@@ -8,9 +8,9 @@
 
 #include "Site.h"
 #include "Annotations.h"
-#include "Core/Options.h"
-#include "IR/Utils.h"
 #include "Markers.h"
+#include "Pass/Options.h"
+#include "Support/Utils.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -81,10 +81,10 @@ static void collectKernels(const Options &O, Module &M,
 
 static void collectHostBodies(Module &M, SmallVectorImpl<Site> &out) {
   for (Function &F : M) {
-    if (F.empty() || !F.hasFnAttribute(kHostBody))
+    if (F.empty() || !F.hasFnAttribute(kSiteBody))
       continue;
     std::optional<double> tau;
-    StringRef value = F.getFnAttribute(kHostBody).getValueAsString();
+    StringRef value = F.getFnAttribute(kSiteBody).getValueAsString();
     if (!value.empty()) {
       double parsed = 0.0;
       [[maybe_unused]] const bool failed = value.getAsDouble(parsed);

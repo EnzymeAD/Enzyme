@@ -1,7 +1,7 @@
 ; The product of matmul_device.ll written as an annotated kernel: the
 ; reduction loop is the kernel's own body and POSEIDON_OPTIMIZE is the
 ; "poseidon" entry of llvm.global.annotations. Same kernel name and launch
-; arguments as the stub in Inputs/ozaki_dispatch/ozaki_stub_host.ll.
+; arguments as the stub in Inputs/library_call/ozaki_stub_host.ll.
 
 ; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"

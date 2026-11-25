@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_CALL_SITES_H
-#define POSEIDON_CALL_SITES_H
+#ifndef POSEIDON_SITES_CALL_SITES_H
+#define POSEIDON_SITES_CALL_SITES_H
 
 #include "llvm/Support/Error.h"
 
@@ -73,4 +73,4 @@ llvm::Expected<PointerExtent> accessedExtent(llvm::Argument &A);
 
 } // namespace poseidon
 
-#endif // POSEIDON_CALL_SITES_H
+#endif // POSEIDON_SITES_CALL_SITES_H

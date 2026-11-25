@@ -7,7 +7,7 @@
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c -poseidon-print %s %t/other.o -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-explain=%t/x -Rpass=poseidon %s %t/other.o -poseidon-print -o %t/use 2> %t/use.err
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-explain=%t/x -Rpass=poseidon %s %t/other.o -poseidon-print -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 // RUN: FileCheck --check-prefix=REMARK --implicit-check-not=remark: %s < %t/use.err
 // RUN: %t/use > %t/use.out
@@ -17,11 +17,11 @@
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/c0 %s %t/other.o -o %t/gen0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > %t/gen0.out
 // RUN: diff %t/stock.out %t/gen0.out
-// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s %t/other.o -poseidon-print -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c0 %s %t/other.o -poseidon-print -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/gen3 > %t/gen3.out
 // RUN: diff %t/stock.out %t/gen3.out
-// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s %t/other.o -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c3 %s %t/other.o -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
 
 // POSEIDON_OPTIMIZE on host functions: a free function called directly,
 // through a pointer and from another translation unit, a member function, a
@@ -41,7 +41,7 @@ void wave_elsewhere(const double *x, double *y, int n) { wave(x, y, n); }
 
 POSEIDON_OPTIMIZE void wave(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
-    // REMARK: host_site_flow.cpp:[[@LINE+1]]:26: remark: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.3125 (-69%) [PT0_0] [-Rpass=poseidon]
+    // REMARK: host_site_flow.cpp:[[@LINE+1]]:26: remark: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.3125 (-69%) [P0_0] [-Rpass=poseidon]
     y[i] = std::exp(-0.5 * x[i] * x[i]) * std::cos(4.0 * x[i]);
 }
 
@@ -101,25 +101,25 @@ int main(int argc, char **argv) {
 
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%)
-// USE: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z6energyPKdi_poseidon_body: the site's own accuracy target 1.000000e-06 overrides -poseidon-tau=1.000000e-06
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%)
-// USE: [poseidon] pin: _Z6energyPKdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z6energyPKdi:P0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__ZN10Integrator4stepEPdPKdi_poseidon_body: tau=1.000000e-06
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%)
-// USE: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:P0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z4clipPKdPdi_poseidon_body: tau=1.000000e-06
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%)
-// USE: [poseidon] pin: _Z4clipPKdPdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z4clipPKdPdi:P0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z4polyIdET_S0__poseidon_body: tau=1.000000e-06
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%)
-// USE: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z4polyIdET_S0_:P0=All FP64(0%) + FP32(100%)
 // USE-NOT: Applying solution
 
-// REMARK: host_site_flow.cpp:[[@LINE-68]]:14: remark: Poseidon runs all 4 operations in float: (double)((float)? + ((float)x[i] * 0.5f * (float)x[i] + sinf((float)x[i]))); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.3 (-70%) [PT0_0] [-Rpass=poseidon]
-// REMARK: host_site_flow.cpp:[[@LINE-59]]:40: remark: Poseidon runs all 3 operations in float: (double)((float)? * sqrtf((float)p[i] * (float)p[i] + 1.0f) + (float)q[i]); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.583333 (-42%) [PT0_0] [-Rpass=poseidon]
-// REMARK: host_site_flow.cpp:[[@LINE-52]]:12: remark: Poseidon runs all 2 operations in float: (double)((float)x[i] * cosf((float)x[i])); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.416667 (-58%) [PT0_0] [-Rpass=poseidon]
-// REMARK: host_site_flow.cpp:[[@LINE-58]]:62: remark: Poseidon runs all 4 operations in float: (double)(expf((float)x) * (float)x + (float)x * -2.0f + 1.0f); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.35 (-65%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-68]]:14: remark: Poseidon runs all 4 operations in float: (double)((float)? + ((float)x[i] * 0.5f * (float)x[i] + sinf((float)x[i]))); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.3 (-70%) [P0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-59]]:40: remark: Poseidon runs all 3 operations in float: (double)((float)? * sqrtf((float)p[i] * (float)p[i] + 1.0f) + (float)q[i]); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.583333 (-42%) [P0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-52]]:12: remark: Poseidon runs all 2 operations in float: (double)((float)x[i] * cosf((float)x[i])); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.416667 (-58%) [P0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-58]]:62: remark: Poseidon runs all 4 operations in float: (double)(expf((float)x) * (float)x + (float)x * -2.0f + 1.0f); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.35 (-65%) [P0_0] [-Rpass=poseidon]
 // REMARK-NOT: remark:
 // The modelled errors are matched by pattern: they come from the profile, whose
 // values the host computes, and a host with a fused multiply-add rounds them
@@ -132,13 +132,13 @@ int main(int argc, char **argv) {
 // At every level each site is rewritten; which mix of FP32 and FP64 a site
 // gets depends on the profile of that level's program.
 // LEVEL: Applying solution for precision change
-// LEVEL: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change
-// LEVEL: [poseidon] pin: _Z6energyPKdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: [poseidon] pin: _Z6energyPKdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change
-// LEVEL: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change
-// LEVEL: [poseidon] pin: _Z4clipPKdPdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: [poseidon] pin: _Z4clipPKdPdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change
-// LEVEL: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: [poseidon] pin: _Z4polyIdET_S0_:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL-NOT: Applying solution

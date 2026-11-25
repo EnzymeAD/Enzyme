@@ -1,0 +1,548 @@
+//===- DeviceProfiler.cu - host half of the CUDA profiler -----------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// The host half of the CUDA profiler, a library a profile-generate build links
+// (libposeidon_profile_cuda, and compiled as HIP libposeidon_profile_hip): it
+// allocates the tables the probes of every profiled device module record into
+// (FPProfilerDevice.cu), writes each module's handles to them, and writes the
+// profile at exit.
+//
+//===----------------------------------------------------------------------===//
+
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#ifdef __HIP__
+#include "../HipAsCuda.h"
+#else
+#include <cuda_fp16.h>
+#include <cuda_runtime.h>
+#endif
+#include <fstream>
+#include <map>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <unistd.h>
+#include <utility>
+#include <vector>
+
+#include "DeviceProfiler.h"
+#include "ProfileFormat.h"
+#include "ShadowTable.h"
+#include "poseidon/poseidon.h"
+
+using namespace poseidon;
+
+static std::string profileDir;
+static GPUProfileSlot *g_devSlots = nullptr;
+static size_t g_slotCount = 0;
+// Host-side handles on the device-allocated registry, read back at exit.
+static int g_maxFuncs = 0;
+static const char **g_devFuncReg = nullptr;
+static char *g_devFuncNames = nullptr;
+static uint32_t *g_devGridByFunc = nullptr;
+static uint32_t *g_devBlockByFunc = nullptr;
+static unsigned long long *g_devLaunchByFunc = nullptr;
+static char *g_devStaticByFunc = nullptr;
+
+// What every profiled device module's table holds, and the host shadows of
+// those tables: one per translation unit, registered by that unit's module
+// constructor, so each names the copy in its own device module.
+static DeviceProfileTable g_table;
+static std::vector<const void *> &poseidonModuleTables() {
+  static auto *v = new std::vector<const void *>();
+  return *v;
+}
+
+// Every GPU runtime call is checked: an ignored failure leaves a sticky error
+// on the context that the next caller of cudaGetLastError() reports as its
+// own, or a profile that is wrong.
+#define POSEIDON_DEVICE_OK(call)                                               \
+  do {                                                                         \
+    cudaError_t _e = (call);                                                   \
+    if (_e != cudaSuccess)                                                     \
+      profileAbort("%s failed (%s).", #call, cudaGetErrorString(_e));          \
+  } while (0)
+
+// A device-side profiler abort (__trap) poisons the context without failing
+// the process, so the exit writer checks the context first and exits nonzero.
+static void poseidonProfileExitCheck() {
+  cudaError_t st = cudaDeviceSynchronize();
+  if (st != cudaSuccess)
+    profileFail("the profiled run ended with a CUDA error (%s). A device-side "
+                "profiler abort leaves the context in this state (see the "
+                "'[poseidon]' message above); the profile is "
+                "incomplete and is NOT written.",
+                cudaGetErrorString(st));
+}
+
+// Tells the host profiler which kernels this writer wrote a profile for. Weak:
+// a program without the host profiler registers no kernel.
+extern "C" void __poseidon_profile_written(const char *funcName)
+    __attribute__((weak));
+
+// The canonical form a record was taken against, from its static header lines.
+static std::string poseidonCanonicalHash(const char *text) {
+  const char *p =
+      strstr(text, (std::string(kProfileKeyCanonicalHash) + " = ").c_str());
+  if (!p)
+    return "";
+  const char *e = strchr(p, '\n');
+  return std::string(p, e ? (size_t)(e - p) : strlen(p));
+}
+
+// The n elements at the device address `from`. The tables live until exit,
+// so a copy that finds them gone means the program reset the device first.
+template <typename T>
+static std::vector<T> poseidonReadBack(const T *from, size_t n) {
+  std::vector<T> to(n);
+  cudaError_t e =
+      cudaMemcpy(to.data(), from, n * sizeof(T), cudaMemcpyDeviceToHost);
+  if (e != cudaSuccess)
+    profileFail("the profile tables could not be read back at exit (%s). A "
+                "program that resets the device before returning from main "
+                "(cudaDeviceReset or hipDeviceReset) frees them; the profile "
+                "is written at exit, so do not reset the device in a "
+                "profiling run. The profile is NOT written.",
+                cudaGetErrorString(e));
+  return to;
+}
+
+namespace {
+// The tables read back at exit, a row per registry entry.
+struct ProfileTables {
+  std::vector<char> names, statics;
+  std::vector<GPUProfileSlot> slots;
+  std::vector<uint32_t> grid, block; // three per row
+  std::vector<unsigned long long> launches;
+
+  char *name(int fi) { return &names[(size_t)fi * POSEIDON_FUNCNAME_MAXLEN]; }
+  char *header(int fi) {
+    return &statics[(size_t)fi * POSEIDON_PROFILE_STATIC_MAXLEN];
+  }
+  GPUProfileSlot *slotsOf(int fi) { return &slots[(size_t)fi * g_slotCount]; }
+};
+} // namespace
+
+static ProfileTables readBackTables() {
+  const size_t n = (size_t)g_maxFuncs;
+  ProfileTables t;
+  t.names = poseidonReadBack(g_devFuncNames, n * POSEIDON_FUNCNAME_MAXLEN);
+  t.slots = poseidonReadBack(g_devSlots, n * g_slotCount);
+  t.statics =
+      poseidonReadBack(g_devStaticByFunc, n * POSEIDON_PROFILE_STATIC_MAXLEN);
+  t.grid = poseidonReadBack(g_devGridByFunc, n * 3);
+  t.block = poseidonReadBack(g_devBlockByFunc, n * 3);
+  t.launches = poseidonReadBack(g_devLaunchByFunc, n);
+  return t;
+}
+
+// Folds row `from` into row `to`: every field is a commutative reduction of
+// what the probes record.
+static void mergeRow(ProfileTables &t, int to, int from) {
+  for (size_t i = 0; i < g_slotCount; i++) {
+    GPUProfileSlot &a = t.slotsOf(to)[i];
+    const GPUProfileSlot &b = t.slotsOf(from)[i];
+    a.minRes = std::max(a.minRes, b.minRes);
+    a.maxRes = std::max(a.maxRes, b.maxRes);
+    for (int j = 0; j < POSEIDON_MAX_OPERANDS; j++) {
+      a.minOperands[j] = std::max(a.minOperands[j], b.minOperands[j]);
+      a.maxOperands[j] = std::max(a.maxOperands[j], b.maxOperands[j]);
+      a.minMagOperands[j] = std::max(a.minMagOperands[j], b.minMagOperands[j]);
+    }
+    a.sumGrad += b.sumGrad;
+    a.sumAbsGrad += b.sumAbsGrad;
+    a.sumSens += b.sumSens;
+    a.exec += b.exec;
+    a.numOperands = std::max(a.numOperands, b.numOperands);
+  }
+  for (int d = 0; d < 3; d++) {
+    t.grid[to * 3 + d] = std::max(t.grid[to * 3 + d], t.grid[from * 3 + d]);
+    t.block[to * 3 + d] = std::max(t.block[to * 3 + d], t.block[from * 3 + d]);
+  }
+  t.launches[to] += t.launches[from];
+  if (t.header(to)[0] == '\0')
+    memcpy(t.header(to), t.header(from), POSEIDON_PROFILE_STATIC_MAXLEN);
+}
+
+// A function compiled into several device modules (an inline device function
+// called from kernels of two translation units) has one row per module that
+// ran it; its record is all of them, as with one device copy. Merged rows lose
+// their name.
+static void mergeModuleCopies(ProfileTables &t) {
+  std::map<std::string, int> firstOf;
+  for (int fi = 0; fi < g_maxFuncs; ++fi) {
+    char *name = t.name(fi);
+    if (name[0] == '\0')
+      continue;
+    auto [it, fresh] = firstOf.emplace(name, fi);
+    if (fresh)
+      continue;
+    const int to = it->second;
+    // Two functions of one name (a static kernel, or a lambda of a static
+    // function, in two units) cannot share one profile file.
+    std::string ha = poseidonCanonicalHash(t.header(to));
+    std::string hb = poseidonCanonicalHash(t.header(fi));
+    if (!ha.empty() && !hb.empty() && ha != hb)
+      profileFail("two different functions were profiled under the name '%s' "
+                  "in two device modules (%s, %s), and one profile file "
+                  "cannot hold both. Give them distinct names. The profile is "
+                  "NOT written.",
+                  name, ha.c_str(), hb.c_str());
+    mergeRow(t, to, fi);
+    name[0] = '\0';
+  }
+}
+
+// The profile of row `fi`: its launch geometry, its static header lines and
+// the record of every slot that executed.
+static std::string profileOf(ProfileTables &t, int fi) {
+  const char *funcName = t.name(fi);
+  std::ostringstream out;
+  out << "MaxBlockDims = " << t.block[fi * 3 + 0] << " " << t.block[fi * 3 + 1]
+      << " " << t.block[fi * 3 + 2] << "\n";
+  out << "MaxGridDims = " << t.grid[fi * 3 + 0] << " " << t.grid[fi * 3 + 1]
+      << " " << t.grid[fi * 3 + 2] << "\n";
+  out << "LaunchCount = " << t.launches[fi] << "\n";
+  // Compile-time static data, already newline-terminated header lines.
+  out << t.header(fi);
+  for (size_t i = 0; i < g_slotCount; i++) {
+    const GPUProfileSlot &slot = t.slotsOf(fi)[i];
+    if (slot.exec == 0)
+      continue;
+    if (slot.numOperands > POSEIDON_MAX_OPERANDS)
+      profileFail("slot %zu of %s records %u operands, more than the %d a "
+                  "device profile holds (POSEIDON_MAX_OPERANDS). The profile "
+                  "is NOT written.",
+                  i, funcName, slot.numOperands, POSEIDON_MAX_OPERANDS);
+    ProfileRecord r{orderedUint64ToDoubleMin(slot.minRes),
+                    orderedUint64ToDouble(slot.maxRes),
+                    slot.sumSens,
+                    slot.sumGrad,
+                    slot.sumAbsGrad,
+                    slot.exec,
+                    {},
+                    {},
+                    {}};
+    for (uint32_t j = 0; j < slot.numOperands; j++) {
+      r.minOperands.push_back(orderedUint64ToDoubleMin(slot.minOperands[j]));
+      r.maxOperands.push_back(orderedUint64ToDouble(slot.maxOperands[j]));
+      // Stored 0 is never written (doubleToOrderedUint64Min).
+      r.minMagOperands.push_back(
+          slot.minMagOperands[j] == 0
+              ? 0.0
+              : orderedUint64ToDoubleMin(slot.minMagOperands[j]));
+    }
+    writeProfileRecord(out, i, r);
+  }
+  return out.str();
+}
+
+static void writeDeviceProfiles() {
+  poseidonProfileExitCheck();
+  // A probe run, or a program that profiled no kernel, has no tables.
+  if (!g_devSlots)
+    return;
+  ProfileTables t = readBackTables();
+  mergeModuleCopies(t);
+  profileMkdirP(profileDir);
+  for (int fi = 0; fi < g_maxFuncs; ++fi) {
+    const char *funcName = t.name(fi);
+    if (funcName[0] == '\0')
+      continue;
+    profileWriteFile(profileDir + "/" + profileFileName(funcName),
+                     profileOf(t, fi), funcName);
+    if (__poseidon_profile_written)
+      __poseidon_profile_written(funcName);
+  }
+}
+
+static bool g_deviceInitDone = false;
+static size_t g_heapBytes = 0;
+// The device the tables were set up on.
+static int g_device = -1;
+
+static void poseidonBindModule(const void *table) {
+  POSEIDON_DEVICE_OK(cudaMemcpyToSymbol(table, &g_table, sizeof(g_table)));
+}
+
+// The function registry (pointer keys, names, per-function launch geometry)
+// and the slots the probes record into. Allocated up front (device code cannot
+// allocate) and zeroed, which is also the "unclaimed" state for every field.
+static void allocateTables(size_t nfuncs, size_t count) {
+  const size_t regBytes = nfuncs * sizeof(const char *);
+  const size_t nameBytes = nfuncs * POSEIDON_FUNCNAME_MAXLEN;
+  const size_t dimBytes = nfuncs * 3 * sizeof(uint32_t);
+  const size_t lcBytes = nfuncs * sizeof(unsigned long long);
+  const size_t stBytes = nfuncs * POSEIDON_PROFILE_STATIC_MAXLEN;
+  const size_t slotBytes = nfuncs * count * sizeof(GPUProfileSlot);
+  cudaError_t err = cudaSuccess;
+  auto alloc = [&](void **p, size_t b) {
+    cudaError_t e = cudaMalloc(p, b);
+    if (e != cudaSuccess && err == cudaSuccess)
+      err = e;
+  };
+  alloc((void **)&g_devFuncReg, regBytes);
+  alloc((void **)&g_devFuncNames, nameBytes);
+  alloc((void **)&g_devGridByFunc, dimBytes);
+  alloc((void **)&g_devBlockByFunc, dimBytes);
+  alloc((void **)&g_devLaunchByFunc, lcBytes);
+  alloc((void **)&g_devStaticByFunc, stBytes);
+  alloc((void **)&g_devSlots, slotBytes);
+  if (err != cudaSuccess)
+    profileAbort(
+        "allocating the profile tables of %zu profiled functions of up to %zu "
+        "probes each (%zu bytes) failed (%s).",
+        nfuncs, count,
+        regBytes + nameBytes + 2 * dimBytes + lcBytes + stBytes + slotBytes,
+        cudaGetErrorString(err));
+  POSEIDON_DEVICE_OK(cudaMemset(g_devFuncReg, 0, regBytes));
+  POSEIDON_DEVICE_OK(cudaMemset(g_devFuncNames, 0, nameBytes));
+  POSEIDON_DEVICE_OK(cudaMemset(g_devGridByFunc, 0, dimBytes));
+  POSEIDON_DEVICE_OK(cudaMemset(g_devBlockByFunc, 0, dimBytes));
+  POSEIDON_DEVICE_OK(cudaMemset(g_devLaunchByFunc, 0, lcBytes));
+  POSEIDON_DEVICE_OK(cudaMemset(g_devStaticByFunc, 0, stBytes));
+  // Zero is the initial state of every field (see doubleToOrderedUint64Min).
+  POSEIDON_DEVICE_OK(cudaMemset(g_devSlots, 0, slotBytes));
+  g_maxFuncs = (int)nfuncs;
+  g_slotCount = count;
+  g_table.maxFuncs = (int)nfuncs;
+  g_table.funcReg = g_devFuncReg;
+  g_table.funcNames = g_devFuncNames;
+  g_table.gridDimByFunc = g_devGridByFunc;
+  g_table.blockDimByFunc = g_devBlockByFunc;
+  g_table.launchCountByFunc = g_devLaunchByFunc;
+  g_table.staticByFunc = g_devStaticByFunc;
+  g_table.slots = g_devSlots;
+  g_table.slotCount = count;
+}
+
+// What the registered device modules profile: the tables hold the sum of
+// their profiled functions, each with as many slots as the largest needs.
+static size_t g_registeredFunctions = 0;
+static size_t g_registeredSlots = 0;
+
+// Called by the module constructor of every translation unit whose device
+// code was compiled for profile generation, with the number of functions that
+// module profiles and the probes the largest of them holds. A unit loaded
+// after main started is bound to the tables already allocated, which it must
+// fit.
+extern "C" void __poseidon_profile_register_module(const void *table,
+                                                   unsigned functions,
+                                                   unsigned slots) {
+  poseidonModuleTables().push_back(table);
+  g_registeredFunctions += functions;
+  g_registeredSlots = std::max<size_t>(g_registeredSlots, slots);
+  if (!g_deviceInitDone)
+    return;
+  if (!g_table.metricOnly && (g_registeredFunctions > (size_t)g_maxFuncs ||
+                              g_registeredSlots > g_slotCount))
+    profileFail("a device module loaded after main started profiles %u "
+                "function(s) of up to %u probes, which the profile tables "
+                "sized for the modules registered before main do not hold. "
+                "Link the module into the program instead of loading it.",
+                functions, slots);
+  poseidonBindModule(table);
+}
+
+// The CUDA half of registration, called from the top of main. It cannot run
+// from a static constructor: in a multi-translation-unit binary a dynamic
+// initializer can run before the device module carrying the __constant__
+// handles is registered. Idempotent.
+extern "C" void __poseidon_profile_init_device() {
+  if (g_deviceInitDone)
+    return;
+  g_deviceInitDone = true;
+
+  profileDir = profileDirectory();
+  POSEIDON_DEVICE_OK(cudaGetDevice(&g_device));
+
+  // A profiled kernel's reverse pass caches what it cannot recompute in the
+  // device heap, which CUDA sizes at 8 MiB and an application sizes for its
+  // own kernels. It can only be resized before the first kernel that
+  // allocates, so it is raised here, and never lowered.
+  const size_t heapBytes =
+      profileEnvPositive("POSEIDON_PROFILE_HEAP_MB", POSEIDON_DEFAULT_HEAP_MB)
+      << 20;
+  POSEIDON_DEVICE_OK(cudaDeviceGetLimit(&g_heapBytes, cudaLimitMallocHeapSize));
+  if (g_heapBytes < heapBytes) {
+    cudaError_t e = cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapBytes);
+    if (e != cudaSuccess)
+      profileFail("reserving %zu MiB of device heap for the profiled kernels' "
+                  "reverse passes failed (%s); set POSEIDON_PROFILE_HEAP_MB to "
+                  "what the device can spare.",
+                  heapBytes >> 20, cudaGetErrorString(e));
+    g_heapBytes = heapBytes;
+  }
+
+  // A run of the condition-number measurement reports only the metric, and
+  // the tables would cost each of the runs sharing the device their memory.
+  g_table.metricOnly = profileIsKappaChild();
+  if (!g_table.metricOnly)
+    allocateTables(std::max<size_t>(g_registeredFunctions, 1),
+                   std::max<size_t>(g_registeredSlots, 1));
+
+  g_table.kappaSite = (int)profileEnvInteger("POSEIDON_KAPPA_SITE", -1);
+  g_table.kappaEps = 0.0;
+  if (g_table.kappaSite >= 0) {
+    g_table.kappaEps = profileEnvPositiveReal("POSEIDON_KAPPA_EPS", 1e-6);
+    fprintf(stderr, "[poseidon] perturbing site %d (eps=%g)\n",
+            g_table.kappaSite, g_table.kappaEps);
+  }
+
+  for (const void *table : poseidonModuleTables())
+    poseidonBindModule(table);
+  POSEIDON_DEVICE_OK(cudaDeviceSynchronize());
+  // atexit handlers run in reverse registration order, and the CUDA runtime
+  // registers its own teardown when it is first initialized above, so the
+  // writer runs before the driver shuts down.
+  std::atexit(writeDeviceProfiles);
+}
+
+// ---------------------------------------------------------------------------
+// Profile-generation launches
+//
+// A profiled kernel's reverse pass takes one shadow buffer per pointer
+// argument; __poseidon_launch_profiled sizes, allocates and seeds them.
+// ---------------------------------------------------------------------------
+
+template <typename T> __global__ void poseidonSeedShadow(T *p, size_t n) {
+  size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    p[i] = T(1);
+}
+
+namespace {
+// Shadows are zeroed and seeded on the stream of the launch that takes them,
+// so that the launch sees them ready whatever stream it runs on.
+struct DeviceShadowOps {
+  static void *allocZeroed(size_t bytes, const char *, void *stream) {
+    void *p = nullptr;
+    POSEIDON_DEVICE_OK(cudaMalloc(&p, bytes));
+    POSEIDON_DEVICE_OK(cudaMemsetAsync(p, 0, bytes, (cudaStream_t)stream));
+    return p;
+  }
+  static void free(void *p) { POSEIDON_DEVICE_OK(cudaFree(p)); }
+  // A run that ended with a device error exits from the profile writer, which
+  // runs after this, with the message that names it.
+  static void freeAtExit(void *p) { (void)cudaFree(p); }
+  // A zero adjoint propagates zero through the whole reverse pass, so the seed
+  // is one on the site's outputs.
+  template <typename T> static void fillOnes(T *p, size_t n, void *stream) {
+    if (n)
+      poseidonSeedShadow<<<(unsigned)((n + 255) / 256), 256, 0,
+                           (cudaStream_t)stream>>>(p, n);
+  }
+};
+} // namespace
+
+// Profiled launches from several host threads share one shadow table.
+static std::mutex g_shadowLock;
+
+// The allocation a device pointer points into. Taken through the driver entry
+// point rather than by linking libcuda, so a profile-generation build needs no
+// extra library on its link line; HIP's runtime answers it itself.
+static void poseidonAllocRange(void *p, void *&base, size_t &size) {
+#ifdef __HIP__
+  hipError_t e = hipMemGetAddressRange(&base, &size, p);
+  if (e != hipSuccess)
+    profileAbort("hipMemGetAddressRange failed (%s) for the device pointer %p "
+                 "passed to a profiled kernel. Only allocations the HIP "
+                 "allocator owns can be shadowed.",
+                 hipGetErrorString(e), p);
+#else
+  typedef int (*PFN_MemGetAddressRange)(unsigned long long *, size_t *,
+                                        unsigned long long);
+  static PFN_MemGetAddressRange getRange = nullptr;
+  if (!getRange) {
+    void *fn = nullptr;
+    cudaError_t e =
+        cudaGetDriverEntryPoint("cuMemGetAddressRange", &fn, cudaEnableDefault);
+    if (e != cudaSuccess || !fn)
+      profileAbort("cuMemGetAddressRange is not available (%s); the size of a "
+                   "profiled kernel's buffers cannot be determined.",
+                   cudaGetErrorString(e));
+    getRange = (PFN_MemGetAddressRange)fn;
+  }
+  unsigned long long b = 0;
+  size_t n = 0;
+  int rc = getRange(&b, &n, (unsigned long long)(uintptr_t)p);
+  if (rc != 0)
+    profileAbort("cuMemGetAddressRange failed (%d) for the device pointer %p "
+                 "passed to a profiled kernel. Only allocations the CUDA "
+                 "allocator owns can be shadowed.",
+                 rc, p);
+  base = (void *)(uintptr_t)b;
+  size = n;
+#endif
+}
+
+// A profiled kernel's launch with the shadows of its pointer arguments
+// (ShadowTable).
+extern "C" void
+__poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
+                           const unsigned *block, size_t shmem, void *stream,
+                           int nargs, void **args, int nptr, const int *ptrIdx,
+                           const int *ptrOff, const int *seedWidth) {
+  int device = -1;
+  POSEIDON_DEVICE_OK(cudaGetDevice(&device));
+  if (device != g_device)
+    profileFail("site %d is launched on device %d, and the profile tables "
+                "were set up on device %d; profile generation supports one "
+                "device per process, so profile on one device.",
+                site, device, g_device);
+  std::vector<void *> full(args, args + nargs);
+  std::vector<void *> shadow((size_t)nptr, nullptr);
+  std::vector<void *> base((size_t)nptr, nullptr);
+  std::vector<size_t> off((size_t)nptr, 0), size((size_t)nptr, 0);
+  // An allocation this launch writes through any of its arguments is an output
+  // of the launch, whichever argument first reaches it below.
+  std::map<void *, int> width;
+  for (int k = 0; k < nptr; ++k) {
+    // A pointer argument, or a pointer field of an aggregate argument (the
+    // captures of a lambda the kernel takes by value).
+    void *p = *(void **)((char *)args[ptrIdx[k]] + ptrOff[k]);
+    if (!p)
+      continue;
+    poseidonAllocRange(p, base[k], size[k]);
+    off[k] = (uintptr_t)p - (uintptr_t)base[k];
+    int &w = width[base[k]];
+    w = std::max(w, seedWidth[k]);
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_shadowLock);
+    for (int k = 0; k < nptr; ++k) {
+      if (base[k])
+        shadow[k] = (char *)ShadowTable<DeviceShadowOps>::get().shadowOf(
+                        (uintptr_t)base[k], size[k], site, width[base[k]],
+                        "a profiled kernel", stream) +
+                    off[k];
+      full.push_back(&shadow[k]);
+    }
+  }
+
+  dim3 g(grid[0], grid[1], grid[2]);
+  dim3 b(block[0], block[1], block[2]);
+  // The reverse pass needs a shadow of the kernel's dynamic shared memory too,
+  // and Enzyme places it directly after the primal block.
+  cudaError_t e = cudaLaunchKernel(func, g, b, full.data(), shmem * 2,
+                                   (cudaStream_t)stream);
+  if (e == cudaSuccess)
+    e = cudaStreamSynchronize((cudaStream_t)stream);
+  if (e != cudaSuccess)
+    profileFail("the profiled launch of site %d failed (%s). The profile is "
+                "incomplete and is NOT written. A reverse pass that outgrows "
+                "the device heap (%zu MiB, POSEIDON_PROFILE_HEAP_MB) faults "
+                "this way too.",
+                site, cudaGetErrorString(e), g_heapBytes >> 20);
+}

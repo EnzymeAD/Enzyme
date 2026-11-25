@@ -13,7 +13,7 @@
 // to six), evaluates the accuracy model on them as the pass does
 // (getFPValues with a precision candidate whose changes are the function's
 // operations) and then materializes them with applyExpansion, one call per
-// change, as PTCandidate::apply does. Into $EXPANSION_MATCH_OUT it writes
+// change, as PrecisionCandidate::apply does. Into $EXPANSION_MATCH_OUT it writes
 // raw.bin (the raw-component cases and the model's results for them),
 // app.bin (the points and the model's results for each function) and
 // fns.inc (the functions, for the harness).
@@ -21,13 +21,13 @@
 // apply-expansion materializes every FP64 instruction of each function named
 // ex<n>_* as an n-component FP32 expansion, with no candidate selection in
 // between.
-#include "Core/ExpansionModel.h"
-#include "IR/Utils.h"
+#include "Techniques/Precision/ExpansionModel.h"
+#include "Support/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/FPNode.h"
-#include "Techniques/Expansion.h"
-#include "Techniques/Precision.h"
+#include "Techniques/Precision/Expansion.h"
+#include "Techniques/Precision/Precision.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -351,10 +351,10 @@ void modelRaw() {
   FILE *out = fopen(outPath("raw.bin").c_str(), "wb");
   for (unsigned n : {2u, 3u, 4u})
     expansion_match::forEachCase(n, 10000, [&](const expansion_match::Case &k) {
-      ExpansionLimbs a = ExpansionLimbs::of(k.a, n),
-                     b = ExpansionLimbs::of(k.b, n),
-                     c = ExpansionLimbs::of(k.c, n);
-      ExpansionLimbs r[kNOps] = {
+      FloatExpansion a = FloatExpansion::of(k.a, n),
+                     b = FloatExpansion::of(k.b, n),
+                     c = FloatExpansion::of(k.c, n);
+      FloatExpansion r[kNOps] = {
           expansionAdd(a, b), expansionSub(a, b),    expansionMul(a, b),
           expansionSqr(a),    expansionDiv(a, b),    expansionSqrt(a),
           expansionNeg(a),    expansionFma(a, b, c), expansionFmaSqr(a, c)};
@@ -405,7 +405,7 @@ void modelApplied(std::vector<AppFn> &fns) {
           nodes, f32 ? PrecisionChangeType::FP32 : PrecisionChangeType::FP64,
           expansionType(a.n));
     }
-    PTCandidate pt(changes, "expansion-match");
+    PrecisionCandidate pt(changes, "expansion-match");
     for (size_t i = 0; i < pts.size() / 3; ++i) {
       MapVector<Value *, double> in;
       for (unsigned j = 0; j < 3; ++j)

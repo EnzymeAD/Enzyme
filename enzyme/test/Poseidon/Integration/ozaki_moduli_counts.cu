@@ -1,7 +1,7 @@
 // Every modulus count the Ozaki-II runtime accepts (3..14), each of which runs
 // its own instantiation of the residue and CRT kernels, against the accuracy
 // model's simulation of the scheme (simulateOzakiIIDgemm), bit for
-// bit: __poseidon_ozaki_dgemm in every A/B/C storage order, with beta = 0.5
+// bit: __poseidon_ozakiii_dgemm in every A/B/C storage order, with beta = 0.5
 // on one, at 37 x 50 x 61, at 20 x 24 x 1100, whose strided operands take the
 // chunked sum of squares, and at the square 48 x 48 x 48. Rows and columns of
 // the operands span 2^-30..2^30, with every 17th element of a row of A 10^6
@@ -14,12 +14,12 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
 // RUN:     -I%S/../../../Poseidon -c \
-// RUN:     %S/../../../Poseidon/Techniques/Matmul/MatmulSimulation.cpp \
+// RUN:     %S/../../../Poseidon/Techniques/Matmul/Simulation.cpp \
 // RUN:     -o %t/sim.o
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=off \
 // RUN:     -I%S/../../../Poseidon/Techniques/Matmul -I%poseidon_runtime_inc \
 // RUN:     %s -x none %t/sim.o \
-// RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm \
+// RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm \
 // RUN:     -o %t/exe
 // RUN: %t/exe | FileCheck --match-full-lines %s
 
@@ -29,7 +29,7 @@
 // CHECK-NEXT: model 16x16x2048 log40: 7 moduli, 1792 products, 0 differ
 // CHECK-NEXT: model 16x16x2048 uniform: 7 moduli, 1792 products, 0 differ
 
-#include "MatmulSimulation.h"
+#include "Simulation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,7 +39,7 @@
 #include <random>
 #include <vector>
 
-#include "GemmDispatch.h"
+#include "gemm/GemmDispatch.h"
 
 using poseidon::simulateOzakiIIDgemm;
 
@@ -125,7 +125,7 @@ size_t run(int M, int N, int K) {
     std::vector<double> C(C0.size());
     for (unsigned nm = 3; nm <= 14; ++nm) {
       cudaMemcpy(dC, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice);
-      __poseidon_ozaki_dgemm(dC, dA, dB, M, N, K, ac ? M : K, bc ? K : N,
+      __poseidon_ozakiii_dgemm(dC, dA, dB, M, N, K, ac ? M : K, bc ? K : N,
                              cc ? M : N, ac, bc, cc, 1.0, beta, nullptr, nm);
       if (cudaMemcpy(C.data(), dC, C.size() * 8, cudaMemcpyDeviceToHost) !=
           cudaSuccess) {
@@ -185,7 +185,7 @@ size_t runSampled(int M, int N, int K) {
     size_t products = 0, d = 0;
     int counts = 0;
     for (unsigned nm = 8; nm <= 14; ++nm, ++counts) {
-      __poseidon_ozaki_dgemm(dC, dA, dB, M, N, K, K, N, N, 0, 0, 0, 1.0, 0.0,
+      __poseidon_ozakiii_dgemm(dC, dA, dB, M, N, K, K, N, N, 0, 0, 0, 1.0, 0.0,
                              nullptr, nm);
       cudaMemcpy(C.data(), dC, C.size() * 8, cudaMemcpyDeviceToHost);
       simulateOzakiIIDgemm(nm, {A.data(), (unsigned)K, (unsigned)M, true},

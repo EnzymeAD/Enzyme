@@ -45,8 +45,8 @@
 // RUN: %poseidon_clangxx -poseidon-profile-generate %t/s1.o %t/s2.o %t/kmain.o -L%cuda_lib_dir -lcudart -o %t/steps
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.steps %t/steps | FileCheck --check-prefix=STATUS %s
 // RUN: ls %t/p.steps | FileCheck --check-prefix=STEPS %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_a.cu -o %t/u1.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_b.cu -o %t/u2.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_a.cu -o %t/u1.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_b.cu -o %t/u2.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
 
 // A program of two CUDA translation units and a main, compiled one unit at a
 // time without relocatable device code, and linked as objects or with the
@@ -67,7 +67,7 @@
 // MERGED: Exec = 8192
 
 // STATUS: status no error
-// CLASH: Poseidon FPProfiler: two different functions were profiled under the name '_ZL4stepPdi~{{[0-9a-f]+}}' in two device modules (CanonicalHash = {{[0-9a-f]+}}, CanonicalHash = {{[0-9a-f]+}}), and one profile file cannot hold both.
+// CLASH: [poseidon] two different functions were profiled under the name '_ZL4stepPdi~{{[0-9a-f]+}}' in two device modules (CanonicalHash = {{[0-9a-f]+}}, CanonicalHash = {{[0-9a-f]+}}), and one profile file cannot hold both.
 // NOSTEP-NOT: step
 
 // STEPS-COUNT-2: _ZL4stepPdi~{{[0-9a-f]+}}.fpprofile

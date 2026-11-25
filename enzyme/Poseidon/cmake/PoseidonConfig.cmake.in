@@ -124,7 +124,7 @@ if(NOT TARGET Poseidon::Plain)
       ${POSEIDON_ENZYME_OPTIONS})
   target_link_libraries(
     Poseidon::ProfileGenerate
-    INTERFACE Poseidon::poseidon_profile_host)
+    INTERFACE Poseidon::poseidon_profile_shadows)
   if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
     target_link_libraries(
       Poseidon::ProfileGenerate
@@ -132,13 +132,15 @@ if(NOT TARGET Poseidon::Plain)
     # Ozaki-II and the direct products; TCEC has no HIP build.
     target_link_libraries(
       Poseidon::ProfileUse
-      INTERFACE Poseidon::poseidon_rt_hip)
+      INTERFACE Poseidon::poseidon_gemm_hip)
   elseif(POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
     target_link_libraries(
       Poseidon::ProfileGenerate
       INTERFACE Poseidon::poseidon_profile_cuda)
     # A rewrite may dispatch a matrix product to any of the GEMM runtimes.
-    target_link_libraries(Poseidon::ProfileUse INTERFACE Poseidon::poseidon_rt)
+    target_link_libraries(
+      Poseidon::ProfileUse
+      INTERFACE Poseidon::poseidon_gemm_cuda)
   endif()
 
   # Error-free transformations survive only if the compiler contracts within a

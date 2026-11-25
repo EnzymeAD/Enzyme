@@ -8,12 +8,12 @@
 //
 // A site is solved on a clone of its body. Per clone, the body it was cut from
 // and the caller values of its parameters, and the names its profile and its
-// -poseidon-apply-rewrites items are found by.
+// -poseidon-pin items are found by.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_SITE_IDENTITY_H
-#define POSEIDON_SITE_IDENTITY_H
+#ifndef POSEIDON_SITES_SITE_IDENTITY_H
+#define POSEIDON_SITES_SITE_IDENTITY_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -129,7 +129,7 @@ std::string siteFileStem(const SiteRecords &T, const llvm::Function &F);
 /// The ".fpprofile" file name of a site clone. The profiling run writes one
 /// record per marked body, so every clone of one body reads the same file.
 std::string siteProfileFile(const SiteRecords &T, const llvm::Function &clone);
-/// The name -poseidon-apply-rewrites gives a site by: the symbol its body was
+/// The name -poseidon-pin gives a site by: the symbol its body was
 /// cut from (an annotated kernel or host function, a marker's target, the copy
 /// made for one __poseidon_optimize call), the one its profile is named after.
 std::string siteKeyOfBody(const llvm::Function &body);
@@ -153,4 +153,4 @@ bool isSiteClone(const SiteRecords &T, const llvm::Function *F);
 bool redirectNoopSite(SiteRecords &T, llvm::Function *clone, bool print);
 
 } // namespace poseidon
-#endif // POSEIDON_SITE_IDENTITY_H
+#endif // POSEIDON_SITES_SITE_IDENTITY_H

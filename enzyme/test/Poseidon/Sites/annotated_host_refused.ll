@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: not %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -Wno-override-module %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
-; RUN: not %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -Wno-override-module %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/use -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: not %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -Wno-override-module %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/use -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
 ; RUN: %opt %s %loadPoseidon -passes=poseidon -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=OFFIR %s < %t/off.ll
 ; RUN: %opt %s -S -o %t/in.ll

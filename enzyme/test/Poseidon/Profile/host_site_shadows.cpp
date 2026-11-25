@@ -93,5 +93,5 @@ int main() {
 // PROF-NEXT: Operand[1] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
 // PROF-NEXT: Operand[2] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
 
-// UNKNOWN: Poseidon FPProfiler: argument 2 ('y') of scale(double const*, double*, int) points to 0x{{[0-9a-f]+}}, which the profiler did not see allocated.
+// UNKNOWN: [poseidon] argument 2 ('y') of scale(double const*, double*, int) points to 0x{{[0-9a-f]+}}, which the profiler did not see allocated.
 // UNKNOWN-SAME: Allocate this array on the heap, or give its shadow in an explicit list of __poseidon_optimize: enzyme_dup before the pointer and the shadow after it.

@@ -9,7 +9,7 @@
 // lower-fpcore lowers each of them, as a rewrite is lowered, into a function
 // @fpcore.<n>(double %x, double %y) of the module that returns it, its
 // symbols x and y the two arguments.
-#include "IR/Utils.h"
+#include "Support/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/FPNode.h"

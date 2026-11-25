@@ -63,12 +63,15 @@ const ProbeABI &Target::probes() const {
 }
 
 const ProbeABI &deviceProbes() {
-  static const ProbeABI P{
-      "poseidonLogValueCUDA",         "poseidonLogGradCUDA",
-      "poseidonProbePerturbCUDA",     "poseidonProbePerturbCUDAf",
-      "poseidonProfileBlockDimsCUDA", "poseidonProfileStaticCUDA",
-      /*RegisterStatic=*/"",
-      /*RuntimeAnchor=*/"",           "poseidonOverlappingArgumentsCUDA"};
+  static const ProbeABI P{"__poseidon_device_log_value",
+                          "__poseidon_device_log_grad",
+                          "__poseidon_device_perturb",
+                          "__poseidon_device_perturbf",
+                          "__poseidon_device_log_block_dims",
+                          "__poseidon_device_publish_static",
+                          /*RegisterStatic=*/"",
+                          /*RuntimeAnchor=*/"",
+                          "__poseidon_device_overlapping_arguments"};
   return P;
 }
 

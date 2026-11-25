@@ -109,10 +109,11 @@ function(poseidon_add_test_plugin name source)
 endfunction()
 
 poseidon_add_test_program(
-  poseidon-test-round-to-prec Core/round_to_prec_apfloat.cpp
-  ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
-poseidon_add_test_program(poseidon-test-matmul-scheme Matmul/matmul_scheme.cpp
-                          ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
+  poseidon-test-round-to-prec Model/round_to_prec_apfloat.cpp
+  ${POSEIDON_SOURCE_DIR}/Model/FPKind.cpp)
+poseidon_add_test_program(
+  poseidon-test-matmul-scheme Techniques/Matmul/scheme.cpp
+  ${POSEIDON_SOURCE_DIR}/Model/FPKind.cpp)
 poseidon_add_test_plugin(poseidon-test-expansion-match
                          Inputs/expansion_match/emit.cpp)
 poseidon_add_test_plugin(poseidon-test-model Inputs/model/plugin.cpp)
@@ -136,12 +137,13 @@ set(POSEIDON_ENZYME_OPT_PLUGIN
 # The CUDA libraries the integration tests link, from the toolkit the build
 # found.
 find_package(CUDAToolkit QUIET)
-# A test that links poseidon_rt links what the runtime links, in its order.
-set(POSEIDON_TEST_RT_LINK "")
-poseidon_rt_link_files(_rt_libs TOOLKIT)
+# A test that links poseidon_gemm_cuda links what the runtime links, in its
+# order.
+set(POSEIDON_TEST_GEMM_LINK "")
+poseidon_gemm_cuda_link_files(_rt_libs TOOLKIT)
 foreach(_lib ${_rt_libs})
   get_filename_component(_dir ${_lib} DIRECTORY)
-  string(APPEND POSEIDON_TEST_RT_LINK " ${_lib} -Wl,-rpath,${_dir}")
+  string(APPEND POSEIDON_TEST_GEMM_LINK " ${_lib} -Wl,-rpath,${_dir}")
 endforeach()
 # What the build has, for the features of the lit configuration.
 set(POSEIDON_TEST_HAS_CUDA ${POSEIDON_HAS_CUDA})
@@ -158,21 +160,21 @@ configure_lit_site_cfg(
 set(POSEIDON_TEST_DEPS
     Poseidon-${LLVM_VERSION_MAJOR}
     poseidon_profile
-    poseidon_profile_host
+    poseidon_profile_shadows
     poseidon-clang
     poseidon-calibrate
-    poseidon-probe
+    poseidon-kappa
     poseidon-test-cost-models
     poseidon-test-programs
     LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})
 endif()
-if(TARGET poseidon_rt)
-  list(APPEND POSEIDON_TEST_DEPS poseidon_rt poseidon_profile_cuda)
+if(TARGET poseidon_gemm_cuda)
+  list(APPEND POSEIDON_TEST_DEPS poseidon_gemm_cuda poseidon_profile_cuda)
 endif()
-if(TARGET poseidon_rt_hip)
-  list(APPEND POSEIDON_TEST_DEPS poseidon_rt_hip poseidon_profile_hip)
+if(TARGET poseidon_gemm_hip)
+  list(APPEND POSEIDON_TEST_DEPS poseidon_gemm_hip poseidon_profile_hip)
 endif()
 if(TARGET herbie)
   list(APPEND POSEIDON_TEST_DEPS herbie)

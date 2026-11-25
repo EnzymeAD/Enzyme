@@ -11,7 +11,7 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
-// RUN:     -poseidon-enable-herbie=0 -poseidon-tau=1e-6 %s -o %t/opt.exe 2> %t/use.log
+// RUN:     -poseidon-enable-rewrite=0 -poseidon-tau=1e-6 %s -o %t/opt.exe 2> %t/use.log
 // RUN: cat %t/profile/*.fpprofile %t/use.log | FileCheck %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 

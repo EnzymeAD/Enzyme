@@ -110,7 +110,7 @@ static void printHelp(StringRef Prog) {
          "     POSEIDON_PROFILE_DIR (default " POSEIDON_DEFAULT_PROFILE_DIR
          "). A program\n"
          "     that declares its result with poseidon_metric runs under\n"
-         "     poseidon-probe -- <program>, which measures each site's\n"
+         "     poseidon-kappa -- <program>, which measures each site's\n"
          "     condition number against it in 1 + 3 x <sites> more runs\n"
          "  3. compile with -poseidon-profile-use, which prices candidates\n"
          "     from the cost model poseidon-calibrate measured for the\n"
@@ -150,7 +150,8 @@ static void printHelp(StringRef Prog) {
          "  -poseidon-help                this message\n\n"
          "Any other -poseidon-<flag>[=<value>], with or without -mllvm before\n"
          "it, reaches the pass as -Xclang -mllvm -Xclang -poseidon-<flag>.\n"
-         "POSEIDON_PLUGIN and ENZYME_PLUGIN override the plugin paths baked\n"
+         "POSEIDON_PLUGIN and POSEIDON_ENZYME_PLUGIN override the plugin paths "
+         "baked\n"
          "in at build time; POSEIDON_ECHO=1 prints the clang command line\n"
          "this driver runs. Every -poseidon-<flag> is listed by\n"
          "  "
@@ -166,12 +167,13 @@ static std::optional<StringRef> poseidonFlag(StringRef A) {
   return std::nullopt;
 }
 
-/// Whether the argument is -poseidon-unit, bare or as the value of -mllvm=.
+/// Whether the argument is -poseidon-compilation-id, bare or as the value of
+/// -mllvm=.
 static bool namesUnit(StringRef A) {
   A.consume_front("-mllvm=");
   return A.consume_front("-") &&
-         (A.consume_front("-poseidon-unit") ||
-          A.consume_front("poseidon-unit")) &&
+         (A.consume_front("-poseidon-compilation-id") ||
+          A.consume_front("poseidon-compilation-id")) &&
          (A.empty() || A.starts_with("="));
 }
 
@@ -334,9 +336,9 @@ static Request convertFlags(ArrayRef<const char *> Args,
   return R;
 }
 
-/// The -poseidon-unit of every compile job of this invocation, unique to it:
-/// the host half of a compile reads the launch descriptors its device half
-/// wrote under the same unit.
+/// The -poseidon-compilation-id of every compile job of this invocation, unique
+/// to it: the host half of a compile reads the launch descriptors its device
+/// half wrote under the same unit.
 static std::string unitName(ArrayRef<const char *> Args) {
   // Without a working directory the arguments alone name the invocation.
   SmallString<256> Cwd;
@@ -346,8 +348,9 @@ static std::string unitName(ArrayRef<const char *> Args) {
     Identity += '\0';
     Identity += A;
   }
-  return "-poseidon-unit=" + utohexstr(xxh3_64bits(Identity),
-                                       /*LowerCase=*/false, /*Width=*/16);
+  return "-poseidon-compilation-id=" + utohexstr(xxh3_64bits(Identity),
+                                                 /*LowerCase=*/false,
+                                                 /*Width=*/16);
 }
 
 /// The arguments that link the runtimes `R` needs, Poseidon's from `LibDir`
@@ -417,7 +420,7 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
   // The shadows of a POSEIDON_OPTIMIZE function on the host are sized from
   // the allocations this library records.
   if (R.ProfileGenerate)
-    Link.push_back("-lposeidon_profile_host");
+    Link.push_back("-lposeidon_profile_shadows");
   // The host half of the GPU profiler. The CUDA and HIP ones export the same
   // names, so a link takes one.
   if (R.ProfileGenerate && HIP && POSEIDON_DRIVER_PROFILER_HIP)
@@ -429,20 +432,20 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
   if (R.ProfileUse && CUDA && !CudaRoot.empty()) {
     // A rewrite may dispatch a matrix product to any of the GEMM runtimes;
     // they export disjoint symbols and only the chosen one runs.
-    Link.push_back("-lposeidon_rt");
+    Link.push_back("-lposeidon_gemm_cuda");
     AsNeeded("-lcublas");
     // Libraries of the runtime outside the toolkit (cuMpSGEMM, which defines
     // cuBLAS's GEMM entry points, so after cuBLAS), found again where they
     // were built. -Xlinker, since after a -x cuda clang compiles a file input.
     SmallVector<StringRef, 2> RuntimeLibs;
-    StringRef(POSEIDON_DRIVER_RT_LIBS).split(RuntimeLibs, ',', -1, false);
+    StringRef(POSEIDON_DRIVER_GEMM_LIBS).split(RuntimeLibs, ',', -1, false);
     for (StringRef Lib : RuntimeLibs)
       Link.append({"-Xlinker", Lib.str(), "-Xlinker", "-rpath", "-Xlinker",
                    sys::path::parent_path(Lib).str()});
   }
   if (R.ProfileUse && HIP && !RocmRoot.empty()) {
     // Ozaki-II and the direct products on hipBLAS; TCEC has no HIP build.
-    Link.push_back("-lposeidon_rt_hip");
+    Link.push_back("-lposeidon_gemm_hip");
     AsNeeded("-lhipblas");
   }
   // The archives are C++; the C driver links no C++ library of its own.
@@ -484,16 +487,18 @@ static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
   // derivatives of its own loads it itself, as with clang alone.
   if (!ProfileGenerate) {
     In.Enzyme.clear();
-  } else if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
+  } else if (std::string Given = envOr("POSEIDON_ENZYME_PLUGIN", "");
+             !Given.empty()) {
     In.Enzyme = Given;
   } else if (In.Enzyme.empty()) {
-    return createStringError("-poseidon-profile-generate needs Enzyme to "
-                             "differentiate the probes, and this build has no "
-                             "ClangEnzyme plugin; set ENZYME_PLUGIN to one");
+    return createStringError(
+        "-poseidon-profile-generate needs Enzyme to "
+        "differentiate the probes, and this build has no "
+        "ClangEnzyme plugin; set POSEIDON_ENZYME_PLUGIN to one");
   } else if (!sys::fs::exists(In.Enzyme)) {
     return createStringError("Enzyme plugin not found at " + In.Enzyme +
                              "; install Enzyme to the same prefix or set "
-                             "ENZYME_PLUGIN");
+                             "POSEIDON_ENZYME_PLUGIN");
   }
   return In;
 }

@@ -1,0 +1,43 @@
+// RUN: rm -rf %t && mkdir %t
+// RUN: %opt %S/Inputs/expansion_fast_flags/fast.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-expansion-match%shlibext -passes=apply-expansion -S -o %t/expanded.ll
+// RUN: FileCheck --check-prefix=IR --implicit-check-not='{{ (fast|contract|reassoc|nnan|ninf|nsz|arcp|afn) }}' %s < %t/expanded.ll
+// RUN: %clang++ -O2 -c %t/expanded.ll -o %t/expanded.o
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off %S/Inputs/expansion_fast_flags/harness.cpp %t/expanded.o -o %t/run
+// RUN: %t/run | FileCheck --check-prefix=OUT %s
+// RUN: %if !global-fp-contract %{ %opt %S/Inputs/expansion_fast_flags/fast_attributes.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-expansion-match%shlibext -passes=apply-expansion -S -o %t/attributes.ll %}
+// RUN: %if !global-fp-contract %{ %clang++ -O2 -c %t/attributes.ll -o %t/attributes.o %}
+// RUN: %if !global-fp-contract %{ %clang++ -std=c++17 -O2 -ffp-contract=off %S/Inputs/expansion_fast_flags/harness.cpp %t/attributes.o -o %t/run_attributes %}
+// RUN: %if !global-fp-contract %{ %t/run_attributes | FileCheck --check-prefix=ATTR %s %}
+
+// The expansion materializer applied to FP64 operations that carry every
+// fast-math flag (Techniques/Precision/Inputs/expansion_fast_flags/fast.ll) emits operations with
+// none, for two, three and four components: an error-free transformation is
+// exact only if each operation rounds as written (with 'nnan ninf contract'
+// kept, -O2 folds each operand's split and the result keeps FP32 precision).
+// Compiled at -O2 and run on the host, the two-component sum and product equal,
+// bit for bit, MultiFloats.jl's two-limb addition and multiplication on the
+// operands' splits (Techniques/Precision/Inputs/expansion_fast_flags/harness.cpp). The same holds in
+// functions that carry every fast-math function attribute (unsafe-fp-math,
+// no-nans-fp-math, no-infs-fp-math, approx-func-fp-math,
+// no-signed-zeros-fp-math; Techniques/Precision/Inputs/expansion_fast_flags/fast_attributes.ll):
+// from LLVM 24 no attribute reaches an operation without fast-math flags.
+
+// IR-LABEL: define double @ex2_add(
+// IR: fptrunc double %a to float
+// IR-LABEL: define double @ex2_mul(
+// IR: call float @llvm.fma.f32(
+// IR-LABEL: define double @ex2_div(
+// IR: fdiv float
+// IR-LABEL: define double @ex2_fma(
+// IR: call float @llvm.fma.f32(
+// IR-LABEL: define double @ex3_mul(
+// IR: call float @llvm.fma.f32(
+// IR-LABEL: define double @ex4_add(
+// IR: fadd float
+
+// OUT: ex2_add(0.1, 0.2) = 0x1.333333333333p-2
+// OUT: sum 100000 of 100000, product 100000 of 100000 equal to the reference
+
+// ATTR: ex2_add(0.1, 0.2) = 0x1.333333333333p-2
+// ATTR-NEXT: sum 100000 of 100000, product 100000 of 100000 equal to the reference
+// ATTR-NOT: {{.}}

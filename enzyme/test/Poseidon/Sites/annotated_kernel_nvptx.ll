@@ -1,10 +1,10 @@
 ; DEFINE: %{use} = -poseidon-profile-use=%t/prof \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
-; DEFINE:   -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
-; DEFINE:   -poseidon-enable-three-tier=false \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
+; DEFINE:   -poseidon-precision-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
+; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" %{use} -poseidon-cache=%t/attr -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t/attr.out 2>&1
 ; RUN: FileCheck %s < %t/attr.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t/attr.out
@@ -17,7 +17,7 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S | FileCheck --check-prefix=INLINED %s
 
 ; A kernel carrying POSEIDON_OPTIMIZE is a site whose annotated computation is
-; its whole body: same code and same profile as ds_expansion_nvptx.ll, with no
+; its whole body: same code and same profile as expansion_two_components_nvptx.ll, with no
 ; marker call and no shadow arguments. The second run reaches the same site by
 ; name with -poseidon-kernels instead of the attribute.
 
@@ -78,7 +78,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: All FP64(0%) + FP32(100%)
 ; CHECK: All FP64(0%) + Expansion2(100%)
 ; CHECK: Applying solution for precision change All FP64(0%) + Expansion2(100%)
-; CHECK: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
+; CHECK: [poseidon] pin: fms_kernel:P0=All FP64(0%) + Expansion2(100%)
 
 ; Without inlining the kernel calls the rewritten body with its own arguments.
 ; MODULE-LABEL: define {{.*}} @fms_kernel(
@@ -87,13 +87,13 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; MODULE-NEXT: call void @preprocess_fms_kernel_poseidon_body(ptr %[[KA]], ptr %[[KB]], ptr %[[KOUT]])
 ; MODULE-NEXT: ret void
 
-; The body is the double-single expansion of the chain (ds_expansion_nvptx.ll
+; The body is the double-single expansion of the chain (expansion_two_components_nvptx.ll
 ; checks its instructions), joined back to FP64 at the store.
 ; BODY-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; BODY-SAME: ptr {{.*}}%[[A:[0-9]+]], ptr {{.*}}%[[B:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])
 ; BODY: %[[I:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
 ; BODY: fptrunc double %{{[0-9]+}} to float
-; BODY: %[[J:ds.f64[0-9]*]] = fadd double %{{.+}}, %{{.+}}, !poseidon.ds.join
+; BODY: %[[J:pair.f64[0-9]*]] = fadd double %{{.+}}, %{{.+}}, !poseidon.pair.join
 ; BODY-NEXT: %[[OP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[OUT]], i64 %[[I]]
 ; BODY-NEXT: store double %[[J]], ptr %[[OP]]
 ; BODY-NEXT: ret void
@@ -105,7 +105,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CLEAN: ret void
 
 ; REGEX: Applying solution for precision change All FP64(0%) + Expansion2(100%)
-; REGEX: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
+; REGEX: [poseidon] pin: fms_kernel:P0=All FP64(0%) + Expansion2(100%)
 ; REGEX-LABEL: define {{.*}} @fms_kernel(
 ; REGEX: call void @preprocess_fms_kernel_poseidon_body(
 
@@ -145,7 +145,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; INLINED: %[[I:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
 ; INLINED: fptrunc double %{{[0-9]+}} to float
 ; INLINED-NOT: fmul double
-; INLINED: [[J:%[^ ]+]] = fadd double %{{.+}}, %{{.+}}, !poseidon.ds.join !{{[0-9]+}}
+; INLINED: [[J:%[^ ]+]] = fadd double %{{.+}}, %{{.+}}, !poseidon.pair.join !{{[0-9]+}}
 ; INLINED-NEXT: %[[OP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[OUT]], i64 %[[I]]
 ; INLINED-NEXT: store double [[J]], ptr %[[OP]]
 ; INLINED-NEXT: ret void

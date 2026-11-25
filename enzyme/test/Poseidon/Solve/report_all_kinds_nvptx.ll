@@ -1,11 +1,11 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-show-table -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=TABLE %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-print-dp-table -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=TABLE %s
 ; RUN: %python -c "import json, sys; d = json.load(open(sys.argv[1])); print(len(d['pareto']), 'points;', *(u['id'] + ':' + str(len(u['alternatives'])) for u in d['subgraphs'])); [print(p['budget'], ','.join(p['applied'])) for p in d['pareto'][:2]]" %t/ex/matmul_body.explain.json | FileCheck --check-prefix=SUMMARY %s
 ; RUN: cat %t/ex/matmul_body.explain.json | FileCheck --check-prefix=EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o %t/tau.ll 2>&1 | FileCheck --check-prefix=TAU %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o %t/tau.ll 2>&1 | FileCheck --check-prefix=TAU %s
 
 ; The table print and the explanation of a site with algebraic, precision and
-; product units (the module of Inputs/exact_dp/reprice.ll, solved exactly; the
+; product units (the module of Inputs/no_early_prune/reprice.ll, solved exactly; the
 ; budget selects a precision change and a raise). Under a target the products are selected by their
 ; domain error apart from the DP, and a precision change of the product's
 ; epilogue that the DP selects is dropped against the raise. The poseidon pass
@@ -22,12 +22,12 @@
 ; TABLE-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 
 ; SUMMARY: 21 points; S0:56 S1:9 M0:3
-; SUMMARY-NEXT: -0.9537642045454545 PT0_0,M0_0
-; SUMMARY-NEXT: -0.94921875 PT0_0,M0_1
+; SUMMARY-NEXT: -0.9537642045454545 P0_0,M0_0
+; SUMMARY-NEXT: -0.94921875 P0_0,M0_1
 
 ; EXPLAIN: "result": {
 ; EXPLAIN-NEXT: "applied": [
-; EXPLAIN-NEXT: "PT0_0",
+; EXPLAIN-NEXT: "P0_0",
 ; EXPLAIN-NEXT: "M0_2"
 ; EXPLAIN-NEXT: ]
 ; EXPLAIN: "cost_delta": -{{0\.[0-9]+}},
@@ -42,4 +42,4 @@
 ; TAU: warning: {{.*}}preprocess_matmul_body{{.*}}: Poseidon: a selected rewrite edits instructions a selected matrix product consumes; the rewrite is dropped{{$}}
 ; TAU: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
 ; TAU-NEXT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-; TAU: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:PT0=All FP64(0%) + FP32(100%){{$}}
+; TAU: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}

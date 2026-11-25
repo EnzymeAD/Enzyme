@@ -10,9 +10,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "NVPTX.h"
 #include "Enzyme/Utils.h"
 #include "MathLibrary.h"
-#include "NVPTXTensorCore.h"
 #include "Target.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -53,7 +53,7 @@ static constexpr LaunchValue kSregValue[3] = {
 namespace {
 
 #ifdef POSEIDON_DEVICE_PROFILER
-// runtime/fpprofiler/FPProfilerDevice.cu, compiled by the build to NVPTX
+// runtime/profile/DeviceProbes.cu, compiled by the build to NVPTX
 // bitcode.
 #include "FPProfilerDevice.inc"
 #endif

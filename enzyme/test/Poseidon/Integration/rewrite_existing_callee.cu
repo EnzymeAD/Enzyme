@@ -13,7 +13,7 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t/profile \
 // RUN:     -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model \
-// RUN:     -poseidon-print -poseidon-enable-herbie=0 -poseidon-tau=1e-3 \
+// RUN:     -poseidon-print -poseidon-enable-rewrite=0 -poseidon-tau=1e-3 \
 // RUN:     %s -o %t/opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 
@@ -68,7 +68,7 @@ int main() {
 // its negation.
 // SOLVE: [poseidon] Optimizing [[BODY:preprocess__Z5wavedPdPKdi_poseidon_body]] with relative error tolerance: 1.000000e-03
 // SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-// SOLVE: [poseidon] pin: _Z5wavedPdPKdi:PT0=All FP64(0%) + FP32(100%){{$}}
+// SOLVE: [poseidon] pin: _Z5wavedPdPKdi:P0=All FP64(0%) + FP32(100%){{$}}
 // SOLVE: define internal void @[[BODY]](
 // SOLVE: [[XF:%[0-9]+]] = fptrunc double %{{[0-9]+}} to float
 // SOLVE-NEXT: [[NEG:%[0-9]+]] = fneg float [[XF]]

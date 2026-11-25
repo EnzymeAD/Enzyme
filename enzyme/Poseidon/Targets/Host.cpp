@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // The host CPU: no kernels, libm, and the host profiler
-// (runtime/fpprofiler/FPProfiler.cpp).
+// (runtime/profile/Profiler.cpp).
 //
 //===----------------------------------------------------------------------===//
 
@@ -59,14 +59,14 @@ const Target &hostTarget() {
 }
 
 const ProbeABI &hostProbes() {
-  static const ProbeABI P{"poseidonLogValue",
-                          "poseidonLogGrad",
-                          "poseidonProbePerturb",
-                          "poseidonProbePerturbf",
+  static const ProbeABI P{"__poseidon_log_value",
+                          "__poseidon_log_grad",
+                          "__poseidon_perturb",
+                          "__poseidon_perturbf",
                           /*BlockDims=*/"",
                           /*PublishStatic=*/"",
-                          "poseidonRegisterProfileStatic",
-                          "POSEIDON_PROFILE_RUNTIME_VAR"};
+                          "__poseidon_register_static",
+                          "__poseidon_profile_runtime"};
   return P;
 }
 

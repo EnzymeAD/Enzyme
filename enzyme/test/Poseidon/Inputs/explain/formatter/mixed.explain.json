@@ -3,13 +3,13 @@
     "ir": "preprocess__Z8rotationPKdPdi",
     "loc": {
       "col": 0,
-      "file": "explain_formatter_rotation.cpp",
+      "file": "formatter_rotation.cpp",
       "line": 9
     },
     "name": "rotation(double const*, double*, int)",
     "site": {
       "col": 3,
-      "file": "explain_formatter_rotation.cpp",
+      "file": "formatter_rotation.cpp",
       "line": 32
     },
     "symbol": "_Z8rotationPKdPdi"
@@ -17,7 +17,7 @@
   "pareto": [
     {
       "applied": [
-        "PT0_10"
+        "P0_10"
       ],
       "budget": -0.7441307993292342,
       "cost": 0.2558692006707658,
@@ -27,7 +27,7 @@
   ],
   "result": {
     "applied": [
-      "PT0_10"
+      "P0_10"
     ],
     "cost_after": 0.2558692006707658,
     "cost_before": 1.0,
@@ -57,7 +57,7 @@
             }
           ],
           "cost_delta": -0.7441307993292342,
-          "id": "PT0_10",
+          "id": "P0_10",
           "kind": "precision",
           "modelled_error": 1.3241097083711176e-08,
           "outputs": [
@@ -78,7 +78,7 @@
         {
           "loc": {
             "col": 30,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 11
           },
           "max": -0.05,
@@ -89,7 +89,7 @@
         {
           "loc": {
             "col": 16,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 11
           },
           "max": 1,
@@ -100,7 +100,7 @@
         {
           "loc": {
             "col": 48,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 11
           },
           "max": 0.06,
@@ -112,7 +112,7 @@
       "kind": "subgraph",
       "loc": {
         "col": 22,
-        "file": "explain_formatter_rotation.cpp",
+        "file": "formatter_rotation.cpp",
         "line": 15
       },
       "ops": [
@@ -120,7 +120,7 @@
           "executions": 1000,
           "loc": {
             "col": 40,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 12
           },
           "max": 0.25,
@@ -132,7 +132,7 @@
           "float_call": "fmaf",
           "loc": {
             "col": 36,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 12
           },
           "max": 1.25,
@@ -144,7 +144,7 @@
           "float_call": "fmaf",
           "loc": {
             "col": 44,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 12
           },
           "max": 1.2504,
@@ -156,7 +156,7 @@
           "float_call": "sqrtf",
           "loc": {
             "col": 20,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 12
           },
           "max": 1.118212859879549,
@@ -167,7 +167,7 @@
           "executions": 1000,
           "loc": {
             "col": 29,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 13
           },
           "max": 0.5591064299397746,
@@ -179,7 +179,7 @@
           "float_call": "sinf",
           "loc": {
             "col": 16,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 13
           },
           "max": 0.5304289041536286,
@@ -190,7 +190,7 @@
           "executions": 1000,
           "loc": {
             "col": 38,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 13
           },
           "max": 0.499939564691577,
@@ -202,7 +202,7 @@
           "float_call": "cosf",
           "loc": {
             "col": 16,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 14
           },
           "max": 0.9996373969156186,
@@ -213,7 +213,7 @@
           "executions": 1000,
           "loc": {
             "col": 22,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 15
           },
           "max": 0.47597491948871645,
@@ -224,7 +224,7 @@
           "executions": 1000,
           "loc": {
             "col": 22,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 16
           },
           "max": -0.02398653696339209,
@@ -235,7 +235,7 @@
           "executions": 1000,
           "loc": {
             "col": 22,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 17
           },
           "max": 0.029991824418484612,
@@ -268,7 +268,7 @@
           ],
           "loc": {
             "col": 22,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 15
           },
           "name": "q[4 * i + 1]",
@@ -293,7 +293,7 @@
           ],
           "loc": {
             "col": 22,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 16
           },
           "name": "q[4 * i + 2]",
@@ -318,7 +318,7 @@
           ],
           "loc": {
             "col": 22,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 17
           },
           "name": "q[4 * i + 3]",
@@ -343,7 +343,7 @@
           ],
           "loc": {
             "col": 16,
-            "file": "explain_formatter_rotation.cpp",
+            "file": "formatter_rotation.cpp",
             "line": 14
           },
           "name": "q[4 * i]",

@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && split-file %s %t
-; RUN: %opt %t/site.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/tau_one_meaning -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c1 -poseidon-explain=%t/x1 -S -poseidon-print -o %t/site.out.ll 2> %t/site.err
-; RUN: %opt %t/site_kernel.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/tau_one_meaning -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c2 -poseidon-explain=%t/x2 -poseidon-tau=1e-4 -S -poseidon-print -o %t/flag.out.ll 2> %t/flag.err
-; RUN: %opt %t/site.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/tau_one_meaning -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c3 -poseidon-tau=1e-6 -S -poseidon-print -o /dev/null 2> %t/both.err
+; RUN: %opt %t/site.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c1 -poseidon-explain=%t/x1 -S -poseidon-print -o %t/site.out.ll 2> %t/site.err
+; RUN: %opt %t/site_kernel.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c2 -poseidon-explain=%t/x2 -poseidon-tau=1e-4 -S -poseidon-print -o %t/flag.out.ll 2> %t/flag.err
+; RUN: %opt %t/site.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c3 -poseidon-tau=1e-6 -S -poseidon-print -o /dev/null 2> %t/both.err
 ; RUN: FileCheck --check-prefix=SOLVE %s < %t/site.err
 ; RUN: FileCheck --check-prefix=SOLVE --check-prefix=FLAG %s < %t/flag.err
 ; RUN: FileCheck --check-prefix=BOTH %s < %t/both.err
@@ -10,7 +10,7 @@
 ; RUN: diff %t/site.cmp.ll %t/flag.cmp.ll
 ; RUN: cat %t/x1/*.explain.json | FileCheck --check-prefix=FROMSITE %s
 ; RUN: cat %t/x2/*.explain.json | FileCheck --check-prefix=FROMFLAG %s
-; RUN: not %opt %t/key.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/tau_one_meaning -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c4 -S -o /dev/null 2>&1 | FileCheck --check-prefix=KEY %s
+; RUN: not %opt %t/key.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c4 -S -o /dev/null 2>&1 | FileCheck --check-prefix=KEY %s
 
 ; One site with a matrix product and elementwise work. The accuracy target is
 ; the same number wherever it is written: given at the site (poseidon_tau) or

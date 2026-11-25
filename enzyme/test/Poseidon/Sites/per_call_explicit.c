@@ -3,7 +3,7 @@
 // RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=SAME %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -poseidon-print -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -poseidon-print -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
 // RUN: not %clang -fsyntax-only -I%poseidon_profile_inc -DMACRO %s 2>&1 | FileCheck --check-prefix=MACRO %s
 
@@ -77,11 +77,11 @@ int main(void) {
 // Each site is rewritten, and the rewritten calls differ from the functions run
 // as written.
 // USE-DAG: [poseidon] preprocess_wave: tau=1.000000e-06
-// USE-DAG: [poseidon] pin: wave:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: wave:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_scale.poseidon.main.0: tau=1.000000e-06
-// USE-DAG: [poseidon] pin: scale.poseidon.main.0:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: scale.poseidon.main.0:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_sq: tau=1.000000e-06
-// USE-DAG: [poseidon] pin: sq:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: sq:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_damp.poseidon.main.1: tau=1.000000e-03
-// USE-DAG: [poseidon] pin: damp.poseidon.main.1:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: damp.poseidon.main.1:P0=All FP64(0%) + FP32(100%)
 // RUNS: 0 0 0 0

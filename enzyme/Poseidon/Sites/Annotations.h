@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_ANNOTATIONS_H
-#define POSEIDON_ANNOTATIONS_H
+#ifndef POSEIDON_SITES_ANNOTATIONS_H
+#define POSEIDON_SITES_ANNOTATIONS_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -49,7 +49,7 @@ constexpr llvm::StringLiteral kNotASite = "poseidon-not-a-site";
 
 /// The function a site's body was cut from (a host site's function, an
 /// annotated kernel), until finalizeModule has given it its debug info back.
-constexpr llvm::StringLiteral kHostWrapper = "poseidon-site-wrapper";
+constexpr llvm::StringLiteral kSiteWrapper = "poseidon-site-wrapper";
 
 /// The annotated device functions whose kernels are sites, and the wrappers on
 /// the way to them.
@@ -57,7 +57,7 @@ constexpr llvm::StringLiteral kSiteCallee = "poseidon-site-callee";
 
 /// The outlined body of a host site. Its value is the site's accuracy target,
 /// empty when the annotation carried none.
-constexpr llvm::StringLiteral kHostBody = "poseidon-site-body";
+constexpr llvm::StringLiteral kSiteBody = "poseidon-site-body";
 
 /// What a site compiled without a profile action is warned with.
 constexpr llvm::StringLiteral kNoProfileAction =
@@ -124,4 +124,4 @@ void inlineKernelBody(llvm::CallInst *call, llvm::Function *body);
 
 } // namespace poseidon
 
-#endif // POSEIDON_ANNOTATIONS_H
+#endif // POSEIDON_SITES_ANNOTATIONS_H

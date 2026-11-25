@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_SAMPLING_H
-#define POSEIDON_SAMPLING_H
+#ifndef POSEIDON_MODEL_SAMPLING_H
+#define POSEIDON_MODEL_SAMPLING_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
@@ -110,4 +110,4 @@ SubgraphSamples &samplesOf(const Options &O, Subgraph &subgraph,
                            const FPGraph &G);
 
 } // namespace poseidon
-#endif // POSEIDON_SAMPLING_H
+#endif // POSEIDON_MODEL_SAMPLING_H

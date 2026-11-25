@@ -12,10 +12,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MODEL_FP_FORMAT_H
-#define POSEIDON_MODEL_FP_FORMAT_H
+#ifndef POSEIDON_MODEL_FPFORMAT_H
+#define POSEIDON_MODEL_FPFORMAT_H
 
-#include "Core/FPKind.h"
+#include "Model/FPKind.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -113,4 +113,4 @@ struct PrecisionChange {
 };
 
 } // namespace poseidon
-#endif // POSEIDON_MODEL_FP_FORMAT_H
+#endif // POSEIDON_MODEL_FPFORMAT_H

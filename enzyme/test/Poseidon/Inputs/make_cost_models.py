@@ -72,12 +72,12 @@ INKERNEL = [("f16_f16", 15), ("f16_f32", 16), ("bf16_f32", 17),
             ("tcec_n2_tf32_f32", 44), ("tcec_n5_f16_f32", 66),
             ("tcec_n3_tf32_f32", 80), ("tcec_n5_tf32_f32", 182)]
 INKERNEL_LIT = {"f16_f32", "tcec_n2_f16_f32", "tcec_n3_f16_f32"}
-DISPATCH = [("direct_dispatch_rel,f16_f32", 2),
-            ("direct_dispatch_rel,bf16_f32", 3),
-            ("direct_dispatch_rel,tf32_f32", 4)] + \
-           [("ozaki_dispatch_rel,nm%d" % k, k) for k in range(8, 15)] + \
-           [("ozaki_dispatch_rel,dgemm", 128)]
-TCEC_DISPATCH = [("tcec_dispatch_rel,fp16tcec", 7)]
+DISPATCH = [("library_direct_rel,f16_f32", 2),
+            ("library_direct_rel,bf16_f32", 3),
+            ("library_direct_rel,tf32_f32", 4)] + \
+           [("library_ozaki_rel,nm%d" % k, k) for k in range(8, 15)] + \
+           [("library_ozaki_rel,dgemm", 128)]
+TCEC_DISPATCH = [("library_tcec_rel,fp16tcec", 7)]
 
 
 def num(v):
@@ -115,7 +115,7 @@ def gpu_rows(inkernel=INKERNEL_LIT, dispatch=False, tcec=False, half=False):
                  "fptrunc_float_to_half,float,64",
                  "fpext_half_to_double,half,64", "fpext_half_to_float,half,64"]
     rows += ["%s,64" % t for t in TILES]
-    rows += ["wmma_inkernel_rel,%s,%s" % (c, num(k / 256))
+    rows += ["inkernel_rel,%s,%s" % (c, num(k / 256))
              for c, k in INKERNEL if c in inkernel]
     if dispatch:
         rows += ["%s,%s" % (r, num(k / 256)) for r, k in DISPATCH]

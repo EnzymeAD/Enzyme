@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && split-file %s %t
-; RUN: not %opt %t/value.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=VALUE %s
-; RUN: not %opt %t/byref.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=BYREF %s
+; RUN: not %opt %t/value.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=VALUE %s
+; RUN: not %opt %t/byref.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=BYREF %s
 
 ; A kernel carrying POSEIDON_OPTIMIZE that cannot be made a wrapper around its
 ; own body is an error: one that returns a value, and an AMDGPU kernel that

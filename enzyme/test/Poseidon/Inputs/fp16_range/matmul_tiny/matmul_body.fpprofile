@@ -2,7 +2,7 @@ MaxBlockDims = 16 16 1
 MaxGridDims = 1 1 1
 LaunchCount = 2
 SiteId = 0
-RedTrip = 0 16
+ReductionTrip = 0 16
 CanonicalHash = fea337c617ef94c9
 0
 	MinRes = 5.00000000000000031e-10

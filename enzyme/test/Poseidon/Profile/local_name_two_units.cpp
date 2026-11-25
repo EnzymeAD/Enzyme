@@ -1,14 +1,14 @@
 // REQUIRES: enzyme
 // DEFINE: %{gen} = %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c
-// DEFINE: %{use} = %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-explain=%t/explain -poseidon-print
+// DEFINE: %{use} = %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-explain=%t/explain -poseidon-print
 // RUN: rm -rf %t && mkdir %t
-// RUN: %{gen} -c %S/../Inputs/local_name/a.cpp -o %t/a.o
-// RUN: %{gen} -c %S/../Inputs/local_name/b.cpp -o %t/b.o
+// RUN: %{gen} -c %S/Inputs/local_name/a.cpp -o %t/a.o
+// RUN: %{gen} -c %S/Inputs/local_name/b.cpp -o %t/b.o
 // RUN: %{gen} %s %t/a.o %t/b.o -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/prof | FileCheck --check-prefix=FILES %s
-// RUN: %{use} -c %S/../Inputs/local_name/a.cpp -o %t/ua.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=error: %s
-// RUN: %{use} -c %S/../Inputs/local_name/b.cpp -o %t/ub.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=error: %s
+// RUN: %{use} -c %S/Inputs/local_name/a.cpp -o %t/ua.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=error: %s
+// RUN: %{use} -c %S/Inputs/local_name/b.cpp -o %t/ub.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=error: %s
 // RUN: ls %t/explain | FileCheck --check-prefix=EXPLAIN %s
 
 // Two units each define a static site function named step, with different

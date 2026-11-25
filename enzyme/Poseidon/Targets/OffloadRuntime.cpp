@@ -222,6 +222,6 @@ void registerDeviceVariable(Module &M, const VariableRegistration &R,
   }
 }
 
-StringRef deviceProfilerInit() { return "__poseidon_profile_init_cuda"; }
+StringRef deviceProfilerInit() { return "__poseidon_profile_init_device"; }
 
 } // namespace poseidon

@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MODEL_FP_NODE_H
-#define POSEIDON_MODEL_FP_NODE_H
+#ifndef POSEIDON_MODEL_FPNODE_H
+#define POSEIDON_MODEL_FPNODE_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -285,4 +285,4 @@ private:
 };
 
 } // namespace poseidon
-#endif // POSEIDON_MODEL_FP_NODE_H
+#endif // POSEIDON_MODEL_FPNODE_H

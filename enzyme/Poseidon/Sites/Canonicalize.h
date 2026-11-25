@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_CANONICALIZE_H
-#define POSEIDON_CANONICALIZE_H
+#ifndef POSEIDON_SITES_CANONICALIZE_H
+#define POSEIDON_SITES_CANONICALIZE_H
 
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/OptimizationLevel.h"
@@ -44,7 +44,7 @@ bool isOptimizable(const llvm::Value &V);
 /// The metadata a canonical clone's optimizable instruction carries its slot
 /// in: the rank among optimizable instructions, which the profile-generate and
 /// profile-use compiles share.
-constexpr llvm::StringLiteral kSlotMD = "poseidon.prof.idx";
+constexpr llvm::StringLiteral kSlotMD = "poseidon.slot";
 
 /// Numbers the optimizable instructions of the canonical clone `F` in order,
 /// the slots its profile records are indexed by.
@@ -63,4 +63,4 @@ void addCanonicalPostInline(llvm::FunctionPassManager &FPM);
 
 } // namespace poseidon
 
-#endif // POSEIDON_CANONICALIZE_H
+#endif // POSEIDON_SITES_CANONICALIZE_H

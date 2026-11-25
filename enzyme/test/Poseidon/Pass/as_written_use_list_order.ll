@@ -4,7 +4,7 @@
 ; order the module's reader gave them.
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s -S -emit-llvm -o %t/plain.ll
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/c -S -emit-llvm -o %t/use.ll
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/c -S -emit-llvm -o %t/use.ll
 ; RUN: grep -v -e llvm.metadata -e '^$' %t/plain.ll > %t/plain.cmp
 ; RUN: grep -v -e llvm.metadata -e '^$' %t/use.ll > %t/use.cmp
 ; RUN: diff %t/plain.cmp %t/use.cmp

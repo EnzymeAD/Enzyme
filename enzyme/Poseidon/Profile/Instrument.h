@@ -17,8 +17,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_INSTRUMENT_H
-#define POSEIDON_INSTRUMENT_H
+#ifndef POSEIDON_PROFILE_INSTRUMENT_H
+#define POSEIDON_PROFILE_INSTRUMENT_H
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -116,4 +116,4 @@ void predeclareInactiveProfilerProbes(llvm::Module &M);
 
 } // namespace poseidon
 
-#endif // POSEIDON_INSTRUMENT_H
+#endif // POSEIDON_PROFILE_INSTRUMENT_H

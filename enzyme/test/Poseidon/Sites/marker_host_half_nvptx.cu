@@ -1,9 +1,9 @@
 // REQUIRES: enzyme, nvptx-device-profiler
 // DEFINE: %{clang} = %clang -x cuda -nocudainc -nocudalib -O1 -S -emit-llvm \
 // DEFINE:   -I%poseidon_profile_inc %s
-// DEFINE: %{host} = %{clang} --cuda-host-only -mllvm -poseidon-unit=u
+// DEFINE: %{host} = %{clang} --cuda-host-only -mllvm -poseidon-compilation-id=u
 // RUN: rm -rf %t && mkdir %t
-// RUN: %{clang} --cuda-device-only --cuda-gpu-arch=%gpu_arch %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-unit=u -mllvm -poseidon-cache=%t/c -o %t/dev.ll
+// RUN: %{clang} --cuda-device-only --cuda-gpu-arch=%gpu_arch %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-compilation-id=u -mllvm -poseidon-cache=%t/c -o %t/dev.ll
 // RUN: %{host} %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -o %t/gen.ll 2>&1 \
 // RUN:   | FileCheck --allow-empty --check-prefix=QUIET %s
 // RUN: FileCheck --check-prefixes=CALLS,STUB --implicit-check-not=__poseidon_fp_optimize --implicit-check-not=__enzyme_fp_optimize --implicit-check-not=__enzyme_autodiff %s < %t/gen.ll
@@ -12,7 +12,7 @@
 // RUN: sed -n '/^define .*@_Z19__device_stub__kickPdPKdd(/,/^}/p' %t/gen.ll > %t/stub.gen
 // RUN: sed -n '/^define .*@_Z19__device_stub__kickPdPKdd(/,/^}/p' %t/nomarkers.ll > %t/stub.nomarkers
 // RUN: diff %t/stub.nomarkers %t/stub.gen
-// RUN: %{host} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u -o %t/use.ll 2>&1 \
+// RUN: %{host} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/u -o %t/use.ll 2>&1 \
 // RUN:   | FileCheck --allow-empty --check-prefix=QUIET %s
 // RUN: FileCheck --check-prefix=CALLS --implicit-check-not=__poseidon_fp_optimize --implicit-check-not=__enzyme_fp_optimize %s < %t/use.ll
 // RUN: %{host} %loadClangPoseidon -o %t/plain.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s

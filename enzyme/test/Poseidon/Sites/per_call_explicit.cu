@@ -6,20 +6,20 @@
 // RUN: %if nvptx-device-profiler %{ %{nvptx} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-c -o %t/nvptx-gen.ll %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefixes=GEN,GEN-NVPTX --implicit-check-not=__poseidon_site_explicit %s < %t/nvptx-gen.ll %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=NOMARKER-NVPTX --implicit-check-not=__poseidon_site_explicit %s < %t/nvptx-gen.ll %}
-// RUN: %if nvptx-device-profiler %{ %{nvptx} --cuda-device-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print -o %t/nvptx-use.ll 2>&1 | FileCheck --check-prefix=USE %s %}
+// RUN: %if nvptx-device-profiler %{ %{nvptx} --cuda-device-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-print -o %t/nvptx-use.ll 2>&1 | FileCheck --check-prefix=USE %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefixes=IR,IR-NVPTX --implicit-check-not=__poseidon_site_explicit %s < %t/nvptx-use.ll %}
 // RUN: %if nvptx-device-profiler %{ %{nvptx} --cuda-device-only -o - | tee %t/nvptx-plain.ll | FileCheck --check-prefixes=PLAIN,PLAIN-NVPTX %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=DECL --implicit-check-not='define {{.*}}@__poseidon_site_explicit' %s < %t/nvptx-plain.ll %}
-// RUN: %if nvptx-device-profiler %{ %{nvptx} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -o %t/nvptx-host.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s %}
+// RUN: %if nvptx-device-profiler %{ %{nvptx} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -o %t/nvptx-host.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=HOST --implicit-check-not=__poseidon_site_explicit --implicit-check-not=__poseidon_fp_optimize %s < %t/nvptx-host.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/amdgpu-c -o %t/amdgpu-gen.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefixes=GEN,GEN-AMDGPU --implicit-check-not=__poseidon_site_explicit %s < %t/amdgpu-gen.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=NOMARKER-AMDGPU --implicit-check-not=__poseidon_site_explicit %s < %t/amdgpu-gen.ll %}
-// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-device-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print -o %t/amdgpu-use.ll 2>&1 | FileCheck --check-prefix=USE %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-device-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-print -o %t/amdgpu-use.ll 2>&1 | FileCheck --check-prefix=USE %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefixes=IR,IR-AMDGPU --implicit-check-not=__poseidon_site_explicit %s < %t/amdgpu-use.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-device-only -o - | tee %t/amdgpu-plain.ll | FileCheck --check-prefixes=PLAIN,PLAIN-AMDGPU %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=DECL --implicit-check-not='define {{.*}}@__poseidon_site_explicit' %s < %t/amdgpu-plain.ll %}
-// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -o %t/amdgpu-host.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -o %t/amdgpu-host.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=HOST --implicit-check-not=__poseidon_site_explicit --implicit-check-not=__poseidon_fp_optimize %s < %t/amdgpu-host.ll %}
 
 // In device code an explicit list through __poseidon_optimize makes the call
@@ -101,10 +101,10 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // NOMARKER-NVPTX: target triple = "nvptx64-nvidia-cuda"
 // NOMARKER-AMDGPU: target triple = "{{(amdgcn|amdgpu)[^"]*}}-amd-amdhsa"
 
-// GEN-DAG: @poseidon_site_preprocess__Z3sumPKdi = private unnamed_addr addrspace(1) constant [11 x i8] c"_Z3sumPKdi\00"
-// GEN-DAG: @poseidon_site_preprocess__Z5scalePKdPdi = private unnamed_addr addrspace(1) constant [15 x i8] c"_Z5scalePKdPdi\00"
-// GEN-DAG: @poseidon_site_preprocess__Z5norm2PKd = private unnamed_addr addrspace(1) constant [12 x i8] c"_Z5norm2PKd\00"
-// GEN-DAG: @poseidon_site_preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0 = private unnamed_addr addrspace(1) constant [36 x i8] c"_Z6spreadPKd.poseidon._Z5thirdPKd.0\00"
+// GEN-DAG: @poseidon.site.preprocess__Z3sumPKdi = private unnamed_addr addrspace(1) constant [11 x i8] c"_Z3sumPKdi\00"
+// GEN-DAG: @poseidon.site.preprocess__Z5scalePKdPdi = private unnamed_addr addrspace(1) constant [15 x i8] c"_Z5scalePKdPdi\00"
+// GEN-DAG: @poseidon.site.preprocess__Z5norm2PKd = private unnamed_addr addrspace(1) constant [12 x i8] c"_Z5norm2PKd\00"
+// GEN-DAG: @poseidon.site.preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0 = private unnamed_addr addrspace(1) constant [36 x i8] c"_Z6spreadPKd.poseidon._Z5thirdPKd.0\00"
 
 // Each site's adjoint reaches the shadow the call gives it: dx for sum and
 // norm2, dy for scale, and a zeroed local the pass makes for spread's x. The
@@ -125,16 +125,16 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN-AMDGPU-NEXT: [[HR:%[0-9]+]] = {{.*}}call {{.*}}double @diffepreprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0(ptr [[HX]], ptr [[HSHG]])
 // GEN-AMDGPU-NEXT: ret double [[HR]]
 // GEN-NVPTX: define {{.*}}ptx_kernel void @_Z1kPKdPdS1_S1_i(ptr {{.*}}[[X:%[0-9]+]], ptr {{.*}}[[DX:%[0-9]+]], ptr {{.*}}[[Y:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
-// GEN-NVPTX-DAG: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z3sumPKdi to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess__Z3sumPKdi to ptr))
+// GEN-NVPTX-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z3sumPKdi to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__Z3sumPKdi to ptr))
 // GEN-NVPTX-DAG: [[DXI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[DX]], i64 {{%[0-9]+}}
 // GEN-NVPTX-DAG: atomicrmw fadd ptr [[DXI]], double {{%[0-9]+}} monotonic
 // GEN-NVPTX-DAG: call {{.*}}double @diffepreprocess__Z5norm2PKd(ptr [[X]], ptr [[DX]])
 // GEN-NVPTX-DAG: call {{.*}}double @diffepreprocess__Z5norm2PKd(ptr [[X]], ptr [[DX]])
-// GEN-NVPTX-DAG: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z5scalePKdPdi to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess__Z5scalePKdPdi to ptr))
+// GEN-NVPTX-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z5scalePKdPdi to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__Z5scalePKdPdi to ptr))
 // GEN-NVPTX-DAG: [[DYI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[DY]], i64 {{%[0-9]+}}
 // GEN-NVPTX-DAG: [[DYV:%[0-9]+]] = load double, ptr [[DYI]]
 // GEN-NVPTX-DAG: store double 0.000000e+00, ptr [[DYI]]
-// GEN-NVPTX-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z5scalePKdPdi to ptr), i64 0, double {{%[0-9]+}}, double [[DYV]])
+// GEN-NVPTX-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z5scalePKdPdi to ptr), i64 0, double {{%[0-9]+}}, double [[DYV]])
 // GEN-NVPTX-DAG: call void @llvm.memset.p0.i64(ptr {{.*}}[[SHA:%[0-9]+]], i8 0, i64 16, i1 false)
 // GEN-NVPTX-DAG: [[SHA]] = alloca [16 x i8]
 // GEN-NVPTX-DAG: call {{.*}}double @diffepreprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0(ptr [[X]], ptr [[SHA]])
@@ -143,7 +143,7 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // The kernel on AMDGPU, whose pointer parameters are in the global address
 // space.
 // GEN-AMDGPU: define protected amdgpu_kernel void @_Z1kPKdPdS1_S1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
-// GEN-AMDGPU-DAG: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z3sumPKdi to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess__Z3sumPKdi to ptr))
+// GEN-AMDGPU-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z3sumPKdi to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__Z3sumPKdi to ptr))
 // GEN-AMDGPU-DAG: [[DXI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[DX]], i64 {{%[0-9]+}}
 // GEN-AMDGPU-DAG: atomicrmw fadd ptr addrspace(1) [[DXI]], double {{%[0-9]+}} monotonic
 // GEN-AMDGPU-DAG: call {{.*}}double @diffepreprocess__Z5norm2PKd(ptr {{.*}}[[XN:%[0-9]+]], ptr [[DXN:%[0-9]+]])
@@ -152,11 +152,11 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN-AMDGPU-DAG: call {{.*}}double @diffepreprocess__Z5norm2PKd(ptr {{.*}}[[XN2:%[0-9]+]], ptr [[DXN2:%[0-9]+]])
 // GEN-AMDGPU-DAG: [[XN2]] = addrspacecast ptr addrspace(1) [[X]] to ptr
 // GEN-AMDGPU-DAG: [[DXN2]] = addrspacecast ptr addrspace(1) [[DX]] to ptr
-// GEN-AMDGPU-DAG: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z5scalePKdPdi to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess__Z5scalePKdPdi to ptr))
+// GEN-AMDGPU-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z5scalePKdPdi to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__Z5scalePKdPdi to ptr))
 // GEN-AMDGPU-DAG: [[DYI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[DY]], i64 {{%[0-9]+}}
 // GEN-AMDGPU-DAG: [[DYV:%[0-9]+]] = load double, ptr addrspace(1) [[DYI]]
 // GEN-AMDGPU-DAG: store double 0.000000e+00, ptr addrspace(1) [[DYI]]
-// GEN-AMDGPU-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z5scalePKdPdi to ptr), i64 0, double {{%[0-9]+}}, double [[DYV]])
+// GEN-AMDGPU-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z5scalePKdPdi to ptr), i64 0, double {{%[0-9]+}}, double [[DYV]])
 // GEN-AMDGPU-DAG: call {{.*}}double @diffepreprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0(ptr [[XS:%[0-9]+]], ptr [[SH:%[0-9]+]])
 // GEN-AMDGPU-DAG: [[XS]] = addrspacecast ptr addrspace(1) [[X]] to ptr
 // GEN-AMDGPU-DAG: [[SH]] = addrspacecast ptr addrspace(5) [[SHA:%[0-9]+]] to ptr

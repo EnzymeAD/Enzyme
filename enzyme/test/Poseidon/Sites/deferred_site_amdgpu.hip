@@ -4,10 +4,10 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %{clang} --offload-arch=gfx942 -S -emit-llvm -mllvm -poseidon-print -o %t/plain.ll 2>&1 | FileCheck --check-prefix=PLAIN %s
 // RUN: FileCheck --check-prefix=LEFT --implicit-check-not=jvp_body --implicit-check-not=__enzyme %s < %t/plain.ll
-// RUN: %{clang} --offload-arch=%amdgpu_arch -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=ir -mllvm -poseidon-print -o %t/gen.ll 2>&1 \
+// RUN: %{clang} --offload-arch=%amdgpu_arch -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-compilation-id=ir -mllvm -poseidon-print -o %t/gen.ll 2>&1 \
 // RUN:   | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
-// RUN: %{clang} --offload-arch=%amdgpu_arch --no-gpu-bundle-output -c -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-unit=object -o %t/gen.co
+// RUN: %{clang} --offload-arch=%amdgpu_arch --no-gpu-bundle-output -c -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-compilation-id=object -o %t/gen.co
 // RUN: llvm-readelf --dyn-syms %t/gen.co | FileCheck --check-prefix=CO %s
 
 // A site whose marked body is a forward-mode derivative request, in AMDGPU
@@ -104,7 +104,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy,
 
 // The kernel passes each local with its shadow (x's and dx's zeroed, y's and
 // dy's seeded 1.0) to the profiled tangent, which logs into the site's table.
-// GENIR: @poseidon_site_preprocess_jvp_body = private unnamed_addr addrspace(1) constant [9 x i8] c"jvp_body\00"
+// GENIR: @poseidon.site.preprocess_jvp_body = private unnamed_addr addrspace(1) constant [9 x i8] c"jvp_body\00"
 // GENIR: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // GENIR-DAG: call void @diffepreprocess_jvp_body(ptr [[XP:%[0-9]+]], ptr [[XSP:%[0-9]+]], ptr [[DXP:%[0-9]+]], ptr [[DXSP:%[0-9]+]], ptr [[YP:%[0-9]+]], ptr [[YSP:%[0-9]+]], ptr [[DYP:%[0-9]+]], ptr [[DYSP:%[0-9]+]], i32 [[N]])
 // GENIR-DAG: [[XP]] = addrspacecast ptr addrspace(5) [[XA:%[0-9]+]] to ptr
@@ -126,15 +126,15 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy,
 // GENIR-DAG: store double [[DYV]], ptr addrspace(1) [[DY]]
 // GENIR: {{^}}}
 // GENIR: define internal void @diffepreprocess_jvp_body(
-// GENIR: call void @poseidonProfileBlockDimsCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess_jvp_body to ptr))
-// GENIR-NEXT: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess_jvp_body to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess_jvp_body to ptr))
+// GENIR: call void @__poseidon_device_log_block_dims(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess_jvp_body to ptr))
+// GENIR-NEXT: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess_jvp_body to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess_jvp_body to ptr))
 // GENIR: call {{.*}}ptr @malloc(i64 {{%[0-9]+}}), !enzyme_cache_alloc
-// GENIR: [[V:%[0-9]+]] = call contract double @llvm.fmuladd.f64(double [[XI:%[0-9]+]], double [[XI]], double {{%[0-9]+}}){{.*}}, !poseidon.prof.idx
+// GENIR: [[V:%[0-9]+]] = call contract double @llvm.fmuladd.f64(double [[XI:%[0-9]+]], double [[XI]], double {{%[0-9]+}}){{.*}}, !poseidon.slot
 // GENIR-NEXT: [[P:%[0-9]+]] = call {{.*}}double @__poseidon_probe_preprocess_jvp_body_0_aug(double [[V]])
-// GENIR: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess_jvp_body to ptr), i64 0, double [[P]], i64 3, ptr {{%[0-9]+}})
+// GENIR: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess_jvp_body to ptr), i64 0, double [[P]], i64 3, ptr {{%[0-9]+}})
 // GENIR: {{^}}}
-// GENIR-DAG: define internal void @poseidonLogValueCUDA(
-// GENIR-DAG: define internal void @poseidonLogGradCUDA(
+// GENIR-DAG: define internal void @__poseidon_device_log_value(
+// GENIR-DAG: define internal void @__poseidon_device_log_grad(
 
 // CO-NOT: UND {{[_a-zA-Z]}}
 // CO: OBJECT WEAK PROTECTED {{[0-9]+}} __poseidon_profile_table{{$}}

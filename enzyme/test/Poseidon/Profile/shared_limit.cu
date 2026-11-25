@@ -54,7 +54,7 @@ template __attribute__((global)) void stage<FIT>(const double *, double *);
 // IR-NVPTX: define internal {{.*}}void @diffepreprocess__Z5stageILi[[FIT]]EEvPKdPd_poseidon_body(
 // IR-AMDGPU: define {{.*}}amdgpu_kernel void @_Z5stageILi[[FIT]]EEvPKdPd(
 // IR: call void @llvm.memset.p3.i64(ptr addrspace(3) {{.*}}@[[SHADOW]], i8 0, i64 [[BYTES]], i1 false)
-// IR: call void @poseidonLogValueCUDA(
+// IR: call void @__poseidon_device_log_value(
 // IR: ![[SHMD]] = !{ptr addrspace(3) @[[SHADOW]]}
 
 // DESC: "profile generation": [

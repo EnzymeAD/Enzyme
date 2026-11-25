@@ -9,8 +9,8 @@
 #include "Canonicalize.h"
 
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
 #include "SiteIdentity.h"
+#include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 
 #include "llvm/ADT/STLExtras.h"

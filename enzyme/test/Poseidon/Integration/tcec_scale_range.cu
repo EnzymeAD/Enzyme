@@ -18,7 +18,7 @@
 // REQUIRES: cuda-runtime, tcec-cumpsgemm
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
 // RUN:     %s -x none \
-// RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
+// RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
@@ -31,7 +31,7 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-#include "GemmDispatch.h"
+#include "gemm/GemmDispatch.h"
 
 #define CK(x)                                                                  \
   do {                                                                         \

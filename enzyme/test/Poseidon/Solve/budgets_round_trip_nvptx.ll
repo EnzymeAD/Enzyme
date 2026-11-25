@@ -1,22 +1,22 @@
 ; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-print -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cache=%t/site -poseidon-explain=%t/site/ex -poseidon-show-table 2>&1 | FileCheck --check-prefix=TABLE %s
+; RUN: %{opt} -poseidon-cache=%t/site -poseidon-explain=%t/site/ex -poseidon-print-dp-table 2>&1 | FileCheck --check-prefix=TABLE %s
 ; RUN: %poseidon_explain %t/site/ex --format budgets > %t/site/budgets
 ; RUN: FileCheck --check-prefix=BUDGETS %s < %t/site/budgets
 ; RUN: for b in $(tr , ' ' < %t/site/budgets); do \
 ; RUN:   %{opt} -poseidon-cache=%t/site -poseidon-cost-budget=$b 2>&1 \
 ; RUN:     | grep -Fx "[poseidon] Computation cost budget used: $(printf %%e $b)" > /dev/null || { echo "budget $b does not select its point"; exit 1; }; \
 ; RUN: done
-; RUN: %{opt} -poseidon-cache=%t/joint -poseidon-explain=%t/joint/ex -poseidon-joint-dp
+; RUN: %{opt} -poseidon-cache=%t/joint -poseidon-explain=%t/joint/ex -poseidon-solve-jointly
 ; RUN: %poseidon_explain %t/joint/ex --format budgets > %t/joint/budgets
 ; RUN: diff %t/site/budgets %t/joint/budgets
 ; RUN: for b in $(tr , ' ' < %t/joint/budgets); do \
-; RUN:   %{opt} -poseidon-cache=%t/joint -poseidon-joint-dp -poseidon-cost-budget=$b 2>&1 \
+; RUN:   %{opt} -poseidon-cache=%t/joint -poseidon-solve-jointly -poseidon-cost-budget=$b 2>&1 \
 ; RUN:     | grep -Fx "[poseidon] Computation cost budget used: $(printf %%e $b)" > /dev/null || { echo "joint budget $b does not select its point"; exit 1; }; \
 ; RUN: done
 

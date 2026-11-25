@@ -20,9 +20,9 @@
 // RUN: %opt %t/dev.ll %loadPoseidon \
 // RUN:     -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 // RUN:     -poseidon-profile-use=%t/profiles \
-// RUN:     -poseidon-enable-herbie=false -poseidon-enable-pt=false \
-// RUN:     -poseidon-cache= -poseidon-raise-wmma -poseidon-print \
-// RUN:     -poseidon-ozaki-host-dispatch=false \
+// RUN:     -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
+// RUN:     -poseidon-cache= -poseidon-enable-matmul -poseidon-print \
+// RUN:     -poseidon-matmul-library-calls=false \
 // RUN:     -poseidon-cost-model=%gpu_cost_model \
 // RUN:     -S 2>&1 | tee %t/use.out | FileCheck %s
 // RUN: FileCheck --check-prefix=NOFP %s < %t/use.out
@@ -113,7 +113,7 @@ int main(void) {
 // PROF-NEXT: MaxGridDims = 1 1 1
 // PROF-NEXT: LaunchCount = 1
 // PROF-NEXT: SiteId = 0
-// PROF-NEXT: RedTrip = 0 8
+// PROF-NEXT: ReductionTrip = 0 8
 // PROF-NEXT: CanonicalHash = fea337c617ef94c9
 // PROF-NEXT: {{^0$}}
 // PROF: SumGrad = 0.00000000000000000e+00
@@ -123,7 +123,7 @@ int main(void) {
 
 // CHECK: [poseidon] Optimizing [[BODY:preprocess_scalar_matmul_body_f64]] with relative error tolerance: 0.000000e+00
 // CHECK: [poseidon] Found 1 matrix product(s) in preprocess_scalar_matmul_body_f64
-// CHECK-NEXT: Matmul[0]: 8x8x8 type=f64 origin=ScalarLoopReduction
+// CHECK-NEXT: Matmul[0]: 8x8x8 type=f64 origin=ConstantShape
 // CHECK-NOT: Matmul[1]:
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> wmma m16n16k16 f16/f16 (#0)

@@ -1,4 +1,4 @@
-; The device IR of Matmul/raise_scalar_tcec_nvptx.ll (its comment gives the
+; The device IR of Techniques/Matmul/raise_scalar_tcec_nvptx.ll (its comment gives the
 ; source).
 
 ; ModuleID = 'tcec_matmul.cu'

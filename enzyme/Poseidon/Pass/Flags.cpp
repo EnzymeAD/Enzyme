@@ -6,9 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Core/Options.h"
-#include "IR/Utils.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
 #include "Sites/Annotations.h"
+#include "Support/Utils.h"
 
 #include "poseidon/poseidon.h"
 
@@ -107,14 +108,14 @@ namespace flags {
       Spelling, cl::desc(Description), cl::value_desc(ValueName),              \
       visibility(OptionRole::Role), cl::cat(Category),                         \
       valueModifier<OptionKind::Kind>(kDefaults.Group.Field));
-#include "Core/Options.def"
+#include "Pass/Options.def"
 } // namespace flags
 
 Options readOptions() {
   Options O;
 #define POSEIDON_OPTION(Group, Field, Kind, ...)                               \
   O.Group.Field = read<OptionKind::Kind>(flags::Field);
-#include "Core/Options.def"
+#include "Pass/Options.def"
   for (auto [flag, dir] :
        {std::pair(&flags::ProfileGenerate, &O.Profiling.ProfileGenerate),
         std::pair(&flags::ProfileUse, &O.Profiling.ProfileUse)})
@@ -181,13 +182,13 @@ Error validateOptions(const Options &O) {
   const std::pair<StringRef, double> numbers[] = {
       {"poseidon-tau", O.Solver.Tau},
       {"poseidon-min-cost-share", O.Profiling.MinCostShare},
-      {"poseidon-max-broken-share", O.Model.MaxBrokenShare},
-      {"poseidon-exponent-penalty", O.Model.ExponentPenalty}};
+      {"poseidon-rewrite-max-broken-share", O.Model.MaxBrokenShare},
+      {"poseidon-matmul-exponent-penalty", O.Model.ExponentPenalty}};
   for (const auto &[flag, value] : numbers)
     if (std::isnan(value))
       return noNumber(flag);
   // Only a solve with no accuracy target selects by the budget.
-  if (O.Solver.Tau <= 0.0 && O.Solver.ApplyRewrites.empty())
+  if (O.Solver.Tau <= 0.0 && O.Solver.Pin.empty())
     return validateCostBudget(O.Solver.CostBudget);
   return Error::success();
 }

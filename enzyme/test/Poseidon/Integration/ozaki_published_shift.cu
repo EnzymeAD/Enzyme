@@ -12,11 +12,11 @@
 // REQUIRES: cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
 // RUN:     %s -x none \
-// RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
+// RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
-#include "GemmDispatch.h"
+#include "gemm/GemmDispatch.h"
 #include <cmath>
 #include <cstdio>
 
@@ -34,7 +34,7 @@ int main() {
   cudaMalloc(&dC, sizeof C);
   cudaMemcpy(dA, A, sizeof A, cudaMemcpyHostToDevice);
   cudaMemcpy(dB, B, sizeof B, cudaMemcpyHostToDevice);
-  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
+  __poseidon_ozakiii_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
                          10);
   if (cudaMemcpy(C, dC, sizeof C, cudaMemcpyDeviceToHost) != cudaSuccess)
     return 1;

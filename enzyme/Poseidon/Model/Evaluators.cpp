@@ -71,7 +71,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
                          node->is(fpcore::Fma);
   if (!supported)
     return false;
-  auto operand = [&](unsigned i) -> ExpansionLimbs {
+  auto operand = [&](unsigned i) -> FloatExpansion {
     const FPNode *o = node->operands[i];
     auto kept = components.find(o);
     if (kept != components.end() && nodeChange.at(o) == nodeChange.at(node))
@@ -84,7 +84,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
   // A value multiplied by itself is materialized as a square.
   const bool sameFactor =
       node->operands.size() >= 2 && node->operands[0] == node->operands[1];
-  ExpansionLimbs r;
+  FloatExpansion r;
   if (node->is(fpcore::Neg))
     r = expansionNeg(operand(0));
   else if (node->is(fpcore::Add))
@@ -181,7 +181,7 @@ double FPEvaluator::evaluateOperation(const FPNode *node,
   const FPKind kind = formatOf(nodePrec).Kind;
   // A binary16 or bfloat16 operation is computed in binary32 and rounded.
   auto truncToPrec = [&](float val) -> float {
-    if (kind != FPKind::BF16 && kind != FPKind::F16)
+    if (kind != FPKind::BF16 && kind != FPKind::FP16)
       return val;
     return static_cast<float>(roundToPrec((double)val, kind));
   };

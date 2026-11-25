@@ -1,13 +1,13 @@
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: sed 's/^target triple = .*/target triple = "nvptx64-nvidia-cuda"/' %t/host.ll > %t/nvptx.ll
 ; RUN: sed 's/^target triple = .*/target triple = "amdgcn-amd-amdhsa"/' %t/host.ll > %t/amdgpu.ll
-; RUN: not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/c -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
-; RUN: not %clang -O0 -x ir -Wno-override-module %t/nvptx.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/nvptx -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
-; RUN: not %clang -O0 -x ir -Wno-override-module %t/amdgpu.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/amdgpu -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/c -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/nvptx.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/nvptx -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/amdgpu.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/amdgpu -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
 ; RUN: %if enzyme %{ not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s %}
 ; RUN: %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -S -emit-llvm -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=OFFIR %s < %t/off.ll
-; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE --implicit-check-not=error: %s
+; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE --implicit-check-not=error: %s
 ; A call through __poseidon_optimize that cannot be a site is an error in a
 ; compile that generates or uses a profile, and the call runs as written with
 ; a warning in any other: the identity's argument is no function, or the

@@ -9,13 +9,14 @@
 #include "Annotations.h"
 
 #include "Canonicalize.h"
-#include "Core/Options.h"
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
-#include "LaunchDescriptors.h"
+#include "LaunchManifest.h"
 #include "Markers.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
 #include "Site.h"
 #include "SiteIdentity.h"
+#include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
@@ -611,7 +612,7 @@ outlineInto(Function &F, Function &B,
   // Folded back, the body's code still names the subprogram it took along;
   // without it again the wrapper compiles with no line table, and ptxas then
   // allocates a kernel differently.
-  F.addFnAttr(kHostWrapper);
+  F.addFnAttr(kSiteWrapper);
   return call;
 }
 
@@ -693,7 +694,7 @@ static void outlineHostFunction(SiteRecords &T, Function &F,
   B->removeFnAttr(Attribute::AlwaysInline);
   B->removeFnAttr(Attribute::InlineHint);
   B->addFnAttr(Attribute::NoInline);
-  B->addFnAttr(kHostBody, tau ? exactDouble(*tau) : "");
+  B->addFnAttr(kSiteBody, tau ? exactDouble(*tau) : "");
   noteSiteIdentity(T, *B, functionIdentity(F));
   CallInst *call = outlineInto(
       F, *B, [](Argument &From, Argument &To) { From.replaceAllUsesWith(&To); },
@@ -772,7 +773,7 @@ SmallVector<CallBase *, 4> callsOf(Value &F) {
 }
 
 void releaseHostBody(Function &B) {
-  B.removeFnAttr(kHostBody);
+  B.removeFnAttr(kSiteBody);
   removeFromUsedLists(*B.getParent(), [&](Constant *C) {
     return C->stripPointerCasts() == &B;
   });

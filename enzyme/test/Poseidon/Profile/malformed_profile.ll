@@ -1,15 +1,15 @@
 ; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= \
 ; DEFINE:   -S -o /dev/null
 ; RUN: rm -rf %t && mkdir -p %t/site_id %t/truncated %t/field %t/dropped
-; RUN: sed '1i SiteId = 2147483648' %S/../Inputs/fma_opt_profiles/tester.fpprofile > %t/site_id/tester.fpprofile
+; RUN: sed '1i SiteId = 2147483648' %S/../Inputs/fma_site_profile/tester.fpprofile > %t/site_id/tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/site_id 2>&1 | FileCheck --check-prefix=SITE-ID %s
-; RUN: sed '$d' %S/../Inputs/fma_opt_profiles/tester.fpprofile > %t/truncated/tester.fpprofile
+; RUN: sed '$d' %S/../Inputs/fma_site_profile/tester.fpprofile > %t/truncated/tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/truncated 2>&1 | FileCheck --check-prefix=TRUNCATED %s
-; RUN: sed '0,/Exec = 100/s//Exec = many/' %S/../Inputs/fma_opt_profiles/tester.fpprofile > %t/field/tester.fpprofile
+; RUN: sed '0,/Exec = 100/s//Exec = many/' %S/../Inputs/fma_site_profile/tester.fpprofile > %t/field/tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/field 2>&1 | FileCheck --check-prefix=FIELD %s
-; RUN: sed '0,/MaxRes = .*/s//&\n\tSumValue = 1.0/' %S/../Inputs/fma_opt_profiles/tester.fpprofile > %t/dropped/tester.fpprofile
+; RUN: sed '0,/MaxRes = .*/s//&\n\tSumValue = 1.0/' %S/../Inputs/fma_site_profile/tester.fpprofile > %t/dropped/tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/dropped 2>&1 | FileCheck --check-prefix=DROPPED %s
 
 ; A profile that does not parse stops the compile at the site, naming the file

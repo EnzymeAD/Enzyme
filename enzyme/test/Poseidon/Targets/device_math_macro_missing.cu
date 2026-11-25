@@ -2,7 +2,7 @@
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // DEFINE: %{nvptx} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon %s -o /dev/null
 // DEFINE: %{amdgpu} = %clang -x hip --offload-arch=%amdgpu_arch -nogpulib -nogpuinc --cuda-device-only -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon %s -o /dev/null
-// DEFINE: %{use} = -mllvm -poseidon-profile-use=%S/../Inputs/other_sites
+// DEFINE: %{use} = -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile
 // RUN: %if cuda-runtime %{ not %{nvptx} -UPOSEIDON_DEVICE_MATH %{use} 2>&1 | FileCheck -DLIB=libdevice %s %}
 // RUN: %if cuda-runtime %{ %{nvptx} %{use} 2>&1 | FileCheck --allow-empty --check-prefix=DEFINED %s %}
 // RUN: %if cuda-runtime %{ not %{nvptx} -UPOSEIDON_DEVICE_MATH -DKERNELS -mllvm -poseidon-kernels=wave %{use} 2>&1 | FileCheck -DLIB=libdevice %s %}

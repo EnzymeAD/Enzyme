@@ -7,13 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "Sampling.h"
-#include "Core/Options.h"
-#include "Core/Parallel.h"
-#include "Core/UniformReal.h"
 #include "Evaluators.h"
 #include "FPCore.h"
 #include "FPNode.h"
-#include "IR/Utils.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
+#include "Support/Parallel.h"
+#include "Support/UniformReal.h"
+#include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"

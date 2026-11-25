@@ -3,7 +3,7 @@
 // DEFINE: %{nvptx} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc
 // DEFINE: %{amdgpu} = %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc
 // DEFINE: %{gen} = %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate
-// DEFINE: %{use} = %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites
+// DEFINE: %{use} = %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile
 // RUN: rm -rf %t && mkdir %t
 // RUN: %if nvptx-device-profiler %{ %{nvptx} %{gen} -mllvm -poseidon-cache=%t/nvptx -mllvm -poseidon-print %s -o %t/nvptx.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
 // RUN: %if nvptx-device-profiler %{ cat %t/nvptx/launches_*.json | FileCheck --check-prefix=DESC %s %}
@@ -105,7 +105,7 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // The kernel, its two launch arguments, its three pointers (all in argument
 // 1), the eight-byte seed of the one written, and where each sits in the
 // lambda: the layout is the same on both targets.
-// DESC: "host dispatch": [],
+// DESC: "library calls": [],
 // DESC-NEXT: "profile generation": [
 // DESC-NEXT: "_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 40 64"
 // DESC-NEXT: ],
@@ -119,7 +119,7 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // replaced by its shadow: the adjoints of Q and G accumulate into the first
 // two, and the one of y is read from the third, cleared, and logged as the
 // seed of both operations.
-// GENIR-NVPTX: @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [61 x i8] c"_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14\00"
+// GENIR-NVPTX: @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [61 x i8] c"_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14\00"
 // GENIR-NVPTX: define ptx_kernel void @_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 [[N:%[0-9]+]], ptr {{.*}}byval(%class.anon){{.*}} [[L:%[0-9]+]], ptr [[DQ:%[0-9]+]], ptr [[DG:%[0-9]+]], ptr [[DY:%[0-9]+]])
 // GENIR-NVPTX-NEXT: [[SL:%[0-9]+]] = alloca %class.anon
 // GENIR-NVPTX-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr {{.*}}[[SL]], ptr {{.*}}[[L]], i64 80, i1 false)
@@ -132,7 +132,7 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GENIR-NVPTX-NEXT: call fastcc void @diffepreprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body(i32 [[N]], ptr {{.*}}[[L]], ptr [[SL]])
 // GENIR-NVPTX-NEXT: ret void
 // GENIR-NVPTX: define internal fastcc void @diffepreprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body(i32 {{.*}}%{{[0-9]+}}, ptr {{.*}}%{{[0-9]+}}, ptr {{.*}}[[S:%[0-9]+]])
-// GENIR-NVPTX-DAG: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr))
+// GENIR-NVPTX-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr))
 // GENIR-NVPTX-DAG: [[SQP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[S]], i64 16
 // GENIR-NVPTX-DAG: [[SQ:%[0-9]+]] = load ptr, ptr [[SQP]]
 // GENIR-NVPTX-DAG: [[SGP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[S]], i64 40
@@ -146,21 +146,21 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GENIR-NVPTX-DAG: [[DYI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[SY]], i64 {{%[0-9]+}}
 // GENIR-NVPTX-DAG: [[ADJ:%[0-9]+]] = load double, ptr [[DYI]]
 // GENIR-NVPTX-DAG: store double 0.000000e+00, ptr [[DYI]]
-// GENIR-NVPTX-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 0, double {{%[0-9]+}}, double [[ADJ]])
+// GENIR-NVPTX-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 0, double {{%[0-9]+}}, double [[ADJ]])
 // GENIR-NVPTX-DAG: atomicrmw fadd ptr [[DYI]], double [[ADJ]] monotonic
-// GENIR-NVPTX-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double {{%[0-9]+}}, double [[ADJ]])
+// GENIR-NVPTX-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double {{%[0-9]+}}, double [[ADJ]])
 // GENIR-NVPTX: {{^}}}
 
 // On AMDGPU the kernel keeps its calling convention and gains the three shadows, in the
 // order of the pointers they shadow: the adjoints of Q and G accumulate into
 // the first two, and the one of y is read from the third, cleared, and logged
 // as the seed of both operations.
-// GENIR-AMDGPU: @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [61 x i8] c"_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14\00"
+// GENIR-AMDGPU: @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [61 x i8] c"_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14\00"
 // GENIR-AMDGPU: define {{.*}}amdgpu_kernel void @_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 {{.*}}, ptr addrspace(4) {{.*}}byref(%class.anon){{.*}}, ptr {{.*}}[[DQ:%[0-9]+]], ptr {{.*}}[[DG:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]])
 // GENIR-AMDGPU-DAG: [[DQG:%[0-9]+]] = addrspacecast ptr [[DQ]] to ptr addrspace(1)
 // GENIR-AMDGPU-DAG: [[DGG:%[0-9]+]] = addrspacecast ptr [[DG]] to ptr addrspace(1)
 // GENIR-AMDGPU-DAG: [[DYG:%[0-9]+]] = addrspacecast ptr [[DY]] to ptr addrspace(1)
-// GENIR-AMDGPU-DAG: call void @poseidonProfileStaticCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), ptr addrspacecast (ptr addrspace(1) @fpprofile_static_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr))
+// GENIR-AMDGPU-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr))
 // GENIR-AMDGPU-DAG: [[DQI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[DQG]], i64 {{%[0-9]+}}
 // GENIR-AMDGPU-DAG: atomicrmw fadd ptr addrspace(1) [[DQI]], double {{%[0-9]+}} monotonic
 // GENIR-AMDGPU-DAG: [[DGI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[DGG]], i64 {{%[0-9]+}}
@@ -168,9 +168,9 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GENIR-AMDGPU-DAG: [[DYI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[DYG]], i64 {{%[0-9]+}}
 // GENIR-AMDGPU-DAG: [[ADJ:%[0-9]+]] = load double, ptr addrspace(1) [[DYI]]
 // GENIR-AMDGPU-DAG: store double 0.000000e+00, ptr addrspace(1) [[DYI]]
-// GENIR-AMDGPU-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 0, double {{%[0-9]+}}, double [[ADJ]])
+// GENIR-AMDGPU-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 0, double {{%[0-9]+}}, double [[ADJ]])
 // GENIR-AMDGPU-DAG: atomicrmw fadd ptr addrspace(1) [[DYI]], double [[ADJ]] monotonic
-// GENIR-AMDGPU-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double {{%[0-9]+}}, double [[ADJ]])
+// GENIR-AMDGPU-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double {{%[0-9]+}}, double [[ADJ]])
 // GENIR-AMDGPU: {{^}}}
 
 // USE: [poseidon] site void Kernel2D<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, reduce(int, int, int, double*, double*, double*)::'lambda'(int)): accuracy target 1e-09

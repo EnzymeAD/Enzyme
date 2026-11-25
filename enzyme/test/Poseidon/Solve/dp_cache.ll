@@ -1,5 +1,5 @@
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-print \
 ; DEFINE:   -S -o /dev/null
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{profiles} = -poseidon-profile-use=%S/../Inputs/pow_term/profiles

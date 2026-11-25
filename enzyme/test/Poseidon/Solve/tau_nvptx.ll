@@ -1,10 +1,10 @@
 ; DEFINE: %{opt} = %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false \
-; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
-; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
+; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
+; DEFINE:   -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
 ; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
+; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
 
 ; The accuracy target of the site below, the kernel and profile of
 ; Sites/annotated_kernel_nvptx.ll.
@@ -19,7 +19,7 @@
 ; RUN: mkdir %t/ladder
 ; RUN: %opt %t/fms_kernel.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/loose 2>&1 | tee %t/ladder/loose.log | FileCheck --check-prefix=LADDER-LOOSE %s
 ; RUN: %opt %t/mid.ll %{opt} -poseidon-cache=%t/ladder/c 2>&1 | FileCheck --check-prefixes=LADDER-MID,EXP2 --implicit-check-not="Solving the DP" %s
-; RUN: %opt %t/tight.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/tight 2>&1 | tee %t/ladder/tight.log | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.ds.join" %s
+; RUN: %opt %t/tight.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/tight 2>&1 | tee %t/ladder/tight.log | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.pair.join" %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/loose.log %t/ladder/loose | FileCheck --check-prefix=LOOSE-JSON %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/tight.log %t/ladder/tight | FileCheck --check-prefix=TIGHT-JSON %s
 ; RUN: FileCheck --check-prefix=TIGHT-BEST %s < %t/ladder/tight/fms_kernel.explain.json
@@ -29,16 +29,16 @@
 ; LADDER-LOOSE: DP table for preprocess_fms_kernel_poseidon_body cached to
 ; LADDER-LOOSE: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-07 S=1.187943e+04 A0=2.571104e-13 selected cost=-9.223869e-01 accCost=1.697296e-04 rel=1.428768e-08
 ; LADDER-LOOSE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-; LADDER-LOOSE: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + FP32(100%)
+; LADDER-LOOSE: [poseidon] pin: fms_kernel:P0=All FP64(0%) + FP32(100%)
 ; LADDER-LOOSE-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; LADDER-LOOSE: call float @llvm.fmuladd.f32(
-; LADDER-LOOSE-NOT: !poseidon.ds.join
+; LADDER-LOOSE-NOT: !poseidon.pair.join
 
 ; LADDER-MID: Per-operation relative error tolerance: 1.000000e-12
 ; LADDER-MID-NEXT: Cache entry for preprocess_fms_kernel_poseidon_body found. Loaded DP tables from cache.
 ; LADDER-MID: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost=-1.692668e-01 accCost=8.072609e-12 rel=7.011882e-16
 ; LADDER-MID: Applying solution for precision change All FP64(0%) + Expansion2(100%) (#2)
-; LADDER-MID: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
+; LADDER-MID: [poseidon] pin: fms_kernel:P0=All FP64(0%) + Expansion2(100%)
 
 ; The explanation of each compile says what its decision lines say.
 ; LOOSE-JSON: preprocess_fms_kernel_poseidon_body: rewritten{{$}}
@@ -58,11 +58,11 @@
 ; LADDER-TIGHT-LABEL: define internal void @fms_kernel_poseidon_body(
 ; LADDER-TIGHT-COUNT-5: call double @llvm.fmuladd.f64(
 ; LADDER-TIGHT-NOT: preprocess_
-; LADDER-TIGHT-NOT: !poseidon.ds.join
+; LADDER-TIGHT-NOT: !poseidon.pair.join
 
 ; Expansion2 joins the result pair into the stored double.
 ; EXP2-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
-; EXP2: fadd double %{{.+}}, %{{.+}}, !poseidon.ds.join
+; EXP2: fadd double %{{.+}}, %{{.+}}, !poseidon.pair.join
 
 ;--- fms_kernel.ll
 source_filename = "annotated_kernel.cu"

@@ -3,7 +3,7 @@
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=SAME %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -poseidon-print -Rpass-missed=poseidon -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -poseidon-print -Rpass-missed=poseidon -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
 //
 // Without the plugin a call with an explicit list does not link; with it and
@@ -12,7 +12,7 @@
 // RUN: %clang -x c++ -O2 -I%poseidon_profile_inc %loadClangPoseidon %s -lstdc++ -lm -o %t/plain
 // RUN: %t/plain | FileCheck --check-prefix=SAME %s
 //
-// RUN: not %clang -x c++ -O1 -gline-tables-only -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DLISTS %s -o /dev/null 2>&1 | FileCheck --check-prefix=LISTS %s
+// RUN: not %clang -x c++ -O1 -gline-tables-only -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -DLISTS %s -o /dev/null 2>&1 | FileCheck --check-prefix=LISTS %s
 
 // __poseidon_optimize takes either list. An explicit one, with Enzyme's
 // activity markers and shadows the caller provides, makes the call a site over
@@ -127,20 +127,20 @@ int main() {
 // second shift rewritten, damp and the first shift left as written, the two
 // calls of wave one solve.
 // USE-DAG: [poseidon] preprocess__Z4wavePKdPdi: tau=1.000000e-06
-// USE-DAG: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] _Z4wavePKdPdi: same body and target as an earlier site; reusing its solve (preprocess__Z4wavePKdPdi)
 // USE-DAG: [poseidon] preprocess__Z6energyPKdi: the site's own accuracy target 1.000000e-03 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: [poseidon] pin: _Z6energyPKdi:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: _Z6energyPKdi:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z4dampPKdd: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: per_call_explicit.cpp:[[@LINE-61]]:14: remark: Poseidon left site damp as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5scalePKdPdi.poseidon.main.0: tau=1.000000e-06
-// USE-DAG: [poseidon] pin: _Z5scalePKdPdi.poseidon.main.0:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: _Z5scalePKdPdi.poseidon.main.0:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z2sqdd: tau=1.000000e-06
-// USE-DAG: [poseidon] pin: _Z2sqdd:PT0=All FP64(0%) + FP32(100%)
+// USE-DAG: [poseidon] pin: _Z2sqdd:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.1: the site's own accuracy target 1.000000e-09 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: per_call_explicit.cpp:[[@LINE-61]]:3: remark: Poseidon left site shift as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-08 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: [poseidon] pin: _Z5shiftPKdPdi.poseidon.main.2:PT0=Funcs FP64(50%) + FP32(50%)
+// USE-DAG: [poseidon] pin: _Z5shiftPKdPdi.poseidon.main.2:P0=Funcs FP64(50%) + FP32(50%)
 // USE-NOT: warning
 
 // The rewritten calls differ from the functions run as written, the calls left

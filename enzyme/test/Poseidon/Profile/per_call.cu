@@ -3,11 +3,11 @@
 // DEFINE: %{nvptx} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc
 // DEFINE: %{amdgpu} = %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O1 -S -emit-llvm -I%poseidon_profile_inc
 // RUN: rm -rf %t && mkdir %t
-// RUN: %if nvptx-device-profiler %{ %{nvptx} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/nvptx.ll 2>&1 | FileCheck %s %}
+// RUN: %if nvptx-device-profiler %{ %{nvptx} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/nvptx.ll 2>&1 | FileCheck %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefixes=IR,IR-NVPTX %s < %t/nvptx.ll %}
 // RUN: %if nvptx-device-profiler %{ %{nvptx} %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-c -mllvm -poseidon-print %s -o %t/nvptx-gen.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=GENIR-NVPTX %s < %t/nvptx-gen.ll %}
-// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/amdgpu.ll 2>&1 | FileCheck %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/amdgpu.ll 2>&1 | FileCheck %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefixes=IR,IR-AMDGPU %s < %t/amdgpu.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/amdgpu-c -mllvm -poseidon-print %s -o %t/amdgpu-gen.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=GENIR-AMDGPU %s < %t/amdgpu-gen.ll %}

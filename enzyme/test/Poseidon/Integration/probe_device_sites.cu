@@ -1,14 +1,14 @@
 // REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
-// RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %poseidon_probe -- %t/gen %t/runs > /dev/null 2> %t/probe.err
+// RUN: env POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %poseidon_kappa -- %t/gen %t/runs > /dev/null 2> %t/probe.err
 // RUN: FileCheck --check-prefix=FOUR %s < %t/runs
 // RUN: FileCheck --check-prefix=MEASURE %s < %t/probe.err
 // RUN: cat %t/prof/*_Z5gaussPKdPdi*.fpprofile | FileCheck --check-prefix=MEASURED %s
 // RUN: cat %t/prof/*_Z4wavePKdPdi*.fpprofile | FileCheck --check-prefix=MEASURED %s
 
-// poseidon-probe on two device sites: each run of the measurement perturbs one
-// kernel's values on the device (POSEIDON_PROBE_SITE, POSEIDON_PROBE_EPS) and
+// poseidon-kappa on two device sites: each run of the measurement perturbs one
+// kernel's values on the device (POSEIDON_KAPPA_SITE, POSEIDON_KAPPA_EPS) and
 // reports the metric alone, and each kernel's profile gets a condition number.
 // The program counts its own runs: the profiling run and 1 + 2 x 1 more.
 
@@ -58,8 +58,8 @@ int main(int argc, char **argv) {
 // FOUR-COUNT-4: run
 // FOUR-NOT: run
 
-// MEASURE: [probe] measuring the condition numbers of metric "y and z" at 2 sites: 3 more runs of this program
-// MEASURE: [probe] condition-number measurement: 3 runs,
+// MEASURE: [poseidon] measuring the condition numbers of metric "y and z" at 2 sites: 3 more runs of this program
+// MEASURE: [poseidon] condition-number measurement: 3 runs,
 
 // MEASURED: Kappa = {{[1-9]|0\.0*[1-9]}}
 // MEASURED-NEXT: KappaMark = {{ok|nonlinear}}

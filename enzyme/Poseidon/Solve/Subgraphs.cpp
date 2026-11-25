@@ -6,13 +6,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Core/Options.h"
-#include "IR/Utils.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
 #include "Pass/Session.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
+#include "Support/Utils.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
 
@@ -85,7 +86,7 @@ static void reportUnexecuted(const Function &F,
 }
 
 void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
-                    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
+                    const SmallVectorImpl<RecognizedMatmul> &abstractMatmuls,
                     FPGraph &G, SmallVectorImpl<Subgraph> &subgraphs) {
   auto &valueToNodeMap = G.valueToNodeMap;
   // An operation the run never executed is left as written, as an unexecuted
@@ -100,7 +101,7 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
   SmallPtrSet<Instruction *, 32> reductionFMAs;
   if (O.Candidates.ReductionSubgraphs)
     for (const auto &am : abstractMatmuls)
-      if (am.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
+      if (am.origin == RecognizedMatmul::Origin::ConstantShape &&
           am.scalarLoop.fma)
         reductionFMAs.insert(am.scalarLoop.fma);
 
@@ -591,7 +592,7 @@ void hintSharedStaging(const Session &S, Function &F,
            "buffer(s) " +
                shared +
                ", which a precision change narrows only when all its units "
-               "pick one tier; -poseidon-merge-shared-staging makes them one "
+               "pick one tier; -poseidon-subgraph-merge-staging makes them one "
                "unit",
            DS_Warning);
 }

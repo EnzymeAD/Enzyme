@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t
-; RUN: not %clang -x ir -Wno-override-module -O1 -S -emit-llvm %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t -o /dev/null 2>&1 | FileCheck %s --implicit-check-not=error: --implicit-check-not=warning:
+; RUN: not %clang -x ir -Wno-override-module -O1 -S -emit-llvm %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t -o /dev/null 2>&1 | FileCheck %s --implicit-check-not=error: --implicit-check-not=warning:
 
 ; An accuracy target of 0, a negative one or NaN is an error at its site in
 ; every form a site takes: an annotation, a call through either identity

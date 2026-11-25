@@ -20,11 +20,11 @@ namespace poseidon {
 static constexpr FPFormatInfo kFormats[] = {
     {PrecisionChangeType::BF16, FPKind::BF16, "bf16", "bf16", "__bf16", "BF16",
      Type::getBFloatTy},
-    {PrecisionChangeType::FP16, FPKind::F16, "f16", "half", "_Float16", "FP16",
+    {PrecisionChangeType::FP16, FPKind::FP16, "f16", "half", "_Float16", "FP16",
      Type::getHalfTy},
-    {PrecisionChangeType::FP32, FPKind::F32, "f32", "float", "float", "FP32",
+    {PrecisionChangeType::FP32, FPKind::FP32, "f32", "float", "float", "FP32",
      Type::getFloatTy},
-    {PrecisionChangeType::FP64, FPKind::F64, "f64", "double", "double", "FP64",
+    {PrecisionChangeType::FP64, FPKind::FP64, "f64", "double", "double", "FP64",
      Type::getDoubleTy},
     {PrecisionChangeType::FP80, FPKind::Invalid, "f80", "fp80", "long double",
      "FP80", Type::getX86_FP80Ty},
@@ -66,18 +66,18 @@ FPKind fpKindFromType(Type *T) {
 
 Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
   switch (k) {
-  case FPKind::F16:
+  case FPKind::FP16:
     return Type::getHalfTy(ctx);
   case FPKind::BF16:
     return Type::getBFloatTy(ctx);
   case FPKind::TF32:
-  case FPKind::F32:
+  case FPKind::FP32:
     return Type::getFloatTy(ctx);
-  case FPKind::F64:
+  case FPKind::FP64:
     return Type::getDoubleTy(ctx);
-  case FPKind::S8:
+  case FPKind::INT8:
     return Type::getInt8Ty(ctx);
-  case FPKind::S32:
+  case FPKind::INT32:
     return Type::getInt32Ty(ctx);
   case FPKind::Invalid:
     break;

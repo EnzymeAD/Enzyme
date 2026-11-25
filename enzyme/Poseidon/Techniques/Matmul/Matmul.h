@@ -6,14 +6,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MATMUL_H
-#define POSEIDON_MATMUL_H
+#ifndef POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
+#define POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 
-#include "MatmulScheme.h"
 #include "Model/FPFormat.h"
-#include "Profile/ProfileRead.h"
-#include "Sites/LaunchDescriptors.h"
-#include "Techniques/Unit.h"
+#include "Profile/ProfileReader.h"
+#include "Scheme.h"
+#include "Sites/LaunchManifest.h"
+#include "Techniques/SiteUnit.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
@@ -273,7 +273,7 @@ struct RuntimeGemmHandle {
 /// A matrix product recognized in a site's function, with the handle of the
 /// recognizer that found it. Its IR pointers are into that function and stay
 /// valid while it is optimized.
-struct AbstractMatmul {
+struct RecognizedMatmul {
   /// The product's index among the products of its function, `matmul[id]` in
   /// diagnostics.
   unsigned id = ~0u;
@@ -300,20 +300,20 @@ struct AbstractMatmul {
   enum class Origin {
     /// A constant-trip reduction loop whose output rows and columns are thread
     /// indices (see ScalarLoopHandle); either realization.
-    ScalarLoopReduction,
+    ConstantShape,
     /// A dense GEMM whose M / Ncols / K and leading dimensions are runtime
     /// expressions over the kernel's arguments, contracted across one or more
     /// reduction loops (see RuntimeGemmHandle). Host dispatch only: an
     /// in-kernel raise needs compile-time tile extents.
-    HostGemmLoopNest,
+    RuntimeShape,
   };
-  /// Which of `scalarLoop` and `hostGemm` describes the product.
-  Origin origin = Origin::ScalarLoopReduction;
+  /// Which of `scalarLoop` and `runtimeGemm` describes the product.
+  Origin origin = Origin::ConstantShape;
 
-  /// The loop of a ScalarLoopReduction product; empty for the other origin.
+  /// The loop of a ConstantShape product; empty for the other origin.
   ScalarLoopHandle scalarLoop;
-  /// The nest of a HostGemmLoopNest product; null for the other origin.
-  std::shared_ptr<RuntimeGemmHandle> hostGemm;
+  /// The nest of a RuntimeShape product; null for the other origin.
+  std::shared_ptr<RuntimeGemmHandle> runtimeGemm;
 
   /// The instructions a realization replaces: the blocks of the reduction loops
   /// and, for a runtime-shape product, its epilogue fadd.
@@ -323,23 +323,23 @@ struct AbstractMatmul {
 };
 
 /// Recognize dense GEMMs written as thread-parallel reduction nests with
-/// runtime dimensions (Origin::HostGemmLoopNest) among the loops no matmul in
+/// runtime dimensions (Origin::RuntimeShape) among the loops no matmul in
 /// `out` already claims. Appends only matmuls whose whole descriptor (extents,
 /// leading dimensions, layouts, beta and the profile-scale shape) could be
 /// reconstructed; every other nest is skipped with a printed reason.
-void findHostGemmLoopNests(const Options &O, llvm::Function &F,
-                           llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
-                           const FunctionProfileHeader &profileHeader,
-                           const ProfileMap &prof,
-                           llvm::SmallVectorImpl<AbstractMatmul> &out);
+void findRuntimeShapeMatmuls(const Options &O, llvm::Function &F,
+                             llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
+                             const SiteProfileHeader &profileHeader,
+                             const ProfileMap &prof,
+                             llvm::SmallVectorImpl<RecognizedMatmul> &out);
 
 /// Recognize the constant-trip reduction loops of F that compute a matrix
-/// product (Origin::ScalarLoopReduction), with the per-CTA extents and the
+/// product (Origin::ConstantShape), with the per-CTA extents and the
 /// launch geometry from `profileHeader`.
-void findScalarLoopMatmuls(const Options &O, llvm::Function &F,
-                           llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
-                           const FunctionProfileHeader &profileHeader,
-                           llvm::SmallVectorImpl<AbstractMatmul> &out);
+void findConstantShapeMatmuls(const Options &O, llvm::Function &F,
+                              llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
+                              const SiteProfileHeader &profileHeader,
+                              llvm::SmallVectorImpl<RecognizedMatmul> &out);
 
 /// Profile generation only: the reduction trip counts (profile-scale) of the
 /// scalar-loop matmuls of one profiled clone, as (fma probe index, trip) pairs
@@ -370,7 +370,7 @@ struct PendingGemm {
 };
 
 /// A tensor-core instruction shape the cost model prices.
-struct WmmaTarget {
+struct InKernelTile {
   /// The tile extents in elements.
   unsigned M, N, K;
   /// The operand format.
@@ -390,7 +390,7 @@ struct MatmulState {
 
   /// The tensor-core shapes the cost model prices, read at their first use in
   /// a compile.
-  std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
+  std::optional<llvm::SmallVector<InKernelTile, 16>> AvailableWmmaTargets;
   /// The cost-model rows a missing-row warning has named.
   llvm::StringSet<> ReportedRows;
   /// Whether -poseidon-print has said that this build has no TCEC runtime.
@@ -427,11 +427,11 @@ public:
   };
 
   /// An empty unit; `matmul` is set before it is solved.
-  MatmulUnit() : SiteUnit(UnitKind::M) {}
+  MatmulUnit() : SiteUnit(UnitKind::Matmul) {}
 
   /// The product; it belongs to its function's recognition results, which
   /// outlive the unit.
-  AbstractMatmul *matmul = nullptr;
+  RecognizedMatmul *matmul = nullptr;
   /// The descriptor of the product's library call, when it has one.
   std::optional<GemmBodyNote> library;
   /// The cost per MAC of the loop as written in cost-model units: one
@@ -464,7 +464,7 @@ public:
 
   /// Whether `U` is a MatmulUnit, for isa and dyn_cast.
   static bool classof(const OptimizationUnit *U) {
-    return U->kind() == unsigned(UnitKind::M);
+    return U->kind() == unsigned(UnitKind::Matmul);
   }
   size_t numCandidates() const override { return candidates.size(); }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
@@ -488,7 +488,7 @@ public:
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {
-    return "CM " + std::to_string(matmul->id);
+    return "M " + std::to_string(matmul->id);
   }
   std::string selectionText(size_t i) const override;
 };
@@ -502,7 +502,7 @@ std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 /// over [maxMag * 2^-B, maxMag]. An error is a user error about the profile or
 /// the cost model.
 llvm::Error generateMatmulCandidates(Session &S,
-                                     llvm::ArrayRef<AbstractMatmul> matmuls,
+                                     llvm::ArrayRef<RecognizedMatmul> matmuls,
                                      const ProfileMap &scalarProfile,
                                      unsigned sampleLogBits,
                                      llvm::SmallVectorImpl<MatmulUnit> &out);
@@ -511,8 +511,9 @@ llvm::Error generateMatmulCandidates(Session &S,
 /// error is <= `budget` and that beats the F64 baseline; scalar subgraphs are
 /// left at baseline in this mode.
 llvm::SmallVector<SolutionStep>
-errorBudgetSelector(const Options &O, llvm::SmallVectorImpl<MatmulUnit> &CMs,
+errorBudgetSelector(const Options &O,
+                    llvm::SmallVectorImpl<MatmulUnit> &matmulUnits,
                     double budget);
 
 } // namespace poseidon
-#endif // POSEIDON_MATMUL_H
+#endif // POSEIDON_TECHNIQUES_MATMUL_MATMUL_H

@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/unmodelled_operand -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.3 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-print -poseidon-cache=%t -S -o %t/out.ll 2>&1 | FileCheck --check-prefix=SOLVE %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/unmodelled_operand -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.3 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-print -poseidon-cache=%t -S -o %t/out.ll 2>&1 | FileCheck --check-prefix=SOLVE %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
 
 ; An instruction with an operand the accuracy model has no node for, an undef

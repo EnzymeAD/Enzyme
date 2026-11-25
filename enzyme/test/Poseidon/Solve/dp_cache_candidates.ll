@@ -1,8 +1,8 @@
 ; DEFINE: %{herbie} = %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
+; DEFINE:   -poseidon-enable-rewrite=true -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
 ; DEFINE:   -poseidon-print
-; DEFINE: %{keys} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/regime_split/tester.ll %{herbie} \
+; DEFINE: %{keys} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/piecewise_rewrite/tester.ll %{herbie} \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh
 ; DEFINE: %{array} = %opt < %t/array.ll %{herbie} \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/array_cores/profiles \
@@ -17,8 +17,8 @@
 ; gives the applied rewrite is the one the explanation of the compile that
 ; reads the table back gives it.
 ; RUN: mkdir %t/ids
-; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-explain=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
-; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-explain=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
+; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-cache=%t/ids/c -poseidon-explain=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
+; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-cache=%t/ids/c -poseidon-explain=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
 ; RUN: %python -c "import json, sys; print(*json.load(open(sys.argv[1]))['result']['applied'])" %t/ids/solve/tester.explain.json > %t/ids/solve.id
 ; RUN: FileCheck --check-prefix=IDS-ID %s < %t/ids/solve.id
 ; RUN: FileCheck --check-prefix=IDS-EXPLAIN -DID=$(cat %t/ids/solve.id) %s < %t/ids/solve/tester.explain.json
@@ -44,7 +44,7 @@
 ; never priced.
 ; RUN: mkdir %t/set
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-FIRST %s
-; RUN: rm %t/set/c/cachedHerbieOutput_*
+; RUN: rm %t/set/c/herbie_*.json
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores/timeout %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-DRIFT %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-HIT %s
 

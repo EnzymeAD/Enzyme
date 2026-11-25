@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_EVALUATORS_H
-#define POSEIDON_EVALUATORS_H
+#ifndef POSEIDON_MODEL_EVALUATORS_H
+#define POSEIDON_MODEL_EVALUATORS_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -21,9 +21,9 @@
 #include "llvm/IR/Value.h"
 #include <unordered_map>
 
-#include "Core/ExpansionModel.h"
 #include "FPFormat.h"
 #include "FPNode.h"
+#include "Techniques/Precision/ExpansionModel.h"
 
 namespace poseidon {
 
@@ -42,7 +42,7 @@ private:
   /// belongs to.
   std::unordered_map<const FPNode *, size_t> nodeChange;
   /// The components of each node evaluated as an FP32 expansion.
-  std::unordered_map<const FPNode *, ExpansionLimbs> components;
+  std::unordered_map<const FPNode *, FloatExpansion> components;
   /// The relative error bound of the square roots a change makes approximate.
   std::unordered_map<const FPNode *, double> approxSqrtError;
 
@@ -84,4 +84,4 @@ getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
               llvm::SmallVectorImpl<double> &results);
 
 } // namespace poseidon
-#endif // POSEIDON_EVALUATORS_H
+#endif // POSEIDON_MODEL_EVALUATORS_H

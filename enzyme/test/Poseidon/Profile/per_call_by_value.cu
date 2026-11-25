@@ -6,11 +6,11 @@
 // RUN: %if nvptx-device-profiler %{ %{nvptx} %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-c -mllvm -poseidon-print %s -o %t/nvptx.ll 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not=warning: %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=IR-NVPTX %s < %t/nvptx.ll %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=BODY-NVPTX %s < %t/nvptx.ll %}
-// RUN: %if nvptx-device-profiler %{ %{nvptx} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/nvptx-u %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s %}
+// RUN: %if nvptx-device-profiler %{ %{nvptx} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/nvptx-u %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/amdgpu-c -mllvm -poseidon-print %s -o %t/amdgpu.ll 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not=warning: %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=IR-AMDGPU %s < %t/amdgpu.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=BODY-AMDGPU %s < %t/amdgpu.ll %}
-// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/amdgpu-u %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/amdgpu-u %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s %}
 
 // A pointer into an aggregate the caller takes by value is a pointer into an
 // object whose extent the pass knows, as one into a local object is: a

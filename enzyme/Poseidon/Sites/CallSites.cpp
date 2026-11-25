@@ -9,12 +9,13 @@
 #include "CallSites.h"
 
 #include "Annotations.h"
-#include "Core/Options.h"
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
 #include "Markers.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
 #include "Site.h"
 #include "SiteIdentity.h"
+#include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
@@ -350,7 +351,7 @@ static Function *makePerCallCopy(SiteRecords &T, Function &fn, Function &caller,
   B->removeFnAttr(Attribute::AlwaysInline);
   B->removeFnAttr(Attribute::InlineHint);
   B->addFnAttr(Attribute::NoInline);
-  B->addFnAttr(kHostBody, tau > 0.0 ? exactDouble(tau) : "");
+  B->addFnAttr(kSiteBody, tau > 0.0 ? exactDouble(tau) : "");
   resetClonedGUID(B);
   noteSiteIdentity(T, *B,
                    (functionIdentity(fn) + kPerCallInfix +

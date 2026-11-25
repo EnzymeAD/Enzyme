@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_POSEIDON_H
-#define POSEIDON_POSEIDON_H
+#ifndef POSEIDON_POSEIDON_POSEIDON_H
+#define POSEIDON_POSEIDON_POSEIDON_H
 
 /// Marks the function it precedes as a site: a host or device function, a CUDA
 /// or HIP kernel, or a lambda. POSEIDON_OPTIMIZE_TAU(t) also gives the site
@@ -108,7 +108,7 @@ extern "C" {
 #endif
 
 /// Declares the quantity of interest of a profiling run, the program's result,
-/// as `name` = `value`; the last call counts. poseidon-probe measures each
+/// as `name` = `value`; the last call counts. poseidon-kappa measures each
 /// site's condition number against it.
 void poseidon_metric(const char *name, double value);
 
@@ -214,7 +214,7 @@ __poseidon_device_math(void) {
 #undef POSEIDON_KEEP
 #elif defined(POSEIDON_DEVICE_MATH) && defined(__HIP_DEVICE_COMPILE__) &&      \
     defined(__CLANG_HIP_LIBDEVICE_DECLARES_H__)
-// HIP spells these as LLVM intrinsics, so its header does not declare them.
+/// HIP spells these as LLVM intrinsics, so its header does not declare them.
 extern "C" __device__ float __ocml_exp_f32(float);
 extern "C" __device__ float __ocml_exp2_f32(float);
 extern "C" __device__ float __ocml_log_f32(float);
@@ -271,4 +271,4 @@ __poseidon_device_math_defined(void) {}
 #undef POSEIDON_SITE_HELPER
 #undef POSEIDON_SITE_TARGETS
 
-#endif // POSEIDON_POSEIDON_H
+#endif // POSEIDON_POSEIDON_POSEIDON_H

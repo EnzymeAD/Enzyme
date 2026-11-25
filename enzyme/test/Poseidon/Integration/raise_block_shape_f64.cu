@@ -13,8 +13,8 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/gen.exe 8 | FileCheck --check-prefix=PROFILED %s
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon \
 // RUN:     -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-cache=%t/c \
-// RUN:     -mllvm -poseidon-raise-wmma -mllvm -poseidon-ozaki-host-dispatch=false \
-// RUN:     -mllvm -poseidon-enable-herbie=false -mllvm -poseidon-enable-pt=false \
+// RUN:     -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false \
+// RUN:     -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false \
 // RUN:     -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print \
 // RUN:     -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
 // RUN: %t/opt.exe 8 | FileCheck --check-prefix=PROFILED %s

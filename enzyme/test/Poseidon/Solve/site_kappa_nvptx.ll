@@ -1,20 +1,20 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-raise-wmma \
-; DEFINE:   -poseidon-ozaki-host-dispatch=false \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: mkdir -p %t/nokappa %t/diverged %t/noise && cp %S/../Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/diverged/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/noise/
+; RUN: mkdir -p %t/nokappa %t/diverged %t/noise && cp %S/Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/Inputs/site_kappa/*.fpprofile %t/diverged/ && cp %S/Inputs/site_kappa/*.fpprofile %t/noise/
 ; RUN: sed -i -e "s/^Kappa = .*/Kappa = 0/" -e "s/^KappaMark = ok/KappaMark = below-noise/" %t/noise/matmul_body.fpprofile %t/noise/fms_body.fpprofile
 ; RUN: sed -i "/^Kappa/d" %t/nokappa/matmul_body.fpprofile %t/nokappa/fms_body.fpprofile
 ; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/matmul_body.fpprofile
-; RUN: %{opt} -poseidon-profile-use=%S/../Inputs/site_kappa -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c1 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/Inputs/site_kappa -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c1 2>&1 \
 ; RUN:   | FileCheck --check-prefix=KAPPA %s
-; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c2 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c2 2>&1 \
 ; RUN:   | FileCheck --check-prefix=PLAIN %s
-; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-pt=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
-; RUN: %{opt} -poseidon-profile-use=%t/noise -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c4 > %t/noise.log 2>&1
+; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/noise -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c4 > %t/noise.log 2>&1
 ; RUN: FileCheck --check-prefix=PLAIN %s < %t/noise.log
 ; RUN: FileCheck --check-prefix=NOISE %s < %t/noise.log
 
@@ -48,7 +48,7 @@
 ; A condition number the probe could not tell from the noise of the runs
 ; would scale every error to zero; the site is solved as one without a
 ; condition number instead, with a warning.
-; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; probe it with larger perturbations (POSEIDON_PROBE_LADDER) to measure it{{$}}
+; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; probe it with larger perturbations (POSEIDON_KAPPA_LADDER) to measure it{{$}}
 ; NOISE: warning: {{.*}}condition number of preprocess_matmul_body
 
 ; A site whose probe run diverged carries no measured kappa; its candidates are
@@ -65,7 +65,7 @@
 ; product's and the scalar subgraph's alike, is multiplied by the site's Kappa
 ; divided by the total sensitivity its profile records; a site whose probe run
 ; diverged is scaled by a large finite factor instead. The bodies and profiles
-; are the Inputs/raise_tcec and Inputs/ds_expansion fixtures; the Kappa values,
+; are the Inputs/matmul_site_profile and Inputs/expansion_two_components fixtures; the Kappa values,
 ; 1000 on the product and 0.001 on the scalar subgraph, make the scaling
 ; legible in the printed costs. The second run solves against the same
 ; profiles with the two header lines deleted.

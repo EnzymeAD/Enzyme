@@ -26,9 +26,9 @@
 // RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t/cache/
 // RUN: cp %s %t/src/annotated_lambda_host_gemm.hip
 // RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch -poseidon-print \
-// RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/other_sites \
-// RUN:     -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-unit=seeded \
-// RUN:     -poseidon-enable-herbie=0 annotated_lambda_host_gemm.hip \
+// RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/unrelated_site_profile \
+// RUN:     -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-compilation-id=seeded \
+// RUN:     -poseidon-enable-rewrite=0 annotated_lambda_host_gemm.hip \
 // RUN:     -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
@@ -183,8 +183,8 @@ int main(int argc, char **argv) {
 
 // The device half has no profile and keeps the kernel as written; the host
 // half dispatches its launch.
-// CHECK: warning: {{.*}}Poseidon: no profile at {{.*}}/Inputs/other_sites/_ZL11HipKernel2D{{[^ ]*}}~{{[0-9a-f]+}}.fpprofile: the profiled program did not contain this site
-// CHECK: [poseidon] replaced the launch in stub _ZL26__device_stub__HipKernel2D{{[^ ]*}} with __poseidon_ozaki_dgemm (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
+// CHECK: warning: {{.*}}Poseidon: no profile at {{.*}}/Inputs/unrelated_site_profile/_ZL11HipKernel2D{{[^ ]*}}~{{[0-9a-f]+}}.fpprofile: the profiled program did not contain this site
+// CHECK: [poseidon] replaced the launch in stub _ZL26__device_stub__HipKernel2D{{[^ ]*}} with __poseidon_ozakiii_dgemm (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 
 // OPT: DENSE: rel err ok
 // OPT: PADDED: rel err ok

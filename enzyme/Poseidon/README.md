@@ -32,7 +32,7 @@ ninja -C build check-poseidon
 ```
 
 The build installs the drivers `poseidon-clang` and `poseidon-clang++`, the
-tools `poseidon-calibrate`, `poseidon-probe` and `poseidon-explain`, the header
+tools `poseidon-calibrate`, `poseidon-kappa` and `poseidon-explain`, the header
 `poseidon/poseidon.h`, the runtimes and a CMake package.
 
 ## Use
@@ -81,7 +81,7 @@ directory `-poseidon-profile-generate=<dir>` names, or to the one
 `POSEIDON_PROFILE_DIR` names when the program runs. A small problem is
 enough when its values are of the kind the large ones compute. A program
 that declares its result with `poseidon_metric(name, value)` runs under
-`poseidon-probe -- ./app small-input` instead, which measures each site's
+`poseidon-kappa -- ./app small-input` instead, which measures each site's
 condition number against that result in 1 + 3 x <sites> more runs. Profiling
 host code needs glibc.
 
@@ -164,7 +164,7 @@ arguments in memory until then. The finalizing pass then checks that no derivati
 is left, links the device profiler, writes the launch manifest, and builds the
 output from the module as written. An LTO link runs the same passes at the
 full-LTO extension points. For `opt`, the pipeline names are `poseidon`,
-`poseidon-late` and `poseidon-finalize`.
+`poseidon-deferred-sites` and `poseidon-finalize`.
 
 The module as written is a copy of the module taken at PipelineStart in a
 profile-use compile with a site. The canonical prefix, the outlined site bodies
@@ -174,7 +174,7 @@ default pipeline as a compile without a profile, and only the functions a
 rewrite reached are taken from the rewritten module into it, so every other
 function is the code a compile without Poseidon emits. There is no such copy
 under profile generation, in the host half of a GPU compile, in a joint solve
-(`-poseidon-joint-dp`), or at an LTO link.
+(`-poseidon-solve-jointly`), or at an LTO link.
 
 ### Device and host halves
 
@@ -204,29 +204,29 @@ compiles are therefore run without either.
 
 | Variable | Read by | Meaning |
 |---|---|---|
-| `POSEIDON_PROFILE_DIR` | profiler runtime, `poseidon-probe` | Where a profiling run writes its profiles and `metric.txt`; default `./poseidon.profile` |
+| `POSEIDON_PROFILE_DIR` | profiler runtime, `poseidon-kappa` | Where a profiling run writes its profiles and `metric.txt`; default `./poseidon.profile` |
 | `POSEIDON_PROFILE_HEAP_MB` | device profiler | Device heap for the profiled kernels' reverse passes; default 4096 |
-| `POSEIDON_PROBE` | profiler runtime | `0` declines the condition numbers of a declared metric; `child` marks a run of the measurement (set by `poseidon-probe`) |
-| `POSEIDON_PROBE_LADDER` | profiler runtime, `poseidon-probe` | The relative perturbations of the measurement; default `1e-8,1e-6,1e-4` |
-| `POSEIDON_PROBE_SITE`, `POSEIDON_PROBE_EPS`, `POSEIDON_PROBE_SITES` | profiler runtime | Set by `poseidon-probe`: the site a run perturbs and by how much, and the file a profiling run lists its sites in |
+| `POSEIDON_KAPPA` | profiler runtime | `0` declines the condition numbers of a declared metric; `child` marks a run of the measurement (set by `poseidon-kappa`) |
+| `POSEIDON_KAPPA_LADDER` | profiler runtime, `poseidon-kappa` | The relative perturbations of the measurement; default `1e-8,1e-6,1e-4` |
+| `POSEIDON_KAPPA_SITE`, `POSEIDON_KAPPA_EPS`, `POSEIDON_KAPPA_SITES` | profiler runtime | Set by `poseidon-kappa`: the site a run perturbs and by how much, and the file a profiling run lists its sites in |
 | `POSEIDON_COST_MODEL` | plugin | The cost model when no `-poseidon-cost-model` names one |
 | `XDG_CACHE_HOME`, `HOME` | plugin, `poseidon-calibrate` | The user cache of cost models, `$XDG_CACHE_HOME/poseidon` or `~/.cache/poseidon` |
-| `POSEIDON_PLUGIN`, `ENZYME_PLUGIN` | `poseidon-clang` | The plugins to load in place of those of the build |
+| `POSEIDON_PLUGIN`, `POSEIDON_ENZYME_PLUGIN` | `poseidon-clang` | The plugins to load in place of those of the build |
 | `POSEIDON_ECHO` | `poseidon-clang` | Prints the clang command it runs |
 | `HIP_PATH`, `ROCM_PATH` | `poseidon-clang` | The ROCm installation of a HIP compile without `--hip-path` or `--rocm-path` |
 | `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` | `poseidon-calibrate` | The GPU to measure without `--gpu` |
-| `TMPDIR` | `poseidon-probe` | Where the runs of the measurement keep their scratch directories; default `/tmp` |
+| `TMPDIR` | `poseidon-kappa` | Where the runs of the measurement keep their scratch directories; default `/tmp` |
 
 ### File formats
 
 | File | Written by | Read by | Specified in |
 |---|---|---|---|
-| Profile, `<site>.fpprofile` and `metric.txt` | profiler runtime; `poseidon-probe` adds the condition number | plugin | `runtime/fpprofiler/FPProfileName.h` |
+| Profile, `<site>.fpprofile` and `metric.txt` | profiler runtime; `poseidon-kappa` adds the condition number | plugin | `runtime/profile/ProfileFormat.h` |
 | Cost model, `cm_<arch>_<device>.csv` and its Herbie platform | `poseidon-calibrate` | plugin | `tools/calibrate/README.md` |
 | Explanation, `<function>.explain.json` | plugin (`-poseidon-explain`) | `poseidon-explain` | `Solve/Explain.h` |
-| Launch manifest | device half of a GPU compile | host half | `Sites/LaunchDescriptors.h` |
-| Herbie answer, in the cache directory | plugin | plugin | `Core/HerbieRun.cpp` |
-| Solved table (DP), in the cache directory | plugin | plugin | `Solve/Solvers.cpp`, `Core/CacheKey.h` |
+| Launch manifest | device half of a GPU compile | host half | `Sites/LaunchManifest.h` |
+| Herbie answer, in the cache directory | plugin | plugin | `Techniques/Rewrite/HerbieRun.cpp` |
+| Solved table (DP), in the cache directory | plugin | plugin | `Solve/SolveSites.cpp`, `Support/CacheKey.h` |
 
 ### Platform
 
@@ -235,7 +235,7 @@ that replaces `malloc` and its family for the whole process, to know the
 extent of every allocation a site's pointer reaches; it calls glibc's own
 allocator underneath, so it takes glibc. A profiling run that declared a
 metric names the command to measure it from `/proc/self/cmdline`, and
-`poseidon-probe` runs the program with POSIX `fork` and `exec`. The GPU
+`poseidon-kappa` runs the program with POSIX `fork` and `exec`. The GPU
 runtimes and profilers take CUDA or ROCm; a HIP build is for one processor.
 
 ## Third-party code and references
@@ -247,8 +247,8 @@ header, with the project's license text.
 
 | Code | Location | Source | License | Relation |
 | --- | --- | --- | --- | --- |
-| Two-component expansion routines | `Core/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
-| Three- and four-component expansion routines, two-component division | `Core/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
+| Two-component expansion routines | `Techniques/Precision/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
+| Three- and four-component expansion routines, two-component division | `Techniques/Precision/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
 | Herbie platform declarations | `tools/calibrate/herbie_platform.py` | [Herbie](https://github.com/herbie-fp/herbie) `src/platforms/c.rkt`, commit 73ba1fe | MIT | The declarations' form, with the cost model's costs and operations |
 | Reference routines of a test | `test/Poseidon/Inputs/expansion_match/multifloats_subset.h` | MultiFloats.jl, commit 28041a3 | MIT | Translated from Julia, statement for statement |
 | Reference routines of a test | `test/Poseidon/Inputs/expansion_match/mx_real_subset.h` | mX_real, commit 72a35d6 | BSD 2-Clause | QxW routines verbatim; mX_real's operator dispatch condensed |
@@ -263,9 +263,9 @@ implementation named.
 
 | Code | Location | Algorithm | Reference implementation |
 | --- | --- | --- | --- |
-| Ozaki-II GEMM runtime | `runtime/ozaki/ozaki_rt.cu`, `runtime/ozaki/OzakiII.h` | K. Ozaki, Y. Uchino, T. Imamura, [arXiv:2504.08009](https://arxiv.org/abs/2504.08009); fast-mode scaling as in GEMMul8 v3.1.1, which attributes it to S. Kawakami, D. Takahashi, [arXiv:2606.29129](https://arxiv.org/abs/2606.29129) | [GEMMul8](https://github.com/RIKEN-RCCS/GEMMul8) v3.1.1 (MIT): its constants and residue method, computed from their definitions, so that results agree bit for bit |
-| Host simulation of the GEMM runtimes | `Techniques/Matmul/MatmulSimulation.cpp` | The Ozaki-II runtime above; TCEC, H. Ootomo, R. Yokota, IJHPCA 36(4), 2022 | GEMMul8 v3.1.1, cuMpSGEMM (MIT): their arithmetic, modeled |
-| In-kernel split scheme | `Techniques/Matmul/InKernelRaise.cpp` | The two-slice split of S. Markidis et al. (IPDPSW 2018), with the residual scaled as Ootomo and Yokota scale it, generalized to N slices | none |
+| Ozaki-II GEMM runtime | `runtime/gemm/OzakiII.cu`, `runtime/gemm/Schemes.h` | K. Ozaki, Y. Uchino, T. Imamura, [arXiv:2504.08009](https://arxiv.org/abs/2504.08009); fast-mode scaling as in GEMMul8 v3.1.1, which attributes it to S. Kawakami, D. Takahashi, [arXiv:2606.29129](https://arxiv.org/abs/2606.29129) | [GEMMul8](https://github.com/RIKEN-RCCS/GEMMul8) v3.1.1 (MIT): its constants and residue method, computed from their definitions, so that results agree bit for bit |
+| Host simulation of the GEMM runtimes | `Techniques/Matmul/Simulation.cpp` | The Ozaki-II runtime above; TCEC, H. Ootomo, R. Yokota, IJHPCA 36(4), 2022 | GEMMul8 v3.1.1, cuMpSGEMM (MIT): their arithmetic, modeled |
+| In-kernel split scheme | `Techniques/Matmul/RealizeInKernel.cpp` | The two-slice split of S. Markidis et al. (IPDPSW 2018), with the residual scaled as Ootomo and Yokota scale it, generalized to N slices | none |
 
 The tests that take the shape of MFEM's kernels (`mfem::forall`,
 `DeviceTensor`, partial-assembly applies) are written for these tests; what

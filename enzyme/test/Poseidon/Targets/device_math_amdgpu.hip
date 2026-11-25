@@ -6,21 +6,21 @@
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN %s -o %t/as_written.site.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %s -o %t/header.s
 // RUN: diff %t/as_written.site.s %t/header.s
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.nosite.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/use.nosite.s
 // RUN: diff %t/as_written.s %t/use.nosite.s
 // RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll %}
 // RUN: %if enzyme %{ FileCheck --check-prefix=CALLS %s < %t/gen.ll %}
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/use.s
 // RUN: diff %t/as_written.s %t/use.s
 // RUN: %if enzyme %{ mkdir -p %t/prof %}
-// RUN: %if enzyme %{ sed -n 's/^@fpprofile_static_preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/_Z4wavePdPKdi.fpprofile %}
+// RUN: %if enzyme %{ sed -n 's/^@poseidon.static.preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/_Z4wavePdPKdi.fpprofile %}
 // RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.s 2>&1 | FileCheck --check-prefix=PROFILED %s %}
 // RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.arch.s %}
 // RUN: %if enzyme %{ diff %t/as_written.arch.s %t/use.profiled.s %}
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.90a.s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.90a.s
 // RUN: diff %t/as_written.90a.s %t/plain.90a.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.90a.s
+// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/use.90a.s
 // RUN: diff %t/as_written.90a.s %t/use.90a.s
 
 // Enzyme's plugin is loaded to generate a profile and not to use one, so the
@@ -62,20 +62,20 @@ POSEIDON_OPTIMIZE __global__ void wave(double *o, const double *a, int n) {
 // CALLS: %[[XP:[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) %[[A]], i64 %[[I:[0-9]+]]
 // CALLS-NEXT: %[[X:[0-9]+]] = load double, ptr addrspace(1) %[[XP]],
 // CALLS: %[[NEG:[0-9]+]] = fneg double %[[X]],
-// CALLS-NEXT: %[[NEGP:[0-9]+]] = call double @poseidonProbePerturbCUDA(i32 0, double %[[NEG]])
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 1, double %[[NEGP]], i64 1,
+// CALLS-NEXT: %[[NEGP:[0-9]+]] = call double @__poseidon_device_perturb(i32 0, double %[[NEG]])
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 1, double %[[NEGP]], i64 1,
 // CALLS: %[[EXP:[0-9]+]] = call {{.*}}double @__ocml_exp_f64(double %[[NEGP]])
-// CALLS-NEXT: %[[EXPP:[0-9]+]] = call double @poseidonProbePerturbCUDA(i32 0, double %[[EXP]])
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 2, double %[[EXPP]], i64 1,
+// CALLS-NEXT: %[[EXPP:[0-9]+]] = call double @__poseidon_device_perturb(i32 0, double %[[EXP]])
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 2, double %[[EXPP]], i64 1,
 // CALLS: %[[COS:[0-9]+]] = call {{.*}}double @__ocml_cos_f64(double {{(noundef )?}}%[[X]])
-// CALLS-NEXT: %[[COSP:[0-9]+]] = call double @poseidonProbePerturbCUDA(i32 0, double %[[COS]])
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 3, double %[[COSP]], i64 1,
+// CALLS-NEXT: %[[COSP:[0-9]+]] = call double @__poseidon_device_perturb(i32 0, double %[[COS]])
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 3, double %[[COSP]], i64 1,
 // CALLS: %[[POW:[0-9]+]] = call {{.*}}double @__ocml_pow_f64(double {{(noundef )?}}%[[X]], double {{(noundef )?}}1.500000e+00)
-// CALLS-NEXT: %[[POWP:[0-9]+]] = call double @poseidonProbePerturbCUDA(i32 0, double %[[POW]])
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 8, double %[[POWP]], i64 2,
+// CALLS-NEXT: %[[POWP:[0-9]+]] = call double @__poseidon_device_perturb(i32 0, double %[[POW]])
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 8, double %[[POWP]], i64 2,
 // CALLS: %[[SIN:[0-9]+]] = call {{.*}}double @__ocml_sin_f64(double {{(noundef )?}}%[[X]])
-// CALLS-NEXT: %[[SINP:[0-9]+]] = call double @poseidonProbePerturbCUDA(i32 0, double %[[SIN]])
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 9, double %[[SINP]], i64 1,
+// CALLS-NEXT: %[[SINP:[0-9]+]] = call double @__poseidon_device_perturb(i32 0, double %[[SIN]])
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePdPKdi_poseidon_body to ptr), i64 9, double %[[SINP]], i64 1,
 // CALLS: call {{.*}}double @__ocml_exp_f64(double %[[NEG]])
 // CALLS: call {{.*}}double @__ocml_cos_f64(double %[[X]])
 // CALLS: call {{.*}}double @__ocml_pow_f64(double %[[X]], double 5.000000e-01)

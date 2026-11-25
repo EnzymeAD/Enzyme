@@ -3,10 +3,10 @@
 // DEFINE:   %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate \
 // DEFINE:   -mllvm -poseidon-cache=%t/c
 // RUN: rm -rf %t && mkdir %t
-// RUN: %{clang} -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -mllvm -poseidon-unit=scale %s -o %t/dev.ll
-// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=scale %s -o %t/host.ll
+// RUN: %{clang} -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -mllvm -poseidon-compilation-id=scale %s -o %t/dev.ll
+// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-compilation-id=scale %s -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
-// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=main -DMAIN_ONLY %s -o %t/main.ll
+// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-compilation-id=main -DMAIN_ONLY %s -o %t/main.ll
 // RUN: FileCheck --check-prefix=INIT %s < %t/main.ll
 // RUN: %{clang} -x c++ -O0 -DMAIN_ONLY -DNO_HIP %s -o %t/cxx.ll
 // RUN: FileCheck --check-prefix=CXX %s < %t/cxx.ll
@@ -46,9 +46,9 @@ int main() { return 0; }
 // HOST: call void @__poseidon_launch_profiled(ptr @_Z5scalePdd, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 1, ptr @poseidon.ptr._Z5scalePdd, ptr @poseidon.off._Z5scalePdd, ptr @poseidon.seed._Z5scalePdd)
 // HOST-NOT: call {{.*}}@hipLaunchKernel(
 // HOST-LABEL: define {{.*}}i32 @main(
-// HOST-NEXT: call void @__poseidon_profile_init_cuda()
+// HOST-NEXT: call void @__poseidon_profile_init_device()
 
 // INIT-LABEL: define {{.*}}i32 @main(
-// INIT-NEXT: call void @__poseidon_profile_init_cuda()
+// INIT-NEXT: call void @__poseidon_profile_init_device()
 
-// CXX-NOT: __poseidon_profile_init_cuda
+// CXX-NOT: __poseidon_profile_init_device

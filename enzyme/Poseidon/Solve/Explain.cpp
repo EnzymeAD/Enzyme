@@ -7,19 +7,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "Explain.h"
-#include "Core/CacheKey.h"
-#include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
+#include "Pass/Diagnostics.h"
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
-#include "Solvers.h"
+#include "SolveSites.h"
+#include "Support/CacheKey.h"
+#include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
-#include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision.h"
-#include "runtime/fpprofiler/FPProfileName.h"
+#include "Techniques/Precision/Precision.h"
+#include "Techniques/Rewrite/Rewrite.h"
+#include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -513,7 +514,7 @@ namespace {
 class Explainer {
   Session &Sess;
   Function &F;
-  FunctionFPState &st;
+  SiteState &st;
   ArrayRef<SolutionStep> steps;
   const SolveRecord &rec;
   ValueNamer namer;
@@ -608,7 +609,7 @@ class Explainer {
   std::string siteLeftReason() const;
 
 public:
-  Explainer(Session &Sess, Function &F, FunctionFPState &st,
+  Explainer(Session &Sess, Function &F, SiteState &st,
             ArrayRef<SolutionStep> steps, const SolveRecord &rec)
       : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F),
         scratch(st.overlay()), A0(rec.baseline), S(rec.accScale), tau(rec.tau),
@@ -654,8 +655,8 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
 
 Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
-  for (size_t i = 0; i < st.COs.size(); ++i) {
-    RewriteUnit &RU = st.COs[i];
+  for (size_t i = 0; i < st.rewriteUnits.size(); ++i) {
+    RewriteUnit &RU = st.rewriteUnits[i];
     if (RU.subgraph != &sg)
       continue;
     json::Object core;
@@ -789,11 +790,11 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       ++k;
     }
 
-  for (size_t i = 0; i < st.CSs.size(); ++i) {
-    PrecisionUnit &PU = st.CSs[i];
+  for (size_t i = 0; i < st.precisionUnits.size(); ++i) {
+    PrecisionUnit &PU = st.precisionUnits[i];
     if (PU.subgraph != &sg)
       continue;
-    auto describe = [&](Alt &A, PTCandidate &cand) {
+    auto describe = [&](Alt &A, PrecisionCandidate &cand) {
       bool expansion = false;
       DenseMap<const FPNode *, std::string> dtypes;
       SmallPtrSet<const Value *, 8> changedInsts;
@@ -859,9 +860,9 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       A.baseCost = U.baseCost;
     };
     for (size_t j = 0; j < PU.candidates.size(); ++j) {
-      PTCandidate &cand = PU.candidates[j];
+      PrecisionCandidate &cand = PU.candidates[j];
       Alt A;
-      A.id = formatv("PT{0}_{1}", i, cand.ordinal).str();
+      A.id = formatv("P{0}_{1}", i, cand.ordinal).str();
       A.item = &PU;
       A.index = j;
       describe(A, cand);
@@ -877,7 +878,7 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       double acc = PU.getAccCostDelta(j);
       PrecisionUnit::RewriteUnitSet cos;
       for (const auto &[item, idx] : applied)
-        for (RewriteUnit &RU : st.COs)
+        for (RewriteUnit &RU : st.rewriteUnits)
           if (&RU == item && RU.subgraph == &sg)
             cos.insert(&RU);
       if (applied.count({&PU, j}) && !cos.empty()) {
@@ -927,8 +928,8 @@ void Explainer::judge(Unit &U) {
       A.status = "applied";
       A.rank = -1;
       U.applied = true;
-      if (rec.selector == "manual")
-        A.reason = "selected by -poseidon-apply-rewrites";
+      if (rec.selector == "pinned")
+        A.reason = "selected by -poseidon-pin";
       else if (A.kind == "matmul" && rec.selector == "error-budget")
         A.reason = "the cheapest product candidate that meets the target";
       else if (tau > 0.0)
@@ -987,7 +988,7 @@ void Explainer::judge(Unit &U) {
         std::string ids;
         for (const SolutionStep &step : sol->second)
           ids += (ids.empty() ? "" : ",") + stepId(step);
-        A.reason += "; -poseidon-apply-rewrites=" + ids + " applies it";
+        A.reason += "; -poseidon-pin=" + ids + " applies it";
       }
       A.rank = 1;
       continue;
@@ -1045,7 +1046,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     SmallVector<std::string, 2> why;
     if (sg) {
       bool hadCO = false;
-      for (const RewriteUnit &RU : st.COs)
+      for (const RewriteUnit &RU : st.rewriteUnits)
         if (RU.subgraph == sg) {
           hadCO = true;
           if (!RU.unpricedReason.empty())
@@ -1055,12 +1056,12 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
             why.push_back("Herbie returned no alternative (" + RU.herbieStatus +
                           ")");
         }
-      for (const PrecisionUnit &PU : st.CSs)
+      for (const PrecisionUnit &PU : st.precisionUnits)
         if (PU.subgraph == sg && !PU.unpricedReason.empty())
           why.push_back("its candidates could not be priced: " +
                         PU.unpricedReason);
       if (!hadCO) {
-        if (!Sess.Opts.Candidates.EnableHerbie)
+        if (!Sess.Opts.Candidates.EnableRewrites)
           why.push_back("the algebraic search is disabled");
         else
           for (Instruction *O : sg->outputs) {
@@ -1173,7 +1174,7 @@ Error Explainer::buildSubgraph(size_t s) {
       out["name"] = name;
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
-    for (const RewriteUnit &RU : st.COs)
+    for (const RewriteUnit &RU : st.rewriteUnits)
       if (RU.subgraph == &sg && !RU.isArray() && RU.roots.front() == O) {
         out["fpcore"] = RU.expr;
         break;
@@ -1246,11 +1247,11 @@ Error Explainer::buildSubgraph(size_t s) {
 }
 
 Error Explainer::buildMatmul(size_t m) {
-  MatmulUnit &MU = st.CMs[m];
+  MatmulUnit &MU = st.matmulUnits[m];
   Unit U;
   U.id = formatv("M{0}", m).str();
   U.kind = "matmul";
-  const AbstractMatmul *mm = MU.matmul;
+  const RecognizedMatmul *mm = MU.matmul;
   if (mm) {
     U.root = dyn_cast_or_null<Instruction>(mm->outputValue);
     if (!U.root && !mm->footprint.empty())
@@ -1345,7 +1346,7 @@ Error Explainer::build() {
   for (size_t s = 0; s < st.subgraphs.size(); ++s)
     if (Error E = buildSubgraph(s))
       return E;
-  for (size_t m = 0; m < st.CMs.size(); ++m)
+  for (size_t m = 0; m < st.matmulUnits.size(); ++m)
     if (Error E = buildMatmul(m))
       return E;
   return Error::success();
@@ -1579,8 +1580,8 @@ std::string Explainer::siteLeftReason() const {
     return "no frontier point is within the cost budget " +
            costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
   }
-  if (rec.selector == "manual")
-    return "no -poseidon-apply-rewrites item names a candidate of this site";
+  if (rec.selector == "pinned")
+    return "no -poseidon-pin item names a candidate of this site";
   if (rec.selected)
     return "the selected frontier point leaves the site as written";
   return "no product candidate meets the target and is cheaper than as "
@@ -1841,7 +1842,7 @@ void explainUnprofiled(Session &S, Function &F, double tau, bool siteTarget,
   explainLeftAlone(S, F, tau, siteTarget, status, cause, profile);
 }
 
-Error explainSolve(Session &S, Function &F, FunctionFPState &st,
+Error explainSolve(Session &S, Function &F, SiteState &st,
                    ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
   const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
   const bool write = !explanationDir(S.Opts).empty();

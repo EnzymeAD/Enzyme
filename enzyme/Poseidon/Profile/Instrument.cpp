@@ -8,15 +8,16 @@
 
 #include "Instrument.h"
 
-#include "Core/Options.h"
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/LaunchDescriptors.h"
+#include "Sites/LaunchManifest.h"
+#include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 #include "poseidon/poseidon.h"
-#include "runtime/fpprofiler/FPProfilerCUDA.h"
+#include "runtime/profile/DeviceProfiler.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -75,7 +76,7 @@ Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
 /// stem.
 static Constant *getProfileNamePointer(Module &M, StringRef key,
                                        StringRef profileName) {
-  return getStringPointer(M, ("poseidon_site_" + key).str(), profileName);
+  return getStringPointer(M, ("poseidon.site." + key).str(), profileName);
 }
 
 FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
@@ -298,7 +299,7 @@ void emitProfileStaticData(Function &clone, StringRef profileName,
 
   Constant *namePtr = getProfileNamePointer(M, clone.getName(), profileName);
   Constant *textPtr =
-      getStringPointer(M, ("fpprofile_static_" + clone.getName()).str(), text);
+      getStringPointer(M, ("poseidon.static." + clone.getName()).str(), text);
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(Ctx), {PtrTy, PtrTy}, false);
 
@@ -321,12 +322,12 @@ bool registerProfileStatic(Module &M, StringRef key, StringRef profileName,
 
   Constant *namePtr = getProfileNamePointer(M, key, profileName);
   Constant *textPtr =
-      getStringPointer(M, ("fpprofile_static_" + key).str(), text);
+      getStringPointer(M, ("poseidon.static." + key).str(), text);
   FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
 
   FunctionCallee reg =
       getProfilerHook(M, Target::of(M).probes().RegisterStatic, FT);
-  std::string ctorName = ("poseidon_register_static_" + key).str();
+  std::string ctorName = ("poseidon.register_static." + key).str();
   if (M.getFunction(ctorName))
     return false;
   Function *ctor = Function::Create(FunctionType::get(VoidTy, {}, false),
@@ -341,7 +342,7 @@ bool registerProfileStatic(Module &M, StringRef key, StringRef profileName,
 
 Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
   if (!O.Profiling.generatesProfile() || Target::of(M).isDevice() ||
-      M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
+      M.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE))
     return false;
   std::optional<VariableRegistration> registration = variableRegistration(M);
   if (!registration)
@@ -354,14 +355,14 @@ Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
   LLVMContext &C = M.getContext();
   Type *VoidTy = Type::getVoidTy(C);
   Type *PtrTy = getInt8PtrTy(C);
-  const uint64_t size = sizeof(PoseidonCUDAProfileTable);
+  const uint64_t size = sizeof(DeviceProfileTable);
   auto *shadowTy = ArrayType::get(Type::getInt8Ty(C), size);
   auto *shadow = new GlobalVariable(
       M, shadowTy, /*isConstant=*/false, GlobalValue::InternalLinkage,
-      Constant::getNullValue(shadowTy), POSEIDON_CUDA_PROFILE_TABLE);
+      Constant::getNullValue(shadowTy), POSEIDON_DEVICE_PROFILE_TABLE);
   shadow->setAlignment(Align(8));
-  registerDeviceVariable(M, *registration, shadow, POSEIDON_CUDA_PROFILE_TABLE,
-                         size);
+  registerDeviceVariable(M, *registration, shadow,
+                         POSEIDON_DEVICE_PROFILE_TABLE, size);
 
   Function *ctor = Function::Create(
       FunctionType::get(VoidTy, false), GlobalValue::InternalLinkage,
@@ -553,10 +554,9 @@ loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
                              "load: ") +
                        toString(parsed.takeError()));
   Module &L = **parsed;
-  GlobalVariable *libTable = L.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE);
-  if (!libTable ||
-      L.getDataLayout().getTypeAllocSize(libTable->getValueType()) !=
-          sizeof(PoseidonCUDAProfileTable))
+  GlobalVariable *libTable = L.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE);
+  if (!libTable || L.getDataLayout().getTypeAllocSize(
+                       libTable->getValueType()) != sizeof(DeviceProfileTable))
     report_fatal_error("Poseidon: the device profiler bitcode does not define "
                        "the table the host runtime writes");
   // A library built for one processor serves only the probes compiled for it.
@@ -617,7 +617,7 @@ Expected<bool> linkDeviceProfiler(Module &M, bool profileGenerate) {
   const Target &target = Target::of(M);
   if (!profileGenerate || !target.isDevice())
     return false;
-  if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
+  if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE))
     if (!T->isDeclaration())
       return false;
   // Without the target's device profiler the probes would stay external and
@@ -633,18 +633,18 @@ Expected<bool> linkDeviceProfiler(Module &M, bool profileGenerate) {
   if (!loaded)
     return loaded.takeError();
   std::unique_ptr<Module> L = std::move(*loaded);
-  GlobalVariable *libTable = L->getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE);
+  GlobalVariable *libTable = L->getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE);
   // Code generation follows the GPU the module is compiled for, and the
   // module keeps its own flags, taking only what its probes reach.
   adaptDeviceProfiler(*L, M);
   SmallVector<std::string, 16> linked = definedOnlyBy(*L, M);
 
   // The host half registers the table whether or not a probe reads it.
-  GlobalVariable *table = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE);
+  GlobalVariable *table = M.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE);
   if (!table)
     table = new GlobalVariable(
         M, libTable->getValueType(), /*isConstant=*/false,
-        GlobalValue::ExternalLinkage, nullptr, POSEIDON_CUDA_PROFILE_TABLE,
+        GlobalValue::ExternalLinkage, nullptr, POSEIDON_DEVICE_PROFILE_TABLE,
         nullptr, GlobalValue::NotThreadLocal, libTable->getAddressSpace());
   appendToCompilerUsed(M, {table});
 
@@ -656,7 +656,7 @@ Expected<bool> linkDeviceProfiler(Module &M, bool profileGenerate) {
   // registers it by name in the linked image.
   for (const std::string &name : linked)
     if (GlobalValue *G = M.getNamedValue(name); G && !G->isDeclaration())
-      G->setLinkage(name == POSEIDON_CUDA_PROFILE_TABLE
+      G->setLinkage(name == POSEIDON_DEVICE_PROFILE_TABLE
                         ? GlobalValue::WeakODRLinkage
                         : GlobalValue::InternalLinkage);
   return true;
@@ -695,7 +695,7 @@ bool injectHostProfilerInit(Module &M, bool print) {
   if (Target::of(M).isDevice())
     return false;
   // A host-only build links no CUDA profiler runtime, so the call injected
-  // below would be an undefined reference to __poseidon_profile_init_cuda.
+  // below would be an undefined reference to __poseidon_profile_init_device.
   OffloadRuntime R = offloadRuntimeOf(M);
   if (R == OffloadRuntime::None)
     return false;
@@ -712,7 +712,7 @@ bool injectHostProfilerInit(Module &M, bool print) {
   B.CreateCall(initFn, {})->setDoesNotThrow();
   if (print)
     llvm::errs()
-        << "[poseidon] FP profiler CUDA registration injected at main\n";
+        << "[poseidon] device profiler registration injected at main\n";
   return true;
 }
 
@@ -728,7 +728,7 @@ bool defineProfileDirectory(const Options &O, Module &M) {
   return true;
 }
 
-/// The probe is keyed by the poseidon_site_<name> global the value probes use,
+/// The probe is keyed by the poseidon.site.<name> global the value probes use,
 /// which exists only after AD.
 void injectBlockDimProbes(Module &M, bool print) {
   const Target &T = Target::of(M);
@@ -761,7 +761,7 @@ void injectBlockDimProbes(Module &M, bool print) {
     auto *gv = dyn_cast<GlobalVariable>(nameArg->stripPointerCasts());
     if (!gv)
       report_fatal_error("Poseidon: a value probe in " + F.getName() +
-                         " has no poseidon_site_ global as its name operand");
+                         " has no poseidon.site. global as its name operand");
     IRBuilder<> B(&*F.getEntryBlock().getFirstInsertionPt());
     Value *nameAtEntry = B.CreateInBoundsGEP(gv->getValueType(), gv,
                                              {B.getInt32(0), B.getInt32(0)});

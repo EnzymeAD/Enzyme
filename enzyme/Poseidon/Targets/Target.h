@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TARGET_H
-#define POSEIDON_TARGET_H
+#ifndef POSEIDON_TARGETS_TARGET_H
+#define POSEIDON_TARGETS_TARGET_H
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Intrinsics.h"
@@ -193,4 +193,4 @@ const ProbeABI &deviceProbes();
 
 } // namespace poseidon
 
-#endif // POSEIDON_TARGET_H
+#endif // POSEIDON_TARGETS_TARGET_H

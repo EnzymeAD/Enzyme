@@ -22,8 +22,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MATH_LIBRARY_H
-#define POSEIDON_MATH_LIBRARY_H
+#ifndef POSEIDON_TARGETS_MATH_LIBRARY_H
+#define POSEIDON_TARGETS_MATH_LIBRARY_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -189,4 +189,4 @@ llvm::Error requireDeviceCallees(llvm::Module &M, bool profileGenerate);
 
 } // namespace poseidon
 
-#endif // POSEIDON_MATH_LIBRARY_H
+#endif // POSEIDON_TARGETS_MATH_LIBRARY_H

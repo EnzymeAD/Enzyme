@@ -6,14 +6,14 @@
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DAS_WRITTEN %s -o %t/as_written.site.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %s -o %t/header.ptx
 // RUN: diff %t/as_written.site.ptx %t/header.ptx
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.nosite.ptx
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/use.nosite.ptx
 // RUN: diff %t/as_written.ptx %t/use.nosite.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
 // RUN: FileCheck --check-prefix=CALLS %s < %t/gen.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.ptx
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o %t/use.ptx
 // RUN: diff %t/as_written.ptx %t/use.ptx
 // RUN: mkdir -p %t/prof
-// RUN: sed -n 's/^@fpprofile_static_preprocess__Z4wavePfPKfi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/_Z4wavePfPKfi.fpprofile
+// RUN: sed -n 's/^@poseidon.static.preprocess__Z4wavePfPKfi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/_Z4wavePfPKfi.fpprofile
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.ptx 2>&1 | FileCheck --check-prefix=PROFILED %s
 // RUN: diff %t/as_written.ptx %t/use.profiled.ptx
 
@@ -57,25 +57,25 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
 // CALLS: [[XP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[PA]], i64 [[I:%[0-9]+]]
 // CALLS-NEXT: [[X:%[0-9]+]] = load float, ptr [[XP]],
 // CALLS: [[NEG:%[0-9]+]] = fneg float [[X]],
-// CALLS-NEXT: [[NEGP:%[0-9]+]] = call float @poseidonProbePerturbCUDAf(i32 0, float [[NEG]])
+// CALLS-NEXT: [[NEGP:%[0-9]+]] = call float @__poseidon_device_perturbf(i32 0, float [[NEG]])
 // CALLS-NEXT: [[NEGD:%[0-9]+]] = fpext float [[NEGP]] to double
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 1, double [[NEGD]], i64 1,
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 1, double [[NEGD]], i64 1,
 // CALLS: [[EXP:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_expf(float {{(noundef )?}}[[NEGP]])
-// CALLS-NEXT: [[EXPP:%[0-9]+]] = call float @poseidonProbePerturbCUDAf(i32 0, float [[EXP]])
+// CALLS-NEXT: [[EXPP:%[0-9]+]] = call float @__poseidon_device_perturbf(i32 0, float [[EXP]])
 // CALLS-NEXT: [[EXPD:%[0-9]+]] = fpext float [[EXPP]] to double
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 2, double [[EXPD]], i64 1,
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 2, double [[EXPD]], i64 1,
 // CALLS: [[COS:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_cosf(float {{(noundef )?}}[[X]])
-// CALLS-NEXT: [[COSP:%[0-9]+]] = call float @poseidonProbePerturbCUDAf(i32 0, float [[COS]])
+// CALLS-NEXT: [[COSP:%[0-9]+]] = call float @__poseidon_device_perturbf(i32 0, float [[COS]])
 // CALLS-NEXT: [[COSD:%[0-9]+]] = fpext float [[COSP]] to double
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 3, double [[COSD]], i64 1,
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 3, double [[COSD]], i64 1,
 // CALLS: [[POW:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_powf(float {{(noundef )?}}[[X]], float {{(noundef )?}}1.500000e+00)
-// CALLS-NEXT: [[POWP:%[0-9]+]] = call float @poseidonProbePerturbCUDAf(i32 0, float [[POW]])
+// CALLS-NEXT: [[POWP:%[0-9]+]] = call float @__poseidon_device_perturbf(i32 0, float [[POW]])
 // CALLS-NEXT: [[POWD:%[0-9]+]] = fpext float [[POWP]] to double
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 8, double [[POWD]], i64 2,
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 8, double [[POWD]], i64 2,
 // CALLS: [[SIN:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_sinf(float {{(noundef )?}}[[X]])
-// CALLS-NEXT: [[SINP:%[0-9]+]] = call float @poseidonProbePerturbCUDAf(i32 0, float [[SIN]])
+// CALLS-NEXT: [[SINP:%[0-9]+]] = call float @__poseidon_device_perturbf(i32 0, float [[SIN]])
 // CALLS-NEXT: [[SIND:%[0-9]+]] = fpext float [[SINP]] to double
-// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 9, double [[SIND]], i64 1,
+// CALLS: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 9, double [[SIND]], i64 1,
 // CALLS: call {{.*}}float @__nv_cosf(float [[X]])
 // CALLS: call {{.*}}float @__nv_powf(float [[X]], float 5.000000e-01)
 // CALLS: call {{.*}}float @__nv_sinf(float [[X]])

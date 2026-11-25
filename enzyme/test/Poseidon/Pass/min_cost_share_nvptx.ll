@@ -2,14 +2,14 @@
 ; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 ; DEFINE: %{use} = -poseidon-kernels=.*_kernel \
 ; DEFINE:   -poseidon-profile-use=%t/prof \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
-; DEFINE:   -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
-; DEFINE:   -poseidon-enable-three-tier=false \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
+; DEFINE:   -poseidon-precision-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print
 ; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/hot_kernel.fpprofile
-; RUN: cp %S/../Inputs/min_cost_share/cold_kernel.fpprofile %t/prof/
+; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/hot_kernel.fpprofile
+; RUN: cp %S/Inputs/min_cost_share/cold_kernel.fpprofile %t/prof/
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -poseidon-explain=%t/filter/ex -S 2>&1 \
 ; RUN:   | tee %t/filter.log | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/filter.log %t/filter/ex | FileCheck --check-prefix=JSON %s

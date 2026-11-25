@@ -7,12 +7,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "ProfiledLaunch.h"
-#include "Core/Options.h"
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
 #include "Instrument.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
 #include "Sites/Annotations.h"
-#include "Sites/LaunchDescriptors.h"
+#include "Sites/LaunchManifest.h"
+#include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 

@@ -70,7 +70,7 @@ config.substitutions += [
     ('%poseidon_clangxx', os.path.join(poseidon_bin, 'poseidon-clang++')),
     ('%poseidon_clang', os.path.join(poseidon_bin, 'poseidon-clang')),
     ('%poseidon_calibrate', os.path.join(poseidon_bin, 'poseidon-calibrate')),
-    ('%poseidon_probe', os.path.join(poseidon_bin, 'poseidon-probe')),
+    ('%poseidon_kappa', os.path.join(poseidon_bin, 'poseidon-kappa')),
     ('%python', python),
     ('%poseidon_explain', python + ' ' + os.path.join(
         config.poseidon_src_root, 'tools', 'explain', 'poseidon-explain')),
@@ -99,7 +99,7 @@ config.substitutions += [
     # pass emit the call.
     ('%poseidon_profile_lib',
      os.path.join(poseidon_lib, 'libposeidon_profile.a')),
-    ('%poseidon_profile_inc', os.path.join(poseidon_runtime, 'fpprofiler') +
+    ('%poseidon_profile_inc', os.path.join(poseidon_runtime, 'profile') +
      ' -I' + os.path.join(config.enzyme_src_root, 'include')),
     ('%poseidon_runtime_inc', poseidon_runtime),
     # The CUDA and the HIP builds of the GPU runtimes, side by side.
@@ -109,9 +109,9 @@ config.substitutions += [
     ('%rocm_path', config.rocm_path),
     ('%poseidon_profile_cuda_lib',
      os.path.join(poseidon_lib, 'libposeidon_profile_cuda.a')),
-    ('%poseidon_rt_lib',
-     os.path.join(poseidon_lib, 'libposeidon_rt.a') + config.poseidon_rt_link),
-    ('%poseidon_rt_hip_lib', os.path.join(poseidon_lib, 'libposeidon_rt_hip.a')),
+    ('%poseidon_gemm_cuda_lib',
+     os.path.join(poseidon_lib, 'libposeidon_gemm_cuda.a') + config.poseidon_rt_link),
+    ('%poseidon_gemm_hip_lib', os.path.join(poseidon_lib, 'libposeidon_gemm_hip.a')),
 ]
 
 # Up to LLVM 23 the code generator of a -ffp-contract=fast unit fuses

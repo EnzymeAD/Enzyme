@@ -6,14 +6,14 @@
 
 # The headers the runtime sources include, for the HIP compiles' dependencies.
 set(POSEIDON_RUNTIME_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/hip_as_cuda.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/GemmDispatch.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/GemmDispatch.inc
-    ${CMAKE_CURRENT_SOURCE_DIR}/GemmRuntime.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/fpprofiler/FPProfilerCUDA.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/fpprofiler/FPProfileName.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/fpprofiler/ShadowTable.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/ozaki/OzakiII.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/HipAsCuda.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmDispatch.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmDispatch.inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmRuntime.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProfiler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/profile/ProfileFormat.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/profile/ShadowTable.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/Schemes.h
     ${ENZYME_SOURCE_DIR}/include/poseidon/poseidon.h)
 set(POSEIDON_RUNTIME_HEADERS ${POSEIDON_RUNTIME_HEADERS} PARENT_SCOPE)
 
@@ -65,14 +65,14 @@ endfunction()
 
 # The host profiler, poseidon_metric, and the condition-number run: linked by
 # every profile-generate build and, for poseidon_metric, by profile use.
-add_library(poseidon_profile STATIC fpprofiler/FPProfiler.cpp)
+add_library(poseidon_profile STATIC profile/Profiler.cpp)
 target_include_directories(
   poseidon_profile
   PRIVATE ${ENZYME_SOURCE_DIR}/include)
 # Linked into profile-generate builds only: it replaces malloc for the process.
-add_library(poseidon_profile_host STATIC fpprofiler/FPProfilerHost.cpp)
+add_library(poseidon_profile_shadows STATIC profile/Shadows.cpp)
 install(
-  TARGETS poseidon_profile poseidon_profile_host
+  TARGETS poseidon_profile poseidon_profile_shadows
   EXPORT PoseidonTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
@@ -80,7 +80,7 @@ install(
 # of GPU code. It links no GPU runtime: it takes the program's own, the one the
 # program's device modules are registered with.
 poseidon_add_gpu_runtime(poseidon_profile_cuda poseidon_profile_hip SOURCES
-                         fpprofiler/FPProfilerCUDA.cu)
+                         profile/DeviceProfiler.cu)
 if(POSEIDON_HAS_CUDA)
   target_include_directories(
     poseidon_profile_cuda
@@ -96,15 +96,15 @@ endif()
 # with DEFINES.
 function(poseidon_embed_device_profiler suffix consumer)
   cmake_parse_arguments(PARSE_ARGV 2 _arg "" "" "COMPILE;DEFINES")
-  set(_src ${CMAKE_CURRENT_SOURCE_DIR}/fpprofiler/FPProfilerDevice.cu)
+  set(_src ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProbes.cu)
   set(_bc ${POSEIDON_BINARY_DIR}/FPProfilerDevice${suffix}.bc)
   set(_inc ${POSEIDON_BINARY_DIR}/FPProfilerDevice${suffix}.inc)
   add_custom_command(
     OUTPUT ${_bc}
     COMMAND ${_arg_COMPILE} -emit-llvm -c ${_src} -o ${_bc}
     DEPENDS
-      ${_src} ${CMAKE_CURRENT_SOURCE_DIR}/fpprofiler/FPProfilerCUDA.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/hip_as_cuda.h
+      ${_src} ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProfiler.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/HipAsCuda.h
     WORKING_DIRECTORY ${POSEIDON_BINARY_DIR}
     VERBATIM)
   add_custom_command(
@@ -174,28 +174,29 @@ endif()
 
 # Native, Ozaki-II and direct for every GPU runtime; TCEC on cuMpSGEMM for
 # CUDA only.
-poseidon_add_gpu_runtime(poseidon_rt poseidon_rt_hip SOURCES native/native_rt.cu
-                         ozaki/ozaki_rt.cu direct/direct_rt.cu)
+poseidon_add_gpu_runtime(poseidon_gemm_cuda poseidon_gemm_hip SOURCES
+                         gemm/Native.cu gemm/OzakiII.cu gemm/Direct.cu)
 if(POSEIDON_HAS_CUDA)
   # Optimized in every build type but Debug, as LLVM's own runtimes are;
   # -Xcompiler, since nvcc warns when its own -O is given twice.
   target_compile_options(
-    poseidon_rt
+    poseidon_gemm_cuda
     PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Xcompiler=-O3>)
-  # What a program that links poseidon_rt links besides it is said here only
-  # (poseidon_rt_link_files).
-  target_link_libraries(poseidon_rt PUBLIC CUDA::cublas CUDA::cudart)
+  # What a program that links poseidon_gemm_cuda links besides it is said here
+  # only
+  # (poseidon_gemm_cuda_link_files).
+  target_link_libraries(poseidon_gemm_cuda PUBLIC CUDA::cublas CUDA::cudart)
   if(POSEIDON_HAS_TCEC)
-    target_sources(poseidon_rt PRIVATE tcec/tcec_rt.cu)
+    target_sources(poseidon_gemm_cuda PRIVATE gemm/Tcec.cu)
     target_include_directories(
-      poseidon_rt
+      poseidon_gemm_cuda
       PRIVATE ${POSEIDON_CUMPSGEMM_ROOT}/include)
     target_link_libraries(
-      poseidon_rt
+      poseidon_gemm_cuda
       PUBLIC ${POSEIDON_CUMPSGEMM_ROOT}/build/libcumpsgemm.so)
   endif()
   install(
-    TARGETS poseidon_rt poseidon_profile_cuda
+    TARGETS poseidon_gemm_cuda poseidon_profile_cuda
     EXPORT PoseidonTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
@@ -204,28 +205,29 @@ if(POSEIDON_HAS_HIP)
   # of the ROCm installation of the machine the package is used on, which the
   # package configuration finds.
   target_link_libraries(
-    poseidon_rt_hip
+    poseidon_gemm_hip
     INTERFACE
       $<BUILD_INTERFACE:${POSEIDON_ROCM_PATH}/lib/libhipblas.so>
       $<BUILD_INTERFACE:${POSEIDON_ROCM_PATH}/lib/libamdhip64.so>
       $<INSTALL_INTERFACE:Poseidon::rocm_hipblas>
       $<INSTALL_INTERFACE:Poseidon::rocm_amdhip64>)
   install(
-    TARGETS poseidon_rt_hip poseidon_profile_hip
+    TARGETS poseidon_gemm_hip poseidon_profile_hip
     EXPORT PoseidonTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
-# poseidon_rt_link_files(<out> [TOOLKIT])
-# The libraries poseidon_rt links, in its order: cuMpSGEMM defines cuBLAS's
+# poseidon_gemm_cuda_link_files(<out> [TOOLKIT])
+# The libraries poseidon_gemm_cuda links, in its order: cuMpSGEMM defines
+# cuBLAS's
 # GEMM entry points and comes after cuBLAS, so that a call of cuBLAS reaches
 # cuBLAS. Without TOOLKIT only those that are files, which a link adds beyond
 # the CUDA toolkit's libraries; with it every one, as a file.
-function(poseidon_rt_link_files out)
+function(poseidon_gemm_cuda_link_files out)
   cmake_parse_arguments(PARSE_ARGV 1 _arg "TOOLKIT" "" "")
   set(_files "")
-  if(TARGET poseidon_rt)
-    get_target_property(_libs poseidon_rt INTERFACE_LINK_LIBRARIES)
+  if(TARGET poseidon_gemm_cuda)
+    get_target_property(_libs poseidon_gemm_cuda INTERFACE_LINK_LIBRARIES)
     foreach(_lib ${_libs})
       if(NOT TARGET ${_lib})
         list(APPEND _files ${_lib})

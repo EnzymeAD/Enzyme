@@ -4,7 +4,7 @@
 // RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
 // RUN: FileCheck --check-prefix=PROBES %s < %t/gen.ll
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O3 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/empty -DEMPTY_ONLY %s -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY %s
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O3 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O3 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s
 
 // A site is everything its kernel runs on the device. The annotated lambda
 // only calls `element`, which stays a call at -O3 (here because of noinline;
@@ -66,17 +66,17 @@ POSEIDON_OPTIMIZE __attribute__((global)) void copy(double *y,
 // `element` no more.
 // PROBES: define internal fastcc void @diffepreprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body(
 // PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
-// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 0, double %{{[0-9]+}}, i64 3,
+// PROBES: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 0, double %{{[0-9]+}}, i64 3,
 // PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
-// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 1, double %{{[0-9]+}}, i64 2,
+// PROBES: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 1, double %{{[0-9]+}}, i64 2,
 // PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
-// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 2, double %{{[0-9]+}}, i64 2,
+// PROBES: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 2, double %{{[0-9]+}}, i64 2,
 // PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
-// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 3, double %{{[0-9]+}}, i64 3,
+// PROBES: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 3, double %{{[0-9]+}}, i64 3,
 // PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
-// PROBES-NOT: @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
+// PROBES-NOT: @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
 // PROBES: {{^}}}
-// PROBES-NOT: @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
+// PROBES-NOT: @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
 
 // EMPTY: annotated_lambda_callee_nvptx.cu:[[@LINE-29]]:{{[0-9]+}}: warning: Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
 // EMPTY: 1 warning generated when compiling for {{.*}}

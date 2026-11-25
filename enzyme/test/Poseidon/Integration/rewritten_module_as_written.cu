@@ -3,14 +3,14 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S %s -o %t/plain.ptx
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=OUT %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/use.ptx 2> %t/use.err
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/use.ptx 2> %t/use.err
 // RUN: awk '/^.visible .entry _Z(5other|10unprofiled)/{p=1} p{print} /^}/{p=0}' %t/plain.ptx > %t/plain.fns
 // RUN: awk '/^.visible .entry _Z(5other|10unprofiled)/{p=1} p{print} /^}/{p=0}' %t/use.ptx > %t/use.fns
 // RUN: diff %t/plain.fns %t/use.fns
 // RUN: FileCheck --check-prefix=FNS %s < %t/use.fns
 // RUN: FileCheck --check-prefix=SOLVE --implicit-check-not=warning: %s < %t/use.err
 // RUN: awk '/^.visible .entry _Z4site/{p=1} p{print} /^}/{p=0}' %t/use.ptx | FileCheck --check-prefix=USE-SITE --implicit-check-not=fma.rn.f64 %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -o %t/use
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -o %t/use
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
 
 // In a module where a site is rewritten, every function no rewrite reached is
@@ -73,7 +73,7 @@ int main(int argc, char **) {
 // SOLVE-NEXT: [poseidon] Optimizing [[BODY:preprocess__Z4sitePKdPdi_poseidon_body]] with relative error tolerance: 1.000000e-06
 // SOLVE: [poseidon] [[BODY]]: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
 // SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-// SOLVE: [poseidon] pin: _Z4sitePKdPdi:PT0=All FP64(0%) + FP32(100%){{$}}
+// SOLVE: [poseidon] pin: _Z4sitePKdPdi:P0=All FP64(0%) + FP32(100%){{$}}
 // SOLVE: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/_Z10unprofiledPKdPdi.fpprofile); left unchanged
 // SOLVE-NEXT: [poseidon] {{.*}}rewritten_module_as_written.cu: 1 function(s) a rewrite reached; every other function as written
 

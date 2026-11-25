@@ -1,4 +1,4 @@
-//===- Pins.h - the items of -poseidon-apply-rewrites ---------------------===//
+//===- Pins.h - the items of -poseidon-pin ---------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,16 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// -poseidon-apply-rewrites names the steps a site applies instead of solving
+// -poseidon-pin names the steps a site applies instead of solving
 // for them, and a solve prints the value that applies its steps again.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_PINS_H
-#define POSEIDON_PINS_H
+#ifndef POSEIDON_SOLVE_PINS_H
+#define POSEIDON_SOLVE_PINS_H
 
-#include "Core/Solver.h"
-#include "Techniques/Unit.h"
+#include "Solve/DP.h"
+#include "Techniques/SiteUnit.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -33,18 +33,18 @@ class Module;
 
 namespace poseidon {
 
-struct FunctionFPState;
+struct SiteState;
 class Session;
 
-/// One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
+/// One item of -poseidon-pin: [<site>:]<unit>_<ordinal> or
 /// [<site>:]<unit>=<name>.
-struct ApplyItem {
+struct PinItem {
   /// The item as written.
   std::string text;
   /// The site the item names; empty when it applies to every site.
   std::string site;
   /// The kind of the unit it names.
-  UnitKind kind = UnitKind::R;
+  UnitKind kind = UnitKind::Rewrite;
   /// The index of the unit among the site's units of that kind.
   size_t unit = 0;
   /// The candidate it applies, by ordinal; none when it names one.
@@ -57,13 +57,13 @@ struct ApplyItem {
   std::set<std::string> named;
 };
 
-/// What the compile knows of its -poseidon-apply-rewrites items and of the
+/// What the compile knows of its -poseidon-pin items and of the
 /// sites it has noted against them.
 struct PinState {
-  /// Whether `items` holds the items of the compile's -poseidon-apply-rewrites.
+  /// Whether `items` holds the items of the compile's -poseidon-pin.
   bool parsed = false;
   /// The items, in the order the flag gives them.
-  std::vector<ApplyItem> items;
+  std::vector<PinItem> items;
   /// The keys of the module's sites noted so far, in the order they were noted.
   std::vector<std::string> sites;
   /// Two sites cut from one body share a key; printing their pin twice would
@@ -71,23 +71,23 @@ struct PinState {
   std::set<std::string> printed;
 };
 
-/// The steps the items of -poseidon-apply-rewrites name at the site of `st`, in
+/// The steps the items of -poseidon-pin name at the site of `st`, in
 /// the order a solve of the site returns its steps.
-llvm::Expected<llvm::SmallVector<SolutionStep>>
-parseManualRewrites(Session &S, FunctionFPState &st);
+llvm::Expected<llvm::SmallVector<SolutionStep>> parsePins(Session &S,
+                                                          SiteState &st);
 
-/// A site of the module, for the items of -poseidon-apply-rewrites that name
+/// A site of the module, for the items of -poseidon-pin that name
 /// one; `body` is what the site's clone is made from. An item whose site two
 /// sites answer to is an error.
 llvm::Error noteSiteForPins(Session &S, const llvm::Function &body);
 
-/// The value of -poseidon-apply-rewrites that applies `applied` at the site of
+/// The value of -poseidon-pin that applies `applied` at the site of
 /// `st` again.
-std::string pinValue(const Session &S, const FunctionFPState &st,
+std::string pinValue(const Session &S, const SiteState &st,
                      llvm::ArrayRef<SolutionStep> applied);
 
 /// Prints pinValue once per value.
-void printPin(Session &S, const FunctionFPState &st,
+void printPin(Session &S, const SiteState &st,
               llvm::ArrayRef<SolutionStep> applied);
 
 /// At the end of a module: an item that names a site has to have named a site
@@ -95,4 +95,4 @@ void printPin(Session &S, const FunctionFPState &st,
 llvm::Error checkPinnedSites(Session &S, llvm::Module &M);
 
 } // namespace poseidon
-#endif // POSEIDON_PINS_H
+#endif // POSEIDON_SOLVE_PINS_H

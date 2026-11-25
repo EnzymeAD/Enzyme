@@ -72,5 +72,5 @@ template void istage<3>(int, const int *, int *);
 // CHECK-NOT: .group_segment_fixed_size:
 
 // The probes the profiled kernel calls are linked into the code object.
-// SYM-DAG: FUNC LOCAL DEFAULT {{[0-9]+}} poseidonLogValueCUDA{{$}}
-// SYM-DAG: FUNC LOCAL DEFAULT {{[0-9]+}} poseidonLogGradCUDA{{$}}
+// SYM-DAG: FUNC LOCAL DEFAULT {{[0-9]+}} __poseidon_device_log_value{{$}}
+// SYM-DAG: FUNC LOCAL DEFAULT {{[0-9]+}} __poseidon_device_log_grad{{$}}

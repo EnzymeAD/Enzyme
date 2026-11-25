@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_SITE_PROFILE_H
-#define POSEIDON_SITE_PROFILE_H
+#ifndef POSEIDON_PROFILE_SITE_PROFILE_H
+#define POSEIDON_PROFILE_SITE_PROFILE_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Error.h"
@@ -46,4 +46,4 @@ void registerGlobals(llvm::Module &M);
 
 } // namespace poseidon
 
-#endif // POSEIDON_SITE_PROFILE_H
+#endif // POSEIDON_PROFILE_SITE_PROFILE_H

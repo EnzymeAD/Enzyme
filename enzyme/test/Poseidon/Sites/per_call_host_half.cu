@@ -4,14 +4,14 @@
 // half of a CUDA compile.
 // DEFINE: %{nvptx} = %clang -x cuda --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %s
 // DEFINE: %{amdgpu} = %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %s
-// DEFINE: %{nvptx_body} = sed -e '/__poseidon_profile_init_cuda/d' -e '/^; Function Attrs/d' \
+// DEFINE: %{nvptx_body} = sed -e '/__poseidon_profile_init_device/d' -e '/^; Function Attrs/d' \
 // DEFINE:   -e '/^attributes #/d' -e '/^$/d' -e 's/ #[0-9][0-9]*//g'
 // DEFINE: %{amdgpu_body} = sed -e '/^define internal void @__poseidon_profile_register_module_table/,/^}/d' \
 // DEFINE:   -e '/__poseidon_profile/d' -e '/__hipRegisterVar/d' -e '/@llvm.global_ctors/d' \
 // DEFINE:   -e '/^; Function Attrs/d' -e '/^attributes #/d' -e '/^$/d' -e 's/ #[0-9][0-9]*//g'
 // RUN: rm -rf %t && mkdir %t
 // RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only -o %t/nvptx-plain.ll %}
-// RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/nvptx-u -o %t/nvptx-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
+// RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/nvptx-u -o %t/nvptx-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
 // RUN: %if cuda-runtime %{ diff %t/nvptx-plain.ll %t/nvptx-use.ll %}
 // RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-g -mllvm -poseidon-print -o %t/nvptx-gen.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
 // RUN: %if cuda-runtime %{ FileCheck --check-prefix=GENIR %s < %t/nvptx-gen.ll %}
@@ -21,7 +21,7 @@
 // RUN: %if cuda-runtime %{ diff %t/nvptx-plain.body %t/nvptx-gen.body %}
 // RUN: %if cuda-runtime %{ %{nvptx} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-d -mllvm -poseidon-print -o %t/nvptx-dev.ll 2>&1 | FileCheck --check-prefix=DEV %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only -o %t/amdgpu-plain.ll %}
-// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/amdgpu-u -o %t/amdgpu-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/amdgpu-u -o %t/amdgpu-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ diff %t/amdgpu-plain.ll %t/amdgpu-use.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/amdgpu-g -mllvm -poseidon-print -o %t/amdgpu-gen.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=GENIR %s < %t/amdgpu-gen.ll %}
@@ -105,13 +105,13 @@ int main() {
 
 // Main binds the profiler, as in any unit of a profiled program.
 // GEN-NOT: warning
-// GEN: [poseidon] FP profiler CUDA registration injected at main
+// GEN: [poseidon] device profiler registration injected at main
 // GEN-NOT: {{.}}
 
-// GENIR-NOT: call {{.*}}@poseidonLogValue(
-// GENIR-NOT: call {{.*}}@poseidonLogGrad(
+// GENIR-NOT: call {{.*}}@__poseidon_log_value(
+// GENIR-NOT: call {{.*}}@__poseidon_log_grad(
 // GENIR-NOT: __poseidon_host_shadows
-// GENIR-NOT: poseidonRegisterProfileStatic
+// GENIR-NOT: __poseidon_register_static
 // GENIR-NOT: preprocess_
 
 // In profile generation the host half only binds the profiler: main
@@ -122,12 +122,12 @@ int main() {
 // BIND-AMDGPU: [[NAME:@[0-9]+]] = private unnamed_addr constant [25 x i8] c"__poseidon_profile_table\00"
 // BIND-AMDGPU: @llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__hip_module_ctor, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }]
 // BIND: define {{.*}}i32 @main()
-// BIND-NEXT: call void @__poseidon_profile_init_cuda()
+// BIND-NEXT: call void @__poseidon_profile_init_device()
 // BIND-AMDGPU: define internal void @__hip_module_ctor()
 // BIND-AMDGPU: call void @__hipRegisterVar(ptr %{{[0-9]+}}, ptr {{.*}}@__poseidon_profile_table, ptr {{.*}}[[NAME]], ptr {{.*}}[[NAME]], i32 0, i64 [[SIZE]], i32 1, i32 0)
 // BIND-AMDGPU: define internal void @__poseidon_profile_register_module_table()
 // BIND-AMDGPU-NEXT: call void @__poseidon_profile_register_module(ptr {{.*}}@__poseidon_profile_table, i32 0, i32 0)
-// BIND: declare void @__poseidon_profile_init_cuda()
+// BIND: declare void @__poseidon_profile_init_device()
 
 // The call in qpoint is lowered twice: in qpoint and where k inlines it.
 // DEV: per_call_host_half.cu:[[@LINE-53]]:{{[0-9]+}}: warning: Poseidon: area(double) is a device function no kernel of this translation unit calls, so it is left as written; on the device, put POSEIDON_OPTIMIZE on a kernel or on a function a kernel calls

@@ -8,20 +8,21 @@
 
 #include "Optimize.h"
 #include "Explain.h"
-#include "IR/Utils.h"
 #include "Model/CostModel.h"
+#include "Pass/Diagnostics.h"
 #include "Pass/Session.h"
-#include "Profile/ProfileRead.h"
+#include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
-#include "Solvers.h"
+#include "SolveSites.h"
+#include "Support/Utils.h"
 #include "Targets/Target.h"
-#include "Techniques/Expansion.h"
-#include "Techniques/Herbie.h"
-#include "Techniques/Matmul/HostDispatch.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision.h"
-#include "Techniques/Staging.h"
+#include "Techniques/Matmul/RealizeLibraryCall.h"
+#include "Techniques/Precision/Expansion.h"
+#include "Techniques/Precision/Narrowing.h"
+#include "Techniques/Precision/Precision.h"
+#include "Techniques/Rewrite/Rewrite.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -116,8 +117,7 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
 
 // The site's matrix products, with the analyses their raise keeps in `st`.
 static void recognizeMatrixProducts(Session &S, Function &F,
-                                    const SiteProfileData &P,
-                                    FunctionFPState &st) {
+                                    const SiteProfileData &P, SiteState &st) {
   const Options &O = S.Opts;
   const Target &T = Target::of(F);
   const auto &profileMap = P.map;
@@ -130,7 +130,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
   auto &raiseTLII = st.raiseTLII;
   auto &raiseTLI = st.raiseTLI;
   auto &raiseSE = st.raiseSE;
-  if (T.isDevice() && O.Candidates.RaiseWMMA) {
+  if (T.isDevice() && O.Candidates.EnableMatmul) {
     raiseDT.emplace(F);
     raiseLI.emplace(*raiseDT);
     raiseAC.emplace(F);
@@ -139,13 +139,13 @@ static void recognizeMatrixProducts(Session &S, Function &F,
     raiseSE.emplace(F, *raiseTLI, *raiseAC, *raiseDT, *raiseLI);
     // The constant-trip products are the in-kernel raise's.
     if (T.hasInKernelMatrixRaise())
-      findScalarLoopMatmuls(O, F, *raiseSE, *raiseLI, profileHeader,
-                            abstractMatmuls);
+      findConstantShapeMatmuls(O, F, *raiseSE, *raiseLI, profileHeader,
+                               abstractMatmuls);
     // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
     // skips whatever that one claimed, so a product both recognize keeps the
     // constant-trip candidate set.
-    findHostGemmLoopNests(O, F, *raiseSE, *raiseLI, profileHeader, profileMap,
-                          abstractMatmuls);
+    findRuntimeShapeMatmuls(O, F, *raiseSE, *raiseLI, profileHeader, profileMap,
+                            abstractMatmuls);
   }
 
   if (O.Diagnostics.Print && !abstractMatmuls.empty()) {
@@ -158,20 +158,20 @@ static void recognizeMatrixProducts(Session &S, Function &F,
       llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
                    << dimStr(m.N) << 'x' << dimStr(m.K)
                    << " type=" << fpKindName(m.elemType) << " origin="
-                   << (m.origin == AbstractMatmul::Origin::HostGemmLoopNest
-                           ? "HostGemmLoopNest"
-                           : "ScalarLoopReduction")
+                   << (m.origin == RecognizedMatmul::Origin::RuntimeShape
+                           ? "RuntimeShape"
+                           : "ConstantShape")
                    << '\n';
     }
   }
 }
 
 // Each technique's candidates for every FP subgraph, one subgraph at a time:
-// Herbie's rewrites into st.COs, precision assignments into st.CSs.
-static Error
-proposeSubgraphCandidates(Session &S, Function &F,
-                          const FunctionProfileHeader &profileHeader,
-                          bool expansionSafe, FunctionFPState &st) {
+// Herbie's rewrites into st.rewriteUnits, precision assignments into
+// st.precisionUnits.
+static Error proposeSubgraphCandidates(Session &S, Function &F,
+                                       const SiteProfileHeader &profileHeader,
+                                       bool expansionSafe, SiteState &st) {
   const Options &O = S.Opts;
   auto &subgraphs = st.subgraphs;
   int symbolCounter = 0;
@@ -180,14 +180,15 @@ proposeSubgraphCandidates(Session &S, Function &F,
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
-    if (O.Candidates.EnableHerbie)
+    if (O.Candidates.EnableRewrites)
       if (Error E = proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
-                                            symbolCounter, st, st.COs))
+                                            symbolCounter, st, st.rewriteUnits))
         return E;
 
-    if (O.Candidates.EnablePT)
-      if (Error E = proposePrecisionCandidates(
-              S, F, subgraph, st, profileHeader, expansionSafe, st.CSs))
+    if (O.Candidates.EnablePrecision)
+      if (Error E =
+              proposePrecisionCandidates(S, F, subgraph, st, profileHeader,
+                                         expansionSafe, st.precisionUnits))
         return E;
     ++subgraphCounter;
   }
@@ -202,8 +203,7 @@ proposeSubgraphCandidates(Session &S, Function &F,
 // site whose probe run diverged gets a large finite factor, so none of its
 // candidates is traded against precision.
 static Error putOnApplicationScale(Session &S, Function &F,
-                                   const SiteProfileData &P,
-                                   FunctionFPState &st) {
+                                   const SiteProfileData &P, SiteState &st) {
   const Options &O = S.Opts;
   const auto &profileMap = P.map;
   const auto &profileHeader = P.header;
@@ -241,7 +241,7 @@ static Error putOnApplicationScale(Session &S, Function &F,
                  shortDouble(profileHeader.kappa) + ", " +
                  kappaMarkName(profileHeader.kappaMark) +
                  "), so the site is solved against its own target; probe "
-                 "it with larger perturbations (POSEIDON_PROBE_LADDER) to "
+                 "it with larger perturbations (POSEIDON_KAPPA_LADDER) to "
                  "measure it",
              DS_Warning);
   if (profileHeader.hasKappa && !unresolved) {
@@ -277,13 +277,13 @@ static Error putOnApplicationScale(Session &S, Function &F,
 }
 
 // Prints every collected candidate with its priced deltas.
-static void printCandidates(Session &S, FunctionFPState &st) {
+static void printCandidates(Session &S, SiteState &st) {
   if (S.Opts.Diagnostics.Print)
     for (SiteUnit *unit : st.units)
       unit->printPriced(llvm::errs());
 }
 
-static Error priceCandidates(FunctionFPState &st) {
+static Error priceCandidates(SiteState &st) {
   for (SiteUnit *unit : st.units)
     if (Error E = unit->price())
       return E;
@@ -310,8 +310,7 @@ static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
 
 // The units the DP solves: every unit of the site, or under an accuracy
 // target every unit but the matrix products, which errorBudgetSelector picks.
-static SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st,
-                                           bool target) {
+static SmallVector<SiteUnit *> solvedUnits(const SiteState &st, bool target) {
   SmallVector<SiteUnit *> units;
   for (SiteUnit *unit : st.units)
     if (!target || !isa<MatmulUnit>(unit))
@@ -319,28 +318,27 @@ static SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st,
   return units;
 }
 
-void FunctionFPState::sealUnits(Session &S) {
+void SiteState::sealUnits(Session &S) {
   assert(!unitsSealed && "a site's units are sealed once");
   unitsSealed = true;
-  for (size_t i = 0; i < COs.size(); ++i) {
-    COs[i].bind(S, *this, *this, i);
-    units.push_back(&COs[i]);
+  for (size_t i = 0; i < rewriteUnits.size(); ++i) {
+    rewriteUnits[i].bind(S, *this, *this, i);
+    units.push_back(&rewriteUnits[i]);
   }
-  for (size_t i = 0; i < CSs.size(); ++i) {
-    CSs[i].bind(S, *this, *this, i);
-    units.push_back(&CSs[i]);
+  for (size_t i = 0; i < precisionUnits.size(); ++i) {
+    precisionUnits[i].bind(S, *this, *this, i);
+    units.push_back(&precisionUnits[i]);
   }
-  for (size_t i = 0; i < CMs.size(); ++i) {
-    CMs[i].bind(S, *this, *this, i);
-    units.push_back(&CMs[i]);
+  for (size_t i = 0; i < matmulUnits.size(); ++i) {
+    matmulUnits[i].bind(S, *this, *this, i);
+    units.push_back(&matmulUnits[i]);
   }
 }
 
 // The cost change of each candidate of `units` that pricing priced, against
 // the site's own axis: an error at the site for one the axis cannot hold. A
 // joint solve's axis is no finer, its profiled cost being at least the site's.
-static Error requireCostsOnAxis(FunctionFPState &st,
-                                ArrayRef<SiteUnit *> units) {
+static Error requireCostsOnAxis(SiteState &st, ArrayRef<SiteUnit *> units) {
   if (st.profiledCost == 0.0)
     return Error::success();
   const CostScale scale(st.profiledCost);
@@ -374,17 +372,17 @@ static Error requireCostsOnAxis(FunctionFPState &st,
 
 // Prices the collected candidates, unless the site's DP table is read back
 // from the cache: the table already holds every price its solve used.
-static Error priceUnlessCached(Session &S, FunctionFPState &st,
+static Error priceUnlessCached(Session &S, SiteState &st,
                                StringRef profilePath) {
   const Options &O = S.Opts;
   // A joint or a manual solve reads no table, and an accuracy target leaves
-  // the matrix products to errorBudgetSelector (fpOptimize).
-  if (!O.Herbie.Cache.empty() && !O.Solver.JointDP &&
-      O.Solver.ApplyRewrites.empty()) {
+  // the matrix products to errorBudgetSelector (optimizeSite).
+  if (!O.Herbie.Cache.empty() && !O.Solver.SolveJointly &&
+      O.Solver.Pin.empty()) {
     const bool target = st.tau > 0.0 || O.Solver.Tau > 0.0;
     const SmallVector<SiteUnit *> units = solvedUnits(st, target);
-    Expected<std::unique_ptr<SiteTable>> table =
-        lookupSiteTable(S, st, units, profilePath);
+    Expected<std::unique_ptr<DPTable>> table =
+        lookupDPTable(S, st, units, profilePath);
     if (!table)
       return table.takeError();
     st.table = std::move(*table);
@@ -395,17 +393,18 @@ static Error priceUnlessCached(Session &S, FunctionFPState &st,
     return E;
   // A manual solve runs no DP; under an accuracy target the matrix products
   // of a site solved alone go to errorBudgetSelector instead.
-  if (!O.Solver.ApplyRewrites.empty())
+  if (!O.Solver.Pin.empty())
     return Error::success();
   const bool target = st.tau > 0.0 || O.Solver.Tau > 0.0;
-  return requireCostsOnAxis(st, solvedUnits(st, target && !O.Solver.JointDP));
+  return requireCostsOnAxis(st,
+                            solvedUnits(st, target && !O.Solver.SolveJointly));
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its
 // DP table is cached; false when F has no FP subgraph and no matrix product.
 static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
                                           unsigned sampleLogBits,
-                                          FunctionFPState &st) {
+                                          SiteState &st) {
   const Options &O = S.Opts;
   st.F = &F;
   st.tau = tau;
@@ -440,7 +439,7 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   if (Error E = attachProfile(O, profile.map, st, st.subgraphs))
     return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
-  if (O.Candidates.EnablePT && !O.Candidates.MergeSharedStaging)
+  if (O.Candidates.EnablePrecision && !O.Candidates.MergeSharedStaging)
     hintSharedStaging(S, F, st.subgraphs);
 
   if (st.subgraphs.empty() && st.abstractMatmuls.empty())
@@ -455,7 +454,7 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
     return std::move(E);
 
   if (Error E = generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
-                                         sampleLogBits, st.CMs))
+                                         sampleLogBits, st.matmulUnits))
     return std::move(E);
   st.sealUnits(S);
 
@@ -520,9 +519,9 @@ applySolution(const Options &O, ArrayRef<SolutionStep> steps) {
 }
 
 // Applies `steps` to F and cleans F up; true when a step was applied.
-static Expected<bool> materializeFPSolution(Session &S, Function &F,
-                                            FunctionFPState &st,
-                                            ArrayRef<SolutionStep> steps) {
+static Expected<bool> materializeSolution(Session &S, Function &F,
+                                          SiteState &st,
+                                          ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
   auto &subgraphs = st.subgraphs;
   Expected<SmallVector<SolutionStep>> applied = applySolution(O, steps);
@@ -549,7 +548,7 @@ static Expected<bool> materializeFPSolution(Session &S, Function &F,
   }
 
   if (changed)
-    narrowSharedStaging(S, F, /*announce=*/true, ParamArm::Both, F);
+    narrowSharedStaging(S, F, /*announce=*/true, ParamNarrowing::Both, F);
   if (changed)
     demoteFPCastPHIs(F);
 
@@ -583,37 +582,37 @@ static Expected<bool> materializeFPSolution(Session &S, Function &F,
 // explains and materializes each site; true when a site changed.
 static Expected<bool> solveAndApply(Session &S, Module &M,
                                     const StringSet<> &declared,
-                                    ArrayRef<FunctionFPState *> sites,
-                                    double tau, bool siteTarget, bool joint) {
+                                    ArrayRef<SiteState *> sites, double tau,
+                                    bool siteTarget, bool joint) {
   const Options &O = S.Opts;
   SolveRecord record;
   record.tau = tau;
   record.siteTarget = siteTarget;
-  for (FunctionFPState *st : sites) {
+  for (SiteState *st : sites) {
     record.profiledCost += st->profiledCost;
     record.accScale += st->accScale;
     if (joint)
       record.sites.push_back(st->F->getName().str());
   }
   const bool explain = llvm::any_of(
-      sites, [&](FunctionFPState *st) { return explainWanted(O, *st->F); });
+      sites, [&](SiteState *st) { return explainWanted(O, *st->F); });
   SolveRecord *rec = explain ? &record : nullptr;
 
   SmallVector<SolutionStep> steps;
-  if (!O.Solver.ApplyRewrites.empty()) {
-    for (FunctionFPState *st : sites) {
-      Expected<SmallVector<SolutionStep>> pinned = parseManualRewrites(S, *st);
+  if (!O.Solver.Pin.empty()) {
+    for (SiteState *st : sites) {
+      Expected<SmallVector<SolutionStep>> pinned = parsePins(S, *st);
       if (!pinned)
         return pinned.takeError();
       append_range(steps, *pinned);
     }
-    record.selector = "manual";
-  } else if (!joint && tau > 0.0 && !sites.front()->CMs.empty()) {
-    FunctionFPState &st = *sites.front();
+    record.selector = "pinned";
+  } else if (!joint && tau > 0.0 && !sites.front()->matmulUnits.empty()) {
+    SiteState &st = *sites.front();
     // The target is a relative error, which is what errorBudgetSelector
     // compares a matrix product against. The elementwise units are solved by
     // the normalized DP under the same number.
-    steps = errorBudgetSelector(O, st.CMs, tau);
+    steps = errorBudgetSelector(O, st.matmulUnits, tau);
     const SmallVector<SiteUnit *> elemUnits = solvedUnits(st, /*target=*/true);
     Expected<SmallVector<SolutionStep>> elemSteps =
         elemUnits.empty()
@@ -638,7 +637,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
     record.selector = "error-budget";
   } else {
     SmallVector<ArrayRef<SiteUnit *>, 4> units;
-    for (FunctionFPState *st : sites)
+    for (SiteState *st : sites)
       units.push_back(st->units);
     Expected<SmallVector<SolutionStep>> solved =
         solveSites(S, sites, units, tau, joint, rec);
@@ -647,19 +646,19 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
     steps = std::move(*solved);
   }
 
-  std::unordered_map<FunctionFPState *, SmallVector<SolutionStep>> perSite;
+  std::unordered_map<SiteState *, SmallVector<SolutionStep>> perSite;
   for (const SolutionStep &step : steps)
     perSite[&unitOf(step).site()].push_back(step);
   if (explain)
-    for (FunctionFPState *st : sites)
+    for (SiteState *st : sites)
       if (Error E = explainSolve(S, *st->F, *st, perSite[st], record))
         return std::move(E);
   eraseScratchDeclarations(M, declared);
 
   bool changed = false;
-  for (FunctionFPState *st : sites) {
+  for (SiteState *st : sites) {
     Expected<bool> siteChanged =
-        materializeFPSolution(S, *st->F, *st, perSite[st]);
+        materializeSolution(S, *st->F, *st, perSite[st]);
     if (!siteChanged)
       return siteChanged.takeError();
     // An unrewritten site calls the original body again: the preprocessed
@@ -675,7 +674,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   return changed;
 }
 
-Expected<bool> fpOptimize(Session &S, Function &F, double tau) {
+Expected<bool> optimizeSite(Session &S, Function &F, double tau) {
   const Options &O = S.Opts;
   // A target written at the site wins over -poseidon-tau, the target of every
   // site that carries none; both mean the same.
@@ -683,13 +682,13 @@ Expected<bool> fpOptimize(Session &S, Function &F, double tau) {
 
   // Uniform sampling over [min, max] under-prices fixed-point Ozaki on matrices
   // of wide dynamic range, so a target defaults to a wide log-uniform range
-  // unless -poseidon-sample-log-bits is given. Only the matrix accuracy model
-  // reads it.
+  // unless -poseidon-matmul-sample-log-bits is given. Only the matrix accuracy
+  // model reads it.
   unsigned sampleLogBits =
       O.Model.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
 
   const StringSet<> declared = declaredFunctions(*F.getParent());
-  FunctionFPState st;
+  SiteState st;
   Expected<bool> collected = collectFPCandidates(S, F, tau, sampleLogBits, st);
   if (!collected)
     return collected.takeError();
@@ -711,7 +710,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   const Options &O = S.Opts;
   SmallVector<Function *, 4> marked;
   for (Function &F : M)
-    if (!F.empty() && F.hasFnAttribute(kJointErrTol))
+    if (!F.empty() && F.hasFnAttribute(kJointTau))
       marked.push_back(&F);
   if (marked.empty())
     return false;
@@ -727,17 +726,18 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   bool allFromSite = true;
   for (Function *F : marked) {
     double tau = 0.0;
-    F->getFnAttribute(kJointErrTol).getValueAsString().getAsDouble(tau);
-    F->removeFnAttr(kJointErrTol);
+    F->getFnAttribute(kJointTau).getValueAsString().getAsDouble(tau);
+    F->removeFnAttr(kJointTau);
     allFromSite &= tau > 0.0;
     targets.push_back({F, tau > 0.0 ? tau : (double)O.Solver.Tau});
   }
-  const double jointErrTol = targets.front().second;
+  const double jointTau = targets.front().second;
   if (llvm::any_of(targets,
-                   [&](const auto &t) { return t.second != jointErrTol; })) {
+                   [&](const auto &t) { return t.second != jointTau; })) {
     std::string msg;
     raw_string_ostream os(msg);
-    os << "Poseidon: the sites of one -poseidon-joint-dp solve have different "
+    os << "Poseidon: the sites of one -poseidon-solve-jointly solve have "
+          "different "
           "accuracy targets:";
     for (auto &[F, t] : targets) {
       const Function *origin = siteOriginOf(S.Sites, *F);
@@ -759,9 +759,9 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   }
 
   const StringSet<> declared = declaredFunctions(M);
-  std::vector<std::unique_ptr<FunctionFPState>> states;
+  std::vector<std::unique_ptr<SiteState>> states;
   for (auto &[F, tau] : targets) {
-    auto st = std::make_unique<FunctionFPState>();
+    auto st = std::make_unique<SiteState>();
     Expected<bool> collected =
         collectFPCandidates(S, *F, tau, O.Model.SampleLogBits.value_or(0), *st);
     if (!collected)
@@ -779,10 +779,10 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   if (states.empty())
     return false;
 
-  SmallVector<FunctionFPState *, 4> sites;
+  SmallVector<SiteState *, 4> sites;
   for (auto &st : states)
     sites.push_back(st.get());
-  return solveAndApply(S, M, declared, sites, jointErrTol, allFromSite,
+  return solveAndApply(S, M, declared, sites, jointTau, allFromSite,
                        /*joint=*/true);
 }
 

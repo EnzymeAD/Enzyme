@@ -9,10 +9,11 @@
 #include "Markers.h"
 
 #include "Annotations.h"
-#include "Core/Options.h"
 #include "Enzyme/EnzymeCallMarkers.h"
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/Options.h"
+#include "Support/Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
@@ -140,8 +141,8 @@ unsigned foldEnzymeGenerated(Function &body) {
 /// noinline, so that the late run's always-inliners leave them too and a
 /// refused site is not optimized further than the code as written (a primal
 /// and a tangent sqrt would merge into one).
-Function *asLeftByPipeline(Function &body,
-                           DenseMap<Function *, Function *> &copies) {
+Function *asWrittenCopy(Function &body,
+                        DenseMap<Function *, Function *> &copies) {
   if (Function *copy = copies.lookup(&body))
     return copy;
   ValueToValueMapTy VMap;
@@ -157,7 +158,7 @@ Function *asLeftByPipeline(Function &body,
       if (Function *callee = CB->getCalledFunction()) {
         if (!callee->isDeclaration() &&
             isEnzymeGeneratedName(callee->getName()))
-          CB->setCalledFunction(asLeftByPipeline(*callee, copies));
+          CB->setCalledFunction(asWrittenCopy(*callee, copies));
         if (callee->hasFnAttribute(Attribute::AlwaysInline))
           CB->addFnAttr(Attribute::NoInline);
       }

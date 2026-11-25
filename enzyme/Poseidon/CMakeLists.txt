@@ -211,7 +211,7 @@ include(${CLANG_CMAKE_DIR}/AddClang.cmake)
 # --- The plugin
 
 set(POSEIDON_SRC
-    Core/CacheKey.cpp
+    Support/CacheKey.cpp
     Sites/Canonicalize.cpp
     Model/CostModel.cpp
     Targets/MathLibrary.cpp
@@ -220,54 +220,55 @@ set(POSEIDON_SRC
     Targets/NVPTX.cpp
     Targets/AMDGPU.cpp
     Targets/OffloadRuntime.cpp
-    Pass/Driver.cpp
+    Pass/Actions.cpp
     Sites/Markers.cpp
     Sites/Annotations.cpp
     Sites/CallSites.cpp
     Profile/SiteProfile.cpp
-    Pass/Twin.cpp
+    Pass/AsWritten.cpp
     Pass/Pipeline.cpp
     Model/Evaluators.cpp
-    Techniques/Expansion.cpp
-    Core/ExpansionModel.cpp
+    Techniques/Precision/Expansion.cpp
+    Techniques/Precision/ExpansionModel.cpp
     Solve/Explain.cpp
     Pass/Flags.cpp
-    Core/FPKind.cpp
-    Techniques/Herbie.cpp
+    Model/FPKind.cpp
+    Techniques/Rewrite/Rewrite.cpp
     Model/FPCore.cpp
-    Core/HerbieRun.cpp
-    Core/Options.cpp
-    Core/Parallel.cpp
-    Core/Solver.cpp
-    Core/UniformReal.cpp
-    Techniques/Matmul/HostDispatch.cpp
-    Techniques/Matmul/InKernelRaise.cpp
+    Techniques/Rewrite/HerbieRun.cpp
+    Pass/Options.cpp
+    Support/Parallel.cpp
+    Solve/DP.cpp
+    Support/UniformReal.cpp
+    Techniques/Matmul/RealizeLibraryCall.cpp
+    Techniques/Matmul/RealizeInKernel.cpp
     Profile/Instrument.cpp
-    Sites/LaunchDescriptors.cpp
-    Sites/LaunchStubs.cpp
+    Sites/LaunchManifest.cpp
+    Pass/HostStubs.cpp
     Solve/Optimize.cpp
     Sites/Site.cpp
     Sites/SiteIdentity.cpp
-    Techniques/Precision.cpp
+    Techniques/Precision/Precision.cpp
     Model/FPFormat.cpp
-    Profile/ProfileRead.cpp
+    Profile/ProfileReader.cpp
     Profile/ProfiledLaunch.cpp
     Model/Sampling.cpp
-    Solve/Solvers.cpp
+    Solve/SolveSites.cpp
     Solve/Pins.cpp
     Solve/Subgraphs.cpp
-    Techniques/Staging.cpp
-    Techniques/Unit.cpp
+    Techniques/Precision/Narrowing.cpp
+    Techniques/SiteUnit.cpp
     Model/FPNode.cpp
-    IR/Utils.cpp
-    Techniques/Matmul/MatmulAccuracy.cpp
-    Techniques/Matmul/MatmulCandidates.cpp
-    Techniques/Matmul/MatmulSimulation.cpp
-    Techniques/Matmul/RecognizeHostGemm.cpp
-    Techniques/Matmul/RecognizeScalarLoop.cpp)
+    Support/Utils.cpp
+    Pass/Diagnostics.cpp
+    Techniques/Matmul/Accuracy.cpp
+    Techniques/Matmul/Matmul.cpp
+    Techniques/Matmul/Simulation.cpp
+    Techniques/Matmul/RecognizeRuntimeShape.cpp
+    Techniques/Matmul/RecognizeConstantShape.cpp)
 
 # The cost table, which the calibrator reads as the plugin does.
-add_library(poseidon_costtable OBJECT Core/CostTable.cpp)
+add_library(poseidon_costtable OBJECT Model/CostTable.cpp)
 set_target_properties(
   poseidon_costtable
   PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -350,7 +351,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     PRIVATE -fno-fast-math -ffp-contract=off)
   # The runtimes' directed roundings change the rounding mode.
   set_source_files_properties(
-    Techniques/Matmul/MatmulSimulation.cpp
+    Techniques/Matmul/Simulation.cpp
     PROPERTIES COMPILE_OPTIONS "-frounding-math")
 endif()
 
@@ -367,7 +368,7 @@ add_subdirectory(tools)
 
 # The Herbie the pass runs by default (tools/CMakeLists.txt).
 set_source_files_properties(
-  Techniques/Herbie.cpp
+  Techniques/Rewrite/Rewrite.cpp
   PROPERTIES
     COMPILE_DEFINITIONS
     POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")

@@ -11,11 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_COST_MODEL_H
-#define POSEIDON_COST_MODEL_H
+#ifndef POSEIDON_MODEL_COST_MODEL_H
+#define POSEIDON_MODEL_COST_MODEL_H
 
-#include "Core/CostTable.h"
-#include "Profile/ProfileRead.h"
+#include "Model/CostTable.h"
+#include "Profile/ProfileReader.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -87,4 +87,4 @@ llvm::Expected<double> compCost(
     uint64_t normalizer = 0);
 
 } // namespace poseidon
-#endif // POSEIDON_COST_MODEL_H
+#endif // POSEIDON_MODEL_COST_MODEL_H

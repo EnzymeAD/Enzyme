@@ -3,13 +3,13 @@
     "ir": "preprocess__Z6kernelPKdPdi",
     "loc": {
       "col": 0,
-      "file": "explain_formatter.cpp",
+      "file": "formatter.cpp",
       "line": 13
     },
     "name": "kernel(double const*, double*, int)",
     "site": {
       "col": 3,
-      "file": "explain_formatter.cpp",
+      "file": "formatter.cpp",
       "line": 26
     },
     "symbol": "_Z6kernelPKdPdi"
@@ -60,7 +60,7 @@
             0
           ],
           "precision": "binary64",
-          "reason": "on the Pareto frontier; -poseidon-apply-rewrites=R0_0 applies it",
+          "reason": "on the Pareto frontier; -poseidon-pin=R0_0 applies it",
           "status": "pareto",
           "summary": "Herbie rewrite searched at binary64, series approximation"
         },
@@ -104,7 +104,7 @@
         {
           "loc": {
             "col": 30,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 0.0001,
@@ -116,7 +116,7 @@
       "kind": "subgraph",
       "loc": {
         "col": 37,
-        "file": "explain_formatter.cpp",
+        "file": "formatter.cpp",
         "line": 15
       },
       "ops": [
@@ -125,7 +125,7 @@
           "float_call": "cosf",
           "loc": {
             "col": 21,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 1,
@@ -136,7 +136,7 @@
           "executions": 1024,
           "loc": {
             "col": 19,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 4.999999969612645e-09,
@@ -147,7 +147,7 @@
           "executions": 1024,
           "loc": {
             "col": 45,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 1e-08,
@@ -158,7 +158,7 @@
           "executions": 1024,
           "loc": {
             "col": 37,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 0.9965277771349845,
@@ -179,7 +179,7 @@
           ],
           "loc": {
             "col": 37,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "name": "out[i]",
@@ -217,7 +217,7 @@
         {
           "loc": {
             "col": 30,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 0.0001,
@@ -229,7 +229,7 @@
       "kind": "subgraph",
       "loc": {
         "col": 37,
-        "file": "explain_formatter.cpp",
+        "file": "formatter.cpp",
         "line": 15
       },
       "ops": [
@@ -238,7 +238,7 @@
           "float_call": "cosf",
           "loc": {
             "col": 21,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 1,
@@ -249,7 +249,7 @@
           "executions": 1024,
           "loc": {
             "col": 19,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 4.999999969612645e-09,
@@ -260,7 +260,7 @@
           "executions": 1024,
           "loc": {
             "col": 45,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 1e-08,
@@ -271,7 +271,7 @@
           "executions": 1024,
           "loc": {
             "col": 37,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "max": 0.9965277771349845,
@@ -292,7 +292,7 @@
           ],
           "loc": {
             "col": 37,
-            "file": "explain_formatter.cpp",
+            "file": "formatter.cpp",
             "line": 15
           },
           "name": "out[i]",

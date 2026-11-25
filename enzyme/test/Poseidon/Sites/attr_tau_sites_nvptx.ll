@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_loose.fpprofile
-; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_tight.fpprofile
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S -poseidon-print > %t/out.ll 2> %t/err.txt
+; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/fms_loose.fpprofile
+; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/fms_tight.fpprofile
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S -poseidon-print > %t/out.ll 2> %t/err.txt
 ; RUN: FileCheck --check-prefix=ERR %s < %t/err.txt
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
 
@@ -123,10 +123,10 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 
 ; ERR: [poseidon] preprocess_fms_loose_poseidon_body: tau=1.000000e-07 {{.*}} rel=1.428768e-08
 ; ERR: Applying solution for precision change All FP64(0%) + FP32(100%)
-; ERR: [poseidon] pin: fms_loose:PT0=All FP64(0%) + FP32(100%)
+; ERR: [poseidon] pin: fms_loose:P0=All FP64(0%) + FP32(100%)
 ; ERR: [poseidon] preprocess_fms_tight_poseidon_body: tau=1.000000e-12 {{.*}} rel=7.011882e-16
 ; ERR: Applying solution for precision change All FP64(0%) + Expansion2(100%)
-; ERR: [poseidon] pin: fms_tight:PT0=All FP64(0%) + Expansion2(100%)
+; ERR: [poseidon] pin: fms_tight:P0=All FP64(0%) + Expansion2(100%)
 ; ERR: warning: {{.*}}in function fms_bare {{.*}}Poseidon: no profile at {{.*}}/fms_bare.fpprofile:
 ; ERR-NOT: Applying solution
 
@@ -142,12 +142,12 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; IR-NEXT: store double [[R]], ptr [[OP]]
 ; IR-NEXT: ret void
 
-; The tight site takes the two-component expansion (ds_expansion_nvptx.ll
+; The tight site takes the two-component expansion (expansion_two_components_nvptx.ll
 ; checks its instructions) and stores the sum of the last pair.
 ; IR-LABEL: define {{.*}} @fms_tight(
 ; IR: fptrunc double %{{[0-9]+}} to float
 ; IR-NOT: fmuladd.f64
-; IR: [[J:%[^ ]+]] = fadd double %{{.+}}, %{{.+}}, !poseidon.ds.join !{{[0-9]+}}
+; IR: [[J:%[^ ]+]] = fadd double %{{.+}}, %{{.+}}, !poseidon.pair.join !{{[0-9]+}}
 ; IR-NEXT: [[OP:%[0-9]+]] = getelementptr inbounds
 ; IR-NEXT: store double [[J]], ptr [[OP]]
 ; IR-NEXT: ret void

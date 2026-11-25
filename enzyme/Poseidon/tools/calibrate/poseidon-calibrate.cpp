@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Core/CostTable.h"
-#include "runtime/ozaki/OzakiII.h"
+#include "Model/CostTable.h"
+#include "runtime/gemm/Schemes.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
@@ -272,8 +272,8 @@ static Device queryDevice() {
   std::string Reasons;
   for (bool Hip : {false, true}) {
     const StringRef Vendor = Hip ? "HIP" : "CUDA";
-    std::string Exe =
-        sibling(Hip ? "poseidon-microbm-hip" : "poseidon-microbm");
+    std::string Exe = sibling(Hip ? "poseidon-calibrate-ops-hip"
+                                  : "poseidon-calibrate-ops-cuda");
     if (!sys::fs::exists(Exe))
       continue;
     const char *Visible = Hip ? "HIP_VISIBLE_DEVICES" : "CUDA_VISIBLE_DEVICES";
@@ -478,7 +478,7 @@ static void armHerbiePlatform(StringRef Csv) {
     fail(Csv + " carries no '# native_arch=' header, so no Herbie platform "
                "can be generated from it");
   if (!isGpuArch(Arch)) {
-    outs() << "[calibrate] herbie-platform: " << Arch
+    outs() << "poseidon-calibrate: herbie-platform: " << Arch
            << " is a host cost model; Herbie keeps its own default platform\n";
     return;
   }
@@ -504,10 +504,10 @@ static void armHerbiePlatform(StringRef Csv) {
   }
   if (run(Argv))
     fail("the Herbie platform generator failed on " + Csv);
-  outs() << "[calibrate] wrote " << Out << '\n';
+  outs() << "poseidon-calibrate: wrote " << Out << '\n';
 }
 
-/// Measures the host `D` with microbm_cpu.py into `Part`, and returns its exit
+/// Measures the host `D` with ops_cpu.py into `Part`, and returns its exit
 /// status.
 static int measureHost(const Device &D, StringRef Part) {
   std::string Py = python();
@@ -522,7 +522,7 @@ static int measureHost(const Device &D, StringRef Part) {
     fail(Py + " cannot import the Python package " + Package +
          ", which the CPU microbenchmark needs; install it (pip install " +
          Package + ") or pass --python <interpreter>");
-  std::string Script = shipped("tools/calibrate/microbm_cpu.py");
+  std::string Script = shipped("tools/calibrate/ops_cpu.py");
   if (!sys::fs::exists(Script))
     fail("the CPU microbenchmark is missing: " + Script);
   std::string Iterations = utostr(CpuIterations);
@@ -581,8 +581,8 @@ static std::string medianOfRuns(ArrayRef<std::string> Runs) {
     double Median = V.size() % 2 ? V[V.size() / 2]
                                  : (V[V.size() / 2 - 1] + V[V.size() / 2]) / 2;
     if (V.back() > 1.1 * V.front()) {
-      outs() << "[calibrate] the runs differ by more than 10% on " << Key
-             << ":";
+      outs() << "poseidon-calibrate: the runs differ by more than 10% on "
+             << Key << ":";
       for (double X : V)
         outs() << ' ' << format("%g", X);
       outs() << "; the median is written\n";
@@ -599,7 +599,7 @@ static bool isUsableModel(StringRef Rows) {
 /// Measures the per-op rows into a new `Csv`.
 static void armMicrobm(StringRef Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
-    outs() << "[calibrate] per-op throughputs already measured: " << Csv
+    outs() << "poseidon-calibrate: per-op throughputs already measured: " << Csv
            << '\n';
     return;
   }
@@ -608,17 +608,17 @@ static void armMicrobm(StringRef Csv, const Device &D) {
   std::string Part = (Csv + ".part").str();
   std::string Rows;
   if (D.Host) {
-    outs() << "[calibrate] measuring per-op throughput\n";
+    outs() << "poseidon-calibrate: measuring per-op throughput\n";
     Rows = measureHost(D, Part) == 0 ? readFile(Part) : std::string();
   } else {
     SmallVector<std::string, kMicrobmRuns> Runs;
     for (unsigned I = 1; I <= kMicrobmRuns; ++I) {
-      outs() << "[calibrate] measuring per-op throughput, run " << I << " of "
-             << kMicrobmRuns << '\n';
+      outs() << "poseidon-calibrate: measuring per-op throughput, run " << I
+             << " of " << kMicrobmRuns << '\n';
       outs().flush();
       // The redirection does not truncate the file it writes.
       sys::fs::remove(Part);
-      std::string Run = run({tool(D, "poseidon-microbm")}, Part) == 0
+      std::string Run = run({tool(D, "poseidon-calibrate-ops-cuda")}, Part) == 0
                             ? readFile(Part)
                             : std::string();
       if (!isUsableModel(Run))
@@ -636,7 +636,7 @@ static void armMicrobm(StringRef Csv, const Device &D) {
   }
   if (std::error_code EC = sys::fs::rename(Part, Csv))
     fail("cannot write " + Csv + ": " + EC.message());
-  outs() << "[calibrate] wrote " << Csv << '\n';
+  outs() << "poseidon-calibrate: wrote " << Csv << '\n';
 }
 
 /// Merges `Rows`, which an arm's run printed, into `Csv`; a failed run or one
@@ -659,7 +659,7 @@ static void writeRows(StringRef Csv, StringRef Arm, StringRef Family,
 static bool alreadyMeasured(StringRef Csv, StringRef Arm, StringRef Family) {
   if (Force || !hasFamily(readFile(Csv), Family))
     return false;
-  outs() << "[calibrate] " << Arm << ": already measured\n";
+  outs() << "poseidon-calibrate: " << Arm << ": already measured\n";
   return true;
 }
 
@@ -669,10 +669,10 @@ static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
                         StringRef Family) {
   if (alreadyMeasured(Csv, Arm, Family))
     return;
-  outs() << "[calibrate] measuring " << Arm << " host dispatch\n";
+  outs() << "poseidon-calibrate: measuring " << Arm << " host dispatch\n";
   writeRows(Csv, Arm, Family,
-            capture({tool(D, "poseidon-dispatch-calibrate"), Arm, utostr(RefN),
-                     utostr(Reps)}));
+            capture({tool(D, "poseidon-calibrate-library-cuda"), Arm,
+                     utostr(RefN), utostr(Reps)}));
 }
 
 /// The extents `Shape` spells as `Count` positive integers joined by 'x'.
@@ -747,18 +747,21 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
                       formatv("m{0}k{1}", (*E)[0], (*E)[1]).str()});
   }
   if (Shapes.empty()) {
-    outs() << "[calibrate] ozaki-rect: no --product or --ozaki-rect shapes, "
+    outs() << "poseidon-calibrate: ozaki-rect: no --product or --ozaki-rect "
+              "shapes, "
               "nothing to measure\n";
     return;
   }
   std::string Content = readFile(Csv);
-  SmallVector<std::string, 8> Argv = {tool(D, "poseidon-dispatch-calibrate"),
-                                      "ozaki", utostr(RefN), utostr(Reps)};
+  SmallVector<std::string, 8> Argv = {
+      tool(D, "poseidon-calibrate-library-cuda"), "ozaki", utostr(RefN),
+      utostr(Reps)};
   const size_t Fixed = Argv.size();
   for (const auto &[Arg, Key] : Shapes) {
     // A shape counts as measured when its first Ozaki-II row is in the model.
-    if (!Force && StringRef(Content).contains(
-                      "nm" + utostr(kOzIIModuliCounts[0]) + "_" + Key + ",")) {
+    if (!Force &&
+        StringRef(Content).contains("nm" + utostr(kOzakiIIModuliCounts[0]) +
+                                    "_" + Key + ",")) {
       outs() << "  = " << Arg << " already measured\n";
       continue;
     }
@@ -767,26 +770,28 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
   }
   if (Argv.size() == Fixed)
     return;
-  outs() << "[calibrate] measuring ozaki-rect host dispatch\n";
+  outs() << "poseidon-calibrate: measuring ozaki-rect host dispatch\n";
   SmallVector<StringRef, 8> Args(Argv.begin(), Argv.end());
-  writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", capture(Args));
+  writeRows(Csv, "ozaki-rect", "library_ozaki_rect_rel", capture(Args));
 }
 
 /// Measures the error-corrected dispatch, which only a build with cuMpSGEMM
 /// has.
 static void armTcec(StringRef Csv, const Device &D) {
   if (D.Hip) {
-    outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "
-              "runtime; its row stays absent\n";
+    outs()
+        << "poseidon-calibrate: tcec: the error-corrected dispatch has no HIP "
+           "runtime; its row stays absent\n";
     return;
   }
   if (!POSEIDON_CALIBRATE_TCEC) {
-    outs() << "[calibrate] tcec: this build has no error-corrected dispatch, "
+    outs() << "poseidon-calibrate: tcec: this build has no error-corrected "
+              "dispatch, "
               "which needs cuMpSGEMM (configure with "
               "-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>); its row stays absent\n";
     return;
   }
-  armDispatch(Csv, D, "tcec", "tcec_dispatch_rel");
+  armDispatch(Csv, D, "tcec", "library_tcec_rel");
 }
 
 /// The time `Exe` reports for --reps runs of its kernel, if it runs.
@@ -841,7 +846,7 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
                                 StringRef Work, unsigned M, unsigned N,
                                 unsigned K, bool BColMajor, StringRef Suffix) {
   std::string Content = readFile(Csv);
-  std::string Src = shipped("tools/calibrate/inkernel_calibrate.cu");
+  std::string Src = shipped("tools/calibrate/inkernel.cu");
   if (!sys::fs::exists(Src))
     fail("the in-kernel harness source is missing: " + Src);
   const std::string Shape = formatv("{0}x{1}x{2}", M, N, K);
@@ -849,7 +854,7 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
       (Work + "/" + (Suffix.empty() ? "class" : Suffix.drop_front())).str();
   if (std::error_code EC = sys::fs::create_directories(Dir))
     fail("cannot create " + Dir + ": " + EC.message());
-  outs() << "[calibrate] in-kernel raises at " << Shape << ", B "
+  outs() << "poseidon-calibrate: in-kernel raises at " << Shape << ", B "
          << (BColMajor ? "contiguous" : "strided") << " along K\n";
 
   std::string Clang = sibling("poseidon-clang++");
@@ -890,41 +895,41 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
   std::optional<double> BaseMs = timeOf(BaseExe);
   if (!BaseMs)
     fail("the scalar-FP64 baseline produced no time");
-  outs() << "[calibrate] scalar-FP64 baseline " << formatv("{0:F4}", *BaseMs)
-         << " ms\n";
+  outs() << "poseidon-calibrate: scalar-FP64 baseline "
+         << formatv("{0:F4}", *BaseMs) << " ms\n";
 
-  // One compile prints the candidate table; -poseidon-apply-rewrites is
-  // mandatory under -poseidon-inkernel-calibration, so a placeholder price can
+  // One compile prints the candidate table; -poseidon-pin is
+  // mandatory under -poseidon-matmul-calibration, so a placeholder price can
   // never reach a DP solve.
   SmallVector<std::string, 16> Common = Timed;
   Common.append({"-poseidon-profile-use=" + ProfDir,
                  "-poseidon-cache=" + Dir + "/cache",
-                 "-poseidon-cost-model=" + Csv, "-poseidon-enable-herbie=0",
-                 "-poseidon-enable-pt=0", "-poseidon-raise-wmma",
-                 "-poseidon-print", "-poseidon-inkernel-calibration"});
+                 "-poseidon-cost-model=" + Csv, "-poseidon-enable-rewrite=0",
+                 "-poseidon-enable-precision=0", "-poseidon-enable-matmul",
+                 "-poseidon-print", "-poseidon-matmul-calibration"});
   auto compile = [&](StringRef Apply, StringRef Exe, StringRef Log) {
     SmallVector<std::string, 16> Flags = Common;
     Flags.push_back(Apply.str());
     return build(Flags, Exe, Log);
   };
   std::string EnumLog = Dir + "/enumerate.log";
-  compile("-poseidon-apply-rewrites=M0_0", "/dev/null", EnumLog);
+  compile("-poseidon-pin=M0_0", "/dev/null", EnumLog);
   std::map<std::string, std::string> Classes = inKernelClasses(EnumLog);
   if (Classes.empty())
     fail("no in-kernel class was proposed on this device; see " + EnumLog);
-  outs() << "[calibrate] " << Classes.size()
+  outs() << "poseidon-calibrate: " << Classes.size()
          << " in-kernel class(es) proposed\n";
 
   std::string Rows;
   for (const auto &[Class, Index] : Classes) {
-    const std::string Row = "wmma_inkernel_rel," + Class + Suffix.str();
+    const std::string Row = "inkernel_rel," + Class + Suffix.str();
     if (!Force && StringRef(Content).contains(Row + ",")) {
       outs() << "  = " << Class << Suffix << " already calibrated\n";
       continue;
     }
     std::string Exe = Dir + "/cand_" + Class + ".exe";
     std::string Log = Dir + "/build_" + Class + ".log";
-    if (compile("-poseidon-apply-rewrites=M0_" + Index, Exe, Log)) {
+    if (compile("-poseidon-pin=M0_" + Index, Exe, Log)) {
       outs() << "  ! " << Class << Suffix << " did not build (" << Log << ")\n";
       Unmeasured.push_back(Row);
       continue;
@@ -953,7 +958,8 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
 /// extents and layout.
 static void armInKernel(const std::string &Csv, const Device &D) {
   if (D.Hip) {
-    outs() << "[calibrate] inkernel: tensor-core raises inside a kernel are "
+    outs() << "poseidon-calibrate: inkernel: tensor-core raises inside a "
+              "kernel are "
               "NVPTX-only; their rows stay absent\n";
     return;
   }
@@ -962,7 +968,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
           sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf))
     fail("cannot create " + WorkBuf + ": " + EC.message());
   std::string Work(WorkBuf);
-  outs() << "[calibrate] in-kernel workdir " << Work << '\n';
+  outs() << "poseidon-calibrate: in-kernel workdir " << Work << '\n';
 
   unsigned Written = measureInKernel(Csv, D, Work, RefN, RefN, RefN,
                                      /*BColMajor=*/false, "");
@@ -972,7 +978,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
           measureInKernel(Csv, D, Work, P.M, P.N, P.K, P.Layout == BLayouts[1],
                           "_" + P.key() + "_" + P.Layout);
   if (!Written)
-    outs() << "[calibrate] in-kernel: nothing new to write\n";
+    outs() << "poseidon-calibrate: in-kernel: nothing new to write\n";
 }
 
 /// Resolves the model as a compile for `D` does, with --out in the place of
@@ -1013,18 +1019,17 @@ static int checkModel(const Device &D) {
   } Families[] = {
       {"fmul", "per-op throughputs", Everywhere},
       {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
-      {"ozaki_dispatch_rel", "Ozaki-II host dispatch", Gpu},
-      {"tcec_dispatch_rel", "error-corrected host dispatch", Nvidia},
-      {"direct_dispatch_rel", "reduced-precision host dispatch", Gpu},
-      {"wmma_inkernel_rel", "in-kernel tensor-core raises", Nvidia}};
+      {"library_ozaki_rel", "Ozaki-II host dispatch", Gpu},
+      {"library_tcec_rel", "error-corrected host dispatch", Nvidia},
+      {"library_direct_rel", "reduced-precision host dispatch", Gpu},
+      {"inkernel_rel", "in-kernel tensor-core raises", Nvidia}};
   for (const auto &F : Families) {
     if ((D.Host && F.On != Everywhere) || (D.Hip && F.On == Nvidia)) {
       outs() << "n/a         " << F.Family << "  (" << F.What << ": none on "
              << (D.Host ? "a host" : D.Arch) << ")\n";
       continue;
     }
-    if (!POSEIDON_CALIBRATE_TCEC &&
-        StringRef(F.Family) == "tcec_dispatch_rel") {
+    if (!POSEIDON_CALIBRATE_TCEC && StringRef(F.Family) == "library_tcec_rel") {
       outs() << "n/a         " << F.Family << "  (" << F.What
              << ": none in a build without cuMpSGEMM)\n";
       continue;
@@ -1053,13 +1058,13 @@ int main(int argc, char **argv) {
       "fpext_/fptrunc_<from>_to_<to>,<from>,\n"
       "                   and on NVIDIA wmma_mma_<tile>,<in>_<acc>\n"
       "  herbie-platform  no rows: the Herbie platform <csv>.herbie.rkt\n"
-      "  ozaki            ozaki_dispatch_rel,nm<8..14> and ,dgemm\n"
-      "  ozaki-rect       ozaki_dispatch_rect_rel,nm<k>_m<M>n<N>k<K> and\n"
+      "  ozaki            library_ozaki_rel,nm<8..14> and ,dgemm\n"
+      "  ozaki-rect       library_ozaki_rect_rel,nm<k>_m<M>n<N>k<K> and\n"
       "                   ,dgemm_m<M>n<N>k<K> (--product),\n"
       "                   ,nm<k>_m<M>k<K> (--ozaki-rect)\n"
-      "  tcec             tcec_dispatch_rel,fp16tcec\n"
-      "  direct           direct_dispatch_rel,<in>_<acc>\n"
-      "  inkernel         wmma_inkernel_rel,<class> and\n"
+      "  tcec             library_tcec_rel,fp16tcec\n"
+      "  direct           library_direct_rel,<in>_<acc>\n"
+      "  inkernel         inkernel_rel,<class> and\n"
       "                   ,<class>_m<M>n<N>k<K>_<layout> (--product)\n"
       "A host has the first two arms only.\n");
   ToolDir = std::string(sys::path::parent_path(
@@ -1096,7 +1101,7 @@ int main(int argc, char **argv) {
     return checkModel(D);
   std::string Csv = resolveCsv(D);
 
-  outs() << "[calibrate] device " << D.Name << " (" << D.Arch;
+  outs() << "poseidon-calibrate: device " << D.Name << " (" << D.Arch;
   if (!D.Host)
     outs() << ", id " << D.Id;
   outs() << ")\n";
@@ -1110,17 +1115,17 @@ int main(int argc, char **argv) {
     armHerbiePlatform(Csv);
   if (!D.Host) {
     if (wants("ozaki"))
-      armDispatch(Csv, D, "ozaki", "ozaki_dispatch_rel");
+      armDispatch(Csv, D, "ozaki", "library_ozaki_rel");
     if (wants("ozaki-rect"))
       armOzakiRect(Csv, D);
     if (wants("tcec"))
       armTcec(Csv, D);
     if (wants("direct"))
-      armDispatch(Csv, D, "direct", "direct_dispatch_rel");
+      armDispatch(Csv, D, "direct", "library_direct_rel");
     if (wants("inkernel"))
       armInKernel(Csv, D);
   }
-  outs() << "[calibrate] cost model: " << Csv << '\n';
+  outs() << "poseidon-calibrate: cost model: " << Csv << '\n';
   if (!Unmeasured.empty()) {
     printError(Twine(Unmeasured.size()) +
                " row(s) not measured, which the same command measures alone "

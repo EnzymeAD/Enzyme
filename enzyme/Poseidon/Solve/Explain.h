@@ -20,7 +20,7 @@
 //   target     tau and tau_from ("site" or "flag") under an accuracy target,
 //              else budget (the -poseidon-cost-budget share); for a solved site
 //              also cost_model, selector ("dp", "joint", "error-budget",
-//              "manual"), from_cache (the DP table was read from the cache),
+//              "pinned"), from_cache (the DP table was read from the cache),
 //              sites (the IR functions of a joint solve)
 //   scale      (solved sites) accuracy_scale S and baseline_accuracy_cost A0:
 //              an accuracy cost a is the modelled relative error (A0 + a) / S;
@@ -38,7 +38,7 @@
 //              applied), steps (each step the solve chose, in order: id,
 //              choice, the text of its "Applying solution for" line, and
 //              applied, false for a step an earlier one made moot), pin (the
-//              -poseidon-apply-rewrites value that applies them again),
+//              -poseidon-pin value that applies them again),
 //              selected (the frontier point selected: cost, the share it adds,
 //              accuracy_cost, modelled_rel_error), best_achievable_rel_error
 //              (for "no_solution" under a target), cost_before, cost_after,
@@ -64,8 +64,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_EXPLAIN_H
-#define POSEIDON_EXPLAIN_H
+#ifndef POSEIDON_SOLVE_EXPLAIN_H
+#define POSEIDON_SOLVE_EXPLAIN_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -74,7 +74,7 @@
 
 namespace poseidon {
 
-struct FunctionFPState;
+struct SiteState;
 struct Options;
 class Session;
 struct SolutionStep;
@@ -105,9 +105,9 @@ void explainUnprofiled(Session &S, llvm::Function &F, double tau,
 
 /// Remarks and the explanation of the solve of the site of `st`; an operation
 /// of a subgraph the cost model has no row for is an error.
-llvm::Error explainSolve(Session &S, llvm::Function &F, FunctionFPState &st,
+llvm::Error explainSolve(Session &S, llvm::Function &F, SiteState &st,
                          llvm::ArrayRef<SolutionStep> steps,
                          const SolveRecord &rec);
 
 } // namespace poseidon
-#endif // POSEIDON_EXPLAIN_H
+#endif // POSEIDON_SOLVE_EXPLAIN_H

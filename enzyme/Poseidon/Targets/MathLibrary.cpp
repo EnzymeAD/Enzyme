@@ -9,7 +9,8 @@
 #include "MathLibrary.h"
 #include "Target.h"
 
-#include "IR/Utils.h"
+#include "Pass/Diagnostics.h"
+#include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

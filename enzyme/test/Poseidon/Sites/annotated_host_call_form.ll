@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
 
 ; A function that carries POSEIDON_OPTIMIZE is a site at every call, so naming
 ; it in the call form as well, here under the marker's name, is a compile

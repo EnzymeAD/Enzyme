@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t
-; RUN: %opt < %s %loadPoseidon -passes="assign-guid,poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t -S | FileCheck %s
+; RUN: %opt < %s %loadPoseidon -passes="assign-guid,poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t -S | FileCheck %s
 ; REQUIRES: guid-metadata
 
 ; A function's GUID is kept as !guid metadata, which a clone copies. Where the

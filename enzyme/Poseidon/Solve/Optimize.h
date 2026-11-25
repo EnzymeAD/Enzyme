@@ -6,15 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_OPTIMIZE_H
-#define POSEIDON_OPTIMIZE_H
+#ifndef POSEIDON_SOLVE_OPTIMIZE_H
+#define POSEIDON_SOLVE_OPTIMIZE_H
 
 #include "Model/FPNode.h"
-#include "Profile/ProfileRead.h"
-#include "Solvers.h"
-#include "Techniques/Herbie.h"
+#include "Profile/ProfileReader.h"
+#include "SolveSites.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision.h"
+#include "Techniques/Precision/Precision.h"
+#include "Techniques/Rewrite/Rewrite.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -39,7 +39,7 @@ class Session;
 
 /// One site's solve: its FP graph, its profile's scale, the units proposed for
 /// it and the analyses its matrix products hold.
-struct FunctionFPState : FPGraph {
+struct SiteState : FPGraph {
   /// The accuracy target written at the site; 0 when the site has none and
   /// -poseidon-tau applies.
   double tau = 0.0;
@@ -67,19 +67,20 @@ struct FunctionFPState : FPGraph {
   llvm::SmallVector<Subgraph, 1> subgraphs;
   /// Backing storage for the matmuls; MatmulUnit::matmul points into this,
   /// so it must outlive materialization.
-  llvm::SmallVector<AbstractMatmul, 4> abstractMatmuls;
+  llvm::SmallVector<RecognizedMatmul, 4> abstractMatmuls;
   /// The rewrite units proposed for the site.
-  llvm::SmallVector<RewriteUnit, 4> COs;
+  llvm::SmallVector<RewriteUnit, 4> rewriteUnits;
   /// The precision units proposed for the site.
-  llvm::SmallVector<PrecisionUnit, 4> CSs;
+  llvm::SmallVector<PrecisionUnit, 4> precisionUnits;
   /// The matrix-product units proposed for the site.
-  llvm::SmallVector<MatmulUnit, 4> CMs;
-  /// The site's units in site order (COs, CSs, CMs), each bound to this site.
+  llvm::SmallVector<MatmulUnit, 4> matmulUnits;
+  /// The site's units in site order (rewriteUnits, precisionUnits,
+  /// matmulUnits), each bound to this site.
   llvm::SmallVector<SiteUnit *, 8> units;
   /// Whether sealUnits has run.
   bool unitsSealed = false;
   /// Set when the site is solved against the DP table cache.
-  std::unique_ptr<SiteTable> table;
+  std::unique_ptr<DPTable> table;
 
   /// Analyses for the loop raises. The matmuls found hold raiseSE and SCEVs it
   /// owns, so these outlive materialization. raiseSE is declared last so that
@@ -94,7 +95,8 @@ struct FunctionFPState : FPGraph {
   std::optional<llvm::ScalarEvolution> raiseSE;
 
   /// Binds every unit to this site and lists it in `units`. Once per site,
-  /// after its last proposal: no unit is added to COs, CSs or CMs after it.
+  /// after its last proposal: no unit is added to rewriteUnits, precisionUnits
+  /// or matmulUnits after it.
   void sealUnits(Session &S);
 };
 
@@ -106,7 +108,7 @@ struct SiteProfileData {
   /// The profile's records by slot.
   ProfileMap map;
   /// The profile's header.
-  FunctionProfileHeader header;
+  SiteProfileHeader header;
   /// The canonical form hash of the site, as computed for this compile.
   std::string canonicalHash;
 };
@@ -118,13 +120,13 @@ std::string siteProfilePath(const Session &S, const llvm::Function &clone,
 
 /// `tau` > 0 is the accuracy target written at the site; 0 means the site
 /// wrote none and -poseidon-tau decides.
-llvm::Expected<bool> fpOptimize(Session &S, llvm::Function &F, double tau);
+llvm::Expected<bool> optimizeSite(Session &S, llvm::Function &F, double tau);
 
 /// The attribute that marks a site of the joint solve, holding the site's
 /// accuracy target.
-constexpr llvm::StringLiteral kJointErrTol = "poseidon-joint-errtol";
+constexpr llvm::StringLiteral kJointTau = "poseidon-joint-tau";
 
-/// Solves one DP over all sites of `M` marked with kJointErrTol.
+/// Solves one DP over all sites of `M` marked with kJointTau.
 llvm::Expected<bool> solveJointly(Session &S, llvm::Module &M);
 
 /// The FP subgraphs of F, flood-filled over its optimizable instructions, and
@@ -132,7 +134,7 @@ llvm::Expected<bool> solveJointly(Session &S, llvm::Module &M);
 /// records no execution of are in no subgraph.
 void buildSubgraphs(
     const Options &O, llvm::Function &F, const ProfileMap &profileMap,
-    const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls, FPGraph &G,
+    const llvm::SmallVectorImpl<RecognizedMatmul> &abstractMatmuls, FPGraph &G,
     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
 /// Sets the profiled sensitivity, gradient, execution count and value ranges
@@ -149,7 +151,7 @@ void shapeSubgraphs(const Options &O, llvm::Function &F,
 /// Names, once for the site clone F, the shared buffers that more than one of
 /// its optimization units reads or writes: a precision change narrows such a
 /// buffer only when all of them pick one tier, which
-/// -poseidon-merge-shared-staging makes them do.
+/// -poseidon-subgraph-merge-staging makes them do.
 void hintSharedStaging(const Session &S, llvm::Function &F,
                        llvm::ArrayRef<Subgraph> subgraphs);
 
@@ -161,4 +163,4 @@ llvm::SmallVector<SolutionStep>
 stepsToApply(llvm::ArrayRef<SolutionStep> steps);
 
 } // namespace poseidon
-#endif // POSEIDON_OPTIMIZE_H
+#endif // POSEIDON_SOLVE_OPTIMIZE_H

@@ -26,7 +26,7 @@
 
 #include <cstdlib>
 
-#include "runtime/fpprofiler/FPProfileName.h"
+#include "runtime/profile/ProfileFormat.h"
 
 using namespace llvm;
 

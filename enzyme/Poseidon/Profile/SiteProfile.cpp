@@ -9,20 +9,21 @@
 #include "SiteProfile.h"
 
 #include "Enzyme/Utils.h"
-#include "IR/Utils.h"
 #include "Instrument.h"
+#include "Pass/Diagnostics.h"
 #include "Pass/Session.h"
-#include "ProfileRead.h"
+#include "ProfileReader.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/LaunchDescriptors.h"
+#include "Sites/LaunchManifest.h"
 #include "Sites/Markers.h"
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
+#include "Support/Utils.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "runtime/fpprofiler/FPProfileName.h"
+#include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -81,7 +82,7 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
     raw_string_ostream os(staticData);
     os << kProfileKeySiteId << " = " << siteId << '\n';
     for (const auto &kv : trips)
-      os << "RedTrip = " << kv.first << ' ' << kv.second << '\n';
+      os << "ReductionTrip = " << kv.first << ' ' << kv.second << '\n';
     os << kProfileKeyCanonicalHash << " = " << canonicalFormHash(*clone)
        << '\n';
   }
@@ -652,7 +653,7 @@ void registerGlobals(Module &M) {
     if (GV.isDeclaration() || GV.isThreadLocal() || GV.getAddressSpace() ||
         GV.hasAvailableExternallyLinkage() || name.starts_with("llvm.") ||
         GV.getSection() == "llvm.metadata" || name.starts_with("poseidon") ||
-        name.starts_with("fpprofile_static_"))
+        name.starts_with("poseidon.static."))
       continue;
     uint64_t bytes = DL.getTypeAllocSize(GV.getValueType());
     if (bytes)

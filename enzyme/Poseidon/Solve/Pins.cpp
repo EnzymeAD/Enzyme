@@ -1,4 +1,4 @@
-//===- Pins.cpp - the items of -poseidon-apply-rewrites -------------------===//
+//===- Pins.cpp - the items of -poseidon-pin -------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -7,11 +7,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "Pins.h"
-#include "IR/Utils.h"
 #include "Optimize.h"
+#include "Pass/Diagnostics.h"
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
-#include "Solvers.h"
+#include "SolveSites.h"
+#include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -25,8 +26,8 @@ using namespace llvm;
 
 namespace poseidon {
 
-static std::optional<ApplyItem> parseUnitRef(StringRef s) {
-  ApplyItem item;
+static std::optional<PinItem> parseUnitRef(StringRef s) {
+  PinItem item;
   const UnitKindInfo *kind =
       llvm::find_if(unitKinds(), [&](const UnitKindInfo &k) {
         return s.starts_with(k.letter);
@@ -55,9 +56,8 @@ static std::optional<ApplyItem> parseUnitRef(StringRef s) {
 
 // A name may itself hold ':' (a Herbie precision annotation), so the unit is
 // read first and a site prefix only when the item does not start with one.
-static Expected<ApplyItem> parseApplyItem(StringRef text,
-                                          const Function &site) {
-  std::optional<ApplyItem> item = parseUnitRef(text);
+static Expected<PinItem> parseApplyItem(StringRef text, const Function &site) {
+  std::optional<PinItem> item = parseUnitRef(text);
   if (!item) {
     auto [site, rest] = text.split(':');
     if (!site.empty() && (item = parseUnitRef(rest)))
@@ -65,9 +65,9 @@ static Expected<ApplyItem> parseApplyItem(StringRef text,
   }
   if (!item)
     return userError(site, site.getSubprogram(),
-                     "-poseidon-apply-rewrites: cannot read '" + Twine(text) +
+                     "-poseidon-pin: cannot read '" + Twine(text) +
                          "'; an item is [<site>:]<unit>_<ordinal> or "
-                         "[<site>:]<unit>=<name>, <unit> being R<i>, PT<i> or "
+                         "[<site>:]<unit>=<name>, <unit> being R<i>, P<i> or "
                          "M<i>");
   item->text = text.str();
   return *item;
@@ -75,16 +75,16 @@ static Expected<ApplyItem> parseApplyItem(StringRef text,
 
 // `site` is the site the items are read for, where a mistake in them is
 // reported.
-static Expected<std::vector<ApplyItem> *> applyItems(Session &S,
-                                                     const Function &site) {
+static Expected<std::vector<PinItem> *> applyItems(Session &S,
+                                                   const Function &site) {
   PinState &P = S.Pins;
   if (!P.parsed) {
     P.parsed = true;
     SmallVector<StringRef> texts;
-    StringRef(S.Opts.Solver.ApplyRewrites)
+    StringRef(S.Opts.Solver.Pin)
         .split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
     for (StringRef text : texts) {
-      Expected<ApplyItem> item = parseApplyItem(text.trim(), site);
+      Expected<PinItem> item = parseApplyItem(text.trim(), site);
       if (!item)
         return item.takeError();
       P.items.push_back(std::move(*item));
@@ -93,7 +93,7 @@ static Expected<std::vector<ApplyItem> *> applyItems(Session &S,
   return &P.items;
 }
 
-static bool namesSite(const ApplyItem &item, StringRef key,
+static bool namesSite(const PinItem &item, StringRef key,
                       ArrayRef<std::string> aliases) {
   return item.site.empty() || item.site == key ||
          is_contained(aliases, item.site);
@@ -113,7 +113,7 @@ static std::string listSites(const std::set<std::string> &keys) {
 // Sites are noted before they are solved, so a name two sites answer to is
 // refused before the second one applies it.
 Error noteSiteForPins(Session &S, const Function &body) {
-  if (S.Opts.Solver.ApplyRewrites.empty())
+  if (S.Opts.Solver.Pin.empty())
     return Error::success();
   PinState &P = S.Pins;
   std::string key = siteKeyOfBody(body);
@@ -121,16 +121,16 @@ Error noteSiteForPins(Session &S, const Function &body) {
     return Error::success();
   P.sites.push_back(key);
   SmallVector<std::string, 2> aliases = siteAliases(key);
-  Expected<std::vector<ApplyItem> *> items = applyItems(S, body);
+  Expected<std::vector<PinItem> *> items = applyItems(S, body);
   if (!items)
     return items.takeError();
-  for (ApplyItem &item : **items) {
+  for (PinItem &item : **items) {
     if (item.site.empty() || !namesSite(item, key, aliases))
       continue;
     item.named.insert(key);
     if (item.named.size() > 1)
       return userError(body, body.getSubprogram(),
-                       "-poseidon-apply-rewrites item '" + Twine(item.text) +
+                       "-poseidon-pin item '" + Twine(item.text) +
                            "' names the site '" + item.site +
                            "', which more than one site of this module "
                            "answers to; give one of them by its symbol:" +
@@ -144,16 +144,15 @@ Error checkPinnedSites(Session &S, Module &M) {
   // The host half of a CUDA or HIP unit is given the items too, and the sites
   // they name are the device half's. A noted site read the items.
   if (!P.sites.empty())
-    for (const ApplyItem &item : P.items)
+    for (const PinItem &item : P.items)
       if (!item.site.empty() && item.named.empty())
         return userError(
-            "-poseidon-apply-rewrites item '" + Twine(item.text) +
-            "' names the site '" + item.site +
-            "', which is no site of this module. Its sites are:" +
+            "-poseidon-pin item '" + Twine(item.text) + "' names the site '" +
+            item.site + "', which is no site of this module. Its sites are:" +
             listSites(std::set<std::string>(P.sites.begin(), P.sites.end())));
   P.sites.clear();
   P.printed.clear();
-  for (ApplyItem &item : P.items)
+  for (PinItem &item : P.items)
     item.named.clear();
   return Error::success();
 }
@@ -161,7 +160,7 @@ Error checkPinnedSites(Session &S, Module &M) {
 // The position of the candidate an item names in a unit's list. A candidate
 // pricing dropped is not in the list, and is told apart from a name the unit
 // never had.
-static Expected<size_t> findNamed(const ApplyItem &item, const Function &F,
+static Expected<size_t> findNamed(const PinItem &item, const Function &F,
                                   StringRef site, StringRef unit,
                                   const SiteUnit &cands) {
   std::optional<size_t> found;
@@ -170,9 +169,9 @@ static Expected<size_t> findNamed(const ApplyItem &item, const Function &F,
       continue;
     if (found)
       return userError(F, F.getSubprogram(),
-                       "-poseidon-apply-rewrites: " + Twine(site) + ": " +
-                           unit + " has more than one candidate named '" +
-                           item.name + "'; give it as " + unit + "_<ordinal>");
+                       "-poseidon-pin: " + Twine(site) + ": " + unit +
+                           " has more than one candidate named '" + item.name +
+                           "'; give it as " + unit + "_<ordinal>");
     found = i;
   }
   if (found)
@@ -180,8 +179,8 @@ static Expected<size_t> findNamed(const ApplyItem &item, const Function &F,
   for (const auto &[name, why] : cands.droppedCandidates())
     if (name == item.name)
       return userError(F, F.getSubprogram(),
-                       "-poseidon-apply-rewrites: " + Twine(site) + ": " +
-                           unit + " has no candidate named '" + item.name +
+                       "-poseidon-pin: " + Twine(site) + ": " + unit +
+                           " has no candidate named '" + item.name +
                            "': pricing dropped it, because " + why);
   std::string names;
   for (size_t i = 0; i < cands.numCandidates(); ++i)
@@ -189,22 +188,21 @@ static Expected<size_t> findNamed(const ApplyItem &item, const Function &F,
   if (names.empty())
     names = " none";
   return userError(F, F.getSubprogram(),
-                   "-poseidon-apply-rewrites: " + Twine(site) + ": " + unit +
+                   "-poseidon-pin: " + Twine(site) + ": " + unit +
                        " has no candidate named '" + item.name +
                        "'. Its candidates are:" + names);
 }
 
-Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
-                                                        FunctionFPState &st) {
+Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
   const std::string key = siteKey(S.Sites, *st.F);
   const SmallVector<std::string, 2> aliases = siteAliases(key);
   SmallVector<SolutionStep> steps;
   SmallPtrSet<const SiteUnit *, 8> appliedUnits;
   const Function &F = *st.F;
-  Expected<std::vector<ApplyItem> *> items = applyItems(S, F);
+  Expected<std::vector<PinItem> *> items = applyItems(S, F);
   if (!items)
     return items.takeError();
-  for (const ApplyItem &item : **items) {
+  for (const PinItem &item : **items) {
     if (!namesSite(item, key, aliases))
       continue;
     const std::string &id = item.text;
@@ -226,23 +224,22 @@ Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
       else if (ofKind > 1)
         has = (kind.letter + "0 to " + kind.letter + Twine(ofKind - 1)).str();
       return userError(F, F.getSubprogram(),
-                       "-poseidon-apply-rewrites item '" + Twine(id) +
-                           "': there is no " + name + "; the site has " + has);
+                       "-poseidon-pin item '" + Twine(id) + "': there is no " +
+                           name + "; the site has " + has);
     }
     size_t pos;
     if (item.ordinal) {
       std::optional<size_t> found = unit->positionOfOrdinal(*item.ordinal);
       if (!found && kind.pricingDrops)
         return userError(F, F.getSubprogram(),
-                         "-poseidon-apply-rewrites item '" + Twine(id) +
-                             "': " + name + " has no candidate " +
-                             Twine(*item.ordinal) + " that pricing kept");
+                         "-poseidon-pin item '" + Twine(id) + "': " + name +
+                             " has no candidate " + Twine(*item.ordinal) +
+                             " that pricing kept");
       if (!found)
         return userError(F, F.getSubprogram(),
-                         "-poseidon-apply-rewrites item '" + Twine(id) +
-                             "': " + name + " has no candidate " +
-                             Twine(*item.ordinal) + "; it has " +
-                             Twine(unit->numCandidates()));
+                         "-poseidon-pin item '" + Twine(id) + "': " + name +
+                             " has no candidate " + Twine(*item.ordinal) +
+                             "; it has " + Twine(unit->numCandidates()));
       pos = *found;
     } else {
       Expected<size_t> named = findNamed(item, F, key, name, *unit);
@@ -252,8 +249,8 @@ Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
     }
     if (!appliedUnits.insert(unit).second)
       return userError(F, F.getSubprogram(),
-                       "-poseidon-apply-rewrites item '" + Twine(id) +
-                           "': " + name + " already has " + kind.appliedNoun +
+                       "-poseidon-pin item '" + Twine(id) + "': " + name +
+                           " already has " + kind.appliedNoun +
                            " applied; give one item per unit");
     // The rule the solvers keep: a raise replaces the loop it reads, so no
     // other step may edit an instruction of that loop.
@@ -262,8 +259,8 @@ Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
       if ((unit->consumesFootprint() || other.consumesFootprint()) &&
           unit->footprintOverlaps(other))
         return userError(F, F.getSubprogram(),
-                         "-poseidon-apply-rewrites item '" + Twine(id) +
-                             "': " + name + " and " + other.info().letter +
+                         "-poseidon-pin item '" + Twine(id) + "': " + name +
+                             " and " + other.info().letter +
                              Twine(other.indexInKind()) +
                              " change the same instructions, and one of "
                              "them replaces them; give one of the two");
@@ -283,7 +280,7 @@ Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
   return steps;
 }
 
-std::string pinValue(const Session &S, const FunctionFPState &st,
+std::string pinValue(const Session &S, const SiteState &st,
                      ArrayRef<SolutionStep> applied) {
   const std::string key = siteKey(S.Sites, *st.F);
   std::string value;
@@ -299,8 +296,7 @@ std::string pinValue(const Session &S, const FunctionFPState &st,
   return value;
 }
 
-void printPin(Session &S, const FunctionFPState &st,
-              ArrayRef<SolutionStep> applied) {
+void printPin(Session &S, const SiteState &st, ArrayRef<SolutionStep> applied) {
   const std::string value = pinValue(S, st, applied);
   if (!value.empty() && !S.Pins.printed.insert(value).second)
     return;

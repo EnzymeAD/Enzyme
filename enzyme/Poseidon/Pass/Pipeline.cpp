@@ -6,24 +6,25 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Driver.h"
-#include "IR/Utils.h"
+#include "Actions.h"
+#include "AsWritten.h"
+#include "Pass/Diagnostics.h"
+#include "Pass/HostStubs.h"
 #include "Profile/Instrument.h"
 #include "Profile/SiteProfile.h"
 #include "Session.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/LaunchDescriptors.h"
-#include "Sites/LaunchStubs.h"
+#include "Sites/LaunchManifest.h"
 #include "Sites/Markers.h"
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Optimize.h"
+#include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "Twin.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -141,7 +142,7 @@ static bool hasSite(const Options &O, Module &M) {
       (!O.Profiling.Kernels.empty() || !annotatedFunctions(M).empty()))
     return true;
   for (Function &F : M) {
-    if (F.hasFnAttribute(kHostBody) || F.hasFnAttribute(kSiteCallee))
+    if (F.hasFnAttribute(kSiteBody) || F.hasFnAttribute(kSiteCallee))
       return true;
     if (!F.use_empty() &&
         ((F.isDeclaration() && isMarkerCall(F.getName())) ||
@@ -220,7 +221,7 @@ struct OptimizePass : PassParent<OptimizePass> {
       return stopOnError(S, M, optimized.takeError());
     changed |= *optimized;
 
-    if (O.Solver.JointDP) {
+    if (O.Solver.SolveJointly) {
       Expected<bool> joint = solveJointly(S, M);
       if (!joint)
         return stopOnError(S, M, joint.takeError());
@@ -272,14 +273,16 @@ namespace {
 // The site handler for deferred sites, at OptimizerLast, where the derivative
 // request a deferred body was made of has been lowered. A module without a
 // deferred site is left untouched.
-struct LatePass : PassParent<LatePass> {
+struct DeferredSitePass : PassParent<DeferredSitePass> {
   PassBuilder *PB;
   OptimizationLevel Level;
   ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
   bool PhaseKnown = false;
 
-  LatePass(PassBuilder *PB, OptimizationLevel Level) : PB(PB), Level(Level) {}
-  LatePass(PassBuilder *PB, OptimizationLevel Level, ThinOrFullLTOPhase Phase)
+  DeferredSitePass(PassBuilder *PB, OptimizationLevel Level)
+      : PB(PB), Level(Level) {}
+  DeferredSitePass(PassBuilder *PB, OptimizationLevel Level,
+                   ThinOrFullLTOPhase Phase)
       : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
 
   // The canonical prefix, over the deferred bodies only: nothing follows this
@@ -290,7 +293,7 @@ struct LatePass : PassParent<LatePass> {
                           DenseMap<Function *, Function *> *asLeft) {
     for (Function *F : bodies) {
       if (asLeft)
-        asLeftByPipeline(*F, *asLeft);
+        asWrittenCopy(*F, *asLeft);
       unsigned folded = foldEnzymeGenerated(*F);
       if (O.Diagnostics.Print && folded)
         llvm::errs() << "[poseidon] " << F->getName() << ": folded " << folded
@@ -398,7 +401,7 @@ struct LatePass : PassParent<LatePass> {
     if (Error E = optimizeSites(S, markers, calls).takeError())
       return stopOnError(S, M, std::move(E));
     SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
-    if (O.Solver.JointDP)
+    if (O.Solver.SolveJointly)
       if (Error E = solveJointly(S, M).takeError())
         return stopOnError(S, M, std::move(E));
     // A site that kept its body calls the body as the pipeline left it rather
@@ -442,7 +445,7 @@ struct LatePass : PassParent<LatePass> {
 // POSEIDON_OPTIMIZE on a host function is lowered at PipelineStart, before the
 // inliner can fold the function into its callers, and on a device function it
 // is handed to the kernels that call it while those calls still exist.
-struct HostSitePass : PassParent<HostSitePass> {
+struct LowerSitesPass : PassParent<LowerSitesPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
     if (S.Stopped)
@@ -485,21 +488,21 @@ struct HostSitePass : PassParent<HostSitePass> {
 };
 
 // Clones a module with a site in a profile-use compile, at PipelineStart and
-// before HostSitePass, so that every function no rewrite reaches is emitted
+// before LowerSitesPass, so that every function no rewrite reaches is emitted
 // from a compile as written: the canonical prefix, site bodies kept out of
 // line and, on a device, libdevice math kept out of line change the code of
 // every function of the module. The host half of a CUDA or HIP compilation
 // holds no site, and its launch stubs are rewritten at PipelineStart, where no
 // rewrite is recorded.
-struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
+struct AsWrittenSnapshotPass : PassParent<AsWrittenSnapshotPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
     const Options &O = S.Opts;
-    if (S.Stopped || S.IsTwin || isOffloadHostHalf(M) || !hasSite(O, M))
+    if (S.Stopped || S.IsAsWritten || isOffloadHostHalf(M) || !hasSite(O, M))
       return PreservedAnalyses::all();
     if (O.Profiling.usesProfile() && !O.Profiling.generatesProfile() &&
-        !O.Solver.JointDP)
-      S.AsWrittenTwin = snapshotAsWritten(M);
+        !O.Solver.SolveJointly)
+      S.AsWritten = snapshotAsWritten(M);
     return PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -550,7 +553,7 @@ struct FinalizePass : PassParent<FinalizePass> {
     // half that failed.
     if (O.Profiling.generatesProfile())
       recordProfileTableSize(S.Launches, M);
-    if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
+    if (T.isDevice() && !S.IsAsWritten && handsOverLaunches(O))
       if (Error E = writeLaunchManifest(S.Opts, S.Launches, M))
         return stopOnError(S, M, std::move(E));
     releaseDeviceMath(M);
@@ -565,7 +568,7 @@ struct FinalizePass : PassParent<FinalizePass> {
     });
     for (Function *F : rewritten)
       inlineDeviceMath(*F);
-    if (std::unique_ptr<Module> Twin = std::move(S.AsWrittenTwin))
+    if (std::unique_ptr<Module> Twin = std::move(S.AsWritten))
       if (PB)
         replaceWithAsWritten(M, std::move(Twin), S, *PB, Level, Phase,
                              rewritten.getArrayRef());
@@ -577,11 +580,11 @@ struct FinalizePass : PassParent<FinalizePass> {
 // A module without a site compiles as it does without the plugin, but that
 // profile generation binds the profiler from main, wherever main is. The
 // canonical prefix runs first in a compile that generates or uses a profile.
-struct IfSitePass : PassParent<IfSitePass> {
+struct SiteGatePass : PassParent<SiteGatePass> {
   ModulePassManager Prefix;
   ModulePassManager Pipeline;
 
-  IfSitePass(ModulePassManager Prefix, ModulePassManager Pipeline)
+  SiteGatePass(ModulePassManager Prefix, ModulePassManager Pipeline)
       : Prefix(std::move(Prefix)), Pipeline(std::move(Pipeline)) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
@@ -631,13 +634,13 @@ static void registerPasses(PassBuilder &PB) {
       });
 
   auto loadHostStub = [](ModulePassManager &MPM, OptimizationLevel) {
-    MPM.addPass(HostSitePass());
+    MPM.addPass(LowerSitesPass());
     // Host-side GEMM dispatch rewrites the launch stub before inlining.
     MPM.addPass(HostStubPass());
   };
   PB.registerPipelineStartEPCallback(
       [loadHostStub](ModulePassManager &MPM, OptimizationLevel Level) {
-        MPM.addPass(TwinSnapshotPass());
+        MPM.addPass(AsWrittenSnapshotPass());
         loadHostStub(MPM, Level);
       });
 
@@ -649,20 +652,20 @@ static void registerPasses(PassBuilder &PB) {
     // Nothing later in the pipeline folds the outlined site bodies and the
     // materialized clones back into their kernels.
     Sites.addPass(AlwaysInlinerPass());
-    MPM.addPass(IfSitePass(std::move(Prefix), std::move(Sites)));
+    MPM.addPass(SiteGatePass(std::move(Prefix), std::move(Sites)));
   };
   PassBuilder *PBp = &PB;
-  // LatePass precedes FinalizePass so that FinalizePass's check for unlowered
-  // requests sees the second Enzyme run of a deferred site. The module as
-  // written is compiled with the default pipeline of the phase the module is
-  // in: a compile from source, also one that writes LTO bitcode. An LTO link
-  // has no module as written.
+  // DeferredSitePass precedes FinalizePass so that FinalizePass's check for
+  // unlowered requests sees the second Enzyme run of a deferred site. The
+  // module as written is compiled with the default pipeline of the phase the
+  // module is in: a compile from source, also one that writes LTO bitcode. An
+  // LTO link has no module as written.
   auto loadFinalize = [PBp](ModulePassManager &MPM, OptimizationLevel Level,
                             ThinOrFullLTOPhase Phase) {
     const bool fromSource = Phase == ThinOrFullLTOPhase::None ||
                             Phase == ThinOrFullLTOPhase::ThinLTOPreLink ||
                             Phase == ThinOrFullLTOPhase::FullLTOPreLink;
-    MPM.addPass(LatePass(PBp, Level, Phase));
+    MPM.addPass(DeferredSitePass(PBp, Level, Phase));
     MPM.addPass(FinalizePass(fromSource ? PBp : nullptr, Level, Phase));
   };
 
@@ -692,8 +695,8 @@ static void registerPasses(PassBuilder &PB) {
           MPM.addPass(FinalizePass());
           return true;
         }
-        if (Name == "poseidon-late") {
-          MPM.addPass(LatePass(PBp, OptimizationLevel::O3));
+        if (Name == "poseidon-deferred-sites") {
+          MPM.addPass(DeferredSitePass(PBp, OptimizationLevel::O3));
           return true;
         }
         return false;

@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MARKERS_H
-#define POSEIDON_MARKERS_H
+#ifndef POSEIDON_SITES_MARKERS_H
+#define POSEIDON_SITES_MARKERS_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -120,8 +120,8 @@ unsigned foldEnzymeGenerated(llvm::Function &body);
 /// the code as written. One copy per body, kept in `copies`; the copies belong
 /// to the module.
 llvm::Function *
-asLeftByPipeline(llvm::Function &body,
-                 llvm::DenseMap<llvm::Function *, llvm::Function *> &copies);
+asWrittenCopy(llvm::Function &body,
+              llvm::DenseMap<llvm::Function *, llvm::Function *> &copies);
 /// Whether `F`, or a function it calls, is still an __enzyme_* request.
 bool callsEnzymeRequest(llvm::Function &F);
 /// Whether the marker call `CI` is the late run's, its body still being a
@@ -170,4 +170,4 @@ llvm::Expected<MarkerArgs> parseMarker(llvm::CallInst *CI, llvm::Function *F);
 
 } // namespace poseidon
 
-#endif // POSEIDON_MARKERS_H
+#endif // POSEIDON_SITES_MARKERS_H

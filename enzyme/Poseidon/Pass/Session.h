@@ -13,16 +13,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_SESSION_H
-#define POSEIDON_SESSION_H
+#ifndef POSEIDON_PASS_SESSION_H
+#define POSEIDON_PASS_SESSION_H
 
-#include "Core/CostTable.h"
-#include "Core/HerbieRun.h"
-#include "Core/Options.h"
-#include "Sites/LaunchDescriptors.h"
+#include "Model/CostTable.h"
+#include "Pass/Options.h"
+#include "Sites/LaunchManifest.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Pins.h"
 #include "Techniques/Matmul/Matmul.h"
+#include "Techniques/Rewrite/HerbieRun.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
@@ -50,8 +50,8 @@ namespace poseidon {
 class Session {
 public:
   /// A session compiling with `O`; `PB` must outlive it.
-  Session(Options O, llvm::PassBuilder &PB, bool IsTwin = false)
-      : Opts(std::move(O)), PB(PB), IsTwin(IsTwin),
+  Session(Options O, llvm::PassBuilder &PB, bool IsAsWritten = false)
+      : Opts(std::move(O)), PB(PB), IsAsWritten(IsAsWritten),
         CostModel(Opts.Model.CostModel) {}
 
   /// The options of the compile, as given on its command line.
@@ -62,7 +62,7 @@ public:
   llvm::PassBuilder &PB;
   /// Whether this is the session of the module as written, compiled as a build
   /// without a profile: it is not snapshotted and hands no launch over.
-  const bool IsTwin;
+  const bool IsAsWritten;
   /// A user error ended Poseidon's work on the module: every later Poseidon
   /// pass of the compile leaves it as it is.
   bool Stopped = false;
@@ -77,7 +77,7 @@ public:
   std::map<std::pair<const llvm::Function *, double>, llvm::WeakVH> SolvedSites;
   /// The module as it was before Poseidon changed it, compiled as written at
   /// the end of the compile; null when no copy was taken.
-  std::unique_ptr<llvm::Module> AsWrittenTwin;
+  std::unique_ptr<llvm::Module> AsWritten;
 
   /// The module's site clones and site identities.
   SiteRecords Sites;
@@ -85,7 +85,7 @@ public:
   /// Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;
 
-  /// The items of -poseidon-apply-rewrites and the sites they name.
+  /// The items of -poseidon-pin and the sites they name.
   PinState Pins;
 
   /// The cost model the compile prices from, resolved on first use.
@@ -179,4 +179,4 @@ struct LocalAnalysisManagers {
 };
 
 } // namespace poseidon
-#endif // POSEIDON_SESSION_H
+#endif // POSEIDON_PASS_SESSION_H

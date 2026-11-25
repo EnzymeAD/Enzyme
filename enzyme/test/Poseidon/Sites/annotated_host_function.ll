@@ -2,7 +2,7 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -poseidon-print -S -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN-ERR %s
 ; RUN: FileCheck --check-prefix=GEN %s < %t/gen.ll
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/use -S -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE-ERR --implicit-check-not=warning: %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-cache=%t/use -S -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE-ERR --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=USE --implicit-check-not=_poseidon_body %s < %t/use.ll
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF-ERR --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=OFF --implicit-check-not=_poseidon_body %s < %t/off.ll
@@ -22,7 +22,7 @@
 ; GEN-NEXT: [[DW:@[^ ]+]] = private unnamed_addr constant [1 x i32] zeroinitializer
 ; GEN-NEXT: [[DNAMES:@[^ ]+]] = private unnamed_addr constant [1 x ptr] [ptr [[DXN]]]
 ; GEN-NEXT: [[TABLE:@[^ ]+]] = private unnamed_addr constant [1 x { ptr, i64 }] [{ ptr, i64 } { ptr @table, i64 32 }]
-; GEN-NEXT: @llvm.global_ctors = appending global [3 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess_scale_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess_dot_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr [[GLOBALS:@[^ ]+]], ptr null }]
+; GEN-NEXT: @llvm.global_ctors = appending global [3 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @poseidon.register_static.preprocess_scale_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon.register_static.preprocess_dot_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr [[GLOBALS:@[^ ]+]], ptr null }]
 
 ; GEN-LABEL: define void @scale(ptr %x, ptr %out)
 ; GEN-NEXT: entry:

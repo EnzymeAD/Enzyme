@@ -35,8 +35,8 @@ config.poseidon_has_hip = @POSEIDON_TEST_HAS_HIP@
 config.poseidon_has_tcec = @POSEIDON_TEST_HAS_TCEC@
 config.gpu_arch = "@POSEIDON_TEST_GPU_ARCH@"
 config.cuda_lib_dir = "@CUDAToolkit_LIBRARY_DIR@"
-# What a program that links poseidon_rt links besides it.
-config.poseidon_rt_link = "@POSEIDON_TEST_RT_LINK@"
+# What a program that links poseidon_gemm_cuda links besides it.
+config.poseidon_rt_link = "@POSEIDON_TEST_GEMM_LINK@"
 config.rocm_path = "@POSEIDON_ROCM_PATH@"
 config.amdgpu_arch = "@POSEIDON_AMDGPU_ARCH@"
 

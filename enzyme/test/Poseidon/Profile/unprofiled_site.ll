@@ -1,37 +1,37 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S
 ; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/empty %t/metric_only
 ; RUN: echo "qoi 1" > %t/metric_only/metric.txt
 ;
-; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/never_executed -pass-remarks-missed=poseidon -poseidon-explain=%t/never -poseidon-print -o %t/never.ll 2> %t/never.err
+; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/Inputs/never_executed -pass-remarks-missed=poseidon -poseidon-explain=%t/never -poseidon-print -o %t/never.ll 2> %t/never.err
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/never.err %t/never | FileCheck --check-prefix=NEVER-JSON %s
 ; RUN: FileCheck --check-prefix=NEVER --implicit-check-not=warning --implicit-check-not=Warning %s < %t/never.err
 ; RUN: FileCheck --check-prefix=NEVER-REMARK %s < %t/never.err
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/never.ll
-; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/never_executed -poseidon-strict-mode -o /dev/null 2>&1 | count 0
-; RUN: not %{opt} < %t/drift.ll -poseidon-profile-use=%S/../Inputs/never_executed -o /dev/null 2>&1 | FileCheck --check-prefix=DRIFT %s
+; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/Inputs/never_executed -poseidon-strict-mode -o /dev/null 2>&1 | count 0
+; RUN: not %{opt} < %t/drift.ll -poseidon-profile-use=%S/Inputs/never_executed -o /dev/null 2>&1 | FileCheck --check-prefix=DRIFT %s
 ;
 ; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%t/empty -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY %s
 ; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%t/metric_only -o /dev/null 2>&1 | FileCheck --check-prefix=METRIC %s
 ;
-; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/other_sites -pass-remarks-missed=poseidon -poseidon-explain=%t/absent -o %t/absent.ll 2>&1 | tee %t/absent.err | FileCheck --check-prefix=ABSENT %s
+; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -pass-remarks-missed=poseidon -poseidon-explain=%t/absent -o %t/absent.ll 2>&1 | tee %t/absent.err | FileCheck --check-prefix=ABSENT %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/absent.err %t/absent | FileCheck --check-prefix=ABSENT-JSON %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/absent.ll
-; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
+; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STRICT %s
 ;
-; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/never_executed -poseidon-print -o %t/out_never.ll 2>&1 \
+; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-output-profiles=%S/Inputs/never_executed -poseidon-print -o %t/out_never.ll 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-NEVER --implicit-check-not=warning --implicit-check-not=Warning %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_never.ll
-; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/fma_opt_profiles,%t/missing -o /dev/null 2>&1 \
+; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-output-profiles=%S/../Inputs/fma_site_profile,%t/missing -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-NODIR %s
-; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%t/empty -o /dev/null 2>&1 \
+; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-output-profiles=%t/empty -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-EMPTY %s
-; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites -o %t/out_absent.ll 2>&1 \
+; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-output-profiles=%S/../Inputs/unrelated_site_profile -o %t/out_absent.ll 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-ABSENT %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_absent.ll
-; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
+; RUN: not %{opt} < %t/tester.ll -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-output-profiles=%S/../Inputs/unrelated_site_profile -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-STRICT %s
 
 ; Why a site has no profile to solve from decides what profile use does. A
@@ -62,17 +62,17 @@
 ; EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; METRIC: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/metric_only (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 
-; ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}other_sites/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+; ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
 ; ABSENT: remark: <unknown>:0:0: Poseidon left the site unchanged: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed)
 ; ABSENT-JSON: preprocess_tester: unprofiled; the profiled program did not contain this site
 
-; STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
+; STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 
 ; OUT-NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/tester.fpprofile); left unchanged
 ; OUT-NODIR: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/missing (-poseidon-output-profiles) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-output-profiles) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
-; OUT-ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}other_sites/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-; OUT-STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
+; OUT-ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+; OUT-STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 
 ;--- tester.ll
 define double @tester(double %x, double %y, double %z) #0 {

@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_OFFLOAD_RUNTIME_H
-#define POSEIDON_OFFLOAD_RUNTIME_H
+#ifndef POSEIDON_TARGETS_OFFLOAD_RUNTIME_H
+#define POSEIDON_TARGETS_OFFLOAD_RUNTIME_H
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -118,4 +118,4 @@ llvm::StringRef deviceProfilerInit();
 
 } // namespace poseidon
 
-#endif // POSEIDON_OFFLOAD_RUNTIME_H
+#endif // POSEIDON_TARGETS_OFFLOAD_RUNTIME_H

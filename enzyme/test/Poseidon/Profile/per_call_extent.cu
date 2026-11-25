@@ -3,7 +3,7 @@
 // DEFINE: %{nvptx} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc
 // DEFINE: %{amdgpu} = %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc
 // DEFINE: %{gen} = %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate
-// DEFINE: %{use} = %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites
+// DEFINE: %{use} = %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile
 // RUN: rm -rf %t && mkdir %t
 // RUN: %if nvptx-device-profiler %{ %{nvptx} %{gen} -mllvm -poseidon-cache=%t/nvptx-c -mllvm -poseidon-print %s -o %t/nvptx.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
 // RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=IR-NVPTX %s < %t/nvptx.ll %}
@@ -218,7 +218,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[XE]], %[[YA]]
 // IR-NVPTX: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-NVPTX: {{^}}[[STOP]]:
-// IR-NVPTX-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[INOUT]] to ptr), i32 1, i32 2)
+// IR-NVPTX-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[INOUT]] to ptr), i32 1, i32 2)
 // IR-NVPTX-NEXT: unreachable
 // IR-NVPTX: {{^}}[[GO]]:
 // IR-NVPTX-NEXT: call {{.*}} @diffe{{.*}}_Z2qfPKdPd.poseidon._Z7k_inoutPKdPdi.0(ptr %[[X]], ptr %[[XS]], ptr %[[Y]], ptr %[[YS]])
@@ -256,7 +256,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[AE]], %[[YA]]
 // IR-NVPTX: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-NVPTX: {{^}}[[STOP]]:
-// IR-NVPTX-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[OUT]] to ptr), i32 1, i32 2)
+// IR-NVPTX-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[OUT]] to ptr), i32 1, i32 2)
 // IR-NVPTX-NEXT: unreachable
 // IR-NVPTX: {{^}}[[GO]]:
 // IR-NVPTX-NEXT: call {{.*}} @diffe{{.*}}_Z2qfPKdPd.poseidon._Z5k_outPKdPdi.0(ptr %[[A]], ptr %[[AS]], ptr %[[Y]], ptr %[[YS]])
@@ -267,7 +267,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX-LABEL: define {{.*}} @_Z9k_inplacePdi(
 // IR-NVPTX-SAME: ptr {{.*}}[[XARG:%[0-9]+]], i32
 // IR-NVPTX: %[[S:[0-9]+]] = alloca [24 x i8], align 8
-// IR-NVPTX-NOT: poseidonOverlappingArgumentsCUDA
+// IR-NVPTX-NOT: __poseidon_device_overlapping_arguments
 // IR-NVPTX: %[[XI:[0-9]+]] = getelementptr inbounds{{.*}}, ptr [[XARG]], i64 %{{[0-9]+}}
 // IR-NVPTX: %[[XJ:[0-9]+]] = getelementptr inbounds{{.*}} i8, ptr %[[XI]], i64 8
 // IR-NVPTX: store i64 0, ptr %[[S]],
@@ -275,12 +275,12 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX: store double 1.000000e+00, ptr %[[Y]],
 // IR-NVPTX: %[[Y1:[0-9]+]] = getelementptr inbounds{{.*}} i8, ptr %[[S]], i64 16
 // IR-NVPTX: store double 1.000000e+00, ptr %[[Y1]],
-// IR-NVPTX-NOT: poseidonOverlappingArgumentsCUDA
+// IR-NVPTX-NOT: __poseidon_device_overlapping_arguments
 // IR-NVPTX: call {{.*}} @diffe{{.*}}_Z2qfPKdPd.poseidon._Z9k_inplacePdi.0(ptr %[[XI]], ptr %[[S]], ptr {{(nonnull )?}}%[[XJ]], ptr %[[Y]])
-// IR-NVPTX-NOT: poseidonOverlappingArgumentsCUDA
+// IR-NVPTX-NOT: __poseidon_device_overlapping_arguments
 // IR-NVPTX: ret void
 // BODY-NVPTX-LABEL: define {{.*}} @_Z9k_inplacePdi(
-// BODY-NVPTX-NOT: poseidonOverlappingArgumentsCUDA
+// BODY-NVPTX-NOT: __poseidon_device_overlapping_arguments
 // BODY-NVPTX: {{^}}}
 
 // The input selected between two local objects, against the output a.
@@ -305,7 +305,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[AE]], %[[IA]]
 // IR-NVPTX: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-NVPTX: {{^}}[[STOP]]:
-// IR-NVPTX-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[SELECT]] to ptr), i32 1, i32 2)
+// IR-NVPTX-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[SELECT]] to ptr), i32 1, i32 2)
 // IR-NVPTX-NEXT: unreachable
 // IR-NVPTX: {{^}}[[GO]]:
 // IR-NVPTX-NEXT: call {{.*}} @diffe{{.*}}_Z2qfPKdPd.poseidon._Z8k_selectPKdPdi.0(ptr %[[IN]], ptr %[[INS]], ptr %[[A]], ptr %[[AS]])
@@ -337,7 +337,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[BE]], %[[RA]]
 // IR-NVPTX: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-NVPTX: {{^}}[[STOP]]:
-// IR-NVPTX-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[REFSTR]] to ptr), i32 1, i32 3)
+// IR-NVPTX-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[REFSTR]] to ptr), i32 1, i32 3)
 // IR-NVPTX-NEXT: unreachable
 // IR-NVPTX: {{^}}[[GO]]:
 // IR-NVPTX-NEXT: call {{.*}} @diffe{{.*}}_Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0(ptr [[REF]], ptr %[[FS]], ptr %[[A]], ptr %[[DA]], ptr %[[B]], ptr %[[DB]])
@@ -373,7 +373,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-NVPTX-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[PHI]], %[[YA]]
 // IR-NVPTX: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-NVPTX: {{^}}[[STOP]]:
-// IR-NVPTX-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[ALIGN]] to ptr), i32 1, i32 2)
+// IR-NVPTX-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[ALIGN]] to ptr), i32 1, i32 2)
 // IR-NVPTX-NEXT: unreachable
 // IR-NVPTX: {{^}}[[GO]]:
 // IR-NVPTX-NEXT: %[[P:[0-9]+]] = getelementptr inbounds{{.*}} i8, ptr %[[PS]], i64 16
@@ -411,7 +411,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[XE]], %[[YA]]
 // IR-AMDGPU: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-AMDGPU: {{^}}[[STOP]]:
-// IR-AMDGPU-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[INOUT]] to ptr), i32 1, i32 2)
+// IR-AMDGPU-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[INOUT]] to ptr), i32 1, i32 2)
 // IR-AMDGPU-NEXT: unreachable
 // IR-AMDGPU: {{^}}[[GO]]:
 // IR-AMDGPU-NEXT: %[[XSG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[XS]] to ptr
@@ -450,7 +450,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[AE]], %[[YA]]
 // IR-AMDGPU: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-AMDGPU: {{^}}[[STOP]]:
-// IR-AMDGPU-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[OUT]] to ptr), i32 1, i32 2)
+// IR-AMDGPU-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[OUT]] to ptr), i32 1, i32 2)
 // IR-AMDGPU-NEXT: unreachable
 // IR-AMDGPU: {{^}}[[GO]]:
 // IR-AMDGPU-NEXT: %[[ASG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[AS]] to ptr
@@ -461,7 +461,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU-LABEL: define {{.*}}amdgpu_kernel void @_Z9k_inplacePdi(
 // IR-AMDGPU-SAME: ptr addrspace(1) {{.*}}%[[XARG:[0-9]+]], i32
 // IR-AMDGPU: %[[S:[0-9]+]] = alloca [24 x i8], align 8, addrspace(5)
-// IR-AMDGPU-NOT: poseidonOverlappingArgumentsCUDA
+// IR-AMDGPU-NOT: __poseidon_device_overlapping_arguments
 // IR-AMDGPU: %[[XI1:[0-9]+]] = getelementptr inbounds{{.*}}, ptr addrspace(1) %[[XARG]], i64 %[[I2:[0-9]+]]
 // IR-AMDGPU: %[[XI1G:[0-9]+]] = addrspacecast ptr addrspace(1) %[[XI1]] to ptr
 // IR-AMDGPU: %[[XJ:[0-9]+]] = getelementptr inbounds{{.*}} i8, ptr %[[XI1G]], i64 8
@@ -474,12 +474,12 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU: store double 1.000000e+00, ptr addrspace(5) %[[Y1]],
 // IR-AMDGPU: %[[SG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[S]] to ptr
 // IR-AMDGPU: %[[YG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[Y]] to ptr
-// IR-AMDGPU-NOT: poseidonOverlappingArgumentsCUDA
+// IR-AMDGPU-NOT: __poseidon_device_overlapping_arguments
 // IR-AMDGPU: call {{.*}} @diffe{{.*}}_Z2qfPKdPd.poseidon._Z9k_inplacePdi.0(ptr %[[XI]], ptr %[[SG]], ptr {{(nonnull )?}}%[[XJ]], ptr %[[YG]])
-// IR-AMDGPU-NOT: poseidonOverlappingArgumentsCUDA
+// IR-AMDGPU-NOT: __poseidon_device_overlapping_arguments
 // IR-AMDGPU: ret void
 // BODY-AMDGPU-LABEL: define {{.*}}amdgpu_kernel void @_Z9k_inplacePdi(
-// BODY-AMDGPU-NOT: poseidonOverlappingArgumentsCUDA
+// BODY-AMDGPU-NOT: __poseidon_device_overlapping_arguments
 // BODY-AMDGPU: {{^}}}
 
 // IR-AMDGPU-LABEL: define {{.*}}amdgpu_kernel void @_Z8k_selectPKdPdi(
@@ -505,7 +505,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[AE]], %[[IA]]
 // IR-AMDGPU: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-AMDGPU: {{^}}[[STOP]]:
-// IR-AMDGPU-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[SELECT]] to ptr), i32 1, i32 2)
+// IR-AMDGPU-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[SELECT]] to ptr), i32 1, i32 2)
 // IR-AMDGPU-NEXT: unreachable
 // IR-AMDGPU: {{^}}[[GO]]:
 // IR-AMDGPU-NEXT: %[[INSG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[INS]] to ptr
@@ -538,7 +538,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[BE]], %[[RA]]
 // IR-AMDGPU: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-AMDGPU: {{^}}[[STOP]]:
-// IR-AMDGPU-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[REFSTR]] to ptr), i32 1, i32 3)
+// IR-AMDGPU-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[REFSTR]] to ptr), i32 1, i32 3)
 // IR-AMDGPU-NEXT: unreachable
 // IR-AMDGPU: {{^}}[[GO]]:
 // IR-AMDGPU-NEXT: %[[AG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[A]] to ptr
@@ -578,7 +578,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR-AMDGPU-DAG: %[[#max(OVL,OVR)]] = icmp {{(samesign )?}}ugt i64 %[[PHI]], %[[YA]]
 // IR-AMDGPU: br i1 %[[OV]], label %[[STOP:[0-9]+]], label %[[GO:[0-9]+]]
 // IR-AMDGPU: {{^}}[[STOP]]:
-// IR-AMDGPU-NEXT: call void @poseidonOverlappingArgumentsCUDA(ptr addrspacecast (ptr addrspace(1) @[[ALIGN]] to ptr), i32 1, i32 2)
+// IR-AMDGPU-NEXT: call void @__poseidon_device_overlapping_arguments(ptr addrspacecast (ptr addrspace(1) @[[ALIGN]] to ptr), i32 1, i32 2)
 // IR-AMDGPU-NEXT: unreachable
 // IR-AMDGPU: {{^}}[[GO]]:
 // IR-AMDGPU-NEXT: %[[P:[0-9]+]] = getelementptr inbounds{{.*}} i8, ptr addrspace(5) %[[PS]], i32 16

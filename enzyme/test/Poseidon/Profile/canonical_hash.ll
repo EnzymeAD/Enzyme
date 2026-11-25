@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: %if enzyme %{ %opt < %t/tester.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
-; RUN: %opt < %t/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
-; RUN: not %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
+; RUN: %opt < %t/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
+; RUN: not %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 
 ; The profile's slot indices are positions in the canonicalized clone's
 ; optimizable instruction sequence, so the profile carries a digest of that
@@ -9,12 +9,12 @@
 
 ; The header the profile-gen compile registers for the site at startup carries,
 ; behind the site id, the digest the fixture holds.
-; GEN: @poseidon_site_preprocess_tester = private unnamed_addr constant [7 x i8] c"tester\00"
-; GEN: @fpprofile_static_preprocess_tester = private unnamed_addr constant [45 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0A\00"
-; GEN: @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess_tester, ptr null }]
-; GEN-LABEL: define internal void @poseidon_register_static_preprocess_tester()
+; GEN: @poseidon.site.preprocess_tester = private unnamed_addr constant [7 x i8] c"tester\00"
+; GEN: @poseidon.static.preprocess_tester = private unnamed_addr constant [45 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0A\00"
+; GEN: @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @poseidon.register_static.preprocess_tester, ptr null }]
+; GEN-LABEL: define internal void @poseidon.register_static.preprocess_tester()
 ; GEN-NEXT: entry:
-; GEN-NEXT: call void @poseidonRegisterProfileStatic(ptr @poseidon_site_preprocess_tester, ptr @fpprofile_static_preprocess_tester)
+; GEN-NEXT: call void @__poseidon_register_static(ptr @poseidon.site.preprocess_tester, ptr @poseidon.static.preprocess_tester)
 ; GEN-NEXT: ret void
 
 ; A body that still produces the digest is solved from the profile: S is the
