@@ -143,17 +143,16 @@ struct LogPResult {
   Value rng;
 };
 
-struct SingleParticleELBOResult {
+/// The ELBO of one particle and the model's rng state after scoring it.
+struct ParticleELBO {
   Value elbo;
-  Value gradLoc;
-  Value gradScale;
   Value rng;
 };
 
-struct MultiParticleELBOResult {
+/// An ELBO estimate and its gradient with respect to each guide parameter.
+struct ELBOGradient {
   Value elbo;
-  Value gradLoc;
-  Value gradScale;
+  SmallVector<Value> grads;
 };
 
 /// A parameter and its two optimizer state slots after one step. A rule that
@@ -178,19 +177,6 @@ struct SVILoopResult {
   Value mScaleFinal;
   Value vScaleFinal;
   Value stepCountFinal;
-};
-
-struct SingleParticleMVNResult {
-  Value elbo;
-  Value gradLoc;
-  Value gradScaleTril;
-  Value rng;
-};
-
-struct SingleParticleAutoDeltaResult {
-  Value elbo;
-  Value gradLoc;
-  Value rng;
 };
 } // namespace
 
@@ -251,10 +237,43 @@ static LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
   return {genOp.getWeight(), rngAfter};
 }
 
+/// Emits an autodiff region that differentiates, with respect to `params`, the
+/// ELBO that `emitELBO` builds inside the region from the region arguments
+/// standing for `params`.
+static ELBOGradient
+emitELBOGradient(OpBuilder &builder, Location loc, ValueRange params,
+                 Type rngType, const VIContext &ctx,
+                 function_ref<ParticleELBO(ValueRange paramArgs)> emitELBO) {
+  RankedTensorType scalarType = ctx.getScalarType();
+  Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
+  SmallVector<Value> adInputs = llvm::to_vector(params);
+  adInputs.push_back(gradSeed);
+  SmallVector<Type> resultTypes{scalarType, rngType};
+  llvm::append_range(resultTypes, params.getTypes());
+  auto adOp = enzyme::AutoDiffRegionOp::create(
+      builder, loc, resultTypes, adInputs,
+      buildGradientRegionAttrs(builder, params.size(), ctx.autodiffAttrs));
+
+  Block *adBlock = builder.createBlock(&adOp.getBody());
+  for (Value param : params)
+    adBlock->addArgument(param.getType(), loc);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(adBlock);
+    ParticleELBO particle = emitELBO(adBlock->getArguments());
+    enzyme::YieldOp::create(builder, loc,
+                            ValueRange{particle.elbo, particle.rng});
+  }
+  builder.setInsertionPointAfter(adOp);
+
+  return {adOp.getResult(0),
+          llvm::to_vector_of<Value>(adOp.getResults().drop_front(2))};
+}
+
 /// One particle of NumPyro's Trace_ELBO with an AutoNormal guide.
-static SingleParticleELBOResult
-emitSingleParticleELBO(OpBuilder &builder, Location loc, Value locParam,
-                       Value scaleParam, Value pkey, const VIContext &ctx) {
+static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
+                                           ValueRange params, Value pkey,
+                                           const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -300,127 +319,84 @@ emitSingleParticleELBO(OpBuilder &builder, Location loc, Value locParam,
   eps = conditionalDump(builder, loc, eps, "VI: eps (combined per-site)",
                         ctx.debugDump);
 
-  Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
+  return emitELBOGradient(
+      builder, loc, params, rngType, ctx,
+      [&](ValueRange paramArgs) -> ParticleELBO {
+        Value locArg = paramArgs[0];
+        Value scaleArg = paramArgs[1];
 
-  SmallVector<Value> adInputs{locParam, scaleParam, gradSeed};
-  SmallVector<NamedAttribute> adAttrs =
-      buildGradientRegionAttrs(builder, /*numActiveArgs=*/2, ctx.autodiffAttrs);
+        // NumPyro's AutoNormal: scale = softplus(unconstrained_scale).
+        Value scale = impulse::emitSoftplus(builder, loc, scaleArg);
 
-  auto adOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{scalarType, rngType, positionType, positionType},
-      adInputs, adAttrs);
+        Value scaleDumped = conditionalDump(
+            builder, loc, scale, "VI: scale=softplus(scaleArg)", ctx.debugDump);
+        Value locDumped =
+            conditionalDump(builder, loc, locArg, "VI: locArg", ctx.debugDump);
 
-  Block *adBlock = builder.createBlock(&adOp.getBody());
-  adBlock->addArgument(positionType, loc);
-  adBlock->addArgument(positionType, loc);
-  Value locArg = adBlock->getArgument(0);
-  Value scaleArg = adBlock->getArgument(1);
+        Value scaleEps = arith::MulFOp::create(builder, loc, scaleDumped, eps);
+        Value zUnc = arith::AddFOp::create(builder, loc, locDumped, scaleEps);
+        zUnc = conditionalDump(builder, loc, zUnc, "VI: zUnc=loc+scale*eps",
+                               ctx.debugDump);
 
-  {
-    OpBuilder::InsertionGuard g(builder);
-    builder.setInsertionPointToStart(adBlock);
+        Value zConstrained =
+            constrainPosition(builder, loc, zUnc, ctx.supports);
+        zConstrained = conditionalDump(builder, loc, zConstrained,
+                                       "VI: zConstrained", ctx.debugDump);
 
-    // NumPyro's AutoNormal: scale = softplus(unconstrained_scale).
-    Value scale = impulse::emitSoftplus(builder, loc, scaleArg);
+        Value logScale = math::LogOp::create(builder, loc, scaleDumped);
+        Value sumLogScale = sumAllElements(builder, loc, logScale);
+        Value logQUnc = emitGaussianLogQ(builder, loc, sumLogScale, eps, ctx);
+        logQUnc = conditionalDump(builder, loc, logQUnc, "VI: logQUnc",
+                                  ctx.debugDump);
+        Value jacCorrection =
+            computeTotalJacobianCorrection(builder, loc, zUnc, ctx.supports);
+        jacCorrection = conditionalDump(builder, loc, jacCorrection,
+                                        "VI: jacCorrection", ctx.debugDump);
+        Value logQ =
+            arith::SubFOp::create(builder, loc, logQUnc, jacCorrection);
+        logQ = conditionalDump(builder, loc, logQ,
+                               "VI: logQ=logQUnc-jacCorrection", ctx.debugDump);
 
-    Value scaleDumped = conditionalDump(
-        builder, loc, scale, "VI: scale=softplus(scaleArg)", ctx.debugDump);
-    Value locDumped =
-        conditionalDump(builder, loc, locArg, "VI: locArg", ctx.debugDump);
+        LogPResult lp =
+            callModelGenerate(builder, loc, zConstrained, modelSeed, ctx);
+        Value logP =
+            conditionalDump(builder, loc, lp.logP, "VI: logP", ctx.debugDump);
 
-    Value scaleEps = arith::MulFOp::create(builder, loc, scaleDumped, eps);
-    Value zUnc = arith::AddFOp::create(builder, loc, locDumped, scaleEps);
-    zUnc = conditionalDump(builder, loc, zUnc, "VI: zUnc=loc+scale*eps",
-                           ctx.debugDump);
-
-    Value zConstrained = constrainPosition(builder, loc, zUnc, ctx.supports);
-    zConstrained = conditionalDump(builder, loc, zConstrained,
-                                   "VI: zConstrained", ctx.debugDump);
-
-    Value logScale = math::LogOp::create(builder, loc, scaleDumped);
-    Value sumLogScale = sumAllElements(builder, loc, logScale);
-    Value logQUnc = emitGaussianLogQ(builder, loc, sumLogScale, eps, ctx);
-    logQUnc =
-        conditionalDump(builder, loc, logQUnc, "VI: logQUnc", ctx.debugDump);
-    Value jacCorrection =
-        computeTotalJacobianCorrection(builder, loc, zUnc, ctx.supports);
-    jacCorrection = conditionalDump(builder, loc, jacCorrection,
-                                    "VI: jacCorrection", ctx.debugDump);
-    Value logQ = arith::SubFOp::create(builder, loc, logQUnc, jacCorrection);
-    logQ = conditionalDump(builder, loc, logQ, "VI: logQ=logQUnc-jacCorrection",
-                           ctx.debugDump);
-
-    LogPResult lp =
-        callModelGenerate(builder, loc, zConstrained, modelSeed, ctx);
-    Value logP =
-        conditionalDump(builder, loc, lp.logP, "VI: logP", ctx.debugDump);
-
-    Value elbo = arith::SubFOp::create(builder, loc, logP, logQ);
-    elbo = conditionalDump(builder, loc, elbo, "VI: elbo=logP-logQ",
-                           ctx.debugDump);
-
-    enzyme::YieldOp::create(builder, loc, ValueRange{elbo, lp.rng});
-  }
-
-  builder.setInsertionPointAfter(adOp);
-
-  Value elbo = adOp.getResult(0);
-  Value modelRngAfter = adOp.getResult(1);
-  Value gradLoc = adOp.getResult(2);
-  Value gradScale = adOp.getResult(3);
-
-  return {elbo, gradLoc, gradScale, modelRngAfter};
+        Value elbo = arith::SubFOp::create(builder, loc, logP, logQ);
+        elbo = conditionalDump(builder, loc, elbo, "VI: elbo=logP-logQ",
+                               ctx.debugDump);
+        return {elbo, lp.rng};
+      });
 }
 
 /// log q = 0, but guide_seed is still split per site as NumPyro does.
-static SingleParticleAutoDeltaResult
-emitSingleParticleAutoDelta(OpBuilder &builder, Location loc, Value locParam,
-                            Value pkey, const VIContext &ctx) {
+static ELBOGradient emitAutoDeltaParticle(OpBuilder &builder, Location loc,
+                                          ValueRange params, Value pkey,
+                                          const VIContext &ctx) {
   Type rngType = pkey.getType();
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
 
   // NumPyro order: model_seed, guide_seed = split(pkey).
   auto seedSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, pkey);
   Value modelSeed = seedSplit.getResult(0);
 
-  Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
-
-  SmallVector<Value> adInputs{locParam, gradSeed};
-  SmallVector<NamedAttribute> adAttrs =
-      buildGradientRegionAttrs(builder, /*numActiveArgs=*/1, ctx.autodiffAttrs);
-
-  auto adOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{scalarType, rngType, positionType}, adInputs,
-      adAttrs);
-
-  Block *adBlock = builder.createBlock(&adOp.getBody());
-  adBlock->addArgument(positionType, loc);
-  Value locArg = adBlock->getArgument(0);
-
-  {
-    OpBuilder::InsertionGuard g(builder);
-    builder.setInsertionPointToStart(adBlock);
-
-    // No Jacobian term: NumPyro's AutoDelta has log_density = 0.
-    Value zConstrained = constrainPosition(builder, loc, locArg, ctx.supports);
-
-    LogPResult lp =
-        callModelGenerate(builder, loc, zConstrained, modelSeed, ctx);
-
-    enzyme::YieldOp::create(builder, loc, ValueRange{lp.logP, lp.rng});
-  }
-
-  builder.setInsertionPointAfter(adOp);
-
-  return {adOp.getResult(0), adOp.getResult(2), adOp.getResult(1)};
+  return emitELBOGradient(builder, loc, params, rngType, ctx,
+                          [&](ValueRange paramArgs) -> ParticleELBO {
+                            // No Jacobian term: NumPyro's AutoDelta has
+                            // log_density = 0.
+                            Value zConstrained = constrainPosition(
+                                builder, loc, paramArgs[0], ctx.supports);
+                            LogPResult lp = callModelGenerate(
+                                builder, loc, zConstrained, modelSeed, ctx);
+                            return {lp.logP, lp.rng};
+                          });
 }
 
-/// AutoMultivariateNormal variant; `xScaleTril` is unconstrained and flat.
-static SingleParticleMVNResult
-emitSingleParticleMVNELBO(OpBuilder &builder, Location loc, Value locParam,
-                          Value xScaleTril, Value pkey, const VIContext &ctx) {
+/// AutoMultivariateNormal variant; the scale parameter is the unconstrained
+/// flat scale_tril.
+static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
+                                        ValueRange params, Value pkey,
+                                        const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -447,97 +423,76 @@ emitSingleParticleMVNELBO(OpBuilder &builder, Location loc, Value locParam,
                                         impulse::RngDistribution::NORMAL));
   Value eps = randOp.getResult();
 
-  Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
-  SmallVector<Value> adInputs{locParam, xScaleTril, gradSeed};
-  SmallVector<NamedAttribute> adAttrs =
-      buildGradientRegionAttrs(builder, /*numActiveArgs=*/2, ctx.autodiffAttrs);
+  return emitELBOGradient(
+      builder, loc, params, rngType, ctx,
+      [&](ValueRange paramArgs) -> ParticleELBO {
+        impulse::ScaledUnitLowerCholeskyResult chol =
+            impulse::emitScaledUnitLowerCholesky(builder, loc, paramArgs[1], d,
+                                                 elemType);
 
-  auto adOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc,
-      TypeRange{scalarType, rngType, positionType, xScaleTril.getType()},
-      adInputs, adAttrs);
+        // L @ eps in row-vector form: eps @ L^T.
+        Value scaledEps = impulse::DotOp::create(
+            builder, loc, positionType, eps, chol.scaleTril,
+            builder.getDenseI64ArrayAttr({1}),
+            builder.getDenseI64ArrayAttr({1}));
+        Value z = arith::AddFOp::create(builder, loc, paramArgs[0], scaledEps);
 
-  Block *adBlock = builder.createBlock(&adOp.getBody());
-  adBlock->addArgument(positionType, loc);
-  adBlock->addArgument(xScaleTril.getType(), loc);
-  Value locArg = adBlock->getArgument(0);
-  Value xArg = adBlock->getArgument(1);
+        Value logQ = emitGaussianLogQ(builder, loc, chol.sumLogDiag, eps, ctx);
 
-  {
-    OpBuilder::InsertionGuard g(builder);
-    builder.setInsertionPointToStart(adBlock);
+        LogPResult lp = callModelGenerate(builder, loc, z, modelSeed, ctx);
 
-    impulse::ScaledUnitLowerCholeskyResult chol =
-        impulse::emitScaledUnitLowerCholesky(builder, loc, xArg, d, elemType);
-    Value scaleTril = chol.scaleTril;
-    Value sumLogDiag = chol.sumLogDiag;
-
-    // L @ eps in row-vector form: eps @ L^T.
-    Value scaledEps = impulse::DotOp::create(
-        builder, loc, positionType, eps, scaleTril,
-        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
-    Value z = arith::AddFOp::create(builder, loc, locArg, scaledEps);
-
-    Value logQ = emitGaussianLogQ(builder, loc, sumLogDiag, eps, ctx);
-
-    LogPResult lp = callModelGenerate(builder, loc, z, modelSeed, ctx);
-
-    Value elbo = arith::SubFOp::create(builder, loc, lp.logP, logQ);
-    enzyme::YieldOp::create(builder, loc, ValueRange{elbo, lp.rng});
-  }
-
-  builder.setInsertionPointAfter(adOp);
-
-  return {adOp.getResult(0), adOp.getResult(2), adOp.getResult(3),
-          adOp.getResult(1)};
+        Value elbo = arith::SubFOp::create(builder, loc, lp.logP, logQ);
+        return {elbo, lp.rng};
+      });
 }
 
-/// NumPyro Trace_ELBO: K == 1 uses `rngStep` directly; K > 1 splits it K ways.
-static MultiParticleELBOResult emitELBOStep(OpBuilder &builder, Location loc,
-                                            Value locParam, Value scaleParam,
-                                            Value rngStep,
-                                            const VIContext &ctx) {
+/// Signature shared by the per-guide particle emitters: one ELBO estimate and
+/// its gradient for the guide parameters `params` and particle key `pkey`.
+using ParticleEmitter = function_ref<ELBOGradient(
+    OpBuilder &builder, Location loc, ValueRange params, Value pkey,
+    const VIContext &ctx)>;
+
+/// NumPyro Trace_ELBO: K == 1 uses `rngStep` directly; K > 1 splits it K ways
+/// and averages the particles.
+static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
+                                     ValueRange params, Value rngStep,
+                                     const VIContext &ctx,
+                                     ParticleEmitter emitParticle) {
   int64_t numParticles = ctx.numParticles;
-  if (numParticles == 1) {
-    auto r = emitSingleParticleELBO(builder, loc, locParam, scaleParam, rngStep,
-                                    ctx);
-    return {r.elbo, r.gradLoc, r.gradScale};
-  }
+  if (numParticles == 1)
+    return emitParticle(builder, loc, params, rngStep, ctx);
 
-  Type rngType = rngStep.getType();
-  SmallVector<Type> splitResultTypes(numParticles, rngType);
-  auto splitK =
-      impulse::RandomSplitOp::create(builder, loc, splitResultTypes, rngStep);
+  SmallVector<Type> keyTypes(numParticles, rngStep.getType());
+  auto keys = impulse::RandomSplitOp::create(builder, loc, keyTypes, rngStep);
 
-  auto scalarType = ctx.getScalarType();
-  auto positionType = ctx.getPositionType();
-
+  RankedTensorType scalarType = ctx.getScalarType();
   Value elboSum = scalarConst(builder, loc, scalarType, 0.0);
-  Value gradLocSum = scalarConst(builder, loc, positionType, 0.0);
-  Value gradScaleSum = scalarConst(builder, loc, positionType, 0.0);
+  SmallVector<Value> gradSums;
+  for (Value param : params)
+    gradSums.push_back(scalarConst(
+        builder, loc, cast<RankedTensorType>(param.getType()), 0.0));
 
-  for (int64_t k = 0; k < numParticles; ++k) {
-    Value pkey = splitK.getResult(k);
-    auto r =
-        emitSingleParticleELBO(builder, loc, locParam, scaleParam, pkey, ctx);
-    elboSum = arith::AddFOp::create(builder, loc, elboSum, r.elbo);
-    gradLocSum = arith::AddFOp::create(builder, loc, gradLocSum, r.gradLoc);
-    gradScaleSum =
-        arith::AddFOp::create(builder, loc, gradScaleSum, r.gradScale);
+  for (Value pkey : keys.getResults()) {
+    ELBOGradient particle = emitParticle(builder, loc, params, pkey, ctx);
+    elboSum = arith::AddFOp::create(builder, loc, elboSum, particle.elbo);
+    for (auto [sum, grad] : llvm::zip_equal(gradSums, particle.grads))
+      sum = arith::AddFOp::create(builder, loc, sum, grad);
   }
 
-  auto numParticlesScalar =
+  Value count =
       scalarConst(builder, loc, scalarType, static_cast<double>(numParticles));
-  Value numParticlesBcast =
-      broadcastScalar(builder, loc, numParticlesScalar, positionType);
-  Value elboMean =
-      arith::DivFOp::create(builder, loc, elboSum, numParticlesScalar);
-  Value gradLocMean =
-      arith::DivFOp::create(builder, loc, gradLocSum, numParticlesBcast);
-  Value gradScaleMean =
-      arith::DivFOp::create(builder, loc, gradScaleSum, numParticlesBcast);
-
-  return {elboMean, gradLocMean, gradScaleMean};
+  DenseMap<Type, Value> countSplats;
+  for (Value param : params) {
+    auto type = cast<RankedTensorType>(param.getType());
+    if (!countSplats.contains(type))
+      countSplats[type] = broadcastScalar(builder, loc, count, type);
+  }
+  ELBOGradient mean;
+  mean.elbo = arith::DivFOp::create(builder, loc, elboSum, count);
+  for (auto [param, sum] : llvm::zip_equal(params, gradSums))
+    mean.grads.push_back(arith::DivFOp::create(
+        builder, loc, sum, countSplats.lookup(param.getType())));
+  return mean;
 }
 
 /// `gradElbo` is d(elbo)/dp; the minimized loss is -elbo.
@@ -860,17 +815,21 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
     Value rngNext = updateSplit.getResult(0);
     Value rngStep = updateSplit.getResult(1);
 
-    auto elboRes = emitELBOStep(builder, loc, locIter, scaleIter, rngStep, ctx);
+    ELBOGradient elboRes =
+        averageParticles(builder, loc, ValueRange{locIter, scaleIter}, rngStep,
+                         ctx, emitAutoNormalParticle);
+    Value elboGradLoc = elboRes.grads[0];
+    Value elboGradScale = elboRes.grads[1];
 
     Value effectiveStep =
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
     OptimizerUpdate locUpd =
-        applyOptimizer(builder, loc, ctx, effectiveStep, locIter,
-                       elboRes.gradLoc, mLocIter, vLocIter);
+        applyOptimizer(builder, loc, ctx, effectiveStep, locIter, elboGradLoc,
+                       mLocIter, vLocIter);
     OptimizerUpdate scaleUpd =
         applyOptimizer(builder, loc, ctx, effectiveStep, scaleIter,
-                       elboRes.gradScale, mScaleIter, vScaleIter);
+                       elboGradScale, mScaleIter, vScaleIter);
     Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
     Value scaleNew = scaleUpd.param, mScaleNew = scaleUpd.m,
           vScaleNew = scaleUpd.v;
@@ -878,7 +837,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
     // A skipped step still records its ELBO, as numpyro's stable_update does.
     if (ctx.stableUpdate) {
       Value isFinite = computeIsFiniteForStableUpdate(
-          builder, loc, elboRes.elbo, elboRes.gradLoc, elboRes.gradScale);
+          builder, loc, elboRes.elbo, elboGradLoc, elboGradScale);
       locNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
                                          locNew, locIter);
       scaleNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
@@ -989,34 +948,10 @@ static SVILoopResult emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
     Value rngNext = updateSplit.getResult(0);
     Value rngStep = updateSplit.getResult(1);
 
-    // Particles are identical; the K-way split keeps NumPyro's RNG stream.
-    Value elboMean, gradLocMean;
-    int64_t numParticles = ctx.numParticles;
-    if (numParticles == 1) {
-      auto r = emitSingleParticleAutoDelta(builder, loc, locIter, rngStep, ctx);
-      elboMean = r.elbo;
-      gradLocMean = r.gradLoc;
-    } else {
-      SmallVector<Type> splitResultTypes(numParticles, rngType);
-      auto splitK = impulse::RandomSplitOp::create(builder, loc,
-                                                   splitResultTypes, rngStep);
-      Value elboSum = scalarConst(builder, loc, scalarType, 0.0);
-      Value gradLocSum = scalarConst(builder, loc, positionType, 0.0);
-      for (int64_t k = 0; k < numParticles; ++k) {
-        Value pkey = splitK.getResult(k);
-        auto r = emitSingleParticleAutoDelta(builder, loc, locIter, pkey, ctx);
-        elboSum = arith::AddFOp::create(builder, loc, elboSum, r.elbo);
-        gradLocSum = arith::AddFOp::create(builder, loc, gradLocSum, r.gradLoc);
-      }
-      auto numParticlesScalar = scalarConst(builder, loc, scalarType,
-                                            static_cast<double>(numParticles));
-      Value numParticlesBcast =
-          broadcastScalar(builder, loc, numParticlesScalar, positionType);
-      elboMean =
-          arith::DivFOp::create(builder, loc, elboSum, numParticlesScalar);
-      gradLocMean =
-          arith::DivFOp::create(builder, loc, gradLocSum, numParticlesBcast);
-    }
+    ELBOGradient elboRes = averageParticles(
+        builder, loc, ValueRange{locIter}, rngStep, ctx, emitAutoDeltaParticle);
+    Value elboMean = elboRes.elbo;
+    Value gradLocMean = elboRes.grads[0];
 
     Value effectiveStep =
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
@@ -1144,41 +1079,12 @@ static SVILoopResult emitSVILoopMVN(OpBuilder &builder, Location loc,
     Value rngNext = updateSplit.getResult(0);
     Value rngStep = updateSplit.getResult(1);
 
-    int64_t numParticles = ctx.numParticles;
-    Value elbo, gradLoc, gradX;
-    if (numParticles == 1) {
-      auto r =
-          emitSingleParticleMVNELBO(builder, loc, locIter, xIter, rngStep, ctx);
-      elbo = r.elbo;
-      gradLoc = r.gradLoc;
-      gradX = r.gradScaleTril;
-    } else {
-      SmallVector<Type> splitTypes(numParticles, rngType);
-      auto splitK =
-          impulse::RandomSplitOp::create(builder, loc, splitTypes, rngStep);
-      Value elboSum = scalarConst(builder, loc, scalarType, 0.0);
-      Value gradLocSum = scalarConst(builder, loc, positionType, 0.0);
-      Value gradXSum = scalarConst(builder, loc, flatXTy, 0.0);
-      for (int64_t k = 0; k < numParticles; ++k) {
-        Value pkey = splitK.getResult(k);
-        auto r =
-            emitSingleParticleMVNELBO(builder, loc, locIter, xIter, pkey, ctx);
-        elboSum = arith::AddFOp::create(builder, loc, elboSum, r.elbo);
-        gradLocSum = arith::AddFOp::create(builder, loc, gradLocSum, r.gradLoc);
-        gradXSum =
-            arith::AddFOp::create(builder, loc, gradXSum, r.gradScaleTril);
-      }
-      auto numParticlesScalar = scalarConst(builder, loc, scalarType,
-                                            static_cast<double>(numParticles));
-      Value numParticlesBcastPos =
-          broadcastScalar(builder, loc, numParticlesScalar, positionType);
-      Value numParticlesBcastX =
-          broadcastScalar(builder, loc, numParticlesScalar, flatXTy);
-      elbo = arith::DivFOp::create(builder, loc, elboSum, numParticlesScalar);
-      gradLoc =
-          arith::DivFOp::create(builder, loc, gradLocSum, numParticlesBcastPos);
-      gradX = arith::DivFOp::create(builder, loc, gradXSum, numParticlesBcastX);
-    }
+    ELBOGradient elboRes =
+        averageParticles(builder, loc, ValueRange{locIter, xIter}, rngStep, ctx,
+                         emitAutoMVNParticle);
+    Value elbo = elboRes.elbo;
+    Value gradLoc = elboRes.grads[0];
+    Value gradX = elboRes.grads[1];
 
     Value effectiveStep =
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
