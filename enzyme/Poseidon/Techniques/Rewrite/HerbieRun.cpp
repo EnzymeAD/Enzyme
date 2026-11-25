@@ -59,7 +59,8 @@ static std::string herbieBinaryDigest(StringRef Program,
 }
 
 // The arguments that decide what Herbie returns for a core. Its timeouts and
-// worker count decide only whether and how soon it returns.
+// worker count are left out: they decide only how soon it returns and whether
+// a core times out, and an answer in which one did is not cached.
 static SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts) {
   // Herbie prunes alternatives by tree cost unless told otherwise, paying a
   // shared subterm once per occurrence; the emitted code computes it once.
@@ -117,10 +118,10 @@ struct ShardPlan {
   unsigned shards, threadsPerShard, coreTimeout, wallBudget;
 };
 
-// Where a question's answer and its timeout marker are kept, and which Herbie
-// an answer has to come from to be served.
+// Where a question's answer is kept, and which Herbie an answer has to come
+// from to be served.
 struct AnswerCache {
-  std::string answerPath, timeoutPath;
+  std::string answerPath;
   CacheKey answeredBy;
   // Without a Herbie to run, an answer any Herbie gave is the answer.
   bool haveHerbie;
@@ -225,12 +226,12 @@ static std::string questionDigest(ArrayRef<std::string> Cores,
   return question.digest();
 }
 
-// The answer, or the timeout, the cache holds for the question, a run's
-// result; none when Herbie has to run. Without a Herbie, a question the cache
-// does not answer is an error naming its cache file.
+// The answer the cache holds for the question, a run's result; none when
+// Herbie has to run. Without a Herbie, a question the cache does not answer is
+// an error naming its cache file.
 static Expected<std::optional<HerbieRunResult>>
 readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
-                 StringRef Label, unsigned wallBudget) {
+                 StringRef Label) {
   HerbieRunResult Run;
   CacheEntryRead cached =
       readCacheEntry(cache.answerPath, cache.answeredBy, cache.unchecked);
@@ -257,24 +258,6 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
                          ? "the answer of another Herbie"
                          : "no cache entry (" + cached.unreadable + ")")
                  << "; running Herbie to replace it\n";
-
-  // A recorded timeout is a result too: without it every re-solve pays the
-  // full wall-clock budget again to learn the same thing.
-  CacheEntryRead marker =
-      readCacheEntry(cache.timeoutPath, cache.answeredBy, cache.unchecked);
-  std::optional<uint64_t> spentBudget =
-      marker.value ? marker.value->getAsUINT64() : std::nullopt;
-  if (spentBudget && wallBudget > 0 && *spentBudget >= wallBudget) {
-    Run.Result = HerbieRunResult::Outcome::Timeout;
-    Run.Warning = ("Herbie " + Label + " timed out before on this exact " +
-                   "input with a budget of " + Twine(*spentBudget) +
-                   " s (recorded in " + cache.timeoutPath +
-                   "), so the subgraph has no algebraic candidates; raise "
-                   "-poseidon-herbie-subgraph-timeout above " +
-                   Twine(*spentBudget) + " to retry it")
-                      .str();
-    return Run;
-  }
   if (!cache.haveHerbie)
     return createStringError(
         inconvertibleErrorCode(),
@@ -417,6 +400,17 @@ static std::optional<json::Value> readShardResults(const ShardFiles &files,
   return answer;
 }
 
+// The cores of `answer`, a usable results.json, that Herbie's per-core
+// --timeout stopped. That timeout is wall-clock time, so another run of the
+// same question can answer them.
+static size_t timedOutCores(const json::Value &answer) {
+  return count_if(*answer.getAsObject()->getArray("tests"),
+                  [](const json::Value &test) {
+                    const json::Object *O = test.getAsObject();
+                    return O && O->getString("status") == "timeout";
+                  });
+}
+
 // `v` as raw_ostream prints a double.
 static std::string printed(double v) {
   std::string text;
@@ -453,9 +447,6 @@ static AnswerCache answerCache(const HerbieRunOptions &Opts,
     return cache;
   std::string keyStem = Opts.Platform.Name + "_" + keyDigest.str();
   cache.answerPath = inDirectory(Opts.CacheDir, "herbie_" + keyStem + ".json");
-  // A timeout gets its own marker so it never looks like an empty result.
-  cache.timeoutPath =
-      inDirectory(Opts.CacheDir, "herbie_timeout_" + keyStem + ".txt");
   return cache;
 }
 
@@ -480,12 +471,10 @@ static void announceRun(const HerbieRunOptions &Opts, StringRef Label,
 }
 
 // The result of a run whose processes were killed at the wall budget or ended
-// by a signal; none for a run that ran to its end. A timeout is recorded in
-// the cache, as it is a property of the input; a crash is not, so the next
-// compile runs Herbie again.
-static Expected<std::optional<HerbieRunResult>>
-stoppedRun(const ProcessOutcome &ran, const AnswerCache &cache,
-           const HerbieRunOptions &Opts, StringRef Label, unsigned wallBudget) {
+// by a signal; none for a run that ran to its end. Neither is cached, so the
+// next compile runs Herbie again.
+static std::optional<HerbieRunResult>
+stoppedRun(const ProcessOutcome &ran, StringRef Label, unsigned wallBudget) {
   HerbieRunResult Run;
   if (!ran.crash.empty()) {
     Run.Result = HerbieRunResult::Outcome::Crashed;
@@ -501,19 +490,12 @@ stoppedRun(const ProcessOutcome &ran, const AnswerCache &cache,
   if (!ran.killed)
     return std::nullopt;
   Run.Result = HerbieRunResult::Outcome::Timeout;
-  std::string recorded;
-  if (!cache.timeoutPath.empty()) {
-    if (Error E = writeAnswer(Opts.CacheDir, cache.timeoutPath,
-                              cache.answeredBy, (uint64_t)wallBudget))
-      return std::move(E);
-    recorded = " (recorded in " + cache.timeoutPath + ")";
-  }
   Run.Warning =
       ("Herbie " + Label + " was stopped after " + printed(ran.seconds) +
-       " s, its wall budget of " + Twine(wallBudget) + " s" + recorded +
-       ", so the subgraph has no algebraic candidates; raise "
-       "-poseidon-herbie-subgraph-timeout, or set it to 0 to wait "
-       "for as long as Herbie takes")
+       " s, its wall budget of " + Twine(wallBudget) +
+       " s, so the subgraph has no algebraic candidates in this compile and "
+       "nothing is cached; raise -poseidon-herbie-subgraph-timeout, or set "
+       "it to 0 to wait for as long as Herbie takes")
           .str();
   return Run;
 }
@@ -531,7 +513,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
   const AnswerCache cache = answerCache(Opts, keyDigest, binaryDigest);
   if (!Opts.CacheDir.empty()) {
     Expected<std::optional<HerbieRunResult>> cached =
-        readCachedAnswer(cache, Opts, Label, plan.wallBudget);
+        readCachedAnswer(cache, Opts, Label);
     if (!cached)
       return cached.takeError();
     if (*cached)
@@ -548,12 +530,9 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
     Run.Failure = ran.executionError;
     return Run;
   }
-  Expected<std::optional<HerbieRunResult>> stopped =
-      stoppedRun(ran, cache, Opts, Label, plan.wallBudget);
-  if (!stopped)
-    return stopped.takeError();
-  if (*stopped)
-    return std::move(**stopped);
+  if (std::optional<HerbieRunResult> stopped =
+          stoppedRun(ran, Label, plan.wallBudget))
+    return std::move(*stopped);
 
   std::optional<json::Value> answer = readShardResults(files, Run.ResultsJson);
   if (!answer) {
@@ -567,13 +546,24 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
             .str();
   if (Opts.Print)
     llvm::errs() << "[poseidon] Herbie output: " << Run.ResultsJson << '\n';
-  if (!cache.answerPath.empty()) {
+  if (size_t timedOut = timedOutCores(*answer)) {
+    if (!Run.Warning.empty())
+      Run.Warning += "; ";
+    Run.Warning +=
+        ("Herbie " + Label + " timed out on " + Twine(timedOut) + " of " +
+         Twine(Cores.size()) + " FPCore(s) at its per-core --timeout of " +
+         Twine(plan.coreTimeout) +
+         " s, so they have no algebraic candidates in this compile; the "
+         "answer is not cached, so the next compile runs Herbie again")
+            .str();
+  } else if (!cache.answerPath.empty()) {
     if (Error E = writeAnswer(Opts.CacheDir, cache.answerPath, cache.answeredBy,
                               std::move(*answer)))
       return std::move(E);
     if (Opts.Print)
       llvm::errs() << "[poseidon] Saved Herbie output to cache file "
                    << cache.answerPath << '\n';
+    Run.CacheFile = cache.answerPath;
   }
   if (Opts.Print)
     llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
@@ -581,7 +571,6 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                  << " s, a fresh answer of the Herbie with digest "
                  << binaryDigest << '\n';
   Run.Result = HerbieRunResult::Outcome::Ok;
-  Run.CacheFile = cache.answerPath;
   return Run;
 }
 

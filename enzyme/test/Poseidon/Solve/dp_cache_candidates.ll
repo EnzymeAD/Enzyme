@@ -41,12 +41,13 @@
 ; the array core times out on the search that replaces them, so the outputs
 ; are sent separately and the site has other candidates under unchanged
 ; inputs. The table is solved again rather than replayed against candidates it
-; never priced.
+; never priced. The answer with the timeout is not cached, so the next compile
+; asks Herbie again; answered the same, it reads that table back.
 ; RUN: mkdir %t/set
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-FIRST %s
 ; RUN: rm %t/set/c/herbie_*.json
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores/timeout %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-DRIFT %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-HIT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores/timeout %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-HIT %s
 
 ; SET-FIRST: Solving the DP for preprocess_tester.
 ; SET-FIRST: Applying solution for (let* ((t1 (- (sqrt (+ (* v0 v0) (* v1 v1))) v0))) (array t1 (* t1 0.5)))
@@ -57,6 +58,7 @@
 ; SET-DRIFT-NOT: (array t1
 ; SET-DRIFT: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0)
 
+; SET-HIT: timed out on 2 of 4 FPCore(s) {{.*}}; the answer is not cached, so the next compile runs Herbie again{{$}}
 ; SET-HIT: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 ; SET-HIT: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0)
 

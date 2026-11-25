@@ -19,9 +19,9 @@
 ; platform, and records the binary that gave it. Changing a search argument
 ; searches again and solves into another table; going back finds the first
 ; search's results and the first table. Herbie's timeouts and worker count
-; decide no result, so changing them reads both caches. Another Herbie binary
-; searches again, and its answers, the same, read the table back: the table
-; depends on the answers, not on which Herbie gave them.
+; are not part of the key, so changing them reads both caches. Another Herbie
+; binary searches again, and its answers, the same, read the table back: the
+; table depends on the answers, not on which Herbie gave them.
 
 ; FIRST: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_{{[0-9A-F]+}}.json
 ; FIRST-NOT: DP cache entry

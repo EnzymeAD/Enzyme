@@ -207,6 +207,14 @@ object compiled against another profile, and a distributed build runs the
 compile where neither the profile nor the cache directory is. Poseidon's
 compiles are therefore run without either.
 
+Herbie's searches are bounded by counts, the `-poseidon-herbie-num-*` flags,
+which are part of the key, and by wall-clock limits, its per-core `--timeout`
+(`-poseidon-herbie-timeout`) and `-poseidon-herbie-subgraph-timeout`, which are
+not. A compile on a loaded machine can reach a limit and get fewer rewrites for
+itself. An answer a limit cut short is never cached, so the next compile asks
+Herbie again; the table solved from it is filed under its candidates and
+serves only a compile that gets the same answers.
+
 ### Environment
 
 | Variable | Read by | Meaning |

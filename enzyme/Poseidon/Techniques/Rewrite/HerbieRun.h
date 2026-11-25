@@ -62,8 +62,8 @@ struct HerbieRunOptions {
   /// Herbie's --num-taylor-terms; none leaves Herbie its own cap.
   std::optional<unsigned> TaylorTerms;
 
-  /// Herbie's per-core --timeout, in seconds; with the fields below, it decides
-  /// only whether and how soon Herbie returns, not what it returns.
+  /// Herbie's per-core --timeout, in seconds. With the fields below it is not
+  /// part of the cache key: an answer in which a core timed out is not cached.
   int CoreTimeout = 0;
   /// Worker threads in all, and the processes they are split across; 0
   /// processes is one per thread.
@@ -115,8 +115,8 @@ struct HerbieRunResult {
   enum class Outcome {
     /// `ResultsJson` is Herbie's results.json, run now or read from the cache.
     Ok,
-    /// Herbie ran out of the wall-clock budget, now or on an earlier run of
-    /// this exact input with the same budget.
+    /// Herbie ran out of the wall-clock budget and was stopped. Nothing is
+    /// cached.
     Timeout,
     /// Herbie ended by a signal the runner did not send; `Crash` names it.
     /// Nothing is cached.
@@ -133,21 +133,23 @@ struct HerbieRunResult {
   Origin From = Origin::Fresh;
   /// Herbie's results.json, for an Ok result; empty otherwise.
   std::string ResultsJson;
-  /// The cache file an Ok result was read from or saved to; empty without a
-  /// cache.
+  /// The cache file an Ok result was read from or saved to; empty when it is
+  /// not cached.
   std::string CacheFile;
   /// The signal a Crashed run ended by; empty otherwise.
   std::string Crash;
   /// Why a Failed run failed; empty otherwise.
   std::string Failure;
   /// What the caller reports as a warning: why a timeout or a crash left the
-  /// cores without an answer, or that Herbie exited with a nonzero status after
-  /// writing a usable answer. Empty when there is nothing to report.
+  /// cores without an answer, that Herbie's per-core timeout left some of them
+  /// without one, or that Herbie exited with a nonzero status after writing a
+  /// usable answer. Empty when there is nothing to report.
   std::string Warning;
 };
 
 /// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache: the
-/// answer this Herbie gave, else a run, whose answer replaces the cached one.
+/// answer this Herbie gave, else a run, whose answer replaces the cached one
+/// unless a core in it timed out.
 /// With `Opts.CacheOnly`, the cached answer is the one any Herbie gave, and a
 /// question the cache does not answer is an error naming its cache file.
 /// `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". A cache

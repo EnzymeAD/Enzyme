@@ -56,12 +56,34 @@
 
 ; FILES-NOT: cachedHerbie
 
-; RETRY-NOT: timed out before
 ; RETRY: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key [[KEY:[0-9A-F]+]]{{$}}
 ; RETRY: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_[[KEY]].json{{$}}
 ; RETRY-NEXT: [poseidon] Herbie subgraph 0 of preprocess_tester: completed in {{[0-9.e+-]+}} s, a fresh answer of the Herbie with digest {{[0-9A-F]+}}{{$}}
 ; RETRY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 ; RETRY: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}
+
+; A Herbie whose per-core --timeout stopped a core, a matter of wall-clock time,
+; answers the other cores, and the compile uses that answer but does not cache
+; it, so the next compile runs Herbie again. A complete answer is cached and
+; serves the compile after it, which does not run Herbie.
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/herbie_cannot_run %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/to -poseidon-print 2>&1 | FileCheck --check-prefix=CORE-TIMEOUT --implicit-check-not="[poseidon] Saved Herbie output" %s
+; RUN: not ls %t/to/herbie_default_*.json
+; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/to -poseidon-print 2>&1 | FileCheck --check-prefix=COMPLETE --implicit-check-not="timed out" %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/herbie_cannot_run %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/to -poseidon-print 2>&1 | FileCheck --check-prefix=REUSED --implicit-check-not="timed out" --implicit-check-not="[poseidon] Executing Herbie" %s
+
+; CORE-TIMEOUT: [poseidon] Executing Herbie
+; CORE-TIMEOUT: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: Herbie subgraph 0 of preprocess_tester timed out on 1 of 2 FPCore(s) at its per-core --timeout of 1800 s, so they have no algebraic candidates in this compile; the answer is not cached, so the next compile runs Herbie again{{$}}
+; CORE-TIMEOUT: [poseidon] Herbie core "1" (subgraph 0 of preprocess_tester): status=timeout
+; CORE-TIMEOUT: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; CORE-TIMEOUT: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}
+
+; COMPLETE: [poseidon] Executing Herbie
+; COMPLETE: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_{{[0-9A-F]+}}.json{{$}}
+; COMPLETE: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}
+
+; REUSED: [poseidon] Using cached Herbie output from {{.*}}herbie_default_{{[0-9A-F]+}}.json{{$}}
+; REUSED: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; REUSED: [poseidon] Herbie answers: 0 fresh, 1 from the cache{{$}}
 
 ; A Herbie answer that cannot be cached, here because the cache directory is
 ; under a regular file, stops the compile naming the path.
