@@ -8,8 +8,7 @@
 //
 // The optimization units of a site: the connected components of its
 // optimizable floating-point instructions, with the profile attached to their
-// nodes, pruned, split at bottlenecks and merged where they share a staging
-// buffer.
+// nodes, split at bottlenecks and merged where they share a staging buffer.
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,7 +24,6 @@
 
 #include <memory>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace llvm {
 class Function;
@@ -52,14 +50,10 @@ void attachProfile(
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     llvm::ArrayRef<Subgraph> subgraphs);
 
-// The site's optimization units: the subgraphs after aggressive DCE, splitting
-// and the shared-staging merge.
-void shapeSubgraphs(
-    const Options &O, llvm::Function &F, const ProfileMap &profileMap,
-    const std::unordered_set<size_t> &zeroGradIdx,
-    const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    llvm::SmallVectorImpl<Subgraph> &subgraphs);
+// The site's optimization units: the subgraphs after splitting and the
+// shared-staging merge.
+void shapeSubgraphs(const Options &O, llvm::Function &F,
+                    llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
 } // namespace poseidon
 #endif // POSEIDON_SUBGRAPHS_H

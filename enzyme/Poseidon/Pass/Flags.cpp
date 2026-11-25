@@ -180,11 +180,6 @@ cl::opt<bool> JointDP(
     "poseidon-joint-dp", cl::init(kDefaults.Solver.JointDP), cl::Hidden,
     cl::desc("Solve all annotated sites in the module under one shared cost "
              "budget instead of an independent per-site solve"));
-cl::opt<bool> AggressiveDCE(
-    "poseidon-aggressive-dce", cl::init(kDefaults.Solver.AggressiveDCE),
-    cl::Hidden,
-    cl::desc("Delete zero-gradient FP instructions that reach no comparison "
-             "before the solve"));
 cl::opt<std::string> ApplyRewrites(
     "poseidon-apply-rewrites", cl::init(kDefaults.Solver.ApplyRewrites),
     cl::Hidden,
@@ -495,7 +490,6 @@ Options readOptions() {
   S.TauCheapest = TauCheapest;
   S.EarlyPrune = EarlyPrune;
   S.JointDP = JointDP;
-  S.AggressiveDCE = AggressiveDCE;
   S.ApplyRewrites = ApplyRewrites;
 
   ModelOptions &M = O.Model;

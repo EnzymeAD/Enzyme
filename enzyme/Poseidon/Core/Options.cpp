@@ -71,7 +71,6 @@ void CandidateOptions::appendLaterSolveInputs(
 
 void SolverOptions::appendSolveInputs(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-early-prune", EarlyPrune);
-  add(out, "poseidon-aggressive-dce", AggressiveDCE);
 }
 
 void SolverOptions::appendOtherValues(SmallVectorImpl<FlagValue> &out) const {

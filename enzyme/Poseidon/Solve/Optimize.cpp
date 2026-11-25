@@ -52,7 +52,6 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -67,7 +66,6 @@ struct SiteProfileData {
   std::string path;
   ProfileMap map;
   FunctionProfileHeader header;
-  std::unordered_set<size_t> zeroGradIdx;
 };
 
 } // namespace
@@ -99,7 +97,6 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
 
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
-  auto &zeroGradIdx = P.zeroGradIdx;
   parseProfileFile(profilePath, F, profileMap, &profileHeader);
   if (profileMap.empty()) {
     llvm::errs() << "Warning: No profile data found in " << profilePath << '\n';
@@ -107,12 +104,6 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   if (!O.Profiling.OutputProfiles.empty())
     mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
                         siteProfileFile(S, F), canonicalHash, F);
-  // Before the floor below, which would hide the exact zeros.
-  if (O.Solver.AggressiveDCE)
-    for (const auto &kv : profileMap) {
-      if (kv.second.weight() == 0.0)
-        zeroGradIdx.insert(kv.first);
-    }
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(profileMap, F.getName());
@@ -378,10 +369,8 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
   buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st.valueToNodeMap,
                  st.subgraphs);
 
-  // Profile read must happen before aggressive DCE as it requires gradients
   attachProfile(O, profile.map, st.valueToNodeMap, st.subgraphs);
-  shapeSubgraphs(O, F, profile.map, profile.zeroGradIdx, st.abstractMatmuls,
-                 st.valueToNodeMap, st.subgraphs);
+  shapeSubgraphs(O, F, st.subgraphs);
 
   if (st.subgraphs.empty() && st.abstractMatmuls.empty()) {
     if (O.Diagnostics.Print)

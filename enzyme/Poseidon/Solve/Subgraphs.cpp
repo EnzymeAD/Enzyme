@@ -26,7 +26,6 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Path.h"
@@ -38,86 +37,6 @@
 using namespace llvm;
 
 namespace poseidon {
-
-// An op without a profile record (-poseidon-loose-coverage) counts as zero.
-static void aggressiveDCE(
-    const Options &O, Function &F, SmallVectorImpl<Subgraph> &subgraphs,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &nodes,
-    const ProfileMap &profileMap, const std::unordered_set<size_t> &zeroGradIdx,
-    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls) {
-  // In the order marked, which -poseidon-print lists them in.
-  SmallSetVector<Value *, 32> critical;
-  SmallVector<Value *, 16> worklist;
-  auto mark = [&](Value *V) {
-    if (V->getType()->isFloatingPointTy() && critical.insert(V))
-      worklist.push_back(V);
-  };
-  for (Instruction &I : instructions(F))
-    if (auto *fcmp = dyn_cast<FCmpInst>(&I)) {
-      mark(fcmp->getOperand(0));
-      mark(fcmp->getOperand(1));
-    }
-  for (const auto &am : abstractMatmuls) {
-    if (am.scalarLoop.fma)
-      critical.insert(am.scalarLoop.fma);
-    if (am.scalarLoop.fmul)
-      critical.insert(am.scalarLoop.fmul);
-  }
-  while (!worklist.empty()) {
-    auto *inst = dyn_cast<Instruction>(worklist.pop_back_val());
-    if (!inst)
-      continue;
-    auto operands =
-        isa<CallInst>(inst) ? cast<CallInst>(inst)->args() : inst->operands();
-    for (auto &op : operands)
-      mark(op);
-    if (auto *load = dyn_cast<LoadInst>(inst))
-      for (User *U : load->getPointerOperand()->users())
-        if (auto *store = dyn_cast<StoreInst>(U))
-          mark(store->getValueOperand());
-  }
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "Critical values:\n";
-    for (Value *V : critical)
-      llvm::errs() << '\t' << *V << '\n';
-  }
-
-  auto zeroGrad = [&](Instruction *op) {
-    size_t idx;
-    if (!tryReadProfIdxMetadata(op, idx))
-      return false;
-    return zeroGradIdx.count(idx) || !profileMap.count(idx);
-  };
-
-  for (auto it = subgraphs.begin(); it != subgraphs.end();) {
-    SmallVector<Instruction *, 32> toRemove;
-    for (Instruction *op : it->operations)
-      if (!critical.count(op) && zeroGrad(op))
-        toRemove.push_back(op);
-    for (Instruction *op : toRemove) {
-      if (O.Diagnostics.Print)
-        llvm::errs() << "Aggressive DCE: eliminating zero-gradient "
-                     << "non-critical instruction: " << *op << '\n';
-      op->replaceAllUsesWith(UndefValue::get(op->getType()));
-      nodes.erase(op);
-      it->operations.remove(op);
-      it->outputs.remove(op);
-      op->eraseFromParent();
-    }
-    if (it->outputs.empty()) {
-      if (O.Diagnostics.Print)
-        llvm::errs() << "Removing empty subgraph\n";
-      it = subgraphs.erase(it);
-    } else {
-      ++it;
-    }
-  }
-
-  if (O.Diagnostics.Print)
-    llvm::errs() << "[poseidon] After aggressive DCE, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << '\n';
-}
 
 // The dtype of a node of type T, which an optimizable instruction and its
 // operands only ever have as float or double.
@@ -841,16 +760,8 @@ static void splitSubgraphs(const Options &O,
   subgraphs = std::move(resultSubgraphs);
 }
 
-void shapeSubgraphs(
-    const Options &O, Function &F, const ProfileMap &profileMap,
-    const std::unordered_set<size_t> &zeroGradIdx,
-    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    SmallVectorImpl<Subgraph> &subgraphs) {
-  if (O.Solver.AggressiveDCE)
-    aggressiveDCE(O, F, subgraphs, valueToNodeMap, profileMap, zeroGradIdx,
-                  abstractMatmuls);
-
+void shapeSubgraphs(const Options &O, Function &F,
+                    SmallVectorImpl<Subgraph> &subgraphs) {
   splitSubgraphs(O, subgraphs);
 
   if (O.Diagnostics.Print) {

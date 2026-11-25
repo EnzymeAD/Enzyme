@@ -81,7 +81,6 @@ struct SolverOptions {
   bool TauCheapest = true;
   bool EarlyPrune = true;
   bool JointDP = false;
-  bool AggressiveDCE = false;
   std::string ApplyRewrites;
 
   void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
