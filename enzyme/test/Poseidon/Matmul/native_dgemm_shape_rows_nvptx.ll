@@ -46,15 +46,15 @@
 ; native_dgemm_runtime_cols_nvptx.cu covers a product with a run-time column
 ; count.
 
-; WARN: [poseidon] WARNING: matmul[0] 16x16x16: native-dgemm host dispatch at 128x16x16 NOT PROPOSED -- this device's cost model carries no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16x16 measures it.
+; WARN: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch at 128x16x16 is not proposed: this device's cost model carries no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16x16 measures it
 ; SQ: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01
 ; LOW: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+01  rel=5.000000e-02
 ; HIGH: native-dgemm cublas f64/f64  compCost/MAC=1.024000e+02  rel=2.000000e-01
 
-; NATIVE: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err
-; OZAKI: Poseidon error-budget: matmul -> ozaki-ii nm=14 wmma m16n16k16 s8/s32 (domain err
-; BASE: Poseidon error-budget: matmul -> baseline F64
+; NATIVE: [poseidon] error budget: matmul -> native-dgemm cublas f64/f64 (domain err
+; OZAKI: [poseidon] error budget: matmul -> ozaki-ii nm=14 wmma m16n16k16 s8/s32 (domain err
+; BASE: [poseidon] error budget: matmul -> baseline F64
 
-; NONE: [poseidon] WARNING: matmul[0] 16x16x16: native-dgemm host dispatch NOT PROPOSED -- this device's cost model carries no measured 'ozaki_dispatch_rel,dgemm' row; poseidon-calibrate --gpu <id> measures it.
+; NONE: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch is not proposed: this device's cost model carries no measured 'ozaki_dispatch_rel,dgemm' row; poseidon-calibrate --gpu <id> measures it
 
 ; STRICT: error: {{.*}}strict mode: {{.*}} has no measured '{{[a-z0-9_]+,[a-z0-9_]+}}' row in {{.*}}oz.csv; poseidon-calibrate --gpu <id>{{.*}} measures it.

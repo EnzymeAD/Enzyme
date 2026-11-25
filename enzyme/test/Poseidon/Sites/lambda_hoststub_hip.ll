@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
+; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
 ; RUN: sed 's/@hipLaunchKernel(/@hipLaunchKernel_spt(/' %s > %t/spt.ll
 ; RUN: %clang -O0 -x ir %t/spt.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SPT %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel (its source, with
@@ -22,7 +22,7 @@
 ; GEN: call void @__poseidon_launch_profiled(ptr @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 3, ptr @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd, ptr @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd, ptr @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd)
 ; GEN-NOT: call {{.*}}@hipLaunchKernel(
 
-; USE: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
+; USE: [poseidon] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
 ; USE-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; USE: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
 ; USE: call i32 @__hipPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])

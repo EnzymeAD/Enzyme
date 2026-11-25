@@ -565,9 +565,12 @@ void Memo::store(const Options &O, double accuracyCost,
   json::Object value;
   value["accuracy cost"] = exactDouble(accuracyCost);
   value["domain error"] = exactDouble(domainError);
-  if (Error E = writeCacheEntry(path, key, std::move(value)))
-    llvm::errs() << "[poseidon] could not write the accuracy memo " << path
-                 << ": " << toString(std::move(E)) << '\n';
+  if (Error E = writeCacheEntry(path, key, std::move(value))) {
+    std::string why = toString(std::move(E));
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] could not write the accuracy memo " << path
+                   << ": " << why << '\n';
+  }
 }
 
 static bool parseAccNumber(const json::Object &value, StringRef name,
@@ -588,15 +591,17 @@ bool Memo::lookup(const Options &O, double &accuracyCost,
       return true;
     read.unreadable = "its value does not parse";
   }
+  if (!O.Diagnostics.Print)
+    return false;
   if (!read.unreadable.empty())
     llvm::errs() << "[poseidon] accuracy memo " << path << " is unreadable ("
-                 << read.unreadable << "); recomputing it.\n";
+                 << read.unreadable << "); recomputing it\n";
   else if (!read.differs.empty())
     llvm::errs() << "[poseidon] accuracy memo " << path
                  << (read.differs == "format"
                          ? " was written in another cache format"
                          : " was computed for a different " + read.differs)
-                 << "; recomputing it.\n";
+                 << "; recomputing it\n";
   return false;
 }
 
@@ -612,7 +617,7 @@ static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
   MatmulAccuracy r{e.accuracyCost, e.domainError};
   auto printDomainError = [&] {
     if (O.Diagnostics.Print)
-      llvm::errs() << "DOMERR " << describe(q) << ' '
+      llvm::errs() << "[poseidon] domain error " << describe(q) << ' '
                    << percentileLabel(kDefaultConfidence)
                    << "_relErr=" << r.domainError
                    << " (sumcost=" << r.accuracyCost << ")\n";

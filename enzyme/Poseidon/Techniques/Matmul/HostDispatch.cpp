@@ -157,8 +157,7 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
     return false;
   auto refuse = [&](const Twine &why) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[ozaki-host-dispatch] " << F.getName() << ": " << why
-                   << '\n';
+      llvm::errs() << "[poseidon] " << F.getName() << ": " << why << '\n';
     return false;
   };
 
@@ -264,23 +263,25 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
         note.cropMAxis = (int)*axM;
         note.cropNAxis = (int)*axN;
         recovered = true;
-        llvm::errs() << "[ozaki-host-dispatch] recovered deploy geometry for "
-                     << F.getName() << ": M=" << gM << " Ncols=" << gNcols
-                     << " K=" << K << " from the index guard on thread axes "
-                     << *axM << '/' << *axN << '\n';
+        if (O.Diagnostics.Print)
+          llvm::errs() << "[poseidon] recovered the deploy geometry of "
+                       << F.getName() << ": M=" << gM << " Ncols=" << gNcols
+                       << " K=" << K << " from the index guard on thread axes "
+                       << *axM << '/' << *axN << '\n';
       }
     }
     if (scaled && !recovered &&
         (m.globalM != m.globalK || m.globalN != m.globalK)) {
-      // Never silent: refusing the note withdraws the host-dispatch candidate,
-      // and the solver then picks among in-kernel candidates that may be
-      // materially less accurate.
-      llvm::errs()
-          << "[ozaki-host-dispatch] REFUSING host dispatch for " << F.getName()
-          << ": non-square geometry under a changed deploy scale (profile "
-             "M/N/K = "
-          << m.globalM << '/' << m.globalN << '/' << m.globalK
-          << ", deploy K = " << K << ")\n";
+      // A warning: the solver then picks among in-kernel candidates that may
+      // be materially less accurate.
+      diagnose(F, F.getSubprogram(),
+               "no library call for " + F.getName() +
+                   ": a non-square product at a changed deploy scale (profile "
+                   "M/N/K = " +
+                   Twine(m.globalM) + "/" + Twine(m.globalN) + "/" +
+                   Twine(m.globalK) + ", deploy K = " + Twine(K) +
+                   ") has no recoverable geometry; profile at the deploy shape",
+               DS_Warning);
       if (O.Model.StrictMode)
         reportUserError(
             F, F.getSubprogram(),
@@ -365,7 +366,8 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
 // output buffer that the prepended host dispatch fills, so the reduction loop
 // dies. F stores a value that reaches the product to an argument, as it does
 // when computeGemmBodyNote gave it a valid note that is not standalone.
-static void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
+static void fissionGemmForDispatch(const Options &O, Function &F,
+                                   const AbstractMatmul &m) {
   StoreInst *cStore = productStore(F, m);
   assert(cStore &&
          "a body with a fused note stores the product to an argument");
@@ -391,8 +393,10 @@ static void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
   for (Use *U : repl)
     U->set(loaded);
   cStore->eraseFromParent(); // dispatch already wrote the output buffer
-  errs() << "[ozaki-host-dispatch] fissioned GEMM in " << F.getName()
-         << " (epilogue reads dispatched output; reduction loop will DCE)\n";
+  if (O.Diagnostics.Print)
+    errs() << "[poseidon] fissioned the product in " << F.getName()
+           << ": the epilogue reads the library call's output and the "
+              "reduction loop is left to dead-code elimination\n";
 }
 
 static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
@@ -488,8 +492,7 @@ std::optional<GemmBodyNote> libraryCallNote(const Session &S,
   }
   auto refuse = [&](const Twine &why) -> std::optional<GemmBodyNote> {
     if (S.Opts.Diagnostics.Print)
-      llvm::errs() << "[ozaki-host-dispatch] " << F->getName() << ": " << why
-                   << '\n';
+      llvm::errs() << "[poseidon] " << F->getName() << ": " << why << '\n';
     return std::nullopt;
   };
   // The host replaces or precedes the whole launch of the kernel with the
@@ -542,14 +545,14 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
                         "-poseidon-ozaki-host-dispatch for this body.");
   S.Matmul.GemmBodies[F] = note;
   if (!note.standalone)
-    fissionGemmForDispatch(*F, m);
+    fissionGemmForDispatch(S.Opts, *F, m);
 }
 
 static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
                            int aArg, int bArg, const GemmBodyNote &n) {
   std::string message;
   raw_string_ostream msg(message);
-  msg << "[ozaki-host-dispatch] wrote descriptor for " << wrapperName
+  msg << "[poseidon] wrote descriptor for " << wrapperName
       << ": C=" << launchRefString({cArg, n.cOffset}, "arg")
       << " A=" << launchRefString({aArg, n.aOffset}, "arg")
       << " B=" << launchRefString({bArg, n.bOffset}, "arg") << ' '
@@ -828,7 +831,8 @@ static Value *loadLaunchValue(IRBuilder<> &B, Value *argArray,
 // argument array. The launch is removed (standalone) or kept (fused); with
 // assumed equalities it runs instead of the dispatch whenever one of them does
 // not hold.
-static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
+static bool rewriteStub(const Options &O, Module &M, Function &F,
+                        const LaunchDesc &d) {
   CallInst *launch = findLaunchCall(F);
   CallInst *pop = findPopConfig(F);
   // A fused body was already fissioned device-side and computes nothing
@@ -840,9 +844,11 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
                        "read the operands from, or a condition to check "
                        "first, and its kernel was fissioned device-side");
   if (!launch || (d.launchCrop && !pop)) {
-    errs() << "[ozaki-host-dispatch] " << F.getName()
-           << ": no launch to read the kernel's arguments from; launching the "
-              "kernel as written\n";
+    diagnose(F, F.getSubprogram(),
+             "the library call of stub " + F.getName() +
+                 " has no launch to read the kernel's arguments from; the "
+                 "kernel is launched as written",
+             DS_Warning);
     return false;
   }
   LLVMContext &C = M.getContext();
@@ -952,9 +958,11 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
       phi->addIncoming(launch, elseTerm->getParent());
     }
   }
-  errs() << "[ozaki-host-dispatch] "
-         << (d.standalone ? "replaced" : "prepended") << " the launch in stub "
-         << F.getName() << " with " << dispatchSym(d.scheme)
+  if (!O.Diagnostics.Print)
+    return true;
+  errs() << "[poseidon] " << (d.standalone ? "replaced" : "prepended")
+         << " the launch in stub " << F.getName() << " with "
+         << dispatchSym(d.scheme)
          << " (C=" << launchRefString({d.cParam, d.cOffset}, "arg")
          << " A=" << launchRefString({d.aParam, d.aOffset}, "arg")
          << " B=" << launchRefString({d.bParam, d.bOffset}, "arg") << ')';
@@ -979,7 +987,7 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
     auto dIt = llvm::find_if(
         descs, [&](const auto &kv) { return isLaunchStubFor(F, kv.first); });
     if (dIt != descs.end())
-      changed |= rewriteStub(M, F, dIt->second);
+      changed |= rewriteStub(O, M, F, dIt->second);
   }
   return changed;
 }

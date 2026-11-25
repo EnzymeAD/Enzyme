@@ -25,9 +25,9 @@
 ; C[(ty * 16 + tx) * 16], whose element step along neither index is one
 ; element, so no layout describes it and the library call is not proposed.
 
-; CHECK-DAG: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
-; CHECK-DAG: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernccPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
-; CHECK-DAG: [ozaki-host-dispatch] preprocess_fused_c_body: the product's store address is not a row-major or column-major element of C
+; CHECK-DAG: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
+; CHECK-DAG: [poseidon] wrote descriptor for _Z13matmul_kernccPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
+; CHECK-DAG: [poseidon] preprocess_fused_c_body: the product's store address is not a row-major or column-major element of C
 ; CHECK-NOT: wrote descriptor for _Z13matmul_kernfcPKdS0_PdS1_
 
 ; DESC-DAG: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 1 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"

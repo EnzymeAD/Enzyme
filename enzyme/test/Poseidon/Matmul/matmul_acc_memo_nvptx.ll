@@ -16,28 +16,28 @@
 ; compiler, here another build of the pass.
 ; RUN: mkdir %t/entry
 ; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/c 2>&1 | FileCheck --check-prefixes=ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not=recomputing %s
-; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/c 2>&1 | FileCheck --check-prefix=ENTRY-PRICED --implicit-check-not=DOMERR --implicit-check-not=recomputing %s
+; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/c 2>&1 | FileCheck --check-prefix=ENTRY-PRICED --implicit-check-not='[poseidon] domain error' --implicit-check-not=recomputing %s
 ; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/one -poseidon-threads=1 2>&1 | FileCheck --check-prefixes=ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not=recomputing %s
 ; RUN: diff -r -x 'launches_*' %t/entry/c %t/entry/one
 ; RUN: cp -r %t/entry/c %t/entry/seed && sed -i 's/^\( *"seed": "\)[0-9]*"/\11"/' %t/entry/seed/matmulacc_*.json
 ; RUN: cat %t/entry/seed/matmulacc_*.json | FileCheck --check-prefix=ENTRY-EDITED-SEED --implicit-check-not='"seed"' %s
-; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/seed 2>&1 | FileCheck --check-prefixes=ENTRY-SEED,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different seed" %s
+; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/seed -poseidon-print 2>&1 | FileCheck --check-prefixes=ENTRY-SEED,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different seed" %s
 ; RUN: cp -r %t/entry/c %t/entry/compiler && sed -i 's/^\( *"compiler": "\)[0-9A-F]* /\10123456789ABCDEF /' %t/entry/compiler/matmulacc_*.json
 ; RUN: cat %t/entry/compiler/matmulacc_*.json | FileCheck --check-prefix=ENTRY-EDITED-COMPILER --implicit-check-not='"compiler"' %s
-; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/compiler 2>&1 | FileCheck --check-prefixes=ENTRY-COMPILER,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different compiler" %s
+; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/compiler -poseidon-print 2>&1 | FileCheck --check-prefixes=ENTRY-COMPILER,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different compiler" %s
 
 ; ENTRY-EDITED-SEED-COUNT-13: "seed": "1"
 ; ENTRY-EDITED-COMPILER-COUNT-13: "compiler": "0123456789ABCDEF LLVM {{[^"]+}}",
 
-; ENTRY-SEED-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different seed; recomputing it.
-; ENTRY-COMPILER-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different compiler; recomputing it.
+; ENTRY-SEED-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different seed; recomputing it
+; ENTRY-COMPILER-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different compiler; recomputing it
 
-; ENTRY-COMPUTE: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
+; ENTRY-COMPUTE: [poseidon] domain error matmul in=f16 acc=f32 p95_relErr=3.137966e-04
 
 ; ENTRY-PRICED: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=3.137966e-04
 ; ENTRY-PRICED: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=1.840864e-13
 ; ENTRY-PRICED: #10 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
-; ENTRY-PRICED: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)
+; ENTRY-PRICED: [poseidon] error budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)
 
 ; Every entry the first compile writes, planted in an empty cache under the
 ; same name with the text 0 0 (the numbers of an FP16 product accurate to every
@@ -49,11 +49,11 @@
 ; RUN: for f in %t/key/first/matmulacc_*; do echo '0 0' > %t/key/seeded/$(basename $f); done
 ; RUN: %{opt} %{prof} -poseidon-cache=%t/key/seeded 2>&1 | FileCheck --check-prefix=KEY-PRICED %s
 
-; KEY-FIRST: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
+; KEY-FIRST: [poseidon] domain error matmul in=f16 acc=f32 p95_relErr=3.137966e-04
 
 ; KEY-MEMO: matmulacc_
 
 ; KEY-PRICED: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=3.137966e-04
 ; KEY-PRICED: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=1.840864e-13
 ; KEY-PRICED: #10 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
-; KEY-PRICED: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)
+; KEY-PRICED: [poseidon] error budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)

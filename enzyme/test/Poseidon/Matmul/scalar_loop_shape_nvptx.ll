@@ -17,9 +17,9 @@
 ; k reaches n. Neither is recognized, and both kernels call their bodies as
 ; written.
 
-; CHECK-DAG: [raise-wmma] reject loop in preprocess_trip_body: trip count is not a known constant
-; CHECK-DAG: [raise-wmma] reject loop in preprocess_exit_body: the loop exits from a block other than its latch
-; CHECK-DAG: [hostgemm]   reject phi in loop: the loop exits from a block other than its latch
+; CHECK-DAG: [poseidon] reject loop in preprocess_trip_body: trip count is not a known constant
+; CHECK-DAG: [poseidon] reject loop in preprocess_exit_body: the loop exits from a block other than its latch
+; CHECK-DAG: [poseidon]   reject phi in loop: the loop exits from a block other than its latch
 
 ; IR-LABEL: define {{.*}} @trip_kernel(
 ; IR-NEXT: call void @trip_body(ptr %A, ptr %B, ptr %C, i32 %n)

@@ -5,7 +5,7 @@
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/same.ll
 ; RUN: sed 's/ozaki_stub\.cu/other_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/other.ll
 ; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV %s
-; RUN: %{clang} %t/same.ll -mllvm -poseidon-unit=u 2>&1 | FileCheck --check-prefix=SAME %s
+; RUN: %{clang} %t/same.ll -mllvm -poseidon-unit=u -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=SAME %s
 ; RUN: %{clang} %t/other.ll -mllvm -poseidon-unit=u 2>&1 | FileCheck --check-prefixes=OTHER,KEPT --implicit-check-not=__poseidon_ozaki_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-unit=v 2>&1 | FileCheck --check-prefixes=OTHERUNIT,KEPT --implicit-check-not=__poseidon_ozaki_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 
@@ -16,9 +16,9 @@
 ; tcec_matmul.cu as unit v. The halves are compiled with different options, so
 ; every compile names its unit.
 
-; DEV: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
+; DEV: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
-; SAME: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; SAME: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; SAME-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; SAME: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
 ; SAME: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])

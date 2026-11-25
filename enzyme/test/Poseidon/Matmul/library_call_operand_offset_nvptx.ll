@@ -13,8 +13,8 @@
 ; shifted_body reads A from three elements past its argument; neither product
 ; is offered a library call.
 
-; CHECK-DAG: [ozaki-host-dispatch] preprocess_gemm_body: an operand or dimension of the product is not an argument of the kernel _Z13offset_kernelPKdS0_PdS1_, from which the host reads it
-; CHECK-DAG: [ozaki-host-dispatch] preprocess_shifted_body: an operand of the product does not start where its pointer parameter points
+; CHECK-DAG: [poseidon] preprocess_gemm_body: an operand or dimension of the product is not an argument of the kernel _Z13offset_kernelPKdS0_PdS1_, from which the host reads it
+; CHECK-DAG: [poseidon] preprocess_shifted_body: an operand of the product does not start where its pointer parameter points
 
 source_filename = "offset.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

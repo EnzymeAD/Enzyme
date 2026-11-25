@@ -153,9 +153,9 @@ int main(void) {
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#{{[0-9]+}})
 // CHECK: [poseidon] pin: rt_gemm_body:M0=native-dgemm cublas f64/f64{{$}}
-// CHECK: [ozaki-host-dispatch] wrote descriptor for _Z14rt_gemm_kerneliiiPdS_S_S_S_S_: C=arg7 A=arg5 B=arg3 arg2x3*arg1x3*arg0 nm=0 (standalone){{$}}
+// CHECK: [poseidon] wrote descriptor for _Z14rt_gemm_kerneliiiPdS_S_S_S_S_: C=arg7 A=arg5 B=arg3 arg2x3*arg1x3*arg0 nm=0 (standalone){{$}}
 // CHECK-NEXT: [poseidon] {{.*}}raise_host_gemm_runtime_k.cu: 1 function(s) a rewrite reached; every other function as written
-// CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z29__device_stub__rt_gemm_kerneliiiPdS_S_S_S_S_ with __poseidon_native_dgemm (C=arg7 A=arg5 B=arg3){{$}}
+// CHECK: [poseidon] replaced the launch in stub _Z29__device_stub__rt_gemm_kerneliiiPdS_S_S_S_S_ with __poseidon_native_dgemm (C=arg7 A=arg5 B=arg3){{$}}
 
 // The descriptor the stub is built from: C, A, B are launch arguments 7, 5 and
 // 3, and the rd block gives M, Ncols, K, lda, ldb and ldc each as (factor

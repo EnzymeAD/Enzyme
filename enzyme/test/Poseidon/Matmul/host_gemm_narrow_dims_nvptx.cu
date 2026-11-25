@@ -66,7 +66,7 @@ void reduce(int np, int ldq, int ne, DT nd, double *Q, double *Gp, double *y,
   (void)k;
 }
 
-// PARAM: [hostgemm] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: a GEMM dimension depends on param0, an i16, but the host reads each launch value as an i32{{$}}
+// PARAM: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: a GEMM dimension depends on param0, an i16, but the host reads each launch value as an i32{{$}}
 // PARAM: [poseidon] no rewrite applied for [[BODY]];
-// FIELD: [hostgemm] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: a GEMM dimension depends on param1[+0], an i16, but the host reads each launch value as an i32{{$}}
+// FIELD: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: a GEMM dimension depends on param1[+0], an i16, but the host reads each launch value as an i32{{$}}
 // FIELD: [poseidon] no rewrite applied for [[BODY]];

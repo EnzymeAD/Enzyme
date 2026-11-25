@@ -14,10 +14,10 @@
 ; threads with threadIdx.x <= threadIdx.y reach the loop, so no in-kernel raise
 ; is proposed and the kernel calls the body as written.
 
-; CHECK: [raise-wmma] preprocess_tri_body: not every thread of the block reaches the reduction loop once, so it has no in-kernel raise
-; CHECK: Matmul[0] candidates
+; CHECK: [poseidon] preprocess_tri_body: not every thread of the block reaches the reduction loop once, so it has no in-kernel raise
+; CHECK: [poseidon] matmul[0] candidates
 ; CHECK-NEXT: (no candidates emitted)
-; CHECK-NEXT: Poseidon error-budget: matmul -> baseline F64
+; CHECK-NEXT: [poseidon] error budget: matmul -> baseline F64
 
 ; IR-LABEL: define {{.*}} @_Z10tri_kernelPKdS0_PdS1_(
 ; IR-NEXT: call void @tri_body(ptr %A, ptr %B, ptr %C)

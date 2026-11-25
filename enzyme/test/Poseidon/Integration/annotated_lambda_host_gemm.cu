@@ -200,16 +200,16 @@ int main(int argc, char **argv) {
 // be np, which the stub checks before it dispatches the product at nm = 12.
 // CHECK: [poseidon] site void CuKernel2D<reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)>(int, reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)): accuracy target 1e-12
 // CHECK-NEXT: [poseidon] Optimizing [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body]] with relative error tolerance: 1.000000e-12
-// CHECK: [hostgemm]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]
-// CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+80] A=param1[+48] B=param1[+16]
+// CHECK: [poseidon]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]
+// CHECK-NEXT: [poseidon]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+80] A=param1[+48] B=param1[+16]
 // CHECK: [poseidon] Found 1 matrix product(s) in [[BODY]]
 // CHECK-NEXT: Matmul[0]: 192x1x192 type=f64 origin=HostGemmLoopNest
-// CHECK: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{[0-9.]+e-[0-9]+}} <= 1.000000e-12 at confidence 9.500000e-01)
+// CHECK: [poseidon] error budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{[0-9.]+e-[0-9]+}} <= 1.000000e-12 at confidence 9.500000e-01)
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#4)
 // CHECK: [poseidon] pin: [[KERNEL:_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_]]:M0=ozaki-ii nm=12 wmma m16n16k16 s8/s32{{$}}
-// CHECK: [ozaki-host-dispatch] wrote descriptor for [[KERNEL]]: C=arg1[+80] A=arg1[+48] B=arg1[+16] arg1[+0]xarg0x3*arg1[+4] nm=12 (standalone), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
+// CHECK: [poseidon] wrote descriptor for [[KERNEL]]: C=arg1[+80] A=arg1[+48] B=arg1[+16] arg1[+0]xarg0x3*arg1[+4] nm=12 (standalone), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 // CHECK-NEXT: [poseidon] {{.*}}annotated_lambda_host_gemm.cu: 1 function(s) a rewrite reached; every other function as written
-// CHECK: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ with __poseidon_ozaki_dgemm (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
+// CHECK: [poseidon] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ with __poseidon_ozaki_dgemm (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 
 // OPT: DENSE: rel err ok
 // OPT-NEXT: PADDED: rel err ok

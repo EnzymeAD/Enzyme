@@ -1304,7 +1304,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
 #define RG_REJECT(msg)                                                         \
   do {                                                                         \
     if (O.Diagnostics.Print && phi.getType()->isFloatingPointTy())             \
-      llvm::errs() << "[hostgemm]   reject phi in "                            \
+      llvm::errs() << "[poseidon]   reject phi in "                            \
                    << L->getHeader()->getName() << ": " << (msg) << '\n';      \
     return false;                                                              \
   } while (0)
@@ -1345,9 +1345,9 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
   assert(Target::of(F).isDevice() && "a runtime-shape GEMM is device code");
   if (profileHeader.launchCount == 0) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[hostgemm] " << F.getName()
+      llvm::errs() << "[poseidon] " << F.getName()
                    << ": no profile header (launchCount=0); a runtime-shape "
-                      "GEMM cannot be priced without one. Skipping.\n";
+                      "GEMM cannot be priced without one, so it is skipped\n";
     return;
   }
 
@@ -1380,7 +1380,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     }
   });
   if (O.Diagnostics.Print)
-    llvm::errs() << "[hostgemm] " << F.getName() << ": " << members.size()
+    llvm::errs() << "[poseidon] " << F.getName() << ": " << members.size()
                  << " candidate reduction loop(s)\n";
   if (members.empty())
     return;
@@ -1427,14 +1427,14 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
   for (unsigned h = 0; h < n; ++h) {
     if (prevOf[h] >= 0 || ambiguous[h]) {
       if (O.Diagnostics.Print && prevOf[h] < 0)
-        llvm::errs() << "[hostgemm]   loop " << h
+        llvm::errs() << "[poseidon]   loop " << h
                      << " is not a chain head: ambiguous accumulator "
                         "dataflow\n";
       continue;
     }
     if (!isPositiveZeroSeed(members[h].init)) {
       if (O.Diagnostics.Print)
-        llvm::errs() << "[hostgemm]   loop " << h
+        llvm::errs() << "[poseidon]   loop " << h
                      << " is a chain head whose accumulator does not start at "
                         "+0.0; not a fresh contraction\n";
       continue;
@@ -1470,7 +1470,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     }
     if (!dispatchable) {
       if (O.Diagnostics.Print)
-        llvm::errs() << "[hostgemm] " << F.getName() << ": reduction chain of "
+        llvm::errs() << "[poseidon] " << F.getName() << ": reduction chain of "
                      << chain.size()
                      << " loop(s) is not a dispatchable runtime-shape GEMM: "
                      << why << '\n';
@@ -1502,27 +1502,27 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
 
     if (O.Diagnostics.Print) {
       const RuntimeGemmHandle &g = *am.hostGemm;
-      llvm::errs() << "[hostgemm] " << F.getName() << ": recognized GEMM from "
+      llvm::errs() << "[poseidon] " << F.getName() << ": recognized GEMM from "
                    << chain.size() << " reduction loop(s)\n"
-                   << "[hostgemm]   C = A^T*B + beta*C  beta=" << g.beta << '\n'
-                   << "[hostgemm]   M=" << runtimeDimString(g.M)
+                   << "[poseidon]   C = A^T*B + beta*C  beta=" << g.beta << '\n'
+                   << "[poseidon]   M=" << runtimeDimString(g.M)
                    << "  Ncols=" << runtimeDimString(g.Ncols)
                    << "  K=" << runtimeDimString(g.K) << '\n'
-                   << "[hostgemm]   lda=" << runtimeDimString(g.lda)
+                   << "[poseidon]   lda=" << runtimeDimString(g.lda)
                    << "  ldb=" << runtimeDimString(g.ldb)
                    << "  ldc=" << runtimeDimString(g.ldc) << '\n'
-                   << "[hostgemm]   aColMajor=" << (g.aColMajor ? 1 : 0)
+                   << "[poseidon]   aColMajor=" << (g.aColMajor ? 1 : 0)
                    << " bColMajor=" << (g.bColMajor ? 1 : 0)
                    << " cColMajor=" << (g.cColMajor ? 1 : 0)
                    << "  C=" << launchRefString(g.cRef, "param")
                    << " A=" << launchRefString(g.aRef, "param")
                    << " B=" << launchRefString(g.bRef, "param") << '\n';
       for (const auto &[x, y] : g.assumedEqual)
-        llvm::errs() << "[hostgemm]   dense only if "
+        llvm::errs() << "[poseidon]   dense only if "
                      << launchRefString(x, "param")
                      << " == " << launchRefString(y, "param")
                      << " (checked at the launch)\n";
-      llvm::errs() << "[hostgemm]   profile shape M=" << g.profM
+      llvm::errs() << "[poseidon]   profile shape M=" << g.profM
                    << " Ncols=" << g.profN << " K=" << g.profK
                    << " (per-CTA tile " << g.tileM << 'x' << g.tileN
                    << ", launches=" << g.launches

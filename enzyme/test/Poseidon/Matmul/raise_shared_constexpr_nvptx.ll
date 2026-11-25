@@ -14,9 +14,9 @@
 ; at a constant offset. The array counts against the 48 KB a kernel's static
 ; shared memory may hold, so no in-kernel raise fits.
 
-; CHECK-DAG: Matmul[0] 16x16x16: in-kernel Direct raise m16n16k16 f16/f32 NOT PROPOSED -- it needs 50176 B of static shared memory against a 49152 B cap (48128 B already live in the enclosing kernel + 2048 B for the raise: 1024 B D tile (16x16 f32) + 512 B A tile + 512 B B tile).
-; CHECK-DAG: Matmul[0] 16x16x16: in-kernel TCEC n=2 m16n16k16 f16/f32 NOT PROPOSED -- it needs 52224 B of static shared memory
-; CHECK: Poseidon error-budget: matmul -> baseline F64
+; CHECK-DAG: [poseidon] matmul[0] 16x16x16: in-kernel direct raise m16n16k16 f16/f32 not proposed: it needs 50176 B of static shared memory against a 49152 B cap (48128 B already live in the enclosing kernel + 2048 B for the raise: 1024 B D tile (16x16 f32) + 512 B A tile + 512 B B tile)
+; CHECK-DAG: [poseidon] matmul[0] 16x16x16: in-kernel TCEC n=2 m16n16k16 f16/f32 not proposed: it needs 52224 B of static shared memory
+; CHECK: [poseidon] error budget: matmul -> baseline F64
 
 source_filename = "staged.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

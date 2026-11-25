@@ -569,12 +569,13 @@ static unsigned extentForIndex(const Options &O, const uint32_t (&dims)[3],
     return 0;
   if (idx.fuseMult != fastDim) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[raise-wmma] " << fname << ": fused " << what
+      llvm::errs() << "[poseidon] " << fname << ": fused " << what
                    << " index multiplier " << idx.fuseMult
                    << " does not match the profiled block extent " << fastDim
                    << " of its fast thread axis; the fused index is not a "
-                      "dense numbering of the block's threads. Skipping "
-                      "(refusing to guess a matmul dimension).\n";
+                      "dense numbering of the block's threads, so the "
+                      "product is skipped rather than given a guessed "
+                      "extent\n";
     return 0;
   }
   return fastDim * slowDim;
@@ -589,8 +590,8 @@ static void forEachScalarLoopReduction(
   const DataLayout &DL = F.getParent()->getDataLayout();
   auto reject = [&](StringRef why) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[raise-wmma] reject loop in " << F.getName() << ": "
-                   << why << '\n';
+      llvm::errs() << "[poseidon] reject loop in " << F.getName() << ": " << why
+                   << '\n';
   };
   forEachInnermostLoop(LI, [&](Loop *L) {
     BasicBlock *latch = L->getLoopLatch();
@@ -651,7 +652,7 @@ void collectScalarLoopReductionTrips(
           trips.emplace_back(*slot, trip);
       });
   if (O.Diagnostics.Print && !trips.empty())
-    llvm::errs() << "[raise-wmma] recorded " << trips.size()
+    llvm::errs() << "[poseidon] recorded " << trips.size()
                  << " reduction trip(s) for " << F.getName() << '\n';
 }
 
@@ -700,7 +701,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
   // guess.
   if (profileHeader.launchCount == 0) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[raise-wmma] " << F.getName()
+      llvm::errs() << "[poseidon] " << F.getName()
                    << ": no profile header (launchCount=0); skipping all "
                       "scalar-loop matmul candidates\n";
     return;
@@ -723,7 +724,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                                         "B-col", F.getName());
         if (profM == 0 || profN == 0) {
           if (O.Diagnostics.Print)
-            llvm::errs() << "[raise-wmma] " << F.getName()
+            llvm::errs() << "[poseidon] " << F.getName()
                          << ": profile header reports zero extent for matmul's "
                             "row/col tid axis; skipping\n";
           return;
@@ -748,7 +749,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         if (wholeBlock)
           h.loopGuard = *guard;
         else if (O.Diagnostics.Print)
-          llvm::errs() << "[raise-wmma] " << F.getName()
+          llvm::errs() << "[poseidon] " << F.getName()
                        << ": not every thread of the block reaches the "
                           "reduction loop once, so it has no in-kernel raise\n";
         // A launch of another block shape than the profiled one runs the
@@ -760,7 +761,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
               return phi.getIncomingValue(0) == h.fma;
             });
         if (wholeBlock && !exitTakesProduct && O.Diagnostics.Print)
-          llvm::errs() << "[raise-wmma] " << F.getName()
+          llvm::errs() << "[poseidon] " << F.getName()
                        << ": the reduction loop's exit takes more from it than "
                           "the product, so it has no in-kernel raise\n";
         h.inKernelRaisable = wholeBlock && exitTakesProduct;

@@ -125,11 +125,14 @@ static void reportMissingRow(Session &S, const AbstractMatmul &m,
                                      measure + " measures it.");
   if (!S.Matmul.ReportedRows.insert(row).second)
     return;
-  llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x'
-               << m.N << 'x' << m.K << ": " << what
-               << " NOT PROPOSED -- this device's cost model carries no "
-                  "measured '"
-               << row << "' row; " << measure << " measures it.\n";
+  const Instruction &at = anchorOf(m);
+  diagnose(*at.getFunction(), at.getDebugLoc(),
+           "matrix product " + Twine(m.id) + ", " + Twine(m.M) + "x" +
+               Twine(m.N) + "x" + Twine(m.K) + ": " + what +
+               " is not proposed: this device's cost model carries no "
+               "measured '" +
+               row + "' row; " + measure + " measures it",
+           DS_Warning);
 }
 
 // The command that measures a device's cost model; a rectangular host
@@ -155,7 +158,7 @@ priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                       "-poseidon-apply-rewrites. Uncalibrated in-kernel "
                       "classes are proposed at a placeholder price under "
                       "that flag, and a DP solve must never see one.");
-    llvm::errs() << "[poseidon] CALIBRATION MODE: " << what
+    llvm::errs() << "[poseidon] calibration mode: " << what
                  << " has no measured wmma_inkernel_rel," << cls
                  << " row; proposing it at rel=1 to be timed\n";
     return baselinePerMac;
@@ -330,12 +333,13 @@ static bool inKernelRaiseFits(const Options &O, Function &F,
   if (total <= cap)
     return true;
   if (O.Diagnostics.Print)
-    llvm::errs() << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x'
-                 << m.K << ": " << className << " NOT PROPOSED -- it needs "
-                 << total << " B of static shared memory against a " << cap
-                 << " B cap (" << existingBytes
+    llvm::errs() << "[poseidon] matmul[" << m.id << "] " << m.M << 'x' << m.N
+                 << 'x' << m.K << ": " << className
+                 << " not proposed: it needs " << total
+                 << " B of static shared memory against a " << cap << " B cap ("
+                 << existingBytes
                  << " B already live in the enclosing kernel + " << raiseBytes
-                 << " B for the raise: " << breakdown << ").\n";
+                 << " B for the raise: " << breakdown << ")\n";
   return false;
 }
 
@@ -431,7 +435,7 @@ static bool siteReachedByWholeBlock(const Session &S, const AbstractMatmul &m) {
       return true;
   }
   if (S.Opts.Diagnostics.Print)
-    llvm::errs() << "[raise-wmma] " << F.getName()
+    llvm::errs() << "[poseidon] " << F.getName()
                  << ": not every thread of the block reaches the site in "
                  << (site ? site->getFunction()->getName() : "its kernel")
                  << " once, so it has no in-kernel raise\n";
@@ -451,7 +455,7 @@ static std::string inKernelDescription(const SchemeVariant &v, unsigned tileM,
       mmaShapeSuffix(tileM, tileN, tileK) + " " + schemeFormats(v, '/');
   switch (v.scheme) {
   case Scheme::Direct:
-    return "in-kernel Direct raise " + tile;
+    return "in-kernel direct raise " + tile;
   case Scheme::Tcec:
     return "in-kernel TCEC " + schemeParameter(v) + " " + tile;
   case Scheme::OzakiII:
@@ -562,10 +566,10 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   const std::optional<GemmBodyNote> &note = L.note;
   L.dispatchable = note.has_value();
   if (S.Opts.Diagnostics.Print && !L.dispatchable)
-    llvm::errs() << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x'
-                 << m.K
-                 << ": host-dispatched Ozaki-II NOT PROPOSED -- the body "
-                    "is not a host-dispatchable GEMM.\n";
+    llvm::errs() << "[poseidon] matmul[" << m.id << "] " << m.M << 'x' << m.N
+                 << 'x' << m.K
+                 << ": host-dispatched Ozaki-II not proposed: the body "
+                    "is not a host-dispatchable GEMM\n";
   if (note && m.origin == AbstractMatmul::Origin::ScalarLoopReduction)
     L.runShape = {(unsigned)note->dims[DimM].add,
                   (unsigned)note->dims[DimNcols].add,
@@ -601,10 +605,11 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
       std::max({L.runShape ? (*L.runShape)[2] : 0u, L.profileShape[2], m.K});
   if (reduction >= (unsigned)kOzakiIIMaxK) {
     if (P.S.Opts.Diagnostics.Print)
-      llvm::errs() << "  Matmul[" << m.id << "] ozaki-ii NOT PROPOSED -- its "
+      llvm::errs() << "[poseidon] matmul[" << m.id
+                   << "] ozaki-ii not proposed: its "
                    << "reduction of " << reduction
                    << " is not below the runtime's limit " << kOzakiIIMaxK
-                   << ".\n";
+                   << '\n';
     return;
   }
   const std::array<unsigned, 3> &shape =
@@ -655,11 +660,11 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
   if (!kHaveTcecDispatch) {
     if (P.S.Opts.Diagnostics.Print &&
         !std::exchange(P.S.Matmul.ReportedNoTcecRuntime, true))
-      llvm::errs() << "[poseidon] WARNING: matmul[" << P.m.id << "] " << P.m.M
-                   << 'x' << P.m.N << 'x' << P.m.K
-                   << ": TCEC dispatch NOT PROPOSED -- this build has no TCEC "
+      llvm::errs() << "[poseidon] matmul[" << P.m.id << "] " << P.m.M << 'x'
+                   << P.m.N << 'x' << P.m.K
+                   << ": TCEC dispatch not proposed: this build has no TCEC "
                       "runtime; configure it with "
-                      "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>.\n";
+                      "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>\n";
     cm.dropped.push_back(
         {matmulOptionLabel(opt),
          "this compiler was built without cuMpSGEMM, on which the "
@@ -771,10 +776,11 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
   for (const AbstractMatmul &m : matmuls) {
     std::optional<MatmulProfile> prof = loadProfile(m, scalarProfile);
     if (!prof) {
-      llvm::errs() << "[poseidon] matmul[" << m.id << "] in '"
-                   << anchorOf(m).getFunction()->getName()
-                   << "': the profiling run never executed it; left as "
-                      "written.\n";
+      if (S.Opts.Diagnostics.Print)
+        llvm::errs() << "[poseidon] matmul[" << m.id << "] in "
+                     << anchorOf(m).getFunction()->getName()
+                     << ": the profiling run never executed it, so it is left "
+                        "as written\n";
       continue;
     }
 
@@ -839,7 +845,7 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
 
     if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest &&
         S.Opts.Diagnostics.Print)
-      llvm::errs() << "[hostgemm] matmul[" << m.id
+      llvm::errs() << "[poseidon] matmul[" << m.id
                    << "] baseline: composed/MAC=" << baselinePerMac << '\n';
 
     // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
@@ -929,19 +935,19 @@ void MatmulUnit::scaleErrors(double factor) {
 }
 
 void MatmulUnit::printPriced(raw_ostream &OS) {
-  OS << "Matmul[" << matmul->id
+  OS << "[poseidon] matmul[" << matmul->id
      << "] candidates (initial cost=" << initialCompCost
      << ", executions=" << executions << ", globalM=" << matmul->globalM
      << ", globalN=" << matmul->globalN << ", globalK=" << matmul->globalK
      << ", K=" << matmul->K << ", gridCTAs=" << matmul->gridCTAs << "):\n";
   if (candidates.empty()) {
-    OS << "  (no candidates emitted)\n";
+    OS << "[poseidon]   (no candidates emitted)\n";
     return;
   }
   for (size_t i = 0; i < candidates.size(); ++i)
-    OS << "  " << matmulOptionLabel(candidates[i])
-       << ": Δcost=" << getCompCostDelta(i)
-       << " ΔaccCost=" << getAccCostDelta(i) << '\n';
+    OS << "[poseidon]   " << matmulOptionLabel(candidates[i])
+       << ": dcost=" << getCompCostDelta(i) << " dacc=" << getAccCostDelta(i)
+       << '\n';
 }
 
 // Dispatch and raise prices are measured wall-clock ratios that repeat to about
@@ -981,7 +987,7 @@ SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
           tieBest = (long)i;
       }
       if (tieBest != best && O.Diagnostics.Print)
-        llvm::errs() << "Poseidon error-budget: cost tie inside "
+        llvm::errs() << "[poseidon] error budget: cost tie inside "
                      << (kCostTieBandRel * 100.0) << "% calibration band ("
                      << matmulOptionLabel(cm.candidates[best]) << " cost "
                      << cm.candidates[best].compCost << " vs "
@@ -994,14 +1000,14 @@ SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
     }
     if (best < 0) {
       if (O.Diagnostics.Print)
-        llvm::errs() << "Poseidon error-budget: matmul -> baseline F64 (no "
+        llvm::errs() << "[poseidon] error budget: matmul -> baseline F64 (no "
                         "rewrite clears "
                      << budget << " at confidence " << kDefaultConfidence
                      << " faster than F64)\n";
       continue;
     }
     if (O.Diagnostics.Print)
-      llvm::errs() << "Poseidon error-budget: matmul -> "
+      llvm::errs() << "[poseidon] error budget: matmul -> "
                    << matmulOptionLabel(cm.candidates[best]) << " (domain err "
                    << cm.candidates[best].domainError << " <= " << budget
                    << " at confidence " << kDefaultConfidence << ")\n";

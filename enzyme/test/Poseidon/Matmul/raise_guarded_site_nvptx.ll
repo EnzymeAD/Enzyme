@@ -13,8 +13,8 @@
 ; the block reaches the block barriers of an in-kernel raise, and none is
 ; proposed.
 
-; CHECK: [raise-wmma] preprocess_gemm_body: not every thread of the block reaches the site in _Z13guard_kernelPKdS0_PdS1_ once, so it has no in-kernel raise
-; CHECK: Poseidon error-budget: matmul -> baseline F64
+; CHECK: [poseidon] preprocess_gemm_body: not every thread of the block reaches the site in _Z13guard_kernelPKdS0_PdS1_ once, so it has no in-kernel raise
+; CHECK: [poseidon] error budget: matmul -> baseline F64
 
 ; IR-LABEL: define {{.*}} @_Z13guard_kernelPKdS0_PdS1_(
 ; IR: call void @gemm_body(ptr %A, ptr %B, ptr %C)

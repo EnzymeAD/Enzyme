@@ -17,7 +17,7 @@
 ; realizations compute the product alone, so the reduction is not recognized
 ; and the kernel calls the body as written.
 
-; CHECK: [raise-wmma] reject loop in preprocess_seed_body: the accumulator does not start at +0.0
+; CHECK: [poseidon] reject loop in preprocess_seed_body: the accumulator does not start at +0.0
 
 ; IR-LABEL: define {{.*}} @_Z13matmul_kernelPKdS0_PdS1_(
 ; IR-NEXT: call void @seed_body(ptr %A, ptr %B, ptr %C)

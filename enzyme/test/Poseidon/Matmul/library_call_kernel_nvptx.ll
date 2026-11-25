@@ -19,9 +19,9 @@
 ; store replaced by a second site it holds two products. Neither site is
 ; offered a library call, and the solve takes the in-kernel raise instead.
 
-; WORK: [ozaki-host-dispatch] preprocess_gemm_body: its kernel _Z13matmul_kernelPKdS0_PdS1_ does more than call this site, and the library call takes the place of the whole launch
+; WORK: [poseidon] preprocess_gemm_body: its kernel _Z13matmul_kernelPKdS0_PdS1_ does more than call this site, and the library call takes the place of the whole launch
 ; WORK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
-; TWO: [ozaki-host-dispatch] preprocess_gemm_body: its kernel _Z13matmul_kernelPKdS0_PdS1_ does more than call this site, and the library call takes the place of the whole launch
+; TWO: [poseidon] preprocess_gemm_body: its kernel _Z13matmul_kernelPKdS0_PdS1_ does more than call this site, and the library call takes the place of the whole launch
 ; TWO: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
 ; TWO: [poseidon] gemm_body: same body and target as an earlier site; reusing its solve (preprocess_gemm_body)
 

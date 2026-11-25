@@ -98,7 +98,7 @@
 ; LABEL-FULL: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
 ; LABEL-SHIFTED: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#12)
 ; LABEL-NATIVE: [poseidon] pin: matmul_body:M0=native-dgemm cublas f64/f64{{$}}
-; LABEL-NATIVE: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
+; LABEL-NATIVE: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
 ; The value a tolerance-selected product prints applies the same candidate,
 ; and the unit's dispatch manifest is the same, without the tolerance.

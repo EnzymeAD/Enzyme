@@ -13,8 +13,8 @@
 ; one, is not proposed.
 
 ; CHECK: Matmul[0]: 256x1x16 type=f64 origin=ScalarLoopReduction
-; CHECK: [ozaki-host-dispatch] preprocess_fused_body: the profile does not give the extent of the product's rows and columns
-; CHECK-NEXT: Matmul[0] 256x1x16: host-dispatched Ozaki-II NOT PROPOSED -- the body is not a host-dispatchable GEMM.
+; CHECK: [poseidon] preprocess_fused_body: the profile does not give the extent of the product's rows and columns
+; CHECK-NEXT: [poseidon] matmul[0] 256x1x16: host-dispatched Ozaki-II not proposed: the body is not a host-dispatchable GEMM
 
 source_filename = "fused_index.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

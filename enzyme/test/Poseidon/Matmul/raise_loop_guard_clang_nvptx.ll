@@ -40,7 +40,7 @@
 ; CHECK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
 ; CHECK: Found 1 matrix product(s) in preprocess_index_body
 ; CHECK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
-; CHECK: [raise-wmma] reject loop in preprocess_gather_body: an operand's address is not an affine function of the loop's counter
+; CHECK: [poseidon] reject loop in preprocess_gather_body: an operand's address is not an affine function of the loop's counter
 ; CHECK-NOT: Applying solution for matmul
 
 ; IR-LABEL: define {{.*}} @preprocess_ptr_body(

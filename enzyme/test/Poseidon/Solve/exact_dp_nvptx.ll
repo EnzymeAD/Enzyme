@@ -96,11 +96,10 @@
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-explain=%t/refusal/exact/ex -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REFUSAL-EXACT %s
 ; RUN: %poseidon_explain %t/refusal/exact/ex --format budgets | FileCheck --check-prefix=REFUSAL-EXACT-BUDGETS %s
 
-; {{[^ -~]+}} stands for the Greek capital delta the log prints.
-; REFUSAL-PRUNE: Matmul[0] candidates
-; REFUSAL-PRUNE-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.932160e+06
-; REFUSAL-PRUNE-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.866624e+06
-; REFUSAL-PRUNE-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.801088e+06
+; REFUSAL-PRUNE: [poseidon] matmul[0] candidates
+; REFUSAL-PRUNE-NEXT: wmma m16n16k16 f16/f32: dcost=-3.932160e+06
+; REFUSAL-PRUNE-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06
+; REFUSAL-PRUNE-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06
 ; REFUSAL-PRUNE: DP table contains 1 entries.
 ; REFUSAL-PRUNE-BUDGETS: {{^}}-0.10526315789473684{{$}}
 ; REFUSAL-EXACT: [poseidon] Exact DP: 4 frontier points

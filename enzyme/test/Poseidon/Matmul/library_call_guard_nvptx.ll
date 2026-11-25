@@ -21,10 +21,10 @@
 ; reaches the pass with the two bounds folded into (row | col) u< 16. Both
 ; library calls are written.
 
-; CHECK-DAG: [ozaki-host-dispatch] preprocess_tri_body: a condition gating the GEMM store is not a thread-index bound
-; CHECK-DAG: [ozaki-host-dispatch] preprocess_short_body: the GEMM store is gated by row < 8, which drops rows of the 16 x 16 product the library call writes
-; CHECK-DAG: [ozaki-host-dispatch] wrote descriptor for _Z12bound_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
-; CHECK-DAG: [ozaki-host-dispatch] wrote descriptor for _Z11wrap_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
+; CHECK-DAG: [poseidon] preprocess_tri_body: a condition gating the GEMM store is not a thread-index bound
+; CHECK-DAG: [poseidon] preprocess_short_body: the GEMM store is gated by row < 8, which drops rows of the 16 x 16 product the library call writes
+; CHECK-DAG: [poseidon] wrote descriptor for _Z12bound_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
+; CHECK-DAG: [poseidon] wrote descriptor for _Z11wrap_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; DESC-DAG: "_Z12bound_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; DESC-DAG: "_Z11wrap_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"

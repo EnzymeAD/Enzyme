@@ -38,7 +38,7 @@
 ; EXPLAIN-NEXT: },
 ; EXPLAIN-NEXT: "id": "R0_1",
 
-; TAU: Poseidon error-budget: matmul -> tcec n=2 wmma m16n16k16 f16/f32 (domain err 1.576106e-07 <= 1.000000e-06 at confidence 9.500000e-01)
+; TAU: [poseidon] error budget: matmul -> tcec n=2 wmma m16n16k16 f16/f32 (domain err 1.576106e-07 <= 1.000000e-06 at confidence 9.500000e-01)
 ; TAU: warning: {{.*}}preprocess_matmul_body{{.*}}: Poseidon: a selected rewrite edits instructions a selected matrix product consumes; the rewrite is dropped{{$}}
 ; TAU: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
 ; TAU-NEXT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)

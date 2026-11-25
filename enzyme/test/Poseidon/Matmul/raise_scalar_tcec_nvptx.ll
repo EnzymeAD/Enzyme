@@ -43,7 +43,7 @@
 ; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.200000e+01 rel=6.250000e-02
 ; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.000000e+01 rel=7.812500e-02
 ; CHECK-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.800000e+01 rel=9.375000e-02
-; CHECK: Matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
+; CHECK: [poseidon] matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
 ; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-3.932160e+06
 ; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-3.866624e+06
 ; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-3.801088e+06
