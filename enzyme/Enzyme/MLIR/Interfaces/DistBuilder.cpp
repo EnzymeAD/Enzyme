@@ -651,7 +651,7 @@ static Value emitNativeSampler(OpBuilder &builder, Location loc,
     Value at = math::AbsFOp::create(builder, loc, t);
     return arith::MulFOp::create(builder, loc, bcast(distArgs[0]), at);
   }
-  case DistBaseKind::MVN: {
+  case DistBaseKind::MULTIVARIATE_NORMAL: {
     // mu + U^T z with the upper Cholesky factor U of Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];
@@ -949,7 +949,7 @@ static Value emitNativeLogpdf(OpBuilder &builder, Location loc,
     Value lognorm = arith::SubFOp::create(builder, loc, termB, termA);
     return add(reduce(kernel), lognorm);
   }
-  case DistBaseKind::MVN: {
+  case DistBaseKind::MULTIVARIATE_NORMAL: {
     // |U^-T diff|^2 with one triangular solve, where Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];

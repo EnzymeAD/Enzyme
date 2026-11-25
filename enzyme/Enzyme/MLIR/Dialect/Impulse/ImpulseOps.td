@@ -190,8 +190,8 @@ def MHOp : Impulse_Op<"mh",
     probability for a proposal that draws the regenerated sites from their
     distributions. If `accepted` is true, `new_trace` and `new_weight` are the
     trace of the proposal and its joint log density; otherwise they are
-    `original_trace` and `original_weight`. `output_rng` is the advanced RNG
-    state.
+    `original_trace` and `original_weight`. `output_rng_state` is the advanced
+    RNG state.
   }];
 
   let arguments = (ins
@@ -210,7 +210,7 @@ def MHOp : Impulse_Op<"mh",
     AnyRankedTensor:$new_trace,
     AnyRankedTensor:$new_weight,
     AnyRankedTensor:$accepted,
-    AnyType:$output_rng
+    AnyType:$output_rng_state
   );
 
   let assemblyFormat = [{
@@ -496,26 +496,26 @@ def RandomSplitOp : Impulse_Op<"random_split"> {
 def ForOp : Impulse_Op<"for", [AutomaticAllocationScope]> {
   let summary = "Counted loop for probabilistic programming";
   let description = [{
-    A counted loop operation that iterates from `lowerBound` to `upperBound`
-    by `step`, carrying `iter_args` through each iteration. The iteration
-    variable and iter_args are passed to the body region.
+    A counted loop operation that iterates from `lower_bound` to
+    `upper_bound` by `step`, carrying `init_args` through each iteration. The
+    iteration variable and the carried values are passed to the body region.
   }];
 
   let arguments = (ins
-    AnyType:$lowerBound,
-    AnyType:$upperBound,
+    AnyType:$lower_bound,
+    AnyType:$upper_bound,
     AnyType:$step,
-    Variadic<AnyType>:$initArgs
+    Variadic<AnyType>:$init_args
   );
 
   let regions = (region SizedRegion<1>:$region);
   let results = (outs Variadic<AnyType>:$results);
 
   let assemblyFormat = [{
-    `(` $lowerBound `:` type($lowerBound) `)`
-    `to` `(` $upperBound `:` type($upperBound) `)`
+    `(` $lower_bound `:` type($lower_bound) `)`
+    `to` `(` $upper_bound `:` type($upper_bound) `)`
     `step` `(` $step `:` type($step) `)`
-    (`iter_args` `(` $initArgs^ `:` type($initArgs) `)`)?
+    (`iter_args` `(` $init_args^ `:` type($init_args) `)`)?
     `->` type(results) $region attr-dict
   }];
 }
@@ -524,21 +524,21 @@ def WhileOp : Impulse_Op<"while", [AutomaticAllocationScope]> {
   let summary = "While loop with condition";
   let description = [{
     Iterates while the condition holds. Both regions take the current values
-    as block arguments: `conditionRegion` yields a rank-0 boolean tensor, and
-    `bodyRegion` yields the values of the next iteration. The results are the
+    as block arguments: `condition_region` yields a rank-0 boolean tensor, and
+    `body_region` yields the values of the next iteration. The results are the
     values for which the condition first evaluates to false.
   }];
 
-  let arguments = (ins Variadic<AnyType>:$initArgs);
-  let regions = (region SizedRegion<1>:$conditionRegion,
-                        SizedRegion<1>:$bodyRegion);
+  let arguments = (ins Variadic<AnyType>:$init_args);
+  let regions = (region SizedRegion<1>:$condition_region,
+                        SizedRegion<1>:$body_region);
   let results = (outs Variadic<AnyType>:$results);
 
   let assemblyFormat = [{
-    `(` $initArgs `:` type($initArgs) `)`
+    `(` $init_args `:` type($init_args) `)`
     `->` type(results)
-    `condition` $conditionRegion
-    `body` $bodyRegion
+    `condition` $condition_region
+    `body` $body_region
     attr-dict
   }];
 }
@@ -551,12 +551,12 @@ def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> 
   }];
 
   let arguments = (ins AnyType:$predicate);
-  let regions = (region SizedRegion<1>:$trueBranch,
-                        SizedRegion<1>:$falseBranch);
+  let regions = (region SizedRegion<1>:$true_branch,
+                        SizedRegion<1>:$false_branch);
   let results = (outs Variadic<AnyType>:$results);
 
   let assemblyFormat = [{
-    `(` $predicate `)` `(` $trueBranch `,` $falseBranch `)`
+    `(` $predicate `)` `(` $true_branch `,` $false_branch `)`
     attr-dict `:` functional-type($predicate, results)
   }];
 

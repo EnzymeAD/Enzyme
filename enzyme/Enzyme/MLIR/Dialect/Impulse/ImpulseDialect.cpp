@@ -84,7 +84,7 @@ static SupportKind baseSupport(DistBaseKind base) {
   case DistBaseKind::BERNOULLI:
   case DistBaseKind::POISSON:
   case DistBaseKind::DISCRETE_UNIFORM:
-  case DistBaseKind::MVN:
+  case DistBaseKind::MULTIVARIATE_NORMAL:
   case DistBaseKind::GUMBEL:
     return SupportKind::REAL;
   }
@@ -116,7 +116,7 @@ unsigned DistAttr::getNumParameters() const {
     break;
   case DistBaseKind::GAMMA:
   case DistBaseKind::DISCRETE_UNIFORM:
-  case DistBaseKind::MVN:
+  case DistBaseKind::MULTIVARIATE_NORMAL:
   case DistBaseKind::GUMBEL:
   case DistBaseKind::HALF_STUDENT_T:
     numParams = 2;
@@ -133,8 +133,9 @@ unsigned DistAttr::getNumParameters() const {
 }
 
 RankedTensorType DistAttr::getSampleType(TypeRange paramTypes) const {
-  // An MVN sample has the type of its mean; no other base fixes the type.
-  if (getBase() != DistBaseKind::MVN || paramTypes.empty())
+  // A MULTIVARIATE_NORMAL sample has the type of its mean; no other base
+  // fixes the type.
+  if (getBase() != DistBaseKind::MULTIVARIATE_NORMAL || paramTypes.empty())
     return RankedTensorType();
   return dyn_cast<RankedTensorType>(paramTypes.front());
 }

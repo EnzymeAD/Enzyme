@@ -7,7 +7,7 @@ module {
     return %r, %mu : tensor<2xui64>, tensor<2xf64>
   }
   func.func @mvn_model(%r: tensor<2xui64>, %mu: tensor<2xf64>, %sig: tensor<2x2xf64>) -> (tensor<2xui64>, tensor<2xf64>) {
-    %o:2 = impulse.sample @mvn_s(%r, %mu, %sig) <{symbol = #impulse.symbol<1>, dist = #impulse.dist<MVN>}>
+    %o:2 = impulse.sample @mvn_s(%r, %mu, %sig) <{symbol = #impulse.symbol<1>, dist = #impulse.dist<MULTIVARIATE_NORMAL>}>
       : (tensor<2xui64>, tensor<2xf64>, tensor<2x2xf64>) -> (tensor<2xui64>, tensor<2xf64>)
     return %o#0, %o#1 : tensor<2xui64>, tensor<2xf64>
   }

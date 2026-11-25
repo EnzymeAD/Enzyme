@@ -167,7 +167,7 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeMHConfigAttrGet(MlirContext ctx);
 MLIR_CAPI_EXPORTED MlirAttribute enzymeGibbsConfigAttrGet(MlirContext ctx);
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
-                                                     uint64_t ptr);
+                                                     uint64_t id);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -75,7 +75,7 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
       I32EnumAttrCase<"HALF_NORMAL", 8>,
       I32EnumAttrCase<"HALF_CAUCHY", 9>,
       I32EnumAttrCase<"DIRICHLET", 10>,
-      I32EnumAttrCase<"MVN", 11>,
+      I32EnumAttrCase<"MULTIVARIATE_NORMAL", 11>,
       I32EnumAttrCase<"GUMBEL", 12>,
       I32EnumAttrCase<"HALF_STUDENT_T", 13>,
     ]> {

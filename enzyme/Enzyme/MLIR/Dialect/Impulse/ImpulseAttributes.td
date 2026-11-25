@@ -51,9 +51,10 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     scale, the first two). The other bases read them in this order:
     EXPONENTIAL (rate), GAMMA (concentration, rate), STUDENT_T (df, loc,
     scale), BERNOULLI (logits), POISSON (rate), DISCRETE_UNIFORM (low, high),
-    HALF_NORMAL (scale), HALF_CAUCHY (scale), DIRICHLET (concentration), MVN
-    (mean, covariance), GUMBEL (loc, scale) and HALF_STUDENT_T (df, scale).
-    The value of an MVN site has the type of its mean.
+    HALF_NORMAL (scale), HALF_CAUCHY (scale), DIRICHLET (concentration),
+    MULTIVARIATE_NORMAL (mean, covariance), GUMBEL (loc, scale) and
+    HALF_STUDENT_T (df, scale). The value of a MULTIVARIATE_NORMAL site has
+    the type of its mean.
 
     The support of the distribution is the support of `base` mapped through
     each bijection.
@@ -215,8 +216,8 @@ def SymbolAttr : Impulse_Attr<"Symbol", "symbol"> {
     An opaque integer that names a sample site within its model; the sites of
     one model have distinct symbols.
   }];
-  let parameters = (ins "uint64_t":$ptr);
-  let assemblyFormat = "`<` $ptr `>`";
+  let parameters = (ins "uint64_t":$id);
+  let assemblyFormat = "`<` $id `>`";
 }
 
 def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
