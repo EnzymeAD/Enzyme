@@ -20,11 +20,16 @@ prebuilt one, and `-DPOSEIDON_BUILD_HERBIE=ON` builds it from source, which
 takes Rust and Racket. A build without Herbie proposes no algebraic rewrites
 and says so in a remark (`-Rpass-missed=poseidon`); asking for them with
 `-poseidon-enable-rewrite` is then an error, unless the `-poseidon-cache`
-directory holds Herbie's answers from another build. The CUDA runtimes are
-built when CMake finds a CUDA toolkit; the HIP runtimes when
-`-DPOSEIDON_ROCM_PATH=<rocm>` names a ROCm installation, for the processor
-`-DPOSEIDON_AMDGPU_ARCH` names (default `gfx942`); the error-corrected GEMM
-runtime when `-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` names a built cuMpSGEMM.
+directory holds Herbie's answers from another build.
+
+The CUDA runtimes are built when CMake finds a CUDA toolkit
+(`-DPOSEIDON_ENABLE_CUDA=On` requires one, `Off` builds none), for the GPUs of
+the machine, or for every major architecture of the toolkit on a machine
+without one (`-DCMAKE_CUDA_ARCHITECTURES` chooses others). The HIP runtimes are
+built when `-DPOSEIDON_ROCM_PATH=<rocm>` names a ROCm installation, for the
+processor `-DPOSEIDON_AMDGPU_ARCH` names (default `gfx942`); the
+error-corrected GEMM runtime when `-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` names
+a built cuMpSGEMM.
 
 ```sh
 cmake -G Ninja -S enzyme -B build \

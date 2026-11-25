@@ -35,8 +35,12 @@ set(POSEIDON_HERBIE_BINARY ""
     CACHE FILEPATH "Prebuilt Herbie executable the pass runs by default")
 option(POSEIDON_BUILD_HERBIE
        "Build Herbie from source, which takes Rust and Racket" OFF)
-# The CUDA runtimes are built when CMake finds a CUDA compiler, for
-# CMAKE_CUDA_ARCHITECTURES (default: the GPUs of this machine).
+# The CUDA runtimes are built when CMake finds a CUDA compiler
+# (POSEIDON_ENABLE_CUDA=Auto), or must be (On), or are not (Off), for
+# CMAKE_CUDA_ARCHITECTURES (default: the GPUs of this machine, else a fixed
+# list, below).
+set(POSEIDON_ENABLE_CUDA Auto
+    CACHE STRING "Build the CUDA runtimes: On, Off or Auto (default)")
 # The HIP runtimes are built when POSEIDON_ROCM_PATH names a ROCm
 # installation, for the one processor POSEIDON_AMDGPU_ARCH.
 set(POSEIDON_ROCM_PATH ""
@@ -82,9 +86,29 @@ endif()
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
-include(CheckLanguage)
-check_language(CUDA)
-if(CMAKE_CUDA_COMPILER)
+string(TOUPPER "${POSEIDON_ENABLE_CUDA}" _poseidon_enable_cuda)
+if(NOT _poseidon_enable_cuda MATCHES "^(ON|OFF|AUTO)$")
+  message(
+    FATAL_ERROR
+      "POSEIDON_ENABLE_CUDA='${POSEIDON_ENABLE_CUDA}' is not On, Off or Auto")
+endif()
+set(POSEIDON_HAS_CUDA OFF)
+if(NOT _poseidon_enable_cuda STREQUAL "OFF")
+  include(CheckLanguage)
+  check_language(CUDA)
+  if(CMAKE_CUDA_COMPILER)
+    set(POSEIDON_HAS_CUDA ON)
+  elseif(_poseidon_enable_cuda STREQUAL "ON")
+    message(
+      FATAL_ERROR
+        "POSEIDON_ENABLE_CUDA is On, but CMake found no CUDA compiler; set "
+        "CMAKE_CUDA_COMPILER to nvcc")
+  endif()
+endif()
+# The architecture the integration tests compile for; none takes the tests'
+# default.
+set(POSEIDON_CUDA_ARCH "" CACHE INTERNAL "")
+if(POSEIDON_HAS_CUDA)
   if(CMAKE_VERSION VERSION_LESS 3.24)
     message(FATAL_ERROR "Poseidon's CUDA runtimes need CMake 3.24 or newer")
   endif()
@@ -95,22 +119,30 @@ if(CMAKE_CUDA_COMPILER)
   # nvcc resolves `native` at every compile, to a JIT-only architecture where
   # it sees no GPU; the GPUs CMake found here are used instead. A failed
   # detection can leave its message in place of the list, so the list's form
-  # is checked.
+  # is checked. On a machine without a GPU the runtimes are built for every
+  # architecture from Turing (sm_75, nvcc's oldest without a deprecation
+  # warning) to Hopper, and as PTX that the driver compiles for newer ones.
+  set(_poseidon_cuda_arch_source "")
   if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
-    if(NOT CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES
-       "^[0-9]+-real(;[0-9]+-real)*$")
-      message(
-        FATAL_ERROR
-          "CMAKE_CUDA_ARCHITECTURES is 'native', but CMake found no GPU; give "
-          "the architecture of the GPU the runtimes are for, such as "
-          "-DCMAKE_CUDA_ARCHITECTURES=120-real")
+    if(CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]+-real(;[0-9]+-real)*$")
+      set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES_NATIVE})
+    else()
+      set(CMAKE_CUDA_ARCHITECTURES 75-real 80-real 90-real 90-virtual)
+      set(_poseidon_cuda_arch_source
+          " (CMake found no GPU; CMAKE_CUDA_ARCHITECTURES chooses others)")
     endif()
-    set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES_NATIVE})
   endif()
-  # The architecture the integration tests compile for.
-  if(CMAKE_CUDA_ARCHITECTURES MATCHES "^([0-9]+)")
+  message(
+    STATUS
+      "Poseidon: CUDA runtimes for ${CMAKE_CUDA_ARCHITECTURES}${_poseidon_cuda_arch_source}")
+  if(NOT _poseidon_cuda_arch_source
+     AND CMAKE_CUDA_ARCHITECTURES MATCHES "^([0-9]+)")
     set(POSEIDON_CUDA_ARCH sm_${CMAKE_MATCH_1} CACHE INTERNAL "")
   endif()
+elseif(_poseidon_enable_cuda STREQUAL "OFF")
+  message(STATUS "Poseidon: no CUDA runtimes (POSEIDON_ENABLE_CUDA=Off)")
+else()
+  message(STATUS "Poseidon: no CUDA compiler found, so no CUDA runtimes")
 endif()
 # The toolkit the CUDA runtimes link and the driver and the device profiler
 # compile against (its root, the directory above nvcc's).
@@ -128,16 +160,12 @@ if(NOT POSEIDON_AMDGPU_ARCH MATCHES "^gfx[0-9a-f]+$")
       "POSEIDON_AMDGPU_ARCH='${POSEIDON_AMDGPU_ARCH}' is not "
       "one AMD GPU processor (gfx942, gfx90a, ...)")
 endif()
-if(POSEIDON_CUMPSGEMM_ROOT AND NOT CMAKE_CUDA_COMPILER)
-  message(FATAL_ERROR "POSEIDON_CUMPSGEMM_ROOT needs a CUDA compiler")
+if(POSEIDON_CUMPSGEMM_ROOT AND NOT POSEIDON_HAS_CUDA)
+  message(FATAL_ERROR "POSEIDON_CUMPSGEMM_ROOT needs the CUDA runtimes")
 endif()
 
 # Which GPU runtimes this build has, for the runtimes, the tools, the package
 # and the tests.
-set(POSEIDON_HAS_CUDA OFF)
-if(CMAKE_CUDA_COMPILER)
-  set(POSEIDON_HAS_CUDA ON)
-endif()
 set(POSEIDON_HAS_HIP OFF)
 if(POSEIDON_ROCM_PATH)
   set(POSEIDON_HAS_HIP ON)
