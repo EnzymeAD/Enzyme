@@ -149,7 +149,7 @@ int main(void) {
 // CHECK: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
 // CHECK-NEXT: Matmul[0]: 3x3x12 type=f64 origin=HostGemmLoopNest
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
-// CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)
+// CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#3)
 // CHECK: [poseidon] pin: rt_gemm_body:M0=native-dgemm cublas f64/f64{{$}}
 // CHECK: [ozaki-host-dispatch] wrote descriptor for _Z14rt_gemm_kerneliiiPdS_S_S_S_S_: C=arg7 A=arg5 B=arg3 arg2x3*arg1x3*arg0 nm=0 (standalone){{$}}
 // CHECK-NEXT: [poseidon] {{.*}}raise_host_gemm_runtime_k.cu: 1 function(s) a rewrite reached; every other function as written
