@@ -2,8 +2,8 @@
 ! (flang's TBAA names a local but not its type): REAL, INTEGER, LOGICAL and
 ! COMPLEX scalars and arrays offset by offset if their size is constant and
 ! within Enzyme's 500 type offsets, at every offset otherwise (an alloca is a
-! whole object), and CHARACTER data as Integer throughout. A name that locals
-! of different types share is left out.
+! whole object), and CHARACTER data as Integer throughout. Locals are keyed on
+! their uniq_name, so locals of one name in different scopes are typed each.
 !
 ! REQUIRES: flang_enzyme_mlir
 ! RUN: mkdir -p %t.mod

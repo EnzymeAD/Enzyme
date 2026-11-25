@@ -29,10 +29,11 @@
 //     adjacent members.
 //   - Character literals (_QQcl*): character data.
 //   - Local variables. flang's conversion of fir.alloca to LLVM keeps only
-//     its name, so `enzyme.type` cannot go on it: the function lists the
-//     types of its locals by name instead (`flang_enzyme.local_types`), and
-//     the translation of that attribute hands each one to the translation of
-//     `enzyme.type` on the alloca of that name.
+//     its bindc_name, so `enzyme.type` cannot go on it: the function lists
+//     the types of its locals by their uniq_name instead
+//     (`flang_enzyme.local_types`), and the pass sets that as the bindc_name
+//     of each listed alloca. The translation of the attribute hands each
+//     entry to the translation of `enzyme.type` on the alloca of that name.
 //
 //===----------------------------------------------------------------------===//
 
@@ -142,8 +143,8 @@ struct LocalTypesTranslation : public LLVMTranslationDialectInterface {
           moduleTranslation.lookupValue(alloca.getResult()));
       if (!tree || !bytes || !inst)
         return WalkResult::advance();
-      // A local of another type may have the same name (e.g. after
-      // inlining): only one of the listed size is the listed local.
+      // The pass keys a local on its uniq_name. As a check, only an alloca of
+      // the listed size is the listed local.
       std::optional<llvm::TypeSize> size =
           inst->getAllocationSize(inst->getDataLayout());
       int64_t expected = bytes.getInt();
@@ -777,26 +778,41 @@ struct FIRTypeAnnotationsPass
     // ctrl_getobcs*). An alloca is a whole object, so nothing follows the
     // data: a constant size up to Enzyme's type offsets is typed offset by
     // offset, any other at every offset. The conversion of fir.alloca to LLVM
-    // keeps only its name, so the function lists its variables by name, with
-    // their size for the translation to check.
+    // keeps only its bindc_name, so the function lists its variables by name,
+    // with their size for the translation to check.
+    //
+    // A bindc_name is not unique in a function: two BLOCKs may each declare a
+    // `v`, and inlining brings in the locals of the callees (ICON's
+    // nwp_nh_interface has a CHARACTER and a TYPE(t_wtr_prog) local of the
+    // same name). The uniq_name is (_QFcollideB1Ev, _QFcollideB2Ev), so a
+    // typed local is keyed on it, and its bindc_name, which after this point
+    // only names the LLVM alloca, becomes that key. Inlined copies of one
+    // procedure share a uniq_name and a type. A key with locals of different
+    // types is still left out.
     if (annotateLocals)
       for (auto fn : module.getOps<func::FuncOp>()) {
-        // Names are not unique in a function (e.g. after inlining, ICON's
-        // nwp_nh_interface has a CHARACTER and a TYPE(t_wtr_prog) local of
-        // the same name): a name with locals of different types is left out.
         llvm::StringMap<std::pair<enzyme::TypeTreeAttr, int64_t>> types;
         llvm::StringSet<> ambiguous;
+        SmallVector<std::pair<fir::AllocaOp, StringAttr>> keyed;
         fn.walk([&](fir::AllocaOp alloca) {
-          auto name = alloca.getBindcName();
-          if (!name)
+          if (!alloca.getBindcName())
             return;
+          StringAttr key = alloca.getUniqNameAttr();
+          if (!key)
+            key = alloca.getBindcNameAttr();
           std::optional<std::pair<enzyme::TypeTreeAttr, int64_t>> t =
               localType(alloca.getInType(), dl);
           auto [it, inserted] = types.try_emplace(
-              *name, t ? *t : std::pair<enzyme::TypeTreeAttr, int64_t>{{}, 0});
+              key.strref(),
+              t ? *t : std::pair<enzyme::TypeTreeAttr, int64_t>{{}, 0});
           if (!t || (!inserted && it->second != *t))
-            ambiguous.insert(*name);
+            ambiguous.insert(key.strref());
+          keyed.push_back({alloca, key});
         });
+        for (auto [alloca, key] : keyed)
+          if (!ambiguous.contains(key.strref()) &&
+              key != alloca.getBindcNameAttr())
+            alloca.setBindcNameAttr(key);
         SmallVector<NamedAttribute> locals;
         for (auto &entry : types)
           if (!ambiguous.contains(entry.getKey()))

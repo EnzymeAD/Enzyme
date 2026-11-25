@@ -179,11 +179,13 @@ subroutine user(y)
   call ext(y, 1.0, buf)
 end subroutine user
 
-! A name that a local of another type has too is left out (here the second
-! BLOCK's v):
+! Locals are keyed on their uniq_name, so the CHARACTER v and the REAL v of the
+! two BLOCKs are each typed:
 ! CHECK-LABEL: define void @collide_(
-! CHECK: alloca [8 x i8], i64 1, align 1{{$}}
-! CHECK: alloca [8 x i8], i64 1, align 1, !enzyme_type ![[CHR]]
+! CHECK-DAG: alloca [4 x double], i64 1, align 8, !enzyme_type ![[V4:[0-9]+]]
+! CHECK-DAG: alloca [8 x i8], i64 1, align 1, !enzyme_type ![[CHR]]
+! CHECK-DAG: alloca [8 x i8], i64 1, align 1, !enzyme_type ![[CHR]]
+! CHECK-NOT: alloca [8 x i8], i64 1, align 1{{$}}
 ! allow(procedure-not-in-module)
 subroutine collide()
   use, intrinsic :: iso_fortran_env, only: real64
@@ -204,5 +206,8 @@ subroutine collide()
 end subroutine collide
 
 ! CHECK: declare void @ext_(ptr, ptr, ptr, i64)
-! CHECK: ![[CHR]] = !{!"Unknown", i32 -1, ![[CHRP:[0-9]+]]}
-! CHECK: ![[CHRP]] = !{!"Pointer", i32 -1, ![[INT:[0-9]+]]}
+! CHECK-DAG: ![[CHR]] = !{!"Unknown", i32 -1, ![[CHRP:[0-9]+]]}
+! CHECK-DAG: ![[CHRP]] = !{!"Pointer", i32 -1, ![[INT:[0-9]+]]}
+! CHECK-DAG: ![[V4]] = !{!"Unknown", i32 -1, ![[V4P:[0-9]+]]}
+! CHECK-DAG: ![[V4P]] = !{!"Pointer", i32 0, ![[DBL:[0-9]+]], i32 8, ![[DBL]], i32 16, ![[DBL]], i32 24, ![[DBL]]}
+! CHECK-DAG: ![[DBL]] = !{!"Float@double"}
