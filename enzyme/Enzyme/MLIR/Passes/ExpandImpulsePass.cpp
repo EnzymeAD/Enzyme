@@ -85,13 +85,6 @@ static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
   return map;
 }
 
-/// Returns the site of `map` with symbol `targetSymbol`, or null.
-static impulse::SampleOp findSampleBySymbol(const SampleOpMap &map,
-                                            Attribute targetSymbol) {
-  auto it = map.find(targetSymbol);
-  return it != map.end() ? it->second : nullptr;
-}
-
 /// Returns the number of trace columns the values of `sampleOp` take, or -1
 /// after emitting on `op` when a value is not a statically shaped tensor.
 static int64_t computeSampleElementCount(Operation *op,
@@ -126,7 +119,7 @@ static bool computePositionSizeForAddress(Operation *op,
   if (address.empty())
     return false;
 
-  auto sampleOp = findSampleBySymbol(sampleMap, address[0]);
+  impulse::SampleOp sampleOp = sampleMap.lookup(address[0]);
   if (!sampleOp)
     return false;
 
@@ -331,18 +324,14 @@ static LogicalResult verifyUnconstrainable(Operation *op, Attribute address,
          << ", which unconstraining the site needs";
 }
 
-/// Checks the supports of the sites of `fn` at the top-level addresses in
-/// `selection`.
+/// Checks the supports of the sites at the top-level addresses of `layout`.
 static LogicalResult verifySelectedSupports(Operation *op,
-                                            FunctionOpInterface fn,
-                                            ArrayAttr selection) {
-  SampleOpMap sampleMap = buildSampleOpMap(fn);
-  for (Attribute addr : selection) {
-    auto address = cast<ArrayAttr>(addr);
-    if (address.size() != 1)
+                                            const FlatTraceLayout &layout) {
+  for (const FlatTraceLayout::Entry &entry : layout.entries) {
+    if (entry.address.size() != 1)
       continue;
-    impulse::SampleOp site = findSampleBySymbol(sampleMap, address[0]);
-    if (site && failed(verifyUnconstrainable(op, addr, site.getSupportAttr())))
+    impulse::SampleOp site = layout.siteBySymbol.lookup(entry.address[0]);
+    if (failed(verifyUnconstrainable(op, entry.address, site.getSupportAttr())))
       return failure();
   }
   return success();
@@ -410,39 +399,36 @@ static void appendSupport(SmallVectorImpl<impulse::SupportInfo> &supports,
                         unconstrainedOffset, unconstrainedSize, support);
 }
 
-/// Support info for the top-level addresses in `selection`. Positions follow
-/// `all_addresses` order when `positionDeclarationOrder` is set, else
-/// `selection` order.
-static SmallVector<impulse::SupportInfo>
-collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
-                               ArrayAttr selection, ArrayAttr allAddresses,
-                               SymbolTableCollection &symbolTable,
-                               bool positionDeclarationOrder) {
-  auto sampleMap = buildSampleOpMap(fn);
+/// Support info for the top-level addresses in `selection`, whose sites
+/// `selected` lays out. Positions follow `all_addresses` order when
+/// `positionDeclarationOrder` is set, else `selection` order; trace offsets
+/// follow `allAddresses`.
+static SmallVector<impulse::SupportInfo> collectSupportInfoForSelection(
+    Operation *op, FunctionOpInterface fn, ArrayAttr selection,
+    const FlatTraceLayout &selected, ArrayAttr allAddresses,
+    SymbolTableCollection &symbolTable, bool positionDeclarationOrder) {
+  DenseMap<Attribute, int64_t> sizeOf;
+  for (const FlatTraceLayout::Entry &entry : selected.entries)
+    if (entry.address.size() == 1)
+      sizeOf.try_emplace(entry.address[0], entry.size);
   auto topLevelSymbol = [](Attribute address) -> Attribute {
     auto path = cast<ArrayAttr>(address);
     return path.size() == 1 ? path[0] : Attribute();
   };
   SmallVector<impulse::SupportInfo> supports;
-  for (Attribute targetSymbol : orderSelected(
+  for (Attribute symbol : orderSelected(
            selection, allAddresses, positionDeclarationOrder, topLevelSymbol)) {
-    auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
-    if (!sampleOp)
-      continue;
-
-    int64_t sampleSize = computeSampleElementCount(op, sampleOp);
-    if (sampleSize < 0)
-      continue;
-
+    // Only the addresses before the site must resolve here; the others are
+    // checked where the model is traced.
     int64_t traceOffset = computeOffsetForSampleInSelection(
-        op, fn, allAddresses, targetSymbol, symbolTable);
+        op, fn, allAddresses, symbol, symbolTable);
     if (traceOffset < 0) {
       op->emitError("Symbol in selection not found in all_addresses - cannot "
                     "determine trace offset for scattered selection");
       return {};
     }
-
-    appendSupport(supports, traceOffset, sampleSize, sampleOp.getSupportAttr());
+    appendSupport(supports, traceOffset, sizeOf.lookup(symbol),
+                  selected.siteBySymbol.lookup(symbol).getSupportAttr());
   }
   return supports;
 }
@@ -846,19 +832,19 @@ resolveFlatModel(OpT op, bool positionDeclarationOrder,
   auto fn = cast<FunctionOpInterface>(
       symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
   ArrayAttr selection = op.getSelectionAttr();
-  int64_t numValues =
-      computePositionSizeForSelection(op, fn, selection, symbolTable);
-  if (numValues <= 0)
+  FailureOr<FlatTraceLayout> selected =
+      getFlatTraceLayout(op, fn, selection, symbolTable);
+  if (failed(selected) || selected->positionSize <= 0)
     return failure();
-  if (failed(verifySelectedSupports(op, fn, selection)))
+  if (failed(verifySelectedSupports(op, *selected)))
     return failure();
-  model.supports =
-      collectSupportInfoForSelection(op, fn, selection, model.allAddresses,
-                                     symbolTable, positionDeclarationOrder);
+  model.supports = collectSupportInfoForSelection(
+      op, fn, selection, *selected, model.allAddresses, symbolTable,
+      positionDeclarationOrder);
   auto fnType = cast<FunctionType>(fn.getFunctionType());
   model.fnResultTypes.assign(fnType.getResults().begin(),
                              fnType.getResults().end());
-  return numValues;
+  return selected->positionSize;
 }
 
 template <typename OpT>
