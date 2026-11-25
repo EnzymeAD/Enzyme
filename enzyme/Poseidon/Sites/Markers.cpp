@@ -384,6 +384,118 @@ readArgumentList(CallBase *call, const Function &fn, Identity identity) {
   return out;
 }
 
+namespace {
+/// What the activity markers before one argument of a marker call say: its
+/// activity when they give one, the marker argument of a poseidon_shadow, and
+/// whether they consumed the argument (a target, a call flag's operand).
+struct ArgumentMarkers {
+  std::optional<bool> dup;
+  std::optional<unsigned> madeShadow;
+  bool consumed = false;
+};
+} // namespace
+
+/// Reads the activity markers from argument `i` of the marker call `CI` of
+/// `F`, leaving `i` at the argument they precede; a poseidon_tau's target goes
+/// to `out`. None, with an error, if they cannot be read.
+static std::optional<ArgumentMarkers>
+readArgumentMarkers(CallInst *CI, Function *F, size_t &i, MarkerArgs &out) {
+  ArgumentMarkers markers;
+  Value *res = CI->getArgOperand(i);
+  while (std::optional<StringRef> name = activityMarkerName(res)) {
+    if (!isMarkerName(*name))
+      break;
+    unsigned skip = 0;
+    if (*name == "poseidon_shadow") {
+      markers.madeShadow = i;
+      markers.dup = false;
+    } else if (*name == "poseidon_tau") {
+      out.forward[i] = false;
+      ++i;
+      std::optional<double> tau = readTarget(
+          CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr, *F);
+      if (!tau)
+        return std::nullopt;
+      out.errTol = *tau;
+      out.forward[i] = false;
+      markers.consumed = true;
+      return markers;
+    } else if (std::optional<enzyme_markers::MarkerInfo> info =
+                   enzyme_markers::lookupEnzymeMarker(*name);
+               info && info->role != enzyme_markers::MarkerRole::Interleave) {
+      // A modifier is read with the marker that follows it, as Enzyme's
+      // handleArguments reads it, or the activity it prefixes is lost.
+      if (info->role == enzyme_markers::MarkerRole::Activity)
+        markers.dup =
+            enzyme_markers::markerActivityTakesShadow(*info->activity);
+      skip = info->extraOperands;
+      if (info->role == enzyme_markers::MarkerRole::CallFlag) {
+        i += skip;
+        if (i >= CI->arg_size()) {
+          fail(CI, *name + " without its operand");
+          return std::nullopt;
+        }
+        markers.consumed = true;
+        return markers;
+      }
+    } else {
+      fail(CI, "unsupported Poseidon annotation argument " + *name);
+      return std::nullopt;
+    }
+    i += 1 + skip;
+    if (i >= CI->arg_size()) {
+      fail(CI, "activity marker without an argument");
+      return std::nullopt;
+    }
+    res = CI->getArgOperand(i);
+  }
+  return markers;
+}
+
+/// Records argument `i` of the marker call `CI` as the caller value of the
+/// next parameter of `F` (after an sret one when `sret`), with the activity
+/// `markers` give it or its type implies, stepping `i` over its shadow. False,
+/// with an error, if the argument fits no parameter or needs a marker.
+static bool readArgument(CallInst *CI, Function *F, bool sret, size_t &i,
+                         ArgumentMarkers markers, MarkerArgs &out) {
+  size_t param = out.primalArgs.size() + sret;
+  if (param >= F->getFunctionType()->getNumParams()) {
+    fail(CI, "more arguments than " + F->getName() + " has parameters");
+    return false;
+  }
+  if (markers.madeShadow) {
+    if (!F->getFunctionType()->getParamType(param)->isPointerTy()) {
+      fail(CI, "poseidon_shadow on parameter " + Twine(param) + " of " +
+                   F->getName() + ", which is not a pointer");
+      return false;
+    }
+    out.madeShadows.push_back(
+        {*markers.madeShadow, (unsigned)i, (unsigned)param});
+  }
+  if (!markers.dup) {
+    // Whether a pointer without a marker is followed by its shadow or not is
+    // what the markers of an explicit list say, so it needs one.
+    Type *PTy = F->getFunctionType()->getParamType(param);
+    if (PTy->isPointerTy()) {
+      fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
+                   " is a pointer without an activity marker in an "
+                   "explicit list; put enzyme_dup before it and its shadow "
+                   "after it, or enzyme_const before it");
+      return false;
+    }
+    if (!PTy->isFloatingPointTy() && !PTy->isIntegerTy()) {
+      fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
+                   " needs an explicit activity marker");
+      return false;
+    }
+    markers.dup = false;
+  }
+  out.primalArgs.push_back(CI->getArgOperand(i));
+  if (*markers.dup)
+    ++i;
+  return true;
+}
+
 std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
   MarkerArgs out;
   bool sret =
@@ -391,95 +503,13 @@ std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
   out.forward.assign(CI->arg_size(), true);
 
   for (size_t i = 1 + sret; i < CI->arg_size(); ++i) {
-    Value *res = CI->getArgOperand(i);
-    std::optional<bool> dup;
-    std::optional<unsigned> madeShadow;
-    bool skipArg = false;
-
-    while (std::optional<StringRef> name = activityMarkerName(res)) {
-      if (!isMarkerName(*name))
-        break;
-      unsigned skip = 0;
-      if (*name == "poseidon_shadow") {
-        madeShadow = i;
-        dup = false;
-      } else if (*name == "poseidon_tau") {
-        out.forward[i] = false;
-        ++i;
-        std::optional<double> tau = readTarget(
-            CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr, *F);
-        if (!tau)
-          return std::nullopt;
-        out.errTol = *tau;
-        out.forward[i] = false;
-        skipArg = true;
-        break;
-      } else if (std::optional<enzyme_markers::MarkerInfo> info =
-                     enzyme_markers::lookupEnzymeMarker(*name);
-                 info && info->role != enzyme_markers::MarkerRole::Interleave) {
-        // A modifier is read with the marker that follows it, as Enzyme's
-        // handleArguments reads it, or the activity it prefixes is lost.
-        if (info->role == enzyme_markers::MarkerRole::Activity)
-          dup = enzyme_markers::markerActivityTakesShadow(*info->activity);
-        skip = info->extraOperands;
-        if (info->role == enzyme_markers::MarkerRole::CallFlag) {
-          i += skip;
-          if (i >= CI->arg_size()) {
-            fail(CI, *name + " without its operand");
-            return std::nullopt;
-          }
-          skipArg = true;
-          break;
-        }
-      } else {
-        fail(CI, "unsupported Poseidon annotation argument " + *name);
-        return std::nullopt;
-      }
-      i += 1 + skip;
-      if (i >= CI->arg_size()) {
-        fail(CI, "activity marker without an argument");
-        return std::nullopt;
-      }
-      res = CI->getArgOperand(i);
-    }
-    if (skipArg)
-      continue;
-
-    size_t param = out.primalArgs.size() + sret;
-    if (param >= F->getFunctionType()->getNumParams()) {
-      fail(CI, "more arguments than " + F->getName() + " has parameters");
+    std::optional<ArgumentMarkers> markers = readArgumentMarkers(CI, F, i, out);
+    if (!markers)
       return std::nullopt;
-    }
-    if (madeShadow) {
-      if (!F->getFunctionType()->getParamType(param)->isPointerTy()) {
-        fail(CI, "poseidon_shadow on parameter " + Twine(param) + " of " +
-                     F->getName() + ", which is not a pointer");
-        return std::nullopt;
-      }
-      out.madeShadows.push_back({*madeShadow, (unsigned)i, (unsigned)param});
-    }
-    if (!dup) {
-      // Whether a pointer without a marker is followed by its shadow or not is
-      // what the markers of an explicit list say, so it needs one.
-      Type *PTy = F->getFunctionType()->getParamType(param);
-      if (PTy->isPointerTy()) {
-        fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
-                     " is a pointer without an activity marker in an "
-                     "explicit list; put enzyme_dup before it and its shadow "
-                     "after it, or enzyme_const before it");
-        return std::nullopt;
-      }
-      if (PTy->isFloatingPointTy() || PTy->isIntegerTy())
-        dup = false;
-      else {
-        fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
-                     " needs an explicit activity marker");
-        return std::nullopt;
-      }
-    }
-    out.primalArgs.push_back(res);
-    if (*dup)
-      ++i;
+    if (markers->consumed)
+      continue;
+    if (!readArgument(CI, F, sret, i, *markers, out))
+      return std::nullopt;
   }
 
   size_t expected = F->getFunctionType()->getNumParams() - sret;
