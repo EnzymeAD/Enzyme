@@ -470,7 +470,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
   }
 
   if (changed)
-    applyStagingNarrowing(S, F, /*announce=*/true, ParamArm::Both, F);
+    narrowSharedStaging(S, F, /*announce=*/true, ParamArm::Both, F);
   if (changed)
     demoteFPCastPHIs(F);
 

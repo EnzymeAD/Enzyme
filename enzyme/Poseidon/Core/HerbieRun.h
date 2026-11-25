@@ -66,7 +66,7 @@ struct HerbieRunOptions {
 
   // The directory of cached results; empty for none.
   std::string CacheDir;
-  // Print the command line and the platform.
+  // Print the command line, the platform and the cache traffic.
   bool Print = false;
 };
 

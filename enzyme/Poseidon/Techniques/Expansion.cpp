@@ -28,6 +28,9 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <optional>
+#include <string>
+
 using namespace llvm;
 
 namespace poseidon {
@@ -108,6 +111,10 @@ using WideOp2 = void (Routines::*)(unsigned, Value *const *, Value *const *,
 } // namespace
 
 static Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
+
+// The metadata on the FP64 restore of a pair, which a Dekker split recovers
+// exactly.
+static constexpr StringLiteral kPairJoin = "poseidon.ds.join";
 
 // Only the component counts whose routines are transcribed exist.
 static void checkComponents(unsigned n) {
@@ -233,11 +240,10 @@ Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
   if (v.n() != 2)
     return R.expansionToF64(v.n(), v.x.data());
   Value *joined = R.dsToF64(pairOf(v));
-  // Tag the restore so foldDSPairRoundtrip can recover {hi,lo} exactly: every
-  // pair here is normalized, so a Dekker split of this restore returns the
-  // same two limbs. Only tagged values are folded.
+  // Every pair here is normalized, so a Dekker split of this restore returns
+  // the same two limbs; only tagged restores are folded.
   if (auto *I = dyn_cast<Instruction>(joined))
-    I->setMetadata("poseidon.ds.join", MDNode::get(I->getContext(), {}));
+    I->setMetadata(kPairJoin, MDNode::get(I->getContext(), {}));
   return joined;
 }
 
@@ -288,11 +294,10 @@ bool matchDekkerSplits(Value *V, bool allowFCmp,
 // split reads the join twice.
 bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
                          bool print) {
-  SmallVector<Instruction *, 32> joins;
-  for (BasicBlock &BB : F)
-    for (Instruction &I : BB)
-      if (I.getMetadata("poseidon.ds.join"))
-        joins.push_back(&I);
+  SmallVector<Instruction *> joins;
+  for (Instruction &I : instructions(F))
+    if (I.getMetadata(kPairJoin))
+      joins.push_back(&I);
 
   bool changed = false;
   for (Instruction *J : joins) {
@@ -347,16 +352,20 @@ static StringRef mathNameOf(Function &callee) {
   return mathFunctionOf(getFuncName(&callee));
 }
 
-// Loop-carried phi incomings are deferred: the accumulator phi and the
-// accumulation feeding it are mutually dependent, and resolving the back edge
-// eagerly would collapse the phi to a single double.
 namespace {
+
+// A loop-carried incoming of the limb phis `phis`, resolved once the subgraph
+// is converted: the accumulator phi and the accumulation feeding it are
+// mutually dependent, and resolving the back edge eagerly would collapse the
+// phi to a single double.
 struct DeferredPhiIn {
   SmallVector<PHINode *, 4> phis;
   Value *incoming;
   BasicBlock *block;
 };
+
 } // namespace
+
 // In insertion order: the restores of the replaced values are emitted by
 // iterating it, and several can share one insertion point.
 using ExpansionMap = MapVector<Value *, ExpansionValue>;
@@ -368,9 +377,9 @@ static ExpansionValue splitConstantFP(IRBuilder<> &B, ConstantFP *CFP,
   ExpansionValue r;
   double rem = val;
   for (unsigned i = 0; i < n; ++i) {
-    float li = (float)rem;
-    r.x.push_back(ConstantFP::get(B.getFloatTy(), li));
-    rem -= (double)li;
+    float limb = static_cast<float>(rem);
+    r.x.push_back(ConstantFP::get(B.getFloatTy(), limb));
+    rem -= static_cast<double>(limb);
   }
   return r;
 }
@@ -390,48 +399,51 @@ static const char *limbPhiName(unsigned n, unsigned c) {
   return "mfx.phi";
 }
 
+// The phi `phi` carried as n limb phis, recorded in `expansionMap`; an
+// incoming not converted yet is a loop back edge, left in `deferred`.
+static ExpansionValue expandPhi(IRBuilder<> &B, PHINode *phi, unsigned n,
+                                ExpansionMap &expansionMap,
+                                SmallVectorImpl<DeferredPhiIn> &deferred) {
+  IRBuilder<> phiB(phi);
+  unsigned nIn = phi->getNumIncomingValues();
+  ExpansionValue result;
+  SmallVector<PHINode *, 4> phis;
+  for (unsigned c = 0; c < n; ++c) {
+    PHINode *limb = phiB.CreatePHI(B.getFloatTy(), nIn, limbPhiName(n, c));
+    phis.push_back(limb);
+    result.x.push_back(limb);
+  }
+  expansionMap[phi] = result;
+  for (unsigned i = 0; i < nIn; ++i) {
+    Value *in = phi->getIncomingValue(i);
+    BasicBlock *inBB = phi->getIncomingBlock(i);
+    if (auto jt = expansionMap.find(in); jt != expansionMap.end()) {
+      for (unsigned c = 0; c < n; ++c)
+        phis[c]->addIncoming(jt->second.x[c], inBB);
+    } else if (auto *CFP = dyn_cast<ConstantFP>(in)) {
+      ExpansionValue inExpansion = splitConstantFP(B, CFP, n);
+      for (unsigned c = 0; c < n; ++c)
+        phis[c]->addIncoming(inExpansion.x[c], inBB);
+    } else {
+      deferred.push_back({phis, in, inBB});
+    }
+  }
+  return result;
+}
+
+// The expansion of `op`: its converted value, a split constant, a carried
+// phi, or the conversion of a value from outside the subgraph.
 static ExpansionValue
 getOrSplitOperand(IRBuilder<> &B, Value *op, unsigned n,
                   ExpansionMap &expansionMap,
                   SmallVectorImpl<DeferredPhiIn> &deferred) {
   if (auto it = expansionMap.find(op); it != expansionMap.end())
     return it->second;
-
   if (auto *CFP = dyn_cast<ConstantFP>(op))
     return splitConstantFP(B, CFP, n);
-
   if (auto *phi = dyn_cast<PHINode>(op);
-      phi && (phi->getType()->isFloatTy() || phi->getType()->isDoubleTy())) {
-    if (all_of(phi->incoming_values(), hasExpansion)) {
-      IRBuilder<> phiB(phi);
-      unsigned nIn = phi->getNumIncomingValues();
-      ExpansionValue result;
-      SmallVector<PHINode *, 4> phis;
-      for (unsigned c = 0; c < n; ++c) {
-        auto *p = phiB.CreatePHI(B.getFloatTy(), nIn, limbPhiName(n, c));
-        phis.push_back(p);
-        result.x.push_back(p);
-      }
-      expansionMap[op] = result;
-      for (unsigned i = 0; i < nIn; ++i) {
-        Value *in = phi->getIncomingValue(i);
-        BasicBlock *inBB = phi->getIncomingBlock(i);
-        if (auto jt = expansionMap.find(in); jt != expansionMap.end()) {
-          for (unsigned c = 0; c < n; ++c)
-            phis[c]->addIncoming(jt->second.x[c], inBB);
-        } else if (auto *CFP = dyn_cast<ConstantFP>(in)) {
-          ExpansionValue inExpansion = splitConstantFP(B, CFP, n);
-          for (unsigned c = 0; c < n; ++c)
-            phis[c]->addIncoming(inExpansion.x[c], inBB);
-        } else {
-          // Not materialized yet: a loop back edge.
-          deferred.push_back({phis, in, inBB});
-        }
-      }
-      return result;
-    }
-  }
-
+      phi && hasExpansion(phi) && all_of(phi->incoming_values(), hasExpansion))
+    return expandPhi(B, phi, n, expansionMap, deferred);
   return emitToExpansion(B, op, n);
 }
 
@@ -498,84 +510,43 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
   return ExpansionValue{};
 }
 
-void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
-                    const SmallPtrSetImpl<Instruction *> &allChanged,
-                    DenseMap<Value *, Value *> *restoredValues,
-                    SmallVectorImpl<Value *> *limbs) {
-  checkComponents(n);
-  ExpansionMap expansionMap;
-  SmallVector<DeferredPhiIn, 16> deferred;
-
-  // The emitted operations carry no fast-math flags, whatever the replaced
-  // instruction had: an error-free transformation is exact only when every
-  // operation is rounded as written.
-  for (Instruction *I : instsToChange) {
-    IRBuilder<> B(I);
-    ExpansionValue v =
-        emitExpansionForInstruction(B, I, n, expansionMap, deferred);
-    if (v.x.empty()) {
-      errs() << "[poseidon] expansion: unsupported instruction, skipping: "
-             << *I << '\n';
-      continue;
-    }
-    expansionMap[I] = v;
-    if (limbs)
-      limbs->append(v.x.begin(), v.x.end());
-  }
-
-  // Resolve deferred back-edge phi incomings now the subgraph is in the map;
-  // iterative, since resolving one incoming may carry a nested phi.
-  while (!deferred.empty()) {
-    DeferredPhiIn d = deferred.pop_back_val();
-    IRBuilder<> predB(d.block->getTerminator());
-    ExpansionValue inExpansion =
-        getOrSplitOperand(predB, d.incoming, n, expansionMap, deferred);
-    for (unsigned c = 0; c < n; ++c)
-      d.phis[c]->addIncoming(inExpansion.x[c], d.block);
-  }
-
+// Gives every use of a converted instruction outside the conversion the
+// instruction's restore, recorded in `restoredValues` if given.
+static void restoreExternalUses(ExpansionMap &expansionMap,
+                                const SmallPtrSetImpl<Instruction *> &changed,
+                                DenseMap<Value *, Value *> *restoredValues) {
   for (auto &[val, v] : expansionMap) {
     auto *I = dyn_cast<Instruction>(val);
-    if (!I || !allChanged.count(I))
+    if (!I || !changed.count(I))
       continue;
     SmallVector<Use *, 4> externalUses;
     for (Use &U : I->uses()) {
       auto *userI = dyn_cast<Instruction>(U.getUser());
-      if (!userI || !expansionMap.count(userI) || !allChanged.count(userI))
+      if (!userI || !expansionMap.count(userI) || !changed.count(userI))
         externalUses.push_back(&U);
     }
-    if (!externalUses.empty()) {
-      BasicBlock::iterator restorePos = std::next(BasicBlock::iterator(I));
-      if (isa<PHINode>(I))
-        // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
-        restorePos = I->getParent()->getFirstNonPHIIt();
-      IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
-      Value *restored = emitExpansionToFP(RestoreB, v, I->getType());
-      assert(restored->getType() == I->getType() &&
-             "unexpected restored value type");
-      for (Use *U : externalUses)
-        U->set(restored);
-      if (restoredValues)
-        (*restoredValues)[I] = restored;
-    }
-  }
-
-  for (auto it = instsToChange.rbegin(); it != instsToChange.rend(); ++it) {
-    Instruction *I = *it;
-    if (!expansionMap.count(I))
+    if (externalUses.empty())
       continue;
-    if (!I->use_empty()) {
-      assert(restoredValues && restoredValues->count(I) &&
-             "every reader of an expanded instruction is expanded or reads "
-             "its restore");
-      I->replaceAllUsesWith((*restoredValues)[I]);
-    }
-    I->eraseFromParent();
+    BasicBlock::iterator restorePos = std::next(BasicBlock::iterator(I));
+    if (isa<PHINode>(I))
+      // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
+      restorePos = I->getParent()->getFirstNonPHIIt();
+    IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
+    Value *restored = emitExpansionToFP(RestoreB, v, I->getType());
+    assert(restored->getType() == I->getType() &&
+           "unexpected restored value type");
+    for (Use *U : externalUses)
+      U->set(restored);
+    if (restoredValues)
+      (*restoredValues)[I] = restored;
   }
+}
 
-  // The FP64 accumulator PHIs carried as expansions survive the erase above,
-  // and restoring them per use would collapse the expansion every iteration,
-  // so each is replaced by one restore of its carried limbs.
+// Replaces each FP64 phi carried as an expansion, which the conversion leaves,
+// by one restore of its limbs: restoring it per use would collapse the
+// expansion every iteration.
+static void restoreCarriedPhis(ExpansionMap &expansionMap,
+                               DenseMap<Value *, Value *> *restoredValues) {
   SmallVector<PHINode *, 8> carriedPhis;
   for (auto &[val, v] : expansionMap)
     if (auto *phi = dyn_cast<PHINode>(val))
@@ -594,11 +565,65 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
     phi->eraseFromParent();
 }
 
+void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
+                    DenseMap<Value *, Value *> *restoredValues,
+                    SmallVectorImpl<Value *> *limbs, bool print) {
+  checkComponents(n);
+  SmallPtrSet<Instruction *, 8> changed(instsToChange.begin(),
+                                        instsToChange.end());
+  ExpansionMap expansionMap;
+  SmallVector<DeferredPhiIn, 16> deferred;
+
+  // The emitted operations carry no fast-math flags, whatever the replaced
+  // instruction had: an error-free transformation is exact only when every
+  // operation is rounded as written.
+  for (Instruction *I : instsToChange) {
+    IRBuilder<> B(I);
+    ExpansionValue v =
+        emitExpansionForInstruction(B, I, n, expansionMap, deferred);
+    if (v.x.empty()) {
+      if (print)
+        llvm::errs() << "[poseidon] expansion: unsupported instruction, "
+                        "skipping: "
+                     << *I << '\n';
+      continue;
+    }
+    expansionMap[I] = v;
+    if (limbs)
+      limbs->append(v.x.begin(), v.x.end());
+  }
+
+  // Resolving one back-edge incoming may carry a nested phi, which defers
+  // another.
+  while (!deferred.empty()) {
+    DeferredPhiIn d = deferred.pop_back_val();
+    IRBuilder<> predB(d.block->getTerminator());
+    ExpansionValue inExpansion =
+        getOrSplitOperand(predB, d.incoming, n, expansionMap, deferred);
+    for (unsigned c = 0; c < n; ++c)
+      d.phis[c]->addIncoming(inExpansion.x[c], d.block);
+  }
+
+  restoreExternalUses(expansionMap, changed, restoredValues);
+  for (Instruction *I : reverse(instsToChange)) {
+    if (!expansionMap.count(I))
+      continue;
+    if (!I->use_empty()) {
+      assert(restoredValues && restoredValues->count(I) &&
+             "every reader of an expanded instruction is expanded or reads "
+             "its restore");
+      I->replaceAllUsesWith((*restoredValues)[I]);
+    }
+    I->eraseFromParent();
+  }
+  restoreCarriedPhis(expansionMap, restoredValues);
+}
+
 #if LLVM_VERSION_MAJOR < 24
 // Before LLVM 24 fast contraction and fast-math attributes also reach
-// operations without flags, so expansion code is not rounded as written there.
-// Returns why for F, or "".
-static std::string fastFPReason(const Function &F) {
+// operations without flags, so expansion code is not rounded as written there:
+// why for F, if so.
+static std::optional<std::string> fastFPReason(const Function &F) {
   SmallVector<StringRef, 4> attrs;
 #if LLVM_VERSION_MAJOR < 22
   attrs.append({"unsafe-fp-math", "approx-func-fp-math"}); // read up to LLVM 21
@@ -623,7 +648,7 @@ static std::string fastFPReason(const Function &F) {
               "no flag")
           .str();
     }
-  return "";
+  return std::nullopt;
 }
 #endif
 
@@ -633,18 +658,18 @@ bool expansionsRoundedAsWritten(const Options &O, Function &F,
 #if LLVM_VERSION_MAJOR < 24
   if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat &&
       Target::of(F).isDevice() && hasSubgraphs) {
-    const std::string reason = fastFPReason(F);
-    expansionSafe = reason.empty();
-    if (!expansionSafe) {
+    const std::optional<std::string> reason = fastFPReason(F);
+    expansionSafe = !reason;
+    if (reason) {
       llvm::errs() << "[poseidon] WARNING: " << F.getName()
                    << ": floating-point expansion candidates NOT PROPOSED -- "
-                   << reason
+                   << *reason
                    << ". An expansion is exact only if each of its operations "
                       "is rounded as written; it needs -ffp-contract=on or "
                       "-ffp-contract=off, without -ffast-math.\n";
       if (O.Model.StrictMode)
         reportUserError(F, F.getSubprogram(),
-                        "strict mode: site '" + F.getName() + "': " + reason +
+                        "strict mode: site '" + F.getName() + "': " + *reason +
                             "; floating-point expansions need "
                             "-ffp-contract=on or -ffp-contract=off");
     }

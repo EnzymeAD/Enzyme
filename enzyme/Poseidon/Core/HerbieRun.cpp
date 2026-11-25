@@ -224,10 +224,9 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
       readCacheEntry(cache.answerPath, cache.answeredBy, cache.unchecked);
   if (cached.value) {
     raw_string_ostream(Run.ResultsJson) << *cached.value;
-    llvm::errs() << "Using cached Herbie output from " << cache.answerPath
-                 << '\n';
     if (Opts.Print)
-      llvm::errs() << "Herbie output: " << Run.ResultsJson << '\n';
+      llvm::errs() << "Using cached Herbie output from " << cache.answerPath
+                   << "\nHerbie output: " << Run.ResultsJson << '\n';
     Run.Result = HerbieRunResult::Outcome::Ok;
     Run.From = HerbieRunResult::Origin::Cache;
     Run.CacheFile = cache.answerPath;
@@ -542,8 +541,9 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
     if (Error E = writeAnswer(Opts.CacheDir, cache.answerPath, cache.answeredBy,
                               std::move(*answer)))
       return std::move(E);
-    llvm::errs() << "Saved Herbie output to cache file " << cache.answerPath
-                 << '\n';
+    if (Opts.Print)
+      llvm::errs() << "Saved Herbie output to cache file " << cache.answerPath
+                   << '\n';
   }
   llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
                << ran.seconds << " s, a fresh answer of the Herbie with digest "

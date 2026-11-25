@@ -2,7 +2,7 @@
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-herbie-processes=1 -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
-; DEFINE:   -poseidon-cache=%t/c -S -o /dev/null
+; DEFINE:   -poseidon-cache=%t/c -poseidon-print -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: printf '#!/bin/sh\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/herbie-a.sh && chmod +x %t/herbie-a.sh
 ; RUN: printf '#!/bin/sh\n# another build\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/herbie-b.sh && chmod +x %t/herbie-b.sh

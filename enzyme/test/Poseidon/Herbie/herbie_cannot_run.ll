@@ -27,7 +27,7 @@
 ; results; when it wrote none, the compile stops.
 ; RUN: printf '#!/bin/sh\n%S/../Inputs/fake-herbie.sh "$@"\nexit 1\n' > %t/herbie.sh && chmod +x %t/herbie.sh
 ; RUN: printf '#!/bin/sh\nexit 3\n' > %t/no-results.sh && chmod +x %t/no-results.sh
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/used 2>&1 | FileCheck --check-prefix=USED --implicit-check-not=crash %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/used -poseidon-print 2>&1 | FileCheck --check-prefix=USED --implicit-check-not=crash %s
 ; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-results.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NONE --implicit-check-not=crashed %s
 
 ; USED: Saved Herbie output to cache file
@@ -45,7 +45,7 @@
 ; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=SIGNAL --implicit-check-not="was stopped after" --implicit-check-not="Saved Herbie output" %s
 ; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=STRICT %s
 ; RUN: ls %t/sig | FileCheck --allow-empty --check-prefix=FILES %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig 2>&1 | FileCheck --check-prefix=RETRY %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=RETRY %s
 
 ; SIGNAL: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key {{[0-9A-F]+$}}
 ; SIGNAL-NEXT: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: Herbie subgraph 0 of preprocess_tester crashed (signal: {{.+}}) after {{[0-9.e+-]+}} s, so the subgraph has no algebraic candidates in this compile; nothing is cached, so the next compile runs Herbie again{{$}}

@@ -11,7 +11,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/IRBuilder.h"
@@ -62,15 +61,16 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
-// Materialize `instsToChange` as an n-component expansion and erase them, with
-// the FP64 PHIs the expansion carries. `restoredValues`, if given, receives
-// each erased value whose users now read another, with that value; `limbs`, if
-// given, receives the limbs of each converted instruction, in order.
+// Materialize `instsToChange`, in an order where an operation follows its
+// operands, as an n-component expansion and erase them, with the FP64 PHIs the
+// expansion carries. `restoredValues`, if given, receives each erased value
+// whose users now read another, with that value; `limbs`, if given, receives
+// the limbs of each converted instruction, in order. An instruction without a
+// routine is left as written, and named under `print`.
 void applyExpansion(
     unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
-    const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
-    llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr,
-    llvm::SmallVectorImpl<llvm::Value *> *limbs = nullptr);
+    llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues,
+    llvm::SmallVectorImpl<llvm::Value *> *limbs, bool print);
 
 // The Dekker split of an FP64 value into FP32 limbs, as emitToExpansion emits
 // it for a pair:

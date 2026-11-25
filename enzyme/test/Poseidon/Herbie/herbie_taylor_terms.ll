@@ -2,7 +2,7 @@
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
-; DEFINE:   -poseidon-cost-budget=1e9 -S -o /dev/null
+; DEFINE:   -poseidon-cost-budget=1e9 -poseidon-print -S -o /dev/null
 ; DEFINE: %{rewrites} = %python -c "import json, sys; print('\\n'.join(a['id'] + ' ' + a['fpcore'] for u in json.load(open(sys.argv[1]))['subgraphs'] for a in u['alternatives'] if a.get('id', '').startswith('R0_')))"
 ; RUN: rm -rf %t && mkdir %t && touch %t/calls24.log %t/calls4.log %t/calls46.log
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/calls24.log %{opt} \

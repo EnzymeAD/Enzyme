@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../Inputs/fma_opt_profiles \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie \
-; DEFINE:   -poseidon-enable-pt=false -S
+; DEFINE:   -poseidon-enable-pt=false -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 
 ; Herbie ranks its rewrite candidates by a platform cost table, so a cached

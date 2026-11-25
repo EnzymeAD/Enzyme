@@ -3,7 +3,7 @@
 ; DEFINE:   -poseidon-enable-herbie=true \
 ; DEFINE:   -poseidon-herbie-processes=1 -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
-; DEFINE:   -poseidon-cache=%t/c -S -o /dev/null
+; DEFINE:   -poseidon-cache=%t/c -poseidon-print -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh 2>&1 | FileCheck --check-prefix=FRESH %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/no_alternatives.json %t/c/cachedHerbieOutput_*
