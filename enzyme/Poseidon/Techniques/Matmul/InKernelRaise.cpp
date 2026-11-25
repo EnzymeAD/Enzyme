@@ -357,12 +357,13 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   const ScalarLoopHandle &h = m.scalarLoop;
   BasicBlock *preheader = h.preheader;
   BasicBlock *exitBB = h.exitBB;
-  if (!preheader)
-    report_fatal_error(
-        "materializeInKernelRaise: loop has no unique preheader");
-  if (!exitBB)
-    report_fatal_error(
-        "materializeInKernelRaise: loop has no unique exit block");
+  assert(preheader && exitBB &&
+         "recognition admits only loops with a preheader and one exit block");
+  if (!h.reachedByWholeBlock)
+    reportUserError(*h.fma,
+                    "the in-kernel raise selected for this matrix product "
+                    "synchronizes the thread block, and not every thread of "
+                    "the block reaches the product's loop once.");
 
   Function *F = preheader->getParent();
   Module *mod = F->getParent();

@@ -14,13 +14,16 @@
 #include "Targets/Target.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
@@ -35,6 +38,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include <array>
 #include <map>
 #include <optional>
 
@@ -122,6 +126,39 @@ std::optional<ReductionCycle> matchReductionCycle(const Loop *L, PHINode &phi,
   return ReductionCycle{fm->fma, fm->fmul, aLoad, bLoad};
 }
 
+bool isPositiveZeroSeed(const Value *V) {
+  SmallVector<const Value *, 4> work{V};
+  SmallPtrSet<const Value *, 4> seen;
+  while (!work.empty()) {
+    const Value *cur = work.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    if (const auto *C = dyn_cast<ConstantFP>(cur)) {
+      if (!C->isZero() || C->isNegative())
+        return false;
+      continue;
+    }
+    const auto *P = dyn_cast<PHINode>(cur);
+    if (!P)
+      return false;
+    append_range(work, P->incoming_values());
+  }
+  return true;
+}
+
+StringRef reductionLoopShapeRefusal(const Loop &L) {
+  BasicBlock *latch = L.getLoopLatch();
+  if (!latch)
+    return "the loop has no unique latch";
+  if (L.getExitingBlock() != latch)
+    return "the loop exits from a block other than its latch";
+  if (!L.getExitBlock())
+    return "the loop has no unique exit block";
+  if (!L.getLoopPreheader())
+    return "the loop has no preheader";
+  return {};
+}
+
 void forEachInnermostLoop(LoopInfo &LI, function_ref<void(Loop *)> fn) {
   SmallVector<Loop *, 8> worklist(LI.begin(), LI.end());
   while (!worklist.empty()) {
@@ -156,12 +193,8 @@ static int64_t extractLeadingDimByte(const DataLayout &DL, LoadInst *load,
   return (outer > scalarBytes) ? outer : fallbackByte;
 }
 
-struct TidLinearCoefs {
-  int64_t coef[3] = {0, 0, 0};
-};
-
 static void extractTidCoefficients(const SCEV *S, int64_t mult,
-                                   TidLinearCoefs &out) {
+                                   std::array<int64_t, 3> &out) {
   while (auto *cast = dyn_cast<SCEVCastExpr>(S))
     S = cast->getOperand();
   if (auto *add = dyn_cast<SCEVAddExpr>(S)) {
@@ -188,7 +221,13 @@ static void extractTidCoefficients(const SCEV *S, int64_t mult,
   LaunchGeometry g = launchGeometryOf(unk->getValue());
   if (g.Kind != LaunchValue::ThreadIndex)
     return;
-  out.coef[g.Axis] += mult;
+  out[g.Axis] += mult;
+}
+
+std::array<int64_t, 3> threadIndexCoefficients(const SCEV *S) {
+  std::array<int64_t, 3> coef = {0, 0, 0};
+  extractTidCoefficients(S, 1, coef);
+  return coef;
 }
 
 // Fused-index classification: also accepts a matrix index built from exactly
@@ -202,17 +241,15 @@ static TidAxis classifyTidIndex(const SCEV *S, TidAxis &slow, unsigned &mult,
   mult = 0;
   unitByte = 0;
 
-  TidLinearCoefs coefs;
-  extractTidCoefficients(S, 1, coefs);
-  unsigned n =
-      (coefs.coef[0] != 0) + (coefs.coef[1] != 0) + (coefs.coef[2] != 0);
+  std::array<int64_t, 3> coef = threadIndexCoefficients(S);
+  unsigned n = (coef[0] != 0) + (coef[1] != 0) + (coef[2] != 0);
   static const TidAxis kAxis[3] = {TidAxis::TidX, TidAxis::TidY, TidAxis::TidZ};
   if (n == 1) {
     // Single axis: still report the per-index byte step, which is the operand's
     // leading dimension.
-    int i = coefs.coef[0] ? 0 : coefs.coef[1] ? 1 : 2;
-    if (coefs.coef[i] > 0)
-      unitByte = coefs.coef[i];
+    int i = coef[0] ? 0 : coef[1] ? 1 : 2;
+    if (coef[i] > 0)
+      unitByte = coef[i];
     return kAxis[i];
   }
   if (n != 2)
@@ -220,23 +257,23 @@ static TidAxis classifyTidIndex(const SCEV *S, TidAxis &slow, unsigned &mult,
 
   int lo = -1, hi = -1;
   for (int i = 0; i < 3; ++i) {
-    if (coefs.coef[i] == 0)
+    if (coef[i] == 0)
       continue;
-    if (coefs.coef[i] < 0)
+    if (coef[i] < 0)
       return TidAxis::Other; // negative index coefficient: not a tensor index
-    if (lo < 0 || coefs.coef[i] < coefs.coef[lo])
+    if (lo < 0 || coef[i] < coef[lo])
       lo = i;
-    if (hi < 0 || coefs.coef[i] > coefs.coef[hi])
+    if (hi < 0 || coef[i] > coef[hi])
       hi = i;
   }
   if (lo < 0 || hi < 0 || lo == hi)
     return TidAxis::Other; // equal coefficients: extents are not separable
-  if (coefs.coef[hi] % coefs.coef[lo] != 0)
+  if (coef[hi] % coef[lo] != 0)
     return TidAxis::Other;
 
   slow = kAxis[hi];
-  mult = (unsigned)(coefs.coef[hi] / coefs.coef[lo]);
-  unitByte = coefs.coef[lo];
+  mult = (unsigned)(coef[hi] / coef[lo]);
+  unitByte = coef[lo];
   return kAxis[lo];
 }
 
@@ -397,32 +434,40 @@ static void forEachScalarLoopReduction(
     const Options &O, Function &F, ScalarEvolution &SE, LoopInfo &LI,
     function_ref<void(Loop *, ScalarLoopHandle &, FPKind, unsigned)> cb) {
   const DataLayout &DL = F.getParent()->getDataLayout();
+  auto reject = [&](StringRef why) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[raise-wmma] reject loop in " << F.getName() << ": "
+                   << why << '\n';
+  };
   forEachInnermostLoop(LI, [&](Loop *L) {
-    // Loop-level preconditions once; then each header phi is tested
-    // independently so loops with several reductions yield one matmul each.
-    BasicBlock *header = L->getHeader();
     BasicBlock *latch = L->getLoopLatch();
     if (!latch) {
-      if (O.Diagnostics.Print)
-        llvm::errs() << "[raise-wmma] reject loop @ "
-                     << header->getParent()->getName()
-                     << ": no unique latch (multi-latch / irreducible)\n";
+      reject("the loop has no unique latch");
       return;
     }
-    unsigned trip = SE.getSmallConstantMaxTripCount(L);
-    if (trip == 0) {
-      if (O.Diagnostics.Print)
-        llvm::errs() << "[raise-wmma] reject loop in "
-                     << header->getParent()->getName()
-                     << ": trip count is not a known constant\n";
-      return;
-    }
-
-    for (PHINode &phi : header->phis()) {
+    // Each header phi is tested independently, so a loop with several
+    // reductions yields one matmul each; the loop's refusals are reported for
+    // the phis that are products.
+    StringRef shape = reductionLoopShapeRefusal(*L);
+    unsigned trip = SE.getSmallConstantTripCount(L);
+    for (PHINode &phi : L->getHeader()->phis()) {
       ScalarLoopHandle h;
       FPKind eltKind = FPKind::Invalid;
       if (!tryAnalyzeReductionPhi(L, phi, SE, DL, trip, latch, h, eltKind))
         continue;
+      if (!shape.empty()) {
+        reject(shape);
+        continue;
+      }
+      if (trip == 0) {
+        reject("trip count is not a known constant");
+        continue;
+      }
+      if (!isPositiveZeroSeed(
+              phi.getIncomingValueForBlock(L->getLoopPreheader()))) {
+        reject("the accumulator does not start at +0.0");
+        continue;
+      }
       cb(L, h, eltKind, trip);
     }
   });
@@ -478,6 +523,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
   // Profile-scale reduction lengths recorded at profile generation, keyed by
   // the fma's probe index.
   const std::map<size_t, unsigned> &redTrip = profileHeader.redTrip;
+  PostDominatorTree PDT(F);
 
   forEachScalarLoopReduction(
       O, F, SE, LI,
@@ -503,6 +549,16 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         h.blockThreads = profileHeader.maxBlockDim[0] *
                          profileHeader.maxBlockDim[1] *
                          profileHeader.maxBlockDim[2];
+        // The in-kernel raise puts block barriers and warp-wide tensor-core
+        // calls in the preheader, so every thread of the block that runs F
+        // has to execute it exactly once: it does when the preheader
+        // post-dominates the entry and lies in no loop.
+        h.reachedByWholeBlock = !LI.getLoopFor(h.preheader) &&
+                                PDT.dominates(h.preheader, &F.getEntryBlock());
+        if (!h.reachedByWholeBlock && O.Diagnostics.Print)
+          llvm::errs() << "[raise-wmma] " << F.getName()
+                       << ": not every thread of the block reaches the "
+                          "reduction loop once\n";
 
         AbstractMatmul am;
         am.id = nextId++;

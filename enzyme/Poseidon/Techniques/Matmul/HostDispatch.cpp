@@ -24,6 +24,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -32,12 +33,15 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
@@ -110,6 +114,17 @@ static bool isGlobalThreadIndex(const Value *v, int &axis) {
   return false;
 }
 
+// Tighten bound[axis] to `ub` when `idx` is the global thread index of `axis`.
+static bool boundGlobalThreadIndex(const Value *idx, uint64_t ub,
+                                   uint64_t bound[3]) {
+  int axis = -1;
+  if (!isGlobalThreadIndex(idx, axis))
+    return false;
+  if (!bound[axis] || ub < bound[axis])
+    bound[axis] = ub;
+  return true;
+}
+
 // Fold a condition known to hold into exclusive upper bounds on the global
 // thread index of each axis; false if any leaf is not such a bound, so a store
 // gated by anything else is never mistaken for a dense rectangle.
@@ -137,9 +152,6 @@ static bool collectIndexBounds(const Value *cond, bool holds, uint64_t bound[3],
     idx = IC->getOperand(1);
     P = CmpInst::getSwappedPredicate(P);
   }
-  int axis = -1;
-  if (!isGlobalThreadIndex(idx, axis))
-    return false;
   if (cst->getValue().isNegative() || cst->getValue().getActiveBits() > 31)
     return false;
   uint64_t ub;
@@ -157,59 +169,42 @@ static bool collectIndexBounds(const Value *cond, bool holds, uint64_t bound[3],
   }
   if (ub == 0)
     return false;
-  if (!bound[axis] || ub < bound[axis])
-    bound[axis] = ub;
-  return true;
+  // (a | b) u< 2^n is how (a u< 2^n) && (b u< 2^n) folds.
+  if (const auto *Or = dyn_cast<BinaryOperator>(idx);
+      Or && Or->getOpcode() == Instruction::Or && CmpInst::isUnsigned(P) &&
+      isPowerOf2_64(ub))
+    return boundGlobalThreadIndex(Or->getOperand(0), ub, bound) &&
+           boundGlobalThreadIndex(Or->getOperand(1), ub, bound);
+  return boundGlobalThreadIndex(idx, ub, bound);
 }
 
-// True deploy extents of the product this body writes, from the constants that
-// gate its C store: every condition dominating the store (outside the reduction
-// loop) must bound a global thread index, and both matrix axes must be bounded.
-// The host stub bounds them again by the launch geometry, taking
-// min(crop, gridDim[axis] * blockDim[axis]).
-static bool recoverGuardExtents(const Options &O, Function &F,
-                                const AbstractMatmul &m,
-                                const StoreInst *cStore, unsigned &cropM,
-                                unsigned &cropN, int &axM, int &axN) {
-  const ScalarLoopHandle &h = m.scalarLoop;
-  if (h.aRowSlowAxis != TidAxis::Unknown || h.bColSlowAxis != TidAxis::Unknown)
-    return false; // fused index: its extent is a product of two axes
-  std::optional<unsigned> ixM = tidAxisIndex(h.aRowAxis);
-  std::optional<unsigned> ixN = tidAxisIndex(h.bColAxis);
-  if (!ixM || !ixN || *ixM == *ixN)
-    return false;
-  axM = (int)*ixM;
-  axN = (int)*ixN;
-
+// The exclusive upper bound that the conditions gating the C store (outside the
+// reduction loop) put on the global thread index of each axis, 0 for an axis
+// they leave unbounded; none when one of them is not such a bound.
+static std::optional<std::array<uint64_t, 3>>
+storeGuardBounds(Function &F, const AbstractMatmul &m,
+                 const StoreInst *cStore) {
   DominatorTree DT(F);
   const BasicBlock *SB = cStore->getParent();
-  uint64_t bound[3] = {0, 0, 0};
+  std::array<uint64_t, 3> bound = {0, 0, 0};
   for (BasicBlock &BB : F) {
-    if (h.blocks.count(&BB))
+    if (m.scalarLoop.blocks.count(&BB))
       continue;
-    Instruction *BI = BB.getTerminator();
-    Value *Cond;
-    if (!match(BI, m_Br(m_Value(Cond), m_BasicBlock(), m_BasicBlock())))
+    Instruction *T = BB.getTerminator();
+    if (T->getNumSuccessors() < 2)
       continue;
-    for (unsigned i = 0; i < 2; ++i) {
+    for (unsigned i = 0, e = T->getNumSuccessors(); i < e; ++i) {
       // The edge query rejects a duplicated edge on its own, so a two-way
       // branch to one block dominates nothing and contributes no fact.
-      if (!DT.dominates(BasicBlockEdge(&BB, BI->getSuccessor(i)), SB))
+      if (!DT.dominates(BasicBlockEdge(&BB, T->getSuccessor(i)), SB))
         continue;
-      if (!collectIndexBounds(Cond, /*holds=*/i == 0, bound)) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "[ozaki-host-dispatch] " << F.getName()
-                       << ": a condition gating the GEMM store is not a "
-                          "thread-index bound\n";
-        return false;
-      }
+      Value *Cond = nullptr;
+      if (!match(T, m_Br(m_Value(Cond), m_BasicBlock(), m_BasicBlock())) ||
+          !collectIndexBounds(Cond, /*holds=*/i == 0, bound.data()))
+        return std::nullopt;
     }
   }
-  if (!bound[axM] || !bound[axN])
-    return false;
-  cropM = (unsigned)bound[axM];
-  cropN = (unsigned)bound[axN];
-  return true;
+  return bound;
 }
 
 // The store the host dispatch takes the place of: the first in F into an
@@ -230,6 +225,12 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
   note = GemmBodyNote{};
   if (m.origin != AbstractMatmul::Origin::ScalarLoopReduction)
     return false;
+  auto refuse = [&](const Twine &why) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[ozaki-host-dispatch] " << F.getName() << ": " << why
+                   << '\n';
+    return false;
+  };
 
   // The raiser reports m.M/m.N as the per-block tile and m.K as the K-loop
   // trip, which for a full-reduction square GEMM is the global dim, so the
@@ -248,6 +249,11 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
     bColMajor = false;
   else
     return false;
+  std::optional<unsigned> axM = tidAxisIndex(h.aRowAxis);
+  std::optional<unsigned> axN = tidAxisIndex(h.bColAxis);
+  if (!axM || !axN || *axM == *axN)
+    return refuse("the product's rows and columns do not run along two thread "
+                  "axes");
 
   LaunchRef aRoot = tracePointerRoot(m.scalarLoop.aPtr);
   LaunchRef bRoot = tracePointerRoot(m.scalarLoop.bPtr);
@@ -260,14 +266,14 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
 
   // The body is standalone iff it has exactly one argument-rooted store.
   int storeCount = 0;
-  const StoreInst *lastArgStore = nullptr;
+  StoreInst *lastArgStore = nullptr;
   for (Instruction &I : instructions(F))
     if (auto *S = dyn_cast<StoreInst>(&I);
         S && tracePointerRoot(S->getPointerOperand()).param >= 0) {
       storeCount++;
       lastArgStore = S;
     }
-  const StoreInst *cStore = productStore(F, m);
+  StoreInst *cStore = productStore(F, m);
   // A fused body's stored value reaches the matmul result only through the
   // loop's lcssa accumulator, which valueReaches may miss; with exactly one
   // argument-rooted store, that store is the C store.
@@ -296,10 +302,14 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
       return false;
   }
 
+  std::optional<std::array<uint64_t, 3>> bound = storeGuardBounds(F, m, cStore);
+  if (!bound)
+    return refuse("a condition gating the GEMM store is not a thread-index "
+                  "bound");
+
   // Every dim must be deploy scale: K is, but globalM/globalN are
-  // profile-scale and are rescaled by K/globalK. Fall back to the square dim K
-  // when the global geometry is unavailable. Leading dims come from the handle
-  // (bytes to elements); C mirrors B's major order.
+  // profile-scale and are rescaled by K/globalK. Leading dims come from the
+  // handle (bytes to elements).
   unsigned gM = 0, gNcols = 0;
   if (m.globalM && m.globalN && m.globalK) {
     // The K/globalK rescale is only sound for a dimension that tracks matrix
@@ -311,21 +321,19 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
     bool recovered = false;
     if (scaled && (m.globalM != m.globalK || m.globalN != m.globalK)) {
       // Before refusing, recover the true deploy extents from the kernel's own
-      // index guard (recoverGuardExtents): exact, already at deploy scale, and
-      // intersected with the launch geometry by the host stub.
-      unsigned cropM = 0, cropN = 0;
-      int axM = -1, axN = -1;
-      if (recoverGuardExtents(O, F, m, cStore, cropM, cropN, axM, axN)) {
-        gM = cropM;
-        gNcols = cropN;
+      // index guard: exact, already at deploy scale, and intersected with the
+      // launch geometry by the host stub, min(crop, gridDim * blockDim).
+      if ((*bound)[*axM] && (*bound)[*axN]) {
+        gM = (unsigned)(*bound)[*axM];
+        gNcols = (unsigned)(*bound)[*axN];
         note.launchCrop = true;
-        note.cropMAxis = axM;
-        note.cropNAxis = axN;
+        note.cropMAxis = (int)*axM;
+        note.cropNAxis = (int)*axN;
         recovered = true;
         llvm::errs() << "[ozaki-host-dispatch] recovered deploy geometry for "
-                     << F.getName() << ": M=" << cropM << " Ncols=" << cropN
+                     << F.getName() << ": M=" << gM << " Ncols=" << gNcols
                      << " K=" << K << " from the index guard on thread axes "
-                     << axM << '/' << axN << '\n';
+                     << *axM << '/' << *axN << '\n';
       }
     }
     if (scaled && !recovered &&
@@ -355,12 +363,47 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
           (unsigned)((uint64_t)m.globalN * (uint64_t)K / (uint64_t)m.globalK);
     }
   } else {
-    gM = m.globalM ? m.globalM : (unsigned)K;
-    gNcols = m.globalN ? m.globalN : (unsigned)K;
+    if (!m.globalM || !m.globalN)
+      return refuse("the profile does not give the extent of the product's "
+                    "rows and columns");
+    gM = m.globalM;
+    gNcols = m.globalN;
+  }
+  if (!note.launchCrop) {
+    if ((*bound)[*axM] && (*bound)[*axM] < gM)
+      return refuse("the GEMM store is gated by row < " +
+                    Twine((*bound)[*axM]) + ", which drops rows of the " +
+                    Twine(gM) + " x " + Twine(gNcols) +
+                    " product the library call writes");
+    if ((*bound)[*axN] && (*bound)[*axN] < gNcols)
+      return refuse("the GEMM store is gated by column < " +
+                    Twine((*bound)[*axN]) + ", which drops columns of the " +
+                    Twine(gM) + " x " + Twine(gNcols) +
+                    " product the library call writes");
+  }
+
+  // C's layout and leading dimension from the byte step of its store address
+  // along the row and column thread axes: one element along the column axis is
+  // row-major, along the row axis column-major.
+  const std::array<int64_t, 3> cStep =
+      threadIndexCoefficients(h.SE->getSCEV(cStore->getPointerOperand()));
+  const unsigned axOther = 3 - *axM - *axN;
+  constexpr int64_t elemBytes = 8;
+  int64_t ldc = 0;
+  if (cStep[axOther] == 0 && cStep[*axN] == elemBytes &&
+      cStep[*axM] % elemBytes == 0 && cStep[*axM] / elemBytes >= gNcols) {
+    note.cColMajor = false;
+    ldc = cStep[*axM] / elemBytes;
+  } else if (cStep[axOther] == 0 && cStep[*axM] == elemBytes &&
+             cStep[*axN] % elemBytes == 0 && cStep[*axN] / elemBytes >= gM) {
+    note.cColMajor = true;
+    ldc = cStep[*axN] / elemBytes;
+  } else {
+    return refuse("the product's store address is not a row-major or "
+                  "column-major element of C");
   }
   note.aColMajor = false;
   note.bColMajor = bColMajor;
-  note.cColMajor = bColMajor; // heuristic: output matches B's major order
   note.dims[DimM] = RuntimeDim::constant(gM);
   note.dims[DimNcols] = RuntimeDim::constant(gNcols);
   note.dims[DimK] = RuntimeDim::constant(K);
@@ -368,7 +411,11 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
       RuntimeDim::constant(h.aLeadingDimByte ? h.aLeadingDimByte / 8 : K);
   note.dims[DimLdb] =
       RuntimeDim::constant(h.bLeadingDimByte ? h.bLeadingDimByte / 8 : K);
-  note.dims[DimLdc] = RuntimeDim::constant(note.cColMajor ? gM : gNcols);
+  note.dims[DimLdc] = RuntimeDim::constant(ldc);
+  if (llvm::any_of(note.dims,
+                   [](const RuntimeDim &d) { return d.add > kMaxDimConstant; }))
+    return refuse("a dimension of the product is out of the range of the "
+                  "dispatch's int dimensions");
   note.standalone = (storeCount == 1);
   note.valid = true;
   return true;
@@ -455,6 +502,15 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m,
   }
   note.scheme = descriptorScheme(v);
   note.numModuli = descriptorModulusField(v);
+  // One descriptor per body: the host replaces or precedes its kernel's launch
+  // with one library call.
+  if (auto prior = S.Matmul.GemmBodies.find(F);
+      prior != S.Matmul.GemmBodies.end() && prior->second.valid)
+    reportUserError(anchorOf(m),
+                    "a second matrix product of " + F->getName() +
+                        " was selected to run as a library call, and a "
+                        "kernel's launch takes one; leave out "
+                        "-poseidon-ozaki-host-dispatch for this body.");
   S.Matmul.GemmBodies[F] = note;
   if (!note.standalone)
     fissionGemmForDispatch(*F, m);
@@ -509,10 +565,27 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
       std::move(message));
 }
 
+// Whether `wrapper` does nothing with an effect but call its site, so that a
+// library call can take the place of its whole launch.
+static bool onlyCallsItsSite(const Function &wrapper) {
+  unsigned effects = 0;
+  for (const Instruction &I : instructions(wrapper)) {
+    if (!I.mayHaveSideEffects())
+      continue;
+    if (const auto *II = dyn_cast<IntrinsicInst>(&I);
+        II && II->isAssumeLikeIntrinsic())
+      continue;
+    ++effects;
+  }
+  return effects <= 1;
+}
+
 // Shared descriptor emit for the per-site path and the deferred joint-dp
 // flush: map C/A/B through `paramToArg` (body parameter to wrapper launch
-// argument, -1 when there is none), skipping (with a message) if any fails.
-static void emitMappedDescriptor(Session &S, StringRef wrapperName,
+// argument, -1 when there is none). A fused body was already fissioned and
+// computes nothing without the descriptor, so an unmapped one is an error; a
+// standalone body still computes its product, and its launch is kept.
+static void emitMappedDescriptor(Session &S, Function &wrapper,
                                  const GemmBodyNote &n,
                                  ArrayRef<int> paramToArg) {
   auto mapParam = [&](int bp) -> int {
@@ -520,13 +593,23 @@ static void emitMappedDescriptor(Session &S, StringRef wrapperName,
       return -1;
     return paramToArg[bp];
   };
+  auto unmapped = [&](StringRef what) {
+    const std::string message =
+        (what +
+         " of the matrix product realized as a library call is not an "
+         "argument of the kernel " +
+         wrapper.getName() + ", from which the host reads it")
+            .str();
+    if (!n.standalone)
+      reportUserError(wrapper, wrapper.getSubprogram(), message);
+    diagnoseSite(wrapper, message + "; the kernel is launched as written",
+                 DS_Warning);
+  };
   int cArg = mapParam(n.cParam);
   int aArg = mapParam(n.aParam);
   int bArg = mapParam(n.bParam);
   if (cArg < 0 || aArg < 0 || bArg < 0) {
-    errs() << "[ozaki-host-dispatch] could not map body params to wrapper "
-              "launch args for "
-           << wrapperName << "; skipping descriptor\n";
+    unmapped("an operand pointer");
     return;
   }
   // Runtime dimensions name body parameters too, and the host side only sees
@@ -543,14 +626,26 @@ static void emitMappedDescriptor(Session &S, StringRef wrapperName,
   for (LaunchRef *f : refs) {
     int a = mapParam(f->param);
     if (a < 0) {
-      errs() << "[ozaki-host-dispatch] could not map a runtime GEMM "
-                "dimension's body param to a wrapper launch arg for "
-             << wrapperName << "; skipping descriptor\n";
+      unmapped("a runtime dimension");
       return;
     }
     f->param = a;
   }
-  emitDescriptor(S, wrapperName, cArg, aArg, bArg, mapped);
+  if (n.standalone && !onlyCallsItsSite(wrapper))
+    reportUserError(wrapper, wrapper.getSubprogram(),
+                    "the library call selected for a matrix product would "
+                    "take the place of the whole launch of " +
+                        wrapper.getName() +
+                        ", which does other work too; move the product into a "
+                        "kernel of its own, or leave out "
+                        "-poseidon-ozaki-host-dispatch.");
+  if (!S.Matmul.DispatchedKernels.insert(wrapper.getName()).second)
+    reportUserError(wrapper, wrapper.getSubprogram(),
+                    "the kernel " + wrapper.getName() +
+                        " holds more than one matrix product selected to run "
+                        "as a library call, and its launch takes one; leave "
+                        "out -poseidon-ozaki-host-dispatch.");
+  emitDescriptor(S, wrapper.getName(), cArg, aArg, bArg, mapped);
 }
 
 static std::vector<int> launchArgsOf(ArrayRef<Value *> primalArgs) {
@@ -564,7 +659,7 @@ void writeGemmDescriptor(Session &S, Function &wrapper,
                          ArrayRef<Value *> primalArgs, const GemmBodyNote &n) {
   if (!n.valid)
     return;
-  emitMappedDescriptor(S, wrapper.getName(), n, launchArgsOf(primalArgs));
+  emitMappedDescriptor(S, wrapper, n, launchArgsOf(primalArgs));
 }
 
 void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
@@ -578,7 +673,8 @@ void flushPendingGemmDispatches(Session &S) {
     // A site not materialized as a host dispatch has no note.
     if (auto n = S.Matmul.GemmBodies.find(body);
         n != S.Matmul.GemmBodies.end() && n->second.valid)
-      emitMappedDescriptor(S, pg.wrapperName, n->second, pg.paramToArg);
+      emitMappedDescriptor(S, *body->getParent()->getFunction(pg.wrapperName),
+                           n->second, pg.paramToArg);
   S.Matmul.PendingGemms.clear();
 }
 
@@ -650,8 +746,9 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
           if (Cursor.consume("rd")) {
             for (RuntimeDim &x : d.dims) {
               unsigned nf = Cursor.integer<unsigned>("factor count");
-              if (nf > 8)
-                Cursor.fail("its factor count " + Twine(nf) + " is above 8");
+              if (nf > kMaxDimFactors)
+                Cursor.fail("its factor count " + Twine(nf) + " is above " +
+                            Twine(kMaxDimFactors));
               for (unsigned f = 0; f < nf && Cursor.ok(); ++f) {
                 LaunchRef r;
                 r.param = Cursor.integer<int>("factor argument");
@@ -660,6 +757,12 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
               }
               x.mul = Cursor.integer<int64_t>("dimension factor");
               x.add = Cursor.integer<int64_t>("dimension term");
+              for (int64_t c : {x.mul, x.add})
+                if (c < -kMaxDimConstant || c > kMaxDimConstant)
+                  Cursor.fail("its dimension constant " + Twine(c) +
+                              " is out of the int range");
+              if (!x.isConst() && !d.standalone)
+                Cursor.fail("it is fused and has a runtime dimension");
             }
             d.beta = Cursor.real("beta");
             haveDims = true;
@@ -669,8 +772,9 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
             d.bOffset = Cursor.integer<int64_t>("B offset");
           } else if (Cursor.consume("eq")) {
             unsigned ne = Cursor.integer<unsigned>("equality count");
-            if (ne > 16)
-              Cursor.fail("its equality count " + Twine(ne) + " is above 16");
+            if (ne > kMaxAssumedEqual)
+              Cursor.fail("its equality count " + Twine(ne) + " is above " +
+                          Twine(kMaxAssumedEqual));
             for (unsigned e = 0; e < ne && Cursor.ok(); ++e) {
               LaunchRef x, y;
               x.param = Cursor.integer<int>("equality argument");
@@ -742,8 +846,10 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   LLVMContext &C = M.getContext();
   Type *ptr = PointerType::get(C, 0);
   Type *i32 = Type::getInt32Ty(C);
+  Type *i64 = Type::getInt64Ty(C);
   Type *dbl = Type::getDoubleTy(C);
   auto I32 = [&](int64_t v) { return ConstantInt::get(i32, (uint64_t)v); };
+  auto I64 = [&](int64_t v) { return ConstantInt::get(i64, (uint64_t)v); };
   Value *argArray = launchArguments(*launch);
   // Resolved per descriptor: the scheme is a per-site solver decision.
   FunctionCallee callee = getDispatchCallee(M, d.scheme);
@@ -752,28 +858,40 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   auto value = [&](const LaunchRef &r, Type *T) {
     return loadLaunchValue(B, argArray, r, T);
   };
-  auto dim = [&](const RuntimeDim &r) {
+  // Whether every runtime dimension fits the int the dispatch takes it as.
+  // The dimensions are evaluated in i64 and every intermediate value is
+  // checked: while all checks pass, each operand is below 2^31 and nothing
+  // wraps.
+  Value *inRange = nullptr;
+  auto checked = [&](Value *v) {
+    Value *fits = B.CreateICmpULE(v, I64(kMaxDimConstant));
+    inRange = inRange ? B.CreateAnd(inRange, fits) : fits;
+    return v;
+  };
+  auto dim = [&](const RuntimeDim &r) -> Value * {
+    if (r.isConst())
+      return I32(r.add);
     Value *v = nullptr;
     for (const LaunchRef &f : r.factors) {
-      Value *x = value(f, i32);
-      v = v ? B.CreateMul(v, x) : x;
+      Value *x = checked(B.CreateSExt(value(f, i32), i64));
+      v = v ? checked(B.CreateMul(v, x)) : x;
     }
-    if (!v)
-      return (Value *)I32(r.add);
     if (r.mul != 1)
-      v = B.CreateMul(v, I32(r.mul));
+      v = checked(B.CreateMul(v, I64(r.mul)));
     if (r.add)
-      v = B.CreateAdd(v, I32(r.add));
-    return v;
+      v = checked(B.CreateAdd(v, I64(r.add)));
+    return B.CreateTrunc(v, i32);
   };
   auto cropDim = [&](int axis, const RuntimeDim &crop) -> Value * {
     Value *g = B.CreateLoad(
         i32, B.CreateConstInBoundsGEP1_32(i32, poppedGrid(*pop), axis));
     Value *b = B.CreateLoad(
         i32, B.CreateConstInBoundsGEP1_32(i32, poppedBlock(*pop), axis));
-    Value *ext = B.CreateMul(g, b);
-    return B.CreateSelect(B.CreateICmpULT(ext, I32(crop.add)), ext,
-                          I32(crop.add));
+    Value *g64 = B.CreateZExt(g, i64);
+    Value *b64 = B.CreateZExt(b, i64);
+    Value *ext = B.CreateMul(g64, b64);
+    Value *below = B.CreateICmpULT(ext, I64(crop.add));
+    return B.CreateTrunc(B.CreateSelect(below, ext, I64(crop.add)), i32);
   };
 
   Value *Cp = value({d.cParam, d.cOffset}, ptr);
@@ -808,6 +926,10 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
     Value *eq = B.CreateICmpEQ(lhs, rhs);
     holds = holds ? B.CreateAnd(holds, eq) : eq;
   }
+  assert((d.standalone || !inRange) &&
+         "the reader admits no runtime dimension in a fused descriptor");
+  if (inRange)
+    holds = holds ? B.CreateAnd(holds, inRange) : inRange;
 
   Value *success = Constant::getNullValue(launch->getType());
   if (!holds) {

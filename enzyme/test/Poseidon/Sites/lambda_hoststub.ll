@@ -32,8 +32,9 @@
 ; passes the runtime that array and each pointer's offset; the kernel's
 ; device-side name carries the -fgpu-rdc postfix of an internal kernel. The
 ; dispatch reads its operands and extents from the same array and runs only
-; when the extents the recognition assumed equal are equal; otherwise it
-; launches the kernel as written.
+; when the extents the recognition assumed equal are equal and every extent
+; fits the dispatch's int parameters; otherwise it launches the kernel as
+; written.
 
 ; GEN: [poseidon-profgen] launch of _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd now allocates and seeds 3 shadow buffer(s)
 ; GEN: @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd = private unnamed_addr constant [3 x i32] [i32 1, i32 1, i32 1]
@@ -67,27 +68,52 @@
 ; USE-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BF]], align 8
 ; USE-NEXT: %[[MS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; USE-NEXT: %[[ML:[0-9]+]] = load ptr, ptr %[[MS]], align 8
-; USE-NEXT: %[[M:[0-9]+]] = load i32, ptr %[[ML]], align 4
+; USE-NEXT: %[[M32:[0-9]+]] = load i32, ptr %[[ML]], align 4
+; USE-NEXT: %[[M64:[0-9]+]] = sext i32 %[[M32]] to i64
+; USE-NEXT: %[[MOK:[0-9]+]] = icmp ule i64 %[[M64]], 2147483647
+; USE-NEXT: %[[M:[0-9]+]] = trunc i64 %[[M64]] to i32
 ; USE-NEXT: %[[NS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
 ; USE-NEXT: %[[NL:[0-9]+]] = load ptr, ptr %[[NS]], align 8
-; USE-NEXT: %[[N:[0-9]+]] = load i32, ptr %[[NL]], align 4
+; USE-NEXT: %[[N32:[0-9]+]] = load i32, ptr %[[NL]], align 4
+; USE-NEXT: %[[N64:[0-9]+]] = sext i32 %[[N32]] to i64
+; USE-NEXT: %[[NOK:[0-9]+]] = icmp ule i64 %[[N64]], 2147483647
+; USE-NEXT: %[[R1:[0-9]+]] = and i1 %[[MOK]], %[[NOK]]
+; USE-NEXT: %[[N:[0-9]+]] = trunc i64 %[[N64]] to i32
 ; USE-NEXT: %[[KS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; USE-NEXT: %[[KL:[0-9]+]] = load ptr, ptr %[[KS]], align 8
 ; USE-NEXT: %[[KF:[0-9]+]] = getelementptr inbounds i8, ptr %[[KL]], i64 4{{$}}
 ; USE-NEXT: %[[K4:[0-9]+]] = load i32, ptr %[[KF]], align 4
-; USE-NEXT: %[[K:[0-9]+]] = mul i32 %[[K4]], 3
+; USE-NEXT: %[[K464:[0-9]+]] = sext i32 %[[K4]] to i64
+; USE-NEXT: %[[K4OK:[0-9]+]] = icmp ule i64 %[[K464]], 2147483647
+; USE-NEXT: %[[R2:[0-9]+]] = and i1 %[[R1]], %[[K4OK]]
+; USE-NEXT: %[[K64:[0-9]+]] = mul i64 %[[K464]], 3
+; USE-NEXT: %[[KOK:[0-9]+]] = icmp ule i64 %[[K64]], 2147483647
+; USE-NEXT: %[[R3:[0-9]+]] = and i1 %[[R2]], %[[KOK]]
+; USE-NEXT: %[[K:[0-9]+]] = trunc i64 %[[K64]] to i32
 ; USE-NEXT: %[[LDAS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; USE-NEXT: %[[LDAL:[0-9]+]] = load ptr, ptr %[[LDAS]], align 8
 ; USE-NEXT: %[[LDAF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDAL]], i64 48{{$}}
-; USE-NEXT: %[[LDA:[0-9]+]] = load i32, ptr %[[LDAF]], align 4
+; USE-NEXT: %[[LDA32:[0-9]+]] = load i32, ptr %[[LDAF]], align 4
+; USE-NEXT: %[[LDA64:[0-9]+]] = sext i32 %[[LDA32]] to i64
+; USE-NEXT: %[[LDAOK:[0-9]+]] = icmp ule i64 %[[LDA64]], 2147483647
+; USE-NEXT: %[[R4:[0-9]+]] = and i1 %[[R3]], %[[LDAOK]]
+; USE-NEXT: %[[LDA:[0-9]+]] = trunc i64 %[[LDA64]] to i32
 ; USE-NEXT: %[[LDBS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; USE-NEXT: %[[LDBL:[0-9]+]] = load ptr, ptr %[[LDBS]], align 8
 ; USE-NEXT: %[[LDBF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDBL]], i64 24{{$}}
-; USE-NEXT: %[[LDB:[0-9]+]] = load i32, ptr %[[LDBF]], align 4
+; USE-NEXT: %[[LDB32:[0-9]+]] = load i32, ptr %[[LDBF]], align 4
+; USE-NEXT: %[[LDB64:[0-9]+]] = sext i32 %[[LDB32]] to i64
+; USE-NEXT: %[[LDBOK:[0-9]+]] = icmp ule i64 %[[LDB64]], 2147483647
+; USE-NEXT: %[[R5:[0-9]+]] = and i1 %[[R4]], %[[LDBOK]]
+; USE-NEXT: %[[LDB:[0-9]+]] = trunc i64 %[[LDB64]] to i32
 ; USE-NEXT: %[[LDCS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; USE-NEXT: %[[LDCL:[0-9]+]] = load ptr, ptr %[[LDCS]], align 8
 ; USE-NEXT: %[[LDCF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDCL]], i64 72{{$}}
-; USE-NEXT: %[[LDC:[0-9]+]] = load i32, ptr %[[LDCF]], align 4
+; USE-NEXT: %[[LDC32:[0-9]+]] = load i32, ptr %[[LDCF]], align 4
+; USE-NEXT: %[[LDC64:[0-9]+]] = sext i32 %[[LDC32]] to i64
+; USE-NEXT: %[[LDCOK:[0-9]+]] = icmp ule i64 %[[LDC64]], 2147483647
+; USE-NEXT: %[[R6:[0-9]+]] = and i1 %[[R5]], %[[LDCOK]]
+; USE-NEXT: %[[LDC:[0-9]+]] = trunc i64 %[[LDC64]] to i32
 ; Each equality loads its two operands in the order the descriptor names
 ; them, whichever compiler built the plugin.
 ; USE-NEXT: %[[X0S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
@@ -108,7 +134,8 @@
 ; USE-NEXT: %[[Y1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y1L]], i64 48{{$}}
 ; USE-NEXT: %[[Y1:[0-9]+]] = load i32, ptr %[[Y1F]], align 4
 ; USE-NEXT: %[[EQ1:[0-9]+]] = icmp eq i32 %[[X1]], %[[Y1]]
-; USE-NEXT: %[[OK:[0-9]+]] = and i1 %[[EQ0]], %[[EQ1]]
+; USE-NEXT: %[[EQ:[0-9]+]] = and i1 %[[EQ0]], %[[EQ1]]
+; USE-NEXT: %[[OK:[0-9]+]] = and i1 %[[EQ]], %[[R6]]
 ; USE-NEXT: br i1 %[[OK]], label %[[DISPATCH:[0-9]+]], label %[[LAUNCH:[0-9]+]]
 ; USE: [[DISPATCH]]:
 ; USE-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)

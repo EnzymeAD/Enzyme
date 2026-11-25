@@ -38,6 +38,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
@@ -218,10 +219,11 @@ static LaunchRef rgLaunchValue(const Value *v) {
 
 // Why the host cannot read the launch value `v` (at `r`) as a dimension or an
 // assumed-equal operand, which it loads as an i32: a narrower integer would be
-// read past its end. Empty when it can.
+// read past its end, and a wider one would lose the bits it reads past 32,
+// which the dispatch's int dimensions could not take anyway. Empty when it can.
 static std::string rgHostReadRefusal(const Value *v, const LaunchRef &r) {
   auto *T = dyn_cast<IntegerType>(v->getType());
-  if (T && T->getBitWidth() >= 32)
+  if (T && T->getBitWidth() == 32)
     return "";
   std::string what = T ? ", an i" + std::to_string(T->getBitWidth()) + ","
                        : ", which is not an integer,";
@@ -340,9 +342,20 @@ static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
   out = RuntimeDim{};
   bool haveTerm = false;
   for (auto &kv : p.t) {
+    if (kv.second < -kMaxDimConstant || kv.second > kMaxDimConstant) {
+      why = "a GEMM dimension has the constant " + std::to_string(kv.second) +
+            ", out of the range a dispatch dimension takes";
+      return false;
+    }
     if (kv.first.empty()) {
       out.add = kv.second;
       continue;
+    }
+    if (kv.first.size() > kMaxDimFactors) {
+      why = "a GEMM dimension is a product of " +
+            std::to_string(kv.first.size()) + " launch values, more than the " +
+            std::to_string(kMaxDimFactors) + " a descriptor holds";
+      return false;
     }
     if (haveTerm) {
       why = "a GEMM dimension is not expressible as mul*arg+add: value "
@@ -497,20 +510,6 @@ static bool rgReaches(Value *v, Value *target, unsigned depth = 0) {
   }
   if (auto *C = dyn_cast<CastInst>(v))
     return rgReaches(C->getOperand(0), target, depth + 1);
-  return false;
-}
-
-static bool rgIsZeroSeed(Value *v, unsigned depth = 0) {
-  if (!v || depth > 12)
-    return false;
-  if (auto *C = dyn_cast<ConstantFP>(v))
-    return C->isZero() && !C->isNegative();
-  if (auto *P = dyn_cast<PHINode>(v)) {
-    for (Value *in : P->incoming_values())
-      if (in != P && !rgIsZeroSeed(in, depth + 1))
-        return false;
-    return true;
-  }
   return false;
 }
 
@@ -714,6 +713,8 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
     indices.push_back(idx);
   }
   BasicBlock *anchorBB = chain.back().fma->getParent();
+  // The branches the index sources come from.
+  SmallPtrSet<const Instruction *, 8> indexBranches;
   for (BasicBlock &BB : F) {
     Instruction *br = BB.getTerminator();
     Value *cond;
@@ -736,17 +737,24 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
     RgIndex idx;
     if (!EX.expand(SX, idx.form))
       continue; // an unexpandable guard is simply not an index source
-    if (llvm::any_of(indices, [&](const RgIndex &prev) {
-          return prev.form == idx.form ||
-                 idx.form == RgPoly::atom(prev.sigAtom);
-        }))
-      continue; // already covered by the strided-loop form it seeds
     if (!EX.expand(SE.getSCEV(cmp->getOperand(1)), idx.extent))
       continue;
+    // The guard a rotated strided loop is entered through, on the loop's own
+    // bound. A guard of the same index with another bound is a second source
+    // of that index, which the signature check below refuses.
+    if (llvm::any_of(indices, [&](const RgIndex &prev) {
+          return (prev.form == idx.form ||
+                  idx.form == RgPoly::atom(prev.sigAtom)) &&
+                 prev.extent == idx.extent;
+        })) {
+      indexBranches.insert(br);
+      continue;
+    }
     if (!rgFinishIndex(idx, atoms))
       continue;
     idx.name = "guarded";
     indices.push_back(idx);
+    indexBranches.insert(br);
   }
   if (indices.empty()) {
     why = "no thread/CTA index source dominates the contraction";
@@ -879,6 +887,13 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
     }
   }
 
+  if (H.assumedEqual.size() > kMaxAssumedEqual) {
+    why = "the dense reading takes " + std::to_string(H.assumedEqual.size()) +
+          " pairs of launch values to be equal, more than the " +
+          std::to_string(kMaxAssumedEqual) + " a descriptor holds";
+    return false;
+  }
+
   SmallVector<RgPoly, 4> c0, c1, cC;
   RgPoly b0, b1, bC;
   if (!splitAll(op0Poly[0], c0, b0) || !splitAll(op1Poly[0], c1, b1)) {
@@ -941,6 +956,28 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
   if (!cStore) {
     why = "no store consumes the accumulator";
     return false;
+  }
+  // The library call writes every element of the product, so the output store
+  // may be gated only by the bounds of the index sources and by the exits of
+  // the contraction's own loops.
+  {
+    SmallPtrSet<const Instruction *, 8> loopExits;
+    for (const RgMember &m : chain)
+      loopExits.insert(m.L->getLoopLatch()->getTerminator());
+    const BasicBlock *storeBB = cStore->getParent();
+    for (BasicBlock &BB : F) {
+      const Instruction *T = BB.getTerminator();
+      if (T->getNumSuccessors() < 2 || indexBranches.contains(T) ||
+          loopExits.contains(T))
+        continue;
+      if (llvm::any_of(successors(&BB), [&](const BasicBlock *S) {
+            return DT.dominates(BasicBlockEdge(&BB, S), storeBB);
+          })) {
+        why = "the output store is gated by a condition that is not a bound "
+              "of the product's indices";
+        return false;
+      }
+    }
   }
   H.beta = 0.0;
   if (epilogue) {
@@ -1282,12 +1319,11 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
   std::optional<ReductionCycle> rc = matchReductionCycle(L, phi, latch, &why);
   if (!rc)
     RG_REJECT(why);
+  if (StringRef shape = reductionLoopShapeRefusal(*L); !shape.empty())
+    RG_REJECT(shape);
   const SCEV *btc = SE.getBackedgeTakenCount(L);
   if (isa<SCEVCouldNotCompute>(btc))
     RG_REJECT("backedge-taken count is not computable");
-  BasicBlock *pre = L->getLoopPreheader();
-  if (!pre)
-    RG_REJECT("loop has no unique preheader");
   out.L = L;
   out.phi = &phi;
   out.fma = rc->fma;
@@ -1297,8 +1333,8 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
   out.aAddr = SE.getSCEV(rc->aLoad->getPointerOperand());
   out.bAddr = SE.getSCEV(rc->bLoad->getPointerOperand());
   out.trip = SE.getAddExpr(btc, SE.getOne(btc->getType()));
-  out.init = phi.getIncomingValueForBlock(pre);
-  return out.init != nullptr;
+  out.init = phi.getIncomingValueForBlock(L->getLoopPreheader());
+  return true;
 }
 #undef RG_REJECT
 
@@ -1397,7 +1433,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                         "dataflow\n";
       continue;
     }
-    if (!rgIsZeroSeed(members[h].init)) {
+    if (!isPositiveZeroSeed(members[h].init)) {
       if (O.Diagnostics.Print)
         llvm::errs() << "[hostgemm]   loop " << h
                      << " is a chain head whose accumulator does not start at "

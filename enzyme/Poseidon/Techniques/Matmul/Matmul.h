@@ -20,6 +20,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
@@ -91,6 +92,9 @@ struct ScalarLoopHandle {
 
   // Set only when the profile header shows blockDim.z == 1.
   bool is2DBlock = false;
+  // Whether every thread of the block runs the preheader, where the in-kernel
+  // raise synchronizes the block, exactly once.
+  bool reachedByWholeBlock = false;
 
   TidAxis aRowAxis = TidAxis::Unknown;
   TidAxis bColAxis = TidAxis::Unknown;
@@ -240,6 +244,13 @@ void collectScalarLoopReductionTrips(
 enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
 constexpr unsigned kNumGemmDims = 6;
 
+// What a host-dispatch descriptor holds: launch values per dimension, assumed
+// equalities, and the magnitude of a dimension's constants and of its value,
+// an int of the dispatch entries.
+constexpr unsigned kMaxDimFactors = 8;
+constexpr unsigned kMaxAssumedEqual = 16;
+constexpr int64_t kMaxDimConstant = INT32_MAX;
+
 // The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
 // and runtime-dimension factors name parameters of the body until the
 // descriptor is written, and launch arguments of the wrapper kernel after.
@@ -290,6 +301,8 @@ struct WmmaTarget {
 struct MatmulState {
   // The GEMM note of each optimized body clone, keyed by the clone.
   std::map<const llvm::Function *, GemmBodyNote> GemmBodies;
+  // The kernels a host-dispatch descriptor was written for.
+  llvm::StringSet<> DispatchedKernels;
   // In the order the sites were split, so that of two sites of one wrapper the
   // same one is recorded last in every compile.
   llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;

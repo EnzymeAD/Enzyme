@@ -17,6 +17,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -50,6 +51,18 @@ struct ReductionCycle {
 std::optional<ReductionCycle>
 matchReductionCycle(const llvm::Loop *L, llvm::PHINode &phi,
                     llvm::BasicBlock *latch, llvm::StringRef *why = nullptr);
+
+// Whether `V`, through phis, is +0.0 on every path: a product's accumulator
+// has to start there, since both realizations compute the product alone.
+bool isPositiveZeroSeed(const llvm::Value *V);
+
+// Why a realization cannot take the place of the reduction loop `L`, empty
+// when it can: the product is the loop's value after its latch, and the
+// in-kernel raise runs in the preheader and reads back in the exit block.
+llvm::StringRef reductionLoopShapeRefusal(const llvm::Loop &L);
+
+// The coefficients of threadIdx.x, .y and .z in `S`.
+std::array<int64_t, 3> threadIndexCoefficients(const llvm::SCEV *S);
 
 // Calls `fn` on each innermost loop of `LI`.
 void forEachInnermostLoop(llvm::LoopInfo &LI,
