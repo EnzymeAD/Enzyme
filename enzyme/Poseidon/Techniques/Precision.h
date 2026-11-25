@@ -70,11 +70,11 @@ struct PTCandidate {
       : changes(std::move(changes)), desc(desc) {}
 
   /// Materializes the changes on `subgraph`, or, given `VMap`, on its clone.
-  /// `limbs`, if given, receives the limbs of the two-component change and then
-  /// those of the wider ones.
+  /// `components`, if given, receives the components of the two-component
+  /// change and then those of the wider ones.
   void apply(Session &S, Subgraph &subgraph,
              llvm::ValueToValueMapTy *VMap = nullptr, FPGraph *graph = nullptr,
-             llvm::SmallVectorImpl<llvm::Value *> *limbs = nullptr);
+             llvm::SmallVectorImpl<llvm::Value *> *components = nullptr);
 };
 
 /// Demotes each FP64 PHI of `F` whose every incoming value is an extension of

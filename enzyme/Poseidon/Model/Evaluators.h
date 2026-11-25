@@ -42,7 +42,7 @@ private:
   /// belongs to.
   std::unordered_map<const FPNode *, size_t> nodeChange;
   /// The components of each node evaluated as an FP32 expansion.
-  std::unordered_map<const FPNode *, ExpansionLimbs> limbs;
+  std::unordered_map<const FPNode *, ExpansionLimbs> components;
   /// The relative error bound of the square roots a change makes approximate.
   std::unordered_map<const FPNode *, double> approxSqrtError;
 

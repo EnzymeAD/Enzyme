@@ -29,11 +29,11 @@ static std::optional<ApplyItem> parseUnitRef(StringRef s) {
   ApplyItem item;
   const UnitKindInfo *kind =
       llvm::find_if(unitKinds(), [&](const UnitKindInfo &k) {
-        return s.starts_with(k.idPrefix);
+        return s.starts_with(k.letter);
       });
   if (kind == unitKinds().end())
     return std::nullopt;
-  s = s.drop_front(kind->idPrefix.size());
+  s = s.drop_front(kind->letter.size());
   item.kind = kind->kind;
   size_t digits = s.find_first_not_of("0123456789");
   if (digits == 0 || digits == StringRef::npos ||
@@ -218,14 +218,13 @@ Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
         unit = u;
       ++ofKind;
     }
-    const std::string name = (kind.idPrefix + Twine(item.unit)).str();
+    const std::string name = (kind.letter + Twine(item.unit)).str();
     if (!unit) {
       std::string has = "none";
       if (ofKind == 1)
-        has = (kind.idPrefix + "0").str();
+        has = (kind.letter + "0").str();
       else if (ofKind > 1)
-        has =
-            (kind.idPrefix + "0 to " + kind.idPrefix + Twine(ofKind - 1)).str();
+        has = (kind.letter + "0 to " + kind.letter + Twine(ofKind - 1)).str();
       return userError(F, F.getSubprogram(),
                        "-poseidon-apply-rewrites item '" + Twine(id) +
                            "': there is no " + name + "; the site has " + has);
@@ -264,7 +263,7 @@ Expected<SmallVector<SolutionStep>> parseManualRewrites(Session &S,
           unit->footprintOverlaps(other))
         return userError(F, F.getSubprogram(),
                          "-poseidon-apply-rewrites item '" + Twine(id) +
-                             "': " + name + " and " + other.info().idPrefix +
+                             "': " + name + " and " + other.info().letter +
                              Twine(other.indexInKind()) +
                              " change the same instructions, and one of "
                              "them replaces them; give one of the two");
@@ -290,7 +289,7 @@ std::string pinValue(const Session &S, const FunctionFPState &st,
   std::string value;
   for (const SolutionStep &step : applied) {
     const SiteUnit &unit = unitOf(step);
-    std::string item = (unit.info().idPrefix + Twine(unit.indexInKind()) + "=" +
+    std::string item = (unit.info().letter + Twine(unit.indexInKind()) + "=" +
                         unit.candidateName(step.candidateIndex))
                            .str();
     if (!value.empty())

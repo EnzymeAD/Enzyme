@@ -42,7 +42,7 @@ class Session;
 struct FunctionFPState : FPGraph {
   /// The accuracy target written at the site; 0 when the site has none and
   /// -poseidon-tau applies.
-  double errTol = 0.0;
+  double tau = 0.0;
   /// Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
   /// costs carry; the denominator that turns an accuracy cost into a
   /// per-operation relative rounding level.
@@ -116,9 +116,9 @@ struct SiteProfileData {
 std::string siteProfilePath(const Session &S, const llvm::Function &clone,
                             llvm::StringRef dir);
 
-/// `errorTol` > 0 is the accuracy target written at the site; 0 means the site
+/// `tau` > 0 is the accuracy target written at the site; 0 means the site
 /// wrote none and -poseidon-tau decides.
-llvm::Expected<bool> fpOptimize(Session &S, llvm::Function &F, double errorTol);
+llvm::Expected<bool> fpOptimize(Session &S, llvm::Function &F, double tau);
 
 /// The attribute that marks a site of the joint solve, holding the site's
 /// accuracy target.

@@ -195,8 +195,7 @@ static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
 // own outlined body), `F` the body and `primalArgs` the caller values its
 // parameters take.
 static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
-                              SmallVectorImpl<Value *> &primalArgs,
-                              double errTol,
+                              SmallVectorImpl<Value *> &primalArgs, double tau,
                               SmallVectorImpl<CallBase *> &calls) {
   const Options &O = S.Opts;
   const bool profileUse = O.Profiling.usesProfile();
@@ -205,7 +204,7 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
   } else {
     if (Error E = noteSiteForPins(S, *F))
       return E;
-    auto key = std::make_pair((const Function *)F, errTol);
+    auto key = std::make_pair((const Function *)F, tau);
     auto prior = S.SolvedSites.find(key);
     if (!O.Solver.JointDP && prior != S.SolvedSites.end())
       if (auto *done = dyn_cast_or_null<Function>(prior->second)) {
@@ -232,13 +231,13 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
 
     // Profile generation recorded nothing for a site without an operation to
     // rewrite, so the absent profile says nothing about whether it ran.
-    const double tau = errTol > 0.0 ? errTol : (double)O.Solver.Tau;
+    const double target = tau > 0.0 ? tau : (double)O.Solver.Tau;
     if (none_of(instructions(*F),
                 [](const Instruction &I) { return isOptimizable(I); })) {
       warn(CI, Twine(sourceBody->getName()) +
                    " holds no floating-point operation the pass rewrites; "
                    "leaving the site unchanged");
-      explainLeftAlone(S, *F, tau, errTol > 0.0, "no_fp_operation",
+      explainLeftAlone(S, *F, target, tau > 0.0, "no_fp_operation",
                        "the site holds no floating-point operation the pass "
                        "rewrites");
       markOutlineTransparent(sourceBody);
@@ -252,8 +251,8 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     if (!site)
       return site.takeError();
     if (*site) {
-      if (Error E = reportUnprofiled(S, CI, *sourceBody, *F, **site, tau,
-                                     errTol > 0.0))
+      if (Error E = reportUnprofiled(S, CI, *sourceBody, *F, **site, target,
+                                     tau > 0.0))
         return E;
       markOutlineTransparent(sourceBody);
       emitSiteCall(CI, sourceBody, primalArgs, calls);
@@ -262,16 +261,16 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
 
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Optimizing " << F->getName()
-                   << " with relative error tolerance: " << tau << '\n';
+                   << " with relative error tolerance: " << target << '\n';
 
     if (O.Solver.JointDP) {
-      F->addFnAttr(kJointErrTol, exactDouble(errTol));
+      F->addFnAttr(kJointErrTol, exactDouble(tau));
       // The joint solve materializes F later; the wrapper's arguments are
       // recorded now, while primalArgs holds them.
       if (O.Matmul.OzakiHostDispatch)
         addPendingGemmDispatch(S, F, *CI->getFunction(), primalArgs);
     } else {
-      Expected<bool> optimized = fpOptimize(S, *F, errTol);
+      Expected<bool> optimized = fpOptimize(S, *F, tau);
       if (!optimized)
         return optimized.takeError();
       if (*optimized)
@@ -306,8 +305,8 @@ static Expected<bool> optimizeMarker(Session &S, CallInst *CI,
   Expected<MarkerArgs> marker = parseMarker(CI, *F);
   if (!marker)
     return marker.takeError();
-  if (Error E = optimizeSiteBody(S, CI, *F, marker->primalArgs, marker->errTol,
-                                 calls))
+  if (Error E =
+          optimizeSiteBody(S, CI, *F, marker->primalArgs, marker->tau, calls))
     return std::move(E);
   return true;
 }

@@ -24,8 +24,8 @@ struct ExpansionLimbs {
   float x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   /// The number of components in use.
   unsigned n = 0;
-  /// The expansion of the `n` components `limbs` points to.
-  static ExpansionLimbs of(const float *limbs, unsigned n);
+  /// The expansion of the `n` components `components` points to.
+  static ExpansionLimbs of(const float *components, unsigned n);
 };
 
 /// The `n`-component expansion of `v`, as the emitted boundary conversion

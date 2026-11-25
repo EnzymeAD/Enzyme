@@ -347,14 +347,14 @@ static Error requireCostsOnAxis(FunctionFPState &st,
   for (SiteUnit *unit : units)
     for (size_t i = 0; i < unit->numCandidates(); ++i) {
       double delta;
-      if (auto *CO = dyn_cast<RewriteUnit>(unit)) {
-        if (CO->candidates[i].CompCost == std::numeric_limits<double>::max())
+      if (auto *RU = dyn_cast<RewriteUnit>(unit)) {
+        if (RU->candidates[i].CompCost == std::numeric_limits<double>::max())
           continue;
-        delta = CO->getCompCostDelta(i);
-      } else if (auto *CS = dyn_cast<PrecisionUnit>(unit)) {
-        if (CS->candidates[i].CompCost == std::numeric_limits<double>::max())
+        delta = RU->getCompCostDelta(i);
+      } else if (auto *PU = dyn_cast<PrecisionUnit>(unit)) {
+        if (PU->candidates[i].CompCost == std::numeric_limits<double>::max())
           continue;
-        delta = CS->getCompCostDelta(i);
+        delta = PU->getCompCostDelta(i);
       } else {
         delta = cast<MatmulUnit>(unit)->getCompCostDelta(i);
       }
@@ -381,7 +381,7 @@ static Error priceUnlessCached(Session &S, FunctionFPState &st,
   // the matrix products to errorBudgetSelector (fpOptimize).
   if (!O.Herbie.Cache.empty() && !O.Solver.JointDP &&
       O.Solver.ApplyRewrites.empty()) {
-    const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
+    const bool target = st.tau > 0.0 || O.Solver.Tau > 0.0;
     const SmallVector<SiteUnit *> units = solvedUnits(st, target);
     Expected<std::unique_ptr<SiteTable>> table =
         lookupSiteTable(S, st, units, profilePath);
@@ -397,19 +397,18 @@ static Error priceUnlessCached(Session &S, FunctionFPState &st,
   // of a site solved alone go to errorBudgetSelector instead.
   if (!O.Solver.ApplyRewrites.empty())
     return Error::success();
-  const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
+  const bool target = st.tau > 0.0 || O.Solver.Tau > 0.0;
   return requireCostsOnAxis(st, solvedUnits(st, target && !O.Solver.JointDP));
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its
 // DP table is cached; false when F has no FP subgraph and no matrix product.
-static Expected<bool> collectFPCandidates(Session &S, Function &F,
-                                          double errorTol,
+static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
                                           unsigned sampleLogBits,
                                           FunctionFPState &st) {
   const Options &O = S.Opts;
   st.F = &F;
-  st.errTol = errorTol;
+  st.tau = tau;
 
   const Target &T = Target::of(F);
   if (T.isDevice() && O.Diagnostics.Print)
@@ -676,11 +675,11 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   return changed;
 }
 
-Expected<bool> fpOptimize(Session &S, Function &F, double errorTol) {
+Expected<bool> fpOptimize(Session &S, Function &F, double tau) {
   const Options &O = S.Opts;
   // A target written at the site wins over -poseidon-tau, the target of every
   // site that carries none; both mean the same.
-  const double target = errorTol > 0.0 ? errorTol : (double)O.Solver.Tau;
+  const double target = tau > 0.0 ? tau : (double)O.Solver.Tau;
 
   // Uniform sampling over [min, max] under-prices fixed-point Ozaki on matrices
   // of wide dynamic range, so a target defaults to a wide log-uniform range
@@ -691,22 +690,21 @@ Expected<bool> fpOptimize(Session &S, Function &F, double errorTol) {
 
   const StringSet<> declared = declaredFunctions(*F.getParent());
   FunctionFPState st;
-  Expected<bool> collected =
-      collectFPCandidates(S, F, errorTol, sampleLogBits, st);
+  Expected<bool> collected = collectFPCandidates(S, F, tau, sampleLogBits, st);
   if (!collected)
     return collected.takeError();
   if (!*collected) {
-    explainNothingToOptimize(S, F, target, errorTol > 0.0);
+    explainNothingToOptimize(S, F, target, tau > 0.0);
     return false;
   }
 
-  if (errorTol > 0.0 && O.Solver.Tau > 0.0 && O.Diagnostics.Print)
+  if (tau > 0.0 && O.Solver.Tau > 0.0 && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] " << F.getName()
-                 << ": the site's own accuracy target " << errorTol
+                 << ": the site's own accuracy target " << tau
                  << " overrides -poseidon-tau=" << O.Solver.Tau << '\n';
 
-  return solveAndApply(S, *F.getParent(), declared, {&st}, target,
-                       errorTol > 0.0, /*joint=*/false);
+  return solveAndApply(S, *F.getParent(), declared, {&st}, target, tau > 0.0,
+                       /*joint=*/false);
 }
 
 Expected<bool> solveJointly(Session &S, Module &M) {
@@ -728,11 +726,11 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   SmallVector<std::pair<Function *, double>, 4> targets;
   bool allFromSite = true;
   for (Function *F : marked) {
-    double errTol = 0.0;
-    F->getFnAttribute(kJointErrTol).getValueAsString().getAsDouble(errTol);
+    double tau = 0.0;
+    F->getFnAttribute(kJointErrTol).getValueAsString().getAsDouble(tau);
     F->removeFnAttr(kJointErrTol);
-    allFromSite &= errTol > 0.0;
-    targets.push_back({F, errTol > 0.0 ? errTol : (double)O.Solver.Tau});
+    allFromSite &= tau > 0.0;
+    targets.push_back({F, tau > 0.0 ? tau : (double)O.Solver.Tau});
   }
   const double jointErrTol = targets.front().second;
   if (llvm::any_of(targets,
@@ -762,10 +760,10 @@ Expected<bool> solveJointly(Session &S, Module &M) {
 
   const StringSet<> declared = declaredFunctions(M);
   std::vector<std::unique_ptr<FunctionFPState>> states;
-  for (auto &[F, errTol] : targets) {
+  for (auto &[F, tau] : targets) {
     auto st = std::make_unique<FunctionFPState>();
-    Expected<bool> collected = collectFPCandidates(
-        S, *F, errTol, O.Model.SampleLogBits.value_or(0), *st);
+    Expected<bool> collected =
+        collectFPCandidates(S, *F, tau, O.Model.SampleLogBits.value_or(0), *st);
     if (!collected)
       return collected.takeError();
     if (*collected) {
@@ -774,7 +772,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
       if (O.Diagnostics.Print)
         llvm::errs() << "[poseidon] joint solve: nothing to optimize in "
                      << F->getName() << '\n';
-      explainNothingToOptimize(S, *F, errTol, allFromSite);
+      explainNothingToOptimize(S, *F, tau, allFromSite);
       redirectNoopSite(S.Sites, F, S.Opts.Diagnostics.Print);
     }
   }

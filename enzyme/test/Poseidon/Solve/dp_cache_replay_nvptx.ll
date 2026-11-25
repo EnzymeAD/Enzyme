@@ -40,9 +40,9 @@
 ; RUN: awk '/^\[poseidon\] DP table:$/ {t = 1; print; next} t && /^ / {print; next} {t = 0}' %t/kinds/replay.log > %t/kinds/replay.table
 ; RUN: diff %t/kinds/solve.table %t/kinds/replay.table
 ; RUN: diff %t/kinds/solve.ll %t/kinds/replay.ll
-; RUN: grep -h -B3 '"unit": "CO"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CO %s
-; RUN: grep -h -B3 '"unit": "CS"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CS %s
-; RUN: grep -h -B2 '"unit": "CM"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CM --implicit-check-not=candidate_key %s
+; RUN: grep -h -B3 '"unit": "R"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CO %s
+; RUN: grep -h -B3 '"unit": "PT"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CS %s
+; RUN: grep -h -B2 '"unit": "M"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CM --implicit-check-not=candidate_key %s
 ; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_solve.ll > %t/kinds/two_solve.log 2>&1
 ; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_replay.ll > %t/kinds/two_replay.log 2>&1
 ; RUN: FileCheck --check-prefix=KINDS-TWO %s < %t/kinds/two_replay.log
@@ -65,13 +65,13 @@
 ; Each step entry of a kind, as grep -B keeps it: the lines before its unit.
 ; KINDS-TABLE-CO: "candidate_key": "{{[0-9A-F]+}}",
 ; KINDS-TABLE-CO-NEXT: "index": {{[0-9]+}},
-; KINDS-TABLE-CO-NEXT: "unit": "CO"
+; KINDS-TABLE-CO-NEXT: "unit": "R"
 ; KINDS-TABLE-CS: "candidate_key": "{{[0-9A-F]+}}",
 ; KINDS-TABLE-CS-NEXT: "index": {{[0-9]+}},
-; KINDS-TABLE-CS-NEXT: "unit": "CS"
+; KINDS-TABLE-CS-NEXT: "unit": "PT"
 ; KINDS-TABLE-CM: "candidate": {{[0-9]+}},
 ; KINDS-TABLE-CM-NEXT: "index": {{[0-9]+}},
-; KINDS-TABLE-CM-NEXT: "unit": "CM"
+; KINDS-TABLE-CM-NEXT: "unit": "M"
 
 ; KINDS-TWO: Cache entry for preprocess_matmul_body found. Loaded DP tables from cache.
 ; KINDS-TWO: Applying solution for matmul[1] -> direct-dispatch cublas f16/f32 (#10)

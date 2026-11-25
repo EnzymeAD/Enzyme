@@ -655,31 +655,31 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
 Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
   for (size_t i = 0; i < st.COs.size(); ++i) {
-    RewriteUnit &CO = st.COs[i];
-    if (CO.subgraph != &sg)
+    RewriteUnit &RU = st.COs[i];
+    if (RU.subgraph != &sg)
       continue;
     json::Object core;
     core["id"] = formatv("R{0}", i).str();
-    if (!CO.herbiePrecision.empty())
-      core["precision"] = CO.herbiePrecision;
-    if (!CO.herbieStatus.empty())
-      core["status"] = CO.herbieStatus;
-    core["candidates"] = (int64_t)CO.candidates.size();
-    if (!CO.unpricedReason.empty())
-      core["unpriced"] = CO.unpricedReason;
-    if (std::isfinite(CO.herbieBits) && std::isfinite(CO.initialHerbieAccuracy))
-      core["error_bits"] = (1.0 - CO.initialHerbieAccuracy) * CO.herbieBits;
+    if (!RU.herbiePrecision.empty())
+      core["precision"] = RU.herbiePrecision;
+    if (!RU.herbieStatus.empty())
+      core["status"] = RU.herbieStatus;
+    core["candidates"] = (int64_t)RU.candidates.size();
+    if (!RU.unpricedReason.empty())
+      core["unpriced"] = RU.unpricedReason;
+    if (std::isfinite(RU.herbieBits) && std::isfinite(RU.initialHerbieAccuracy))
+      core["error_bits"] = (1.0 - RU.initialHerbieAccuracy) * RU.herbieBits;
     U.herbie.push_back(std::move(core));
 
     SmallVector<unsigned, 1> outs;
-    for (Value *root : CO.roots)
+    for (Value *root : RU.roots)
       for (unsigned k = 0; k < sg.outputs.size(); ++k)
         if (sg.outputs[k] == root)
           outs.push_back(k);
-    std::string rdt = dtypeOfType(CO.roots.front()->getType());
+    std::string rdt = dtypeOfType(RU.roots.front()->getType());
     std::optional<int64_t> base;
-    if (std::isfinite(CO.initialCompCost)) {
-      Expected<int64_t> c = onAxis(CO.initialCompCost * (double)CO.executions);
+    if (std::isfinite(RU.initialCompCost)) {
+      Expected<int64_t> c = onAxis(RU.initialCompCost * (double)RU.executions);
       if (!c)
         return c.takeError();
       base = *c;
@@ -687,11 +687,11 @@ Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
 
     auto fill = [&](Alt &A, const std::string &expr) {
       A.kind = "algebraic";
-      A.precision = CO.herbiePrecision;
+      A.precision = RU.herbiePrecision;
       A.fpcore = expr;
       A.outputs = outs;
-      A.at = cast<Instruction>(CO.roots.front());
-      A.baseAcc = CO.initialAccCost;
+      A.at = cast<Instruction>(RU.roots.front());
+      A.baseAcc = RU.initialAccCost;
       A.baseCost = base;
       SmallVector<std::pair<std::string, std::string>, 2> specs;
       A.c = fpcoreToC(expr, scratch, how, rdt, &specs);
@@ -738,35 +738,35 @@ Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.summary = what;
     };
 
-    for (size_t j = 0; j < CO.candidates.size(); ++j) {
-      const RewriteCandidate &cand = CO.candidates[j];
+    for (size_t j = 0; j < RU.candidates.size(); ++j) {
+      const RewriteCandidate &cand = RU.candidates[j];
       Alt A;
       A.id = formatv("R{0}_{1}", i, cand.ordinal).str();
-      A.item = &CO;
+      A.item = &RU;
       A.index = j;
       fill(A, cand.expr);
       if (cand.CompCost != std::numeric_limits<double>::max()) {
-        Expected<int64_t> c = onAxis(CO.getCompCostDelta(j));
+        Expected<int64_t> c = onAxis(RU.getCompCostDelta(j));
         if (!c)
           return c.takeError();
         A.costDelta = *c;
       }
-      double acc = CO.getAccCostDelta(j);
+      double acc = RU.getAccCostDelta(j);
       if (std::isfinite(acc)) {
         A.accDelta = acc;
         double e = relErr(acc);
         if (std::isfinite(e))
           A.err = e;
       }
-      if (std::isfinite(CO.herbieBits)) {
-        if (std::isfinite(CO.initialHerbieAccuracy))
-          A.bitsBefore = (1.0 - CO.initialHerbieAccuracy) * CO.herbieBits;
+      if (std::isfinite(RU.herbieBits)) {
+        if (std::isfinite(RU.initialHerbieAccuracy))
+          A.bitsBefore = (1.0 - RU.initialHerbieAccuracy) * RU.herbieBits;
         if (std::isfinite(cand.herbieAccuracy))
-          A.bitsAfter = (1.0 - cand.herbieAccuracy) * CO.herbieBits;
+          A.bitsAfter = (1.0 - cand.herbieAccuracy) * RU.herbieBits;
       }
       U.alts.push_back(std::move(A));
     }
-    for (const auto &[expr, why] : CO.dropped) {
+    for (const auto &[expr, why] : RU.dropped) {
       Alt A;
       fill(A, expr);
       A.status = "rejected";
@@ -790,8 +790,8 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
     }
 
   for (size_t i = 0; i < st.CSs.size(); ++i) {
-    PrecisionUnit &CS = st.CSs[i];
-    if (CS.subgraph != &sg)
+    PrecisionUnit &PU = st.CSs[i];
+    if (PU.subgraph != &sg)
       continue;
     auto describe = [&](Alt &A, PTCandidate &cand) {
       bool expansion = false;
@@ -855,43 +855,43 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
           if (FPNode *N = nodeOf(O))
             A.c.push_back(renderC(*N, typed, dtypeOfType(O->getType())));
       }
-      A.baseAcc = CS.initialAccCost;
+      A.baseAcc = PU.initialAccCost;
       A.baseCost = U.baseCost;
     };
-    for (size_t j = 0; j < CS.candidates.size(); ++j) {
-      PTCandidate &cand = CS.candidates[j];
+    for (size_t j = 0; j < PU.candidates.size(); ++j) {
+      PTCandidate &cand = PU.candidates[j];
       Alt A;
       A.id = formatv("PT{0}_{1}", i, cand.ordinal).str();
-      A.item = &CS;
+      A.item = &PU;
       A.index = j;
       describe(A, cand);
       for (unsigned o = 0; o < sg.outputs.size(); ++o)
         A.outputs.push_back(o);
       std::optional<int64_t> cost;
       if (cand.CompCost != std::numeric_limits<double>::max()) {
-        Expected<int64_t> c = onAxis(CS.getCompCostDelta(j));
+        Expected<int64_t> c = onAxis(PU.getCompCostDelta(j));
         if (!c)
           return c.takeError();
         cost = *c;
       }
-      double acc = CS.getAccCostDelta(j);
+      double acc = PU.getAccCostDelta(j);
       PrecisionUnit::RewriteUnitSet cos;
       for (const auto &[item, idx] : applied)
-        for (RewriteUnit &CO : st.COs)
-          if (&CO == item && CO.subgraph == &sg)
-            cos.insert(&CO);
-      if (applied.count({&CS, j}) && !cos.empty()) {
+        for (RewriteUnit &RU : st.COs)
+          if (&RU == item && RU.subgraph == &sg)
+            cos.insert(&RU);
+      if (applied.count({&PU, j}) && !cos.empty()) {
         PrecisionUnit::RepriceKey key{j, cos};
-        auto c = CS.compCostDeltaCache.find(key);
+        auto c = PU.compCostDeltaCache.find(key);
         cost = std::nullopt;
-        if (c != CS.compCostDeltaCache.end()) {
+        if (c != PU.compCostDeltaCache.end()) {
           Expected<int64_t> repriced = onAxis(c->second);
           if (!repriced)
             return repriced.takeError();
           cost = *repriced;
         }
-        auto a = CS.accCostDeltaCache.find(key);
-        acc = a == CS.accCostDeltaCache.end()
+        auto a = PU.accCostDeltaCache.find(key);
+        acc = a == PU.accCostDeltaCache.end()
                   ? std::numeric_limits<double>::quiet_NaN()
                   : a->second;
       }
@@ -904,7 +904,7 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       }
       U.alts.push_back(std::move(A));
     }
-    for (const auto &[desc, why] : CS.dropped) {
+    for (const auto &[desc, why] : PU.dropped) {
       Alt A;
       A.kind = "precision";
       A.summary = desc;
@@ -951,13 +951,13 @@ void Explainer::judge(Unit &U) {
       continue;
     }
     if (A.kind == "matmul" && rec.selector == "error-budget") {
-      const auto *CM = cast<MatmulUnit>(A.item);
-      const MatmulUnit::Option &o = CM->candidates[A.index];
+      const auto *MU = cast<MatmulUnit>(A.item);
+      const MatmulUnit::Option &o = MU->candidates[A.index];
       if (tau > 0.0 && o.domainError > tau) {
         A.reason = "modelled domain error " + num(o.domainError) +
                    " is above the target " + num(tau);
         A.rank = A.costDelta && *A.costDelta < 0 ? 0 : 2;
-      } else if (o.compCost >= CM->initialCompCost) {
+      } else if (o.compCost >= MU->initialCompCost) {
         A.reason = "not cheaper than the product as written";
         A.rank = 3;
       } else {
@@ -1045,20 +1045,20 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     SmallVector<std::string, 2> why;
     if (sg) {
       bool hadCO = false;
-      for (const RewriteUnit &CO : st.COs)
-        if (CO.subgraph == sg) {
+      for (const RewriteUnit &RU : st.COs)
+        if (RU.subgraph == sg) {
           hadCO = true;
-          if (!CO.unpricedReason.empty())
+          if (!RU.unpricedReason.empty())
             why.push_back("its candidates could not be priced: " +
-                          CO.unpricedReason);
-          else if (!CO.herbieStatus.empty() && CO.candidates.empty())
-            why.push_back("Herbie returned no alternative (" + CO.herbieStatus +
+                          RU.unpricedReason);
+          else if (!RU.herbieStatus.empty() && RU.candidates.empty())
+            why.push_back("Herbie returned no alternative (" + RU.herbieStatus +
                           ")");
         }
-      for (const PrecisionUnit &CS : st.CSs)
-        if (CS.subgraph == sg && !CS.unpricedReason.empty())
+      for (const PrecisionUnit &PU : st.CSs)
+        if (PU.subgraph == sg && !PU.unpricedReason.empty())
           why.push_back("its candidates could not be priced: " +
-                        CS.unpricedReason);
+                        PU.unpricedReason);
       if (!hadCO) {
         if (!Sess.Opts.Candidates.EnableHerbie)
           why.push_back("the algebraic search is disabled");
@@ -1173,9 +1173,9 @@ Error Explainer::buildSubgraph(size_t s) {
       out["name"] = name;
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
-    for (const RewriteUnit &CO : st.COs)
-      if (CO.subgraph == &sg && !CO.isArray() && CO.roots.front() == O) {
-        out["fpcore"] = CO.expr;
+    for (const RewriteUnit &RU : st.COs)
+      if (RU.subgraph == &sg && !RU.isArray() && RU.roots.front() == O) {
+        out["fpcore"] = RU.expr;
         break;
       }
     FPNode *ON = nodeOf(O);
@@ -1246,11 +1246,11 @@ Error Explainer::buildSubgraph(size_t s) {
 }
 
 Error Explainer::buildMatmul(size_t m) {
-  MatmulUnit &CM = st.CMs[m];
+  MatmulUnit &MU = st.CMs[m];
   Unit U;
   U.id = formatv("M{0}", m).str();
   U.kind = "matmul";
-  const AbstractMatmul *mm = CM.matmul;
+  const AbstractMatmul *mm = MU.matmul;
   if (mm) {
     U.root = dyn_cast_or_null<Instruction>(mm->outputValue);
     if (!U.root && !mm->footprint.empty())
@@ -1264,27 +1264,27 @@ Error Explainer::buildMatmul(size_t m) {
     U.shape = dim(M) + "x" + dim(N) + "x" + dim(K);
   }
   U.loc = locOf(U.root);
-  U.executions = CM.executions;
-  if (CM.initialCompCost >= 0.0) {
-    Expected<int64_t> c = onAxis(CM.initialCompCost * (double)CM.executions);
+  U.executions = MU.executions;
+  if (MU.initialCompCost >= 0.0) {
+    Expected<int64_t> c = onAxis(MU.initialCompCost * (double)MU.executions);
     if (!c)
       return c.takeError();
     U.baseCost = *c;
   }
-  for (size_t j = 0; j < CM.candidates.size(); ++j) {
-    const MatmulUnit::Option &o = CM.candidates[j];
+  for (size_t j = 0; j < MU.candidates.size(); ++j) {
+    const MatmulUnit::Option &o = MU.candidates[j];
     Alt A;
     A.id = formatv("M{0}_{1}", m, j).str();
     A.kind = "matmul";
     A.summary = matmulOptionLabel(o);
-    A.item = &CM;
+    A.item = &MU;
     A.index = j;
     A.at = U.root;
-    Expected<int64_t> c = onAxis(CM.getCompCostDelta(j));
+    Expected<int64_t> c = onAxis(MU.getCompCostDelta(j));
     if (!c)
       return c.takeError();
     A.costDelta = *c;
-    double acc = CM.getAccCostDelta(j);
+    double acc = MU.getAccCostDelta(j);
     if (std::isfinite(acc)) {
       A.accDelta = acc;
       if (rec.selector != "error-budget" && std::isfinite(relErr(acc)))

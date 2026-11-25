@@ -79,7 +79,7 @@ using Routines = ExpansionRoutines<HostArith>;
 static Routines routines() { return Routines(HostArith()); }
 
 static F2 pair(const ExpansionLimbs &a) { return {a.x[0], a.x[1]}; }
-static ExpansionLimbs limbs2(F2 r) {
+static ExpansionLimbs components2(F2 r) {
   ExpansionLimbs c;
   c.n = 2;
   c.x[0] = r.hi;
@@ -92,17 +92,17 @@ static ExpansionLimbs sized(unsigned n) {
   return c;
 }
 
-ExpansionLimbs ExpansionLimbs::of(const float *limbs, unsigned n) {
+ExpansionLimbs ExpansionLimbs::of(const float *components, unsigned n) {
   ExpansionLimbs r;
   r.n = n;
   for (unsigned i = 0; i < n; ++i)
-    r.x[i] = limbs[i];
+    r.x[i] = components[i];
   return r;
 }
 
 ExpansionLimbs expansionFromF64(double v, unsigned n) {
   if (n == 2)
-    return limbs2(routines().dsFromF64(v));
+    return components2(routines().dsFromF64(v));
   ExpansionLimbs r = sized(n);
   routines().expansionFromF64(n, v, r.x);
   return r;
@@ -110,7 +110,7 @@ ExpansionLimbs expansionFromF64(double v, unsigned n) {
 
 ExpansionLimbs expansionFromF32(float v, unsigned n) {
   if (n == 2)
-    return limbs2(routines().dsFromF32(v));
+    return components2(routines().dsFromF32(v));
   ExpansionLimbs r = sized(n);
   routines().expansionFromF32(n, v, r.x);
   return r;
@@ -130,7 +130,7 @@ float expansionToF32(const ExpansionLimbs &a) {
 
 ExpansionLimbs expansionNeg(const ExpansionLimbs &a) {
   if (a.n == 2)
-    return limbs2(routines().dsNeg(pair(a)));
+    return components2(routines().dsNeg(pair(a)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionNeg(a.n, a.x, c.x);
   return c;
@@ -138,7 +138,7 @@ ExpansionLimbs expansionNeg(const ExpansionLimbs &a) {
 
 ExpansionLimbs expansionAdd(const ExpansionLimbs &a, const ExpansionLimbs &b) {
   if (a.n == 2)
-    return limbs2(routines().dsAdd(pair(a), pair(b)));
+    return components2(routines().dsAdd(pair(a), pair(b)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionAdd(a.n, a.x, b.x, c.x);
   return c;
@@ -146,7 +146,7 @@ ExpansionLimbs expansionAdd(const ExpansionLimbs &a, const ExpansionLimbs &b) {
 
 ExpansionLimbs expansionSub(const ExpansionLimbs &a, const ExpansionLimbs &b) {
   if (a.n == 2)
-    return limbs2(routines().dsSub(pair(a), pair(b)));
+    return components2(routines().dsSub(pair(a), pair(b)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionSub(a.n, a.x, b.x, c.x);
   return c;
@@ -154,7 +154,7 @@ ExpansionLimbs expansionSub(const ExpansionLimbs &a, const ExpansionLimbs &b) {
 
 ExpansionLimbs expansionMul(const ExpansionLimbs &a, const ExpansionLimbs &b) {
   if (a.n == 2)
-    return limbs2(routines().dsMul(pair(a), pair(b)));
+    return components2(routines().dsMul(pair(a), pair(b)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionMul(a.n, a.x, b.x, c.x);
   return c;
@@ -162,7 +162,7 @@ ExpansionLimbs expansionMul(const ExpansionLimbs &a, const ExpansionLimbs &b) {
 
 ExpansionLimbs expansionSqr(const ExpansionLimbs &a) {
   if (a.n == 2)
-    return limbs2(routines().dsMul(pair(a), pair(a)));
+    return components2(routines().dsMul(pair(a), pair(a)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionSqr(a.n, a.x, c.x);
   return c;
@@ -170,7 +170,7 @@ ExpansionLimbs expansionSqr(const ExpansionLimbs &a) {
 
 ExpansionLimbs expansionDiv(const ExpansionLimbs &a, const ExpansionLimbs &b) {
   if (a.n == 2)
-    return limbs2(routines().dsDiv(pair(a), pair(b)));
+    return components2(routines().dsDiv(pair(a), pair(b)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionDiv(a.n, a.x, b.x, c.x);
   return c;
@@ -178,7 +178,7 @@ ExpansionLimbs expansionDiv(const ExpansionLimbs &a, const ExpansionLimbs &b) {
 
 ExpansionLimbs expansionSqrt(const ExpansionLimbs &a) {
   if (a.n == 2)
-    return limbs2(routines().dsSqrt(pair(a)));
+    return components2(routines().dsSqrt(pair(a)));
   ExpansionLimbs c = sized(a.n);
   routines().expansionSqrt(a.n, a.x, c.x);
   return c;
@@ -187,14 +187,14 @@ ExpansionLimbs expansionSqrt(const ExpansionLimbs &a) {
 ExpansionLimbs expansionFma(const ExpansionLimbs &a, const ExpansionLimbs &b,
                             const ExpansionLimbs &c) {
   if (a.n == 2)
-    return limbs2(routines().dsFma(pair(a), pair(b), pair(c)));
+    return components2(routines().dsFma(pair(a), pair(b), pair(c)));
   return expansionAdd(expansionMul(a, b), c);
 }
 
 ExpansionLimbs expansionFmaSqr(const ExpansionLimbs &a,
                                const ExpansionLimbs &c) {
   if (a.n == 2)
-    return limbs2(routines().dsFma(pair(a), pair(a), pair(c)));
+    return components2(routines().dsFma(pair(a), pair(a), pair(c)));
   return expansionAdd(expansionSqr(a), c);
 }
 

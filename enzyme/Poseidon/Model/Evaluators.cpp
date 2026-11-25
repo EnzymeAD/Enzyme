@@ -73,8 +73,8 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     return false;
   auto operand = [&](unsigned i) -> ExpansionLimbs {
     const FPNode *o = node->operands[i];
-    auto kept = limbs.find(o);
-    if (kept != limbs.end() && nodeChange.at(o) == nodeChange.at(node))
+    auto kept = components.find(o);
+    if (kept != components.end() && nodeChange.at(o) == nodeChange.at(node))
       return kept->second;
     double v = getResult(o);
     return o->hasPrecision(PrecisionChangeType::FP32)
@@ -101,7 +101,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
   else
     r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
                    : expansionFma(operand(0), operand(1), operand(2));
-  limbs[node] = r;
+  components[node] = r;
   cache.try_emplace(node, node->hasPrecision(PrecisionChangeType::FP32)
                               ? (double)expansionToF32(r)
                               : expansionToF64(r));

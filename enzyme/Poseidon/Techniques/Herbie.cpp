@@ -369,31 +369,31 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
   return H;
 }
 
-// Records `answer` in its core's unit `CO`: the status of the first answer,
+// Records `answer` in its core's unit `RU`: the status of the first answer,
 // and each expression not in `seen` as a candidate, priced relative to the
 // core as written.
 static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
-                      RewriteUnit &CO, std::unordered_set<std::string> &seen) {
-  if (!CO.herbieAnswered)
-    CO.herbieStatus = status.str();
+                      RewriteUnit &RU, std::unordered_set<std::string> &seen) {
+  if (!RU.herbieAnswered)
+    RU.herbieStatus = status.str();
   if (!answer.Rewrites)
     return;
-  CO.herbieAnswered = true;
+  RU.herbieAnswered = true;
 
   const HerbieRewrites &rewrites = *answer.Rewrites;
   const HerbieCostAccuracy &costAccuracy = rewrites.CostAccuracy;
   const double bits = rewrites.Bits;
-  CO.herbieBits = bits;
+  RU.herbieBits = bits;
   const double initialCost = costAccuracy.Initial.Cost;
-  CO.initialHerbieAccuracy = 1.0 - costAccuracy.Initial.ErrorBits / bits;
+  RU.initialHerbieAccuracy = 1.0 - costAccuracy.Initial.ErrorBits / bits;
 
   auto add = [&](const HerbiePoint &point, const std::string &expr) {
     if (!seen.insert(expr).second)
       return;
     RewriteCandidate candidate(point.Cost / initialCost,
                                1.0 - point.ErrorBits / bits, expr);
-    candidate.ordinal = CO.candidates.size();
-    CO.candidates.push_back(candidate);
+    candidate.ordinal = RU.candidates.size();
+    RU.candidates.push_back(candidate);
   };
   add(costAccuracy.Best, rewrites.BestExpr);
   for (const HerbieAlternative &alternative : costAccuracy.Alternatives)
@@ -401,16 +401,16 @@ static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
       add(alternative.Point, *alternative.Expr);
 }
 
-// An error at the site `F` if an expression of `answer`, for the unit `CO`
+// An error at the site `F` if an expression of `answer`, for the unit `RU`
 // and read from `source` (its run's label and cache file), is one the model
 // cannot read: an answer is external input, checked before anything evaluates
 // or lowers it.
 static Error checkAnswer(const HerbieCoreAnswer &answer,
                          const std::pair<std::string, std::string> &source,
-                         const RewriteUnit &CO, const Function &F, FPGraph &G) {
+                         const RewriteUnit &RU, const Function &F, FPGraph &G) {
   auto check = [&](const std::string &expr) -> Error {
     Expected<FPNode *> parsed =
-        parseHerbieExpr(expr, G, nullptr, &CO.subgraph->inputs);
+        parseHerbieExpr(expr, G, nullptr, &RU.subgraph->inputs);
     if (parsed)
       return Error::success();
     return userError(
@@ -479,9 +479,9 @@ static Error collectHerbieRewrites(Session &S,
     if (Run.Result != HerbieRunResult::Outcome::Timeout &&
         Run.Result != HerbieRunResult::Outcome::Crashed)
       continue;
-    for (RewriteUnit &CO : COs)
-      if (!CO.herbieAnswered)
-        CO.herbieStatus = Run.Result == HerbieRunResult::Outcome::Timeout
+    for (RewriteUnit &RU : COs)
+      if (!RU.herbieAnswered)
+        RU.herbieStatus = Run.Result == HerbieRunResult::Outcome::Timeout
                               ? "timeout"
                               : "crashed";
   }
@@ -776,16 +776,16 @@ Error SubgraphCores::addPerOutputCores(const EligibleOutput &E,
   getUniqueArgs(E.expr, args);
   std::string precondition = rangePrecondition(O, args, G);
   for (const char *prec : precs) {
-    RewriteUnit CO(subgraph, {E.output}, {E.grad}, E.expr, E.executions);
-    if (Error Err = CO.priceAsWritten(S.CostModel))
+    RewriteUnit RU(subgraph, {E.output}, {E.grad}, E.expr, E.executions);
+    if (Error Err = RU.priceAsWritten(S.CostModel))
       return Err;
-    CO.herbiePrecision = prec;
+    RU.herbiePrecision = prec;
     std::string herbieInput =
         fpcoreText(args, prec, precondition, "", batch.units.size(), E.expr);
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Herbie input:\n" << herbieInput << '\n';
     batch.inputs.push_back(herbieInput);
-    batch.units.push_back(CO);
+    batch.units.push_back(RU);
   }
   return Error::success();
 }
@@ -876,12 +876,12 @@ Error SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Herbie array input:\n" << herbieInput << '\n';
     batch.inputs.push_back(herbieInput);
-    RewriteUnit &CO =
+    RewriteUnit &RU =
         batch.units.emplace_back(subgraph, ArrayRef<Value *>(roots), grads,
                                  body, group.front()->executions);
-    if (Error Err = CO.priceAsWritten(S.CostModel))
+    if (Error Err = RU.priceAsWritten(S.CostModel))
       return Err;
-    CO.herbiePrecision = prec;
+    RU.herbiePrecision = prec;
   }
   return Error::success();
 }
@@ -1304,17 +1304,17 @@ static void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
     collectInputs(operand, inputs, seen, used);
 }
 
-// The elements of a candidate of CO parsed as `parsed`, one per output: the
+// The elements of a candidate of RU parsed as `parsed`, one per output: the
 // operands of an array, or the candidate itself; none when an array candidate
 // has another count.
 static std::optional<SmallVector<FPNode *, 1>>
-elementsOf(FPNode *parsed, const RewriteUnit &CO) {
+elementsOf(FPNode *parsed, const RewriteUnit &RU) {
   SmallVector<FPNode *, 1> elements;
-  if (!CO.isArray()) {
+  if (!RU.isArray()) {
     elements.push_back(parsed);
     return elements;
   }
-  if (!parsed->is(fpcore::Array) || parsed->operands.size() != CO.roots.size())
+  if (!parsed->is(fpcore::Array) || parsed->operands.size() != RU.roots.size())
     return std::nullopt;
   elements.append(parsed->operands.begin(), parsed->operands.end());
   return elements;
@@ -1327,8 +1327,8 @@ namespace {
 // gradients.
 class RewriteAccuracy {
 public:
-  RewriteAccuracy(const Options &O, RewriteUnit &CO, FPGraph &G)
-      : O(O), CO(CO), G(G), samples(samplesOf(O, *CO.subgraph, G)) {}
+  RewriteAccuracy(const Options &O, RewriteUnit &RU, FPGraph &G)
+      : O(O), RU(RU), G(G), samples(samplesOf(O, *RU.subgraph, G)) {}
 
   // Sets the unit's accuracy cost as written and each candidate's, and drops
   // the candidates that cannot be priced.
@@ -1352,7 +1352,7 @@ private:
   bool keep(RewriteCandidate &candidate, CandidatePricing &P);
 
   const Options &O;
-  RewriteUnit &CO;
+  RewriteUnit &RU;
   FPGraph &G;
   SubgraphSamples &samples;
   SmallVector<BaselineAccuracy::Output, 1> rootSamples;
@@ -1367,8 +1367,8 @@ RewriteAccuracy::CandidatePricing
 RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
   CandidatePricing P;
   P.parsed = cantFail(
-      parseHerbieExpr(candidate.expr, G, nullptr, &CO.subgraph->inputs));
-  std::optional<SmallVector<FPNode *, 1>> elements = elementsOf(P.parsed, CO);
+      parseHerbieExpr(candidate.expr, G, nullptr, &RU.subgraph->inputs));
+  std::optional<SmallVector<FPNode *, 1>> elements = elementsOf(P.parsed, RU);
   if (!elements) {
     P.wrongShape = true;
     return P;
@@ -1376,7 +1376,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
   for (auto [k, element] : enumerate(*elements)) {
     SmallPtrSet<const FPNode *, 32> seen;
     SmallPtrSet<Value *, 8> used;
-    collectInputs(element, CO.subgraph->inputs, seen, used);
+    collectInputs(element, RU.subgraph->inputs, seen, used);
     const SmallPtrSet<Value *, 8> &elementInputs = rootInputs[k];
     if (!all_of(used, [&](Value *V) { return elementInputs.contains(V); })) {
       P.strayElement = k;
@@ -1405,8 +1405,8 @@ bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] dropping array candidate with "
                    << P.parsed->operands.size() << " element(s) for "
-                   << CO.roots.size() << " outputs\n";
-    CO.dropped.push_back(
+                   << RU.roots.size() << " outputs\n";
+    RU.dropped.push_back(
         {candidate.expr, "it does not have one element per output"});
     return false;
   }
@@ -1416,12 +1416,12 @@ bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
   for (auto [k, E] : enumerate(P.elements)) {
     llvm::errs() << E.diag;
     if (E.discard) {
-      CO.dropped.push_back({candidate.expr, E.why});
+      RU.dropped.push_back({candidate.expr, E.why});
       return false;
     }
     const double grad = std::fabs(rootSamples[k].grad);
     total += E.cost * grad;
-    if (CO.isArray() && O.Diagnostics.Print)
+    if (RU.isArray() && O.Diagnostics.Print)
       perElement +=
           formatv(" {0:e}/{1:e}", E.cost * grad, rootSamples[k].error * grad)
               .str();
@@ -1430,14 +1430,14 @@ bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] dropping candidate: element "
                    << *P.strayElement << " reads a value its output does not\n";
-    CO.dropped.push_back(
+    RU.dropped.push_back(
         {candidate.expr, formatv("its element {0} reads a value that "
                                  "output does not",
                                  *P.strayElement)
                              .str()});
     return false;
   }
-  if (CO.isArray() && O.Diagnostics.Print)
+  if (RU.isArray() && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] array candidate per element (cand/orig):"
                  << perElement << '\n';
   candidate.accuracyCost = total;
@@ -1448,25 +1448,25 @@ bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
 
 void RewriteAccuracy::price() {
   SmallVector<const FPNode *, 1> nodes;
-  for (Value *root : CO.roots)
+  for (Value *root : RU.roots)
     nodes.push_back(G.valueToNodeMap[root]);
   std::optional<BaselineAccuracy> baseline =
-      CO.priceBaseline(samples, nodes, CO.rootGrads, O.Diagnostics.Print);
+      RU.priceBaseline(samples, nodes, RU.rootGrads, O.Diagnostics.Print);
   if (!baseline)
     return;
   ArrayRef<SubgraphSamples::Point> sampledPoints = baseline->points;
   rootSamples = std::move(baseline->outputs);
-  for (Value *root : CO.roots) {
+  for (Value *root : RU.roots) {
     SmallPtrSet<const FPNode *, 32> seen;
     SmallPtrSet<Value *, 8> used;
-    collectInputs(G.valueToNodeMap[root], CO.subgraph->inputs, seen, used);
+    collectInputs(G.valueToNodeMap[root], RU.subgraph->inputs, seen, used);
     rootInputs.push_back(std::move(used));
   }
 
   // Parsing extends the site's maps, so the candidates are read in order and
   // only their elements are priced concurrently.
   SmallVector<CandidatePricing, 4> pricings;
-  for (const RewriteCandidate &candidate : CO.candidates)
+  for (const RewriteCandidate &candidate : RU.candidates)
     pricings.push_back(prepare(candidate));
   SmallVector<ElementPricing *, 0> allElements;
   for (CandidatePricing &P : pricings)
@@ -1480,10 +1480,10 @@ void RewriteAccuracy::price() {
     chargeWorstArm(O, *E);
 
   SmallVector<RewriteCandidate, 4> kept;
-  for (auto [candidate, P] : zip(CO.candidates, pricings))
+  for (auto [candidate, P] : zip(RU.candidates, pricings))
     if (keep(candidate, P))
       kept.push_back(std::move(candidate));
-  CO.candidates = std::move(kept);
+  RU.candidates = std::move(kept);
 }
 
 //===----------------------------------------------------------------------===//

@@ -38,7 +38,7 @@ namespace poseidon {
 namespace {
 
 // The two components of a two-component expansion, the routines' pair.
-struct DSValue {
+struct PairValue {
   Value *hi;
   Value *lo;
 };
@@ -48,7 +48,7 @@ struct IRArith {
   using F32 = Value *;
   using F64 = Value *;
   using Bool = Value *;
-  using Pair = DSValue;
+  using Pair = PairValue;
 
   IRBuilder<> &B;
 
@@ -102,8 +102,8 @@ struct IRArith {
 };
 
 using Routines = ExpansionRoutines<IRArith>;
-using PairOp1 = DSValue (Routines::*)(DSValue);
-using PairOp2 = DSValue (Routines::*)(DSValue, DSValue);
+using PairOp1 = PairValue (Routines::*)(PairValue);
+using PairOp2 = PairValue (Routines::*)(PairValue, PairValue);
 using WideOp1 = void (Routines::*)(unsigned, Value *const *, Value **);
 using WideOp2 = void (Routines::*)(unsigned, Value *const *, Value *const *,
                                    Value **);
@@ -124,12 +124,12 @@ static void checkComponents(unsigned n) {
                        "to fabricate an unimplemented component count.");
 }
 
-static DSValue pairOf(const ExpansionValue &v) {
+static PairValue pairOf(const ExpansionValue &v) {
   assert(v.n() == 2 && "a pair is a two-component expansion");
   return {v.x[0], v.x[1]};
 }
 
-static ExpansionValue expansionOf(DSValue p) {
+static ExpansionValue expansionOf(PairValue p) {
   ExpansionValue r;
   r.x.assign({p.hi, p.lo});
   return r;
@@ -241,7 +241,7 @@ Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
     return R.expansionToF64(v.n(), v.x.data());
   Value *joined = R.dsToF64(pairOf(v));
   // Every pair here is normalized, so a Dekker split of this restore returns
-  // the same two limbs; only tagged restores are folded.
+  // the same two components; only tagged restores are folded.
   if (auto *I = dyn_cast<Instruction>(joined))
     I->setMetadata(kPairJoin, MDNode::get(I->getContext(), {}));
   return joined;
@@ -292,7 +292,8 @@ bool matchDekkerSplits(Value *V, bool allowFCmp,
 // Exact for a normalized pair, bit for bit, so only joins tagged by
 // emitExpansionToFP are folded. InstCombine does not fold the pair because the
 // split reads the join twice.
-bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
+bool foldDSPairRoundtrip(Function &F,
+                         SmallVectorImpl<Value *> *foldedComponents,
                          bool print) {
   SmallVector<Instruction *> joins;
   for (Instruction &I : instructions(F))
@@ -305,18 +306,19 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
     auto *elo = dyn_cast<FPExtInst>(J->getOperand(1));
     if (!ehi || !elo || ehi == elo)
       continue;
-    Value *hiLimb = ehi->getOperand(0), *loLimb = elo->getOperand(0);
-    if (!hiLimb->getType()->isFloatTy() || !loLimb->getType()->isFloatTy())
+    Value *hiComponent = ehi->getOperand(0), *loComponent = elo->getOperand(0);
+    if (!hiComponent->getType()->isFloatTy() ||
+        !loComponent->getType()->isFloatTy())
       continue;
     SmallVector<DekkerSplit, 1> splits;
     if (!matchDekkerSplits(J, /*allowFCmp=*/false, splits) ||
         splits.size() != 1)
       continue;
 
-    splits.front().replaceWith(hiLimb, loLimb);
-    if (foldedLimbs) {
-      foldedLimbs->push_back(hiLimb);
-      foldedLimbs->push_back(loLimb);
+    splits.front().replaceWith(hiComponent, loComponent);
+    if (foldedComponents) {
+      foldedComponents->push_back(hiComponent);
+      foldedComponents->push_back(loComponent);
     }
     if (J->use_empty()) {
       J->eraseFromParent();
@@ -354,10 +356,10 @@ static StringRef mathNameOf(Function &callee) {
 
 namespace {
 
-// A loop-carried incoming of the limb phis `phis`, resolved once the subgraph
-// is converted: the accumulator phi and the accumulation feeding it are
-// mutually dependent, and resolving the back edge eagerly would collapse the
-// phi to a single double.
+// A loop-carried incoming of the component phis `phis`, resolved once the
+// subgraph is converted: the accumulator phi and the accumulation feeding it
+// are mutually dependent, and resolving the back edge eagerly would collapse
+// the phi to a single double.
 struct DeferredPhiIn {
   SmallVector<PHINode *, 4> phis;
   Value *incoming;
@@ -370,16 +372,16 @@ struct DeferredPhiIn {
 // iterating it, and several can share one insertion point.
 using ExpansionMap = MapVector<Value *, ExpansionValue>;
 
-// The greedy split of a constant into n FP32 limbs.
+// The greedy split of a constant into n FP32 components.
 static ExpansionValue splitConstantFP(IRBuilder<> &B, ConstantFP *CFP,
                                       unsigned n) {
   double val = CFP->getValueAPF().convertToDouble();
   ExpansionValue r;
   double rem = val;
   for (unsigned i = 0; i < n; ++i) {
-    float limb = static_cast<float>(rem);
-    r.x.push_back(ConstantFP::get(B.getFloatTy(), limb));
-    rem -= static_cast<double>(limb);
+    float component = static_cast<float>(rem);
+    r.x.push_back(ConstantFP::get(B.getFloatTy(), component));
+    rem -= static_cast<double>(component);
   }
   return r;
 }
@@ -391,15 +393,15 @@ static bool hasExpansion(Value *op) {
   return T->isFloatTy() || T->isDoubleTy();
 }
 
-// The name of limb c of a carried phi, after the routines' instructions: ds.*
-// for a pair, mfx.* for a wider expansion.
-static const char *limbPhiName(unsigned n, unsigned c) {
+// The name of component c of a carried phi, after the routines' instructions:
+// ds.* for a pair, mfx.* for a wider expansion.
+static const char *componentPhiName(unsigned n, unsigned c) {
   if (n == 2)
     return c == 0 ? "ds.phi.hi" : "ds.phi.lo";
   return "mfx.phi";
 }
 
-// The phi `phi` carried as n limb phis, recorded in `expansionMap`; an
+// The phi `phi` carried as n component phis, recorded in `expansionMap`; an
 // incoming not converted yet is a loop back edge, left in `deferred`.
 static ExpansionValue expandPhi(IRBuilder<> &B, PHINode *phi, unsigned n,
                                 ExpansionMap &expansionMap,
@@ -409,9 +411,10 @@ static ExpansionValue expandPhi(IRBuilder<> &B, PHINode *phi, unsigned n,
   ExpansionValue result;
   SmallVector<PHINode *, 4> phis;
   for (unsigned c = 0; c < n; ++c) {
-    PHINode *limb = phiB.CreatePHI(B.getFloatTy(), nIn, limbPhiName(n, c));
-    phis.push_back(limb);
-    result.x.push_back(limb);
+    PHINode *component =
+        phiB.CreatePHI(B.getFloatTy(), nIn, componentPhiName(n, c));
+    phis.push_back(component);
+    result.x.push_back(component);
   }
   expansionMap[phi] = result;
   for (unsigned i = 0; i < nIn; ++i) {
@@ -543,7 +546,7 @@ static void restoreExternalUses(ExpansionMap &expansionMap,
 }
 
 // Replaces each FP64 phi carried as an expansion, which the conversion leaves,
-// by one restore of its limbs: restoring it per use would collapse the
+// by one restore of its components: restoring it per use would collapse the
 // expansion every iteration.
 static void restoreCarriedPhis(ExpansionMap &expansionMap,
                                DenseMap<Value *, Value *> *restoredValues) {
@@ -567,7 +570,7 @@ static void restoreCarriedPhis(ExpansionMap &expansionMap,
 
 void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
                     DenseMap<Value *, Value *> *restoredValues,
-                    SmallVectorImpl<Value *> *limbs, bool print) {
+                    SmallVectorImpl<Value *> *components, bool print) {
   checkComponents(n);
   SmallPtrSet<Instruction *, 8> changed(instsToChange.begin(),
                                         instsToChange.end());
@@ -589,8 +592,8 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
       continue;
     }
     expansionMap[I] = v;
-    if (limbs)
-      limbs->append(v.x.begin(), v.x.end());
+    if (components)
+      components->append(v.x.begin(), v.x.end());
   }
 
   // Resolving one back-edge incoming may carry a nested phi, which defers

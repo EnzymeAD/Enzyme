@@ -425,7 +425,7 @@ void modelApplied(std::vector<AppFn> &fns) {
 // Materializes `ops` as one n-component expansion change.
 void expand(unsigned n, ArrayRef<Instruction *> ops) {
   DenseMap<Value *, Value *> restored;
-  applyExpansion(n, ops, &restored, /*limbs=*/nullptr, /*print=*/false);
+  applyExpansion(n, ops, &restored, /*components=*/nullptr, /*print=*/false);
 }
 
 void materialize(std::vector<AppFn> &fns) {

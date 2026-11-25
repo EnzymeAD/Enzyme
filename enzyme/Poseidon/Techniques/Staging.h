@@ -26,7 +26,7 @@ class Session;
 /// Which parameter transforms narrowSharedStaging runs. Each declines a buffer
 /// whose readers it does not fit, so the materializer runs Both; a pricing
 /// clone runs one, because narrowing an expansion's operand buffer to one float
-/// zeroes its `lo` limb and prices the expansion as free.
+/// zeroes its `lo` component and prices the expansion as free.
 enum class ParamArm { Both, FP32, DS };
 
 /// Narrows the shared staging of F after a precision change, in the order every

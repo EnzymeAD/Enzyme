@@ -22,13 +22,13 @@ namespace poseidon {
 struct Options;
 
 /// An n-component FP32 expansion, n = 2, 3, 4. x[0] is the most significant
-/// limb; the value is the unevaluated sum of the limbs. Every emitter below
-/// returns a value whose limbs are normalized (|x[i+1]| <= ulp(x[i])/2), except
-/// the square root of an operand with a zero leading limb, which is the
-/// operand. The emitters emit the routines of Core/ExpansionRoutines.h,
-/// operation for operation.
+/// component; the value is the unevaluated sum of the components. Every emitter
+/// below returns a value whose components are normalized (|x[i+1]| <=
+/// ulp(x[i])/2), except the square root of an operand with a zero leading
+/// component, which is the operand. The emitters emit the routines of
+/// Core/ExpansionRoutines.h, operation for operation.
 struct ExpansionValue {
-  /// The limbs, each an F32 value, most significant first.
+  /// The components, each an F32 value, most significant first.
   llvm::SmallVector<llvm::Value *, 4> x;
   /// The component count.
   unsigned n() const { return x.size(); }
@@ -50,7 +50,7 @@ ExpansionValue emitExpansionDiv(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
 /// The square root of a, at B.
 ExpansionValue emitExpansionSqrt(llvm::IRBuilder<> &B, const ExpansionValue &a);
-/// -a, at B: each limb negated.
+/// -a, at B: each component negated.
 ExpansionValue emitExpansionNeg(llvm::IRBuilder<> &B, const ExpansionValue &a);
 /// a * b + c, for llvm.fma and llvm.fmuladd: the fused routine for n = 2, the
 /// product and then the sum for n >= 3.
@@ -65,27 +65,27 @@ ExpansionValue emitExpansionFMASqr(llvm::IRBuilder<> &B,
 /// `fpval`, an F32 or F64 value, as an `n`-component expansion, at B.
 ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
                                unsigned n);
-/// The sum of v's limbs rounded to `targetTy`, F32 or F64, at B.
+/// The sum of v's components rounded to `targetTy`, F32 or F64, at B.
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
 /// Materialize `instsToChange`, in an order where an operation follows its
 /// operands, as an n-component expansion and erase them, with the FP64 PHIs the
 /// expansion carries. `restoredValues`, if given, receives each erased value
-/// whose users now read another, with that value; `limbs`, if given, receives
-/// the limbs of each converted instruction, in order. An instruction without a
-/// routine is left as written, and named under `print`.
+/// whose users now read another, with that value; `components`, if given,
+/// receives the components of each converted instruction, in order. An
+/// instruction without a routine is left as written, and named under `print`.
 void applyExpansion(
     unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues,
-    llvm::SmallVectorImpl<llvm::Value *> *limbs, bool print);
+    llvm::SmallVectorImpl<llvm::Value *> *components, bool print);
 
-/// The Dekker split of an FP64 value into FP32 limbs, as emitToExpansion emits
-/// it for a pair:
+/// The Dekker split of an FP64 value into FP32 components, as emitToExpansion
+/// emits it for a pair:
 ///   hi = fptrunc V ; hib = fpext hi ; los = fsub V, hib ; lo = fptrunc los
 /// where hib and los are read by the split alone.
 struct DekkerSplit {
-  /// The leading and the trailing limb.
+  /// The leading and the trailing component.
   llvm::FPTruncInst *hi, *lo;
   /// hi widened back to FP64.
   llvm::FPExtInst *hib;
@@ -102,10 +102,10 @@ bool matchDekkerSplits(llvm::Value *V, bool allowFCmp,
                        llvm::SmallVectorImpl<DekkerSplit> &splits);
 
 /// Cancels the join/split roundtrip a df64 conversion leaves on an expansion
-/// restore of F; whether one was cancelled. `foldedLimbs`, if given, collects
-/// the limbs the fold exposed.
+/// restore of F; whether one was cancelled. `foldedComponents`, if given,
+/// collects the components the fold exposed.
 bool foldDSPairRoundtrip(llvm::Function &F,
-                         llvm::SmallVectorImpl<llvm::Value *> *foldedLimbs,
+                         llvm::SmallVectorImpl<llvm::Value *> *foldedComponents,
                          bool print);
 
 /// Whether expansion candidates may be proposed for F: false, with a warning,

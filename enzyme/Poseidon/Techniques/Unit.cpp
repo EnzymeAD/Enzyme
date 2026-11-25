@@ -24,9 +24,9 @@ using namespace llvm;
 namespace poseidon {
 
 static constexpr UnitKindInfo kUnitKinds[] = {
-    {UnitKind::R, "CO", "rewrite", "R", "a rewrite", true},
-    {UnitKind::PT, "CS", "precision change", "PT", "a precision change", true},
-    {UnitKind::M, "CM", "matrix product", "M", "a candidate", false},
+    {UnitKind::R, "rewrite", "R", "a rewrite", true},
+    {UnitKind::PT, "precision change", "PT", "a precision change", true},
+    {UnitKind::M, "matrix product", "M", "a candidate", false},
 };
 
 ArrayRef<UnitKindInfo> unitKinds() { return kUnitKinds; }
@@ -102,7 +102,7 @@ SiteUnit &unitOf(const SolutionStep &step) {
 }
 
 std::string SiteUnit::candidateId(size_t i) const {
-  return (info().idPrefix + Twine(indexInKind()) + "_" + Twine(ordinalOf(i)))
+  return (info().letter + Twine(indexInKind()) + "_" + Twine(ordinalOf(i)))
       .str();
 }
 

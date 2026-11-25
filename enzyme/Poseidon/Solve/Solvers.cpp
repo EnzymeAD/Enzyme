@@ -155,7 +155,7 @@ static bool bindTable(ArrayRef<StoredPoint> points, ArrayRef<SiteUnit *> units,
                       SiteTable &table) {
   auto bind = [&](const StoredStep &s) -> std::optional<SolutionStep> {
     for (SiteUnit *unit : units) {
-      if (unit->info().tag != s.unit || unit->indexInKind() != s.index)
+      if (unit->info().letter != s.unit || unit->indexInKind() != s.index)
         continue;
       if (!unit->info().pricingDrops) {
         if (s.candidate < unit->numCandidates())
@@ -250,7 +250,7 @@ static void writeSiteTable(const Options &O, const Function &F,
     for (const SolutionStep &step : costToSolutionMap.at(cost)) {
       const SiteUnit &unit = unitOf(step);
       json::Object stored{
-          {"unit", unit.info().tag},
+          {"unit", unit.info().letter},
           {"index", static_cast<int64_t>(unit.indexInKind())},
           {"candidate", static_cast<int64_t>(step.candidateIndex)}};
       if (unit.info().pricingDrops)
@@ -324,30 +324,30 @@ static double baselineAccCost(ArrayRef<RewriteUnit> COs,
                               ArrayRef<PrecisionUnit> CSs, unsigned &unpriced) {
   SmallPtrSet<const Subgraph *, 4> subgraphsWithCS;
   double baseline = 0.0;
-  for (const auto &CS : CSs) {
-    baseline += CS.initialAccCost;
-    subgraphsWithCS.insert(CS.subgraph);
-    if (!CS.unpricedReason.empty())
-      unpriced += CS.subgraph->outputs.size();
+  for (const auto &PU : CSs) {
+    baseline += PU.initialAccCost;
+    subgraphsWithCS.insert(PU.subgraph);
+    if (!PU.unpricedReason.empty())
+      unpriced += PU.subgraph->outputs.size();
   }
   SmallPtrSet<const Value *, 8> arrayPriced;
-  for (const auto &CO : COs) {
-    if (subgraphsWithCS.count(CO.subgraph))
+  for (const auto &RU : COs) {
+    if (subgraphsWithCS.count(RU.subgraph))
       continue;
     // A RewriteUnit with no candidates was never priced, so its share of the
     // baseline is unknown; it cannot appear in a solution either.
-    if (CO.candidates.empty()) {
+    if (RU.candidates.empty()) {
       ++unpriced;
       continue;
     }
     // An array core prices all of its outputs at once; each output's baseline
     // is counted once however many cores cover it.
-    if (llvm::any_of(CO.roots,
+    if (llvm::any_of(RU.roots,
                      [&](const Value *V) { return arrayPriced.contains(V); }))
       continue;
-    if (CO.isArray())
-      arrayPriced.insert(CO.roots.begin(), CO.roots.end());
-    baseline += CO.initialAccCost;
+    if (RU.isArray())
+      arrayPriced.insert(RU.roots.begin(), RU.roots.end());
+    baseline += RU.initialAccCost;
   }
   return baseline;
 }
@@ -500,8 +500,9 @@ solveSites(Session &S, ArrayRef<FunctionFPState *> sites,
     costToSolutionMap[0] = {};
 
     // Each prune also compares partial solutions a later unit treats
-    // differently (a CS is priced against the COs chosen on its subgraph), so
-    // the pruned frontier can miss points the exact solve finds.
+    // differently (a precision unit is priced against the rewrites chosen on
+    // its subgraph), so the pruned frontier can miss points the exact solve
+    // finds.
     Error searched =
         !O.Solver.EarlyPrune
             ? solveExact(solveOrder(O, units), scale, costToAccuracyMap,

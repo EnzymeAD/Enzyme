@@ -191,10 +191,10 @@ public:
   // clone under VMap.
   SetVector<Instruction *> operationsOf(const PrecisionChange &change) const;
 
-  // Converts `sorted`, in operand order, to an n-component expansion. `limbs`
-  // receives the limbs of each converted instruction.
+  // Converts `sorted`, in operand order, to an n-component expansion.
+  // `components` receives the components of each converted instruction.
   void expand(unsigned n, ArrayRef<Instruction *> sorted,
-              SmallVectorImpl<Value *> &limbs);
+              SmallVectorImpl<Value *> &components);
 
   // Converts `insts`, `sorted` in operand order, to the format of `change`,
   // giving their readers outside the change the value cast back.
@@ -250,17 +250,19 @@ ChangeTarget::operationsOf(const PrecisionChange &change) const {
 }
 
 void ChangeTarget::expand(unsigned n, ArrayRef<Instruction *> sorted,
-                          SmallVectorImpl<Value *> &limbs) {
+                          SmallVectorImpl<Value *> &components) {
   DenseMap<Value *, Value *> restoredValues;
   Function *F = sorted.empty() ? nullptr : sorted.front()->getFunction();
-  applyExpansion(n, sorted, &restoredValues, &limbs, S.Opts.Diagnostics.Print);
+  applyExpansion(n, sorted, &restoredValues, &components,
+                 S.Opts.Diagnostics.Print);
   // The pair narrowing preserves values only once every load of the buffer is
   // a Dekker split, so it is tried after each pair change and declines until
   // then. It runs here so that foldDSPairRoundtrip sees the join/split pair it
   // cancels. A pricing clone is not a registered site, and the narrowing
   // declines on it.
   if (n == 2 && F && narrowToPairs(S, *F, *F, /*announce=*/!VMap))
-    foldDSPairRoundtrip(*F, /*foldedLimbs=*/nullptr, S.Opts.Diagnostics.Print);
+    foldDSPairRoundtrip(*F, /*foldedComponents=*/nullptr,
+                        S.Opts.Diagnostics.Print);
   if (VMap) {
     for (auto &[oldClonedI, restoredV] : restoredValues)
       if (clonedToOriginal.count(oldClonedI))
@@ -324,21 +326,21 @@ void ChangeTarget::changeFormat(PrecisionChange &change,
 // values and change outputs in VMap to new casted outputs. Otherwise `graph`,
 // if passed, learns of each erased operation whose users read a new value.
 void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
-                        FPGraph *graph, SmallVectorImpl<Value *> *limbs) {
+                        FPGraph *graph, SmallVectorImpl<Value *> *components) {
   ChangeTarget target(S, subgraph, VMap, graph);
-  SmallVector<Value *, 32> pairLimbs, widerLimbs;
+  SmallVector<Value *, 32> pairComponents, widerComponents;
   for (PrecisionChange &change : changes) {
     SetVector<Instruction *> insts = target.operationsOf(change);
     SmallVector<Instruction *, 8> sorted;
     topoSort(insts, sorted);
     if (unsigned n = expansionComponents(change.newType))
-      target.expand(n, sorted, n == 2 ? pairLimbs : widerLimbs);
+      target.expand(n, sorted, n == 2 ? pairComponents : widerComponents);
     else
       target.changeFormat(change, insts, sorted);
   }
-  if (limbs) {
-    limbs->append(pairLimbs.begin(), pairLimbs.end());
-    limbs->append(widerLimbs.begin(), widerLimbs.end());
+  if (components) {
+    components->append(pairComponents.begin(), pairComponents.end());
+    components->append(widerComponents.begin(), widerComponents.end());
   }
 }
 
@@ -488,41 +490,41 @@ scoreCandidate(const PTCandidate &candidate, ArrayRef<FPNode *> outputs,
   return out;
 }
 
-// Sets the accuracy cost of CS and of each candidate, the gradient-weighted
+// Sets the accuracy cost of PU and of each candidate, the gradient-weighted
 // mean error at the outputs over the subgraph's samples, and drops the
 // candidates that cannot be scored. With no usable sample the unit keeps the
 // subgraph as written.
-static void priceAccuracy(const Options &O, PrecisionUnit &CS, FPGraph &G) {
-  SubgraphSamples &samples = samplesOf(O, *CS.subgraph, G);
+static void priceAccuracy(const Options &O, PrecisionUnit &PU, FPGraph &G) {
+  SubgraphSamples &samples = samplesOf(O, *PU.subgraph, G);
   SmallVector<FPNode *, 4> outputs;
   SmallVector<const FPNode *, 4> nodes;
   SmallVector<double, 4> grads;
-  for (Instruction *output : CS.subgraph->outputs) {
+  for (Instruction *output : PU.subgraph->outputs) {
     FPNode *node = G.valueToNodeMap[output];
     outputs.push_back(node);
     nodes.push_back(node);
     grads.push_back(node->grad);
   }
   std::optional<BaselineAccuracy> baseline =
-      CS.priceBaseline(samples, nodes, grads, O.Diagnostics.Print);
+      PU.priceBaseline(samples, nodes, grads, O.Diagnostics.Print);
   if (!baseline)
     return;
   ArrayRef<SubgraphSamples::Point> sampledPoints = baseline->points;
   SmallVector<const SubgraphSamples::Reference *, 4> refs;
   for (auto [node, out] : zip(outputs, baseline->outputs)) {
-    CS.perOutputInitialAccCost[node] = out.error * std::fabs(out.grad);
+    PU.perOutputInitialAccCost[node] = out.error * std::fabs(out.grad);
     refs.push_back(out.ref);
   }
 
-  SmallVector<CandidateErrors, 0> scored(CS.candidates.size());
-  forEachIndex(O.Model.Threads, CS.candidates.size(), [&](size_t c) {
-    scored[c] = scoreCandidate(CS.candidates[c], outputs, refs, sampledPoints);
+  SmallVector<CandidateErrors, 0> scored(PU.candidates.size());
+  forEachIndex(O.Model.Threads, PU.candidates.size(), [&](size_t c) {
+    scored[c] = scoreCandidate(PU.candidates[c], outputs, refs, sampledPoints);
   });
 
   SmallVector<PTCandidate, 4> kept;
-  for (auto [candidate, errors] : zip(CS.candidates, scored)) {
+  for (auto [candidate, errors] : zip(PU.candidates, scored)) {
     if (errors.nonFinite) {
-      CS.dropped.push_back({candidate.desc,
+      PU.dropped.push_back({candidate.desc,
                             "the accuracy model found that it returns a "
                             "non-finite value at a sampled input where the "
                             "exact result is finite"});
@@ -540,7 +542,7 @@ static void priceAccuracy(const Options &O, PrecisionUnit &CS, FPGraph &G) {
            "a kept candidate has an accuracy cost");
     kept.push_back(std::move(candidate));
   }
-  CS.candidates = std::move(kept);
+  PU.candidates = std::move(kept);
 }
 
 //===----------------------------------------------------------------------===//
@@ -580,7 +582,7 @@ public:
 
 private:
   // Applies `pt` to the clone with the materializer's clean-ups, and holds
-  // the walk's inputs and roots: the outputs, then the limbs the expansion
+  // the walk's inputs and roots: the outputs, then the components the expansion
   // changes leave, which are the unit's outputs in the emitted code.
   void applyCandidate(Session &S, Subgraph &subgraph,
                       ArrayRef<Instruction *> outputs, PTCandidate &pt,
@@ -645,16 +647,17 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
   const Options &O = S.Opts;
   // The clone gets the materializer's carried-PHI elimination, so the df64
   // restore is not billed per iteration.
-  SmallVector<Value *, 32> expansionLimbs;
+  SmallVector<Value *, 32> expandedComponents;
   bool ptHasExpansion = false, wantsDS = false;
   for (PrecisionChange &ch : pt.changes) {
     ptHasExpansion |= expansionComponents(ch.newType) != 0;
     wantsDS |= ch.newType == PrecisionChangeType::Expansion2;
   }
-  pt.apply(S, subgraph, &VMap, /*graph=*/nullptr, &expansionLimbs);
+  pt.apply(S, subgraph, &VMap, /*graph=*/nullptr, &expandedComponents);
   // An Expansion2 change that converts nothing (unsupported instructions)
-  // leaves no limbs, and the untouched FP64 outputs are still the right roots.
-  const bool expansionMaterialized = !expansionLimbs.empty();
+  // leaves no components, and the untouched FP64 outputs are still the right
+  // roots.
+  const bool expansionMaterialized = !expandedComponents.empty();
 
   // Run the materializer's cleanups, so that the price charges only the casts
   // the materializer emits. FClone has no call sites, so F, whose arguments are
@@ -662,14 +665,14 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
   // the pair layout and any other the halved one, so one parameter arm runs.
   const ParamArm paramArm = wantsDS ? ParamArm::DS : ParamArm::FP32;
   // The df64 narrowing turns a staged load's split, some of whose halves are
-  // limbs, into a pair load: the limbs follow it through handles.
-  SmallVector<WeakTrackingVH, 32> limbHandles(expansionLimbs.begin(),
-                                              expansionLimbs.end());
+  // components, into a pair load: the components follow it through handles.
+  SmallVector<WeakTrackingVH, 32> componentHandles(expandedComponents.begin(),
+                                                   expandedComponents.end());
   narrowSharedStaging(S, *FClone, /*announce=*/false, paramArm, F);
-  expansionLimbs.clear();
-  for (Value *L : limbHandles)
+  expandedComponents.clear();
+  for (Value *L : componentHandles)
     if (L)
-      expansionLimbs.push_back(L);
+      expandedComponents.push_back(L);
   // Cancel the join/split roundtrip, as the emitted code does.
   SmallVector<Value *, 8> dsFoldRoots;
   foldDSPairRoundtrip(*FClone, &dsFoldRoots, O.Diagnostics.Print);
@@ -683,11 +686,12 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
                                                    : WeakTrackingVH());
   numOutputs = trackedOutputs.size();
   // The F64 handles above are dead once the expansion is materialized, so
-  // without the limbs the candidate walks an empty cone and prices as free.
+  // without the components the candidate walks an empty cone and prices as
+  // free.
   size_t liveExpansionRoots = 0;
-  for (ArrayRef<Value *> limbList :
-       {ArrayRef<Value *>(expansionLimbs), ArrayRef<Value *>(dsFoldRoots)})
-    for (Value *L : limbList)
+  for (ArrayRef<Value *> componentList :
+       {ArrayRef<Value *>(expandedComponents), ArrayRef<Value *>(dsFoldRoots)})
+    for (Value *L : componentList)
       if (auto *LI = dyn_cast<Instruction>(L))
         if (LI->getParent()) {
           trackedOutputs.emplace_back(L);
@@ -1083,8 +1087,8 @@ namespace {
 // profiled sensitivity, the most sensitive in the widest tier.
 class TierSweep {
 public:
-  TierSweep(const Options &O, PrecisionUnit &CS, PrecisionChangeType current)
-      : O(O), CS(CS), current(current) {}
+  TierSweep(const Options &O, PrecisionUnit &PU, PrecisionChangeType current)
+      : O(O), PU(PU), current(current) {}
 
   // Two tiers, the share of `tiers.hi` from 0% up in steps of
   // -poseidon-two-tier-step, over `sortedAsc` (ascending sensitivity).
@@ -1107,7 +1111,7 @@ private:
   void add(Assignment &assignment, std::string desc);
 
   const Options &O;
-  PrecisionUnit &CS;
+  PrecisionUnit &PU;
   PrecisionChangeType current;
 };
 
@@ -1132,8 +1136,8 @@ void TierSweep::add(Assignment &assignment, std::string desc) {
   if (changes.empty())
     return;
   PTCandidate cand{std::move(changes), std::move(desc)};
-  cand.ordinal = CS.candidates.size();
-  CS.candidates.push_back(std::move(cand));
+  cand.ordinal = PU.candidates.size();
+  PU.candidates.push_back(std::move(cand));
 }
 
 void TierSweep::twoTier(TierPair tiers, ArrayRef<FPLLValue *> sortedAsc,
@@ -1198,19 +1202,19 @@ Error proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
   const Options &O = S.Opts;
   const uint64_t o0Exec = G.valueToNodeMap[subgraph.outputs[0]]->executions;
 
-  // Filled before CS is built, whose baseline walk reads them.
+  // Filled before PU is built, whose baseline walk reads them.
   subgraph.opExec.clear();
   subgraph.depthExec.clear();
   subgraph.execNormalizer = o0Exec;
   if (freqWeightedPricing(O))
     measureFrequencies(O, F, subgraph, G);
 
-  PrecisionUnit CS(subgraph);
-  if (Error E = CS.priceAsWritten(S.CostModel))
+  PrecisionUnit PU(subgraph);
+  if (Error E = PU.priceAsWritten(S.CostModel))
     return E;
-  CS.executions = o0Exec;
+  PU.executions = o0Exec;
   if (std::optional<double> scale =
-          outBoundaryFreqScale(profileHeader, CS.executions))
+          outBoundaryFreqScale(profileHeader, PU.executions))
     subgraph.outBoundaryFreqScale = *scale;
 
   // The operations, and the calls of the library functions the cost model
@@ -1249,7 +1253,7 @@ Error proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
       return types.takeError();
     hwScalar = *types;
   }
-  TierSweep sweep(O, CS,
+  TierSweep sweep(O, PU,
                   getPrecisionChangeType(subgraph.outputs[0]->getType()));
   for (TierPair tp : kCanonicalPairs) {
     if (!tiersAllowed(O, {tp.hi, tp.lo}, gpuMode, expansionSafe, hwScalar))
@@ -1266,7 +1270,7 @@ Error proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
 
   // Zero candidates for a nonempty subgraph means every tier was filtered
   // out (a configuration problem), which must not pass as a no-op frontier.
-  if (CS.candidates.empty() && !subgraph.operations.empty()) {
+  if (PU.candidates.empty() && !subgraph.operations.empty()) {
     std::string msg =
         ("a floating-point subgraph of " + Twine(subgraph.operations.size()) +
          " operations has no precision candidate, since the "
@@ -1278,7 +1282,7 @@ Error proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
     diagnose(F, F.getSubprogram(), msg, DS_Warning);
   }
 
-  CSs.push_back(std::move(CS));
+  CSs.push_back(std::move(PU));
   return Error::success();
 }
 
@@ -1303,9 +1307,9 @@ static SmallVector<RewriteUnit *> rewritesOf(const Subgraph *subgraph,
                                              ArrayRef<SolutionStep> steps) {
   SmallVector<RewriteUnit *> rewrites;
   for (const SolutionStep &step : steps)
-    if (auto *CO = dyn_cast<RewriteUnit>(step.unit))
-      if (CO->subgraph == subgraph)
-        rewrites.push_back(CO);
+    if (auto *RU = dyn_cast<RewriteUnit>(step.unit))
+      if (RU->subgraph == subgraph)
+        rewrites.push_back(RU);
   return rewrites;
 }
 
@@ -1313,10 +1317,10 @@ static SmallVector<RewriteUnit *> rewritesOf(const Subgraph *subgraph,
 static Subgraph withoutRewrites(const Subgraph &subgraph,
                                 ArrayRef<SolutionStep> steps) {
   Subgraph left = subgraph;
-  for (RewriteUnit *CO : rewritesOf(&subgraph, steps)) {
+  for (RewriteUnit *RU : rewritesOf(&subgraph, steps)) {
     left.operations.remove_if(
-        [CO](Instruction *I) { return CO->erasableInsts.contains(I); });
-    for (Value *root : CO->roots)
+        [RU](Instruction *I) { return RU->erasableInsts.contains(I); });
+    for (Value *root : RU->roots)
       left.outputs.remove(cast<Instruction>(root));
   }
   return left;
@@ -1468,8 +1472,8 @@ double PrecisionUnit::errorDelta(size_t candidateIndex,
 
   // The outputs the rewrites among `steps` replace are not this unit's.
   SmallPtrSet<FPNode *, 8> stepNodes;
-  for (RewriteUnit *CO : rewritesOf(subgraph, steps))
-    for (Value *root : CO->roots) {
+  for (RewriteUnit *RU : rewritesOf(subgraph, steps))
+    for (Value *root : RU->roots) {
       auto it = valueToNodeMap.find(root);
       assert(it != valueToNodeMap.end() && it->second &&
              "a rewritten output has a node");

@@ -119,7 +119,7 @@ public:
   // Two components. The MultiFloats.jl routines at Val{2} these translate
   // (see the file header): twoSum two_sum (src/MultiFloats.jl 313-321),
   // dsFastTwoSum fast_two_sum (1047-1052), twoProd two_prod (1070-1074), dsAdd
-  // mfadd (src/mfadd.jl 10-24), dsSub x + (-y) and dsNeg limbwise -
+  // mfadd (src/mfadd.jl 10-24), dsSub x + (-y) and dsNeg componentwise -
   // (src/MultiFloats.jl 1102, 1020), dsMul mfmul (src/mfmul.jl 10-23), dsSqrt
   // sqrt_r, i.e. mfsqrt (src/MultiFloats.jl 1416-1421) under sqrt_r's zero
   // test (1448-1449). dsDiv translates mX_real's division of its
@@ -171,7 +171,7 @@ public:
     return dsAdd(x, negY);
   }
 
-  /// x * y, normalized; the product of the low limbs is dropped.
+  /// x * y, normalized; the product of the low components is dropped.
   Pair dsMul(Pair x, Pair y) {
     Pair pe = twoProd(x.hi, y.hi);
     F32 c1 = A.mul(x.hi, y.lo, "dsm.c1");
@@ -184,10 +184,10 @@ public:
   /// x * y + z, for llvm.fma and llvm.fmuladd: 16 F32 ops against 30 for dsMul
   /// + dsAdd. The product's renormalizing fastTwoSum is dead work when the pair
   /// is consumed by an addition, the cross terms become hardware FMAs into the
-  /// residual, and the addition's second twoSum over the low limbs is dropped
-  /// because after the exact twoSum of the high parts every remaining term is
-  /// O(eps) relative to max(|x*y|, |z|). x.lo*y.lo is dropped as in dsMul.
-  /// Low-limb accumulation is ordered smallest-magnitude first.
+  /// residual, and the addition's second twoSum over the low components is
+  /// dropped because after the exact twoSum of the high parts every remaining
+  /// term is O(eps) relative to max(|x*y|, |z|). x.lo*y.lo is dropped as in
+  /// dsMul. Low-component accumulation is ordered smallest-magnitude first.
   Pair dsFma(Pair x, Pair y, Pair z) {
     // p + e == x.hi*y.hi exactly.
     F32 p = A.mul(x.hi, y.hi, "dsf.p");
@@ -223,7 +223,7 @@ public:
     return {hi, lo};
   }
 
-  /// -x, limb by limb.
+  /// -x, component by component.
   Pair dsNeg(Pair x) {
     F32 hi = A.neg(x.hi, "dsn.hi");
     F32 lo = A.neg(x.lo, "dsn.lo");
@@ -353,7 +353,7 @@ public:
 
   /// Greedy split into n components, which mX_real has no counterpart for (it
   /// converts a double to its leading float); an F64 source fills at most three
-  /// limbs, the extra precision is created by the arithmetic.
+  /// components, the extra precision is created by the arithmetic.
   void expansionFromF64(unsigned N, F64 v, F32 *c) {
     F64 rem = v;
     for (unsigned i = 0; i < N; ++i) {
@@ -372,8 +372,8 @@ public:
       c[i] = A.constant(0.0);
   }
 
-  /// Sum the limbs least significant first; mX_real converts back from the
-  /// leading limb alone.
+  /// Sum the components least significant first; mX_real converts back from the
+  /// leading component alone.
   F64 expansionToF64(unsigned N, const F32 *x) {
     F64 s = A.extend(x[N - 1], "mfx.e");
     for (int i = (int)N - 2; i >= 0; --i) {
@@ -383,7 +383,7 @@ public:
     return s;
   }
 
-  /// To FP32: the limbs summed least significant first.
+  /// To FP32: the components summed least significant first.
   F32 expansionToF32(unsigned N, const F32 *x) {
     F32 s = x[N - 1];
     for (int i = (int)N - 2; i >= 0; --i)
@@ -416,8 +416,8 @@ private:
     return {s, e};
   }
 
-  /// mX_real Normalize<NormalizeOption::Regular> for a 3-limb expansion at a
-  /// non-Quasi algorithm: three in-place fastTwoSum sweeps.
+  /// mX_real Normalize<NormalizeOption::Regular> for a 3-component expansion at
+  /// a non-Quasi algorithm: three in-place fastTwoSum sweeps.
   void expansionNormalize3(F32 &x0, F32 &x1, F32 &x2) {
     Pair t = expansionFastTwoSum(x1, x2);
     x1 = t.hi;
@@ -430,7 +430,7 @@ private:
     x2 = t.lo;
   }
 
-  /// mX_real Normalize<Regular> for a 4-limb expansion at a non-Quasi
+  /// mX_real Normalize<Regular> for a 4-component expansion at a non-Quasi
   /// algorithm.
   void expansionNormalize4(F32 &x0, F32 &x1, F32 &x2, F32 &x3) {
     Pair t = expansionFastTwoSum(x2, x3);
@@ -553,7 +553,8 @@ private:
     c2 = div(tn, td);
   }
 
-  /// QxW::sqrt_QTW_PA  (sqrt of a 3-limb value to 2 limbs, unnormalized)
+  /// QxW::sqrt_QTW_PA  (sqrt of a 3-component value to 2 components,
+  /// unnormalized)
   void expansionSqrtRaw32(F32 a0, F32 a1, F32 a2, F32 &c0, F32 &c1) {
     c0 = sqrt(a0);
     F32 nc0 = neg(c0);
@@ -564,7 +565,8 @@ private:
     c1 = div(num, twoC0);
   }
 
-  /// QxW::sqr_PA_QTW  (square of a 2-limb value to 3 limbs, unnormalized)
+  /// QxW::sqr_PA_QTW  (square of a 2-component value to 3 components,
+  /// unnormalized)
   void expansionSqrRaw23(F32 a0, F32 a1, F32 &c0, F32 &c1, F32 &c2) {
     Pair p = twoProd(a0, a0);
     c0 = p.hi;
@@ -758,7 +760,8 @@ private:
     c3 = add(c3, t7);
   }
 
-  /// QxW::sqr_QTW_QQW  (square of a 3-limb value to 4 limbs, unnormalized)
+  /// QxW::sqr_QTW_QQW  (square of a 3-component value to 4 components,
+  /// unnormalized)
   void expansionSqrRaw34(F32 a0, F32 a1, F32 a2, F32 &c0, F32 &c1, F32 &c2,
                          F32 &c3) {
     Pair p = twoProd(a0, a0);

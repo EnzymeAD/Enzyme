@@ -402,7 +402,7 @@ readArgumentMarkers(CallInst *CI, Function *F, size_t &i, MarkerArgs &out) {
           CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr, *F);
       if (!tau)
         return tau.takeError();
-      out.errTol = *tau;
+      out.tau = *tau;
       out.forward[i] = false;
       markers.consumed = true;
       return markers;

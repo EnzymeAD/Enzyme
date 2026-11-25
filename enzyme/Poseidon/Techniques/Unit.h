@@ -56,12 +56,11 @@ enum class UnitKind { R, PT, M };
 struct UnitKindInfo {
   /// The kind the row describes; rows are listed in UnitKind order.
   UnitKind kind;
-  /// The DP table's itemType.
-  llvm::StringLiteral tag;
   /// What the solver's progress lines call the kind.
   llvm::StringLiteral noun;
-  /// The <unit> of the ids <unit><i>_<j> and of the pins <unit><i>=<name>.
-  llvm::StringLiteral idPrefix;
+  /// The letter of the ids <letter><i>_<j>, of the pins <letter><i>=<name>
+  /// and of the DP table's steps.
+  llvm::StringLiteral letter;
   /// What the duplicate-pin error says the unit already has.
   llvm::StringLiteral appliedNoun;
   /// Pricing may drop candidates: a candidate's ordinal is not its position,

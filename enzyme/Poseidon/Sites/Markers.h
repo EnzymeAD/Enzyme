@@ -161,7 +161,7 @@ struct MarkerArgs {
   llvm::SmallVector<MadeShadow, 4> madeShadows;
   /// The accuracy target the marker gives; 0 for none, which leaves the site to
   /// -poseidon-tau.
-  double errTol = 0.0;
+  double tau = 0.0;
 };
 
 /// What the marker call `CI` of body `F` says; an error at `CI` if the marker
