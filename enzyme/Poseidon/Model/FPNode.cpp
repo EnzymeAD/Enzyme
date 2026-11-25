@@ -68,9 +68,7 @@ bool FPNode::hasPrecision(PrecisionChangeType P) const {
   return format && format->Precision == P;
 }
 
-void FPNode::addOperand(std::shared_ptr<FPNode> operand) {
-  operands.push_back(operand);
-}
+void FPNode::addOperand(FPNode *operand) { operands.push_back(operand); }
 
 void FPNode::updateBounds(double lower, double upper) {
   if (isa<FPConst>(this))
@@ -225,9 +223,8 @@ unsigned inlinedOps(const FPLLValue &V, const SetVector<Value *> &inputs) {
   return inlinedOps(V, inputs, memo);
 }
 
-std::shared_ptr<FPNode> existingDefinition(const FPNode &N,
-                                           const SetVector<Value *> &inputs,
-                                           const FPGraph &G) {
+FPNode *existingDefinition(const FPNode &N, const SetVector<Value *> &inputs,
+                           const FPGraph &G) {
   auto same = [](const FPNode &A, const FPNode &B) {
     auto *CA = dyn_cast<FPConst>(&A), *CB = dyn_cast<FPConst>(&B);
     return &A == &B || (CA && CB && CA->format == CB->format &&
@@ -246,7 +243,7 @@ std::shared_ptr<FPNode> existingDefinition(const FPNode &N,
   bool commutes =
       (N.is(fpcore::Add) || N.is(fpcore::Mul)) && N.operands.size() == 2;
   for (Value *V : inputs) {
-    auto *VN = dyn_cast<FPLLValue>(G.valueToNodeMap.at(V).get());
+    auto *VN = dyn_cast<FPLLValue>(G.valueToNodeMap.at(V));
     if (!VN || !inlinedOps(*VN, inputs))
       continue;
     SmallVector<const FPLLValue *, 4> todo{VN};
@@ -256,7 +253,7 @@ std::shared_ptr<FPNode> existingDefinition(const FPNode &N,
       if (W->value && (matches(*W, false) || (commutes && matches(*W, true))))
         return G.valueToNodeMap.at(W->value);
       for (const auto &O : W->operands)
-        if (auto *L = dyn_cast<FPLLValue>(O.get());
+        if (auto *L = dyn_cast<FPLLValue>(O);
             L && !L->operands.empty() && !inputs.contains(L->value))
           todo.push_back(L);
     }
@@ -308,15 +305,22 @@ bool FPLLValue::classof(const FPNode *N) {
   return N->getType() == NodeType::LLValue;
 }
 
+FPGraph FPGraph::overlay() const {
+  FPGraph G;
+  G.F = F;
+  G.valueToNodeMap = valueToNodeMap;
+  G.symbolToValueMap = symbolToValueMap;
+  return G;
+}
+
 void FPGraph::replaceErased(Value *erased, Value *now) {
   auto it = valueToNodeMap.find(erased);
   if (it == valueToNodeMap.end())
     return;
-  auto *node = cast<FPLLValue>(it->second.get());
+  auto *node = cast<FPLLValue>(it->second);
   if (node->hasSymbol()) {
     symbolToValueMap[node->symbol] = now;
-    valueToNodeMap[now] =
-        std::make_shared<FPLLValue>(now, nullptr, node->format);
+    valueToNodeMap[now] = create<FPLLValue>(now, nullptr, node->format);
   }
   node->value = nullptr;
 }
@@ -371,7 +375,7 @@ bool FPConst::classof(const FPNode *N) {
 }
 
 SmallVector<Value *, 4>
-emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
+emitSharedElements(FPGraph &G, ArrayRef<FPNode *> elements,
                    function_ref<IRBuilder<> &(size_t)> at,
                    ValueToValueMapTy *VMap, const DominatorTree *DT) {
   DenseMap<const FPNode *, std::string> keys;
@@ -391,7 +395,7 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
     else {
       k = N->op->Name.str() + "." + formatName(N) + "(";
       for (const auto &operand : N->operands)
-        k += key(operand.get()) + ",";
+        k += key(operand) + ",";
       k += ")";
     }
     return keys[N] = std::move(k);
@@ -407,16 +411,16 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
       return;
     ++counts[key(N)];
     for (const auto &operand : N->operands)
-      count(operand.get());
+      count(operand);
   };
   for (const auto &element : elements)
-    count(element.get());
+    count(element);
 
   StringMap<Value *> emitted;
   auto placeholder = [&](Value *V, const FPFormatInfo *format) {
     if (VMap)
       (*VMap)[V] = V;
-    return std::make_shared<FPLLValue>(V, nullptr, format);
+    return G.create<FPLLValue>(V, nullptr, format);
   };
   SmallVector<Value *, 4> out;
   for (auto [k, element] : llvm::enumerate(elements)) {
@@ -427,11 +431,10 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
         return true;
       return DT->dominates(I, &*B.GetInsertPoint());
     };
-    std::function<std::shared_ptr<FPNode>(std::shared_ptr<FPNode>)> share =
-        [&](std::shared_ptr<FPNode> N) -> std::shared_ptr<FPNode> {
-      if (isLeaf(N.get()))
+    std::function<FPNode *(FPNode *)> share = [&](FPNode *N) -> FPNode * {
+      if (isLeaf(N))
         return N;
-      const std::string &k = key(N.get());
+      const std::string &k = key(N);
       for (auto &operand : N->operands)
         operand = share(operand);
       if (counts[k] < 2)

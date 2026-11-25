@@ -310,25 +310,25 @@ std::vector<AppFn> emitApplied(Module &M) {
 }
 
 // The accuracy model's graph of F, built as buildSubgraphs builds it.
-std::shared_ptr<FPNode>
-nodeOf(Value *V, std::unordered_map<Value *, std::shared_ptr<FPNode>> &m) {
+FPNode *nodeOf(Value *V, FPGraph &G) {
+  DenseMap<Value *, FPNode *> &m = G.valueToNodeMap;
   if (auto it = m.find(V); it != m.end())
     return it->second;
   const FPFormatInfo *format = formatOf(V->getType());
-  std::shared_ptr<FPNode> node;
+  FPNode *node;
   if (auto *A = dyn_cast<Argument>(V)) {
-    node = std::make_shared<FPLLValue>(A, nullptr, format);
+    node = G.create<FPLLValue>(A, nullptr, format);
   } else if (auto *CF = dyn_cast<ConstantFP>(V)) {
     SmallString<16> s;
     CF->getValueAPF().toString(s);
-    node = std::make_shared<FPConst>(s.c_str(), format);
+    node = G.create<FPConst>(s.c_str(), format);
   } else {
     auto *I = cast<Instruction>(V);
-    node = std::make_shared<FPLLValue>(I, fpcoreOperator(getHerbieOperator(*I)),
-                                       format);
+    node =
+        G.create<FPLLValue>(I, fpcoreOperator(getHerbieOperator(*I)), format);
     for (Value *op : I->operands())
       if (!isa<Function>(op))
-        node->addOperand(nodeOf(op, m));
+        node->addOperand(nodeOf(op, G));
   }
   m[V] = node;
   return node;
@@ -392,15 +392,15 @@ void modelApplied(std::vector<AppFn> &fns) {
   FILE *inc = fopen(outPath("fns.inc").c_str(), "w");
   fwrite(pts.data(), 8, pts.size(), out);
   for (AppFn &a : fns) {
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> m;
-    std::shared_ptr<FPNode> root =
-        nodeOf(a.F->getEntryBlock().getTerminator()->getOperand(0), m);
+    FPGraph G;
+    FPNode *root =
+        nodeOf(a.F->getEntryBlock().getTerminator()->getOperand(0), G);
     const bool f32 = a.F->getReturnType()->isFloatTy();
     SmallVector<PrecisionChange> changes;
     for (auto &ch : a.changes) {
       SetVector<FPLLValue *> nodes;
       for (Instruction *I : ch)
-        nodes.insert(cast<FPLLValue>(m.at(I).get()));
+        nodes.insert(cast<FPLLValue>(G.valueToNodeMap.at(I)));
       changes.emplace_back(
           nodes, f32 ? PrecisionChangeType::FP32 : PrecisionChangeType::FP64,
           expansionType(a.n));
@@ -412,7 +412,7 @@ void modelApplied(std::vector<AppFn> &fns) {
         in[a.F->getArg(j)] =
             f32 ? (double)(float)pts[3 * i + j] : pts[3 * i + j];
       SmallVector<double, 1> r;
-      getFPValues({root.get()}, in, r, pt.changes);
+      getFPValues({root}, in, r, pt.changes);
       fwrite(&r[0], 8, 1, out);
     }
     fprintf(inc, "FN(%s, %u, %s, \"%s\")\n", a.F->getName().str().c_str(), a.n,

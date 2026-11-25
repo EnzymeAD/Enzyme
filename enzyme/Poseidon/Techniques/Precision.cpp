@@ -515,7 +515,7 @@ static void priceAccuracy(const Options &O, PrecisionUnit &CS, FPGraph &G) {
   SmallVector<const SubgraphSamples::Reference *, 4> refs;
   SmallVector<std::optional<double>, 4> origErrors;
   for (Instruction *output : CS.subgraph->outputs) {
-    FPNode *node = G.valueToNodeMap[output].get();
+    FPNode *node = G.valueToNodeMap[output];
     outputs.push_back(node);
     CS.perOutputInitialAccCost[node] = 0.;
     refs.push_back(&samples.reference(node));
@@ -1232,7 +1232,7 @@ void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
   const std::unordered_set<std::string> &PTFuncs = getPTFuncs(S.CostModel, F);
   SetVector<FPLLValue *> funcsSet, allSet;
   for (Instruction *I : subgraph.operations) {
-    auto *node = cast<FPLLValue>(G.valueToNodeMap[I].get());
+    auto *node = cast<FPLLValue>(G.valueToNodeMap[I]);
     allSet.insert(node);
     if (PTFuncs.count(operationName(*node)) != 0) {
       funcsSet.insert(node);
@@ -1450,7 +1450,7 @@ double PrecisionUnit::errorDelta(size_t candidateIndex,
       auto it = valueToNodeMap.find(root);
       assert(it != valueToNodeMap.end() && it->second &&
              "a rewritten output has a node");
-      stepNodes.insert(it->second.get());
+      stepNodes.insert(it->second);
     }
 
   for (auto &[node, cost] : perOutputInitialAccCost)

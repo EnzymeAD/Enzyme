@@ -386,7 +386,7 @@ static void checkAnswer(const HerbieCoreAnswer &answer,
                         const std::pair<std::string, std::string> &source,
                         const RewriteUnit &CO, const Function &F, FPGraph &G) {
   auto check = [&](const std::string &expr) {
-    Expected<std::shared_ptr<FPNode>> parsed =
+    Expected<FPNode *> parsed =
         parseHerbieExpr(expr, G, nullptr, &CO.subgraph->inputs);
     if (!parsed)
       reportUserError(
@@ -562,14 +562,14 @@ static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
     if (!visited.insert(N).second || isLeaf(N))
       return;
     for (auto &operand : N->operands) {
-      if (!isLeaf(operand.get()))
-        ++uses[operand.get()];
-      walk(operand.get());
+      if (!isLeaf(operand))
+        ++uses[operand];
+      walk(operand);
     }
     order.push_back(N);
   };
   for (Instruction *output : outputs) {
-    FPNode *N = G.valueToNodeMap[output].get();
+    FPNode *N = G.valueToNodeMap[output];
     ++uses[N];
     walk(N);
   }
@@ -580,7 +580,7 @@ static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
     std::string expr =
         "(" + (N->is(fpcore::Neg) ? std::string("-") : operationName(*N));
     for (auto &operand : N->operands)
-      expr += " " + ref(operand.get());
+      expr += " " + ref(operand);
     return expr + ")";
   };
   ref = [&](FPNode *N) -> std::string {
@@ -605,7 +605,7 @@ static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
   }
   std::string body = "(array";
   for (Instruction *output : outputs)
-    body += " " + ref(G.valueToNodeMap[output].get());
+    body += " " + ref(G.valueToNodeMap[output]);
   body += ")";
   return bindings.empty() ? body : "(let* (" + bindings + ") " + body + ")";
 }
@@ -906,7 +906,7 @@ static void collectIfNodes(const FPNode *node,
   if (node->is(fpcore::If))
     ifs.push_back(node);
   for (const auto &operand : node->operands)
-    collectIfNodes(operand.get(), seen, ifs);
+    collectIfNodes(operand, seen, ifs);
 }
 
 // The arms the candidate actually evaluates at `point`, following each `if` the
@@ -920,15 +920,15 @@ static void collectTakenArms(const FPNode *node,
     return;
   if (!node->is(fpcore::If)) {
     for (const auto &operand : node->operands)
-      collectTakenArms(operand.get(), point, ev, seen, arms);
+      collectTakenArms(operand, point, ev, seen, arms);
     return;
   }
-  const FPNode *cond = node->operands[0].get();
+  const FPNode *cond = node->operands[0];
   ev.evaluateNode(cond, point);
   bool taken = ev.getResult(cond) == 1.0;
   arms.push_back({node, taken});
   collectTakenArms(cond, point, ev, seen, arms);
-  collectTakenArms(node->operands[taken ? 1 : 2].get(), point, ev, seen, arms);
+  collectTakenArms(node->operands[taken ? 1 : 2], point, ev, seen, arms);
 }
 
 static SmallVector<RegimeArm, 4>
@@ -952,7 +952,7 @@ struct ArmStats {
 // subgraph's samples. The pricing of an element reads nothing another element
 // writes, so the elements of a unit are priced concurrently.
 struct ElementPricing {
-  std::shared_ptr<FPNode> node;
+  FPNode *node;
   // The output's original expression, its values at the samples, and its
   // mean error there.
   const FPNode *orig = nullptr;
@@ -993,10 +993,10 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
   forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
     for (size_t i = begin; i < end; ++i) {
       FPEvaluator ev;
-      ev.evaluateNode(E.node.get(), points[i]);
-      values[i] = ev.getResult(E.node.get());
+      ev.evaluateNode(E.node, points[i]);
+      values[i] = ev.getResult(E.node);
       if (!E.ifNodes.empty())
-        arms[i] = takenArms(E.node.get(), points[i], ev);
+        arms[i] = takenArms(E.node, points[i], ev);
     }
   });
 
@@ -1089,7 +1089,7 @@ static RoundWork planRound(const Options &O, ElementPricing &E,
   forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
     for (size_t p = begin; p < end; ++p) {
       FPEvaluator ev;
-      W.arms[p] = takenArms(E.node.get(), points[p], ev);
+      W.arms[p] = takenArms(E.node, points[p], ev);
     }
   });
   for (size_t p = 0; p < n; ++p)
@@ -1101,7 +1101,7 @@ static RoundWork planRound(const Options &O, ElementPricing &E,
                [&](size_t begin, size_t end) {
                  SmallVector<double, 1> r;
                  for (size_t i = begin; i < end; ++i) {
-                   getFPValues({E.node.get()}, points[W.wanted[i]], r);
+                   getFPValues({E.node}, points[W.wanted[i]], r);
                    W.values[W.wanted[i]] = r[0];
                  }
                });
@@ -1228,15 +1228,15 @@ static void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
       return;
   }
   for (const auto &operand : node->operands)
-    collectInputs(operand.get(), inputs, seen, used);
+    collectInputs(operand, inputs, seen, used);
 }
 
 // The elements of a candidate of CO parsed as `parsed`, one per output: the
 // operands of an array, or the candidate itself; none when an array candidate
 // has another count.
-static std::optional<SmallVector<std::shared_ptr<FPNode>, 1>>
-elementsOf(const std::shared_ptr<FPNode> &parsed, const RewriteUnit &CO) {
-  SmallVector<std::shared_ptr<FPNode>, 1> elements;
+static std::optional<SmallVector<FPNode *, 1>>
+elementsOf(FPNode *parsed, const RewriteUnit &CO) {
+  SmallVector<FPNode *, 1> elements;
   if (!CO.isArray()) {
     elements.push_back(parsed);
     return elements;
@@ -1273,7 +1273,7 @@ private:
 
   // One candidate's elements, priced against their outputs.
   struct CandidatePricing {
-    std::shared_ptr<FPNode> parsed;
+    FPNode *parsed;
     bool wrongShape = false;
     // The elements in order up to the first that reads a value its output
     // does not, whose index is `strayElement`.
@@ -1317,7 +1317,7 @@ void RewriteAccuracy::unpriceable(StringRef why) {
 bool RewriteAccuracy::priceBaseline() {
   double initialAccCost = 0.0;
   for (auto [root, grad] : zip(CO.roots, CO.rootGrads)) {
-    const FPNode *node = G.valueToNodeMap[root].get();
+    const FPNode *node = G.valueToNodeMap[root];
     const SubgraphSamples::Reference &ref = samples.reference(node);
     std::optional<double> origCost = ref.meanError();
     if (!origCost) {
@@ -1348,8 +1348,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
   CandidatePricing P;
   P.parsed = cantFail(
       parseHerbieExpr(candidate.expr, G, nullptr, &CO.subgraph->inputs));
-  std::optional<SmallVector<std::shared_ptr<FPNode>, 1>> elements =
-      elementsOf(P.parsed, CO);
+  std::optional<SmallVector<FPNode *, 1>> elements = elementsOf(P.parsed, CO);
   if (!elements) {
     P.wrongShape = true;
     return P;
@@ -1357,7 +1356,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
   for (auto [k, element] : enumerate(*elements)) {
     SmallPtrSet<const FPNode *, 32> seen;
     SmallPtrSet<Value *, 8> used;
-    collectInputs(element.get(), CO.subgraph->inputs, seen, used);
+    collectInputs(element, CO.subgraph->inputs, seen, used);
     const SmallPtrSet<Value *, 8> &elementInputs = rootInputs[k];
     if (!all_of(used, [&](Value *V) { return elementInputs.contains(V); })) {
       P.strayElement = k;
@@ -1371,7 +1370,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
     E.exprForLog = &candidate.expr;
     if (O.Model.MinArmSamples > 0) {
       SmallPtrSet<const FPNode *, 32> seenIfs;
-      collectIfNodes(element.get(), seenIfs, E.ifNodes);
+      collectIfNodes(element, seenIfs, E.ifNodes);
     }
     for (const FPNode *ifNode : E.ifNodes) {
       E.armStats[{ifNode, true}];
@@ -1439,8 +1438,7 @@ void RewriteAccuracy::price() {
   for (Value *root : CO.roots) {
     SmallPtrSet<const FPNode *, 32> seen;
     SmallPtrSet<Value *, 8> used;
-    collectInputs(G.valueToNodeMap[root].get(), CO.subgraph->inputs, seen,
-                  used);
+    collectInputs(G.valueToNodeMap[root], CO.subgraph->inputs, seen, used);
     rootInputs.push_back(std::move(used));
   }
 
@@ -1529,10 +1527,10 @@ ScratchFunction::ScratchFunction(Module &M, const std::string &expr,
     leaves.push_back(argValue);
   }
 
-  std::shared_ptr<FPNode> parsedNode =
+  FPNode *parsedNode =
       cantFail(parseHerbieExpr(expr, G, nullptr, &subgraphInputs));
   // An existing value a node was mapped back to is an argument no symbol names.
-  SmallVector<FPNode *, 16> stack{parsedNode.get()};
+  SmallVector<FPNode *, 16> stack{parsedNode};
   SmallPtrSet<FPNode *, 16> seen;
   while (!stack.empty()) {
     FPNode *N = stack.pop_back_val();
@@ -1545,8 +1543,8 @@ ScratchFunction::ScratchFunction(Module &M, const std::string &expr,
       }
       continue;
     }
-    for (std::shared_ptr<FPNode> &op : N->operands)
-      stack.push_back(op.get());
+    for (FPNode *op : N->operands)
+      stack.push_back(op);
   }
 
   Type *ReturnType = scratchReturnType(
@@ -1570,8 +1568,8 @@ ScratchFunction::ScratchFunction(Module &M, const std::string &expr,
   builder.setFastMathFlags(FMF);
   if (isArray) {
     SmallVector<Value *, 4> elements = emitSharedElements(
-        parsedNode->operands, [&](size_t) -> IRBuilder<> & { return builder; },
-        &VMap, nullptr);
+        G, parsedNode->operands,
+        [&](size_t) -> IRBuilder<> & { return builder; }, &VMap, nullptr);
     Value *Agg = UndefValue::get(FuncRetType);
     for (auto [i, V] : enumerate(elements)) {
       if (V->getType() != ReturnType)
@@ -1756,9 +1754,9 @@ void RewriteUnit::materialize(size_t candidateIndex) {
                 }) &&
          "a rewrite's outputs are in the site when it is materialized");
 
-  std::shared_ptr<FPNode> parsedNode = cantFail(parseHerbieExpr(
-      candidates[candidateIndex].expr, G, nullptr, &subgraph->inputs));
-  std::optional<SmallVector<std::shared_ptr<FPNode>, 1>> elements =
+  FPNode *parsedNode = cantFail(parseHerbieExpr(candidates[candidateIndex].expr,
+                                                G, nullptr, &subgraph->inputs));
+  std::optional<SmallVector<FPNode *, 1>> elements =
       elementsOf(parsedNode, *this);
   if (!elements)
     report_fatal_error("Poseidon: an array rewrite does not have one element "
@@ -1769,7 +1767,7 @@ void RewriteUnit::materialize(size_t candidateIndex) {
     DominatorTree DT(*cast<Instruction>(roots.front())->getFunction());
     std::optional<IRBuilder<>> builder;
     newOutputs = emitSharedElements(
-        *elements,
+        G, *elements,
         [&](size_t k) -> IRBuilder<> & {
           auto *oldInst = cast<Instruction>(roots[k]);
           builder.emplace(oldInst->getParent());
@@ -1798,8 +1796,8 @@ void RewriteUnit::materialize(size_t candidateIndex) {
 
     root->replaceAllUsesWith(newOutput);
     G.symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
-    valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
-        newOutput, nullptr, valueToNodeMap[root]->format);
+    valueToNodeMap[newOutput] =
+        G.create<FPLLValue>(newOutput, nullptr, valueToNodeMap[root]->format);
   }
 
   for (Instruction *I : erasableInsts) {
@@ -1807,7 +1805,7 @@ void RewriteUnit::materialize(size_t candidateIndex) {
       I->replaceAllUsesWith(UndefValue::get(I->getType()));
     I->eraseFromParent();
     subgraph->operations.remove(I);
-    cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
+    cast<FPLLValue>(valueToNodeMap[I])->value = nullptr;
   }
 
   subgraph->outputs_rewritten += roots.size();

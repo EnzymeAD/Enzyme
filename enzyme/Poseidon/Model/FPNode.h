@@ -33,12 +33,13 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace poseidon {
 
 struct FPCoreOperator;
 struct FPFormatInfo;
-struct FPGraph;
+class FPGraph;
 enum class PrecisionChangeType;
 
 class FPNode {
@@ -57,7 +58,7 @@ public:
   // floating-point number of a format of the pass.
   const FPFormatInfo *format;
   std::string symbol;
-  llvm::SmallVector<std::shared_ptr<FPNode>, 2> operands;
+  llvm::SmallVector<FPNode *, 2> operands;
   // Sensitivity score, the sum of |grad * value|.
   double sens = std::numeric_limits<double>::quiet_NaN();
   // The sum of the gradients, signed.
@@ -75,7 +76,7 @@ public:
   bool is(const FPCoreOperator &O) const { return op == &O; }
   // Whether the node's value has the format of precision `P`.
   bool hasPrecision(PrecisionChangeType P) const;
-  void addOperand(std::shared_ptr<FPNode> operand);
+  void addOperand(FPNode *operand);
   bool hasSymbol() const { return !symbol.empty(); }
   // The Herbie expression of a node of the original graph, a value or a
   // literal: a subgraph input as its symbol, anything else spelled out over
@@ -112,10 +113,9 @@ unsigned inlinedOps(const FPLLValue &V,
                     const llvm::SetVector<llvm::Value *> &inputs);
 // The existing value a parsed rewrite node recomputes, if the node is one of
 // the operations an input was spelled as: the rewrite reuses it.
-std::shared_ptr<FPNode>
-existingDefinition(const FPNode &N,
-                   const llvm::SetVector<llvm::Value *> &inputs,
-                   const FPGraph &G);
+FPNode *existingDefinition(const FPNode &N,
+                           const llvm::SetVector<llvm::Value *> &inputs,
+                           const FPGraph &G);
 
 class FPLLValue : public FPNode {
 public:
@@ -157,9 +157,10 @@ public:
 
 // Lowers one expression per output, element k at the builder `at(k)` returns,
 // computing a subterm several elements share once wherever that copy
-// dominates the later use (every earlier copy, when DT is null).
+// dominates the later use (every earlier copy, when DT is null). The nodes
+// that stand for a shared copy are created in `G`, which owns the elements.
 llvm::SmallVector<llvm::Value *, 4>
-emitSharedElements(llvm::ArrayRef<std::shared_ptr<FPNode>> elements,
+emitSharedElements(FPGraph &G, llvm::ArrayRef<FPNode *> elements,
                    llvm::function_ref<llvm::IRBuilder<> &(size_t)> at,
                    llvm::ValueToValueMapTy *VMap,
                    const llvm::DominatorTree *DT);
@@ -205,15 +206,35 @@ struct Subgraph {
 
 // The expression graph of one site: the function it is built over, a node per
 // value (the subgraphs' inputs and operations), and the value each symbol of a
-// Herbie expression names.
-struct FPGraph {
+// Herbie expression names. The graph owns every node created through it,
+// those of the parsed rewrites included.
+class FPGraph {
+public:
   llvm::Function *F = nullptr;
-  std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;
+  llvm::DenseMap<llvm::Value *, FPNode *> valueToNodeMap;
   std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
+
+  FPGraph() = default;
+  FPGraph(FPGraph &&) = default;
+  FPGraph &operator=(FPGraph &&) = default;
+
+  // A node of type T, built from `args`, that the graph owns.
+  template <typename T, typename... Args> T *create(Args &&...args) {
+    owned.push_back(std::make_unique<T>(std::forward<Args>(args)...));
+    return static_cast<T *>(owned.back().get());
+  }
+
+  // A graph over this one's maps that owns only the nodes created through it:
+  // what is parsed into it leaves this graph as it is. It reads this graph's
+  // nodes, so it must not outlive it.
+  FPGraph overlay() const;
 
   // `erased` was erased and its users read `now` instead: a later rewrite
   // whose expression names `erased` reads `now`.
   void replaceErased(llvm::Value *erased, llvm::Value *now);
+
+private:
+  std::vector<std::unique_ptr<FPNode>> owned;
 };
 
 } // namespace poseidon

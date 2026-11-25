@@ -72,7 +72,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
   if (!supported)
     return false;
   auto operand = [&](unsigned i) -> ExpansionLimbs {
-    const FPNode *o = node->operands[i].get();
+    const FPNode *o = node->operands[i];
     auto kept = limbs.find(o);
     if (kept != limbs.end() && nodeChange.at(o) == nodeChange.at(node))
       return kept->second;
@@ -150,14 +150,14 @@ template <typename T> static std::optional<int> orderOf(T a, T b) {
 bool FPEvaluator::evaluateLogic(const FPNode *node,
                                 const MapVector<Value *, double> &inputValues) {
   auto truth = [&](unsigned i) {
-    evaluateNode(node->operands[i].get(), inputValues);
-    return getResult(node->operands[i].get()) == 1.0;
+    evaluateNode(node->operands[i], inputValues);
+    return getResult(node->operands[i]) == 1.0;
   };
   double res;
   if (node->is(fpcore::If)) {
     unsigned arm = truth(0) ? 1 : 2;
-    evaluateNode(node->operands[arm].get(), inputValues);
-    res = getResult(node->operands[arm].get());
+    evaluateNode(node->operands[arm], inputValues);
+    res = getResult(node->operands[arm]);
   } else if (node->is(fpcore::And)) {
     res = truth(0) && truth(1);
   } else if (node->is(fpcore::Or)) {
@@ -186,7 +186,7 @@ double FPEvaluator::evaluateOperation(const FPNode *node,
     return static_cast<float>(roundToPrec((double)val, kind));
   };
   auto toF = [&](double v) { return truncToPrec(static_cast<float>(v)); };
-  auto operand = [&](unsigned i) { return getResult(node->operands[i].get()); };
+  auto operand = [&](unsigned i) { return getResult(node->operands[i]); };
 
   if (auto approx = approxSqrtError.find(node);
       node->is(fpcore::Sqrt) && approx != approxSqrtError.end())
@@ -233,7 +233,7 @@ void FPEvaluator::evaluateNode(const FPNode *node,
 
   PrecisionChangeType nodePrec = getNodePrecision(node);
   for (const auto &operand : node->operands)
-    evaluateNode(operand.get(), inputValues);
+    evaluateNode(operand, inputValues);
   if (nodePrec == PrecisionChangeType::FP80 ||
       nodePrec == PrecisionChangeType::FP128)
     llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
@@ -327,12 +327,9 @@ void MPFREvaluator::evaluateNode(
 
 void MPFREvaluator::evaluateChoice(
     const FPNode *node, const MapVector<Value *, double> &inputValues) {
-  evaluateNode(node->operands[0].get(), inputValues);
+  evaluateNode(node->operands[0], inputValues);
   const FPNode *arm =
-      node->operands[0 == mpfr_cmp_ui(getResult(node->operands[0].get()), 1)
-                         ? 1
-                         : 2]
-          .get();
+      node->operands[0 == mpfr_cmp_ui(getResult(node->operands[0]), 1) ? 1 : 2];
   evaluateNode(arm, inputValues);
   cache.emplace(node, CachedValue(cache.at(arm).prec));
   mpfr_set(cache.at(node).value, getResult(arm), MPFR_RNDN);
@@ -345,9 +342,9 @@ void MPFREvaluator::evaluateOperation(
   auto rounded = [&]() {
     SmallVector<mpfr_ptr, 3> ops;
     for (const auto &operand : node->operands)
-      evaluateNode(operand.get(), inputValues);
+      evaluateNode(operand, inputValues);
     for (const auto &operand : node->operands) {
-      mpfr_ptr op = getResult(operand.get());
+      mpfr_ptr op = getResult(operand);
       mpfr_prec_round(op, prec, MPFR_RNDN);
       ops.push_back(op);
     }
@@ -357,9 +354,9 @@ void MPFREvaluator::evaluateOperation(
   auto operands = [&]() {
     SmallVector<mpfr_ptr, 2> ops;
     for (const auto &operand : node->operands)
-      evaluateNode(operand.get(), inputValues);
+      evaluateNode(operand, inputValues);
     for (const auto &operand : node->operands)
-      ops.push_back(getResult(operand.get()));
+      ops.push_back(getResult(operand));
     return ops;
   };
   auto truth = [](mpfr_srcptr x) { return 0 == mpfr_cmp_ui(x, 1); };

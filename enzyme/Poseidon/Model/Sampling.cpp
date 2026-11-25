@@ -60,8 +60,7 @@ struct CancellationPlan {
 
 static CancellationPlan
 buildCancellationPlan(const Options &O, const Subgraph &subgraph,
-                      const std::unordered_map<Value *, std::shared_ptr<FPNode>>
-                          &valueToNodeMap) {
+                      const DenseMap<Value *, FPNode *> &valueToNodeMap) {
   CancellationPlan plan;
   const SetVector<Value *> &inputs = subgraph.inputs;
 
@@ -82,12 +81,12 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
     auto it = valueToNodeMap.find(I);
     if (it == valueToNodeMap.end())
       continue;
-    FPNode *node = it->second.get();
+    FPNode *node = it->second;
 
     if (node->is(fpcore::Sub) && node->operands.size() == 2) {
       // One entry per unordered pair.
-      auto *a = dyn_cast<FPLLValue>(node->operands[0].get());
-      auto *b = dyn_cast<FPLLValue>(node->operands[1].get());
+      auto *a = dyn_cast<FPLLValue>(node->operands[0]);
+      auto *b = dyn_cast<FPLLValue>(node->operands[1]);
       if (a && b && a->value != b->value && inputs.count(a->value) &&
           inputs.count(b->value)) {
         bool seen = any_of(plan.pairs, [&](const auto &pr) {
@@ -98,10 +97,10 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
           plan.pairs.push_back({a->value, b->value});
       }
     } else if (node->is(fpcore::Sqrt) && node->operands.size() >= 1) {
-      if (minMagnitude(node->operands[0].get()) < kCancellationThreshold)
+      if (minMagnitude(node->operands[0]) < kCancellationThreshold)
         nearSingular = true;
     } else if (node->is(fpcore::Div) && node->operands.size() == 2) {
-      if (minMagnitude(node->operands[1].get()) < kCancellationThreshold)
+      if (minMagnitude(node->operands[1]) < kCancellationThreshold)
         nearSingular = true;
     }
   }
@@ -124,7 +123,7 @@ static void collectLeaves(const FPNode *node,
     return;
   }
   for (const auto &operand : node->operands)
-    collectLeaves(operand.get(), seen, leaves);
+    collectLeaves(operand, seen, leaves);
 }
 
 namespace {
@@ -141,8 +140,7 @@ using Box = MapVector<Value *, SmallVector<double, 2>>;
 class JointSampler {
 public:
   JointSampler(const Options &O,
-               const std::unordered_map<Value *, std::shared_ptr<FPNode>>
-                   &valueToNodeMap,
+               const DenseMap<Value *, FPNode *> &valueToNodeMap,
                unsigned seedOffset)
       : O(O), valueToNodeMap(valueToNodeMap),
         gen(O.Model.RandomSeed + seedOffset) {}
@@ -170,7 +168,7 @@ private:
                 SmallVectorImpl<double> &results) const;
 
   const Options &O;
-  const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
+  const DenseMap<Value *, FPNode *> &valueToNodeMap;
   std::minstd_rand0 gen;
   Box box, leafBox;
   SmallVector<FPNode *, 8> computed;
@@ -196,7 +194,7 @@ Error JointSampler::collectBoxes(ArrayRef<Value *> inputs) {
   SmallPtrSet<const FPNode *, 32> seen;
   SetVector<const FPLLValue *> leaves;
   for (Value *input : inputs) {
-    FPNode *node = valueToNodeMap.at(input).get();
+    FPNode *node = valueToNodeMap.at(input);
     double lower = node->getLowerBound(), upper = node->getUpperBound();
     if (Error E = checkFinite(lower, upper, *input, "the subgraph input "))
       return E;
@@ -222,7 +220,7 @@ bool JointSampler::evaluate(const SubgraphSamples::Point &leafPoint,
     getFPValues(computed, leafPoint, results);
   size_t next = 0;
   for (const auto &[input, range] : box) {
-    FPNode *node = valueToNodeMap.at(input).get();
+    FPNode *node = valueToNodeMap.at(input);
     double v;
     if (!node->operands.empty())
       v = results[next++];
@@ -328,10 +326,10 @@ void JointSampler::drawIndependent(
 // -poseidon-num-samples points in the profiled box of `inputs`, the share
 // kCancellationFraction of them near the coincidences `plan` names when it is
 // active; an error saying why when the box holds too few.
-static Expected<SmallVector<SubgraphSamples::Point, 4>> drawPoints(
-    const Options &O, ArrayRef<Value *> inputs,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const CancellationPlan *plan, unsigned seedOffset = 0) {
+static Expected<SmallVector<SubgraphSamples::Point, 4>>
+drawPoints(const Options &O, ArrayRef<Value *> inputs,
+           const DenseMap<Value *, FPNode *> &valueToNodeMap,
+           const CancellationPlan *plan, unsigned seedOffset = 0) {
   const size_t numSamples = O.Model.NumSamples;
   JointSampler sampler(O, valueToNodeMap, seedOffset);
   if (Error E = sampler.collectBoxes(inputs))

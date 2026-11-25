@@ -82,7 +82,7 @@ extern const FPCoreOperator &Neg, &Add, &Sub, &Mul, &Div, &Pow, &Sqrt, &Fma,
 // operator of an unmodelled format or with the wrong operand count, a truth
 // value where a number belongs or the reverse, or a malformed literal, approx
 // form or array.
-llvm::Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
+llvm::Expected<FPNode *> parseHerbieExpr(
     llvm::StringRef expr, FPGraph &G,
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
         nullptr,

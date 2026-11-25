@@ -308,10 +308,10 @@ struct FPCoreParser {
   const SetVector<Value *> *subgraphInputs;
 
   // `expr`, an array only when it is the whole expression (`top`).
-  Expected<std::shared_ptr<FPNode>> parse(StringRef expr, bool top);
+  Expected<FPNode *> parse(StringRef expr, bool top);
   // `expr` parsed as a number, not a truth value or an array.
-  Expected<std::shared_ptr<FPNode>> parseNumber(StringRef expr) {
-    Expected<std::shared_ptr<FPNode>> N = parse(expr, /*top=*/false);
+  Expected<FPNode *> parseNumber(StringRef expr) {
+    Expected<FPNode *> N = parse(expr, /*top=*/false);
     if (N && isBoolean(**N))
       return malformed("a truth value where a number is expected", expr);
     return N;
@@ -320,28 +320,26 @@ struct FPCoreParser {
 private:
   // A literal, `#s(literal v format)` or a bare number; null for any other
   // text.
-  Expected<std::shared_ptr<FPNode>> parseLiteral(const std::string &expr);
+  Expected<FPNode *> parseLiteral(const std::string &expr);
   // `#s(approx spec result)`: the result, the pair kept in approxSpecs.
-  Expected<std::shared_ptr<FPNode>> parseApprox(StringRef expr, bool top);
+  Expected<FPNode *> parseApprox(StringRef expr, bool top);
   // `(ref.N.array<...> e)`: element N of the array or sincos e.
-  Expected<std::shared_ptr<FPNode>>
-  parseProjection(StringRef expr, StringRef head, StringRef args);
+  Expected<FPNode *> parseProjection(StringRef expr, StringRef head,
+                                     StringRef args);
   // `(op.dtype operands...)`.
-  Expected<std::shared_ptr<FPNode>>
-  parseOperation(StringRef expr, StringRef head, StringRef args, bool top);
+  Expected<FPNode *> parseOperation(StringRef expr, StringRef head,
+                                    StringRef args, bool top);
 };
 } // namespace
 
-Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
-                                                      bool top) {
+Expected<FPNode *> FPCoreParser::parse(StringRef expr, bool top) {
   const std::string trimmedExpr = expr.trim(' ').str();
   if (trimmedExpr.empty())
     return malformed("an empty expression", expr);
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#')
-    if (std::shared_ptr<FPNode> node =
-            G.valueToNodeMap[G.symbolToValueMap[trimmedExpr]])
+    if (FPNode *node = G.valueToNodeMap[G.symbolToValueMap[trimmedExpr]])
       return node;
-  Expected<std::shared_ptr<FPNode>> literal = parseLiteral(trimmedExpr);
+  Expected<FPNode *> literal = parseLiteral(trimmedExpr);
   if (!literal || *literal)
     return literal;
   if (StringRef(trimmedExpr).starts_with(kApproxHead))
@@ -357,8 +355,7 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
   return parseOperation(trimmedExpr, head, args, top);
 }
 
-Expected<std::shared_ptr<FPNode>>
-FPCoreParser::parseLiteral(const std::string &expr) {
+Expected<FPNode *> FPCoreParser::parseLiteral(const std::string &expr) {
   static const std::regex constantPattern(
       "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+(\\w+)\\)$");
   static const std::regex plainConstantPattern(
@@ -388,11 +385,10 @@ FPCoreParser::parseLiteral(const std::string &expr) {
   std::string value = matches[1].str();
   if (zeroDenominator(value))
     return malformed("a rational literal with denominator 0", expr);
-  return std::make_shared<FPConst>(value, format);
+  return G.create<FPConst>(value, format);
 }
 
-Expected<std::shared_ptr<FPNode>> FPCoreParser::parseApprox(StringRef expr,
-                                                            bool top) {
+Expected<FPNode *> FPCoreParser::parseApprox(StringRef expr, bool top) {
   StringRef inner = expr.drop_front(kApproxHead.size()).drop_back().trim(' ');
   SmallVector<StringRef, 4> parts = splitTopLevel(inner);
   if (expr.back() != ')' || parts.size() < 2)
@@ -404,8 +400,8 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseApprox(StringRef expr,
   return parse(resultPart, top);
 }
 
-Expected<std::shared_ptr<FPNode>>
-FPCoreParser::parseProjection(StringRef expr, StringRef head, StringRef args) {
+Expected<FPNode *> FPCoreParser::parseProjection(StringRef expr, StringRef head,
+                                                 StringRef args) {
   unsigned idx;
   StringRef inner = args.trim(' ');
   if (!head.drop_front(kProjectionHead.size())
@@ -420,10 +416,9 @@ FPCoreParser::parseProjection(StringRef expr, StringRef head, StringRef args) {
       return parseNumber(elems[idx]);
     if ((of == "sincos.f64" || of == "sincos.f32") && elems.size() == 1 &&
         idx < 2) {
-      auto node =
-          std::make_shared<FPNode>(*fpcoreOperator(idx == 0 ? "sin" : "cos"),
-                                   formatOfDtype(of.split('.').second));
-      Expected<std::shared_ptr<FPNode>> operand = parseNumber(elems[0]);
+      auto *node = G.create<FPNode>(*fpcoreOperator(idx == 0 ? "sin" : "cos"),
+                                    formatOfDtype(of.split('.').second));
+      Expected<FPNode *> operand = parseNumber(elems[0]);
       if (!operand)
         return operand.takeError();
       node->addOperand(*operand);
@@ -433,10 +428,8 @@ FPCoreParser::parseProjection(StringRef expr, StringRef head, StringRef args) {
   return malformed("an array projection of no array element", expr);
 }
 
-Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
-                                                               StringRef head,
-                                                               StringRef args,
-                                                               bool top) {
+Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
+                                                StringRef args, bool top) {
   StringRef op = head;
   const FPFormatInfo *format = nullptr;
   if (head.starts_with("array<")) {
@@ -473,7 +466,7 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
       format = &formatOf(PrecisionChangeType::FP64);
   }
 
-  auto node = std::make_shared<FPNode>(*O, format);
+  auto *node = G.create<FPNode>(*O, format);
   // A logical operation, and the condition of a choice, take truth values;
   // every other operand is a number.
   const bool logical =
@@ -481,7 +474,7 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
   const bool choice = O == &fpcore::If;
   for (auto [k, text] : enumerate(operandTexts)) {
     const bool truth = logical || (choice && k == 0);
-    Expected<std::shared_ptr<FPNode>> operand =
+    Expected<FPNode *> operand =
         truth || choice ? parse(text, /*top=*/false) : parseNumber(text);
     if (!operand)
       return operand.takeError();
@@ -493,18 +486,17 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
     return malformed("a choice between a number and a truth value", expr);
 
   if (subgraphInputs)
-    if (std::shared_ptr<FPNode> existing =
-            existingDefinition(*node, *subgraphInputs, G))
+    if (FPNode *existing = existingDefinition(*node, *subgraphInputs, G))
       return existing;
   return node;
 }
 
-Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
+Expected<FPNode *> parseHerbieExpr(
     StringRef expr, FPGraph &G,
     SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
     const SetVector<Value *> *subgraphInputs) {
   FPCoreParser P{G, approxSpecs, subgraphInputs};
-  Expected<std::shared_ptr<FPNode>> N = P.parse(expr, /*top=*/true);
+  Expected<FPNode *> N = P.parse(expr, /*top=*/true);
   if (N && isBoolean(**N))
     return malformed("a truth value where a number is expected", expr);
   return N;
@@ -782,7 +774,7 @@ private:
                                                  const std::string &want) {
     if ((!N.is(fpcore::Add) && !N.is(fpcore::Sub)) || N.operands.size() != 2)
       return std::nullopt;
-    auto *C = dyn_cast<FPConst>(N.operands[1].get());
+    auto *C = dyn_cast<FPConst>(N.operands[1]);
     if (!C || !(C->getLowerBound() < 0.0))
       return std::nullopt;
     CExpr a = operand(*N.operands[0], want);
@@ -893,13 +885,12 @@ fpcoreToC(StringRef expr, FPGraph &G, const CRendering &how,
   SmallVector<std::string, 1> out;
   if (!isRenderableFPCore(expr, G.symbolToValueMap))
     return out;
-  Expected<std::shared_ptr<FPNode>> parsed =
-      parseHerbieExpr(expr, G, approxSpecs, how.inputs);
+  Expected<FPNode *> parsed = parseHerbieExpr(expr, G, approxSpecs, how.inputs);
   if (!parsed) {
     consumeError(parsed.takeError());
     return out;
   }
-  std::shared_ptr<FPNode> node = *parsed;
+  FPNode *node = *parsed;
   if (node->is(fpcore::Array))
     for (const auto &element : node->operands)
       out.push_back(renderC(*element, how, resultDtype));

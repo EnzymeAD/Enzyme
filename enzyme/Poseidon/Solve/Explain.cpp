@@ -517,8 +517,8 @@ class Explainer {
   ArrayRef<SolutionStep> steps;
   const SolveRecord &rec;
   ValueNamer namer;
-  // A copy: fpcoreToC may add to the graph it is given, and the explanation
-  // must leave the solve's own as it is.
+  // An overlay: fpcoreToC may add to the graph it is given, and the
+  // explanation must leave the solve's own as it is.
   FPGraph scratch;
   std::set<std::pair<const SiteUnit *, size_t>> applied, skipped, onPareto,
       inSelected;
@@ -557,7 +557,7 @@ class Explainer {
 
   FPNode *nodeOf(Value *V) const {
     auto it = st.valueToNodeMap.find(V);
-    return it == st.valueToNodeMap.end() ? nullptr : it->second.get();
+    return it == st.valueToNodeMap.end() ? nullptr : it->second;
   }
 
   CRendering rendering(const Subgraph &sg) {
@@ -607,8 +607,8 @@ class Explainer {
 public:
   Explainer(Session &Sess, Function &F, FunctionFPState &st,
             ArrayRef<SolutionStep> steps, const SolveRecord &rec)
-      : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F), scratch(st),
-        A0(rec.baseline), S(rec.accScale), tau(rec.tau),
+      : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F),
+        scratch(st.overlay()), A0(rec.baseline), S(rec.accScale), tau(rec.tau),
         scale(rec.profiledCost) {}
 
   void build();
@@ -1167,7 +1167,7 @@ void Explainer::buildSubgraph(size_t s) {
         continue;
       coneOps.insert(op->second);
       for (const auto &operand : N->operands)
-        todo.push_back(operand.get());
+        todo.push_back(operand);
     }
     json::Array cops, cins;
     for (unsigned k : coneOps)

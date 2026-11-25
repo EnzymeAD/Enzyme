@@ -110,14 +110,14 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!isOptimizable(I)) {
-        valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, nullptr, nullptr);
+        valueToNodeMap[&I] = G.create<FPLLValue>(&I, nullptr, nullptr);
         if (O.Diagnostics.Print)
           llvm::errs() << "[poseidon] not an optimizable operation: " << I
                        << '\n';
         continue;
       }
 
-      valueToNodeMap[&I] = std::make_shared<FPLLValue>(
+      valueToNodeMap[&I] = G.create<FPLLValue>(
           &I, fpcoreOperator(getHerbieOperator(I)), nodeFormat(I.getType()));
     }
   }
@@ -130,18 +130,18 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
       for (auto &operand : fpOperands(I)) {
         if (!valueToNodeMap.count(operand)) {
           if (auto Arg = dyn_cast<Argument>(operand)) {
-            valueToNodeMap[operand] = std::make_shared<FPLLValue>(
-                Arg, nullptr, nodeFormat(Arg->getType()));
+            valueToNodeMap[operand] =
+                G.create<FPLLValue>(Arg, nullptr, nodeFormat(Arg->getType()));
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
-            valueToNodeMap[operand] = std::make_shared<FPConst>(
-                value.c_str(), nodeFormat(C->getType()));
+            valueToNodeMap[operand] =
+                G.create<FPConst>(value.c_str(), nodeFormat(C->getType()));
           } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
             // e.g., powi intrinsic has a constant int as its exponent
             double exponent = static_cast<double>(CI->getSExtValue());
             std::string doubleStr = std::to_string(exponent);
-            valueToNodeMap[operand] = std::make_shared<FPConst>(
+            valueToNodeMap[operand] = G.create<FPConst>(
                 doubleStr.c_str(), &formatOf(PrecisionChangeType::FP64));
           } else {
             llvm_unreachable("isOptimizable admits no other operand");

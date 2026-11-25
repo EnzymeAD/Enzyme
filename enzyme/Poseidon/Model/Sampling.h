@@ -31,7 +31,7 @@ namespace poseidon {
 
 struct Options;
 struct Subgraph;
-struct FPGraph;
+class FPGraph;
 class FPNode;
 
 // Per-sample absolute accuracy error.
@@ -83,8 +83,7 @@ private:
 
   const Options &O;
   const Subgraph &subgraph;
-  const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-      &valueToNodeMap;
+  const llvm::DenseMap<llvm::Value *, FPNode *> &valueToNodeMap;
   bool sampled = false;
   llvm::SmallVector<Point, 4> base;
   // Why points() has none.

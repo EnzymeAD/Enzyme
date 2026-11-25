@@ -43,7 +43,7 @@ class raw_ostream;
 namespace poseidon {
 
 class Session;
-struct FPGraph;
+class FPGraph;
 struct FunctionFPState;
 
 // The kinds of unit, by the letter -poseidon-apply-rewrites names them with.
