@@ -16,9 +16,16 @@ set(_platform ${POSEIDON_SOURCE_DIR}/tools/calibrate/herbie_platform.py)
 # The CPU a host compile names when it names none, as clang passes it to cc1:
 # the tests that compile for the host price from a model filed under it.
 execute_process(
-  COMMAND ${LLVM_TOOLS_BINARY_DIR}/clang "-###" -c -x c /dev/null -o /dev/null
-  ERROR_VARIABLE _host_jobs
-  OUTPUT_QUIET)
+  COMMAND
+    ${LLVM_TOOLS_BINARY_DIR}/clang
+    "-###"
+    -c
+    -x
+    c
+    /dev/null
+    -o
+    /dev/null
+  ERROR_VARIABLE _host_jobs OUTPUT_QUIET)
 if(NOT _host_jobs MATCHES "\"-target-cpu\" \"([^\"]+)\"")
   message(
     FATAL_ERROR

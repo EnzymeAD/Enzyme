@@ -345,11 +345,13 @@ target_include_directories(
 # runtimes bit for bit, and the sampler reproduces the standard library's
 # uniform reals bit for bit.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(${POSEIDON_PLUGIN_TARGET} PRIVATE -fno-fast-math
-                                                           -ffp-contract=off)
+  target_compile_options(
+    ${POSEIDON_PLUGIN_TARGET}
+    PRIVATE -fno-fast-math -ffp-contract=off)
   # The runtimes' directed roundings change the rounding mode.
-  set_source_files_properties(Techniques/Matmul/MatmulSimulation.cpp
-                              PROPERTIES COMPILE_OPTIONS "-frounding-math")
+  set_source_files_properties(
+    Techniques/Matmul/MatmulSimulation.cpp
+    PROPERTIES COMPILE_OPTIONS "-frounding-math")
 endif()
 
 install(

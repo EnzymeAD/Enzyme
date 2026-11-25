@@ -231,12 +231,9 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
     M.getOrInsertGlobal(P.RuntimeAnchor, Int32Ty);
   }
 
-  ProbeBuilder PB{M,
-                  Ctx,
-                  P,
-                  siteId,
-                  clone,
-                  getProfileNamePointer(M, clone.getName(), profileName)};
+  ProbeBuilder PB{
+      M,      Ctx,   P,
+      siteId, clone, getProfileNamePointer(M, clone.getName(), profileName)};
 
   FunctionCallee logValue = getProfilerHook(M, P.LogValue, logValueType(Ctx));
 
