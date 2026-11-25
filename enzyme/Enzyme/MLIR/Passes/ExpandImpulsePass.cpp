@@ -2141,6 +2141,215 @@ static bool deltaWeightFeasible(FunctionOpInterface fn) {
   return feasible;
 }
 
+/// Proposes fresh values for the selected sites of `op` from its sampler,
+/// reads the other sites from `trace` and scores the result with the logpdf
+/// region. `drawOverride` gives the values of replaced sampler draws.
+/// `changedColumns` receives the trace columns the move can change. With
+/// `delta`, the weight is the sum of new-minus-old scores over the terms the
+/// move can change, else the new joint density; with `withLogRatio` too, a
+/// move of several sites on a score-tail trace also returns log alpha.
+static MHProposal
+proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
+                  const RegionTraceLayout &layout, Value trace, Value rng,
+                  bool delta, bool withLogRatio, ColumnWindows &changedColumns,
+                  const DenseMap<Operation *, Value> *drawOverride = nullptr) {
+  changedColumns.clear();
+  ArrayAttr selection = op.getSelectionAttr();
+  Region &sampler = op.getSampling();
+  Region &logpdf = op.getLogpdf();
+  Block &sBlock = sampler.front();
+  auto traceType = cast<RankedTensorType>(trace.getType());
+  int64_t positionSize = layout.positionSize;
+
+  DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
+
+  IRMapping map;
+  map.map(sBlock.getArgument(0), rng);
+  for (unsigned i = 1, e = sBlock.getNumArguments(); i < e; ++i)
+    map.map(sBlock.getArgument(i), op.getInputs()[i]);
+
+  Value curRng = rng;
+  Value newTrace = trace;
+  DenseMap<Attribute, SmallVector<Value>> proposedSelected;
+  // Program-order ordinal = per-site yield index = score-tail column.
+  SmallVector<int64_t> selectedOrdinals;
+  int64_t siteOrdinal = -1;
+
+  for (Operation &o : sBlock.without_terminator()) {
+    auto site = dyn_cast<impulse::SampleRegionOp>(&o);
+    if (!site) {
+      b.clone(o, map);
+      continue;
+    }
+    ++siteOrdinal;
+    Attribute addr = site.getAddressAttr();
+    int64_t siteOff = layout.columnOf.lookup(addr);
+    if (selectedSet.contains(addr)) {
+      selectedOrdinals.push_back(siteOrdinal);
+      changedColumns.push_back({siteOff, siteOff + sampleRegionSize(site)});
+      Block &sub = site.getSampling().front();
+      IRMapping subMap;
+      subMap.map(sub.getArgument(0), curRng);
+      for (unsigned j = 1, e = site.getInputs().size(); j < e; ++j)
+        subMap.map(sub.getArgument(j),
+                   map.lookupOrDefault(site.getInputs()[j]));
+      for (Operation &subOp : sub.without_terminator()) {
+        if (drawOverride) {
+          auto it = drawOverride->find(&subOp);
+          if (it != drawOverride->end()) {
+            subMap.map(subOp.getResult(0),
+                       subMap.lookupOrDefault(subOp.getOperand(0)));
+            subMap.map(subOp.getResult(1), it->second);
+            continue;
+          }
+        }
+        b.clone(subOp, subMap);
+      }
+      Operation *y = sub.getTerminator();
+      curRng = subMap.lookupOrDefault(y->getOperand(0));
+      map.map(site.getResult(0), curRng);
+      SmallVector<Value> vals;
+      int64_t wOff = siteOff;
+      for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
+        Value v = subMap.lookupOrDefault(y->getOperand(k));
+        map.map(site.getResult(k), v);
+        vals.push_back(v);
+        newTrace = writeTraceColumns(b, loc, newTrace, v, wOff);
+        wOff += computeTensorElementCount(cast<RankedTensorType>(v.getType()));
+      }
+      proposedSelected[addr] = vals;
+    } else {
+      map.map(site.getResult(0), curRng);
+      map.map(site.getResults().drop_front(),
+              sliceTraceValues(b, loc, trace, siteOff,
+                               TypeRange(site->getResultTypes()).drop_front()));
+    }
+  }
+
+  Block &lpBlock = logpdf.front();
+  IRMapping lpMap;
+  unsigned argIdx = 0;
+  for (Attribute addr : selection)
+    for (Value v : proposedSelected[addr])
+      lpMap.map(lpBlock.getArgument(argIdx++), v);
+  for (Operation &lo : lpBlock.without_terminator())
+    b.clone(lo, lpMap);
+  Operation *lpTerm = lpBlock.getTerminator();
+  Value newWeight = lpMap.lookupOrDefault(lpTerm->getOperand(0));
+  SmallVector<bool> dirty =
+      delta ? taintedSiteYields(lpBlock, lpBlock.getArguments())
+            : SmallVector<bool>(lpTerm->getNumOperands() - 1, true);
+
+  // A trace wider than positionSize carries a per-site score tail.
+  if (traceType.getShape()[1] > positionSize) {
+    Value row0 = i64Const(b, loc, 0);
+    auto s11 = RankedTensorType::get({1, 1}, traceType.getElementType());
+    for (unsigned j = 1, e = lpTerm->getNumOperands(); j < e; ++j) {
+      if (!dirty[j - 1])
+        continue;
+      Value score = lpMap.lookupOrDefault(lpTerm->getOperand(j));
+      Value flat = impulse::ReshapeOp::create(b, loc, s11, score);
+      Value col = i64Const(b, loc, positionSize + (int64_t)j - 1);
+      newTrace = impulse::DynamicUpdateSliceOp::create(
+                     b, loc, traceType, newTrace, flat, ValueRange{row0, col})
+                     .getResult();
+    }
+  }
+
+  IRMapping oldLpMap;
+  if (traceType.getShape()[1] == positionSize) {
+    unsigned oldArgIdx = 0;
+    for (Attribute addr : selection)
+      for (Value oldValue :
+           sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
+                            ValueRange(proposedSelected[addr]).getTypes()))
+        oldLpMap.map(lpBlock.getArgument(oldArgIdx++), oldValue);
+    for (Operation &lo : lpBlock.without_terminator())
+      b.clone(lo, oldLpMap);
+  }
+  Value corr;
+  Value logRatio;
+  for (int64_t j : selectedOrdinals) {
+    Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
+    Value oldScore = traceType.getShape()[1] == positionSize
+                         ? oldLpMap.lookupOrDefault(lpTerm->getOperand(1 + j))
+                         : scalarAt(b, loc, trace, {0, positionSize + j});
+    Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
+    corr = corr ? arith::AddFOp::create(b, loc, corr, d).getResult() : d;
+  }
+
+  if (delta) {
+    SmallVector<int64_t> dirtyIdx;
+    for (auto [j, isDirty] : llvm::enumerate(dirty))
+      if (isDirty)
+        dirtyIdx.push_back(j);
+    // log alpha is the other dirty terms, so XLA does not recompute draws.
+    bool splitRatio = withLogRatio && selectedOrdinals.size() >= 2 &&
+                      traceType.getShape()[1] > positionSize;
+    llvm::SmallDenseSet<int64_t> own(selectedOrdinals.begin(),
+                                     selectedOrdinals.end());
+    Value ratio;
+    Value sum;
+    for (int64_t j : dirtyIdx) {
+      Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
+      Value oldScore = scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
+      Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
+      sum = sum ? arith::AddFOp::create(b, loc, sum, d).getResult() : d;
+      if (splitRatio && !own.contains(j))
+        ratio = ratio ? arith::AddFOp::create(b, loc, ratio, d).getResult() : d;
+    }
+    if (splitRatio) {
+      if (!ratio) {
+        auto scalarType = RankedTensorType::get({}, b.getF64Type());
+        ratio = f64Const(b, loc, scalarType, 0.0);
+      }
+      logRatio = ratio;
+    }
+    if (!sum) {
+      auto scalarType = RankedTensorType::get({}, b.getF64Type());
+      sum = f64Const(b, loc, scalarType, 0.0);
+    }
+    newWeight = sum;
+  }
+
+  // Only dirty scores: XLA:CPU copies the accept chain into every element.
+  if (delta) {
+    for (auto [j, isDirty] : llvm::enumerate(dirty))
+      if (isDirty)
+        changedColumns.push_back(
+            {positionSize + (int64_t)j, positionSize + (int64_t)j + 1});
+  } else if (traceType.getShape()[1] > positionSize) {
+    changedColumns.push_back({positionSize, traceType.getShape()[1]});
+  }
+  changedColumns = mergeColumnWindows(std::move(changedColumns));
+
+  return {newTrace, newWeight, corr, curRng, logRatio};
+}
+
+/// Proposes the move of the flat-form MH op `op` with a Hastings
+/// `impulse.regenerate`. The weight is the change of the joint density on a
+/// score-tail trace, else the new joint density.
+static MHProposal proposeFlatMove(OpBuilder &b, Location loc,
+                                  impulse::InferOp op,
+                                  ArrayRef<Type> fnResultTypes, Value trace,
+                                  Value rng) {
+  auto weightType = RankedTensorType::get({2}, b.getF64Type());
+  SmallVector<Type> regenResultTypes{trace.getType(), weightType};
+  for (Type t : fnResultTypes)
+    regenResultTypes.push_back(t);
+  SmallVector<Value> inputs(op.getInputs().begin(), op.getInputs().end());
+  inputs[0] = rng;
+  auto regen = impulse::RegenerateOp::create(
+      b, loc, regenResultTypes, op.getFnAttr(), inputs, trace,
+      op.getConstraint(), /*selection=*/op.getAllAddressesAttr(),
+      /*regenerate_addresses=*/op.getSelectionAttr(),
+      op.getConstrainedAddressesAttr(), b.getStringAttr(""));
+  regen->setAttr(kMHHastingsAttr, b.getUnitAttr());
+  auto [weight, corr] = unpackHastingsWeight(b, loc, regen.getWeight());
+  return {regen.getNewTrace(), weight, corr, regen.getOutputs()[0],
+          /*logRatio=*/Value()};
+}
+
 namespace {
 
 struct ExpandImpulsePass
@@ -2644,217 +2853,6 @@ struct ExpandImpulsePass
         std::is_same_v<OpT, impulse::InferRegionOp>;
     using mlir::OpRewritePattern<OpT>::OpRewritePattern;
 
-    static SmallVector<bool> dirtySiteYields(Block &lpBlock) {
-      return taintedSiteYields(lpBlock, lpBlock.getArguments());
-    }
-
-    /// With `delta`, weight is the dirty-term delta: XLA:CPU fuses the accept
-    /// decision into every write-back element, so it must stay a short chain.
-    std::tuple<Value, Value, Value, Value>
-    proposeRegion(OpBuilder &b, Location loc, OpT op,
-                  const RegionTraceLayout &layout, Value trace, Value rng,
-                  ArrayAttr selection, bool delta,
-                  SmallVectorImpl<std::pair<int64_t, int64_t>> &changedColumns,
-                  const DenseMap<Operation *, Value> *drawOverride = nullptr,
-                  Value *logRatioOut = nullptr) const {
-      changedColumns.clear();
-      Region &sampler = op.getSampling();
-      Region &logpdf = op.getLogpdf();
-      Block &sBlock = sampler.front();
-      auto traceType = cast<RankedTensorType>(trace.getType());
-      int64_t positionSize = layout.positionSize;
-
-      DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
-
-      IRMapping map;
-      map.map(sBlock.getArgument(0), rng);
-      for (unsigned i = 1, e = sBlock.getNumArguments(); i < e; ++i)
-        map.map(sBlock.getArgument(i), op.getInputs()[i]);
-
-      Value curRng = rng;
-      Value newTrace = trace;
-      DenseMap<Attribute, SmallVector<Value>> proposedSelected;
-      // Program-order ordinal = per-site yield index = score-tail column.
-      SmallVector<int64_t> selectedOrdinals;
-      int64_t siteOrdinal = -1;
-
-      for (Operation &o : sBlock.without_terminator()) {
-        auto site = dyn_cast<impulse::SampleRegionOp>(&o);
-        if (!site) {
-          b.clone(o, map);
-          continue;
-        }
-        ++siteOrdinal;
-        Attribute addr = site.getAddressAttr();
-        int64_t siteOff = layout.columnOf.lookup(addr);
-        if (selectedSet.contains(addr)) {
-          selectedOrdinals.push_back(siteOrdinal);
-          changedColumns.push_back({siteOff, siteOff + sampleRegionSize(site)});
-          Block &sub = site.getSampling().front();
-          IRMapping subMap;
-          subMap.map(sub.getArgument(0), curRng);
-          for (unsigned j = 1, e = site.getInputs().size(); j < e; ++j)
-            subMap.map(sub.getArgument(j),
-                       map.lookupOrDefault(site.getInputs()[j]));
-          for (Operation &subOp : sub.without_terminator()) {
-            if (drawOverride) {
-              auto it = drawOverride->find(&subOp);
-              if (it != drawOverride->end()) {
-                subMap.map(subOp.getResult(0),
-                           subMap.lookupOrDefault(subOp.getOperand(0)));
-                subMap.map(subOp.getResult(1), it->second);
-                continue;
-              }
-            }
-            b.clone(subOp, subMap);
-          }
-          Operation *y = sub.getTerminator();
-          curRng = subMap.lookupOrDefault(y->getOperand(0));
-          map.map(site.getResult(0), curRng);
-          SmallVector<Value> vals;
-          int64_t wOff = siteOff;
-          for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
-            Value v = subMap.lookupOrDefault(y->getOperand(k));
-            map.map(site.getResult(k), v);
-            vals.push_back(v);
-            newTrace = writeTraceColumns(b, loc, newTrace, v, wOff);
-            wOff +=
-                computeTensorElementCount(cast<RankedTensorType>(v.getType()));
-          }
-          proposedSelected[addr] = vals;
-        } else {
-          map.map(site.getResult(0), curRng);
-          map.map(
-              site.getResults().drop_front(),
-              sliceTraceValues(b, loc, trace, siteOff,
-                               TypeRange(site->getResultTypes()).drop_front()));
-        }
-      }
-
-      Block &lpBlock = logpdf.front();
-      IRMapping lpMap;
-      unsigned argIdx = 0;
-      for (Attribute addr : selection)
-        for (Value v : proposedSelected[addr])
-          lpMap.map(lpBlock.getArgument(argIdx++), v);
-      for (Operation &lo : lpBlock.without_terminator())
-        b.clone(lo, lpMap);
-      Operation *lpTerm = lpBlock.getTerminator();
-      Value newWeight = lpMap.lookupOrDefault(lpTerm->getOperand(0));
-      SmallVector<bool> dirty =
-          delta ? dirtySiteYields(lpBlock)
-                : SmallVector<bool>(lpTerm->getNumOperands() - 1, true);
-
-      // A trace wider than positionSize carries a per-site score tail.
-      if (traceType.getShape()[1] > positionSize) {
-        Value row0 = i64Const(b, loc, 0);
-        auto s11 = RankedTensorType::get({1, 1}, traceType.getElementType());
-        for (unsigned j = 1, e = lpTerm->getNumOperands(); j < e; ++j) {
-          if (!dirty[j - 1])
-            continue;
-          Value score = lpMap.lookupOrDefault(lpTerm->getOperand(j));
-          Value flat = impulse::ReshapeOp::create(b, loc, s11, score);
-          Value col = i64Const(b, loc, positionSize + (int64_t)j - 1);
-          newTrace =
-              impulse::DynamicUpdateSliceOp::create(b, loc, traceType, newTrace,
-                                                    flat, ValueRange{row0, col})
-                  .getResult();
-        }
-      }
-
-      IRMapping oldLpMap;
-      if (traceType.getShape()[1] == positionSize) {
-        unsigned oldArgIdx = 0;
-        for (Attribute addr : selection)
-          for (Value oldValue :
-               sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
-                                ValueRange(proposedSelected[addr]).getTypes()))
-            oldLpMap.map(lpBlock.getArgument(oldArgIdx++), oldValue);
-        for (Operation &lo : lpBlock.without_terminator())
-          b.clone(lo, oldLpMap);
-      }
-      Value corr;
-      for (int64_t j : selectedOrdinals) {
-        Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
-        Value oldScore =
-            traceType.getShape()[1] == positionSize
-                ? oldLpMap.lookupOrDefault(lpTerm->getOperand(1 + j))
-                : scalarAt(b, loc, trace, {0, positionSize + j});
-        Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
-        corr = corr ? arith::AddFOp::create(b, loc, corr, d).getResult() : d;
-      }
-
-      if (delta) {
-        SmallVector<int64_t> dirtyIdx;
-        for (auto [j, isDirty] : llvm::enumerate(dirty))
-          if (isDirty)
-            dirtyIdx.push_back(j);
-        // log alpha is the other dirty terms, so XLA does not recompute draws.
-        bool splitRatio = logRatioOut && selectedOrdinals.size() >= 2 &&
-                          traceType.getShape()[1] > positionSize;
-        llvm::SmallDenseSet<int64_t> own(selectedOrdinals.begin(),
-                                         selectedOrdinals.end());
-        Value ratio;
-        Value sum;
-        for (int64_t j : dirtyIdx) {
-          Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
-          Value oldScore =
-              scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
-          Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
-          sum = sum ? arith::AddFOp::create(b, loc, sum, d).getResult() : d;
-          if (splitRatio && !own.contains(j))
-            ratio =
-                ratio ? arith::AddFOp::create(b, loc, ratio, d).getResult() : d;
-        }
-        if (splitRatio) {
-          if (!ratio) {
-            auto scalarType = RankedTensorType::get({}, b.getF64Type());
-            ratio = f64Const(b, loc, scalarType, 0.0);
-          }
-          *logRatioOut = ratio;
-        }
-        if (!sum) {
-          auto scalarType = RankedTensorType::get({}, b.getF64Type());
-          sum = f64Const(b, loc, scalarType, 0.0);
-        }
-        newWeight = sum;
-      }
-
-      // Only dirty scores: XLA:CPU copies the accept chain into every element.
-      if (delta) {
-        for (auto [j, isDirty] : llvm::enumerate(dirty))
-          if (isDirty)
-            changedColumns.push_back(
-                {positionSize + (int64_t)j, positionSize + (int64_t)j + 1});
-      } else if (traceType.getShape()[1] > positionSize) {
-        changedColumns.push_back({positionSize, traceType.getShape()[1]});
-      }
-      changedColumns = mergeColumnWindows(std::move(changedColumns));
-
-      return {newTrace, newWeight, corr, curRng};
-    }
-
-    // Weight is the dirty-term delta for a score-tail trace, else the joint.
-    std::tuple<Value, Value, Value, Value>
-    proposeFlat(OpBuilder &b, Location loc, OpT op, FunctionOpInterface fn,
-                ArrayRef<Type> fnResultTypes, Value trace, Value rng,
-                ArrayAttr selection, ArrayAttr allAddresses) const {
-      auto weightType = RankedTensorType::get({2}, b.getF64Type());
-      SmallVector<Type> regenResultTypes{trace.getType(), weightType};
-      for (Type t : fnResultTypes)
-        regenResultTypes.push_back(t);
-      SmallVector<Value> inputs(op.getInputs().begin(), op.getInputs().end());
-      inputs[0] = rng;
-      auto regen = impulse::RegenerateOp::create(
-          b, loc, regenResultTypes, op.getFnAttr(), inputs, trace,
-          op.getConstraint(), /*selection=*/allAddresses,
-          /*regenerate_addresses=*/selection, op.getConstrainedAddressesAttr(),
-          b.getStringAttr(""));
-      regen->setAttr(kMHHastingsAttr, b.getUnitAttr());
-      auto [weight, corr] = unpackHastingsWeight(b, loc, regen.getWeight());
-      return {regen.getNewTrace(), weight, corr, regen.getOutputs()[0]};
-    }
-
     LogicalResult matchAndRewrite(OpT op,
                                   PatternRewriter &rewriter) const override {
       if (!op.getMhConfig().has_value())
@@ -2945,16 +2943,11 @@ struct ExpandImpulsePass
                          Value rng) -> MHStep {
         MHProposal proposal;
         if constexpr (isRegionForm)
-          std::tie(proposal.trace, proposal.weight, proposal.corr,
-                   proposal.rng) =
-              proposeRegion(b, loc, op, layout, trace, rng, selection,
-                            deltaWeight, changedColumns, nullptr,
-                            &proposal.logRatio);
+          proposal =
+              proposeRegionMove(b, loc, op, layout, trace, rng, deltaWeight,
+                                /*withLogRatio=*/true, changedColumns);
         else
-          std::tie(proposal.trace, proposal.weight, proposal.corr,
-                   proposal.rng) =
-              proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
-                          allAddresses);
+          proposal = proposeFlatMove(b, loc, op, fnResultTypes, trace, rng);
         MHDecision decision =
             emitMHDecision(b, loc, weight, rngType, proposal, deltaWeight);
         Value newTrace = writeBackMHWindows(b, loc, trace, proposal.trace,
@@ -3020,8 +3013,6 @@ struct ExpandImpulsePass
   // depends on at most one run site, no site's parameters depend on another,
   // written columns are disjoint and all proposals are one matching draw.
   struct MHRunBatcher {
-    using MHRegion = LowerMHInferPattern<impulse::InferRegionOp>;
-
     struct Move {
       // Op handles are mutable: their accessors are non-const.
       mutable impulse::InferRegionOp op;
@@ -3380,7 +3371,6 @@ struct ExpandImpulsePass
                                             impulse::RngDistribution::UNIFORM));
       Value logRand = math::LogOp::create(b, loc, accepts.getResult());
 
-      MHRegion mh(ctx);
       SmallVector<Value> newTraces, deltaCells, corrCells;
       SmallVector<ColumnWindows> changed(numMoves);
       auto elemType = traceType.getElementType();
@@ -3394,12 +3384,12 @@ struct ExpandImpulsePass
       for (unsigned k = 0; k < numMoves; ++k) {
         DenseMap<Operation *, Value> override;
         override[ms[k].draw] = takeLeading(b, loc, proposals.getResult(), k);
-        auto [newTrace, delta, corr, stepRng] = mh.proposeRegion(
-            b, loc, ms[k].op, ms[k].layout, trace0, rng0,
-            ms[k].op.getSelectionAttr(), /*delta=*/true, changed[k], &override);
-        newTraces.push_back(newTrace);
-        deltaCells.push_back(delta);
-        corrCells.push_back(corr);
+        MHProposal proposal = proposeRegionMove(
+            b, loc, ms[k].op, ms[k].layout, trace0, rng0, /*delta=*/true,
+            /*withLogRatio=*/false, changed[k], &override);
+        newTraces.push_back(proposal.trace);
+        deltaCells.push_back(proposal.weight);
+        corrCells.push_back(proposal.corr);
       }
 
       SmallVector<SmallVector<int64_t>> cols(numMoves);
