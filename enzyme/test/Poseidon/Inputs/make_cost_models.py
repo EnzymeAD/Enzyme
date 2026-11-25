@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make_cost_models.py <out dir> [<gpu arch>]
+"""make_cost_models.py <out dir> [<gpu arch> <host cpu>]
 
 Writes the cost models the Poseidon tests price from. Every price is made up:
 none is a measurement of any device, and none predicts one. The prices are
@@ -7,6 +7,8 @@ chosen only so that the orderings the tests exercise hold.
 
   cm_cpu_native.csv       x86-64: 1 per float operation, 2 per float math
                           library call, 4 times that in double, 1 per cast
+  cm_cpu_host.csv         the same, filed under <host cpu>, the CPU a host
+                          compile names by default
   cm_cpu_foreign.csv      the same, filed under sm_120
   cm_cpu_noarch.csv       the same, with no native_arch header
   cm_cpu_missing.csv      the same, without the fmul,double row
@@ -167,6 +169,11 @@ def main():
           gpu_rows(half=True))
     write(out, "cm_sm_90_synthetic.csv",
           [gpu, "# native_arch=sm_90", types], gpu_rows())
+    if len(sys.argv) > 3:
+        write(out, "cm_cpu_host.csv",
+              [cpu + ", not a device measurement; native_arch is the CPU a "
+               "host compile names by default.", "# native_arch=" + sys.argv[3],
+               types], cpu_rows())
     if len(sys.argv) > 2:
         write(out, "cm_gpu_synthetic.csv",
               [gpu, "# native_arch=" + sys.argv[2], types],

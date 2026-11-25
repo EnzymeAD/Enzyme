@@ -49,6 +49,14 @@ POSEIDON_OPTIMIZE __global__ void logistic_kernel(const double *x0,
   out[i] = x;
 }
 
+// The host's binary128 type: long double where it is one (AArch64), else the
+// __float128 extension (x86-64).
+#if __LDBL_MANT_DIG__ == 113
+typedef long double binary128;
+#else
+typedef __float128 binary128;
+#endif
+
 int main(int argc, char **argv) {
   if (argc != 3) {
     fprintf(stderr, "usage: %s <min error> <max error>\n", argv[0]);
@@ -70,9 +78,9 @@ int main(int argc, char **argv) {
     return 1;
   double maxRel = 0.0;
   for (int i = 0; i < N; ++i) {
-    __float128 x = hx[i];
+    binary128 x = hx[i];
     for (int k = 0; k < kSteps; ++k)
-      x = (__float128)3.9 * x * (1 - x);
+      x = (binary128)3.9 * x * (1 - x);
     double ref = (double)x;
     maxRel = std::fmax(maxRel, std::fabs(hout[i] - ref) / std::fabs(ref));
   }

@@ -1,6 +1,6 @@
 // REQUIRES: nvptx-registered-target
 // DEFINE: %{driver} = %poseidon_clangxx -x cuda --cuda-device-only \
-// DEFINE:   --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S \
+// DEFINE:   --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S \
 // DEFINE:   -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false \
 // DEFINE:   -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
 // DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \

@@ -1,4 +1,4 @@
-; DEFINE: %{clang} = %clang -O0 -x ir -fno-discard-value-names %loadClangPoseidon \
+; DEFINE: %{clang} = %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %loadClangPoseidon \
 ; DEFINE:   -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec \
 ; DEFINE:   -mllvm -poseidon-cache=%t/c -S -emit-llvm -o -
 ; RUN: rm -rf %t && mkdir %t

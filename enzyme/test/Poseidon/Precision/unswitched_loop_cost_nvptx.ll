@@ -4,7 +4,7 @@
 ; RUN:   -poseidon-profile-use=%S/../Inputs/unswitched_loop -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
 ; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print \
 ; RUN:   -S -o %t/out.ll 2> %t/log
 ; RUN: FileCheck %s < %t/log
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
@@ -12,7 +12,7 @@
 ; RUN:   -poseidon-profile-use=%S/../Inputs/unswitched_loop -poseidon-cache=%t/k \
 ; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
 ; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print \
 ; RUN:   -unswitch-threshold=0 -S -o /dev/null 2> %t/kept.log
 ; RUN: grep '^\[poseidon\] precision candidate' %t/log | sed 's/ [^ ]*acc=.*//' > %t/priced
 ; RUN: grep '^\[poseidon\] precision candidate' %t/kept.log | sed 's/ [^ ]*acc=.*//' > %t/priced-kept
@@ -21,7 +21,7 @@
 ; RUN:   -poseidon-profile-use=%S/../Inputs/unswitched_loop -poseidon-cache=%t/f \
 ; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
 ; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print \
 ; RUN:   -enable-nontrivial-unswitch -S -o /dev/null 2> %t/forced.log
 ; RUN: grep '^\[poseidon\] precision candidate' %t/forced.log | sed 's/ [^ ]*acc=.*//' > %t/priced-forced
 ; RUN: diff %t/priced %t/priced-forced

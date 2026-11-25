@@ -8,6 +8,7 @@
 //
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-cache=%t.cache -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o > %t.cuda.jobs 2>&1
 // RUN: FileCheck --check-prefix=CUDA %s < %t.cuda.jobs
 // RUN: grep -o 'poseidon-unit=[^" ]*' %t.cuda.jobs > %t.cuda.units
@@ -15,10 +16,12 @@
 // RUN: sort -u %t.cuda.units | count 1
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-cache=%t.cache -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | grep -o 'poseidon-unit=[^" ]*' | diff %t.cuda.units -
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-cache=%t.cache -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.other.o 2>&1 \
 // RUN:   | grep -o 'poseidon-unit=[^" ]*' > %t.other.units
 // RUN: count 3 < %t.other.units
@@ -26,6 +29,7 @@
 //
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -x hip --offload-arch=gfx942 --rocm-path=%t.rocm -nogpuinc \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     -nogpulib -### %s -o %t.o > %t.hip.jobs 2>&1
 // RUN: FileCheck --check-prefix=HIP %s < %t.hip.jobs
 // RUN: grep -o 'poseidon-unit=[^" ]*' %t.hip.jobs > %t.hip.units
@@ -34,11 +38,13 @@
 //
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-unit=mine -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o > %t.mine.jobs 2>&1
 // RUN: FileCheck --check-prefix=MINE %s < %t.mine.jobs
 // RUN: FileCheck --check-prefix=MINE-UNITS --implicit-check-not=poseidon-unit= %s < %t.mine.jobs
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -Xarch_host -mllvm=-poseidon-unit=mine -x hip --offload-arch=gfx942 \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o > %t.host.jobs 2>&1
 // RUN: FileCheck --check-prefix=HOST %s < %t.host.jobs
 // RUN: FileCheck --check-prefix=HOST-UNITS --implicit-check-not=poseidon-unit= %s < %t.host.jobs
@@ -54,6 +60,7 @@
 // named, never loaded.
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
 // RUN:     %poseidon_clangxx -poseidon-profile-generate -x hip \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --offload-arch=gfx942 --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s \
 // RUN:     -o %t.o 2>&1 | FileCheck --check-prefix=HIPLTO %s
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
@@ -62,6 +69,7 @@
 // RUN:   | FileCheck --check-prefix=HIPLINK %s
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
 // RUN:     %poseidon_clangxx -poseidon-profile-generate -x cuda \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-gpu-arch=%gpu_arch --cuda-path=%t.cuda -nocudainc -nocudalib \
 // RUN:     -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=CUDALTO --implicit-check-not=enzyme-lto-prelink %s

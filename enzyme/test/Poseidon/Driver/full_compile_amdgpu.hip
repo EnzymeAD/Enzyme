@@ -134,5 +134,5 @@ void launch_site(const double *x, double *y, int n) {
 // PKGENZYME-DAG: {{ }}-x hip --offload-arch=[[ARCH]] --rocm-path={{[^ ]+}} -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on -fpass-plugin={{[^ ]+}}/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -MD -MT CMakeFiles/k.dir/k.cpp.o {{.*}} -c {{[^ ]+}}/k.cpp{{$}}
 // PKGENZYME-DAG: {{ }}-fgpu-rdc -x hip --offload-arch=[[ARCH]] --rocm-path={{[^ ]+}} -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on -fpass-plugin={{[^ ]+}}/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -MD -MT CMakeFiles/k_rdc.dir/k.cpp.o {{.*}} -c {{[^ ]+}}/k.cpp{{$}}
 
-// DEFERRED-PKG: FAILED: CMakeFiles/{{k|k_rdc}}.dir/k.cpp.o
+// DEFERRED-PKG: FAILED: {{(\[code=[0-9]+\] )?}}CMakeFiles/{{k|k_rdc}}.dir/k.cpp.o
 // DEFERRED-PKG: k.cpp:[[@LINE-85]]:28: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang -mllvm -Xclang -enzyme-lto-prelink=1).

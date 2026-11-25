@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub/launches_*.json %t/
-; RUN: not %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o /dev/null 2>&1 | FileCheck %s
+; RUN: not %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o /dev/null 2>&1 | FileCheck %s
 
 ; The launch stub of a profiled kernel (Inputs/lambda_stub) that does not end
 ; in the launch API the profiling run rewrites, here the cudaLaunch of a host

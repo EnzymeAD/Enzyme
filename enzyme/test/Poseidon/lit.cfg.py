@@ -80,6 +80,8 @@ config.substitutions += [
     ('%poseidon_test_programs', config.poseidon_test_programs),
     ('%gpu_cost_model',
      os.path.join(config.poseidon_cost_models, 'cm_gpu_synthetic.csv')),
+    ('%host_cost_model',
+     os.path.join(config.poseidon_cost_models, 'cm_cpu_host.csv')),
     ('%cost_models', config.poseidon_cost_models),
     # LLVM, as in Enzyme's suites; %clang++ is %clang followed by ++.
     ('%shlibext', config.llvm_shlib_ext),
@@ -90,6 +92,7 @@ config.substitutions += [
      '" -DCMAKE_MAKE_PROGRAM=' + config.cmake_make_program),
     ('%cmake', '"' + config.cmake + '"'),
     ('%poseidon_package_dir', config.poseidon_build_root),
+    ('%install_libdir', config.install_libdir),
     ('%enzyme_binary_dir', config.enzyme_obj_root),
     # The runtimes, for tests that link them themselves: the profiler, and the
     # GEMM runtimes for tests that call an entry point instead of having the

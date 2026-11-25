@@ -1,8 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
 ; RUN: sed 's/@hipLaunchKernel(/@hipLaunchKernel_spt(/' %s > %t/spt.ll
-; RUN: %clang -O0 -x ir %t/spt.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SPT %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/spt.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SPT %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel (its source, with
 ; hip/hip_runtime.h, through clang -x hip --offload-arch=gfx942
 ; --cuda-host-only -O0 -S -emit-llvm): HIP pops the configuration with

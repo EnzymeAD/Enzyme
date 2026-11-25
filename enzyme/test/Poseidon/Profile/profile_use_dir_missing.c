@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t/tmp
-// RUN: (env TMPDIR=%t/tmp %clang -x c -O1 -c -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv %s -o %t/site.o 2>&1; echo "exit status $?") | FileCheck %s --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE
+// RUN: (env TMPDIR=%t/tmp %clang -x c -O1 -c -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-cost-model=%host_cost_model %s -o %t/site.o 2>&1; echo "exit status $?") | FileCheck %s --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE
 // RUN: not ls %t/site.o
 // RUN: ls %t/tmp | count 0
 

@@ -6,7 +6,7 @@
 // RUN: not ls %t/poseidon.profile
 // RUN: env POSEIDON_PROFILE_DIR=%t/env %t/gen
 // RUN: ls %t/env | FileCheck --check-prefix=PROFILE %s
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/named -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-print -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/named -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-print -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c -S -emit-llvm %s -o - | FileCheck --check-prefix=DEFAULT %s
 
 // A program built with -poseidon-profile-generate=<dir> writes its profiles

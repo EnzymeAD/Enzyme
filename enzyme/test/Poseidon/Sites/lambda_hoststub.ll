@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub/launches_*.json %t/
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@cudaLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@cudaLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
 ; The launch stub of a kernel that takes a lambda by value, host IR from
 ; clang -x cuda --cuda-host-only -O0 -S -emit-llvm of
 ;   template <int D> struct DeviceTensor {

@@ -24,6 +24,8 @@ config.poseidon_herbie_binary = "@POSEIDON_HERBIE_BINARY_PATH@"
 config.poseidon_calibrate_python = "@Python3_EXECUTABLE@"
 
 config.cmake = "@CMAKE_COMMAND@"
+# The directory under an installation's prefix its libraries go to.
+config.install_libdir = "@CMAKE_INSTALL_LIBDIR@"
 config.cmake_generator = "@CMAKE_GENERATOR@"
 config.cmake_make_program = "@CMAKE_MAKE_PROGRAM@"
 

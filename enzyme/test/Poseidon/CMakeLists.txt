@@ -13,10 +13,24 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(POSEIDON_TEST_COST_MODELS ${CMAKE_CURRENT_BINARY_DIR}/cost_models)
 set(_generator ${CMAKE_CURRENT_SOURCE_DIR}/Inputs/make_cost_models.py)
 set(_platform ${POSEIDON_SOURCE_DIR}/tools/calibrate/herbie_platform.py)
+# The CPU a host compile names when it names none, as clang passes it to cc1:
+# the tests that compile for the host price from a model filed under it.
+execute_process(
+  COMMAND ${LLVM_TOOLS_BINARY_DIR}/clang "-###" -c -x c /dev/null -o /dev/null
+  ERROR_VARIABLE _host_jobs
+  OUTPUT_QUIET)
+if(NOT _host_jobs MATCHES "\"-target-cpu\" \"([^\"]+)\"")
+  message(
+    FATAL_ERROR
+      "Poseidon tests: ${LLVM_TOOLS_BINARY_DIR}/clang names no -target-cpu "
+      "for a host compile, so no host cost model can be filed under it")
+endif()
+set(POSEIDON_TEST_HOST_CPU ${CMAKE_MATCH_1})
 set(_outputs "")
 foreach(
   _model
   cpu_native
+  cpu_host
   cpu_foreign
   cpu_noarch
   cpu_missing
@@ -46,7 +60,7 @@ add_custom_command(
   OUTPUT ${_outputs}
   COMMAND
     ${Python3_EXECUTABLE} ${_generator} ${POSEIDON_TEST_COST_MODELS}
-    ${POSEIDON_TEST_GPU_ARCH} ${_platforms}
+    ${POSEIDON_TEST_GPU_ARCH} ${POSEIDON_TEST_HOST_CPU} ${_platforms}
   DEPENDS ${_generator} ${_platform}
   COMMENT "Writing the cost models of the Poseidon tests")
 add_custom_target(poseidon-test-cost-models DEPENDS ${_outputs})

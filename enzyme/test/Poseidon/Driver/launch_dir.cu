@@ -1,6 +1,7 @@
 // REQUIRES: enzyme
 // DEFINE: %{drv} = env TMPDIR=%t/tmp POSEIDON_ECHO=1 %poseidon_clangxx \
 // DEFINE:   -poseidon-profile-generate -x cuda --cuda-gpu-arch=%gpu_arch \
+// DEFINE:   --target=x86_64-unknown-linux-gnu \
 // DEFINE:   --cuda-path=%t/cuda -nocudainc -nocudalib -### %s
 // RUN: rm -rf %t && mkdir -p %t/tmp
 // RUN: %{drv} -o %t/k.o 2>&1 | FileCheck -DTMP=%t/tmp --check-prefix=BOTH %s

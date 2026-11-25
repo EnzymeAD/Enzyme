@@ -28,10 +28,12 @@
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -poseidon-cache=%t.cache \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=USE --implicit-check-not=ClangEnzyme %s
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-generate \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=GEN %s
 // RUN: %poseidon_clangxx -poseidon-help | FileCheck --check-prefix=HELP %s
@@ -41,7 +43,9 @@
 // HIP Enzyme option, its compilers the Poseidon flags, and its device link
 // none. A line that only links is not warned about the flags it carries.
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
-// RUN:     %poseidon_clangxx -xhip --cuda-gpu-arch=gfx90a --rocm-path=%t.rocm \
+// RUN:     %poseidon_clangxx -xhip --cuda-gpu-arch=gfx90a \
+// RUN:     --target=x86_64-unknown-linux-gnu \
+// RUN:     --rocm-path=%t.rocm \
 // RUN:     -nogpuinc -nogpulib -poseidon-profile-generate -poseidon-tau=1e-12 \
 // RUN:     -c -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=XHIP %s
@@ -77,6 +81,7 @@
 // RUN:     -Xcuda-ptxas --maxrregcount=160 -Xclang -poseidon-not-a-flag \
 // RUN:     -mllvm -poseidon-print -mllvm=-poseidon-enable-herbie=0 \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=XPAIR %s
 //
@@ -84,11 +89,12 @@
 // linker, to which HIP's driver hands -mllvm, and the runtimes are HIP's.
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -x hip --offload-arch=gfx942 \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=HIPUSE --implicit-check-not=ClangEnzyme \
 // RUN:     --implicit-check-not=enzyme-lto-prelink %s
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-generate \
-// RUN:     -x hip --offload-arch=gfx942 \
+// RUN:     -x hip --target=x86_64-unknown-linux-gnu --offload-arch=gfx942 \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=HIPGEN %s
 //
@@ -96,10 +102,12 @@
 // HIP_PATH before --rocm-path, ROCM_PATH without either.
 // RUN: mkdir -p %t.hippath && env POSEIDON_ECHO=1 HIP_PATH=%t.hippath %poseidon_clangxx \
 // RUN:     -poseidon-profile-use -x hip --offload-arch=gfx942 \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=HIPPATH %s
 // RUN: mkdir -p %t.rocmpath && env POSEIDON_ECHO=1 ROCM_PATH=%t.rocmpath %poseidon_clangxx \
 // RUN:     -poseidon-profile-use -x hip --offload-arch=gfx942 -nogpuinc \
+// RUN:     --target=x86_64-unknown-linux-gnu \
 // RUN:     -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=ROCMPATH %s
 // What clang prints for -###, -v, --version and -print-* comes once.
