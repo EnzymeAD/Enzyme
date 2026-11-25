@@ -46,11 +46,6 @@ struct VIContext {
   bool stableUpdate = false;
   // Warm-restart optimizer state from `state_in`; null means a cold start.
   bool isResume = false;
-  Value initMLoc;
-  Value initVLoc;
-  Value initMScale;
-  Value initVScale;
-  Value initStepCount;
   bool debugDump = false;
 
   // When set, the joint density is cloned from here, not `@fn.generate`.

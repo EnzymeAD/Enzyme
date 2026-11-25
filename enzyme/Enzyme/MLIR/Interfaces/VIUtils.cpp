@@ -76,19 +76,12 @@ static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
 
 /// Sum as canary: a NaN/Inf gradient element makes its sum non-finite.
 static Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
-                                            Value elboScalar, Value gradLoc,
-                                            Value gradScale) {
-  Value isFinite = math::IsFiniteOp::create(builder, loc, elboScalar);
-  if (gradLoc) {
-    Value gradLocSum = sumAllElements(builder, loc, gradLoc);
-    Value gradLocFinite = math::IsFiniteOp::create(builder, loc, gradLocSum);
-    isFinite = arith::AndIOp::create(builder, loc, isFinite, gradLocFinite);
-  }
-  if (gradScale) {
-    Value gradScaleSum = sumAllElements(builder, loc, gradScale);
-    Value gradScaleFinite =
-        math::IsFiniteOp::create(builder, loc, gradScaleSum);
-    isFinite = arith::AndIOp::create(builder, loc, isFinite, gradScaleFinite);
+                                            Value elbo, ValueRange grads) {
+  Value isFinite = math::IsFiniteOp::create(builder, loc, elbo);
+  for (Value grad : grads) {
+    Value gradSum = sumAllElements(builder, loc, grad);
+    Value gradFinite = math::IsFiniteOp::create(builder, loc, gradSum);
+    isFinite = arith::AndIOp::create(builder, loc, isFinite, gradFinite);
   }
   return isFinite;
 }
@@ -155,28 +148,21 @@ struct ELBOGradient {
   SmallVector<Value> grads;
 };
 
-/// A parameter and its two optimizer state slots after one step. A rule that
-/// keeps fewer slots returns the unused ones unchanged.
-struct OptimizerUpdate {
+/// A guide parameter and its two optimizer state slots. An update rule that
+/// keeps fewer slots passes the unused ones through.
+struct ParamState {
   Value param;
   Value m;
   Value v;
 };
 
+/// The values an SVI loop leaves behind.
 struct SVILoopResult {
   Value traceBuf;
   Value elboBuf;
-  Value rngFinal;
-  Value locFinal; // unconstrained
-  // Unconstrained; flat scale_tril for AutoMVN, null for AutoDelta.
-  Value scaleFinal;
-  Value elboFinal;
-  // Final optimizer state; the scale moments are null for AutoDelta.
-  Value mLocFinal;
-  Value vLocFinal;
-  Value mScaleFinal;
-  Value vScaleFinal;
-  Value stepCountFinal;
+  Value rng;
+  SmallVector<ParamState> params;
+  Value stepCount;
 };
 } // namespace
 
@@ -496,9 +482,8 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
 }
 
 /// `gradElbo` is d(elbo)/dp; the minimized loss is -elbo.
-static OptimizerUpdate applySGDUpdate(OpBuilder &builder, Location loc,
-                                      Value param, Value gradElbo, Value m,
-                                      Value v, Value lr) {
+static ParamState applySGDUpdate(OpBuilder &builder, Location loc, Value param,
+                                 Value gradElbo, Value m, Value v, Value lr) {
   auto ty = cast<RankedTensorType>(param.getType());
   Value lrBcast = broadcastScalar(builder, loc, lr, ty);
   Value scaledGrad = arith::MulFOp::create(builder, loc, lrBcast, gradElbo);
@@ -508,11 +493,10 @@ static OptimizerUpdate applySGDUpdate(OpBuilder &builder, Location loc,
 
 /// jax.example_libraries.optimizers.adam; `stepIdx` counts from 0. A positive
 /// `clipNorm` clips each gradient element, as ClippedAdam does.
-static OptimizerUpdate applyAdamUpdate(OpBuilder &builder, Location loc,
-                                       Value param, Value gradElbo, Value m,
-                                       Value v, Value stepIdx, Value lr,
-                                       double b1, double b2, double eps,
-                                       double clipNorm) {
+static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
+                                  Value gradElbo, Value m, Value v,
+                                  Value stepIdx, Value lr, double b1, double b2,
+                                  double eps, double clipNorm) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -582,9 +566,9 @@ static OptimizerUpdate applyAdamUpdate(OpBuilder &builder, Location loc,
 }
 
 /// jax.example_libraries.optimizers.momentum; `m` is the velocity.
-static OptimizerUpdate applyMomentumUpdate(OpBuilder &builder, Location loc,
-                                           Value param, Value gradElbo, Value m,
-                                           Value v, Value lr, double mass) {
+static ParamState applyMomentumUpdate(OpBuilder &builder, Location loc,
+                                      Value param, Value gradElbo, Value m,
+                                      Value v, Value lr, double mass) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -602,10 +586,10 @@ static OptimizerUpdate applyMomentumUpdate(OpBuilder &builder, Location loc,
 
 /// jax.example_libraries.optimizers.rmsprop; `m` is the squared-gradient
 /// average.
-static OptimizerUpdate applyRMSPropUpdate(OpBuilder &builder, Location loc,
-                                          Value param, Value gradElbo, Value m,
-                                          Value v, Value lr, double gamma,
-                                          double eps) {
+static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
+                                     Value param, Value gradElbo, Value m,
+                                     Value v, Value lr, double gamma,
+                                     double eps) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -637,9 +621,9 @@ static OptimizerUpdate applyRMSPropUpdate(OpBuilder &builder, Location loc,
 }
 
 /// jax.example_libraries.optimizers.adagrad; `m` is g_sq, `v` the momentum.
-static OptimizerUpdate applyAdagradUpdate(OpBuilder &builder, Location loc,
-                                          Value param, Value gradElbo, Value m,
-                                          Value v, Value lr, double momentum) {
+static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
+                                     Value param, Value gradElbo, Value m,
+                                     Value v, Value lr, double momentum) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -680,10 +664,11 @@ static OptimizerUpdate applyAdagradUpdate(OpBuilder &builder, Location loc,
 
 /// jax.example_libraries.optimizers.rmsprop_momentum; `m` is the
 /// squared-gradient average, `v` the momentum.
-static OptimizerUpdate
-applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc, Value param,
-                           Value gradElbo, Value m, Value v, Value lr,
-                           double gamma, double eps, double momentumMass) {
+static ParamState applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
+                                             Value param, Value gradElbo,
+                                             Value m, Value v, Value lr,
+                                             double gamma, double eps,
+                                             double momentumMass) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -722,10 +707,9 @@ applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc, Value param,
 
 /// Applies `ctx.optimizerKind` to `param` with gradient `gradElbo` and state
 /// slots `m` and `v`; `step` is the zero-based global step index.
-static OptimizerUpdate applyOptimizer(OpBuilder &builder, Location loc,
-                                      const VIContext &ctx, Value step,
-                                      Value param, Value gradElbo, Value m,
-                                      Value v) {
+static ParamState applyOptimizer(OpBuilder &builder, Location loc,
+                                 const VIContext &ctx, Value step, Value param,
+                                 Value gradElbo, Value m, Value v) {
   switch (ctx.optimizerKind) {
   case OptimizerKind::ADAM:
     return applyAdamUpdate(builder, loc, param, gradElbo, m, v, step,
@@ -754,18 +738,22 @@ static OptimizerUpdate applyOptimizer(OpBuilder &builder, Location loc,
   llvm_unreachable("unknown VI optimizer kind");
 }
 
-/// `ctx.numSamples` iterations of NumPyro's SVI.update.
-static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
-                                 Value scale0, Value rng0,
-                                 const VIContext &ctx) {
+/// Emits `ctx.numSamples` iterations of NumPyro's SVI.update over the guide
+/// parameters `params0`, whose null optimizer slots start at zero and whose
+/// null `initStepCount` starts at step 0. The trace records the first
+/// parameter, constrained when `recordConstrained` is set.
+static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
+                                 ArrayRef<ParamState> params0, Value rng0,
+                                 Value initStepCount, const VIContext &ctx,
+                                 ParticleEmitter emitParticle,
+                                 bool recordConstrained) {
   auto elemType = ctx.getElementType();
-  auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  Type rngType = rng0.getType();
   auto traceBufType =
       RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
-  auto i64T = RankedTensorType::get({}, builder.getI64Type());
+  auto i64Type = RankedTensorType::get({}, builder.getI64Type());
+  size_t numParams = params0.size();
 
   Value c0i = i64Const(builder, loc, 0);
   Value c1i = i64Const(builder, loc, 1);
@@ -773,383 +761,114 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
   Value traceInit = scalarConst(builder, loc, traceBufType, 0.0);
   Value elboInit = scalarConst(builder, loc, elboBufType, 0.0);
   Value elboFinalSeed = scalarConst(builder, loc, scalarType, 0.0);
-  Value zeroPos = scalarConst(builder, loc, positionType, 0.0);
-  Value mLoc0 = ctx.initMLoc ? ctx.initMLoc : zeroPos;
-  Value vLoc0 = ctx.initVLoc ? ctx.initVLoc : zeroPos;
-  Value mScale0 = ctx.initMScale ? ctx.initMScale : zeroPos;
-  Value vScale0 = ctx.initVScale ? ctx.initVScale : zeroPos;
-  Value initStepCountI64 =
-      ctx.initStepCount ? ctx.initStepCount : i64Const(builder, loc, 0);
+  DenseMap<Type, Value> zeroSlots;
+  for (const ParamState &p : params0) {
+    auto type = cast<RankedTensorType>(p.param.getType());
+    if (!zeroSlots.contains(type))
+      zeroSlots[type] = scalarConst(builder, loc, type, 0.0);
+  }
+  if (!initStepCount)
+    initStepCount = i64Const(builder, loc, 0);
 
-  SmallVector<Value> iterArgs{loc0,          scale0, rng0,  traceInit, elboInit,
-                              elboFinalSeed, mLoc0,  vLoc0, mScale0,   vScale0};
-  SmallVector<Type> iterTypes{
-      positionType, positionType, rngType,      traceBufType, elboBufType,
-      scalarType,   positionType, positionType, positionType, positionType};
+  // Iteration arguments: params, rng, trace, ELBO trace, last ELBO, then the
+  // (m, v) slots of each param.
+  SmallVector<Value> iterArgs;
+  for (const ParamState &p : params0)
+    iterArgs.push_back(p.param);
+  iterArgs.append({rng0, traceInit, elboInit, elboFinalSeed});
+  for (const ParamState &p : params0) {
+    Value zero = zeroSlots.lookup(p.param.getType());
+    iterArgs.push_back(p.m ? p.m : zero);
+    iterArgs.push_back(p.v ? p.v : zero);
+  }
+  SmallVector<Type> iterTypes(ValueRange(iterArgs).getTypes());
 
   auto forOp =
       impulse::ForOp::create(builder, loc, iterTypes, c0i, cNi, c1i, iterArgs);
   Block *body = builder.createBlock(&forOp.getRegion());
-  body->addArgument(i64T, loc);
-  for (auto t : iterTypes)
-    body->addArgument(t, loc);
+  body->addArgument(i64Type, loc);
+  for (Type type : iterTypes)
+    body->addArgument(type, loc);
 
   Value iter = body->getArgument(0);
-  Value locIter = body->getArgument(1);
-  Value scaleIter = body->getArgument(2);
-  Value rngIter = body->getArgument(3);
-  Value traceBufIter = body->getArgument(4);
-  Value elboBufIter = body->getArgument(5);
-  Value mLocIter = body->getArgument(7);
-  Value vLocIter = body->getArgument(8);
-  Value mScaleIter = body->getArgument(9);
-  Value vScaleIter = body->getArgument(10);
+  ValueRange iterValues = body->getArguments().drop_front();
+  ValueRange params = iterValues.take_front(numParams);
+  Value rngIter = iterValues[numParams];
+  Value traceBufIter = iterValues[numParams + 1];
+  Value elboBufIter = iterValues[numParams + 2];
+  ValueRange slots = iterValues.drop_front(numParams + 4);
 
   {
-    OpBuilder::InsertionGuard g(builder);
+    OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(body);
 
     // NumPyro SVI.update: rng_next, rng_step = split(rng).
     auto updateSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rngType, rngType}, rngIter);
+        builder, loc, TypeRange{rng0.getType(), rng0.getType()}, rngIter);
     Value rngNext = updateSplit.getResult(0);
     Value rngStep = updateSplit.getResult(1);
 
-    ELBOGradient elboRes =
-        averageParticles(builder, loc, ValueRange{locIter, scaleIter}, rngStep,
-                         ctx, emitAutoNormalParticle);
-    Value elboGradLoc = elboRes.grads[0];
-    Value elboGradScale = elboRes.grads[1];
+    ELBOGradient estimate =
+        averageParticles(builder, loc, params, rngStep, ctx, emitParticle);
 
-    Value effectiveStep =
-        arith::AddIOp::create(builder, loc, iter, initStepCountI64);
-
-    OptimizerUpdate locUpd =
-        applyOptimizer(builder, loc, ctx, effectiveStep, locIter, elboGradLoc,
-                       mLocIter, vLocIter);
-    OptimizerUpdate scaleUpd =
-        applyOptimizer(builder, loc, ctx, effectiveStep, scaleIter,
-                       elboGradScale, mScaleIter, vScaleIter);
-    Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
-    Value scaleNew = scaleUpd.param, mScaleNew = scaleUpd.m,
-          vScaleNew = scaleUpd.v;
+    Value step = arith::AddIOp::create(builder, loc, iter, initStepCount);
+    SmallVector<Value> newParams, newSlots;
+    for (size_t i = 0; i < numParams; ++i) {
+      ParamState next =
+          applyOptimizer(builder, loc, ctx, step, params[i], estimate.grads[i],
+                         slots[2 * i], slots[2 * i + 1]);
+      newParams.push_back(next.param);
+      newSlots.append({next.m, next.v});
+    }
 
     // A skipped step still records its ELBO, as numpyro's stable_update does.
     if (ctx.stableUpdate) {
       Value isFinite = computeIsFiniteForStableUpdate(
-          builder, loc, elboRes.elbo, elboGradLoc, elboGradScale);
-      locNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                         locNew, locIter);
-      scaleNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                           scaleNew, scaleIter);
-      mLocNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                          mLocNew, mLocIter);
-      vLocNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                          vLocNew, vLocIter);
-      mScaleNew = impulse::SelectOp::create(builder, loc, positionType,
-                                            isFinite, mScaleNew, mScaleIter);
-      vScaleNew = impulse::SelectOp::create(builder, loc, positionType,
-                                            isFinite, vScaleNew, vScaleIter);
+          builder, loc, estimate.elbo, estimate.grads);
+      auto keepIfFinite = [&](Value next, Value prev) -> Value {
+        return impulse::SelectOp::create(builder, loc, prev.getType(), isFinite,
+                                         next, prev);
+      };
+      for (auto [next, prev] : llvm::zip_equal(newParams, params))
+        next = keepIfFinite(next, prev);
+      for (auto [next, prev] : llvm::zip_equal(newSlots, slots))
+        next = keepIfFinite(next, prev);
     }
 
-    Value locFlat = impulse::ReshapeOp::create(
-        builder, loc, RankedTensorType::get({1, ctx.positionSize}, elemType),
-        locNew);
+    Value recorded = newParams.front();
+    if (recordConstrained)
+      recorded = constrainPosition(builder, loc, recorded, ctx.supports);
+    Value recordedRow = impulse::ReshapeOp::create(
+        builder, loc, ctx.getPositionType(), recorded);
     Value traceBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, traceBufType, traceBufIter, locFlat,
+        builder, loc, traceBufType, traceBufIter, recordedRow,
         ValueRange{iter, c0i});
 
-    auto scalar1d = RankedTensorType::get({1}, elemType);
-    Value elbo1d =
-        impulse::ReshapeOp::create(builder, loc, scalar1d, elboRes.elbo);
+    Value elbo1d = impulse::ReshapeOp::create(
+        builder, loc, RankedTensorType::get({1}, elemType), estimate.elbo);
     Value elboBufNew = impulse::DynamicUpdateSliceOp::create(
         builder, loc, elboBufType, elboBufIter, elbo1d, ValueRange{iter});
 
-    impulse::YieldOp::create(builder, loc,
-                             ValueRange{locNew, scaleNew, rngNext, traceBufNew,
-                                        elboBufNew, elboRes.elbo, mLocNew,
-                                        vLocNew, mScaleNew, vScaleNew});
+    SmallVector<Value> yielded(newParams);
+    yielded.append({rngNext, traceBufNew, elboBufNew, estimate.elbo});
+    llvm::append_range(yielded, newSlots);
+    impulse::YieldOp::create(builder, loc, yielded);
   }
 
   builder.setInsertionPointAfter(forOp);
 
   Value numSamplesI64 = i64Const(builder, loc, ctx.numSamples);
-  Value finalStepCountI64 =
-      arith::AddIOp::create(builder, loc, initStepCountI64, numSamplesI64);
-
-  SVILoopResult r;
-  r.traceBuf = forOp.getResult(3);
-  r.elboBuf = forOp.getResult(4);
-  r.rngFinal = forOp.getResult(2);
-  r.locFinal = forOp.getResult(0);
-  r.scaleFinal = forOp.getResult(1);
-  r.elboFinal = forOp.getResult(5);
-  r.mLocFinal = forOp.getResult(6);
-  r.vLocFinal = forOp.getResult(7);
-  r.mScaleFinal = forOp.getResult(8);
-  r.vScaleFinal = forOp.getResult(9);
-  r.stepCountFinal = finalStepCountI64;
-  return r;
-}
-
-/// AutoDelta variant of emitSVILoop; the trace records the constrained loc.
-static SVILoopResult emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
-                                          Value loc0, Value rng0,
-                                          const VIContext &ctx) {
-  auto elemType = ctx.getElementType();
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  Type rngType = rng0.getType();
-  auto traceBufType =
-      RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
-  auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
-  auto i64T = RankedTensorType::get({}, builder.getI64Type());
-
-  Value c0i = i64Const(builder, loc, 0);
-  Value c1i = i64Const(builder, loc, 1);
-  Value cNi = i64Const(builder, loc, ctx.numSamples);
-  Value traceInit = scalarConst(builder, loc, traceBufType, 0.0);
-  Value elboInit = scalarConst(builder, loc, elboBufType, 0.0);
-  Value elboFinalSeed = scalarConst(builder, loc, scalarType, 0.0);
-  Value zeroPos = scalarConst(builder, loc, positionType, 0.0);
-  Value mLoc0 = ctx.initMLoc ? ctx.initMLoc : zeroPos;
-  Value vLoc0 = ctx.initVLoc ? ctx.initVLoc : zeroPos;
-  Value initStepCountI64 =
-      ctx.initStepCount ? ctx.initStepCount : i64Const(builder, loc, 0);
-
-  SmallVector<Value> iterArgs{loc0,          rng0,  traceInit, elboInit,
-                              elboFinalSeed, mLoc0, vLoc0};
-  SmallVector<Type> iterTypes{positionType, rngType,    traceBufType,
-                              elboBufType,  scalarType, positionType,
-                              positionType};
-
-  auto forOp =
-      impulse::ForOp::create(builder, loc, iterTypes, c0i, cNi, c1i, iterArgs);
-  Block *body = builder.createBlock(&forOp.getRegion());
-  body->addArgument(i64T, loc);
-  for (auto t : iterTypes)
-    body->addArgument(t, loc);
-
-  Value iter = body->getArgument(0);
-  Value locIter = body->getArgument(1);
-  Value rngIter = body->getArgument(2);
-  Value traceBufIter = body->getArgument(3);
-  Value elboBufIter = body->getArgument(4);
-  Value mLocIter = body->getArgument(6);
-  Value vLocIter = body->getArgument(7);
-
-  {
-    OpBuilder::InsertionGuard g(builder);
-    builder.setInsertionPointToStart(body);
-
-    // NumPyro SVI.update: rng_next, rng_step = split(rng).
-    auto updateSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rngType, rngType}, rngIter);
-    Value rngNext = updateSplit.getResult(0);
-    Value rngStep = updateSplit.getResult(1);
-
-    ELBOGradient elboRes = averageParticles(
-        builder, loc, ValueRange{locIter}, rngStep, ctx, emitAutoDeltaParticle);
-    Value elboMean = elboRes.elbo;
-    Value gradLocMean = elboRes.grads[0];
-
-    Value effectiveStep =
-        arith::AddIOp::create(builder, loc, iter, initStepCountI64);
-
-    OptimizerUpdate locUpd =
-        applyOptimizer(builder, loc, ctx, effectiveStep, locIter, gradLocMean,
-                       mLocIter, vLocIter);
-    Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
-
-    if (ctx.stableUpdate) {
-      Value isFinite = computeIsFiniteForStableUpdate(
-          builder, loc, elboMean, gradLocMean, /*gradScale=*/Value());
-      locNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                         locNew, locIter);
-      mLocNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                          mLocNew, mLocIter);
-      vLocNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                          vLocNew, vLocIter);
-    }
-
-    // Constrained, as NumPyro reports the `<site>_auto_loc` params.
-    Value locConstrained =
-        constrainPosition(builder, loc, locNew, ctx.supports);
-    Value locFlat = impulse::ReshapeOp::create(
-        builder, loc, RankedTensorType::get({1, ctx.positionSize}, elemType),
-        locConstrained);
-    Value traceBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, traceBufType, traceBufIter, locFlat,
-        ValueRange{iter, c0i});
-
-    auto scalar1d = RankedTensorType::get({1}, elemType);
-    Value elbo1d = impulse::ReshapeOp::create(builder, loc, scalar1d, elboMean);
-    Value elboBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, elboBufType, elboBufIter, elbo1d, ValueRange{iter});
-
-    impulse::YieldOp::create(builder, loc,
-                             ValueRange{locNew, rngNext, traceBufNew,
-                                        elboBufNew, elboMean, mLocNew,
-                                        vLocNew});
-  }
-
-  builder.setInsertionPointAfter(forOp);
-
-  Value numSamplesI64 = i64Const(builder, loc, ctx.numSamples);
-  Value finalStepCountI64 =
-      arith::AddIOp::create(builder, loc, initStepCountI64, numSamplesI64);
-
-  SVILoopResult r;
-  r.traceBuf = forOp.getResult(2);
-  r.elboBuf = forOp.getResult(3);
-  r.rngFinal = forOp.getResult(1);
-  r.locFinal = forOp.getResult(0);
-  r.scaleFinal = Value();
-  r.elboFinal = forOp.getResult(4);
-  r.mLocFinal = forOp.getResult(5);
-  r.vLocFinal = forOp.getResult(6);
-  r.mScaleFinal = Value();
-  r.vScaleFinal = Value();
-  r.stepCountFinal = finalStepCountI64;
-  return r;
-}
-
-/// `xScaleTril0` is the unconstrained flat vector of length d*(d+1)/2.
-static SVILoopResult emitSVILoopMVN(OpBuilder &builder, Location loc,
-                                    Value loc0, Value xScaleTril0, Value rng0,
-                                    const VIContext &ctx) {
-  auto elemType = ctx.getElementType();
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  Type rngType = rng0.getType();
-  int64_t d = ctx.positionSize;
-  int64_t flatSize = d * (d + 1) / 2;
-  auto flatXTy = RankedTensorType::get({flatSize}, elemType);
-  auto traceBufType = RankedTensorType::get({ctx.numSamples, d}, elemType);
-  auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
-  auto i64T = RankedTensorType::get({}, builder.getI64Type());
-
-  Value c0i = i64Const(builder, loc, 0);
-  Value c1i = i64Const(builder, loc, 1);
-  Value cNi = i64Const(builder, loc, ctx.numSamples);
-  Value traceInit = scalarConst(builder, loc, traceBufType, 0.0);
-  Value elboInit = scalarConst(builder, loc, elboBufType, 0.0);
-  Value elboFinalSeed = scalarConst(builder, loc, scalarType, 0.0);
-  Value zeroPos = scalarConst(builder, loc, positionType, 0.0);
-  Value zeroFlat = scalarConst(builder, loc, flatXTy, 0.0);
-  Value mLoc0 = ctx.initMLoc ? ctx.initMLoc : zeroPos;
-  Value vLoc0 = ctx.initVLoc ? ctx.initVLoc : zeroPos;
-  Value mX0 = ctx.initMScale ? ctx.initMScale : zeroFlat;
-  Value vX0 = ctx.initVScale ? ctx.initVScale : zeroFlat;
-  Value initStepCountI64 =
-      ctx.initStepCount ? ctx.initStepCount : i64Const(builder, loc, 0);
-
-  SmallVector<Value> iterArgs{
-      loc0,          xScaleTril0, rng0,  traceInit, elboInit,
-      elboFinalSeed, mLoc0,       vLoc0, mX0,       vX0};
-  SmallVector<Type> iterTypes{
-      positionType, flatXTy,      rngType,      traceBufType, elboBufType,
-      scalarType,   positionType, positionType, flatXTy,      flatXTy};
-
-  auto forOp =
-      impulse::ForOp::create(builder, loc, iterTypes, c0i, cNi, c1i, iterArgs);
-  Block *body = builder.createBlock(&forOp.getRegion());
-  body->addArgument(i64T, loc);
-  for (auto t : iterTypes)
-    body->addArgument(t, loc);
-
-  Value iter = body->getArgument(0);
-  Value locIter = body->getArgument(1);
-  Value xIter = body->getArgument(2);
-  Value rngIter = body->getArgument(3);
-  Value traceBufIter = body->getArgument(4);
-  Value elboBufIter = body->getArgument(5);
-  Value mLocIter = body->getArgument(7);
-  Value vLocIter = body->getArgument(8);
-  Value mXIter = body->getArgument(9);
-  Value vXIter = body->getArgument(10);
-
-  {
-    OpBuilder::InsertionGuard g(builder);
-    builder.setInsertionPointToStart(body);
-
-    // NumPyro SVI.update: rng_next, rng_step = split(rng).
-    auto updateSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rngType, rngType}, rngIter);
-    Value rngNext = updateSplit.getResult(0);
-    Value rngStep = updateSplit.getResult(1);
-
-    ELBOGradient elboRes =
-        averageParticles(builder, loc, ValueRange{locIter, xIter}, rngStep, ctx,
-                         emitAutoMVNParticle);
-    Value elbo = elboRes.elbo;
-    Value gradLoc = elboRes.grads[0];
-    Value gradX = elboRes.grads[1];
-
-    Value effectiveStep =
-        arith::AddIOp::create(builder, loc, iter, initStepCountI64);
-
-    OptimizerUpdate locUpd = applyOptimizer(
-        builder, loc, ctx, effectiveStep, locIter, gradLoc, mLocIter, vLocIter);
-    OptimizerUpdate xUpd = applyOptimizer(builder, loc, ctx, effectiveStep,
-                                          xIter, gradX, mXIter, vXIter);
-    Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
-    Value xNew = xUpd.param, mXNew = xUpd.m, vXNew = xUpd.v;
-
-    if (ctx.stableUpdate) {
-      Value isFinite =
-          computeIsFiniteForStableUpdate(builder, loc, elbo, gradLoc, gradX);
-      auto xType = cast<RankedTensorType>(xIter.getType());
-      locNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                         locNew, locIter);
-      xNew =
-          impulse::SelectOp::create(builder, loc, xType, isFinite, xNew, xIter);
-      mLocNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                          mLocNew, mLocIter);
-      vLocNew = impulse::SelectOp::create(builder, loc, positionType, isFinite,
-                                          vLocNew, vLocIter);
-      mXNew = impulse::SelectOp::create(builder, loc, xType, isFinite, mXNew,
-                                        mXIter);
-      vXNew = impulse::SelectOp::create(builder, loc, xType, isFinite, vXNew,
-                                        vXIter);
-    }
-
-    Value locFlat =
-        impulse::ReshapeOp::create(builder, loc, positionType, locNew);
-    Value traceBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, traceBufType, traceBufIter, locFlat,
-        ValueRange{iter, c0i});
-
-    auto scalar1d = RankedTensorType::get({1}, elemType);
-    Value elbo1d = impulse::ReshapeOp::create(builder, loc, scalar1d, elbo);
-    Value elboBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, elboBufType, elboBufIter, elbo1d, ValueRange{iter});
-
-    impulse::YieldOp::create(builder, loc,
-                             ValueRange{locNew, xNew, rngNext, traceBufNew,
-                                        elboBufNew, elbo, mLocNew, vLocNew,
-                                        mXNew, vXNew});
-  }
-
-  builder.setInsertionPointAfter(forOp);
-
-  Value numSamplesI64 = i64Const(builder, loc, ctx.numSamples);
-  Value finalStepCountI64 =
-      arith::AddIOp::create(builder, loc, initStepCountI64, numSamplesI64);
-
-  SVILoopResult r;
-  r.traceBuf = forOp.getResult(3);
-  r.elboBuf = forOp.getResult(4);
-  r.rngFinal = forOp.getResult(2);
-  r.locFinal = forOp.getResult(0);
-  r.scaleFinal = forOp.getResult(1);
-  r.elboFinal = forOp.getResult(5);
-  r.mLocFinal = forOp.getResult(6);
-  r.vLocFinal = forOp.getResult(7);
-  r.mScaleFinal = forOp.getResult(8);
-  r.vScaleFinal = forOp.getResult(9);
-  r.stepCountFinal = finalStepCountI64;
-  return r;
+  SVILoopResult result;
+  result.traceBuf = forOp.getResult(numParams + 1);
+  result.elboBuf = forOp.getResult(numParams + 2);
+  result.rng = forOp.getResult(numParams);
+  for (size_t i = 0; i < numParams; ++i)
+    result.params.push_back({forOp.getResult(i),
+                             forOp.getResult(numParams + 4 + 2 * i),
+                             forOp.getResult(numParams + 5 + 2 * i)});
+  result.stepCount =
+      arith::AddIOp::create(builder, loc, initStepCount, numSamplesI64);
+  return result;
 }
 
 template <typename OpT>
@@ -1188,17 +907,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     auto stateIn = op.getStateIn();
     return *idx < stateIn.size() ? stateIn[*idx] : Value();
   };
-
-  ctx.initMLoc = slotIn("opt_m_loc");
-  ctx.initVLoc = slotIn("opt_v_loc");
-  if (ctx.guideKind == impulse::GuideKind::AUTO_MULTIVARIATE_NORMAL) {
-    ctx.initMScale = slotIn("opt_m_scale_tril");
-    ctx.initVScale = slotIn("opt_v_scale_tril");
-  } else {
-    ctx.initMScale = slotIn("opt_m_scale");
-    ctx.initVScale = slotIn("opt_v_scale");
-  }
-  ctx.initStepCount = slotIn("opt_step_count");
 
   // NumPyro SVI.init: rng_key, model_seed, guide_seed = split(key, 3).
   // A resumed run already holds the per-update rng_key, so it skips the split.
@@ -1276,11 +984,14 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     }
   }
 
+  ParamState locState{loc0, slotIn("opt_m_loc"), slotIn("opt_v_loc")};
+  Value initStepCount = slotIn("opt_step_count");
   SVILoopResult loopRes;
   impulse::VIGuide guide;
   if (ctx.guideKind == impulse::GuideKind::AUTO_DELTA) {
     guide = impulse::VIGuide::AutoDelta;
-    loopRes = emitSVILoopAutoDelta(rewriter, loc, loc0, rng0, ctx);
+    loopRes = emitSVILoop(rewriter, loc, {locState}, rng0, initStepCount, ctx,
+                          emitAutoDeltaParticle, /*recordConstrained=*/true);
   } else if (ctx.guideKind == impulse::GuideKind::AUTO_NORMAL) {
     guide = impulse::VIGuide::AutoNormal;
     Value scale0;
@@ -1298,7 +1009,10 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       double initScaleU = std::log(std::expm1(ctx.initScale));
       scale0 = scalarConst(rewriter, loc, positionType, initScaleU);
     }
-    loopRes = emitSVILoop(rewriter, loc, loc0, scale0, rng0, ctx);
+    ParamState scaleState{scale0, slotIn("opt_m_scale"), slotIn("opt_v_scale")};
+    loopRes = emitSVILoop(rewriter, loc, {locState, scaleState}, rng0,
+                          initStepCount, ctx, emitAutoNormalParticle,
+                          /*recordConstrained=*/false);
   } else {
     // scale_tril = init_scale * I: zero off-diagonals, softplus_inv diagonal.
     guide = impulse::VIGuide::AutoMVN;
@@ -1320,25 +1034,29 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       xScaleTril0 = arith::ConstantOp::create(
           rewriter, loc, flatTy, DenseElementsAttr::get(flatTy, vals));
     }
-    loopRes = emitSVILoopMVN(rewriter, loc, loc0, xScaleTril0, rng0, ctx);
+    ParamState scaleTrilState{xScaleTril0, slotIn("opt_m_scale_tril"),
+                              slotIn("opt_v_scale_tril")};
+    loopRes = emitSVILoop(rewriter, loc, {locState, scaleTrilState}, rng0,
+                          initStepCount, ctx, emitAutoMVNParticle,
+                          /*recordConstrained=*/false);
   }
 
   auto slotValue = [&](StringRef name) -> Value {
     if (name == "loc")
-      return loopRes.locFinal;
+      return loopRes.params[0].param;
     if (name == "scale_unconstrained" || name == "scale_tril_unconstrained")
-      return loopRes.scaleFinal;
+      return loopRes.params[1].param;
     if (name == "opt_m_loc")
-      return loopRes.mLocFinal;
+      return loopRes.params[0].m;
     if (name == "opt_v_loc")
-      return loopRes.vLocFinal;
+      return loopRes.params[0].v;
     if (name == "opt_m_scale" || name == "opt_m_scale_tril")
-      return loopRes.mScaleFinal;
+      return loopRes.params[1].m;
     if (name == "opt_v_scale" || name == "opt_v_scale_tril")
-      return loopRes.vScaleFinal;
+      return loopRes.params[1].v;
     if (name == "opt_step_count")
-      return loopRes.stepCountFinal;
-    return Value();
+      return loopRes.stepCount;
+    llvm_unreachable("unknown VI state slot");
   };
 
   SmallVector<Value> results;
@@ -1349,7 +1067,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       DenseElementsAttr::get(
           cast<ShapedType>(op.getLogDensities().getType()),
           rewriter.getFloatAttr(elemType, 0.0)))); // log_densities (unused)
-  results.push_back(loopRes.rngFinal);
+  results.push_back(loopRes.rng);
   for (const impulse::StateSlot &slot :
        impulse::buildVIStateSchema(guide, ctx.positionSize, elemType))
     results.push_back(slotValue(slot.name));
