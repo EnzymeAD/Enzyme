@@ -148,6 +148,10 @@ llvm::Error userError(const llvm::Twine &Message);
 // its location, any other as a mistake of the whole compile.
 void reportUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
 
+// Reports the errors `E` holds and ends the compile as reportUserError does;
+// returns when it holds none.
+void exitOnUserError(llvm::LLVMContext &Ctx, llvm::Error E);
+
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1
 // and without crash diagnostics.

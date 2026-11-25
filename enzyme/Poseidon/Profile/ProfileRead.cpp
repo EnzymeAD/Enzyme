@@ -83,12 +83,12 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
   return floored;
 }
 
-void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
-                         StringRef fileName, StringRef canonicalHash,
-                         const Function &F, bool print) {
+Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
+                          StringRef fileName, StringRef canonicalHash,
+                          const Function &F, bool print) {
   const StringRef functionName = F.getName();
-  auto refuse = [&](const Twine &why) {
-    reportUserError(F, F.getSubprogram(), why);
+  auto refusal = [&](const Twine &why) {
+    return userError(F, F.getSubprogram(), why);
   };
   std::unordered_map<size_t, double> grad, sens;
   for (const std::string &dir : dirs) {
@@ -96,28 +96,30 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     sys::path::append(path, fileName);
     ProfileMap out;
     FunctionProfileHeader header;
-    parseProfileFile(path.str().str(), F, out, header);
+    if (Error E = parseProfileFile(path.str().str(), F, out, header))
+      return E;
     double total = 0.0;
     for (const auto &kv : out)
       total += kv.second.sumSens;
     if (!(total > 0.0) || !std::isfinite(total))
-      refuse(Twine("output profile ") + path + " of " + functionName +
-             " carries no sensitivity; re-run profile "
-             "generation with that output seeded.");
+      return refusal(Twine("output profile ") + path + " of " + functionName +
+                     " carries no sensitivity; re-run profile "
+                     "generation with that output seeded.");
     if (!canonicalHash.empty() && header.canonicalHash != canonicalHash)
-      refuse(Twine("output profile ") + path +
-             " was recorded against a different canonical form than the "
-             "site's profile; re-run profile generation.");
+      return refusal(Twine("output profile ") + path +
+                     " was recorded against a different canonical form than "
+                     "the site's profile; re-run profile generation.");
     if (out.size() != profileMap.size())
-      refuse(Twine("output profile ") + path + " records " + Twine(out.size()) +
-             " instructions, the site's profile " + Twine(profileMap.size()) +
-             "; both must come from the same profiling binary.");
+      return refusal(Twine("output profile ") + path + " records " +
+                     Twine(out.size()) + " instructions, the site's profile " +
+                     Twine(profileMap.size()) +
+                     "; both must come from the same profiling binary.");
     for (const auto &kv : out) {
       if (!profileMap.count(kv.first))
-        refuse(Twine("output profile ") + path + " names instruction " +
-               Twine(kv.first) +
-               " that the site's profile does not; both must come from the "
-               "same profiling binary.");
+        return refusal(Twine("output profile ") + path + " names instruction " +
+                       Twine(kv.first) +
+                       " that the site's profile does not; both must come "
+                       "from the same profiling binary.");
       const ProfileInfo &p = kv.second;
       grad[kv.first] = std::max(grad[kv.first], p.weight() / total);
       sens[kv.first] = std::max(sens[kv.first], p.sumSens / total);
@@ -133,6 +135,7 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     errs() << "[poseidon] " << functionName
            << ": accuracy weighted per output (" << dirs.size()
            << " output profiles)\n";
+  return Error::success();
 }
 
 namespace {
@@ -144,7 +147,7 @@ public:
   ProfileParser(const MemoryBuffer &Buffer, StringRef Path, const Function &F)
       : Lines(Buffer, /*SkipBlanks=*/true), Path(Path), F(F) {}
 
-  void parse(ProfileMap &Records, FunctionProfileHeader &Header);
+  Error parse(ProfileMap &Records, FunctionProfileHeader &Header);
 
 private:
   line_iterator Lines;
@@ -152,10 +155,10 @@ private:
   const Function &F;
   int64_t LineNo = 0;
 
-  [[noreturn]] void refuse(const Twine &What) {
-    reportUserError(F, F.getSubprogram(),
-                    Path + ":" + Twine(LineNo) + ": " + What +
-                        "; re-run profile generation.");
+  Error refusal(const Twine &What) const {
+    return userError(F, F.getSubprogram(),
+                     Path + ":" + Twine(LineNo) + ": " + What +
+                         "; re-run profile generation.");
   }
 
   /// The next line, trimmed; none at the end of the file.
@@ -168,74 +171,108 @@ private:
     return Line;
   }
 
-  template <typename T> T integer(StringRef Text, const Twine &Field) {
+  template <typename T>
+  Expected<T> integer(StringRef Text, const Twine &Field) {
     T Out;
     if (Text.getAsInteger(10, Out))
-      refuse(Field + " " + Text +
-             (all_of(Text, isDigit) && !Text.empty() ? " is out of range"
-                                                     : " is not a number"));
+      return refusal(Field + " " + Text +
+                     (all_of(Text, isDigit) && !Text.empty()
+                          ? " is out of range"
+                          : " is not a number"));
     return Out;
   }
 
-  double real(StringRef Text, const Twine &Field) {
+  Expected<double> real(StringRef Text, const Twine &Field) {
     double Out;
     if (Text.getAsDouble(Out))
-      refuse(Field + " " + Text + " is not a number");
+      return refusal(Field + " " + Text + " is not a number");
     return Out;
   }
 
   template <typename T>
-  void integers(StringRef Text, const Twine &Field, MutableArrayRef<T> Out) {
+  Error integers(StringRef Text, const Twine &Field, MutableArrayRef<T> Out) {
     SmallVector<StringRef, 3> Parts;
     Text.split(Parts, ' ', -1, /*KeepEmpty=*/false);
     if (Parts.size() != Out.size())
-      refuse(Field + " " + Text + " is not " + Twine(Out.size()) + " numbers");
-    for (auto [Part, To] : zip(Parts, Out))
-      To = integer<T>(Part, Field);
+      return refusal(Field + " " + Text + " is not " + Twine(Out.size()) +
+                     " numbers");
+    for (auto [Part, To] : zip(Parts, Out)) {
+      Expected<T> Value = integer<T>(Part, Field);
+      if (!Value)
+        return Value.takeError();
+      To = *Value;
+    }
+    return Error::success();
   }
 
   /// The value of the next line, which is the `Key` line of the record of
   /// `Slot`.
-  StringRef field(size_t Slot, StringRef Key) {
+  Expected<StringRef> field(size_t Slot, StringRef Key) {
     std::optional<StringRef> Line = next();
     if (!Line)
-      refuse("the record of slot " + Twine(Slot) + " ends before its " + Key +
-             " line");
+      return refusal("the record of slot " + Twine(Slot) + " ends before its " +
+                     Key + " line");
     auto [K, V] = Line->split(" = ");
     if (K != Key)
-      refuse("expected the " + Key + " line of slot " + Twine(Slot));
+      return refusal("expected the " + Key + " line of slot " + Twine(Slot));
     return V;
   }
 
-  void header(StringRef Key, StringRef Value, FunctionProfileHeader &Header);
-  void record(size_t Slot, ProfileInfo &Info);
+  /// The number on the `Key` line of the record of `Slot`, into `Out`.
+  template <typename T> Error number(size_t Slot, StringRef Key, T &Out) {
+    Expected<StringRef> Text = field(Slot, Key);
+    if (!Text)
+      return Text.takeError();
+    Expected<T> Value = [&]() -> Expected<T> {
+      if constexpr (std::is_floating_point_v<T>)
+        return real(*Text, Key);
+      else
+        return integer<T>(*Text, Key);
+    }();
+    if (!Value)
+      return Value.takeError();
+    Out = *Value;
+    return Error::success();
+  }
+
+  Error header(StringRef Key, StringRef Value, FunctionProfileHeader &Header);
+  Error record(size_t Slot, ProfileInfo &Info);
 };
 
 } // namespace
 
-void ProfileParser::header(StringRef Key, StringRef Value,
-                           FunctionProfileHeader &Header) {
-  if (Key == "MaxBlockDims") {
-    integers<uint32_t>(Value, Key, Header.maxBlockDim);
-  } else if (Key == "MaxGridDims") {
-    integers<uint32_t>(Value, Key, Header.maxGridDim);
-  } else if (Key == "LaunchCount") {
-    Header.launchCount = integer<uint64_t>(Value, Key);
+Error ProfileParser::header(StringRef Key, StringRef Value,
+                            FunctionProfileHeader &Header) {
+  if (Key == "MaxBlockDims")
+    return integers<uint32_t>(Value, Key, Header.maxBlockDim);
+  if (Key == "MaxGridDims")
+    return integers<uint32_t>(Value, Key, Header.maxGridDim);
+  if (Key == "LaunchCount") {
+    Expected<uint64_t> Count = integer<uint64_t>(Value, Key);
+    if (!Count)
+      return Count.takeError();
+    Header.launchCount = *Count;
   } else if (Key == "RedTrip") {
     size_t Trip[2];
-    integers<size_t>(Value, Key, Trip);
+    if (Error E = integers<size_t>(Value, Key, Trip))
+      return E;
     if (Trip[1] > std::numeric_limits<unsigned>::max())
-      refuse("RedTrip trip count " + Twine(Trip[1]) + " is out of range");
+      return refusal("RedTrip trip count " + Twine(Trip[1]) +
+                     " is out of range");
     Header.redTrip[Trip[0]] = Trip[1];
   } else if (Key == kProfileKeyCanonicalHash) {
     if (Value.empty() || !all_of(Value, isHexDigit))
-      refuse(Twine(Key) + " " + Value + " is not a hexadecimal digest");
+      return refusal(Twine(Key) + " " + Value + " is not a hexadecimal digest");
     Header.canonicalHash = Value.str();
   } else if (Key == kProfileKeySiteId) {
     // The probe driver's; checked so that the driver reads it back.
-    (void)integer<int>(Value, Key);
+    if (Expected<int> Id = integer<int>(Value, Key); !Id)
+      return Id.takeError();
   } else if (Key == kProfileKeyKappa) {
-    Header.kappa = real(Value, Key);
+    Expected<double> Kappa = real(Value, Key);
+    if (!Kappa)
+      return Kappa.takeError();
+    Header.kappa = *Kappa;
     Header.hasKappa = true;
   } else if (Key == kProfileKeyKappaMark) {
     Header.kappaMark = StringSwitch<KappaMark>(Value)
@@ -246,101 +283,121 @@ void ProfileParser::header(StringRef Key, StringRef Value,
                            .Case(kKappaUnmeasured, KappaMark::Unmeasured)
                            .Default(KappaMark::None);
     if (Header.kappaMark == KappaMark::None)
-      refuse(Twine(Key) + " " + Value +
-             " is not ok, below-noise, nonlinear, diverged or " +
-             kKappaUnmeasured);
+      return refusal(Twine(Key) + " " + Value +
+                     " is not ok, below-noise, nonlinear, diverged or " +
+                     kKappaUnmeasured);
   } else if (Key == kProfileKeyExecuted) {
     if (Value != "0")
-      refuse(Twine(Key) + " " + Value + " is not 0");
+      return refusal(Twine(Key) + " " + Value + " is not 0");
     Header.executed = false;
   } else {
-    refuse("'" + Key + "' is not a header key of a profile");
+    return refusal("'" + Key + "' is not a header key of a profile");
   }
+  return Error::success();
 }
 
-void ProfileParser::record(size_t Slot, ProfileInfo &Info) {
-  Info.minRes = real(field(Slot, "MinRes"), "MinRes");
-  Info.maxRes = real(field(Slot, "MaxRes"), "MaxRes");
-  Info.sumSens = real(field(Slot, "SumSens"), "SumSens");
-  Info.sumGrad = real(field(Slot, "SumGrad"), "SumGrad");
-  Info.sumAbsGrad = real(field(Slot, "SumAbsGrad"), "SumAbsGrad");
-  Info.exec = integer<uint64_t>(field(Slot, "Exec"), "Exec");
-  unsigned NumOperands =
-      integer<unsigned>(field(Slot, "NumOperands"), "NumOperands");
+Error ProfileParser::record(size_t Slot, ProfileInfo &Info) {
+  for (auto [Key, Out] :
+       {std::pair<StringRef, double *>{"MinRes", &Info.minRes},
+        {"MaxRes", &Info.maxRes},
+        {"SumSens", &Info.sumSens},
+        {"SumGrad", &Info.sumGrad},
+        {"SumAbsGrad", &Info.sumAbsGrad}})
+    if (Error E = number(Slot, Key, *Out))
+      return E;
+  if (Error E = number(Slot, "Exec", Info.exec))
+    return E;
+  unsigned NumOperands = 0;
+  if (Error E = number(Slot, "NumOperands", NumOperands))
+    return E;
   // Read before the vectors are sized, so that a count the file does not hold
   // is refused rather than allocated.
   SmallVector<std::array<double, 3>, 2> Operands;
   for (unsigned I = 0; I < NumOperands; ++I) {
     SmallString<16> Key;
     (Twine("Operand[") + Twine(I) + "]").toVector(Key);
-    StringRef Value = field(Slot, Key);
+    Expected<StringRef> Value = field(Slot, Key);
+    if (!Value)
+      return Value.takeError();
     SmallVector<StringRef, 3> Parts;
-    if (!Value.consume_front("[") || !Value.consume_back("]") ||
-        (Value.split(Parts, ", "), Parts.size() != 3))
-      refuse(Key + " of slot " + Twine(Slot) +
-             " is not [minimum, maximum, smallest nonzero magnitude]");
+    if (!Value->consume_front("[") || !Value->consume_back("]") ||
+        (Value->split(Parts, ", "), Parts.size() != 3))
+      return refusal(Key + " of slot " + Twine(Slot) +
+                     " is not [minimum, maximum, smallest nonzero magnitude]");
     std::array<double, 3> &Range = Operands.emplace_back();
-    for (unsigned J = 0; J < 3; ++J)
-      Range[J] = real(Parts[J], Key);
+    for (unsigned J = 0; J < 3; ++J) {
+      Expected<double> Bound = real(Parts[J], Key);
+      if (!Bound)
+        return Bound.takeError();
+      Range[J] = *Bound;
+    }
   }
   for (const std::array<double, 3> &Range : Operands) {
     Info.minOperands.push_back(Range[0]);
     Info.maxOperands.push_back(Range[1]);
     Info.minMagOperands.push_back(Range[2]);
   }
+  return Error::success();
 }
 
-void ProfileParser::parse(ProfileMap &Records, FunctionProfileHeader &Header) {
+Error ProfileParser::parse(ProfileMap &Records, FunctionProfileHeader &Header) {
   while (std::optional<StringRef> Line = next()) {
     if (all_of(*Line, isDigit)) {
       if (!Header.executed)
-        refuse("the profile says its site was never executed and records "
-               "executions of it");
-      size_t Slot = integer<size_t>(*Line, "slot");
-      if (!Records.emplace(Slot, ProfileInfo()).second)
-        refuse("slot " + Twine(Slot) + " is recorded twice");
-      record(Slot, Records[Slot]);
+        return refusal("the profile says its site was never executed and "
+                       "records executions of it");
+      Expected<size_t> Slot = integer<size_t>(*Line, "slot");
+      if (!Slot)
+        return Slot.takeError();
+      if (!Records.emplace(*Slot, ProfileInfo()).second)
+        return refusal("slot " + Twine(*Slot) + " is recorded twice");
+      if (Error E = record(*Slot, Records[*Slot]))
+        return E;
       continue;
     }
     if (!Records.empty())
-      refuse("'" + *Line + "' follows the records");
+      return refusal("'" + *Line + "' follows the records");
     auto [Key, Value] = Line->split(" = ");
     if (Key == *Line)
-      refuse("'" + *Line + "' is neither a slot index nor 'key = value'");
-    header(Key, Value, Header);
+      return refusal("'" + *Line +
+                     "' is neither a slot index nor 'key = value'");
+    if (Error E = header(Key, Value, Header))
+      return E;
   }
+  return Error::success();
 }
 
-void parseProfileFile(const std::string &profilePath, const Function &F,
-                      ProfileMap &profileMap, FunctionProfileHeader &header) {
+Error parseProfileFile(const std::string &profilePath, const Function &F,
+                       ProfileMap &profileMap, FunctionProfileHeader &header) {
   profileMap.clear();
   header = FunctionProfileHeader{};
   ErrorOr<std::unique_ptr<MemoryBuffer>> Buffer =
       MemoryBuffer::getFile(profilePath, /*IsText=*/true);
   if (!Buffer)
-    reportUserError(F, F.getSubprogram(),
-                    "cannot read the profile " + profilePath + " (" +
-                        Buffer.getError().message() +
-                        "); run the program built with "
-                        "-poseidon-profile-generate, which writes it into "
-                        "POSEIDON_PROFILE_DIR (default " +
-                        POSEIDON_DEFAULT_PROFILE_DIR + ")");
-  ProfileParser(**Buffer, profilePath, F).parse(profileMap, header);
+    return userError(F, F.getSubprogram(),
+                     "cannot read the profile " + profilePath + " (" +
+                         Buffer.getError().message() +
+                         "); run the program built with "
+                         "-poseidon-profile-generate, which writes it into "
+                         "POSEIDON_PROFILE_DIR (default " +
+                         POSEIDON_DEFAULT_PROFILE_DIR + ")");
+  return ProfileParser(**Buffer, profilePath, F).parse(profileMap, header);
 }
 
-void requireCanonicalHash(const FunctionProfileHeader &header,
-                          StringRef canonicalHash, StringRef profilePath,
-                          const Function &F) {
-  if (header.canonicalHash != canonicalHash)
-    reportUserError(
-        F, F.getSubprogram(),
-        Twine("the profile of ") + F.getName() +
-            " was recorded against a different canonical form "
-            "(profile CanonicalHash " +
-            (header.canonicalHash.empty() ? "none" : header.canonicalHash) +
-            ", this compile " + canonicalHash +
-            "). Its slot indices do not name the same "
-            "instructions; re-run profile generation.");
+Error requireCanonicalHash(const FunctionProfileHeader &header,
+                           StringRef canonicalHash, StringRef profilePath,
+                           const Function &F) {
+  if (header.canonicalHash == canonicalHash)
+    return Error::success();
+  return userError(
+      F, F.getSubprogram(),
+      Twine("the profile of ") + F.getName() +
+          " was recorded against a different canonical form "
+          "(profile CanonicalHash " +
+          (header.canonicalHash.empty() ? "none" : header.canonicalHash) +
+          ", this compile " + canonicalHash +
+          "). Its slot indices do not name the same "
+          "instructions; re-run profile generation.");
 }
 
 StringRef kappaMarkName(KappaMark M) {
@@ -361,11 +418,11 @@ StringRef kappaMarkName(KappaMark M) {
   llvm_unreachable("every KappaMark has a word");
 }
 
-void requireMeasuredKappa(const FunctionProfileHeader &header,
-                          StringRef profilePath, const Function &F) {
+Error requireMeasuredKappa(const FunctionProfileHeader &header,
+                           StringRef profilePath, const Function &F) {
   if (header.hasKappa || header.kappaMark != KappaMark::Unmeasured)
-    return;
-  reportUserError(
+    return Error::success();
+  return userError(
       F, F.getSubprogram(),
       Twine("the profiling run declared a quantity of interest with "
             "poseidon_metric and did not measure the condition number of ") +

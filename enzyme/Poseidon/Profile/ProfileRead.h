@@ -18,6 +18,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 
 #include <cstdint>
 #include <limits>
@@ -89,19 +90,22 @@ llvm::StringRef kappaMarkName(KappaMark M);
 
 /// The records and the header of the profile at `profilePath`. A profile that
 /// cannot be read, or does not parse, is an error at the site `F`.
-void parseProfileFile(const std::string &profilePath, const llvm::Function &F,
-                      ProfileMap &profileMap, FunctionProfileHeader &header);
+llvm::Error parseProfileFile(const std::string &profilePath,
+                             const llvm::Function &F, ProfileMap &profileMap,
+                             FunctionProfileHeader &header);
 
 /// An error at the site `F` unless the profile's slot indices were numbered
 /// against the canonical form `canonicalHash` names.
-void requireCanonicalHash(const FunctionProfileHeader &header,
-                          llvm::StringRef canonicalHash,
-                          llvm::StringRef profilePath, const llvm::Function &F);
+llvm::Error requireCanonicalHash(const FunctionProfileHeader &header,
+                                 llvm::StringRef canonicalHash,
+                                 llvm::StringRef profilePath,
+                                 const llvm::Function &F);
 
 /// An error at the site `F` when the profiling run declared a quantity of
 /// interest and did not measure the site's condition number against it.
-void requireMeasuredKappa(const FunctionProfileHeader &header,
-                          llvm::StringRef profilePath, const llvm::Function &F);
+llvm::Error requireMeasuredKappa(const FunctionProfileHeader &header,
+                                 llvm::StringRef profilePath,
+                                 const llvm::Function &F);
 
 /// Floors the accuracy weight (summed |gradient|) of every instruction, so that
 /// a value whose profiled gradient is ~0 is not priced free; that happens both
@@ -124,11 +128,11 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
 /// instruction is weighted by the largest of its per-output gradients, each
 /// divided by that output's total; summed over a site this bounds the worst
 /// output's error, and the site's accuracy scale is 1.
-void mergeOutputProfiles(ProfileMap &profileMap,
-                         llvm::ArrayRef<std::string> dirs,
-                         llvm::StringRef fileName,
-                         llvm::StringRef canonicalHash, const llvm::Function &F,
-                         bool print);
+llvm::Error mergeOutputProfiles(ProfileMap &profileMap,
+                                llvm::ArrayRef<std::string> dirs,
+                                llvm::StringRef fileName,
+                                llvm::StringRef canonicalHash,
+                                const llvm::Function &F, bool print);
 
 } // namespace poseidon
 #endif // POSEIDON_PROFILE_READ_H

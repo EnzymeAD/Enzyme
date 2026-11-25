@@ -80,6 +80,13 @@ void reportUserErrors(LLVMContext &Ctx, Error E) {
       });
 }
 
+void exitOnUserError(LLVMContext &Ctx, Error E) {
+  if (!E)
+    return;
+  reportUserErrors(Ctx, std::move(E));
+  endCompile();
+}
+
 void reportUserError(const Function &F, const DiagnosticLocation &Loc,
                      const Twine &Message) {
   diagnose(F, Loc, Message, DS_Error);

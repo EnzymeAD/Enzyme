@@ -80,8 +80,9 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
 
   P.path = siteProfilePath(S, F, O.Profiling.ProfileUse);
   P.canonicalHash = canonicalHash;
-  parseProfileFile(P.path, F, P.map, P.header);
-  requireCanonicalHash(P.header, canonicalHash, P.path, F);
+  exitOnUserError(F.getContext(), parseProfileFile(P.path, F, P.map, P.header));
+  exitOnUserError(F.getContext(),
+                  requireCanonicalHash(P.header, canonicalHash, P.path, F));
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
   const std::string &profilePath = P.path;
@@ -90,16 +91,18 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
              "the profile " + profilePath + " records no operation of the site",
              DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
-    mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
-                        siteProfileFile(S.Sites, F), canonicalHash, F,
-                        O.Diagnostics.Print);
+    exitOnUserError(F.getContext(),
+                    mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
+                                        siteProfileFile(S.Sites, F),
+                                        canonicalHash, F, O.Diagnostics.Print));
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(profileMap, F.getName(), O.Diagnostics.Print);
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
-    requireMeasuredKappa(profileHeader, profilePath, F);
+    exitOnUserError(F.getContext(),
+                    requireMeasuredKappa(profileHeader, profilePath, F));
   if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
     llvm::errs() << "[poseidon] profile header for " << F.getName()
                  << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ','

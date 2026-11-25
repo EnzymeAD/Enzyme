@@ -130,10 +130,13 @@ unprofiledSite(Session &S, CallBase *CI, Function &clone) {
     }
     ProfileMap records;
     FunctionProfileHeader header;
-    parseProfileFile(path, clone, records, header);
+    if (Error E = parseProfileFile(path, clone, records, header))
+      return E;
     if (header.executed)
       return Error::success();
-    requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
+    if (Error E =
+            requireCanonicalHash(header, canonicalFormHash(clone), path, clone))
+      return E;
     if (!neverExecuted)
       neverExecuted = Unprofiled{true, path};
     return Error::success();
@@ -341,7 +344,7 @@ static Expected<bool> optimizeHostBody(Session &S, const Site &site) {
 // records, the execution count times the CSV price of the operation the slot
 // names. A site the run never reached has no records and costs nothing; a
 // profile recorded against another canonical form is an error at the site.
-static double profiledSiteCost(Session &S, Function &body) {
+static Expected<double> profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
   llvm::sys::path::append(profilePath, bodyProfileFile(S.Sites, body));
   if (!llvm::sys::fs::exists(profilePath.str()))
@@ -349,7 +352,9 @@ static double profiledSiteCost(Session &S, Function &body) {
 
   ProfileMap profileMap;
   FunctionProfileHeader header;
-  parseProfileFile(profilePath.str().str(), body, profileMap, header);
+  if (Error E =
+          parseProfileFile(profilePath.str().str(), body, profileMap, header))
+    return std::move(E);
   if (profileMap.empty())
     return 0.0;
 
@@ -358,14 +363,21 @@ static double profiledSiteCost(Session &S, Function &body) {
   // under the same name.
   Function *clone = canonicalize(body);
   setSlotMetadata(*clone);
-  requireCanonicalHash(header, canonicalFormHash(*clone), profilePath, *clone);
-  requireCostModel(S.CostModel, *clone);
-  double cost = profiledCost(S.CostModel, *clone, profileMap,
-                             [](const Instruction &I, size_t &slot) {
-                               std::optional<size_t> found = slotOf(&I);
-                               slot = found.value_or(0);
-                               return found.has_value();
-                             });
+  Expected<double> cost = [&]() -> Expected<double> {
+    if (Error E = requireCanonicalHash(header, canonicalFormHash(*clone),
+                                       profilePath, *clone))
+      return std::move(E);
+    requireCostModel(S.CostModel, *clone);
+    return profiledCost(S.CostModel, *clone, profileMap,
+                        [](const Instruction &I, size_t &slot) {
+                          std::optional<size_t> found = slotOf(&I);
+                          slot = found.value_or(0);
+                          return found.has_value();
+                        });
+  }();
+  // An error names the clone, so the clone outlives it.
+  if (!cost)
+    return cost.takeError();
   clone->eraseFromParent();
   return cost;
 }
@@ -430,7 +442,13 @@ static Expected<bool> optimizeKernels(Session &Sess,
     if (!call)
       continue;
     markOutlineTransparent(body);
-    double cost = site->byRegex ? profiledSiteCost(Sess, *body) : 0.0;
+    double cost = 0.0;
+    if (site->byRegex) {
+      Expected<double> priced = profiledSiteCost(Sess, *body);
+      if (!priced)
+        return priced.takeError();
+      cost = *priced;
+    }
     regexTotal += cost;
     outlined.push_back({site, body, call, cost});
   }
