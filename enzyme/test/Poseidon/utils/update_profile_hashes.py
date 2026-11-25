@@ -2,21 +2,23 @@
 """Rewrite the CanonicalHash of the checked-in profile fixtures after a change
 to the canonical form (an LLVM update, a change to Sites/Canonicalize.cpp).
 
-A fixture under test/Poseidon/Inputs is a profile recorded once against the
-canonical form of its site; its CanonicalHash names that form, and profile use
-refuses a profile whose hash differs from the one the compile computes. When
-the form changes, every test that reads the fixture stops with
+A fixture, a .fpprofile in any Inputs directory of test/Poseidon, is a profile
+recorded once against the canonical form of its site; its CanonicalHash names
+that form, and profile use refuses a profile whose hash differs from the one
+the compile computes. When the form changes, every test that reads the fixture
+stops with
 
   the profile of <site> was recorded against a different canonical form
   (profile CanonicalHash <old>, this compile <new>)
 
 This script runs the suite of a build, reads those pairs from the failures,
 and replaces <old> by <new> wherever the tree records it as a fixture's hash:
-in each Inputs/**/*.fpprofile that carries it, and in the tests that copy a
-fixture under a hash of their own (sed "s/^CanonicalHash = .*/.../") or check
-it. A hash that no fixture carries, such as one a test writes to provoke the
-error, is left alone. It repeats until a run reports no new pair, then lists
-the tests that still fail.
+in each fixture that carries it, and in the tests that copy a fixture under a
+hash of their own (sed "s/^CanonicalHash = .*/.../") or check it. A hash that
+no fixture carries, such as one a test writes to provoke the error, is left
+alone. It repeats until a run reports no new pair, then lists the tests that
+still fail. Inputs/unrelated_site_profile/other.fpprofile holds no record of a
+site the tests compile, so no compile reads its hash, which stays 0.
 
 Only the hash is rewritten: the records keep their numbers, which the tests
 check. A record is kept for the slot index it was recorded under, so a form
@@ -53,8 +55,7 @@ def recorded_hashes(test_root):
     """The hashes the tree records for its fixtures: every fixture's own, and
     every hash a test writes into a copy of one."""
     hashes = set()
-    for path in files(os.path.join(test_root, "Inputs"),
-                      lambda n: n.endswith(".fpprofile")):
+    for path in files(test_root, lambda n: n.endswith(".fpprofile")):
         hashes.update(FIXTURE_HASH.findall(open(path).read()))
     sed = re.compile(r"CanonicalHash = \.\*/CanonicalHash = ([0-9a-f]{16})/")
     for path in files(test_root, lambda n: n.endswith(TEST_SUFFIXES)):
@@ -65,10 +66,31 @@ def recorded_hashes(test_root):
 def run_lit(lit, build_root, tests):
     cmd = [sys.executable, lit, "-v", "--filter-out", "Integration/"]
     cmd += [os.path.join(build_root, t) for t in tests] or [build_root]
-    env = dict(os.environ, CUDA_VISIBLE_DEVICES="")
+    # A test that pipes a compile's errors into FileCheck reports them only in
+    # FileCheck's input dump, which FileCheck otherwise leaves out when its
+    # checks pass and the compile's exit status fails the test.
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="",
+               FILECHECK_OPTS="-dump-input=always")
     out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, env=env).stdout
     failing = re.findall(r"^FAIL: Poseidon :: (\S+)", out, re.M)
+    # A test that sends a compile's errors to a file of its own leaves them in
+    # its temporary files, which lit keeps after a failure.
+    for test in failing:
+        output = os.path.join(build_root, os.path.dirname(test), "Output")
+        stem = os.path.basename(test) + ".tmp"
+        if not os.path.isdir(output):
+            continue
+        for name in os.listdir(output):
+            if not name.startswith(stem):
+                continue
+            path = os.path.join(output, name)
+            paths = [path]
+            if os.path.isdir(path):
+                paths = files(path, lambda n: True)
+            for p in paths:
+                with open(p, errors="replace") as f:
+                    out += f.read()
     return out, failing
 
 
@@ -87,7 +109,9 @@ def rewrite(test_root, renames):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--build", required=True,
                     help="the build directory the suite runs from")
     ap.add_argument("--lit", default=None,
