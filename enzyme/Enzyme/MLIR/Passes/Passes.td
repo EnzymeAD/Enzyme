@@ -289,12 +289,6 @@ def PrintBaseObjectPass : Pass<"test-print-base-object"> {
   ];
 }
 
-def TestTypeTreeAttrPass : Pass<"test-type-tree-attr"> {
-  let summary = "Replace each `test.type_tree` string, a type tree in the "
-                "syntax of TypeTree::str, with its #enzyme.type_tree";
-  let dependentDialects = ["enzyme::EnzymeDialect"];
-}
-
 def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
   let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
 }

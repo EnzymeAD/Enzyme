@@ -1,7 +1,6 @@
 #pragma once
 
 #include "mlir/Analysis/DataFlowFramework.h"
-#include "mlir/AsmParser/AsmParser.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/Support/CommandLine.h"
@@ -45,11 +44,6 @@ template <> struct ConcreteTypeTraits<mlir::Type> {
     llvm::raw_string_ostream OS(S);
     OS << T;
     return S;
-  }
-
-  static mlir::Type parseFloat(llvm::StringRef name,
-                               mlir::MLIRContext &context) {
-    return mlir::parseType(name, &context);
   }
 
   static bool less(mlir::Type A, mlir::Type B) {
