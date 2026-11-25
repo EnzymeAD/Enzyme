@@ -1,4 +1,9 @@
 //===- VIUtils.cpp - Variational Inference lowering utilities -------------===//
+//
+// The key splits, draws and update formulas reproduce NumPyro's SVI bit for
+// bit, so their order and arithmetic must not change.
+//
+//===----------------------------------------------------------------------===//
 
 #include "VIUtils.h"
 
@@ -17,6 +22,7 @@ using namespace mlir::enzyme;
 using namespace mlir::impulse;
 using namespace mlir::impulse::VI;
 
+/// Splat constant of type `ty` with every element equal to `v`.
 static Value scalarConst(OpBuilder &builder, Location loc, RankedTensorType ty,
                          double v) {
   auto elem = ty.getElementType();
@@ -25,6 +31,7 @@ static Value scalarConst(OpBuilder &builder, Location loc, RankedTensorType ty,
       DenseElementsAttr::get(ty, builder.getFloatAttr(elem, v)));
 }
 
+/// Rank-0 i64 tensor constant `v`.
 static Value i64Const(OpBuilder &builder, Location loc, int64_t v) {
   auto ty = RankedTensorType::get({}, builder.getI64Type());
   return arith::ConstantOp::create(
@@ -32,6 +39,7 @@ static Value i64Const(OpBuilder &builder, Location loc, int64_t v) {
       DenseElementsAttr::get(ty, builder.getI64IntegerAttr(v)));
 }
 
+/// Broadcasts the rank-0 tensor `scalar` to `targetType`.
 static Value broadcastScalar(OpBuilder &builder, Location loc, Value scalar,
                              RankedTensorType targetType) {
   return enzyme::BroadcastOp::create(
@@ -39,6 +47,7 @@ static Value broadcastScalar(OpBuilder &builder, Location loc, Value scalar,
       builder.getDenseI64ArrayAttr(targetType.getShape()));
 }
 
+/// Writes each site's slice of `position2d` into its columns of `fullTrace`.
 static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
                                     Value position2d, Value fullTrace,
                                     const VIContext &ctx) {
@@ -74,7 +83,8 @@ static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
                                 allDims);
 }
 
-/// Sum as canary: a NaN/Inf gradient element makes its sum non-finite.
+/// Whether `elbo` and every gradient in `grads` are finite. A gradient is
+/// tested through its sum, which is not finite when any element is not.
 static Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
                                             Value elbo, ValueRange grads) {
   Value isFinite = math::IsFiniteOp::create(builder, loc, elbo);
@@ -131,6 +141,7 @@ buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
 }
 
 namespace {
+/// The model's log joint density and its rng state after scoring it.
 struct LogPResult {
   Value logP;
   Value rng;
@@ -166,7 +177,9 @@ struct SVILoopResult {
 };
 } // namespace
 
-/// Values captured from above the region are referenced as-is.
+/// Clones the logpdf region at the insertion point with each block argument
+/// bound to its slice of `z`, and returns the cloned log-density. Values the
+/// region captures from above are used as they are.
 static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
                                  const VIContext &ctx) {
   Block &lpBlock = ctx.logpdfRegion->front();
@@ -192,8 +205,11 @@ static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
   return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
 }
 
-static LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
-                                    Value modelRng, const VIContext &ctx) {
+/// Log joint density of the model at the constrained position `z`, from the
+/// logpdf region when there is one and from a generate call of `ctx.fn`
+/// otherwise.
+static LogPResult emitModelLogDensity(OpBuilder &builder, Location loc, Value z,
+                                      Value modelRng, const VIContext &ctx) {
   // The region consumes no RNG, so the model rng is returned unadvanced.
   if (ctx.hasLogpdfRegion())
     return {cloneVILogpdfRegion(builder, loc, z, ctx), modelRng};
@@ -256,7 +272,9 @@ emitELBOGradient(OpBuilder &builder, Location loc, ValueRange params,
           llvm::to_vector_of<Value>(adOp.getResults().drop_front(2))};
 }
 
-/// One particle of NumPyro's Trace_ELBO with an AutoNormal guide.
+/// One ELBO particle for a mean-field normal guide. `params` are the location
+/// and the unconstrained scale, whose softplus is the standard deviation; the
+/// sample is constrained and its log-Jacobian enters log q.
 static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
                                            ValueRange params, Value pkey,
                                            const VIContext &ctx) {
@@ -265,14 +283,13 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
 
-  // NumPyro order: model_seed, guide_seed = split(pkey).
   auto seedSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, pkey);
   Value modelSeed = seedSplit.getResult(0);
   Value guideSeed = seedSplit.getResult(1);
 
-  // eps is drawn outside autodiff so the primal and shadow share it, with
-  // NumPyro's (chain, site_key) = split(chain) per site in declaration order.
+  // eps is drawn outside the autodiff region so that the primal and the shadow
+  // see the same sample; each site draws from its own key.
   auto zeroScalar = scalarConst(builder, loc, scalarType, 0.0);
   auto oneScalar = scalarConst(builder, loc, scalarType, 1.0);
   Value c0i64 = i64Const(builder, loc, 0);
@@ -305,7 +322,6 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         Value locArg = paramArgs[0];
         Value scaleArg = paramArgs[1];
 
-        // NumPyro's AutoNormal: scale = softplus(unconstrained_scale).
         Value scale = impulse::emitSoftplus(builder, loc, scaleArg);
 
         Value scaleDumped = conditionalDump(
@@ -338,7 +354,7 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
                                "VI: logQ=logQUnc-jacCorrection", ctx.debugDump);
 
         LogPResult lp =
-            callModelGenerate(builder, loc, zConstrained, modelSeed, ctx);
+            emitModelLogDensity(builder, loc, zConstrained, modelSeed, ctx);
         Value logP =
             conditionalDump(builder, loc, lp.logP, "VI: logP", ctx.debugDump);
 
@@ -349,31 +365,31 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
       });
 }
 
-/// log q = 0, but guide_seed is still split per site as NumPyro does.
+/// One ELBO particle for a point-mass guide at `params[0]`: the model
+/// log-density at the constrained location, with no log q or Jacobian term.
+/// `pkey` is still split into a model and an unused guide seed.
 static ELBOGradient emitAutoDeltaParticle(OpBuilder &builder, Location loc,
                                           ValueRange params, Value pkey,
                                           const VIContext &ctx) {
   Type rngType = pkey.getType();
 
-  // NumPyro order: model_seed, guide_seed = split(pkey).
   auto seedSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, pkey);
   Value modelSeed = seedSplit.getResult(0);
 
   return emitELBOGradient(builder, loc, params, rngType, ctx,
                           [&](ValueRange paramArgs) -> ParticleELBO {
-                            // No Jacobian term: NumPyro's AutoDelta has
-                            // log_density = 0.
                             Value zConstrained = constrainPosition(
                                 builder, loc, paramArgs[0], ctx.supports);
-                            LogPResult lp = callModelGenerate(
+                            LogPResult lp = emitModelLogDensity(
                                 builder, loc, zConstrained, modelSeed, ctx);
                             return {lp.logP, lp.rng};
                           });
 }
 
-/// AutoMultivariateNormal variant; the scale parameter is the unconstrained
-/// flat scale_tril.
+/// One ELBO particle for a full-rank normal guide. `params` are the location
+/// and the flat unconstrained scale_tril, which emitScaledUnitLowerCholesky
+/// maps to the lower Cholesky factor.
 static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
                                         ValueRange params, Value pkey,
                                         const VIContext &ctx) {
@@ -383,13 +399,12 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
   auto elemType = ctx.getElementType();
   int64_t d = ctx.positionSize;
 
-  // NumPyro order: model_seed, guide_seed = split(pkey).
   auto seedSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, pkey);
   Value modelSeed = seedSplit.getResult(0);
   Value guideSeed = seedSplit.getResult(1);
 
-  // One split for NumPyro's single `_auto_latent` site.
+  // The guide draws all latents as one site, so it takes a single site key.
   auto siteSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, guideSeed);
   Value siteKey = siteSplit.getResult(1);
@@ -419,7 +434,7 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
 
         Value logQ = emitGaussianLogQ(builder, loc, chol.sumLogDiag, eps, ctx);
 
-        LogPResult lp = callModelGenerate(builder, loc, z, modelSeed, ctx);
+        LogPResult lp = emitModelLogDensity(builder, loc, z, modelSeed, ctx);
 
         Value elbo = arith::SubFOp::create(builder, loc, lp.logP, logQ);
         return {elbo, lp.rng};
@@ -432,8 +447,9 @@ using ParticleEmitter = function_ref<ELBOGradient(
     OpBuilder &builder, Location loc, ValueRange params, Value pkey,
     const VIContext &ctx)>;
 
-/// NumPyro Trace_ELBO: K == 1 uses `rngStep` directly; K > 1 splits it K ways
-/// and averages the particles.
+/// Averages the ELBO and gradients of `ctx.numParticles` particles. A single
+/// particle uses `rngStep` as its key; more particles split it into one key
+/// each.
 static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
                                      ValueRange params, Value rngStep,
                                      const VIContext &ctx,
@@ -475,7 +491,8 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
   return mean;
 }
 
-/// `gradElbo` is d(elbo)/dp; the minimized loss is -elbo.
+/// SGD step on the loss -elbo, where `gradElbo` is d(elbo)/d(param). Both
+/// slots pass through.
 static ParamState applySGDUpdate(OpBuilder &builder, Location loc, Value param,
                                  Value gradElbo, Value m, Value v, Value lr) {
   auto ty = cast<RankedTensorType>(param.getType());
@@ -485,8 +502,9 @@ static ParamState applySGDUpdate(OpBuilder &builder, Location loc, Value param,
   return {paramNew, m, v};
 }
 
-/// jax.example_libraries.optimizers.adam; `stepIdx` counts from 0. A positive
-/// `clipNorm` clips each gradient element, as ClippedAdam does.
+/// Bias-corrected Adam step; `m` and `v` are the moment estimates and `stepIdx`
+/// counts from 0. A positive `clipNorm` first clamps each gradient element to
+/// [-clipNorm, clipNorm].
 static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
                                   Value gradElbo, Value m, Value v,
                                   Value stepIdx, Value lr, double b1, double b2,
@@ -556,7 +574,7 @@ static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
   return {paramNew, mNew, vNew};
 }
 
-/// jax.example_libraries.optimizers.momentum; `m` is the velocity.
+/// Heavy-ball momentum step; `m` is the velocity and `v` passes through.
 static ParamState applyMomentumUpdate(OpBuilder &builder, Location loc,
                                       Value param, Value gradElbo, Value m,
                                       Value v, Value lr, double mass) {
@@ -575,8 +593,8 @@ static ParamState applyMomentumUpdate(OpBuilder &builder, Location loc,
   return {paramNew, mNew, v};
 }
 
-/// jax.example_libraries.optimizers.rmsprop; `m` is the squared-gradient
-/// average.
+/// RMSProp step; `m` is the running squared-gradient average and `v` passes
+/// through.
 static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
                                      Value param, Value gradElbo, Value m,
                                      Value v, Value lr, double gamma,
@@ -611,7 +629,8 @@ static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
   return {paramNew, avgNew, v};
 }
 
-/// jax.example_libraries.optimizers.adagrad; `m` is g_sq, `v` the momentum.
+/// Adagrad step with momentum; `m` is the squared-gradient sum and `v` the
+/// momentum.
 static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
                                      Value param, Value gradElbo, Value m,
                                      Value v, Value lr, double momentum) {
@@ -624,7 +643,7 @@ static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
   Value gSquared = arith::MulFOp::create(builder, loc, g, g);
   Value gSqNew = arith::AddFOp::create(builder, loc, m, gSquared);
 
-  // where(g_sq > 0, 1/sqrt(g_sq), 0), as JAX's adagrad.
+  // g is 0 wherever g_sq is 0; select 0 there, as g * 1/sqrt(0) is NaN.
   Value sqrtGSq = math::SqrtOp::create(builder, loc, gSqNew);
   Value zeroBcast = scalarConst(builder, loc, paramType, 0.0);
   Value isPositive = arith::CmpFOp::create(
@@ -653,8 +672,8 @@ static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
   return {paramNew, gSqNew, vNew};
 }
 
-/// jax.example_libraries.optimizers.rmsprop_momentum; `m` is the
-/// squared-gradient average, `v` the momentum.
+/// RMSProp step with momentum; `m` is the running squared-gradient average and
+/// `v` the momentum.
 static ParamState applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
                                              Value param, Value gradElbo,
                                              Value m, Value v, Value lr,
@@ -729,10 +748,10 @@ static ParamState applyOptimizer(OpBuilder &builder, Location loc,
   llvm_unreachable("unknown VI optimizer kind");
 }
 
-/// Emits `ctx.numSamples` iterations of NumPyro's SVI.update over the guide
-/// parameters `params0`, whose null optimizer slots start at zero and whose
-/// null `initStepCount` starts at step 0. The trace records the first
-/// parameter, constrained when `recordConstrained` is set.
+/// Emits `ctx.numSamples` SVI steps over the guide parameters `params0`. Null
+/// optimizer slots start at zero and a null `initStepCount` at step 0. Each
+/// step records its ELBO and the first parameter, constrained when
+/// `recordConstrained` is set.
 static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
                                  ArrayRef<ParamState> params0, Value rng0,
                                  Value initStepCount, const VIContext &ctx,
@@ -793,7 +812,6 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(body);
 
-    // NumPyro SVI.update: rng_next, rng_step = split(rng).
     auto updateSplit = impulse::RandomSplitOp::create(
         builder, loc, TypeRange{rng0.getType(), rng0.getType()}, rngIter);
     Value rngNext = updateSplit.getResult(0);
@@ -812,7 +830,8 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
       newSlots.append({next.m, next.v});
     }
 
-    // A skipped step still records its ELBO, as numpyro's stable_update does.
+    // A step that is not finite keeps the previous parameters and optimizer
+    // state; its ELBO is still recorded and the key still advances.
     if (ctx.stableUpdate) {
       Value isFinite = computeIsFiniteForStableUpdate(
           builder, loc, estimate.elbo, estimate.grads);
@@ -899,8 +918,8 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     return *idx < stateIn.size() ? stateIn[*idx] : Value();
   };
 
-  // NumPyro SVI.init: rng_key, model_seed, guide_seed = split(key, 3).
-  // A resumed run already holds the per-update rng_key, so it skips the split.
+  // A cold start splits the key into the loop key, an unused model seed and
+  // the guide's init seed; a resumed run's key is already the loop key.
   Value rngInput = op.getInputs()[0];
   Type rngType = rngInput.getType();
   Value rng0;
@@ -917,15 +936,15 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   Value loc0;
   if (isResume) {
     loc0 = slotIn("loc");
-  } else if (auto ip = op.getInitPosition()) {
-    auto ipType = cast<RankedTensorType>(ip.getType());
-    if (ipType == positionType) {
-      loc0 = ip;
+  } else if (Value initPosition = op.getInitPosition()) {
+    if (initPosition.getType() == positionType) {
+      loc0 = initPosition;
     } else {
-      loc0 = impulse::ReshapeOp::create(rewriter, loc, positionType, ip);
+      loc0 =
+          impulse::ReshapeOp::create(rewriter, loc, positionType, initPosition);
     }
   } else {
-    // NumPyro's init_to_uniform: one split per site in declaration order.
+    // Each site starts uniform in [-initRadius, initRadius], from its own key.
     RankedTensorType scalarType = ctx.getScalarType();
     Value c0i64 = i64Const(rewriter, loc, 0);
     Value negRadius = scalarConst(rewriter, loc, scalarType, -ctx.initRadius);
@@ -934,25 +953,24 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
         rewriter.getContext(), impulse::RngDistribution::UNIFORM);
 
     loc0 = scalarConst(rewriter, loc, positionType, 0.0);
-    // AutoGuide._setup_prototype's numpyro.prng_key() consumes one split.
     auto preSplit = impulse::RandomSplitOp::create(
         rewriter, loc, TypeRange{rngType, rngType}, guideInitSeed);
     Value chain = preSplit.getResult(1);
     for (const auto &info : ctx.supports) {
-      auto sp = impulse::RandomSplitOp::create(
+      auto siteSplit = impulse::RandomSplitOp::create(
           rewriter, loc, TypeRange{rngType, rngType}, chain);
-      chain = sp.getResult(0);
-      Value siteKey = sp.getResult(1);
+      chain = siteSplit.getResult(0);
+      Value siteKey = siteSplit.getResult(1);
 
-      auto siteFlatTy = RankedTensorType::get({info.size}, elemType);
-      auto rop = impulse::RandomOp::create(
-          rewriter, loc, TypeRange{rngType, siteFlatTy}, siteKey, negRadius,
+      auto siteFlatType = RankedTensorType::get({info.size}, elemType);
+      auto draw = impulse::RandomOp::create(
+          rewriter, loc, TypeRange{rngType, siteFlatType}, siteKey, negRadius,
           posRadius, uniformAttr);
-      Value initDraw = rop.getResult();
+      Value initDraw = draw.getResult();
 
-      auto sliceTy = RankedTensorType::get({1, info.size}, elemType);
+      auto sliceType = RankedTensorType::get({1, info.size}, elemType);
       Value initDraw2D =
-          impulse::ReshapeOp::create(rewriter, loc, sliceTy, initDraw);
+          impulse::ReshapeOp::create(rewriter, loc, sliceType, initDraw);
       Value offsetIdx = i64Const(rewriter, loc, info.offset);
       loc0 = impulse::DynamicUpdateSliceOp::create(
           rewriter, loc, positionType, loc0, initDraw2D,
@@ -973,14 +991,11 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     Value scale0;
     if (isResume) {
       scale0 = slotIn("scale_unconstrained");
-    } else if (auto initScaleOp = op.getInitScale()) {
-      auto isType = cast<RankedTensorType>(initScaleOp.getType());
-      Value initScaleConstrained =
-          (isType == positionType)
-              ? Value(initScaleOp)
-              : Value(impulse::ReshapeOp::create(rewriter, loc, positionType,
-                                                 initScaleOp));
-      scale0 = impulse::emitSoftplusInv(rewriter, loc, initScaleConstrained);
+    } else if (Value initScale = op.getInitScale()) {
+      if (initScale.getType() != positionType)
+        initScale =
+            impulse::ReshapeOp::create(rewriter, loc, positionType, initScale);
+      scale0 = impulse::emitSoftplusInv(rewriter, loc, initScale);
     } else {
       double initScaleU = std::log(std::expm1(ctx.initScale));
       scale0 = scalarConst(rewriter, loc, positionType, initScaleU);
@@ -995,7 +1010,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     int64_t d = ctx.positionSize;
     int64_t flatSize = d * (d + 1) / 2;
     int64_t nOff = d * (d - 1) / 2;
-    auto flatTy = RankedTensorType::get({flatSize}, elemType);
+    auto flatType = RankedTensorType::get({flatSize}, elemType);
     Value xScaleTril0;
     if (isResume) {
       xScaleTril0 = slotIn("scale_tril_unconstrained");
@@ -1008,7 +1023,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       for (int64_t i = 0; i < d; ++i)
         vals.push_back(rewriter.getFloatAttr(elemType, initU));
       xScaleTril0 = arith::ConstantOp::create(
-          rewriter, loc, flatTy, DenseElementsAttr::get(flatTy, vals));
+          rewriter, loc, flatType, DenseElementsAttr::get(flatType, vals));
     }
     ParamState scaleTrilState{xScaleTril0, slotIn("opt_m_scale_tril"),
                               slotIn("opt_v_scale_tril")};

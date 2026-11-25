@@ -14,6 +14,7 @@ namespace mlir {
 namespace impulse {
 namespace VI {
 
+/// The model and configuration for lowering one VI inference op.
 struct VIContext {
   FlatSymbolRefAttr fn;
   ArrayRef<Value> fnInputs;
@@ -23,7 +24,7 @@ struct VIContext {
   ArrayAttr allAddresses;
   Value stepSize; // learning rate
   int64_t positionSize;
-  int64_t numSamples; // SVI.update iterations
+  int64_t numSamples; // optimizer steps
   SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
   DictionaryAttr autodiffAttrs;
@@ -35,16 +36,16 @@ struct VIContext {
   double adamB1;
   double adamB2;
   double adamEps;
-  // Per-element gradient clip, as numpyro.optim.ClippedAdam.
+  // Per-element gradient clip of CLIPPED_ADAM.
   double clipNorm = 10.0;
-  // init_to_uniform radius, used without `initial_position`.
+  // Half-width of the uniform initial location used without `init_position`.
   double initRadius = 2.0;
   double momentumMass = 0.9;
   double rmspropGamma = 0.9;
   double rmspropEps = 1.0e-8;
-  // numpyro SVI.stable_update: skip non-finite steps; the RNG still advances.
+  // Skip steps whose ELBO or gradient is not finite; the key still advances.
   bool stableUpdate = false;
-  // Warm-restart optimizer state from `state_in`; null means a cold start.
+  // Set when the op resumes from `state_in`.
   bool isResume = false;
   bool debugDump = false;
 
@@ -91,7 +92,9 @@ struct VIContext {
   }
 };
 
-/// `ctx` is by value: the warm-restart slots are filled from `state_in`.
+/// Replaces the VI inference `op` with an SVI loop that starts from the op's
+/// `state_in` when it has one. Fails with a diagnostic on guide kinds and
+/// modes the lowering does not support.
 template <typename OpT>
 LogicalResult lowerVI(PatternRewriter &rewriter, OpT op, VIContext ctx,
                       bool debugDump = false);
