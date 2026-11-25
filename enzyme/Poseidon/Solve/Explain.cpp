@@ -592,7 +592,7 @@ class Explainer {
   }
 
   void markSteps();
-  void buildSubgraph(size_t s);
+  Error buildSubgraph(size_t s);
   void buildMatmul(size_t m);
   void addCOAlternatives(Unit &U, const Subgraph &sg);
   void addCSAlternatives(Unit &U, const Subgraph &sg);
@@ -611,7 +611,7 @@ public:
         scratch(st.overlay()), A0(rec.baseline), S(rec.accScale), tau(rec.tau),
         scale(rec.profiledCost) {}
 
-  void build();
+  Error build();
   void emitRemarks();
   json::Object toJSON();
 };
@@ -1072,7 +1072,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
          costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
 }
 
-void Explainer::buildSubgraph(size_t s) {
+Error Explainer::buildSubgraph(size_t s) {
   Subgraph &sg = st.subgraphs[s];
   Unit U;
   U.id = formatv("S{0}", s).str();
@@ -1191,9 +1191,11 @@ void Explainer::buildSubgraph(size_t s) {
 
   if (!sg.outputs.empty()) {
     SmallVector<Value *> outs(sg.outputs.begin(), sg.outputs.end());
-    double base = getCompCost(Sess.CostModel, outs, sg.inputs);
+    Expected<double> base = compCost(Sess.CostModel, outs, sg.inputs);
+    if (!base)
+      return base.takeError();
     if (FPNode *N = nodeOf(sg.outputs[0]))
-      U.baseCost = scale.toDPCost(base * (double)N->executions);
+      U.baseCost = scale.toDPCost(*base * (double)N->executions);
   }
 
   addCOAlternatives(U, sg);
@@ -1201,6 +1203,7 @@ void Explainer::buildSubgraph(size_t s) {
   judge(U);
   U.left = leftReason(U, &sg);
   units.push_back(std::move(U));
+  return Error::success();
 }
 
 void Explainer::buildMatmul(size_t m) {
@@ -1290,12 +1293,14 @@ std::optional<double> Explainer::selectedAcc() const {
   return it->second;
 }
 
-void Explainer::build() {
+Error Explainer::build() {
   markSteps();
   for (size_t s = 0; s < st.subgraphs.size(); ++s)
-    buildSubgraph(s);
+    if (Error E = buildSubgraph(s))
+      return E;
   for (size_t m = 0; m < st.CMs.size(); ++m)
     buildMatmul(m);
+  return Error::success();
 }
 
 // The explanation of a solved site, in the schema Explain.h documents.
@@ -1788,18 +1793,20 @@ void explainUnprofiled(Session &S, Function &F, double tau, bool siteTarget,
   explainLeftAlone(S, F, tau, siteTarget, status, cause, profile);
 }
 
-void explainSolve(Session &S, Function &F, FunctionFPState &st,
-                  ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
+Error explainSolve(Session &S, Function &F, FunctionFPState &st,
+                   ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
   const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
   const bool write = !explanationDir(S.Opts).empty();
   if (!remarks && !write)
-    return;
+    return Error::success();
   Explainer E(S, F, st, steps, rec);
-  E.build();
+  if (Error Err = E.build())
+    return Err;
   if (remarks)
     E.emitRemarks();
   if (write)
     writeExplanation(S, F, siteFileStem(S.Sites, F), E.toJSON());
+  return Error::success();
 }
 
 } // namespace poseidon

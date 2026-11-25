@@ -210,8 +210,12 @@ struct OptimizePass : PassParent<OptimizePass> {
       return stopOnError(S, M, optimized.takeError());
     changed |= *optimized;
 
-    if (O.Solver.JointDP)
-      changed |= solveJointly(S, M);
+    if (O.Solver.JointDP) {
+      Expected<bool> joint = solveJointly(S, M);
+      if (!joint)
+        return stopOnError(S, M, joint.takeError());
+      changed |= *joint;
+    }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -381,7 +385,8 @@ struct LatePass : PassParent<LatePass> {
       return stopOnError(S, M, std::move(E));
     SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
     if (O.Solver.JointDP)
-      solveJointly(S, M);
+      if (Error E = solveJointly(S, M).takeError())
+        return stopOnError(S, M, std::move(E));
     // A site that kept its body calls the body as the pipeline left it rather
     // than its canonical form.
     for (WeakVH &handle : lowered)

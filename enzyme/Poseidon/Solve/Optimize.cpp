@@ -65,7 +65,7 @@ std::string siteProfilePath(const Session &S, const Function &clone,
 
 // Reads the site's profile, checked against the canonical form its slots were
 // numbered against.
-static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
+static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   const Options &O = S.Opts;
   assert(!O.Profiling.ProfileUse.empty() &&
          "a site is optimized only under profile use");
@@ -80,9 +80,10 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
 
   P.path = siteProfilePath(S, F, O.Profiling.ProfileUse);
   P.canonicalHash = canonicalHash;
-  exitOnUserError(F.getContext(), parseProfileFile(P.path, F, P.map, P.header));
-  exitOnUserError(F.getContext(),
-                  requireCanonicalHash(P.header, canonicalHash, P.path, F));
+  if (Error E = parseProfileFile(P.path, F, P.map, P.header))
+    return E;
+  if (Error E = requireCanonicalHash(P.header, canonicalHash, P.path, F))
+    return E;
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
   const std::string &profilePath = P.path;
@@ -91,18 +92,18 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
              "the profile " + profilePath + " records no operation of the site",
              DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
-    exitOnUserError(F.getContext(),
-                    mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
-                                        siteProfileFile(S.Sites, F),
-                                        canonicalHash, F, O.Diagnostics.Print));
+    if (Error E = mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
+                                      siteProfileFile(S.Sites, F),
+                                      canonicalHash, F, O.Diagnostics.Print))
+      return E;
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(profileMap, F.getName(), O.Diagnostics.Print);
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
-    exitOnUserError(F.getContext(),
-                    requireMeasuredKappa(profileHeader, profilePath, F));
+    if (Error E = requireMeasuredKappa(profileHeader, profilePath, F))
+      return E;
   if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
     llvm::errs() << "[poseidon] profile header for " << F.getName()
                  << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ','
@@ -110,6 +111,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
                  << profileHeader.maxBlockDim[2]
                  << ") LaunchCount=" << profileHeader.launchCount << '\n';
   }
+  return Error::success();
 }
 
 // The site's matrix products, with the analyses their raise keeps in `st`.
@@ -196,9 +198,9 @@ proposeSubgraphCandidates(Session &S, Function &F,
 // the site and leaves the downstream condition per unit of accuracy cost. A
 // site whose probe run diverged gets a large finite factor, so none of its
 // candidates is traded against precision.
-static void putOnApplicationScale(Session &S, Function &F,
-                                  const SiteProfileData &P,
-                                  FunctionFPState &st) {
+static Error putOnApplicationScale(Session &S, Function &F,
+                                   const SiteProfileData &P,
+                                   FunctionFPState &st) {
   const Options &O = S.Opts;
   const auto &profileMap = P.map;
   const auto &profileHeader = P.header;
@@ -209,7 +211,7 @@ static void putOnApplicationScale(Session &S, Function &F,
   // Per-output weights are already divided by each output's own total.
   if (!O.Profiling.OutputProfiles.empty()) {
     if (profileHeader.hasKappa)
-      reportUserError(
+      return userError(
           F, F.getSubprogram(),
           Twine("the profile of ") + F.getName() +
               " carries a measured condition number, which scales one "
@@ -242,12 +244,12 @@ static void putOnApplicationScale(Session &S, Function &F,
   if (profileHeader.hasKappa && !unresolved) {
     double sumSens = siteSumSens;
     if (sumSens == 0.0)
-      reportUserError(F, F.getSubprogram(),
-                      Twine("the profile of ") + F.getName() +
-                          " carries a measured condition number but a zero "
-                          "total sensitivity, so the accuracy costs cannot "
-                          "be put on the scale the condition number was "
-                          "measured against; re-run profile generation.");
+      return userError(F, F.getSubprogram(),
+                       Twine("the profile of ") + F.getName() +
+                           " carries a measured condition number but a zero "
+                           "total sensitivity, so the accuracy costs cannot "
+                           "be put on the scale the condition number was "
+                           "measured against; re-run profile generation.");
     factor = profileHeader.kappaMark == KappaMark::Diverged
                  ? 1e30
                  : profileHeader.kappa / sumSens;
@@ -268,6 +270,7 @@ static void putOnApplicationScale(Session &S, Function &F,
   if (factor != 1.0)
     for (SiteUnit *unit : st.units)
       unit->scaleErrors(factor);
+  return Error::success();
 }
 
 // Prints every collected candidate with its priced deltas.
@@ -330,8 +333,8 @@ void FunctionFPState::sealUnits(Session &S) {
 
 // Prices the collected candidates, unless the site's DP table is read back
 // from the cache: the table already holds every price its solve used.
-static void priceUnlessCached(Session &S, FunctionFPState &st,
-                              StringRef profilePath) {
+static Error priceUnlessCached(Session &S, FunctionFPState &st,
+                               StringRef profilePath) {
   const Options &O = S.Opts;
   // A joint or a manual solve reads no table, and an accuracy target leaves
   // the matrix products to errorBudgetSelector (fpOptimize).
@@ -339,17 +342,24 @@ static void priceUnlessCached(Session &S, FunctionFPState &st,
       O.Solver.ApplyRewrites.empty()) {
     const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
     const SmallVector<SiteUnit *> units = solvedUnits(st, target);
-    st.table = lookupSiteTable(S, st, units, profilePath);
+    Expected<std::unique_ptr<SiteTable>> table =
+        lookupSiteTable(S, st, units, profilePath);
+    if (!table)
+      return table.takeError();
+    st.table = std::move(*table);
     if (st.table->hit)
-      return;
+      return Error::success();
   }
   priceCandidates(st);
+  return Error::success();
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its
 // DP table is cached; false when F has no FP subgraph and no matrix product.
-static bool collectFPCandidates(Session &S, Function &F, double errorTol,
-                                unsigned sampleLogBits, FunctionFPState &st) {
+static Expected<bool> collectFPCandidates(Session &S, Function &F,
+                                          double errorTol,
+                                          unsigned sampleLogBits,
+                                          FunctionFPState &st) {
   const Options &O = S.Opts;
   st.F = &F;
   st.errTol = errorTol;
@@ -359,25 +369,30 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
     llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << '\n';
 
   SiteProfileData profile;
-  readSiteProfile(S, F, profile);
+  if (Error E = readSiteProfile(S, F, profile))
+    return std::move(E);
   st.profilePath = profile.path;
   st.canonicalHash = profile.canonicalHash;
   recognizeMatrixProducts(S, F, profile, st);
 
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
-  exitOnUserError(F.getContext(), requireCostModel(S.CostModel, F));
-  st.profiledCost = exitOnUserError(
-      F.getContext(), profiledCost(S.CostModel, F, profile.map,
-                                   [](const Instruction &I, size_t &slot) {
-                                     std::optional<size_t> found = slotOf(&I);
-                                     slot = found.value_or(0);
-                                     return found.has_value();
-                                   }));
+  if (Error E = requireCostModel(S.CostModel, F))
+    return std::move(E);
+  Expected<double> cost = profiledCost(
+      S.CostModel, F, profile.map, [](const Instruction &I, size_t &slot) {
+        std::optional<size_t> found = slotOf(&I);
+        slot = found.value_or(0);
+        return found.has_value();
+      });
+  if (!cost)
+    return cost.takeError();
+  st.profiledCost = *cost;
 
   buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st, st.subgraphs);
 
-  attachProfile(O, profile.map, st, st.subgraphs);
+  if (Error E = attachProfile(O, profile.map, st, st.subgraphs))
+    return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
   if (O.Candidates.EnablePT && !O.Candidates.MergeSharedStaging)
     hintSharedStaging(S, F, st.subgraphs);
@@ -393,9 +408,11 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
                            st.CMs);
   st.sealUnits(S);
 
-  priceUnlessCached(S, st, profile.path);
+  if (Error E = priceUnlessCached(S, st, profile.path))
+    return std::move(E);
 
-  putOnApplicationScale(S, F, profile, st);
+  if (Error E = putOnApplicationScale(S, F, profile, st))
+    return std::move(E);
   if (st.table && st.table->hit) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << F.getName()
@@ -509,9 +526,10 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
 
 // Selects the steps of `sites`, pinned or solved in one DP under `tau`, then
 // explains and materializes each site; true when a site changed.
-static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
-                          ArrayRef<FunctionFPState *> sites, double tau,
-                          bool siteTarget, bool joint) {
+static Expected<bool> solveAndApply(Session &S, Module &M,
+                                    const StringSet<> &declared,
+                                    ArrayRef<FunctionFPState *> sites,
+                                    double tau, bool siteTarget, bool joint) {
   const Options &O = S.Opts;
   SolveRecord record;
   record.tau = tau;
@@ -528,8 +546,12 @@ static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
 
   SmallVector<SolutionStep> steps;
   if (!O.Solver.ApplyRewrites.empty()) {
-    for (FunctionFPState *st : sites)
-      append_range(steps, parseManualRewrites(S, *st));
+    for (FunctionFPState *st : sites) {
+      Expected<SmallVector<SolutionStep>> pinned = parseManualRewrites(S, *st);
+      if (!pinned)
+        return pinned.takeError();
+      append_range(steps, *pinned);
+    }
     record.selector = "manual";
   } else if (!joint && tau > 0.0 && !sites.front()->CMs.empty()) {
     FunctionFPState &st = *sites.front();
@@ -538,28 +560,36 @@ static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
     // the normalized DP under the same number.
     steps = errorBudgetSelector(O, st.CMs, tau);
     const SmallVector<SiteUnit *> elemUnits = solvedUnits(st, /*target=*/true);
-    if (!elemUnits.empty())
-      for (const SolutionStep &e :
-           solveSites(S, sites, ArrayRef<SiteUnit *>(elemUnits), tau,
-                      /*joint=*/false, rec)) {
-        // The two selectors run independently, so the DP's footprint rule is
-        // applied between their results here, loudly: dropping a priced
-        // rewrite changes what the site emits.
-        if (overlapsConsumed(e, steps)) {
-          diagnose(*st.F, st.F->getSubprogram(),
-                   "a selected rewrite edits instructions a selected matrix "
-                   "product consumes; the rewrite is dropped",
-                   DS_Warning);
-          continue;
-        }
-        steps.push_back(e);
+    Expected<SmallVector<SolutionStep>> elemSteps =
+        elemUnits.empty()
+            ? SmallVector<SolutionStep>()
+            : solveSites(S, sites, ArrayRef<SiteUnit *>(elemUnits), tau,
+                         /*joint=*/false, rec);
+    if (!elemSteps)
+      return elemSteps.takeError();
+    for (const SolutionStep &e : *elemSteps) {
+      // The two selectors run independently, so the DP's footprint rule is
+      // applied between their results here, loudly: dropping a priced
+      // rewrite changes what the site emits.
+      if (overlapsConsumed(e, steps)) {
+        diagnose(*st.F, st.F->getSubprogram(),
+                 "a selected rewrite edits instructions a selected matrix "
+                 "product consumes; the rewrite is dropped",
+                 DS_Warning);
+        continue;
       }
+      steps.push_back(e);
+    }
     record.selector = "error-budget";
   } else {
     SmallVector<ArrayRef<SiteUnit *>, 4> units;
     for (FunctionFPState *st : sites)
       units.push_back(st->units);
-    steps = solveSites(S, sites, units, tau, joint, rec);
+    Expected<SmallVector<SolutionStep>> solved =
+        solveSites(S, sites, units, tau, joint, rec);
+    if (!solved)
+      return solved.takeError();
+    steps = std::move(*solved);
   }
 
   std::unordered_map<FunctionFPState *, SmallVector<SolutionStep>> perSite;
@@ -567,7 +597,8 @@ static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
     perSite[&unitOf(step).site()].push_back(step);
   if (explain)
     for (FunctionFPState *st : sites)
-      explainSolve(S, *st->F, *st, perSite[st], record);
+      if (Error E = explainSolve(S, *st->F, *st, perSite[st], record))
+        return std::move(E);
   eraseScratchDeclarations(M, declared);
 
   bool changed = false;
@@ -586,7 +617,7 @@ static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
   return changed;
 }
 
-bool fpOptimize(Session &S, Function &F, double errorTol) {
+Expected<bool> fpOptimize(Session &S, Function &F, double errorTol) {
   const Options &O = S.Opts;
   // A target written at the site wins over -poseidon-tau, the target of every
   // site that carries none; both mean the same.
@@ -601,7 +632,11 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
 
   const StringSet<> declared = declaredFunctions(*F.getParent());
   FunctionFPState st;
-  if (!collectFPCandidates(S, F, errorTol, sampleLogBits, st)) {
+  Expected<bool> collected =
+      collectFPCandidates(S, F, errorTol, sampleLogBits, st);
+  if (!collected)
+    return collected.takeError();
+  if (!*collected) {
     explainNothingToOptimize(S, F, target, errorTol > 0.0);
     return false;
   }
@@ -615,7 +650,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
                        errorTol > 0.0, /*joint=*/false);
 }
 
-bool solveJointly(Session &S, Module &M) {
+Expected<bool> solveJointly(Session &S, Module &M) {
   const Options &O = S.Opts;
   SmallVector<Function *, 4> marked;
   for (Function &F : M)
@@ -670,8 +705,11 @@ bool solveJointly(Session &S, Module &M) {
   std::vector<std::unique_ptr<FunctionFPState>> states;
   for (auto &[F, errTol] : targets) {
     auto st = std::make_unique<FunctionFPState>();
-    if (collectFPCandidates(S, *F, errTol, O.Model.SampleLogBits.value_or(0),
-                            *st)) {
+    Expected<bool> collected = collectFPCandidates(
+        S, *F, errTol, O.Model.SampleLogBits.value_or(0), *st);
+    if (!collected)
+      return collected.takeError();
+    if (*collected) {
       states.push_back(std::move(st));
     } else {
       if (O.Diagnostics.Print)

@@ -38,7 +38,8 @@ optimizeSites(Session &S, llvm::ArrayRef<Site> sites,
 llvm::Expected<bool> prepareModule(Session &S, llvm::Module &M);
 
 // Drop the canonicalized clones nothing calls any more. Runs once per module,
-// after every site is lowered and inlined.
+// after every site is lowered and inlined. An -poseidon-apply-rewrites item
+// that names no site of the module is an error.
 llvm::Error finalizeModule(Session &S, llvm::Module &M);
 
 } // namespace poseidon

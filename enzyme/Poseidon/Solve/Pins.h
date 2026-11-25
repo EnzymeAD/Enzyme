@@ -19,6 +19,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Error.h"
 
 #include <optional>
 #include <set>
@@ -62,13 +63,13 @@ struct PinState {
 
 // The steps the items of -poseidon-apply-rewrites name at the site of `st`, in
 // the order a solve of the site returns its steps.
-llvm::SmallVector<SolutionStep> parseManualRewrites(Session &S,
-                                                    FunctionFPState &st);
+llvm::Expected<llvm::SmallVector<SolutionStep>>
+parseManualRewrites(Session &S, FunctionFPState &st);
 
 // A site of the module, for the items of -poseidon-apply-rewrites that name
 // one; `body` is what the site's clone is made from. An item whose site two
 // sites answer to is an error.
-void noteSiteForPins(Session &S, const llvm::Function &body);
+llvm::Error noteSiteForPins(Session &S, const llvm::Function &body);
 
 // The value of -poseidon-apply-rewrites that applies `applied` at the site of
 // `st` again.
@@ -81,7 +82,7 @@ void printPin(Session &S, const FunctionFPState &st,
 
 // At the end of a module: an item that names a site has to have named a site
 // of the module, if the module has any.
-void checkPinnedSites(Session &S, llvm::Module &M);
+llvm::Error checkPinnedSites(Session &S, llvm::Module &M);
 
 } // namespace poseidon
 #endif // POSEIDON_PINS_H

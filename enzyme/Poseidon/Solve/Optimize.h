@@ -25,6 +25,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Error.h"
 
 #include <memory>
 #include <optional>
@@ -98,14 +99,14 @@ std::string siteProfilePath(const Session &S, const llvm::Function &clone,
 
 // `errorTol` > 0 is the accuracy target written at the site; 0 means the site
 // wrote none and -poseidon-tau decides.
-bool fpOptimize(Session &S, llvm::Function &F, double errorTol);
+llvm::Expected<bool> fpOptimize(Session &S, llvm::Function &F, double errorTol);
 
 // The attribute that marks a site of the joint solve, holding the site's
 // accuracy target.
 constexpr llvm::StringLiteral kJointErrTol = "poseidon-joint-errtol";
 
 // Solves one DP over all sites of `M` marked with kJointErrTol.
-bool solveJointly(Session &S, llvm::Module &M);
+llvm::Expected<bool> solveJointly(Session &S, llvm::Module &M);
 
 // The FP subgraphs of F, flood-filled over its optimizable instructions, and
 // a node for every value they read or compute. The instructions `profileMap`
@@ -116,9 +117,10 @@ void buildSubgraphs(
     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
 // Sets the profiled sensitivity, gradient, execution count and value ranges
-// of the subgraphs' nodes.
-void attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
-                   llvm::ArrayRef<Subgraph> subgraphs);
+// of the subgraphs' nodes. A profile that gives an operand no range was not
+// generated from this program, an error at the operation.
+llvm::Error attachProfile(const Options &O, const ProfileMap &profileMap,
+                          FPGraph &G, llvm::ArrayRef<Subgraph> subgraphs);
 
 // The site's optimization units: the subgraphs after splitting and the
 // shared-staging merge.

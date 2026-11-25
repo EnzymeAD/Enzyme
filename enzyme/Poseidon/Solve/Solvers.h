@@ -23,6 +23,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 
 #include <limits>
 #include <memory>
@@ -68,10 +69,9 @@ struct SiteTable {
 // The cache entry of the DP table of the site `st` over `units`, read from
 // the cache when it holds one; an entry that is unreadable or was solved by
 // another compiler is reported and missed.
-std::unique_ptr<SiteTable> lookupSiteTable(Session &S,
-                                           const FunctionFPState &st,
-                                           llvm::ArrayRef<SiteUnit *> units,
-                                           llvm::StringRef profilePath);
+llvm::Expected<std::unique_ptr<SiteTable>>
+lookupSiteTable(Session &S, const FunctionFPState &st,
+                llvm::ArrayRef<SiteUnit *> units, llvm::StringRef profilePath);
 
 // The order the DP takes `units[i]`, units of the i-th site, in, which is the
 // order of the steps of every solution: exactOrder, or prunedOrder under
@@ -86,7 +86,7 @@ solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
 // relative rounding level. A single site's table is read from or written to
 // the cache when the site has one. `joint` marks a solve of the sites of
 // -poseidon-joint-dp, however many.
-llvm::SmallVector<SolutionStep>
+llvm::Expected<llvm::SmallVector<SolutionStep>>
 solveSites(Session &S, llvm::ArrayRef<FunctionFPState *> sites,
            llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
            bool joint, SolveRecord *record);

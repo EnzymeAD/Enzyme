@@ -89,9 +89,9 @@ bool fromJSON(const json::Value &V, StoredPoint &P, json::Path Path) {
 // left out of the table. The entry is filed under the digest of the key
 // without the compiler, so that a rebuilt compiler replaces the entries of the
 // one before it.
-static void keySiteTable(Session &S, const FunctionFPState &st,
-                         ArrayRef<SiteUnit *> units, StringRef profilePath,
-                         SiteTable &table) {
+static Error keySiteTable(Session &S, const FunctionFPState &st,
+                          ArrayRef<SiteUnit *> units, StringRef profilePath,
+                          SiteTable &table) {
   const Options &O = S.Opts;
   const Function &F = *st.F;
   CacheKey &key = table.key;
@@ -120,12 +120,12 @@ static void keySiteTable(Session &S, const FunctionFPState &st,
   for (const std::string &path : profilePaths) {
     auto buf = MemoryBuffer::getFile(path);
     if (!buf)
-      reportUserError(F, F.getSubprogram(),
-                      Twine("cannot read the profile ") + path +
-                          " again to key the DP table of " + F.getName() +
-                          " (" + buf.getError().message() +
-                          "); a profile directory must not change while a "
-                          "compile reads it.");
+      return userError(F, F.getSubprogram(),
+                       Twine("cannot read the profile ") + path +
+                           " again to key the DP table of " + F.getName() +
+                           " (" + buf.getError().message() +
+                           "); a profile directory must not change while a "
+                           "compile reads it.");
     profiles += contentDigest((*buf)->getBuffer()) + "\n";
   }
   key.addContent("profile", profiles);
@@ -146,6 +146,7 @@ static void keySiteTable(Session &S, const FunctionFPState &st,
   sys::path::append(path, "dp_" + key.digest() + ".json");
   table.path = path.str().str();
   key.addCompiler(kPassIdentity);
+  return Error::success();
 }
 
 // Binds the cached frontier `points` to `units` in `table`; false when a step
@@ -180,12 +181,13 @@ static bool bindTable(ArrayRef<StoredPoint> points, ArrayRef<SiteUnit *> units,
   return true;
 }
 
-std::unique_ptr<SiteTable> lookupSiteTable(Session &S,
-                                           const FunctionFPState &st,
-                                           ArrayRef<SiteUnit *> units,
-                                           StringRef profilePath) {
+Expected<std::unique_ptr<SiteTable>> lookupSiteTable(Session &S,
+                                                     const FunctionFPState &st,
+                                                     ArrayRef<SiteUnit *> units,
+                                                     StringRef profilePath) {
   auto table = std::make_unique<SiteTable>();
-  keySiteTable(S, st, units, profilePath, *table);
+  if (Error E = keySiteTable(S, st, units, profilePath, *table))
+    return std::move(E);
   const StringRef fnName = st.F->getName();
   CacheEntryRead read = readCacheEntry(table->path, table->key);
   std::vector<StoredPoint> points;
@@ -284,30 +286,31 @@ static void writeSiteTable(const Options &O, const Function &F,
 // A site tolerance is a per-operation relative rounding level, so everything
 // the ratio is built from has to be measured. `at` is the site the error is
 // reported at.
-static void checkToleranceInputs(const Function &at, StringRef siteName,
-                                 double accScale, double baseline) {
+static Error checkToleranceInputs(const Function &at, StringRef siteName,
+                                  double accScale, double baseline) {
   if (!(accScale > 0.0) || !std::isfinite(accScale)) {
     std::string scaleStr;
     llvm::raw_string_ostream(scaleStr) << accScale;
-    reportUserError(at, at.getSubprogram(),
-                    Twine("site ") + siteName +
-                        " was given an accuracy tolerance but its profile "
-                        "carries a total sensitivity of " +
-                        scaleStr +
-                        ", so no rewrite's modelled error can be expressed "
-                        "as a per-operation relative level; re-run profile "
-                        "generation for this site.");
+    return userError(at, at.getSubprogram(),
+                     Twine("site ") + siteName +
+                         " was given an accuracy tolerance but its profile "
+                         "carries a total sensitivity of " +
+                         scaleStr +
+                         ", so no rewrite's modelled error can be expressed "
+                         "as a per-operation relative level; re-run profile "
+                         "generation for this site.");
   }
 
   if (!std::isfinite(baseline))
-    reportUserError(at, at.getSubprogram(),
-                    Twine("site ") + siteName +
-                        " was given an accuracy tolerance but its own "
-                        "baseline accuracy cost is not finite, so no "
-                        "candidate's modelled error can be placed on an "
-                        "absolute scale; give the site a cost budget "
-                        "instead of a tolerance, or re-run profile "
-                        "generation if its profile is not of this program.");
+    return userError(at, at.getSubprogram(),
+                     Twine("site ") + siteName +
+                         " was given an accuracy tolerance but its own "
+                         "baseline accuracy cost is not finite, so no "
+                         "candidate's modelled error can be placed on an "
+                         "absolute scale; give the site a cost budget "
+                         "instead of a tolerance, or re-run profile "
+                         "generation if its profile is not of this program.");
+  return Error::success();
 }
 
 // The modelled error of the code as written. The DP table is relative to it
@@ -441,11 +444,10 @@ solveOrder(const Options &O, ArrayRef<ArrayRef<SiteUnit *>> units) {
   return O.Solver.EarlyPrune ? prunedOrder(sites) : exactOrder(sites);
 }
 
-SmallVector<SolutionStep> solveSites(Session &S,
-                                     ArrayRef<FunctionFPState *> sites,
-                                     ArrayRef<ArrayRef<SiteUnit *>> units,
-                                     double tau, bool joint,
-                                     SolveRecord *record) {
+Expected<SmallVector<SolutionStep>>
+solveSites(Session &S, ArrayRef<FunctionFPState *> sites,
+           ArrayRef<ArrayRef<SiteUnit *>> units, double tau, bool joint,
+           SolveRecord *record) {
   const Options &O = S.Opts;
   const bool print = O.Diagnostics.Print;
   // Only a single site's table is cached: the key names one site's candidates.
@@ -554,7 +556,9 @@ SmallVector<SolutionStep> solveSites(Session &S,
                    << " subgraph output(s) carry no priced candidate, so the "
                       "baseline below covers only the priced ones and the "
                       "reported relative error is a lower bound.\n";
-    checkToleranceInputs(*sites.front()->F, names, accScale, baseline);
+    if (Error E =
+            checkToleranceInputs(*sites.front()->F, names, accScale, baseline))
+      return std::move(E);
     best = selectUnderTarget(O, costToAccuracyMap, baseline, accScale, tau);
     if (!best) {
       double bestAchievable = std::numeric_limits<double>::infinity();
@@ -565,7 +569,7 @@ SmallVector<SolutionStep> solveSites(Session &S,
                         "tolerance "
                      << tau << "; the best relative accuracy in the DP table "
                      << "is " << (baseline + bestAchievable) / accScale << '\n';
-      return {};
+      return SmallVector<SolutionStep>();
     }
     const double accCost = costToAccuracyMap.at(*best);
     if (print)
@@ -580,7 +584,7 @@ SmallVector<SolutionStep> solveSites(Session &S,
       if (print)
         llvm::errs() << "[poseidon] No solution found within the computation "
                         "cost budget\n";
-      return {};
+      return SmallVector<SolutionStep>();
     }
     if (print) {
       llvm::errs() << "[poseidon] Minimum accuracy cost within budget: "

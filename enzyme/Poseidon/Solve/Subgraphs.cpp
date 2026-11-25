@@ -234,8 +234,8 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
   }
 }
 
-void attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
-                   ArrayRef<Subgraph> subgraphs) {
+Error attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
+                    ArrayRef<Subgraph> subgraphs) {
   auto &valueToNodeMap = G.valueToNodeMap;
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
@@ -259,19 +259,20 @@ void attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
             continue;
           std::string name;
           raw_string_ostream(name) << *operand;
-          reportUserError(*op, "the profile gives this operation " +
-                                   Twine(profileInfo.minOperands.size()) +
-                                   " operand range(s), and its operand " +
-                                   Twine(i) + " (" + StringRef(name).trim() +
-                                   ") has none: the profile was not "
-                                   "generated from this program. Re-run "
-                                   "profile generation.");
+          return userError(*op, "the profile gives this operation " +
+                                    Twine(profileInfo.minOperands.size()) +
+                                    " operand range(s), and its operand " +
+                                    Twine(i) + " (" + StringRef(name).trim() +
+                                    ") has none: the profile was not "
+                                    "generated from this program. Re-run "
+                                    "profile generation.");
         }
         valueToNodeMap[operand]->updateBounds(profileInfo.minOperands[i],
                                               profileInfo.maxOperands[i]);
       }
     }
   }
+  return Error::success();
 }
 
 // The operations a split at I moves into a subgraph of their own: I and the

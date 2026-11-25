@@ -202,7 +202,8 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
   if (!profileUse) {
     warn(CI, kNoProfileAction);
   } else {
-    noteSiteForPins(S, *F);
+    if (Error E = noteSiteForPins(S, *F))
+      return E;
     auto key = std::make_pair((const Function *)F, errTol);
     auto prior = S.SolvedSites.find(key);
     if (!O.Solver.JointDP && prior != S.SolvedSites.end())
@@ -269,15 +270,17 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       if (O.Matmul.OzakiHostDispatch)
         addPendingGemmDispatch(S, F, *CI->getFunction(), primalArgs);
     } else {
-      bool optimized = fpOptimize(S, *F, errTol);
-      if (optimized)
+      Expected<bool> optimized = fpOptimize(S, *F, errTol);
+      if (!optimized)
+        return optimized.takeError();
+      if (*optimized)
         noteRewritten(S, *CI->getFunction());
 
       writeGemmDescriptorOf(S, CI, F, primalArgs);
 
       // The canonical clone's lowering may differ from the original body's at
       // ulp level, so a site with no rewrite calls the original body.
-      if (!optimized) {
+      if (!*optimized) {
         if (O.Diagnostics.Print)
           llvm::errs() << "[poseidon] no rewrite applied for " << F->getName()
                        << "; calling original body " << sourceBody->getName()
@@ -593,7 +596,8 @@ static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
 }
 
 Error finalizeModule(Session &S, Module &M) {
-  checkPinnedSites(S, M);
+  if (Error E = checkPinnedSites(S, M))
+    return E;
   reportHerbieAnswers(S);
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases

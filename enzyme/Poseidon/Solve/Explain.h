@@ -70,6 +70,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
+#include "llvm/Support/Error.h"
 
 namespace poseidon {
 
@@ -100,8 +101,11 @@ void explainUnprofiled(Session &S, llvm::Function &F, double tau,
                        bool siteTarget, llvm::StringRef status,
                        llvm::StringRef cause, llvm::StringRef profile);
 
-void explainSolve(Session &S, llvm::Function &F, FunctionFPState &st,
-                  llvm::ArrayRef<SolutionStep> steps, const SolveRecord &rec);
+// Remarks and the explanation of the solve of the site of `st`; an operation
+// of a subgraph the cost model has no row for is an error.
+llvm::Error explainSolve(Session &S, llvm::Function &F, FunctionFPState &st,
+                         llvm::ArrayRef<SolutionStep> steps,
+                         const SolveRecord &rec);
 
 } // namespace poseidon
 #endif // POSEIDON_EXPLAIN_H
