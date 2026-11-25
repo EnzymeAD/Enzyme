@@ -3277,6 +3277,460 @@ static LogicalResult finishTracedClone(PatternRewriter &rewriter, Operation *op,
 }
 
 namespace {
+/// Lowers the sites of a clone for one `impulse.regenerate`: selected sites
+/// are drawn afresh, the others read from the old trace or the constraint.
+/// The weight is the joint log density, or on a score-tail trace the change
+/// of the terms the move can change. `kMHHastingsAttr` adds the Hastings
+/// correction of the move to it, and `kMHSiteScoresAttr` replaces it with the
+/// liveness and log density of the listed sites.
+class RegenerateLowering {
+public:
+  RegenerateLowering(PatternRewriter &rewriter, impulse::RegenerateOp op,
+                     TracedClone &clone, SymbolTableCollection &symbolTable);
+
+  /// Checks a score-tail model, computes what the move can change and emits
+  /// the starting trace and weight of the clone, and for a Hastings move the
+  /// scores of the old sites it cannot evaluate inline. Fails after emitting
+  /// on the op.
+  LogicalResult prepare();
+  /// Lowers one site of the clone; see `TracedSiteFn`.
+  FailureOr<SmallVector<Value>> lowerSite(impulse::SampleOp site,
+                                          SiteCarry &carry);
+  /// Emits the weight the clone returns at `loc`.
+  Value emitWeightOut(Location loc);
+
+private:
+  /// A distribution site being lowered.
+  struct DistSite {
+    impulse::SampleOp op;
+    /// Its first column on the old trace, or -1 when it has none.
+    int64_t column;
+    bool isSelected;
+    /// Its column of `oldSiteScores` when its liveness can flip, else -1.
+    int64_t flipIdx;
+    /// Whether it ran before the move, set when its liveness can flip.
+    Value oldLive;
+  };
+
+  /// Emits the regenerate that scores the old sites of a Hastings move whose
+  /// density cannot be evaluated inline at the new state.
+  void emitOldSiteScores();
+  FailureOr<SmallVector<Value>> lowerDistSite(impulse::SampleOp op,
+                                              SiteCarry &carry);
+  FailureOr<SmallVector<Value>> lowerCallSite(impulse::SampleOp op,
+                                              SiteCarry &carry);
+  /// Returns the values of the site that is not regenerated: read from the
+  /// old trace or the constraint, and for a site whose liveness can flip,
+  /// redrawn unless it ran before.
+  FailureOr<SmallVector<Value>> readOrRedrawValues(DistSite &site);
+  /// Adds the term of `site` at `values` to the weight and the Hastings
+  /// correction of `carry`, and records its score for the score tail.
+  /// `termDirty` says whether the term can change under the move.
+  void accumulateSiteWeight(const DistSite &site, FunctionOpInterface logpdfFn,
+                            ArrayRef<Value> values, bool termDirty,
+                            SiteCarry &carry);
+  SmallVector<impulse::IfOp> enclosingIfs(Operation *site);
+  /// Whether `site` sits in a branch whose predicate the move can change.
+  bool inFlippableBranch(Operation *site);
+  /// Whether `site` reads its value from the constraint when constrained. In
+  /// MH, constraint entries outside branches may be latent initial values.
+  bool readsConstraint(impulse::SampleOp site);
+  /// The `oldSiteScores` column of a latent whose liveness can flip: kept if
+  /// it ran before the move, else redrawn. -1 for other sites.
+  int64_t flipLatentIndex(impulse::SampleOp site, bool isSelected);
+  /// Emits whether the site at `oldSiteScores` column `k` ran before the move.
+  Value emitOldLive(Location loc, int64_t k);
+  /// Records `score` as the log density of the site at column `k` of the site
+  /// scores `acc`, and marks the site live.
+  Value recordSiteScore(Location loc, Value acc, int64_t k, Value score);
+
+  PatternRewriter &rewriter;
+  impulse::RegenerateOp op;
+  TracedClone &clone;
+  SymbolTableCollection &symbolTable;
+  ArrayAttr selection;
+  ArrayAttr constrainedAddresses;
+  /// The old trace and the constraint, arguments of the clone.
+  Value prevTrace;
+  Value constraint;
+  bool hastings;
+  bool scoring;
+  bool hasScoreTail;
+  /// Values the move can change, for the terms of a score-tail weight.
+  DenseSet<Value> scoreTailTaint;
+  /// Values a Hastings move can change, for the liveness of branches.
+  DenseSet<Value> hastingsTaint;
+  /// Site symbol -> column of the site scores weight or of `oldSiteScores`.
+  DenseMap<Attribute, int64_t> siteIndex;
+  /// `[liveness; old log density]` of the sites a Hastings move cannot score
+  /// inline, one column per site.
+  Value oldSiteScores;
+  /// Program-order index of the next distribution site, its score column.
+  int64_t siteOrdinal = 0;
+};
+} // namespace
+
+RegenerateLowering::RegenerateLowering(PatternRewriter &rewriter,
+                                       impulse::RegenerateOp op,
+                                       TracedClone &clone,
+                                       SymbolTableCollection &symbolTable)
+    : rewriter(rewriter), op(op), clone(clone), symbolTable(symbolTable),
+      selection(op.getSelectionAttr()),
+      constrainedAddresses(op.getConstrainedAddressesAttr()),
+      prevTrace(clone.newFn.getArgument(0)),
+      constraint(op.getConstraint() ? clone.newFn.getArgument(1) : Value()),
+      hastings(op->hasAttr(kMHHastingsAttr)),
+      scoring(
+          static_cast<bool>(op->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr))),
+      hasScoreTail(clone.hasScoreTail()) {}
+
+LogicalResult RegenerateLowering::prepare() {
+  OpBuilder entryBuilder(clone.bodyStart);
+  Location entryLoc = clone.bodyStart->getLoc();
+  Value initTrace = clone.zeroTrace;
+  Value initWeight = clone.zeroWeight;
+  // On a score-tail trace the weight is the sum over dirty terms (regenerated
+  // or dependent on one) of new minus old log density; clean terms cancel in
+  // the MH ratio. Taint is computed up front; fresh draws are added as they
+  // are created.
+  if (hasScoreTail) {
+    if (!supportsScoreTail(clone.newFn))
+      return op.emitError("Impulse: regenerate over a score-tail trace "
+                          "requires a straight-line body of top-level "
+                          "distribution sites");
+    scoreTailTaint = computeRegenerateTaint(clone.newFn, selection);
+    // Non-regenerated values are unchanged: start from the previous trace.
+    initTrace = emitColumnSlice(
+        entryBuilder, entryLoc,
+        cast<RankedTensorType>(clone.zeroTrace.getType()), prevTrace,
+        /*start=*/0);
+  }
+  if (scoring) {
+    auto siteScoresAttr = op->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
+    for (auto [k, addr] : llvm::enumerate(siteScoresAttr))
+      siteIndex[cast<ArrayAttr>(addr)[0]] = k;
+    auto scoresType = RankedTensorType::get({2, (int64_t)siteScoresAttr.size()},
+                                            entryBuilder.getF64Type());
+    initWeight = emitSplatConstant(entryBuilder, entryLoc, scoresType, 0.0);
+  } else if (hastings && !hasScoreTail) {
+    emitOldSiteScores();
+  }
+  clone.carry = {initTrace, initWeight, /*offset=*/0,
+                 hastings ? clone.zeroWeight : Value()};
+  return success();
+}
+
+void RegenerateLowering::emitOldSiteScores() {
+  hastingsTaint = computeRegenerateTaint(clone.newFn, selection);
+  SmallVector<Attribute> oldScoreAddrs;
+  clone.newFn.getFunctionBody().walk([&](impulse::SampleOp s) {
+    if (!s.getDistAttr() && !s.getLogpdfFnAttr())
+      return;
+    bool needsOld;
+    if (addressInList(s, selection))
+      needsOld = !enclosingIfs(s).empty() ||
+                 llvm::any_of(llvm::drop_begin(s.getInputs()), [&](Value v) {
+                   return hastingsTaint.contains(v);
+                 });
+    else
+      needsOld = !(constraint && constrainedAddresses &&
+                   addressInList(s, constrainedAddresses)) &&
+                 inFlippableBranch(s);
+    if (!needsOld)
+      return;
+    siteIndex[s.getSymbolAttr()] = oldScoreAddrs.size();
+    oldScoreAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
+  });
+  if (oldScoreAddrs.empty())
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(&clone.newFn.getFunctionBody().front());
+  auto scoresType = RankedTensorType::get({2, (int64_t)oldScoreAddrs.size()},
+                                          rewriter.getF64Type());
+  SmallVector<Type> scoreTypes{prevTrace.getType(), scoresType};
+  llvm::append_range(scoreTypes, clone.fn.getResultTypes());
+  SmallVector<Value> scoreInputs(
+      clone.newFn.getArguments().drop_front(constraint ? 2 : 1));
+  auto scoreOp = impulse::RegenerateOp::create(
+      rewriter, op.getLoc(), scoreTypes, op.getFnAttr(), scoreInputs, prevTrace,
+      constraint, clone.allAddresses, rewriter.getArrayAttr({}),
+      constraint ? constrainedAddresses : ArrayAttr(),
+      rewriter.getStringAttr(""));
+  scoreOp->setAttr(kMHSiteScoresAttr, rewriter.getArrayAttr(oldScoreAddrs));
+  oldSiteScores = scoreOp.getWeight();
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::lowerSite(impulse::SampleOp site, SiteCarry &carry) {
+  if (site.getDistAttr() || site.getLogpdfFnAttr())
+    return lowerDistSite(site, carry);
+  return lowerCallSite(site, carry);
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::lowerDistSite(impulse::SampleOp op, SiteCarry &carry) {
+  if (failed(verifyTopLevelAddress(op, selection, "selected")))
+    return failure();
+  DistSite site{op, clone.layout.firstColumn(op.getSymbolAttr()),
+                addressInList(op, selection), /*flipIdx=*/-1, Value()};
+  site.flipIdx = flipLatentIndex(op, site.isSelected);
+  FailureOr<SmallVector<Value>> sampledValues =
+      site.isSelected ? emitSiteDraw(rewriter, symbolTable, op)
+                      : readOrRedrawValues(site);
+  if (failed(sampledValues))
+    return failure();
+  ArrayRef<Value> values = ArrayRef<Value>(*sampledValues).drop_front();
+  if (hastings && !hasScoreTail && (site.isSelected || site.flipIdx >= 0))
+    hastingsTaint.insert(values.begin(), values.end());
+  FailureOr<FunctionOpInterface> logpdfFn =
+      verifySiteLogpdf(symbolTable, op, values.size());
+  if (failed(logpdfFn))
+    return failure();
+
+  bool termDirty = site.isSelected ||
+                   (hasScoreTail && llvm::any_of(siteParams(op), [&](Value v) {
+                      return scoreTailTaint.contains(v);
+                    }));
+  if (hasScoreTail && site.isSelected)
+    scoreTailTaint.insert(values.begin(), values.end());
+  accumulateSiteWeight(site, *logpdfFn, values, termDirty, carry);
+  ++siteOrdinal;
+
+  if (addressInList(op, clone.allAddresses) &&
+      failed(appendSiteValues(rewriter, op, values, carry.trace, carry.offset,
+                              /*write=*/!hasScoreTail || site.isSelected)))
+    return failure();
+  return sampledValues;
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::readOrRedrawValues(DistSite &site) {
+  impulse::SampleOp op = site.op;
+  bool isConstrained = false;
+  if (readsConstraint(op)) {
+    if (failed(verifyTopLevelAddress(op, constrainedAddresses, "constrained")))
+      return failure();
+    isConstrained = addressInList(op, constrainedAddresses);
+  }
+  int64_t readOffset = isConstrained
+                           ? computeOffsetForSampleInSelection(
+                                 this->op, clone.fn, constrainedAddresses,
+                                 op.getSymbolAttr(), symbolTable)
+                           : site.column;
+  FailureOr<SmallVector<Value>> values = readSiteValues(
+      rewriter, op, isConstrained ? constraint : prevTrace, readOffset);
+  if (failed(values) || site.flipIdx < 0)
+    return values;
+  Location loc = op.getLoc();
+  site.oldLive = emitOldLive(loc, site.flipIdx);
+  SmallVector<Value> drawn = emitSiteDraw(rewriter, symbolTable, op);
+  for (unsigned i = 1; i < values->size(); ++i)
+    (*values)[i] =
+        impulse::SelectOp::create(rewriter, loc, (*values)[i].getType(),
+                                  site.oldLive, (*values)[i], drawn[i]);
+  (*values)[0] = drawn[0];
+  return values;
+}
+
+void RegenerateLowering::accumulateSiteWeight(const DistSite &site,
+                                              FunctionOpInterface logpdfFn,
+                                              ArrayRef<Value> values,
+                                              bool termDirty,
+                                              SiteCarry &carry) {
+  impulse::SampleOp op = site.op;
+  Location loc = op.getLoc();
+  Value oldScore;
+  if (hasScoreTail)
+    oldScore = scalarAt(rewriter, loc, prevTrace,
+                        {0, clone.positionSize() + siteOrdinal});
+
+  if (scoring) {
+    auto it = siteIndex.find(op.getSymbolAttr());
+    if (it != siteIndex.end()) {
+      Value score = emitSiteLogpdf(rewriter, op, logpdfFn, values);
+      carry.weight = recordSiteScore(loc, carry.weight, it->second, score);
+    }
+    return;
+  }
+  if (hasScoreTail && !termDirty) {
+    clone.siteScores.push_back(oldScore);
+    return;
+  }
+
+  Value logpdf = emitSiteLogpdf(rewriter, op, logpdfFn, values);
+  Value contribution =
+      hasScoreTail
+          ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore).getResult()
+          : logpdf;
+  carry.weight =
+      arith::AddFOp::create(rewriter, loc, carry.weight, contribution);
+  if (hasScoreTail)
+    clone.siteScores.push_back(logpdf);
+  if (hastings && site.isSelected) {
+    // A prior draw's proposal density cancels its own term.
+    carry.hastingsCorrection = arith::AddFOp::create(
+        rewriter, loc, carry.hastingsCorrection, contribution);
+    if (!hasScoreTail && !siteIndex.count(op.getSymbolAttr())) {
+      // Parameters unchanged by the move: score the old value inline.
+      Value oldLogpdf = emitSiteLogpdf(
+          rewriter, op, logpdfFn,
+          sliceTraceValues(rewriter, loc, prevTrace, site.column,
+                           TypeRange(op->getResultTypes()).drop_front()));
+      carry.hastingsCorrection = arith::SubFOp::create(
+          rewriter, loc, carry.hastingsCorrection, oldLogpdf);
+    }
+  } else if (site.flipIdx >= 0) {
+    // Kept: old density, cancelled via oldSiteScores; fresh: new density.
+    Value term = arith::SelectOp::create(
+        rewriter, loc, site.oldLive,
+        scalarAt(rewriter, loc, oldSiteScores, {1, site.flipIdx}), logpdf);
+    carry.hastingsCorrection =
+        arith::AddFOp::create(rewriter, loc, carry.hastingsCorrection, term);
+  }
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::lowerCallSite(impulse::SampleOp op, SiteCarry &carry) {
+  FailureOr<NestedSite> nested =
+      resolveNestedSite(rewriter, op, clone, symbolTable);
+  if (failed(nested))
+    return failure();
+  if (nested->subAllAddresses.empty())
+    return emitSiteDraw(rewriter, symbolTable, op);
+  if (nested->subPositionSize <= 0)
+    return op.emitError("Impulse: failed to compute sub-position size");
+  Location loc = op.getLoc();
+  Value subPrevTrace = emitColumnSlice(rewriter, loc, nested->getTraceType(),
+                                       prevTrace, nested->mergeOffset);
+
+  Attribute symbol = op.getSymbolAttr();
+  ArrayAttr subSelection = buildSubSelection(rewriter, selection, symbol);
+  Value subConstraint;
+  ArrayAttr subConstrainedForOp;
+  if (constraint && constrainedAddresses) {
+    ArrayAttr subConstrainedAddrs =
+        buildSubSelection(rewriter, constrainedAddresses, symbol);
+    if (!subConstrainedAddrs.empty()) {
+      int64_t subConstraintSize = computePositionSizeForSelection(
+          op, nested->genFn, subConstrainedAddrs, symbolTable);
+      int64_t subConstraintOffset = computeOffsetForSampleInSelection(
+          op, clone.fn, constrainedAddresses, symbol, symbolTable);
+      if (subConstraintSize > 0 && subConstraintOffset >= 0) {
+        auto subConstraintType = RankedTensorType::get({1, subConstraintSize},
+                                                       rewriter.getF64Type());
+        subConstraint = emitColumnSlice(rewriter, loc, subConstraintType,
+                                        constraint, subConstraintOffset);
+        subConstrainedForOp = subConstrainedAddrs;
+      }
+    }
+  }
+
+  if (hastings) {
+    bool genHasIf = false;
+    nested->genFn.getFunctionBody().walk(
+        [&](impulse::IfOp) { genHasIf = true; });
+    bool inputsTainted =
+        llvm::any_of(llvm::drop_begin(op.getInputs()),
+                     [&](Value v) { return hastingsTaint.contains(v); });
+    if (inFlippableBranch(op) ||
+        (inputsTainted && (!subSelection.empty() || genHasIf)))
+      return op.emitError("Impulse: MH over a generative call whose sites can "
+                          "change liveness or parameters under the move is "
+                          "not supported");
+  }
+
+  Type weightType = hastings ? RankedTensorType::get({2}, rewriter.getF64Type())
+                             : clone.zeroWeight.getType();
+  auto nestedRegenerate = impulse::RegenerateOp::create(
+      rewriter, loc, nested->getResultTypes(weightType), op.getFnAttr(),
+      op.getInputs(), subPrevTrace, subConstraint, nested->subAllAddresses,
+      subSelection, subConstrainedForOp, rewriter.getStringAttr(""));
+  Value subWeight = nestedRegenerate.getWeight();
+  if (hastings) {
+    nestedRegenerate->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
+    auto [weight, correction] = unpackHastingsWeight(rewriter, loc, subWeight);
+    carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight, weight);
+    carry.hastingsCorrection = arith::AddFOp::create(
+        rewriter, loc, carry.hastingsCorrection, correction);
+  } else if (!scoring) {
+    carry.weight =
+        arith::AddFOp::create(rewriter, loc, carry.weight, subWeight);
+  }
+  mergeNestedTrace(rewriter, loc, *nested, nestedRegenerate.getNewTrace(),
+                   carry);
+  return SmallVector<Value>(nestedRegenerate.getOutputs());
+}
+
+Value RegenerateLowering::emitWeightOut(Location loc) {
+  const SiteCarry &carry = clone.carry;
+  if (!hastings)
+    return carry.weight;
+  Value correction = carry.hastingsCorrection;
+  if (oldSiteScores)
+    for (int64_t
+             k = 0,
+             e = cast<RankedTensorType>(oldSiteScores.getType()).getShape()[1];
+         k < e; ++k)
+      correction =
+          arith::SubFOp::create(rewriter, loc, correction,
+                                scalarAt(rewriter, loc, oldSiteScores, {1, k}));
+  return packHastingsWeight(rewriter, loc, carry.weight, correction);
+}
+
+SmallVector<impulse::IfOp> RegenerateLowering::enclosingIfs(Operation *site) {
+  SmallVector<impulse::IfOp> ifs;
+  for (Operation *p = site->getParentOp(); p && p != clone.newFn.getOperation();
+       p = p->getParentOp())
+    if (auto ifOp = dyn_cast<impulse::IfOp>(p))
+      ifs.push_back(ifOp);
+  return ifs;
+}
+
+bool RegenerateLowering::inFlippableBranch(Operation *site) {
+  return llvm::any_of(enclosingIfs(site), [&](impulse::IfOp ifOp) {
+    return hastingsTaint.contains(ifOp.getPredicate());
+  });
+}
+
+bool RegenerateLowering::readsConstraint(impulse::SampleOp site) {
+  if (!constraint || !constrainedAddresses)
+    return false;
+  return !(hastings || scoring) || !enclosingIfs(site).empty();
+}
+
+int64_t RegenerateLowering::flipLatentIndex(impulse::SampleOp site,
+                                            bool isSelected) {
+  if (!hastings || isSelected)
+    return -1;
+  auto it = siteIndex.find(site.getSymbolAttr());
+  return it == siteIndex.end() ? -1 : it->second;
+}
+
+Value RegenerateLowering::emitOldLive(Location loc, int64_t k) {
+  Value flag = scalarAt(rewriter, loc, oldSiteScores, {0, k});
+  Value half = emitSplatConstant(
+      rewriter, loc, cast<RankedTensorType>(clone.zeroWeight.getType()), 0.5);
+  return arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OGT, flag,
+                               half);
+}
+
+Value RegenerateLowering::recordSiteScore(Location loc, Value acc, int64_t k,
+                                          Value score) {
+  auto cellType = RankedTensorType::get({1, 1}, rewriter.getF64Type());
+  Value one = emitSplatConstant(rewriter, loc, cellType, 1.0);
+  Value scoreCell = impulse::ReshapeOp::create(rewriter, loc, cellType, score);
+  acc = impulse::DynamicUpdateSliceOp::create(
+      rewriter, loc, acc.getType(), acc, one,
+      ValueRange{emitI64ScalarConstant(rewriter, loc, 0),
+                 emitI64ScalarConstant(rewriter, loc, k)});
+  return impulse::DynamicUpdateSliceOp::create(
+      rewriter, loc, acc.getType(), acc, scoreCell,
+      ValueRange{emitI64ScalarConstant(rewriter, loc, 1),
+                 emitI64ScalarConstant(rewriter, loc, k)});
+}
+
+namespace {
 
 /// Lowers the Impulse inference ops. Runs of chained single-site MH moves are
 /// batched before the patterns run.
@@ -4232,9 +4686,7 @@ struct ExpandImpulsePass
 
   /// Lowers `impulse.regenerate` to a call of a clone of the model that redraws
   /// the selected sites, reads the others from the old trace and also returns
-  /// the new trace and the weight: the joint log density, or its change on a
-  /// score-tail trace, in the form `kMHHastingsAttr` or `kMHSiteScoresAttr`
-  /// ask for.
+  /// the new trace and the weight that `RegenerateLowering` describes.
   struct LowerRegeneratePattern
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
     using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
@@ -4242,8 +4694,6 @@ struct ExpandImpulsePass
     LogicalResult matchAndRewrite(impulse::RegenerateOp op,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
-      ArrayAttr allAddresses = op.getAllAddressesAttr();
-      ArrayAttr constrainedAddresses = op.getConstrainedAddressesAttr();
       bool hasConstraint = static_cast<bool>(op.getConstraint());
       // Operand width, not the packed size, as in generate.
       int64_t constraintSize =
@@ -4253,371 +4703,25 @@ struct ExpandImpulsePass
       int64_t declaredWidth =
           cast<RankedTensorType>(op.getNewTrace().getType()).getShape()[1];
       FailureOr<TracedClone> clone = beginTracedClone(
-          op, op.getFnAttr(), allAddresses, declaredWidth,
+          op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
           ImpulseMode::Regenerate, constraintSize, "regenerate", symbolTable);
       if (failed(clone))
         return failure();
-      FunctionOpInterface fn = clone->fn;
-      FunctionOpInterface newFn = clone->newFn;
-      int64_t positionSize = clone->positionSize();
-      bool hasScoreTail = clone->hasScoreTail();
-      int64_t siteOrdinal = 0;
+      RegenerateLowering lowering(rewriter, op, *clone, symbolTable);
+      if (failed(lowering.prepare()))
+        return failure();
 
-      OpBuilder entryBuilder(clone->bodyStart);
-      Location initLoc = clone->bodyStart->getLoc();
-      auto scalarType = cast<RankedTensorType>(clone->zeroWeight.getType());
-      auto traceType = cast<RankedTensorType>(clone->zeroTrace.getType());
-      Value zeroWeight = clone->zeroWeight;
-      Value initWeight = zeroWeight;
-      Value initTrace = clone->zeroTrace;
-
-      Value prevTrace = newFn.getArgument(0);
-      Value constraint = hasConstraint ? newFn.getArgument(1) : Value();
-
-      // On a score-tail trace the weight is the sum over dirty terms
-      // (regenerated or dependent on one) of new minus old log density; clean
-      // terms cancel in the MH ratio. Taint is computed up front; fresh draws
-      // are added as they are created.
-      DenseSet<Value> tainted;
-      if (hasScoreTail) {
-        if (!supportsScoreTail(newFn)) {
-          op.emitError("Impulse: regenerate over a score-tail trace requires "
-                       "a straight-line body of top-level distribution sites");
-          return failure();
-        }
-        tainted = computeRegenerateTaint(newFn, op.getSelectionAttr());
-        // Non-regenerated values are unchanged: start from the previous trace.
-        initTrace = emitColumnSlice(entryBuilder, initLoc, traceType, prevTrace,
-                                    /*start=*/0);
-      }
-
-      ArrayAttr selection = op.getSelectionAttr();
-      bool hastings = op->hasAttr(kMHHastingsAttr);
-      ArrayAttr siteScoresAttr =
-          op->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
-      bool scoring = static_cast<bool>(siteScoresAttr);
-      // Site symbol -> column of the scores vector or of `oldSiteScores`.
-      DenseMap<Attribute, int64_t> siteIndex;
-      Value oldSiteScores;
-      DenseSet<Value> hastingsTaint;
-      auto enclosingIfs = [&](Operation *site) {
-        SmallVector<impulse::IfOp> ifs;
-        for (Operation *p = site->getParentOp(); p && p != newFn.getOperation();
-             p = p->getParentOp())
-          if (auto ifOp = dyn_cast<impulse::IfOp>(p))
-            ifs.push_back(ifOp);
-        return ifs;
-      };
-      auto inFlippableBranch = [&](Operation *site) {
-        return llvm::any_of(enclosingIfs(site), [&](impulse::IfOp ifOp) {
-          return hastingsTaint.contains(ifOp.getPredicate());
-        });
-      };
-      if (scoring) {
-        for (auto [k, addr] : llvm::enumerate(siteScoresAttr))
-          siteIndex[cast<ArrayAttr>(addr)[0]] = k;
-        auto scoresType = RankedTensorType::get(
-            {2, (int64_t)siteScoresAttr.size()}, entryBuilder.getF64Type());
-        initWeight = emitSplatConstant(entryBuilder, initLoc, scoresType, 0.0);
-      } else if (hastings && !hasScoreTail) {
-        // Sites whose old density cannot be evaluated inline at the new state.
-        hastingsTaint = computeRegenerateTaint(newFn, selection);
-        SmallVector<Attribute> oldScoreAddrs;
-        newFn.getFunctionBody().walk([&](impulse::SampleOp s) {
-          if (!s.getDistAttr() && !s.getLogpdfFnAttr())
-            return;
-          bool needsOld;
-          if (addressInList(s, selection))
-            needsOld =
-                !enclosingIfs(s).empty() ||
-                llvm::any_of(llvm::drop_begin(s.getInputs()), [&](Value v) {
-                  return hastingsTaint.contains(v);
-                });
-          else
-            needsOld = !(constraint && constrainedAddresses &&
-                         addressInList(s, constrainedAddresses)) &&
-                       inFlippableBranch(s);
-          if (!needsOld)
-            return;
-          siteIndex[s.getSymbolAttr()] = oldScoreAddrs.size();
-          oldScoreAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
-        });
-        if (!oldScoreAddrs.empty()) {
-          OpBuilder::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPointToStart(&newFn.getFunctionBody().front());
-          auto scoresType = RankedTensorType::get(
-              {2, (int64_t)oldScoreAddrs.size()}, rewriter.getF64Type());
-          SmallVector<Type> scoreTypes{prevTrace.getType(), scoresType};
-          scoreTypes.append(fn.getResultTypes().begin(),
-                            fn.getResultTypes().end());
-          SmallVector<Value> scoreInputs(
-              newFn.getArguments().drop_front(hasConstraint ? 2 : 1));
-          auto scoreOp = impulse::RegenerateOp::create(
-              rewriter, op.getLoc(), scoreTypes, op.getFnAttr(), scoreInputs,
-              prevTrace, constraint, allAddresses, rewriter.getArrayAttr({}),
-              hasConstraint ? constrainedAddresses : ArrayAttr(),
-              rewriter.getStringAttr(""));
-          scoreOp->setAttr(kMHSiteScoresAttr,
-                           rewriter.getArrayAttr(oldScoreAddrs));
-          oldSiteScores = scoreOp.getWeight();
-        }
-      }
-      // In MH, constraint entries outside branches may be latent init values.
-      auto readsConstraint = [&](impulse::SampleOp s) {
-        if (!constraint || !constrainedAddresses)
-          return false;
-        return !(hastings || scoring) || !enclosingIfs(s).empty();
-      };
-      // `oldSiteScores` column of a flippable latent (kept if live, else
-      // redrawn).
-      auto flipLatentIndex = [&](impulse::SampleOp s, bool isSelected) {
-        if (!hastings || isSelected)
-          return (int64_t)-1;
-        auto it = siteIndex.find(s.getSymbolAttr());
-        return it == siteIndex.end() ? (int64_t)-1 : it->second;
-      };
-      auto oldLiveAt = [&](Location loc, int64_t k) -> Value {
-        Value flag = scalarAt(rewriter, loc, oldSiteScores, {0, k});
-        Value half = emitSplatConstant(rewriter, loc, scalarType, 0.5);
-        return arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OGT,
-                                     flag, half);
-      };
-      auto recordSiteScore = [&](Location loc, Value acc, int64_t k,
-                                 Value score) -> Value {
-        auto t11 = RankedTensorType::get({1, 1}, rewriter.getF64Type());
-        Value one = emitSplatConstant(rewriter, loc, t11, 1.0);
-        Value scoreRow = impulse::ReshapeOp::create(rewriter, loc, t11, score);
-        acc = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, acc.getType(), acc, one,
-            ValueRange{emitI64ScalarConstant(rewriter, loc, 0),
-                       emitI64ScalarConstant(rewriter, loc, k)});
-        return impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, acc.getType(), acc, scoreRow,
-            ValueRange{emitI64ScalarConstant(rewriter, loc, 1),
-                       emitI64ScalarConstant(rewriter, loc, k)});
-      };
-
-      clone->carry = {initTrace, initWeight, /*offset=*/0,
-                      hastings ? Value(zeroWeight) : Value()};
-      auto lowerSite = [&](impulse::SampleOp sampleOp,
-                           SiteCarry &branch) -> FailureOr<SmallVector<Value>> {
-        SmallVector<Value> sampledValues;
-        if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
-          Location loc = sampleOp.getLoc();
-          if (failed(verifyTopLevelAddress(sampleOp, selection, "selected")))
-            return failure();
-          bool isSelected = addressInList(sampleOp, selection);
-          int64_t sampleOffset =
-              clone->layout.firstColumn(sampleOp.getSymbolAttr());
-
-          int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
-          Value oldLive;
-          if (isSelected) {
-            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
-          } else {
-            bool isConstrained = false;
-            if (readsConstraint(sampleOp)) {
-              if (failed(verifyTopLevelAddress(sampleOp, constrainedAddresses,
-                                               "constrained")))
-                return failure();
-              isConstrained = addressInList(sampleOp, constrainedAddresses);
-            }
-            int64_t readOffset =
-                isConstrained ? computeOffsetForSampleInSelection(
-                                    op, fn, constrainedAddresses,
-                                    sampleOp.getSymbolAttr(), symbolTable)
-                              : sampleOffset;
-            FailureOr<SmallVector<Value>> read = readSiteValues(
-                rewriter, sampleOp, isConstrained ? constraint : prevTrace,
-                readOffset);
-            if (failed(read))
-              return failure();
-            sampledValues = std::move(*read);
-            if (flipIdx >= 0) {
-              oldLive = oldLiveAt(loc, flipIdx);
-              SmallVector<Value> drawn =
-                  emitSiteDraw(rewriter, symbolTable, sampleOp);
-              for (unsigned i = 1; i < sampledValues.size(); ++i)
-                sampledValues[i] = impulse::SelectOp::create(
-                    rewriter, loc, sampledValues[i].getType(), oldLive,
-                    sampledValues[i], drawn[i]);
-              sampledValues[0] = drawn[0];
-            }
-          }
-          ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
-          if (hastings && !hasScoreTail && (isSelected || flipIdx >= 0))
-            hastingsTaint.insert(values.begin(), values.end());
-          FailureOr<FunctionOpInterface> logpdfFn =
-              verifySiteLogpdf(symbolTable, sampleOp, values.size());
-          if (failed(logpdfFn))
-            return failure();
-
-          bool termDirty =
-              isSelected ||
-              (hasScoreTail && llvm::any_of(siteParams(sampleOp), [&](Value v) {
-                 return tainted.contains(v);
-               }));
-          if (hasScoreTail && isSelected)
-            tainted.insert(values.begin(), values.end());
-
-          Value oldScore;
-          if (hasScoreTail)
-            oldScore = scalarAt(rewriter, loc, prevTrace,
-                                {0, positionSize + siteOrdinal});
-
-          if (scoring) {
-            auto it = siteIndex.find(sampleOp.getSymbolAttr());
-            if (it != siteIndex.end())
-              branch.weight = recordSiteScore(
-                  loc, branch.weight, it->second,
-                  emitSiteLogpdf(rewriter, sampleOp, *logpdfFn, values));
-          } else if (!hasScoreTail || termDirty) {
-            Value logpdf =
-                emitSiteLogpdf(rewriter, sampleOp, *logpdfFn, values);
-            Value contribution =
-                hasScoreTail
-                    ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore)
-                          .getResult()
-                    : logpdf;
-            branch.weight = arith::AddFOp::create(rewriter, loc, branch.weight,
-                                                  contribution);
-            if (hasScoreTail)
-              clone->siteScores.push_back(logpdf);
-            if (hastings && isSelected) {
-              // A prior draw's proposal density cancels its own term.
-              branch.hastingsCorrection = arith::AddFOp::create(
-                  rewriter, loc, branch.hastingsCorrection, contribution);
-              if (!hasScoreTail && !siteIndex.count(sampleOp.getSymbolAttr())) {
-                // Parameters unchanged by the move: score the old value inline.
-                Value oldLogpdf = emitSiteLogpdf(
-                    rewriter, sampleOp, *logpdfFn,
-                    sliceTraceValues(
-                        rewriter, loc, prevTrace, sampleOffset,
-                        TypeRange(sampleOp->getResultTypes()).drop_front()));
-                branch.hastingsCorrection = arith::SubFOp::create(
-                    rewriter, loc, branch.hastingsCorrection, oldLogpdf);
-              }
-            } else if (flipIdx >= 0) {
-              // Kept: old density, cancelled via oldSiteScores; fresh: new
-              // density.
-              Value term = arith::SelectOp::create(
-                  rewriter, loc, oldLive,
-                  scalarAt(rewriter, loc, oldSiteScores, {1, flipIdx}), logpdf);
-              branch.hastingsCorrection = arith::AddFOp::create(
-                  rewriter, loc, branch.hastingsCorrection, term);
-            }
-          } else {
-            clone->siteScores.push_back(oldScore);
-          }
-          ++siteOrdinal;
-
-          if (addressInList(sampleOp, allAddresses) &&
-              failed(appendSiteValues(rewriter, sampleOp, values, branch.trace,
-                                      branch.offset,
-                                      /*write=*/!hasScoreTail || isSelected)))
-            return failure();
-          return sampledValues;
-        }
-
-        FailureOr<NestedSite> nested =
-            resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
-        if (failed(nested))
-          return failure();
-        if (nested->subAllAddresses.empty())
-          return emitSiteDraw(rewriter, symbolTable, sampleOp);
-        if (nested->subPositionSize <= 0)
-          return sampleOp.emitError(
-              "Impulse: failed to compute sub-position size");
-        Location loc = sampleOp.getLoc();
-        Value subPrevTrace =
-            emitColumnSlice(rewriter, loc, nested->getTraceType(), prevTrace,
-                            nested->mergeOffset);
-
-        Attribute symbol = sampleOp.getSymbolAttr();
-        ArrayAttr subSelection =
-            buildSubSelection(rewriter, op.getSelectionAttr(), symbol);
-        Value subConstraint;
-        ArrayAttr subConstrainedForOp;
-        if (constraint && constrainedAddresses) {
-          ArrayAttr subConstrainedAddrs =
-              buildSubSelection(rewriter, constrainedAddresses, symbol);
-          if (!subConstrainedAddrs.empty()) {
-            int64_t subConstraintSize = computePositionSizeForSelection(
-                sampleOp, nested->genFn, subConstrainedAddrs, symbolTable);
-            int64_t subConstraintOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, constrainedAddresses, symbol, symbolTable);
-            if (subConstraintSize > 0 && subConstraintOffset >= 0) {
-              auto subConstraintType = RankedTensorType::get(
-                  {1, subConstraintSize}, rewriter.getF64Type());
-              subConstraint = emitColumnSlice(rewriter, loc, subConstraintType,
-                                              constraint, subConstraintOffset);
-              subConstrainedForOp = subConstrainedAddrs;
-            }
-          }
-        }
-
-        if (hastings) {
-          bool genHasIf = false;
-          nested->genFn.getFunctionBody().walk(
-              [&](impulse::IfOp) { genHasIf = true; });
-          bool inputsTainted =
-              llvm::any_of(llvm::drop_begin(sampleOp.getInputs()),
-                           [&](Value v) { return hastingsTaint.contains(v); });
-          if (inFlippableBranch(sampleOp) ||
-              (inputsTainted && (!subSelection.empty() || genHasIf)))
-            return sampleOp.emitError(
-                "Impulse: MH over a generative call whose sites can "
-                "change liveness or parameters under the move is not "
-                "supported");
-        }
-
-        Type weightType =
-            hastings ? RankedTensorType::get({2}, rewriter.getF64Type())
-                     : scalarType;
-        auto nestedRegenerate = impulse::RegenerateOp::create(
-            rewriter, loc, nested->getResultTypes(weightType),
-            sampleOp.getFnAttr(), sampleOp.getInputs(), subPrevTrace,
-            subConstraint, nested->subAllAddresses, subSelection,
-            subConstrainedForOp, rewriter.getStringAttr(""));
-        Value subWeight = nestedRegenerate.getWeight();
-        if (hastings) {
-          nestedRegenerate->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
-          auto [weight, correction] =
-              unpackHastingsWeight(rewriter, loc, subWeight);
-          branch.weight =
-              arith::AddFOp::create(rewriter, loc, branch.weight, weight);
-          branch.hastingsCorrection = arith::AddFOp::create(
-              rewriter, loc, branch.hastingsCorrection, correction);
-        } else if (!scoring) {
-          branch.weight =
-              arith::AddFOp::create(rewriter, loc, branch.weight, subWeight);
-        }
-        mergeNestedTrace(rewriter, loc, *nested, nestedRegenerate.getNewTrace(),
-                         branch);
-        return SmallVector<Value>(nestedRegenerate.getOutputs());
-      };
-
-      auto weightOut = [&](Location loc) -> Value {
-        const SiteCarry &carry = clone->carry;
-        if (!hastings)
-          return carry.weight;
-        Value correction = carry.hastingsCorrection;
-        if (oldSiteScores)
-          for (int64_t k = 0,
-                       e = cast<RankedTensorType>(oldSiteScores.getType())
-                               .getShape()[1];
-               k < e; ++k)
-            correction = arith::SubFOp::create(
-                rewriter, loc, correction,
-                scalarAt(rewriter, loc, oldSiteScores, {1, k}));
-        return packHastingsWeight(rewriter, loc, carry.weight, correction);
-      };
       SmallVector<Value> callOperands{op.getOriginalTrace()};
       if (hasConstraint)
         callOperands.push_back(op.getConstraint());
       llvm::append_range(callOperands, op.getInputs());
-      return finishTracedClone(rewriter, op, *clone, lowerSite, weightOut,
-                               callOperands);
+      return finishTracedClone(
+          rewriter, op, *clone,
+          [&](impulse::SampleOp site, SiteCarry &carry) {
+            return lowering.lowerSite(site, carry);
+          },
+          [&](Location loc) { return lowering.emitWeightOut(loc); },
+          callOperands);
     }
   };
 };
