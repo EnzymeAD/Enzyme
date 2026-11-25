@@ -18,7 +18,6 @@
 #include "Interfaces/DistBuilder.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
-#include "Interfaces/TransformUtils.h"
 #include "Interfaces/VIUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
@@ -304,7 +303,7 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
       continue;
 
     int64_t unconstrainedSize =
-        transforms::getUnconstrainedSize(sampleSize, supportAttr);
+        supportAttr ? supportAttr.getUnconstrainedSize(sampleSize) : sampleSize;
 
     int64_t traceOffset = computeOffsetForSampleInSelection(
         op, fn, allAddresses, targetSymbol, symbolTable);
@@ -390,8 +389,10 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
     if (!site || !layout->columnOf.count(addr))
       return {};
     int64_t constrainedSize = sampleRegionSize(site);
-    int64_t unconstrainedSize = transforms::getUnconstrainedSize(
-        constrainedSize, site.getSupportAttr());
+    impulse::SupportAttr support = site.getSupportAttr();
+    int64_t unconstrainedSize =
+        support ? support.getUnconstrainedSize(constrainedSize)
+                : constrainedSize;
     supports.emplace_back(positionOffset, layout->columnOf.lookup(addr),
                           constrainedSize, unconstrainedOffset,
                           unconstrainedSize, site.getSupportAttr());
@@ -432,8 +433,9 @@ static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
       continue;
     impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
     int64_t siteSize = sampleRegionSize(site);
+    impulse::SupportAttr support = site.getSupportAttr();
     int64_t unconstrainedSize =
-        transforms::getUnconstrainedSize(siteSize, site.getSupportAttr());
+        support ? support.getUnconstrainedSize(siteSize) : siteSize;
     out.supports.emplace_back(positionOffset, layout->columnOf.lookup(addr),
                               siteSize, unconstrainedOffset, unconstrainedSize,
                               site.getSupportAttr());

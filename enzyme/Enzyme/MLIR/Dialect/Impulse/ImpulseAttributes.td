@@ -103,6 +103,12 @@ def SupportAttr : Impulse_Attr<"Support", "support"> {
     OptionalParameter<"FloatAttr">:$upper_bound,
     OptionalParameter<"IntegerAttr">:$event_size
   );
+  let extraClassDeclaration = [{
+    /// The number of unconstrained values that `constrainedSize` values on
+    /// this support map to: K - 1 per simplex of K for SIMPLEX, else
+    /// `constrainedSize`.
+    int64_t getUnconstrainedSize(int64_t constrainedSize) const;
+  }];
   // Comma-led optional groups cannot parse `<LESS_THAN, upper = y>`.
   let assemblyFormat = [{
     `<` $kind `` custom<SupportParams>($lower_bound, $upper_bound, $event_size)

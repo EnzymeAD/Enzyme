@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Builds the sampler and the log density of an `#impulse.dist` attribute and
-// the bijection that unconstrains a support out of impulse, enzyme.broadcast,
-// arith and math ops.
+// Builds, out of impulse, enzyme.broadcast, arith and math ops, the sampler
+// and the log density of an `#impulse.dist` attribute and the map of
+// unconstrained values onto a support.
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,34 +24,22 @@
 namespace mlir {
 namespace impulse {
 
-/// Maps unconstrained `z` onto `support`; the identity when `support` is
-/// null.
-Value emitBijectorForward(OpBuilder &builder, Location loc, SupportAttr support,
-                          Value z);
-/// Maps `y` in `support` back to unconstrained space.
-Value emitBijectorInverse(OpBuilder &builder, Location loc, SupportAttr support,
-                          Value y);
-/// Returns log|det J| of emitBijectorForward at the unconstrained `z`, summed
-/// to a rank-0 tensor.
-Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
-                               SupportAttr support, Value z);
+/// Maps `unconstrained` onto `support`; the identity for a null or REAL
+/// support.
+Value emitConstrain(OpBuilder &builder, Location loc, SupportAttr support,
+                    Value unconstrained);
+/// Inverse of emitConstrain.
+Value emitUnconstrain(OpBuilder &builder, Location loc, SupportAttr support,
+                      Value constrained);
+/// Returns log|det J| of emitConstrain at `unconstrained`, summed to a rank-0
+/// tensor.
+Value emitConstrainLogAbsDetJacobian(OpBuilder &builder, Location loc,
+                                     SupportAttr support, Value unconstrained);
 
 /// Elementwise log1p(exp(x)).
 Value emitSoftplus(OpBuilder &builder, Location loc, Value x);
 /// Elementwise log(exp(x) - 1), the inverse of emitSoftplus.
 Value emitSoftplusInv(OpBuilder &builder, Location loc, Value x);
-
-struct ScaledUnitLowerCholeskyResult {
-  Value scaleTril;
-  Value sumLogDiag;
-};
-
-/// Builds the scale factor diag(softplus(d)) * L, with L unit lower triangular,
-/// from `xFlat` = [strict lower entries of L in row-major order, d], and the
-/// sum of log(softplus(d)).
-ScaledUnitLowerCholeskyResult
-emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
-                            int64_t d, Type elemType);
 
 /// Draws `sampleType` values uniform on [0, 1) and advances `rng`.
 Value emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,

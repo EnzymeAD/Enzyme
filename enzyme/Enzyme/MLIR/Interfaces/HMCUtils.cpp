@@ -12,8 +12,8 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
 #include "Interfaces/ImpulseUtils.h"
-#include "Interfaces/TransformUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -334,9 +334,9 @@ static Value emitPotential(OpBuilder &builder, Location loc, Value q,
                            const HMCContext &ctx) {
   Value logDensity = emitModelLogDensity(builder, loc, qConstrained, rng, ctx);
   Value negLogDensity = arith::NegFOp::create(builder, loc, logDensity);
-  Value jacobianCorrection =
-      computeTotalJacobianCorrection(builder, loc, q, ctx.supports);
-  return arith::SubFOp::create(builder, loc, negLogDensity, jacobianCorrection);
+  Value logAbsDetJacobian =
+      constrainPositionLogAbsDetJacobian(builder, loc, q, ctx.supports);
+  return arith::SubFOp::create(builder, loc, negLogDensity, logAbsDetJacobian);
 }
 
 /// Whether the potential calls the logpdf symbol, which takes the position
@@ -1614,7 +1614,8 @@ SmallVector<AdaptWindow> impulse::buildAdaptationSchedule(int64_t numSteps) {
   return schedule;
 }
 
-/// Whether the site's support needs a bijector, i.e. is not all of R.
+/// Whether the site's support is not all of R, so that its values are mapped
+/// onto it.
 static bool isConstrainedSite(const SupportInfo &info) {
   return info.support && info.support.getKind() != impulse::SupportKind::REAL;
 }
@@ -1652,8 +1653,8 @@ static Value transformPosition(OpBuilder &builder, Location loc, Value position,
                                  builder.getDenseI64ArrayAttr({1}));
     if (isConstrainedSite(info))
       slice = toUnconstrained
-                  ? transforms::unconstrain(builder, loc, slice, info.support)
-                  : transforms::constrain(builder, loc, slice, info.support);
+                  ? emitUnconstrain(builder, loc, info.support, slice)
+                  : emitConstrain(builder, loc, info.support, slice);
     slices.push_back(slice);
   }
 
@@ -1690,9 +1691,9 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
                            /*toUnconstrained=*/false);
 }
 
-Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
-                                              Value unconstrained,
-                                              ArrayRef<SupportInfo> supports) {
+Value impulse::constrainPositionLogAbsDetJacobian(
+    OpBuilder &builder, Location loc, Value unconstrained,
+    ArrayRef<SupportInfo> supports) {
   auto inputType = cast<RankedTensorType>(unconstrained.getType());
   auto elemType = inputType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -1718,10 +1719,9 @@ Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
         builder.getDenseI64ArrayAttr(
             {info.unconstrainedOffset + info.unconstrainedSize}),
         builder.getDenseI64ArrayAttr({1}));
-    auto jacobian =
-        transforms::logAbsDetJacobian(builder, loc, slice, info.support);
-
-    total = arith::AddFOp::create(builder, loc, total, jacobian);
+    Value logAbsDetJacobian =
+        emitConstrainLogAbsDetJacobian(builder, loc, info.support, slice);
+    total = arith::AddFOp::create(builder, loc, total, logAbsDetJacobian);
   }
 
   return total;

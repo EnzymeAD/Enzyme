@@ -139,6 +139,13 @@ SupportAttr DistAttr::getSupport() const {
                           /*upper=*/FloatAttr(), /*event_size=*/IntegerAttr());
 }
 
+int64_t SupportAttr::getUnconstrainedSize(int64_t constrainedSize) const {
+  if (getKind() != SupportKind::SIMPLEX)
+    return constrainedSize;
+  int64_t eventSize = getEventSize().getInt();
+  return constrainedSize / eventSize * (eventSize - 1);
+}
+
 unsigned DistAttr::getNumParameters() const {
   unsigned numParams = 0;
   switch (getBase()) {

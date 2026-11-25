@@ -445,11 +445,11 @@ Value unconstrainPosition(OpBuilder &builder, Location loc, Value constrained,
 Value constrainPosition(OpBuilder &builder, Location loc, Value unconstrained,
                         ArrayRef<SupportInfo> supports);
 
-/// Compute total Jacobian correction for the constrain transform over all
-/// position vector slices.
-Value computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
-                                     Value unconstrained,
-                                     ArrayRef<SupportInfo> supports);
+/// Returns log|det J| of constrainPosition at `unconstrained`, summed over
+/// the sites to a rank-0 tensor.
+Value constrainPositionLogAbsDetJacobian(OpBuilder &builder, Location loc,
+                                         Value unconstrained,
+                                         ArrayRef<SupportInfo> supports);
 } // namespace impulse
 } // namespace mlir
 

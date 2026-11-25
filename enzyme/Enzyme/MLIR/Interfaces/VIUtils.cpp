@@ -117,6 +117,12 @@ struct SVILoopResult {
   SmallVector<ParamState> params;
   Value stepCount;
 };
+
+/// A lower Cholesky factor and the sum of the logs of its diagonal.
+struct ScaledUnitLowerCholeskyResult {
+  Value scaleTril;
+  Value sumLogDiag;
+};
 } // namespace
 
 /// One ELBO particle for a mean-field normal guide. `params` are the location
@@ -195,12 +201,12 @@ static ValueAndGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         Value logQUnc = emitGaussianLogQ(builder, loc, sumLogScale, eps, ctx);
         logQUnc = conditionalDump(builder, loc, logQUnc, "VI: logQUnc",
                                   ctx.debugDump);
-        Value jacCorrection =
-            computeTotalJacobianCorrection(builder, loc, zUnc, ctx.supports);
-        jacCorrection = conditionalDump(builder, loc, jacCorrection,
-                                        "VI: jacCorrection", ctx.debugDump);
+        Value logAbsDetJacobian = constrainPositionLogAbsDetJacobian(
+            builder, loc, zUnc, ctx.supports);
+        logAbsDetJacobian = conditionalDump(builder, loc, logAbsDetJacobian,
+                                            "VI: jacCorrection", ctx.debugDump);
         Value logQ =
-            arith::SubFOp::create(builder, loc, logQUnc, jacCorrection);
+            arith::SubFOp::create(builder, loc, logQUnc, logAbsDetJacobian);
         logQ = conditionalDump(builder, loc, logQ,
                                "VI: logQ=logQUnc-jacCorrection", ctx.debugDump);
 
@@ -233,6 +239,73 @@ static ValueAndGradient emitAutoDeltaParticle(OpBuilder &builder, Location loc,
             constrainPosition(builder, loc, paramArgs[0], ctx.supports);
         return emitModelLogDensity(builder, loc, zConstrained, rng, ctx);
       });
+}
+
+/// Builds the scale factor diag(softplus(d)) * L, with L unit lower triangular,
+/// from `xFlat` = [strict lower entries of L in row-major order, d], and the
+/// sum of log(softplus(d)).
+static ScaledUnitLowerCholeskyResult
+emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
+                            int64_t d, Type elemType) {
+  int64_t nOff = d * (d - 1) / 2;
+  auto offDiagTy = RankedTensorType::get({nOff}, elemType);
+  auto diagTy = RankedTensorType::get({d}, elemType);
+  auto matTy = RankedTensorType::get({d, d}, elemType);
+  auto scalarTy = RankedTensorType::get({}, elemType);
+
+  Value offDiag, diagPre;
+  if (nOff > 0) {
+    offDiag = impulse::SliceOp::create(builder, loc, offDiagTy, xFlat,
+                                       builder.getDenseI64ArrayAttr({0}),
+                                       builder.getDenseI64ArrayAttr({nOff}),
+                                       builder.getDenseI64ArrayAttr({1}));
+  }
+  diagPre = impulse::SliceOp::create(builder, loc, diagTy, xFlat,
+                                     builder.getDenseI64ArrayAttr({nOff}),
+                                     builder.getDenseI64ArrayAttr({nOff + d}),
+                                     builder.getDenseI64ArrayAttr({1}));
+
+  Value diag = impulse::emitSoftplus(builder, loc, diagPre);
+
+  Value logDiag = math::LogOp::create(builder, loc, diag);
+  Value sumLogDiag = sumAllElements(builder, loc, logDiag);
+
+  Value scaleTril = emitSplatConstant(builder, loc, matTy, 0.0);
+
+  auto sliceScalar = [&](Value vec, int64_t k) -> Value {
+    auto oneTy = RankedTensorType::get({1}, elemType);
+    Value s1 = impulse::SliceOp::create(builder, loc, oneTy, vec,
+                                        builder.getDenseI64ArrayAttr({k}),
+                                        builder.getDenseI64ArrayAttr({k + 1}),
+                                        builder.getDenseI64ArrayAttr({1}));
+    return impulse::ReshapeOp::create(builder, loc, scalarTy, s1);
+  };
+  auto reshapeTo11 = [&](Value scalar) -> Value {
+    auto t11 = RankedTensorType::get({1, 1}, elemType);
+    return impulse::ReshapeOp::create(builder, loc, t11, scalar);
+  };
+
+  int64_t k = 0;
+  for (int64_t i = 0; i < d; ++i) {
+    Value diagElem = sliceScalar(diag, i);
+    for (int64_t j = 0; j < i; ++j) {
+      Value offElem = sliceScalar(offDiag, k);
+      Value entry = arith::MulFOp::create(builder, loc, offElem, diagElem);
+      Value entry11 = reshapeTo11(entry);
+      scaleTril = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, matTy, scaleTril, entry11,
+          ValueRange{emitI64ScalarConstant(builder, loc, i),
+                     emitI64ScalarConstant(builder, loc, j)});
+      ++k;
+    }
+    Value diagElem11 = reshapeTo11(diagElem);
+    scaleTril = impulse::DynamicUpdateSliceOp::create(
+        builder, loc, matTy, scaleTril, diagElem11,
+        ValueRange{emitI64ScalarConstant(builder, loc, i),
+                   emitI64ScalarConstant(builder, loc, i)});
+  }
+
+  return {scaleTril, sumLogDiag};
 }
 
 /// One ELBO particle for a full-rank normal guide. `params` are the location
@@ -271,9 +344,8 @@ static ValueAndGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
   return emitGradientRegion(
       builder, loc, params, gradSeed, modelRng, ctx.autodiffAttrs,
       [&](ValueRange paramArgs, Value &rng) -> Value {
-        impulse::ScaledUnitLowerCholeskyResult chol =
-            impulse::emitScaledUnitLowerCholesky(builder, loc, paramArgs[1], d,
-                                                 elemType);
+        ScaledUnitLowerCholeskyResult chol = emitScaledUnitLowerCholesky(
+            builder, loc, paramArgs[1], d, elemType);
 
         // L @ eps in row-vector form: eps @ L^T.
         Value scaledEps = impulse::DotOp::create(

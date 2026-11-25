@@ -19,7 +19,6 @@ add_mlir_library(
   ImpulseUtils.cpp
   LogpdfRegion.cpp
   DistBuilder.cpp
-  TransformUtils.cpp
   EnzymeLogic.cpp
   EnzymeLogicReverse.cpp
   MTypeResults.cpp

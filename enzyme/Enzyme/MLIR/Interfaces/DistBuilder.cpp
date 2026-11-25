@@ -339,8 +339,8 @@ static Value emitXformInverse(OpBuilder &builder, Location loc, XformAttr xform,
   llvm_unreachable("unknown XformKind");
 }
 
-Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
-                                   SupportAttr support, Value z) {
+Value impulse::emitConstrain(OpBuilder &builder, Location loc,
+                             SupportAttr support, Value z) {
   if (!support)
     return z;
   auto zType = cast<RankedTensorType>(z.getType());
@@ -380,8 +380,8 @@ Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
   llvm_unreachable("unknown SupportKind");
 }
 
-Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
-                                   SupportAttr support, Value y) {
+Value impulse::emitUnconstrain(OpBuilder &builder, Location loc,
+                               SupportAttr support, Value y) {
   if (!support)
     return y;
   auto yType = cast<RankedTensorType>(y.getType());
@@ -432,10 +432,10 @@ static Value emitLogSigmoidDerivative(OpBuilder &builder, Location loc,
 
 /// log|det J| of the forward map of the distribution transform `xform`,
 /// evaluated at its input `forwardInput` and summed over the event.
-static Value emitXformLogAbsDetJac(OpBuilder &builder, Location loc,
-                                   XformAttr xform, Value forwardInput,
-                                   ValueRange distArgs,
-                                   RankedTensorType sampleType) {
+static Value emitXformLogAbsDetJacobian(OpBuilder &builder, Location loc,
+                                        XformAttr xform, Value forwardInput,
+                                        ValueRange distArgs,
+                                        RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
@@ -459,9 +459,9 @@ static Value emitXformLogAbsDetJac(OpBuilder &builder, Location loc,
   llvm_unreachable("unknown XformKind");
 }
 
-Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
-                                        SupportAttr support,
-                                        Value unconstrained) {
+Value impulse::emitConstrainLogAbsDetJacobian(OpBuilder &builder, Location loc,
+                                              SupportAttr support,
+                                              Value unconstrained) {
   auto zType = cast<RankedTensorType>(unconstrained.getType());
   auto elemType = zType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -498,70 +498,6 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
   llvm_unreachable("unknown SupportKind");
 }
 
-impulse::ScaledUnitLowerCholeskyResult
-impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
-                                     Value xFlat, int64_t d, Type elemType) {
-  int64_t nOff = d * (d - 1) / 2;
-  auto offDiagTy = RankedTensorType::get({nOff}, elemType);
-  auto diagTy = RankedTensorType::get({d}, elemType);
-  auto matTy = RankedTensorType::get({d, d}, elemType);
-  auto scalarTy = RankedTensorType::get({}, elemType);
-
-  Value offDiag, diagPre;
-  if (nOff > 0) {
-    offDiag = impulse::SliceOp::create(builder, loc, offDiagTy, xFlat,
-                                       builder.getDenseI64ArrayAttr({0}),
-                                       builder.getDenseI64ArrayAttr({nOff}),
-                                       builder.getDenseI64ArrayAttr({1}));
-  }
-  diagPre = impulse::SliceOp::create(builder, loc, diagTy, xFlat,
-                                     builder.getDenseI64ArrayAttr({nOff}),
-                                     builder.getDenseI64ArrayAttr({nOff + d}),
-                                     builder.getDenseI64ArrayAttr({1}));
-
-  Value diag = impulse::emitSoftplus(builder, loc, diagPre);
-
-  Value logDiag = math::LogOp::create(builder, loc, diag);
-  Value sumLogDiag = sumVector(builder, loc, logDiag);
-
-  Value scaleTril = emitSplatConstant(builder, loc, matTy, 0.0);
-
-  auto sliceScalar = [&](Value vec, int64_t k) -> Value {
-    auto oneTy = RankedTensorType::get({1}, elemType);
-    Value s1 = impulse::SliceOp::create(builder, loc, oneTy, vec,
-                                        builder.getDenseI64ArrayAttr({k}),
-                                        builder.getDenseI64ArrayAttr({k + 1}),
-                                        builder.getDenseI64ArrayAttr({1}));
-    return impulse::ReshapeOp::create(builder, loc, scalarTy, s1);
-  };
-  auto reshapeTo11 = [&](Value scalar) -> Value {
-    auto t11 = RankedTensorType::get({1, 1}, elemType);
-    return impulse::ReshapeOp::create(builder, loc, t11, scalar);
-  };
-
-  int64_t k = 0;
-  for (int64_t i = 0; i < d; ++i) {
-    Value diagElem = sliceScalar(diag, i);
-    for (int64_t j = 0; j < i; ++j) {
-      Value offElem = sliceScalar(offDiag, k);
-      Value entry = arith::MulFOp::create(builder, loc, offElem, diagElem);
-      Value entry11 = reshapeTo11(entry);
-      scaleTril = impulse::DynamicUpdateSliceOp::create(
-          builder, loc, matTy, scaleTril, entry11,
-          ValueRange{emitI64ScalarConstant(builder, loc, i),
-                     emitI64ScalarConstant(builder, loc, j)});
-      ++k;
-    }
-    Value diagElem11 = reshapeTo11(diagElem);
-    scaleTril = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, matTy, scaleTril, diagElem11,
-        ValueRange{emitI64ScalarConstant(builder, loc, i),
-                   emitI64ScalarConstant(builder, loc, i)});
-  }
-
-  return {scaleTril, sumLogDiag};
-}
-
 /// Draws `sampleType` values from `distribution` with parameters 0 and 1,
 /// that is uniform on [0, 1) or standard normal, and advances `rng`.
 static Value emitRandomDraw(OpBuilder &builder, Location loc, Value &rng,
@@ -591,10 +527,9 @@ static Value stdExpFromUniform(OpBuilder &builder, Location loc, Value u) {
 }
 
 /// Draws a `sampleType` sample of the untransformed `base` and advances `rng`.
-static Value emitNativeSampler(OpBuilder &builder, Location loc,
-                               DistBaseKind base, Value &rng,
-                               ValueRange distArgs,
-                               RankedTensorType sampleType) {
+static Value emitBaseSampler(OpBuilder &builder, Location loc,
+                             DistBaseKind base, Value &rng, ValueRange distArgs,
+                             RankedTensorType sampleType) {
   auto bcast = [&](Value v) {
     return broadcastToSample(builder, loc, v, sampleType);
   };
@@ -689,7 +624,7 @@ static Value emitNativeSampler(OpBuilder &builder, Location loc,
   }
   default:
     llvm::report_fatal_error(
-        "emitNativeSampler: sampler not emittable for this base");
+        "emitBaseSampler: sampler not emittable for this base");
   }
 }
 
@@ -697,8 +632,8 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &builder, Location loc,
                                             DistAttr dist, Value rng,
                                             ValueRange distArgs,
                                             RankedTensorType sampleType) {
-  Value val = emitNativeSampler(builder, loc, dist.getBase(), rng, distArgs,
-                                sampleType);
+  Value val =
+      emitBaseSampler(builder, loc, dist.getBase(), rng, distArgs, sampleType);
   // The verifier allows chains only on parameterless bases, so the distArgs
   // belong to the chain.
   if (ArrayAttr transforms = dist.getTransforms())
@@ -793,9 +728,8 @@ emitStudentTParamTerms(OpBuilder &builder, Location loc, Value dfArg,
 
 /// Log density of `observed` under the untransformed `base`, summed over the
 /// event.
-static Value emitNativeLogpdf(OpBuilder &builder, Location loc,
-                              DistBaseKind base, Value observed,
-                              ValueRange distArgs) {
+static Value emitBaseLogpdf(OpBuilder &builder, Location loc, DistBaseKind base,
+                            Value observed, ValueRange distArgs) {
   auto sampleType = cast<RankedTensorType>(observed.getType());
   Type elemType = sampleType.getElementType();
   auto bcast = [&](Value v) {
@@ -1014,7 +948,7 @@ static Value emitNativeLogpdf(OpBuilder &builder, Location loc,
     return add(unnormed, reduce(lognorm));
   }
   default:
-    llvm::report_fatal_error("emitNativeLogpdf: unsupported base");
+    llvm::report_fatal_error("emitBaseLogpdf: unsupported base");
   }
 }
 
@@ -1027,7 +961,7 @@ Value impulse::emitDistLogpdf(OpBuilder &builder, Location loc, DistAttr dist,
   bool hasChain = chain && !chain.empty();
   if (dist.getBase() != DistBaseKind::STD_NORMAL &&
       !(dist.getBase() == DistBaseKind::STD_UNIFORM && hasChain)) {
-    return emitNativeLogpdf(builder, loc, dist.getBase(), observed, distArgs);
+    return emitBaseLogpdf(builder, loc, dist.getBase(), observed, distArgs);
   }
 
   Value val = observed;
@@ -1037,8 +971,8 @@ Value impulse::emitDistLogpdf(OpBuilder &builder, Location loc, DistAttr dist,
     for (int64_t i = transforms.size() - 1; i >= 0; --i) {
       auto xform = cast<XformAttr>(transforms[i]);
       Value inv = emitXformInverse(builder, loc, xform, distArgs, val);
-      Value ld =
-          emitXformLogAbsDetJac(builder, loc, xform, inv, distArgs, sampleType);
+      Value ld = emitXformLogAbsDetJacobian(builder, loc, xform, inv, distArgs,
+                                            sampleType);
       logdetTotal = arith::AddFOp::create(builder, loc, logdetTotal, ld);
       val = inv;
     }
