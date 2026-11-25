@@ -74,7 +74,9 @@ Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
   return value;
 }
 
-/// `tensor<1xN>` is a diagonal mass; `tensor<1x1>` stays on the dense path.
+/// Whether the HMC kernels treat a mass tensor of type `t` as a diagonal:
+/// `tensor<N>` for every N and `tensor<1xN>` for N > 1. `tensor<1x1>` is a
+/// dense 1x1 matrix.
 static bool isDiagonalMass(RankedTensorType t) {
   return t.getRank() == 1 ||
          (t.getRank() == 2 && t.getShape()[0] == 1 && t.getShape()[1] != 1);

@@ -59,8 +59,10 @@ inline constexpr llvm::StringLiteral kOptStepCount = "opt_step_count";
 inline constexpr llvm::StringLiteral kWeight = "weight";
 } // namespace state_slot
 
-/// Whether an inverse mass matrix of type `type` is diagonal: `tensor<N>` and
-/// `tensor<1xN>` hold the diagonal, any other shape a dense matrix.
+/// Whether the state schema and the warmup adaptation treat an inverse mass
+/// matrix of type `type` as a diagonal: `tensor<N>` and `tensor<1xN>` hold the
+/// diagonal for every N, `tensor<1x1>` included; any other shape is a dense
+/// matrix.
 inline bool isDiagonalInverseMass(mlir::RankedTensorType type) {
   return type.getRank() == 1 ||
          (type.getRank() == 2 && type.getShape()[0] == 1);
