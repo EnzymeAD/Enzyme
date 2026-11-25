@@ -274,10 +274,11 @@ void replaceWithAsWritten(Module &M, std::unique_ptr<Module> twin,
   if (!compileAsWritten(*twin, parent, PB, Level, Phase))
     return;
   if (!takeRewritten(*twin, rewritten)) {
-    llvm::errs() << "[poseidon] " << M.getName()
-                 << ": a rewritten function refers to what the module as "
-                    "written does not hold alike; emitting the rewritten "
-                    "module\n";
+    if (parent.Opts.Diagnostics.Print)
+      llvm::errs() << "[poseidon] " << M.getName()
+                   << ": a rewritten function refers to what the module as "
+                      "written does not hold alike; emitting the rewritten "
+                      "module\n";
     return;
   }
   adoptModule(M, *twin);

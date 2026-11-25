@@ -8,6 +8,7 @@
 
 #include "Explain.h"
 #include "Core/CacheKey.h"
+#include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
@@ -475,22 +476,28 @@ static const std::string &explanationDir(const Options &O) {
 
 // Writes `doc`, the explanation of a site, as <stem>.explain.json into the
 // explanation directory.
-static void writeExplanation(const Session &S, StringRef stem,
-                             json::Object doc) {
+static void writeExplanation(const Session &S, const Function &F,
+                             StringRef stem, json::Object doc) {
   const std::string &dir = explanationDir(S.Opts);
   if (auto EC = sys::fs::create_directories(dir)) {
-    errs() << "Error creating explanation directory: " << EC.message() << '\n';
+    diagnose(F, F.getSubprogram(),
+             "cannot create the explanation directory " + dir + ": " +
+                 EC.message(),
+             DS_Warning);
     return;
   }
   SmallString<128> path(dir);
   sys::path::append(path, stem + ".explain.json");
   if (Error Err = writeFileAtomically(
           path, formatv("{0:2}", json::Value(std::move(doc))).str() + "\n")) {
-    errs() << "Error writing explanation: " << toString(std::move(Err)) << '\n';
+    diagnose(F, F.getSubprogram(),
+             "cannot write the explanation " + path + ": " +
+                 toString(std::move(Err)),
+             DS_Warning);
     return;
   }
   if (S.Opts.Diagnostics.Print)
-    errs() << "Poseidon explanation written to " << path << '\n';
+    errs() << "[poseidon] explanation written to " << path << '\n';
 }
 
 // Where a remark about a site points: its call, else the site's function.
@@ -1735,11 +1742,12 @@ void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
   json::Object result{{"status", status}, {"reason", reason}};
   if (!profile.empty())
     result["profile"] = profile;
-  writeExplanation(S, body ? bodyProfileStem(S, F) : siteFileStem(S, F),
-                   json::Object{{"schema", kSchema},
-                                {"function", functionJSON(S, F)},
-                                {"target", targetJSON(S.Opts, tau, siteTarget)},
-                                {"result", std::move(result)}});
+  writeExplanation(
+      S, F, body ? bodyProfileStem(S, F) : siteFileStem(S, F),
+      json::Object{{"schema", kSchema},
+                   {"function", functionJSON(S, F)},
+                   {"target", targetJSON(S.Opts, tau, siteTarget)},
+                   {"result", std::move(result)}});
 }
 
 void explainNothingToOptimize(Session &S, Function &F, double tau,
@@ -1781,7 +1789,7 @@ void explainSolve(Session &S, Function &F, FunctionFPState &st,
   if (remarks)
     E.emitRemarks();
   if (write)
-    writeExplanation(S, siteFileStem(S, F), E.toJSON());
+    writeExplanation(S, F, siteFileStem(S, F), E.toJSON());
 }
 
 } // namespace poseidon

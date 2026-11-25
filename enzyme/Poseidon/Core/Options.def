@@ -368,7 +368,7 @@ POSEIDON_MODEL_OPTION(FreqWeightedPricing, Bool, false,
                       "of the subgraph's")
 
 // Diagnostics.
-POSEIDON_DIAGNOSTIC_OPTION(Print, Bool, false, "poseidon-print", User, Other,
+POSEIDON_DIAGNOSTIC_OPTION(Print, Bool, false, "poseidon-print", Hidden, Other,
                            "",
                            "Print what the solve of each site considered and "
                            "chose on stderr")

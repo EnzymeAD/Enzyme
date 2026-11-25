@@ -10,7 +10,7 @@
 ; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget
 ; RUN: cat %t/budget/dp_*.json | FileCheck --check-prefix=KEY %s
 ; RUN: sed -i 's/"TCEC backend": "[^"]*"/"TCEC backend": "another"/' %t/budget/dp_*.json %t/budget/matmulacc_*.json
-; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget 2>&1 | FileCheck --check-prefix=ANOTHER %s
+; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget -poseidon-print 2>&1 | FileCheck --check-prefix=ANOTHER %s
 
 ; Operand A of the product of ozaki_dispatch_nvptx.ll is profiled at 1e-9
 ; (Inputs/fp16_range/matmul_tiny), below FP16's smallest subnormal: every

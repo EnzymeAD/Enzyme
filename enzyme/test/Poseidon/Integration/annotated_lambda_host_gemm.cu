@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
 // CHECK-NEXT: [poseidon] Optimizing [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body]] with relative error tolerance: 1.000000e-12
 // CHECK: [hostgemm]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]
 // CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+80] A=param1[+48] B=param1[+16]
-// CHECK: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK: [poseidon] Found 1 matrix product(s) in [[BODY]]
 // CHECK-NEXT: Matmul[0]: 192x1x192 type=f64 origin=HostGemmLoopNest
 // CHECK: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{[0-9.]+e-[0-9]+}} <= 1.000000e-12 at confidence 9.500000e-01)
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#4)

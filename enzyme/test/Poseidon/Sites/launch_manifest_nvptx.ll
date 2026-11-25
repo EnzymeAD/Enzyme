@@ -136,7 +136,7 @@
 ; solve, which records both after the joint materialization. A repeated
 ; compile writes the same manifest and the same messages.
 ; RUN: mkdir %t/order
-; RUN: %opt %s %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/order/c -poseidon-unit=u 2> %t/order/site1.err
+; RUN: %opt %s %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/order/c -poseidon-unit=u 2> %t/order/site1.err -poseidon-print
 ; RUN: cp %t/order/c/launches_tcec_matmul.cu_*.json %t/order/site1.json
 ; RUN: %opt %s %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/order/c -poseidon-unit=u 2> %t/order/site2.err
 ; RUN: FileCheck --check-prefix=ORDER-LOG %s < %t/order/site1.err
@@ -145,7 +145,7 @@
 ; RUN: grep 'wrote descriptor' %t/order/site2.err > %t/order/site2.wrote
 ; RUN: diff %t/order/site1.wrote %t/order/site2.wrote
 ; RUN: cmp %t/order/site1.json %t/order/c/launches_tcec_matmul.cu_*.json
-; RUN: %opt %s %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/order/c -poseidon-unit=u -poseidon-joint-dp 2> %t/order/joint1.err
+; RUN: %opt %s %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/order/c -poseidon-unit=u -poseidon-joint-dp 2> %t/order/joint1.err -poseidon-print
 ; RUN: cp %t/order/c/launches_tcec_matmul.cu_*.json %t/order/joint1.json
 ; RUN: %opt %s %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/order/c -poseidon-unit=u -poseidon-joint-dp 2> %t/order/joint2.err
 ; RUN: FileCheck --check-prefix=ORDER-JOINT %s < %t/order/joint1.err
@@ -177,7 +177,7 @@
 ; nothing and succeeds against the same path. Profile generation for an NVPTX
 ; kernel needs Enzyme and the NVPTX device profiler.
 ; RUN: %if enzyme && nvptx-device-profiler %{ mkdir %t/unwritable && echo > %t/unwritable/file %}
-; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unwritable/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE-DISPATCH -DCACHE=%t/unwritable/file/c %s %}
+; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-DISPATCH -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/unwritable/file/c -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=UNWRITABLE-PROFILE -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/unwritable/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE-NONE %s %}
 

@@ -37,7 +37,7 @@ for line in log:
         if got != list(m.groups()[1:]):
             fail("%s: %s against %s" % (ir, got, list(m.groups()[1:])))
 
-applying = [l[len("Applying solution for "):] for l in log if l.startswith("Applying solution for ")]
+applying = [l[len("[poseidon] Applying solution for "):] for l in log if l.startswith("[poseidon] Applying solution for ")]
 pins = [l[len("[poseidon] pin: "):] for l in log if l.startswith("[poseidon] pin: ")]
 choices = [s["choice"] for d in docs.values() for s in d["result"].get("steps", [])]
 if sorted(applying) != sorted(choices):
@@ -57,7 +57,7 @@ for line in log:
     m = re.match(r"\[poseidon\] canonical form hash of (\S+) is (\S+)$", line)
     if m and docs[m.group(1)]["function"]["canonical_hash"] != m.group(2):
         fail("canonical hash of " + m.group(1))
-if any(l.startswith("No solution found") for l in log) != any(
+if any(l.startswith("[poseidon] No solution found") for l in log) != any(
         d["result"]["status"] == "no_solution" for d in docs.values()):
     fail("no solution")
 

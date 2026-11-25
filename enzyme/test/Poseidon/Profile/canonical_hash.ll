@@ -1,5 +1,5 @@
 ; RUN: %if enzyme %{ %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
 ; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t.drift.ll
 ; RUN: not %opt < %t.drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 

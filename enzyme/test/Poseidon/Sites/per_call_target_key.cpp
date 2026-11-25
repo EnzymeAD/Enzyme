@@ -3,7 +3,7 @@
 // RUN: %poseidon_clangxx -std=c++20 -O2 -DA=1e-6 -DB=1e-9 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clangxx -std=c++20 -O2 -DA=1e-9 -DB=1e-6 -poseidon-profile-use=%t/prof -poseidon-tau=1e-3 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -o %t/use 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='did not contain' %s
+// RUN: %poseidon_clangxx -std=c++20 -O2 -DA=1e-9 -DB=1e-6 -poseidon-profile-use=%t/prof -poseidon-tau=1e-3 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/use 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='did not contain' %s
 
 // A target that __poseidon_optimize_tau or a marker's poseidon_tau gives,
 // taken by the caller as a template argument, is left out of the name of the

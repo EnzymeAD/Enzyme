@@ -82,7 +82,7 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
 // CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+24] (checked at the launch)
 // CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+56] (checked at the launch)
 // CHECK-NEXT: [hostgemm]   profile shape M=192 Ncols=192 K=192 (per-CTA tile 192x1, launches=1 CTAs/launch=192 MACs=7077888)
-// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK-NEXT: [poseidon] Found 1 matrix product(s) in [[BODY]]
 // CHECK-NEXT: Matmul[0]: 192x1x192 type=f64 origin=HostGemmLoopNest
 // CHECK-NEXT: error: Poseidon: no cost model for target-cpu '[[ARCH]]' in {{.*}}/poseidon; measure the GPU with 'poseidon-calibrate --gpu <id>', or name a model with -poseidon-cost-model=<csv> or POSEIDON_COST_MODEL
 

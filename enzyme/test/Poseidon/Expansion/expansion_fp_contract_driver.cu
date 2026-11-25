@@ -6,9 +6,9 @@
 // DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 // DEFINE:   -poseidon-cost-budget=-1e-9 %s
 // RUN: rm -rf %t && mkdir %t
-// RUN: %{driver} -poseidon-cache=%t/on -o %t/on.ptx 2>&1 | FileCheck %s
-// RUN: %{driver} -poseidon-cache=%t/fast -ffp-contract=fast -o %t/fast.ptx 2>&1 | FileCheck %s
-// RUN: %{driver} -poseidon-cache=%t/fastmath -ffast-math -o %t/fastmath.ptx 2>&1 | FileCheck %s
+// RUN: %{driver} -poseidon-cache=%t/on -poseidon-print -o %t/on.ptx 2>&1 | FileCheck %s
+// RUN: %{driver} -poseidon-cache=%t/fast -ffp-contract=fast -poseidon-print -o %t/fast.ptx 2>&1 | FileCheck %s
+// RUN: %{driver} -poseidon-cache=%t/fastmath -ffast-math -poseidon-print -o %t/fastmath.ptx 2>&1 | FileCheck %s
 // RUN: sed -n '/\.entry .*fms_kernel/,/^}/p' %t/on.ptx | FileCheck --check-prefix=FMA --implicit-check-not=fma.rn.f32 %s
 // RUN: sed -n '/\.entry .*fms_kernel/,/^}/p' %t/fast.ptx | FileCheck --check-prefix=FMA --implicit-check-not=fma.rn.f32 %s
 // RUN: sed -n '/\.entry .*fms_kernel/,/^}/p' %t/fastmath.ptx | FileCheck --check-prefix=FMA --implicit-check-not=fma.rn.f32 %s

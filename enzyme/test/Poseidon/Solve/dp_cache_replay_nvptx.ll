@@ -36,8 +36,8 @@
 ; RUN: %{reprice} -poseidon-cache=%t/kinds/reprice -o %t/kinds/replay.ll > %t/kinds/replay.log 2>&1
 ; RUN: FileCheck --check-prefix=KINDS-SOLVE %s < %t/kinds/solve.log
 ; RUN: FileCheck --check-prefix=KINDS-REPLAY %s < %t/kinds/replay.log
-; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/solve.log > %t/kinds/solve.table
-; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/replay.log > %t/kinds/replay.table
+; RUN: awk '/^\[poseidon\] DP table:$/ {t = 1; print; next} t && /^ / {print; next} {t = 0}' %t/kinds/solve.log > %t/kinds/solve.table
+; RUN: awk '/^\[poseidon\] DP table:$/ {t = 1; print; next} t && /^ / {print; next} {t = 0}' %t/kinds/replay.log > %t/kinds/replay.table
 ; RUN: diff %t/kinds/solve.table %t/kinds/replay.table
 ; RUN: diff %t/kinds/solve.ll %t/kinds/replay.ll
 ; RUN: grep -h -B3 '"unit": "CO"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-CO %s
@@ -46,8 +46,8 @@
 ; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_solve.ll > %t/kinds/two_solve.log 2>&1
 ; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_replay.ll > %t/kinds/two_replay.log 2>&1
 ; RUN: FileCheck --check-prefix=KINDS-TWO %s < %t/kinds/two_replay.log
-; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/two_solve.log > %t/kinds/two_solve.table
-; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/two_replay.log > %t/kinds/two_replay.table
+; RUN: awk '/^\[poseidon\] DP table:$/ {t = 1; print; next} t && /^ / {print; next} {t = 0}' %t/kinds/two_solve.log > %t/kinds/two_solve.table
+; RUN: awk '/^\[poseidon\] DP table:$/ {t = 1; print; next} t && /^ / {print; next} {t = 0}' %t/kinds/two_replay.log > %t/kinds/two_replay.table
 ; RUN: diff %t/kinds/two_solve.table %t/kinds/two_replay.table
 ; RUN: diff %t/kinds/two_solve.ll %t/kinds/two_replay.ll
 

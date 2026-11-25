@@ -2,7 +2,7 @@
 ; DEFINE:   -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -disable-output
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=FLOAT %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/a/preprocess_tester.explain.json
 ; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon 2>&1 \
@@ -68,7 +68,7 @@
 ; KEPT-NEXT: remark: wave.c:4:26: Poseidon rejected the precision change PT0_5 to exp(x[i] * (double)((float)x[i] * -0.5f)) * cos(x[i] * 4.0): modelled error 1.1e-09 is above the target 1e-12 (cost change -0.03125){{$}}
 ; KEPT: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 
-; LONG: Poseidon explanation written to {{.*}}/long/preprocess_tester{{x{143}~}}940caf41237f8c7f.explain.json{{$}}
+; LONG: [poseidon] explanation written to {{.*}}/long/preprocess_tester{{x{143}~}}940caf41237f8c7f.explain.json{{$}}
 
 ; LONGFILES: {{^}}preprocess_tester{{x{143}~}}940caf41237f8c7f.explain.json{{$}}
 ; LONGFILES-NOT: {{.}}

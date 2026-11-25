@@ -7,7 +7,7 @@
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -poseidon-print -poseidon-explain=%t/ex_exact -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=EXACT %s
 ; RUN: %poseidon_explain %t/ex_exact --format budgets | FileCheck --check-prefix=EXACT-BUDGETS %s
 ; RUN: cat %t/ex_exact/preprocess_matmul_body_b.explain.json | FileCheck --check-prefix=EXACT-EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -o %t/pins.ll 2>&1 | FileCheck --check-prefix=PINS %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -poseidon-print -o %t/pins.ll 2>&1 | FileCheck --check-prefix=PINS %s
 
 ; A joint solve over two sites that each hold algebraic, precision and product
 ; units: the body of Inputs/exact_dp/reprice.ll twice, each with its profile.
@@ -18,7 +18,7 @@
 ; selects a raise in both sites; pins can name units of both sites and every
 ; kind. The poseidon pass runs alone, as in dp_cache_replay_nvptx.ll.
 
-; PRUNE: Poseidon JOINT: collecting candidates from 2 marked function(s)
+; PRUNE: [poseidon] joint solve: collecting candidates from 2 marked function(s)
 ; PRUNE: Critical computation cost range: [-6.112571e-01, 1.454545e-01]
 ; PRUNE-NEXT: DP table contains 34 entries.
 ; PRUNE: Minimum accuracy cost within budget: 1.118681e+10

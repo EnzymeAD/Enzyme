@@ -77,7 +77,7 @@ int main() {
 }
 
 // SOLVE-DAG: Applying solution for
-// SOLVE-DAG: No solution found that meets accuracy tolerance 1.000000e-30
+// SOLVE-DAG: [poseidon] No solution found that meets accuracy tolerance 1.000000e-30
 // FNS-LABEL: define {{.*}} @_Z5jvp_bPKdS0_PdS1_(
 // FNS: call fastcc void @fwddiffe_Z2qfPKdPd(
 // FNS-LABEL: define internal fastcc void @fwddiffe_Z2qfPKdPd(

@@ -8,7 +8,7 @@
 // RUN: FileCheck --check-prefix=ORDER %s < %t/idx
 // RUN: sort -n -c %t/idx
 // RUN: FileCheck --check-prefix=NOPROBE --allow-empty %s < %t/gen.err
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
 // RUN: %poseidon_clangxx -poseidon-profile-use=%t/prof %t/use.o -o %t/use
 // RUN: mkdir %t/deployed && cd %t/deployed && %t/use
 // RUN: ls -A %t/deployed | count 0

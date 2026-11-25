@@ -33,7 +33,7 @@
 ; A rewrite named by its expression is applied; the regime split is a name of
 ; no candidate, because pricing dropped it, and that is what the error says.
 ; RUN: mkdir %t/named
-; RUN: %{regime} -poseidon-cache=%t/named/c "-poseidon-apply-rewrites=tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))" -S 2>&1 | FileCheck --check-prefix=NAMED %s
+; RUN: %{regime} -poseidon-cache=%t/named/c "-poseidon-apply-rewrites=tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))" -S -poseidon-print 2>&1 | FileCheck --check-prefix=NAMED %s
 ; RUN: not %{regime} -poseidon-cache=%t/named/c "-poseidon-apply-rewrites=R0=(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) #s(literal 0 binary64) (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)))" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-DROPPED %s
 ; RUN: not %{regime} -poseidon-cache=%t/named/c "-poseidon-apply-rewrites=R0=(-.f64 v0 v1)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-UNKNOWN %s
 
@@ -53,10 +53,10 @@
 ; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-cost-budget=1e9 -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-SOLVE %s
 ; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-cost-budget=1e9 -poseidon-print -S -o %t/named/replay.ll 2> %t/named/replay.err
 ; RUN: FileCheck --check-prefix=NAMED-REPLAY %s < %t/named/replay.err
-; RUN: %{regime} -poseidon-cache=%t/named/c "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/named/replay.err | paste -sd, -)" -S -o %t/named/pinned.ll 2> %t/named/pinned.err
+; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-print "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/named/replay.err | paste -sd, -)" -S -o %t/named/pinned.ll 2> %t/named/pinned.err
 ; RUN: diff %t/named/replay.ll %t/named/pinned.ll
-; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/named/replay.err > %t/named/replay.picks
-; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/named/pinned.err > %t/named/pinned.picks
+; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: ' %t/named/replay.err > %t/named/replay.picks
+; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: ' %t/named/pinned.err > %t/named/pinned.picks
 ; RUN: diff %t/named/replay.picks %t/named/pinned.picks
 
 ; NAMED-SOLVE: DP table for preprocess_tester cached to
@@ -69,10 +69,10 @@
 ; sites.ll, two sites with the profiles of Inputs/joint_profiles: an item
 ; without a site applies at every site.
 ; RUN: mkdir %t/sites %t/sites/mangled %t/sites/onemangled
-; RUN: %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),tester_b:PT0=All FP64(70%%) + FP32(30%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES %s
-; RUN: %opt %t/sites.ll %{pass} %{joint} %{pt} -poseidon-joint-dp %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),tester_b:PT0=All FP64(70%%) + FP32(30%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES %s
-; RUN: %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=PT0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-EVERY %s
-; RUN: not %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_c:PT0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NOSITE %s
+; RUN: %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),tester_b:PT0=All FP64(70%%) + FP32(30%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES %s
+; RUN: %opt %t/sites.ll %{pass} %{joint} %{pt} -poseidon-joint-dp %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),tester_b:PT0=All FP64(70%%) + FP32(30%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES %s
+; RUN: %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=PT0=All FP64(0%%) + FP32(100%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-EVERY %s
+; RUN: not %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_c:PT0=All FP64(0%%) + FP32(100%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NOSITE %s
 ; RUN: not %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(10%%) + FP32(90%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONAME %s
 ; RUN: not %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),PT0_0" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-TWICE %s
 
@@ -104,11 +104,11 @@
 ; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_a.fpprofile %t/sites/mangled/preprocess__Z6testerdd.fpprofile
 ; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_b.fpprofile %t/sites/mangled/preprocess__Z6testerdi.fpprofile
 ; RUN: not %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-apply-rewrites=tester:PT0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-AMBIGUOUS %s
-; RUN: %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-apply-rewrites=_Z6testerdi:PT0=All FP64(70%%) + FP32(30%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-SYMBOL %s
+; RUN: %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-apply-rewrites=_Z6testerdi:PT0=All FP64(70%%) + FP32(30%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-SYMBOL %s
 ; RUN: sed -e 's/tester_a/_Z6testerdd/g' %t/sites.ll > %t/sites/onemangled/m.ll
 ; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_a.fpprofile %t/sites/onemangled/preprocess__Z6testerdd.fpprofile
 ; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_b.fpprofile %t/sites/onemangled/preprocess_tester_b.fpprofile
-; RUN: %opt %t/sites/onemangled/m.ll %{pass} -poseidon-profile-use=%t/sites/onemangled %{pt} %{cm} -poseidon-cache=%t/sites/onemangled/c "-poseidon-apply-rewrites=tester:PT0=All FP64(50%%) + FP32(50%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-BASENAME %s
+; RUN: %opt %t/sites/onemangled/m.ll %{pass} -poseidon-profile-use=%t/sites/onemangled %{pt} %{cm} -poseidon-cache=%t/sites/onemangled/c "-poseidon-apply-rewrites=tester:PT0=All FP64(50%%) + FP32(50%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-BASENAME %s
 
 ; SITES-AMBIGUOUS: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'tester:PT0=All FP64(0%) + FP32(100%)' names the site 'tester', which more than one site of this module answers to; give one of them by its symbol:
 ; SITES-AMBIGUOUS-NEXT: {{^}}  _Z6testerdd (tester(double, double)){{$}}
@@ -125,19 +125,19 @@
 ; The values a solve prints, joined, apply what it applied: under a budget of
 ; -0.04 the per-site solves pick a different candidate at each site, and the
 ; joint solve spends it on tester_b alone.
-; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/site -poseidon-cost-budget=-0.04 -S -o %t/sites/site.ll 2> %t/sites/site.err
+; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/site -poseidon-cost-budget=-0.04 -S -poseidon-print -o %t/sites/site.ll 2> %t/sites/site.err
 ; RUN: FileCheck --check-prefix=SITES-SITE-SOLVE %s < %t/sites/site.err
-; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/site "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/sites/site.err | paste -sd, -)" -S -o %t/sites/site.pinned.ll 2> %t/sites/site.pinned.err
+; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/site -poseidon-print "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/sites/site.err | paste -sd, -)" -S -o %t/sites/site.pinned.ll 2> %t/sites/site.pinned.err
 ; RUN: diff %t/sites/site.ll %t/sites/site.pinned.ll
-; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/sites/site.err > %t/sites/site.picks
-; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/sites/site.pinned.err > %t/sites/site.pinned.picks
+; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: ' %t/sites/site.err > %t/sites/site.picks
+; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: ' %t/sites/site.pinned.err > %t/sites/site.pinned.picks
 ; RUN: diff %t/sites/site.picks %t/sites/site.pinned.picks
-; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} -poseidon-joint-dp %{cm} -poseidon-cache=%t/sites/joint -poseidon-cost-budget=-0.04 -S -o %t/sites/joint.ll 2> %t/sites/joint.err
+; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} -poseidon-joint-dp %{cm} -poseidon-cache=%t/sites/joint -poseidon-cost-budget=-0.04 -S -poseidon-print -o %t/sites/joint.ll 2> %t/sites/joint.err
 ; RUN: FileCheck --check-prefix=SITES-JOINT-SOLVE %s < %t/sites/joint.err
-; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} -poseidon-joint-dp %{cm} -poseidon-cache=%t/sites/joint "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/sites/joint.err | paste -sd, -)" -S -o %t/sites/joint.pinned.ll 2> %t/sites/joint.pinned.err
+; RUN: %opt %t/sites.ll %{passfn} %{joint} %{pt} -poseidon-joint-dp %{cm} -poseidon-cache=%t/sites/joint -poseidon-print "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/sites/joint.err | paste -sd, -)" -S -o %t/sites/joint.pinned.ll 2> %t/sites/joint.pinned.err
 ; RUN: diff %t/sites/joint.ll %t/sites/joint.pinned.ll
-; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/sites/joint.err > %t/sites/joint.picks
-; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/sites/joint.pinned.err > %t/sites/joint.pinned.picks
+; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: ' %t/sites/joint.err > %t/sites/joint.picks
+; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: ' %t/sites/joint.pinned.err > %t/sites/joint.pinned.picks
 ; RUN: diff %t/sites/joint.picks %t/sites/joint.pinned.picks
 
 ; SITES-SITE-SOLVE: [poseidon] pin: tester_a:PT0=All FP64(0%) + FP32(100%){{$}}

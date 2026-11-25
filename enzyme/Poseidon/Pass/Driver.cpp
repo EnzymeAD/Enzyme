@@ -149,8 +149,9 @@ static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
   if (site.neverExecuted) {
     const char *cause =
         "the profiling run instrumented this site and never executed it";
-    llvm::errs() << "[poseidon] " << body.getName() << ": " << cause << " ("
-                 << site.path << "); left unchanged\n";
+    if (S.Opts.Diagnostics.Print)
+      llvm::errs() << "[poseidon] " << body.getName() << ": " << cause << " ("
+                   << site.path << "); left unchanged\n";
     explainUnprofiled(S, clone, tau, siteTarget, "never_executed", cause,
                       site.path);
     return;
@@ -202,10 +203,11 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
         if (done != F)
           noteRewritten(S, *CI->getFunction());
         writeGemmDescriptorOf(S, CI, done, primalArgs);
-        llvm::errs() << "[poseidon] " << F->getName()
-                     << ": same body and target as an earlier site; reusing "
-                        "its solve ("
-                     << done->getName() << ")\n";
+        if (O.Diagnostics.Print)
+          llvm::errs() << "[poseidon] " << F->getName()
+                       << ": same body and target as an earlier site; reusing "
+                          "its solve ("
+                       << done->getName() << ")\n";
         emitSiteCall(CI, done, primalArgs, calls);
         return;
       }
@@ -427,8 +429,9 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
                   format("%.4g", share * 100),
                   format("%g", (double)O.Profiling.MinCostShare))
               .str();
-      llvm::errs() << "[poseidon] " << K.site->fn->getName() << " is " << below
-                   << "; left unoptimized\n";
+      if (O.Diagnostics.Print)
+        llvm::errs() << "[poseidon] " << K.site->fn->getName() << " is "
+                     << below << "; left unoptimized\n";
       explainLeftAlone(Sess, *K.body,
                        K.site->target.value_or((double)O.Solver.Tau),
                        K.site->target.has_value(), "below_cost_share",

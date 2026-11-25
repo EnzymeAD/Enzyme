@@ -66,18 +66,19 @@ static void reportUnexecuted(const Function &F,
   for (const Instruction *I : unexecuted)
     if (const DebugLoc &DL = I->getDebugLoc())
       lines.insert({DL->getFilename().str(), DL.getLine()});
-  llvm::errs() << "[poseidon] " << F.getName() << ": " << unexecuted.size()
-               << " floating-point operation(s) the profiling run never "
-                  "executed are left as written (";
+  std::string where;
+  raw_string_ostream os(where);
   if (lines.empty())
-    llvm::errs() << "no source location";
+    os << "no source location";
   ListSeparator sep;
   for (const auto &[file, line] : lines)
-    llvm::errs() << sep << sys::path::filename(file) << ':' << line;
-  llvm::errs() << "): no profile gives their ranges, cost or error, so the "
-                  "subgraphs of the executed operations end at them and the "
-                  "error a rewrite of those passes on to them is not "
-                  "modelled\n";
+    os << sep << sys::path::filename(file) << ':' << line;
+  diagnose(F, F.getSubprogram(),
+           Twine(unexecuted.size()) +
+               " floating-point operation(s) the profiling run never executed "
+               "are left as written (" +
+               where + "); profile an input that runs them to optimize them",
+           DS_Warning);
 }
 
 void buildSubgraphs(
@@ -109,9 +110,8 @@ void buildSubgraphs(
       if (!isOptimizable(I)) {
         valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, "__nh", "__nh");
         if (O.Diagnostics.Print)
-          llvm::errs()
-              << "Registered FPLLValue for non-isOptimizable instruction: " << I
-              << '\n';
+          llvm::errs() << "[poseidon] not an optimizable operation: " << I
+                       << '\n';
         continue;
       }
 
@@ -203,18 +203,19 @@ void buildSubgraphs(
 
       if (!operation_seen.empty()) {
         if (O.Diagnostics.Print)
-          llvm::errs() << "Found a subgraph with " << operation_seen.size()
-                       << " operations and " << input_seen.size()
-                       << " inputs and " << output_seen.size() << " outputs\n";
+          llvm::errs() << "[poseidon] Found a subgraph with "
+                       << operation_seen.size() << " operations and "
+                       << input_seen.size() << " inputs and "
+                       << output_seen.size() << " outputs\n";
 
         if (operation_seen.size() == 1 &&
             !reductionFMAs.contains(*operation_seen.begin())) {
           if (O.Diagnostics.Print)
-            llvm::errs() << "Skipping trivial subgraph\n";
+            llvm::errs() << "[poseidon] Skipping trivial subgraph\n";
           continue;
         }
         if (operation_seen.size() == 1 && O.Diagnostics.Print)
-          llvm::errs() << "Keeping 1-op reduction subgraph: "
+          llvm::errs() << "[poseidon] Keeping 1-op reduction subgraph: "
                        << **operation_seen.begin() << '\n';
 
         subgraphs.emplace_back(input_seen, output_seen, operation_seen);
@@ -373,12 +374,13 @@ static bool isExpansionBottleneck(const Options &O, Instruction *I,
 
   bool isBottleneck = forced || movedOps.size() >= O.Candidates.MinOpsSplit;
   if (O.Diagnostics.Print && isBottleneck) {
-    llvm::errs() << "Bottleneck: " << *I << '\n';
-    llvm::errs() << "Num of operations that would be moved: " << movedOps.size()
-                 << " (>=" << O.Candidates.MinOpsSplit << ")\n";
-    llvm::errs() << "Num of internal uses: " << internalUses
+    llvm::errs() << "[poseidon] Bottleneck: " << *I << '\n';
+    llvm::errs() << "  Num of operations that would be moved: "
+                 << movedOps.size() << " (>=" << O.Candidates.MinOpsSplit
+                 << ")\n";
+    llvm::errs() << "  Num of internal uses: " << internalUses
                  << " (>=" << O.Candidates.MinUsesSplit << ")\n";
-    llvm::errs() << "Operations that would be moved:\n";
+    llvm::errs() << "  Operations that would be moved:\n";
     for (auto *op : movedOps) {
       llvm::errs() << '\t' << *op << '\n';
     }
@@ -581,13 +583,14 @@ void hintSharedStaging(const Session &S, Function &F,
       os << sep << '@' << G->getName() << " (" << n << " units)";
   if (shared.empty())
     return;
-  llvm::errs() << "[poseidon] " << F.getName()
-               << ": more than one optimization unit reads or writes the "
-                  "shared buffer(s) "
-               << shared
-               << "; a precision change narrows such a buffer only when all "
-                  "its units pick one tier, which "
-                  "-poseidon-merge-shared-staging makes them do\n";
+  diagnose(F, F.getSubprogram(),
+           "more than one optimization unit reads or writes the shared "
+           "buffer(s) " +
+               shared +
+               ", which a precision change narrows only when all its units "
+               "pick one tier; -poseidon-merge-shared-staging makes them one "
+               "unit",
+           DS_Warning);
 }
 
 static void splitSubgraphs(const Options &O,
@@ -621,8 +624,8 @@ static void splitSubgraphs(const Options &O,
                                   remainingSubgraph);
 
         if (O.Diagnostics.Print) {
-          llvm::errs() << "=== Splitting subgraph at bottleneck: " << *I
-                       << " ===\n";
+          llvm::errs() << "[poseidon] Splitting subgraph at bottleneck: " << *I
+                       << '\n';
 
           llvm::errs() << "  New subgraph:\n";
           llvm::errs() << "    Inputs (" << newSubgraph.inputs.size() << "):\n";

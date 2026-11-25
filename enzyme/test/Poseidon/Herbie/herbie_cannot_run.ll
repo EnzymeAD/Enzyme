@@ -8,7 +8,7 @@
 ; RUN: not env TMPDIR=%t/tmp %clang -O1 -c -x ir %S/../Inputs/regime_split/tester.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/regime_split/profiles -mllvm -poseidon-enable-herbie=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-pt=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: not ls %t/site.o
 ; RUN: ls %t/tmp | count 0
-; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=DISABLED --implicit-check-not=Herbie %s
+; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=DISABLED --implicit-check-not=Herbie --implicit-check-not="[poseidon]" %s
 
 ; A subgraph whose Herbie answer is not in the cache needs Herbie: when there is
 ; no Herbie the compile stops, naming the search, the cache file the answer
@@ -19,8 +19,8 @@
 
 ; ENABLED-NOT: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
 ; ENABLED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt, and there is no Herbie at {{.*}}/no-herbie to compute it. Compute the answer on a machine with Herbie and copy its -poseidon-cache directory here, or turn algebraic rewriting off with -poseidon-enable-herbie=0.{{$}}
+; DISABLED: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 
-; DISABLED: [poseidon] pin:
 
 ; A Herbie that exits with a nonzero status is not a crash. When it wrote a
 ; usable results.json, the compile says so once and uses and caches the

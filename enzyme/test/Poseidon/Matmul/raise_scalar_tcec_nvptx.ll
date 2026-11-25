@@ -37,7 +37,7 @@
 ; matmul_kernel<<<1, dim3(16, 16)>>> on A[i] = 1.0 + 0.001 * i and
 ; B[i] = 0.5 + 0.003 * (i % 97), with dD set to 1.0.
 
-; CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_matmul_body
+; CHECK: [poseidon] Found 1 matrix product(s) in preprocess_matmul_body
 ; CHECK-NEXT: Matmul[0]: 16x16x16 type=f64 origin=ScalarLoopReduction
 ; CHECK: matmul[0] pricing: baseline/MAC=5.120000e+02 executions=8192
 ; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.200000e+01 rel=6.250000e-02

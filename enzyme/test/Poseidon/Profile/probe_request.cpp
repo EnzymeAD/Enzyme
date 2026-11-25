@@ -33,7 +33,7 @@
 // RUN: FileCheck --check-prefix=DECLINED %s < %t/declined.err
 // RUN: FileCheck --check-prefix=NOKAPPA -DID=0 %s < %t/declined/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=NOKAPPA -DID=1 %s < %t/declined/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o 2>&1 \
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/declined.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=DECLINED-USE --implicit-check-not=error: %s
 
 // The condition numbers of a program that declares a metric are measured by
@@ -99,11 +99,11 @@ int main(int argc, char **argv) {
 // NOKAPPA-NOT: Kappa
 
 // Each site is solved at the compile's target, with no condition number.
-// DECLINED-USE-NOT: kappa=
+// DECLINED-USE-NOT: measured condition number
 // DECLINED-USE: [poseidon] preprocess__Z5gaussPKdPdi_poseidon_body: tau=1.000000e-06 S=
-// DECLINED-USE-NOT: kappa=
+// DECLINED-USE-NOT: measured condition number
 // DECLINED-USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06 S=
-// DECLINED-USE-NOT: kappa=
+// DECLINED-USE-NOT: measured condition number
 
 // UNMEASURED: CanonicalHash =
 // UNMEASURED-NEXT: KappaMark = unmeasured

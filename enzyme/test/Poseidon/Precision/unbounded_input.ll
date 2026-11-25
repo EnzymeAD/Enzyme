@@ -4,9 +4,9 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -pass-remarks-missed=poseidon -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cost-budget=-0.3 -poseidon-cache=%t/budget -o %t/budget.ll 2>&1 | FileCheck --check-prefix=BUDGET %s
+; RUN: %{opt} -poseidon-cost-budget=-0.3 -poseidon-cache=%t/budget -poseidon-print -o %t/budget.ll 2>&1 | FileCheck --check-prefix=BUDGET %s
 ; RUN: FileCheck --check-prefix=IR --implicit-check-not=preprocess %s < %t/budget.ll
-; RUN: not %{opt} -poseidon-tau=1e-3 -poseidon-cache=%t/tau -o /dev/null 2>&1 | FileCheck --check-prefix=TAU %s
+; RUN: not %{opt} -poseidon-tau=1e-3 -poseidon-cache=%t/tau -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=TAU %s
 ; RUN: mkdir %t/foreign && cp %S/../Inputs/unbounded_input/*.fpprofile %t/foreign/
 ; RUN: sed -i -e '10s/NumOperands = 2/NumOperands = 0/' -e '11,12d' %t/foreign/preprocess_tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/foreign -poseidon-cost-budget=-0.3 -poseidon-cache=%t/foreign-cache -o /dev/null 2>&1 | FileCheck --check-prefix=FOREIGN %s
@@ -84,11 +84,11 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; BUDGET: [poseidon] subgraph cannot be priced (the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values); discarding its 2 precision candidate(s) and keeping the original body.
-; BUDGET: No solution found within the computation cost budget!
+; BUDGET: [poseidon] No solution found within the computation cost budget
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left (? + ?) * ? as written: its candidates could not be priced: the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values and the algebraic search is disabled
 ; BUDGET: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; BUDGET: [poseidon] subgraph cannot be priced (every sample of the original expression scored NaN); discarding its 4 precision candidate(s) and keeping the original body.
-; BUDGET: No solution found within the computation cost budget!
+; BUDGET: [poseidon] No solution found within the computation cost budget
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left sqrt(? * ?) + ? as written: its candidates could not be priced: every sample of the original expression scored NaN and the algebraic search is disabled
 ; BUDGET: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester_nan{{$}}
 

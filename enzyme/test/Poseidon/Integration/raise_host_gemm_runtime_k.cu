@@ -148,7 +148,7 @@ int main(void) {
 // the descriptor records them: M = nDofs (arg2), Ncols = 3*numEls (arg1),
 // K = 3*numPoints (arg0).
 // CHECK: [poseidon] Optimizing [[BODY:preprocess_rt_gemm_body]] with relative error tolerance: 0.000000e+00
-// CHECK: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK: [poseidon] Found 1 matrix product(s) in [[BODY]]
 // CHECK-NEXT: Matmul[0]: 3x3x12 type=f64 origin=HostGemmLoopNest
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#{{[0-9]+}})

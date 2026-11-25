@@ -4,7 +4,7 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-tau=1e-4 -pass-remarks=poseidon -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cache=%t/loose -o %t/loose.ll 2>&1 | FileCheck --check-prefix=LOOSE %s
+; RUN: %{opt} -poseidon-cache=%t/loose -poseidon-print -o %t/loose.ll 2>&1 | FileCheck --check-prefix=LOOSE %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/loose.ll
 
 ; The profiling run took only the scalar branch, so the two operations of the
@@ -64,7 +64,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 !8 = !DILocation(line: 9, column: 7, scope: !5)
 !9 = !{i32 2, !"Debug Info Version", i32 3}
 
-; LOOSE: [poseidon] preprocess_tester: 2 floating-point operation(s) the profiling run never executed are left as written (matrix.c:9): no profile gives their ranges, cost or error, so the subgraphs of the executed operations end at them and the error a rewrite of those passes on to them is not modelled
+; LOOSE: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: 2 floating-point operation(s) the profiling run never executed are left as written (matrix.c:9); profile an input that runs them to optimize them{{$}}
 ; LOOSE: [poseidon] preprocess_tester: tau=1.000000e-04 S=3.818938e+03 A0=2.850360e-11 selected cost=-4.375000e-01 accCost=2.794345e-02 rel=7.317073e-06
 ; LOOSE-NEXT: remark: <unknown>:0:0: Poseidon runs all 4 operations in float; modelled error 7.5e-15 -> 7.3e-06, cost 1 -> 0.5625 (-44%) [PT0_0]
 ; LOOSE: [poseidon] pin: tester:PT0=All FP64(0%) + FP32(100%)

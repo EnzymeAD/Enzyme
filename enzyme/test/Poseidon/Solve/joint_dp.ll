@@ -20,7 +20,7 @@
 ; RUN: %poseidon_explain %t/sites/both/ex --format budgets | FileCheck --check-prefix=SITES-BUDGETS %s
 ; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
 
-; SITES-BOTH: Poseidon JOINT: collecting candidates from 2 marked function(s)
+; SITES-BOTH: [poseidon] joint solve: collecting candidates from 2 marked function(s)
 ; SITES-BOTH: Critical computation cost range: [-4.500000e-01, 0.000000e+00]
 ; SITES-BOTH-NEXT: DP table contains 4 entries.
 ; SITES-BOTH: Minimum accuracy cost within budget: 1.154131e-04
@@ -108,10 +108,10 @@
 ; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %t/targets/a.ll > %t/targets/ab_same.ll
 ; RUN: not %opt %t/targets/a.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c1 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-NONE %s
 ; RUN: not %opt %t/targets/ab_diff.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-DIFF %s
-; RUN: %opt %t/targets/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -o %t/targets/flag.out.ll 2> %t/targets/flag.err
+; RUN: %opt %t/targets/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -poseidon-print -o %t/targets/flag.out.ll 2> %t/targets/flag.err
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/targets/flag.err %t/targets/ex | FileCheck --check-prefix=TARGETS-JSON %s
 ; RUN: FileCheck --check-prefix=TARGETS-SITES %s < %t/targets/ex/preprocess_tester_a.explain.json
-; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c4 -S -o %t/targets/site.out.ll 2> %t/targets/site.err
+; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c4 -S -poseidon-print -o %t/targets/site.out.ll 2> %t/targets/site.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/flag.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/site.err
 ; RUN: sed -e 's/, metadata !"poseidon_tau", double 1.000000e-02//' -e '/^; ModuleID/d' -e '/^source_filename/d' %t/targets/flag.out.ll > %t/targets/flag.cmp.ll

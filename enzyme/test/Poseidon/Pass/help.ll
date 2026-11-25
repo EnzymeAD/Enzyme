@@ -10,7 +10,6 @@
 ; CHECK-NEXT: --poseidon-cost-model=<csv>
 ; CHECK-NEXT: --poseidon-explain=<directory>
 ; CHECK: --poseidon-kernels=<regex>
-; CHECK-NEXT: --poseidon-print
 ; CHECK-NEXT: --poseidon-profile-generate[=<directory>]
 ; CHECK-NEXT: --poseidon-profile-use[=<directory>]
 ; CHECK: --poseidon-tau=<error>
@@ -19,4 +18,5 @@
 ; HIDDEN-LABEL: Poseidon options:
 ; HIDDEN: --poseidon-herbie-pre-floor-bits=
 ; HIDDEN: --poseidon-herbie-processes=
+; HIDDEN: --poseidon-print
 ; HIDDEN: --poseidon-tau=<error>

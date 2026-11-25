@@ -122,7 +122,7 @@ int main(void) {
 // PROF-NOT: {{^[0-9]+$}}
 
 // CHECK: [poseidon] Optimizing [[BODY:preprocess_scalar_matmul_body_f64]] with relative error tolerance: 0.000000e+00
-// CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
+// CHECK: [poseidon] Found 1 matrix product(s) in preprocess_scalar_matmul_body_f64
 // CHECK-NEXT: Matmul[0]: 8x8x8 type=f64 origin=ScalarLoopReduction
 // CHECK-NOT: Matmul[1]:
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost

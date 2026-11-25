@@ -49,8 +49,7 @@
 
 ; LADDER-TIGHT: Per-operation relative error tolerance: 1.000000e-18
 ; LADDER-TIGHT-NEXT: Cache entry for preprocess_fms_kernel_poseidon_body found. Loaded DP tables from cache.
-; LADDER-TIGHT: No solution found that meets accuracy tolerance 1.000000e-18!
-; LADDER-TIGHT-NEXT: Best achievable relative accuracy in DP table: 2.164332e-17
+; LADDER-TIGHT: [poseidon] No solution found that meets accuracy tolerance 1.000000e-18; the best relative accuracy in the DP table is 2.164332e-17{{$}}
 ; LADDER-TIGHT: [poseidon] pin: {{$}}
 ; LADDER-TIGHT: warning: {{.*}}Poseidon: Poseidon returned false (no change) for preprocess_fms_kernel_poseidon_body
 ; LADDER-TIGHT: [poseidon] no rewrite applied for preprocess_fms_kernel_poseidon_body; calling original body fms_kernel_poseidon_body (bit-transparent no-op)

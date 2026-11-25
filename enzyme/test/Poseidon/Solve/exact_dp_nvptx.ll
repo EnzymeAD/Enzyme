@@ -32,7 +32,7 @@
 
 ; ONE-PRUNE: Using cached Herbie output
 ; ONE-PRUNE: DP table contains 1 entries.
-; ONE-PRUNE: No solution found within the computation cost budget!
+; ONE-PRUNE: [poseidon] No solution found within the computation cost budget
 ; ONE-PRUNE-NOT: Applying solution
 ; ONE-PRUNE: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
 ; ONE-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}
@@ -72,7 +72,7 @@
 ; RUN: %poseidon_explain %t/joint/exact/ex --format budgets | FileCheck --check-prefix=JOINT-EXACT-BUDGETS %s
 
 ; JOINT-PRUNE: DP table contains 1 entries.
-; JOINT-PRUNE: No solution found within the computation cost budget!
+; JOINT-PRUNE: [poseidon] No solution found within the computation cost budget
 ; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
 ; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_b; wrapper call restored to original body tester_b (bit-transparent no-op)
 ; JOINT-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}

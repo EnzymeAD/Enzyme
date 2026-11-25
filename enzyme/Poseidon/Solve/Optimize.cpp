@@ -85,9 +85,10 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
   const std::string &profilePath = P.path;
-  if (profileMap.empty()) {
-    llvm::errs() << "Warning: No profile data found in " << profilePath << '\n';
-  }
+  if (profileMap.empty())
+    diagnose(F, F.getSubprogram(),
+             "the profile " + profilePath + " records no operation of the site",
+             DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
     mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
                         siteProfileFile(S, F), canonicalHash, F,
@@ -144,7 +145,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
 
   if (O.Diagnostics.Print && !abstractMatmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
-                 << " AbstractMatmul(s) for " << F.getName() << '\n';
+                 << " matrix product(s) in " << F.getName() << '\n';
     auto dimStr = [](unsigned d) -> std::string {
       return d == ~0u ? std::string("?") : std::to_string(d);
     };
@@ -249,10 +250,12 @@ static void putOnApplicationScale(Session &S, Function &F,
                  : profileHeader.kappa / sumSens;
     st.kappa = profileHeader.kappa;
     st.kappaMark = profileHeader.kappaMark;
-    llvm::errs() << "[poseidon] site " << F.getName()
-                 << ": kappa=" << profileHeader.kappa << " ("
-                 << profileHeader.kappaMark << ") sumsens=" << sumSens
-                 << " factor=" << factor << '\n';
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] " << F.getName()
+                   << ": measured condition number " << profileHeader.kappa
+                   << " (" << profileHeader.kappaMark
+                   << "), profiled sensitivity " << sumSens << ", error scale "
+                   << factor << '\n';
   }
   // The accuracy costs below are scaled by `factor`, so the level a tolerance
   // is compared against has to be scaled the same way; with a kappa this
@@ -422,24 +425,23 @@ static SmallVector<SolutionStep> applySolution(const Options &O,
   if (steps.empty())
     return applied;
   if (O.Diagnostics.Print)
-    llvm::errs() << "\n!!! Applying solution (" << steps.size()
-                 << " step(s)) ... !!!\n";
+    llvm::errs() << "[poseidon] Applying " << steps.size() << " step(s)\n";
   const SolutionStep *next = applied.begin();
   for (const SolutionStep &step : steps) {
     SiteUnit &unit = unitOf(step);
-    llvm::errs() << "Applying solution for "
-                 << unit.choiceText(step.candidateIndex) << '\n';
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] Applying solution for "
+                   << unit.choiceText(step.candidateIndex) << '\n';
     if (next == applied.end() || next->unit != step.unit ||
         next->candidateIndex != step.candidateIndex) {
-      llvm::errs() << "[poseidon] output already rewritten by an "
-                      "earlier step; skipping this one\n";
+      if (O.Diagnostics.Print)
+        llvm::errs() << "[poseidon] output already rewritten by an "
+                        "earlier step; skipping this one\n";
       continue;
     }
     ++next;
     unit.materialize(step.candidateIndex);
   }
-  if (O.Diagnostics.Print)
-    llvm::errs() << "!!! Solution applied !!!\n\n";
   return applied;
 }
 
@@ -539,11 +541,10 @@ static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
         // applied between their results here, loudly: dropping a priced
         // rewrite changes what the site emits.
         if (overlapsConsumed(e, steps)) {
-          llvm::errs() << "[poseidon] " << st.F->getName()
-                       << ": an elementwise rewrite the DP selected edits "
-                          "instructions a selected matrix-product raise "
-                          "consumes; keeping the raise and dropping the "
-                          "rewrite\n";
+          diagnose(*st.F, st.F->getSubprogram(),
+                   "a selected rewrite edits instructions a selected matrix "
+                   "product consumes; the rewrite is dropped",
+                   DS_Warning);
           continue;
         }
         steps.push_back(e);
@@ -601,7 +602,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     return false;
   }
 
-  if (errorTol > 0.0 && O.Solver.Tau > 0.0)
+  if (errorTol > 0.0 && O.Solver.Tau > 0.0 && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] " << F.getName()
                  << ": the site's own accuracy target " << errorTol
                  << " overrides -poseidon-tau=" << O.Solver.Tau << '\n';
@@ -620,7 +621,7 @@ bool solveJointly(Session &S, Module &M) {
     return false;
 
   if (O.Diagnostics.Print)
-    llvm::errs() << "Poseidon JOINT: collecting candidates from "
+    llvm::errs() << "[poseidon] joint solve: collecting candidates from "
                  << marked.size() << " marked function(s)\n";
 
   // One shared budget is spent against one target, so every site in the
@@ -669,7 +670,7 @@ bool solveJointly(Session &S, Module &M) {
       states.push_back(std::move(st));
     } else {
       if (O.Diagnostics.Print)
-        llvm::errs() << "Poseidon JOINT: nothing to optimize in "
+        llvm::errs() << "[poseidon] joint solve: nothing to optimize in "
                      << F->getName() << '\n';
       explainNothingToOptimize(S, *F, errTol, allFromSite);
       redirectNoopSite(S, F);

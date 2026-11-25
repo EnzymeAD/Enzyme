@@ -43,7 +43,7 @@
 ; F32: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; F32: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
-; HINT: [poseidon] preprocess_staged_body: more than one optimization unit reads or writes the shared buffer(s) @_ZZ13staged_kernelPKdS0_PdS1_E1s (2 units); a precision change narrows such a buffer only when all its units pick one tier, which -poseidon-merge-shared-staging makes them do
+; HINT: warning: {{.*}}preprocess_staged_body{{.*}}: Poseidon: more than one optimization unit reads or writes the shared buffer(s) @_ZZ13staged_kernelPKdS0_PdS1_E1s (2 units), which a precision change narrows only when all its units pick one tier; -poseidon-merge-shared-staging makes them one unit{{$}}
 
 ; Two contractions staged through one __shared__ buffer that reaches the body
 ; as a pointer parameter, then a once-per-thread epilogue. The chosen tier

@@ -30,7 +30,7 @@
 ; OUT16: 2.254356e+07		-4.746240e+05		All FP64(0%) + FP32(100%)
 ; OUT16-NOT: FP16(100%)
 ; OUT16-NOT: NOT caching the DP table
-; OUT16: No solution found within the computation cost budget!
+; OUT16: [poseidon] No solution found within the computation cost budget
 ; OUT16-NOT: Applying solution
 ; OUT16-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(
 ; OUT16-NOT: half

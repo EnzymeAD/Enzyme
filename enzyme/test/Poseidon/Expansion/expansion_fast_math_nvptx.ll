@@ -8,11 +8,11 @@
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call contract double @llvm.fmuladd/' %S/../Inputs/ds_expansion/ds_fms.ll > %t/contract.ll
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call fast double @llvm.fmuladd/; s/= fneg double/= fneg fast double/' %S/../Inputs/ds_expansion/ds_fms.ll > %t/fast.ll
 ; RUN: sed 's/^attributes #0 = { /attributes #0 = { "unsafe-fp-math"="true" "no-nans-fp-math"="true" "no-infs-fp-math"="true" "approx-func-fp-math"="true" "no-signed-zeros-fp-math"="true" /' %S/../Inputs/ds_expansion/ds_fms.ll > %t/attr.ll
-; RUN: %{opt} %S/../Inputs/ds_expansion/ds_fms.ll -poseidon-cache=%t/plain -o %t/plain.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
-; RUN: %{opt} %t/contract.ll -poseidon-cache=%t/contract -o %t/contract.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
-; RUN: %{opt} %t/fast.ll -poseidon-cache=%t/fast -o %t/fast.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
-; RUN: %{opt} %t/attr.ll -poseidon-cache=%t/attr -o %t/attr.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
-; RUN: %{opt} %t/contract.ll -poseidon-cache=%t/strict -poseidon-strict-mode -o %t/strict.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
+; RUN: %{opt} %S/../Inputs/ds_expansion/ds_fms.ll -poseidon-cache=%t/plain -poseidon-print -o %t/plain.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
+; RUN: %{opt} %t/contract.ll -poseidon-cache=%t/contract -poseidon-print -o %t/contract.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
+; RUN: %{opt} %t/fast.ll -poseidon-cache=%t/fast -poseidon-print -o %t/fast.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
+; RUN: %{opt} %t/attr.ll -poseidon-cache=%t/attr -poseidon-print -o %t/attr.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
+; RUN: %{opt} %t/contract.ll -poseidon-cache=%t/strict -poseidon-strict-mode -poseidon-print -o %t/strict.out.ll 2>&1 | FileCheck --check-prefix=APPLIED %s
 ; RUN: FileCheck --check-prefix=BODY %s < %t/fast.out.ll
 ; RUN: sed -n '/^define .*@preprocess_fms_body/,/^}/p' %t/plain.out.ll > %t/plain.body.ll
 ; RUN: sed -n '/^define .*@preprocess_fms_body/,/^}/p' %t/contract.out.ll | diff %t/plain.body.ll -
