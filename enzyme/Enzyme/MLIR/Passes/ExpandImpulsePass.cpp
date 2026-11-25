@@ -415,6 +415,29 @@ static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
   return true;
 }
 
+namespace {
+/// HMC/NUTS warmup adaptation state, in `state_schema` slot order from
+/// `da_log_step_size` through `window_idx`.
+struct AdaptationState {
+  static constexpr unsigned kNumValues = 9;
+
+  DualAveragingState dualAveraging;
+  WelfordState welford;
+  Value windowIdx;
+
+  SmallVector<Value> toValues() const {
+    SmallVector<Value> values = dualAveraging.toValues();
+    llvm::append_range(values, welford.toValues());
+    values.push_back(windowIdx);
+    return values;
+  }
+  static AdaptationState fromValues(ArrayRef<Value> values) {
+    return {DualAveragingState::fromValues(values.take_front(5)),
+            WelfordState::fromValues(values.slice(5, 3)), values[8]};
+  }
+};
+} // namespace
+
 static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
                                    Attribute targetSymbol) {
   SmallVector<Attribute> subAddresses;
@@ -1314,16 +1337,12 @@ struct ExpandImpulsePass
       bool exposeAdaptation =
           impulse::slotIndex(schema, state_slot::kWindowIdx).has_value();
 
-      // Schema order matches DualAveragingState/WelfordState::toValues().
-      SmallVector<Value> adaptationInValsBase;
-      if (auto daIdx = impulse::slotIndex(schema, state_slot::kDaLogStepSize)) {
-        auto stateIn = mcmcOp.getStateIn();
-        for (unsigned i = 0; i < 9; ++i)
-          adaptationInValsBase.push_back(
-              *daIdx + i < stateIn.size() ? stateIn[*daIdx + i] : Value());
-      }
-      bool hasAdaptationInBase = !adaptationInValsBase.empty() &&
-                                 adaptationInValsBase.front() != nullptr;
+      std::optional<AdaptationState> savedAdaptation;
+      if (std::optional<unsigned> first =
+              impulse::slotIndex(schema, state_slot::kDaLogStepSize);
+          first && *first < mcmcOp.getStateIn().size())
+        savedAdaptation = AdaptationState::fromValues(llvm::to_vector(
+            mcmcOp.getStateIn().slice(*first, AdaptationState::kNumValues)));
 
       // Multi-chain slots are chain-major; runOneChain reads them per chain.
       if (numChains <= 1) {
@@ -1460,17 +1479,35 @@ struct ExpandImpulsePass
         };
         Value chainStepSize = stepSize;
         Value chainInvMass = invMass;
-        SmallVector<Value> adaptationInVals = adaptationInValsBase;
-        bool hasAdaptationIn = hasAdaptationInBase;
+        std::optional<AdaptationState> chainSavedAdaptation = savedAdaptation;
         if (numChains > 1) {
           if (Value s = stateInSlot(mcmcOp, state_slot::kStepSize))
             chainStepSize = sliceChainDim(s, chainIdx);
           if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
             chainInvMass = sliceChainDim(m, chainIdx);
-          for (Value &av : adaptationInVals)
-            if (av)
-              av = sliceChainDim(av, chainIdx);
+          if (savedAdaptation) {
+            SmallVector<Value> values = savedAdaptation->toValues();
+            for (Value &v : values)
+              v = sliceChainDim(v, chainIdx);
+            chainSavedAdaptation = AdaptationState::fromValues(values);
+          }
         }
+
+        auto loadOrInitAdaptation = [&](Value initStepSize,
+                                        bool withWelford) -> AdaptationState {
+          if (chainSavedAdaptation)
+            return *chainSavedAdaptation;
+          AdaptationState fresh;
+          fresh.dualAveraging = initDualAveraging(rewriter, loc, initStepSize,
+                                                  /*logOfProduct=*/true);
+          if (withWelford)
+            fresh.welford = initWelford(rewriter, loc, positionSize, diagonal);
+          fresh.windowIdx = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(i64TensorType,
+                                     rewriter.getI64IntegerAttr(0)));
+          return fresh;
+        };
 
         Value adaptedInvMass = chainInvMass;
         auto adaptedMassMatrixSqrt =
@@ -1550,19 +1587,7 @@ struct ExpandImpulsePass
                                      rewriter.getFloatAttr(elemType, 1.0)));
         }
 
-        SmallVector<Value> finalAdaptationState;
-        auto packAdaptation = [&](const DualAveragingState &da,
-                                  const WelfordState &w,
-                                  Value widx) -> SmallVector<Value> {
-          SmallVector<Value> v;
-          for (Value x : da.toValues())
-            v.push_back(x);
-          v.push_back(w.mean);
-          v.push_back(w.m2);
-          v.push_back(w.n);
-          v.push_back(widx);
-          return v;
-        };
+        std::optional<AdaptationState> finalAdaptation;
 
         if (numWarmup > 0) {
           auto c0 = arith::ConstantOp::create(
@@ -1602,31 +1627,13 @@ struct ExpandImpulsePass
           initialStepSize = conditionalDump(
               rewriter, loc, initialStepSize,
               "MCMC: initial step size before warmup", debugDump);
-          DualAveragingState daState =
-              hasAdaptationIn
-                  ? DualAveragingState::fromValues(
-                        ArrayRef<Value>(adaptationInVals).take_front(5))
-                  : initDualAveraging(rewriter, loc, initialStepSize,
-                                      /*logOfProduct=*/true);
-
-          WelfordState welfordState;
+          AdaptationState adaptation =
+              loadOrInitAdaptation(initialStepSize, adaptMassMatrix);
+          const DualAveragingState &daState = adaptation.dualAveraging;
+          const WelfordState &welfordState = adaptation.welford;
+          Value windowIdx = adaptation.windowIdx;
           WelfordConfig welfordConfig;
-          if (adaptMassMatrix) {
-            welfordState =
-                hasAdaptationIn
-                    ? WelfordState::fromValues(
-                          ArrayRef<Value>(adaptationInVals).slice(5, 3))
-                    : initWelford(rewriter, loc, positionSize, diagonal);
-            welfordConfig.diagonal = diagonal;
-          }
-
-          Value windowIdx =
-              hasAdaptationIn
-                  ? adaptationInVals[8]
-                  : arith::ConstantOp::create(
-                        rewriter, loc, i64TensorType,
-                        DenseElementsAttr::get(i64TensorType,
-                                               rewriter.getI64IntegerAttr(0)));
+          welfordConfig.diagonal = diagonal;
 
           SmallVector<Type> warmupLoopTypes = {positionType,
                                                positionType,
@@ -1939,46 +1946,29 @@ struct ExpandImpulsePass
           }
 
           if (exposeAdaptation) {
-            DualAveragingState finalDa = DualAveragingState::fromValues(
+            AdaptationState finalState;
+            finalState.dualAveraging = DualAveragingState::fromValues(
                 {warmupLoop.getResult(7), warmupLoop.getResult(8),
                  warmupLoop.getResult(9), warmupLoop.getResult(10),
                  warmupLoop.getResult(11)});
-            WelfordState finalW;
-            Value finalWidx;
             if (adaptMassMatrix) {
-              finalW = WelfordState::fromValues({warmupLoop.getResult(12),
-                                                 warmupLoop.getResult(13),
-                                                 warmupLoop.getResult(14)});
-              finalWidx = warmupLoop.getResult(15);
+              finalState.welford =
+                  WelfordState::fromValues({warmupLoop.getResult(12),
+                                            warmupLoop.getResult(13),
+                                            warmupLoop.getResult(14)});
+              finalState.windowIdx = warmupLoop.getResult(15);
             } else {
-              finalW = initWelford(rewriter, loc, positionSize, diagonal);
-              finalWidx = warmupLoop.getResult(12);
+              finalState.welford =
+                  initWelford(rewriter, loc, positionSize, diagonal);
+              finalState.windowIdx = warmupLoop.getResult(12);
             }
-            finalAdaptationState = packAdaptation(finalDa, finalW, finalWidx);
+            finalAdaptation = finalState;
           }
         }
 
-        if (exposeAdaptation && finalAdaptationState.empty()) {
-          DualAveragingState da =
-              hasAdaptationIn
-                  ? DualAveragingState::fromValues(
-                        ArrayRef<Value>(adaptationInVals).take_front(5))
-                  : initDualAveraging(rewriter, loc, chainStepSize,
-                                      /*logOfProduct=*/true);
-          WelfordState w =
-              hasAdaptationIn
-                  ? WelfordState::fromValues(
-                        ArrayRef<Value>(adaptationInVals).slice(5, 3))
-                  : initWelford(rewriter, loc, positionSize, diagonal);
-          Value widx =
-              hasAdaptationIn
-                  ? adaptationInVals[8]
-                  : arith::ConstantOp::create(
-                        rewriter, loc, i64TensorType,
-                        DenseElementsAttr::get(i64TensorType,
-                                               rewriter.getI64IntegerAttr(0)));
-          finalAdaptationState = packAdaptation(da, w, widx);
-        }
+        if (exposeAdaptation && !finalAdaptation)
+          finalAdaptation =
+              loadOrInitAdaptation(chainStepSize, /*withWelford=*/true);
 
         int64_t collectionSize = numSamples / thinning;
         int64_t startIdx = numSamples % thinning;
@@ -2159,6 +2149,9 @@ struct ExpandImpulsePass
                   DenseElementsAttr::get(
                       i64TensorType, rewriter.getI64IntegerAttr(numWarmup))));
 
+          SmallVector<Value> adaptationOut;
+          if (finalAdaptation)
+            adaptationOut = finalAdaptation->toValues();
           auto slotValue = [&](StringRef name) -> Value {
             if (name == state_slot::kPosition)
               return finalQ;
@@ -2172,11 +2165,9 @@ struct ExpandImpulsePass
               return adaptedInvMass;
             if (name == state_slot::kWarmupOffset)
               return warmupOffsetOut;
-            // Remaining slots are the contiguous 9-value adaptation block.
-            unsigned base =
+            unsigned first =
                 *impulse::slotIndex(schema, state_slot::kDaLogStepSize);
-            unsigned idx = *impulse::slotIndex(schema, name);
-            return finalAdaptationState[idx - base];
+            return adaptationOut[*impulse::slotIndex(schema, name) - first];
           };
 
           // The verifier guarantees the declared schema has this layout.
