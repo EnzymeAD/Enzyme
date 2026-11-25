@@ -28,7 +28,7 @@ buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
                  mlir::RankedTensorType invMassType, int64_t numChains = 1,
                  mlir::RankedTensorType rngType = {}) {
   mlir::MLIRContext *ctx = elemType.getContext();
-  auto i64Scalar =
+  auto i64TensorType =
       mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
   auto f64 = mlir::Float64Type::get(ctx);
   auto positionType = mlir::RankedTensorType::get({1, positionSize}, elemType);
@@ -53,21 +53,22 @@ buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
         {"da_log_step_size", scalarType},
         {"da_log_step_size_avg", scalarType},
         {"da_gradient_avg", scalarType},
-        {"da_step_count", i64Scalar},
+        {"da_step_count", i64TensorType},
         {"da_prox_center", scalarType},
         {"welford_mean", welfordVec},
         {"welford_m2", welfordM2},
-        {"welford_n", i64Scalar},
-        {"window_idx", i64Scalar},
-        {"warmup_offset", i64Scalar},
+        {"welford_n", i64TensorType},
+        {"window_idx", i64TensorType},
+        {"warmup_offset", i64TensorType},
     });
   }
   if (numChains > 1) {
-    for (StateSlot &s : slots) {
+    for (StateSlot &slot : slots) {
       llvm::SmallVector<int64_t> shape;
       shape.push_back(numChains);
-      shape.append(s.type.getShape().begin(), s.type.getShape().end());
-      s.type = mlir::RankedTensorType::get(shape, s.type.getElementType());
+      shape.append(slot.type.getShape().begin(), slot.type.getShape().end());
+      slot.type =
+          mlir::RankedTensorType::get(shape, slot.type.getElementType());
     }
     auto ui64 = mlir::IntegerType::get(ctx, 64, mlir::IntegerType::Unsigned);
     mlir::RankedTensorType perChainRng =
@@ -87,7 +88,7 @@ enum class VIGuide { None, AutoNormal, AutoDelta, AutoMVN };
 inline llvm::SmallVector<StateSlot>
 buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
   mlir::MLIRContext *ctx = elemType.getContext();
-  auto i64Scalar =
+  auto i64TensorType =
       mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
   auto vecType = mlir::RankedTensorType::get({1, positionSize}, elemType);
   int64_t flat = positionSize * (positionSize + 1) / 2;
@@ -103,7 +104,7 @@ buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
         {"opt_v_loc", vecType},
         {"opt_m_scale", vecType},
         {"opt_v_scale", vecType},
-        {"opt_step_count", i64Scalar},
+        {"opt_step_count", i64TensorType},
     };
     break;
   case VIGuide::AutoDelta:
@@ -111,7 +112,7 @@ buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
         {"loc", vecType},
         {"opt_m_loc", vecType},
         {"opt_v_loc", vecType},
-        {"opt_step_count", i64Scalar},
+        {"opt_step_count", i64TensorType},
     };
     break;
   case VIGuide::AutoMVN:
@@ -122,7 +123,7 @@ buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
         {"opt_v_loc", vecType},
         {"opt_m_scale_tril", flatType},
         {"opt_v_scale_tril", flatType},
-        {"opt_step_count", i64Scalar},
+        {"opt_step_count", i64TensorType},
     };
     break;
   case VIGuide::None:
@@ -141,8 +142,8 @@ inline mlir::ArrayAttr schemaNamesAttr(mlir::Builder &b,
                                        llvm::ArrayRef<StateSlot> slots) {
   llvm::SmallVector<mlir::Attribute> names;
   names.reserve(slots.size());
-  for (const StateSlot &s : slots)
-    names.push_back(b.getStringAttr(s.name));
+  for (const StateSlot &slot : slots)
+    names.push_back(b.getStringAttr(slot.name));
   return b.getArrayAttr(names);
 }
 
