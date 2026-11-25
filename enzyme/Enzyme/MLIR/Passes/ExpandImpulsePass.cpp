@@ -403,10 +403,10 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
 
 namespace {
 /// VI positions in `all_addresses` (declaration) order, so per-site draws
-/// consume the RNG in program order; `argSlices` are in `selection` order.
+/// consume the RNG in program order; `argOffsets` are in `selection` order.
 struct RegionVILayout {
   SmallVector<impulse::SupportInfo> supports;
-  SmallVector<std::pair<int64_t, int64_t>> argSlices;
+  SmallVector<int64_t> argOffsets;
   int64_t positionSize = 0;
 };
 } // namespace
@@ -449,9 +449,8 @@ static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
       return false;
     int64_t within = 0;
     for (Value result : llvm::drop_begin(site->getResults())) {
-      int64_t size = cast<RankedTensorType>(result.getType()).getNumElements();
-      out.argSlices.emplace_back(declPositionOffset[addr] + within, size);
-      within += size;
+      out.argOffsets.push_back(declPositionOffset[addr] + within);
+      within += cast<RankedTensorType>(result.getType()).getNumElements();
     }
   }
   return true;
@@ -3220,6 +3219,14 @@ struct ExpandImpulsePass
       }
 
       ModelContext model = readInferModel(mcmcOp, debugDump);
+      if constexpr (isRegionForm) {
+        // The logpdf region takes the position values in their order.
+        int64_t column = 0;
+        for (BlockArgument arg : mcmcOp.getLogpdf().front().getArguments()) {
+          model.logpdfArgOffsets.push_back(column);
+          column += cast<RankedTensorType>(arg.getType()).getNumElements();
+        }
+      }
       auto unconstrainedSizeOf = [](ArrayRef<impulse::SupportInfo> supports) {
         int64_t size = 0;
         for (const impulse::SupportInfo &info : supports)
@@ -3335,7 +3342,7 @@ struct ExpandImpulsePass
           return failure();
         }
         model.supports = std::move(regionLayout.supports);
-        model.logpdfArgSlices = std::move(regionLayout.argSlices);
+        model.logpdfArgOffsets = std::move(regionLayout.argOffsets);
         model.positionSize = regionLayout.positionSize;
         if (model.positionSize <= 0)
           return failure();

@@ -73,6 +73,11 @@ Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
                           RankedTensorType type,
                           function_ref<bool(int64_t, int64_t)> isOne);
 
+/// Reads a value of `type` from row 0 of the rank-2 `row`, starting at column
+/// `column`.
+Value emitRowSlice(OpBuilder &builder, Location loc, Value row, int64_t column,
+                   RankedTensorType type);
+
 /// Clones the operations of `block` except its terminator at the insertion
 /// point through `mapping`, and returns the terminator's operands mapped.
 SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,

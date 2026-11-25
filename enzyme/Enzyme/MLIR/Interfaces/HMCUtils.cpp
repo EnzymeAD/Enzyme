@@ -268,9 +268,11 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                          ctx.supports, /*toTrace=*/false);
 }
 
-GenerateOp impulse::emitGenerateAt(OpBuilder &builder, Location loc,
-                                   Value qConstrained, Value rng,
-                                   const ModelContext &ctx) {
+/// Writes `qConstrained` into the original trace and emits a generate op of
+/// the model on that trace.
+static GenerateOp emitGenerateAt(OpBuilder &builder, Location loc,
+                                 Value qConstrained, Value rng,
+                                 const ModelContext &ctx) {
   Value zeroIndex = emitI64ScalarConstant(builder, loc, 0);
   Value fullTrace =
       copySiteColumns(builder, loc, qConstrained, ctx.originalTrace, zeroIndex,
@@ -286,30 +288,22 @@ GenerateOp impulse::emitGenerateAt(OpBuilder &builder, Location loc,
       ctx.allAddresses, builder.getStringAttr(""));
 }
 
-/// Clones the logpdf region with its block arguments bound to consecutive
-/// slices of `qConstrained` and returns the log density. Values the region
-/// captures from above the `infer_region` op are sample-invariant.
-static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
-                                 Value qConstrained, const HMCContext &ctx) {
-  Block &lpBlock = ctx.logpdfRegion->front();
-  Type elemType = ctx.elementType;
-
-  IRMapping mapping;
-  int64_t offset = 0;
-  for (BlockArgument arg : lpBlock.getArguments()) {
-    auto argType = cast<RankedTensorType>(arg.getType());
-    int64_t numElements = argType.getNumElements();
-    auto sliceType = RankedTensorType::get({1, numElements}, elemType);
-    Value slice = impulse::SliceOp::create(
-        builder, loc, sliceType, qConstrained,
-        builder.getDenseI64ArrayAttr({0, offset}),
-        builder.getDenseI64ArrayAttr({1, offset + numElements}),
-        builder.getDenseI64ArrayAttr({1, 1}));
-    Value component = impulse::ReshapeOp::create(builder, loc, argType, slice);
-    mapping.map(arg, component);
-    offset += numElements;
+Value impulse::emitModelLogDensity(OpBuilder &builder, Location loc,
+                                   Value qConstrained, Value &rng,
+                                   const ModelContext &ctx) {
+  if (ctx.hasLogpdfRegion()) {
+    Block &lpBlock = ctx.logpdfRegion->front();
+    IRMapping mapping;
+    for (auto [arg, column] :
+         llvm::zip(lpBlock.getArguments(), ctx.logpdfArgOffsets))
+      mapping.map(arg, emitRowSlice(builder, loc, qConstrained, column,
+                                    cast<RankedTensorType>(arg.getType())));
+    return cloneBlockBody(builder, lpBlock, mapping).front();
   }
-  return cloneBlockBody(builder, lpBlock, mapping).front();
+  GenerateOp generateOp = emitGenerateAt(builder, loc, qConstrained, rng, ctx);
+  if (!generateOp.getOutputs().empty())
+    rng = generateOp.getOutputs().front();
+  return generateOp.getWeight();
 }
 
 /// Emits the logpdf symbol at `position` and returns the log density. A
@@ -333,27 +327,16 @@ static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
   return cloneBlockBody(builder, entry, mapping).front();
 }
 
-/// Emits the potential U(q) = -log p(qConstrained) - log|det J(q)|, with the
-/// log density from the logpdf region or else from a generate op of the model.
-/// Returns U and the RNG state after it.
-static std::pair<Value, Value> emitPotential(OpBuilder &builder, Location loc,
-                                             Value q, Value qConstrained,
-                                             Value rng, const HMCContext &ctx) {
-  Value logDensity;
-  if (ctx.hasLogpdfRegion()) {
-    logDensity = cloneLogpdfRegionAt(builder, loc, qConstrained, ctx);
-  } else {
-    impulse::GenerateOp generateOp =
-        emitGenerateAt(builder, loc, qConstrained, rng, ctx);
-    logDensity = generateOp.getWeight();
-    rng = generateOp.getResult(2);
-  }
+/// Emits the potential U(q) = -log p(qConstrained) - log|det J(q)| and
+/// advances `rng` as emitModelLogDensity does.
+static Value emitPotential(OpBuilder &builder, Location loc, Value q,
+                           Value qConstrained, Value &rng,
+                           const HMCContext &ctx) {
+  Value logDensity = emitModelLogDensity(builder, loc, qConstrained, rng, ctx);
   Value negLogDensity = arith::NegFOp::create(builder, loc, logDensity);
   Value jacobianCorrection =
       computeTotalJacobianCorrection(builder, loc, q, ctx.supports);
-  Value potentialEnergy =
-      arith::SubFOp::create(builder, loc, negLogDensity, jacobianCorrection);
-  return {potentialEnergy, rng};
+  return arith::SubFOp::create(builder, loc, negLogDensity, jacobianCorrection);
 }
 
 /// Whether the potential calls the logpdf symbol, which takes the position
@@ -400,8 +383,9 @@ static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
   } else {
     // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
     Value qConstrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    auto [potentialEnergy, rngOut] =
-        emitPotential(builder, loc, qArg, qConstrained, rng, ctx);
+    Value rngOut = rng;
+    Value potentialEnergy =
+        emitPotential(builder, loc, qArg, qConstrained, rngOut, ctx);
     enzyme::YieldOp::create(builder, loc, {potentialEnergy, rngOut});
   }
 
@@ -671,8 +655,8 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
           gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
       q0 = unconstrainPosition(builder, loc, q0Constrained, ctx.supports);
     }
-    U0 = emitPotential(builder, loc, q0, q0Constrained, rngForAutodiff, ctx)
-             .first;
+    Value rngForPotential = rngForAutodiff;
+    U0 = emitPotential(builder, loc, q0, q0Constrained, rngForPotential, ctx);
   }
 
   Value autodiffQ0 = useSymbol ? flattenPosition(builder, loc, q0, ctx) : q0;

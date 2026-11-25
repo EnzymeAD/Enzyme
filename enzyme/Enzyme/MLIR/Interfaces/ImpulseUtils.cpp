@@ -8,6 +8,7 @@
 
 #include "Interfaces/ImpulseUtils.h"
 #include "CloneFunction.h"
+#include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -177,6 +178,18 @@ Value impulse::emitIndicatorMatrix(OpBuilder &builder, Location loc,
       values.push_back(isOne(i, j) ? one : zero);
   return arith::ConstantOp::create(builder, loc, type,
                                    DenseElementsAttr::get(type, values));
+}
+
+Value impulse::emitRowSlice(OpBuilder &builder, Location loc, Value row,
+                            int64_t column, RankedTensorType type) {
+  int64_t numElements = type.getNumElements();
+  auto sliceType =
+      RankedTensorType::get({1, numElements}, type.getElementType());
+  Value slice = impulse::SliceOp::create(
+      builder, loc, sliceType, row, builder.getDenseI64ArrayAttr({0, column}),
+      builder.getDenseI64ArrayAttr({1, column + numElements}),
+      builder.getDenseI64ArrayAttr({1, 1}));
+  return impulse::ReshapeOp::create(builder, loc, type, slice);
 }
 
 SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,

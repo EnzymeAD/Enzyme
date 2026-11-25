@@ -21,7 +21,6 @@
 #include "Interfaces/ImpulseUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/IR/IRMapping.h"
 
 #include <cmath>
 #include <optional>
@@ -102,12 +101,6 @@ static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
 }
 
 namespace {
-/// The model's log joint density and its rng state after scoring it.
-struct LogPResult {
-  Value logP;
-  Value rng;
-};
-
 /// The ELBO of one particle and the model's rng state after scoring it.
 struct ParticleELBO {
   Value elbo;
@@ -137,47 +130,6 @@ struct SVILoopResult {
   Value stepCount;
 };
 } // namespace
-
-/// Clones the logpdf region at the insertion point with each block argument
-/// bound to its slice of `z`, and returns the cloned log-density. Values the
-/// region captures from above are used as they are.
-static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
-                                 const VIContext &ctx) {
-  Block &lpBlock = ctx.logpdfRegion->front();
-  Type elemType = ctx.elementType;
-
-  IRMapping mapping;
-  for (auto [arg, slice] :
-       llvm::zip(lpBlock.getArguments(), ctx.logpdfArgSlices)) {
-    int64_t offset = slice.first;
-    int64_t size = slice.second;
-    auto argType = cast<RankedTensorType>(arg.getType());
-    auto sliceType = RankedTensorType::get({1, size}, elemType);
-    Value s = impulse::SliceOp::create(
-        builder, loc, sliceType, z, builder.getDenseI64ArrayAttr({0, offset}),
-        builder.getDenseI64ArrayAttr({1, offset + size}),
-        builder.getDenseI64ArrayAttr({1, 1}));
-    Value component = impulse::ReshapeOp::create(builder, loc, argType, s);
-    mapping.map(arg, component);
-  }
-
-  return cloneBlockBody(builder, lpBlock, mapping).front();
-}
-
-/// Log joint density of the model at the constrained position `z`, from the
-/// logpdf region when there is one and from a generate call of `ctx.fn`
-/// otherwise.
-static LogPResult emitModelLogDensity(OpBuilder &builder, Location loc, Value z,
-                                      Value modelRng, const VIContext &ctx) {
-  // The region consumes no RNG, so the model rng is returned unadvanced.
-  if (ctx.hasLogpdfRegion())
-    return {cloneVILogpdfRegion(builder, loc, z, ctx), modelRng};
-
-  impulse::GenerateOp genOp = emitGenerateAt(builder, loc, z, modelRng, ctx);
-  // Result 2 is the model's first output, the rng by convention.
-  Value rngAfter = genOp.getNumResults() >= 3 ? genOp.getResult(2) : modelRng;
-  return {genOp.getWeight(), rngAfter};
-}
 
 /// Emits an autodiff region that differentiates, with respect to `params`, the
 /// ELBO that `emitELBO` builds inside the region from the region arguments
@@ -295,15 +247,15 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         logQ = conditionalDump(builder, loc, logQ,
                                "VI: logQ=logQUnc-jacCorrection", ctx.debugDump);
 
-        LogPResult lp =
-            emitModelLogDensity(builder, loc, zConstrained, modelSeed, ctx);
+        Value modelRng = modelSeed;
         Value logP =
-            conditionalDump(builder, loc, lp.logP, "VI: logP", ctx.debugDump);
+            emitModelLogDensity(builder, loc, zConstrained, modelRng, ctx);
+        logP = conditionalDump(builder, loc, logP, "VI: logP", ctx.debugDump);
 
         Value elbo = arith::SubFOp::create(builder, loc, logP, logQ);
         elbo = conditionalDump(builder, loc, elbo, "VI: elbo=logP-logQ",
                                ctx.debugDump);
-        return {elbo, lp.rng};
+        return {elbo, modelRng};
       });
 }
 
@@ -323,9 +275,10 @@ static ELBOGradient emitAutoDeltaParticle(OpBuilder &builder, Location loc,
                           [&](ValueRange paramArgs) -> ParticleELBO {
                             Value zConstrained = constrainPosition(
                                 builder, loc, paramArgs[0], ctx.supports);
-                            LogPResult lp = emitModelLogDensity(
-                                builder, loc, zConstrained, modelSeed, ctx);
-                            return {lp.logP, lp.rng};
+                            Value modelRng = modelSeed;
+                            Value logP = emitModelLogDensity(
+                                builder, loc, zConstrained, modelRng, ctx);
+                            return {logP, modelRng};
                           });
 }
 
@@ -376,10 +329,11 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
 
         Value logQ = emitGaussianLogQ(builder, loc, chol.sumLogDiag, eps, ctx);
 
-        LogPResult lp = emitModelLogDensity(builder, loc, z, modelSeed, ctx);
+        Value modelRng = modelSeed;
+        Value logP = emitModelLogDensity(builder, loc, z, modelRng, ctx);
 
-        Value elbo = arith::SubFOp::create(builder, loc, lp.logP, logQ);
-        return {elbo, lp.rng};
+        Value elbo = arith::SubFOp::create(builder, loc, logP, logQ);
+        return {elbo, modelRng};
       });
 }
 

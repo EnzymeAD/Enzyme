@@ -112,13 +112,12 @@ struct IntegratorState {
 struct ModelContext {
   FlatSymbolRefAttr fn;
   FlatSymbolRefAttr logpdfFn;
-  /// When set, the log density is cloned from this region, whose block
-  /// arguments take slices of the constrained position, instead of evaluated
-  /// through `fn`.
+  /// When set, the log density is cloned from this region instead of
+  /// evaluated through `fn`.
   Region *logpdfRegion = nullptr;
-  /// Block argument k of `logpdfRegion` binds to the (offset, size) slice
-  /// `logpdfArgSlices[k]` of the position; set by the VI lowering.
-  SmallVector<std::pair<int64_t, int64_t>> logpdfArgSlices;
+  /// Block argument k of `logpdfRegion` reads its value from the constrained
+  /// position starting at column `logpdfArgOffsets[k]`.
+  SmallVector<int64_t> logpdfArgOffsets;
   /// The operands of `fn` or `logpdfFn` after the RNG state or the position.
   SmallVector<Value> fnInputs;
   SmallVector<Type> fnResultTypes;
@@ -242,10 +241,14 @@ Value sampleMomentum(OpBuilder &builder, Location loc, Value rng, Value invMass,
                      Value massMatrixSqrt, RankedTensorType positionType,
                      bool debugDump);
 
-/// Writes `qConstrained` into the original trace and emits a generate op of
-/// the model on that trace.
-GenerateOp emitGenerateAt(OpBuilder &builder, Location loc, Value qConstrained,
-                          Value rng, const ModelContext &ctx);
+/// Returns the log density of the model at the constrained `1xN` position
+/// `qConstrained`: the logpdf region of `ctx` cloned at the insertion point
+/// when there is one, else the weight of a generate op of `ctx.fn` that draws
+/// from `rng`. `rng` advances to the first output of the generate op, by
+/// convention the model's RNG state; the region and a model without outputs
+/// leave it as it is.
+Value emitModelLogDensity(OpBuilder &builder, Location loc, Value qConstrained,
+                          Value &rng, const ModelContext &ctx);
 
 /// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
 GradientResult computePotentialAndGradient(OpBuilder &builder, Location loc,
