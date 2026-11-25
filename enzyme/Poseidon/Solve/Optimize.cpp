@@ -500,6 +500,86 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
   return changed;
 }
 
+// Selects the steps of `sites`, pinned or solved in one DP under `tau`, then
+// explains and materializes each site; true when a site changed.
+static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
+                          ArrayRef<FunctionFPState *> sites, double tau,
+                          bool siteTarget, bool joint) {
+  const Options &O = S.Opts;
+  SolveRecord record;
+  record.tau = tau;
+  record.siteTarget = siteTarget;
+  for (FunctionFPState *st : sites) {
+    record.profiledCost += st->profiledCost;
+    record.accScale += st->accScale;
+    if (joint)
+      record.sites.push_back(st->F->getName().str());
+  }
+  const bool explain = llvm::any_of(
+      sites, [&](FunctionFPState *st) { return explainWanted(O, *st->F); });
+  SolveRecord *rec = explain ? &record : nullptr;
+
+  SmallVector<SolutionStep> steps;
+  if (!O.Solver.ApplyRewrites.empty()) {
+    for (FunctionFPState *st : sites)
+      append_range(steps, parseManualRewrites(S, *st));
+    record.selector = "manual";
+  } else if (!joint && tau > 0.0 && !sites.front()->CMs.empty()) {
+    FunctionFPState &st = *sites.front();
+    // The target is a relative error, which is what errorBudgetSelector
+    // compares a matrix product against. The elementwise units are solved by
+    // the normalized DP under the same number.
+    steps = errorBudgetSelector(O, st.CMs, tau);
+    const SmallVector<SiteUnit *> elemUnits = solvedUnits(st, /*target=*/true);
+    if (!elemUnits.empty())
+      for (const SolutionStep &e :
+           solveSites(S, sites, ArrayRef<SiteUnit *>(elemUnits), tau,
+                      /*joint=*/false, rec)) {
+        // The two selectors run independently, so the DP's footprint rule is
+        // applied between their results here, loudly: dropping a priced
+        // rewrite changes what the site emits.
+        if (overlapsConsumed(e, steps)) {
+          llvm::errs() << "[poseidon] " << st.F->getName()
+                       << ": an elementwise rewrite the DP selected edits "
+                          "instructions a selected matrix-product raise "
+                          "consumes; keeping the raise and dropping the "
+                          "rewrite\n";
+          continue;
+        }
+        steps.push_back(e);
+      }
+    record.selector = "error-budget";
+  } else {
+    SmallVector<ArrayRef<SiteUnit *>, 4> units;
+    for (FunctionFPState *st : sites)
+      units.push_back(st->units);
+    steps = solveSites(S, sites, units, tau, joint, rec);
+  }
+
+  std::unordered_map<FunctionFPState *, SmallVector<SolutionStep>> perSite;
+  for (const SolutionStep &step : steps)
+    perSite[&unitOf(step).site()].push_back(step);
+  if (explain)
+    for (FunctionFPState *st : sites)
+      explainSolve(S, *st->F, *st, perSite[st], record);
+  eraseScratchDeclarations(M, declared);
+
+  bool changed = false;
+  for (FunctionFPState *st : sites) {
+    const bool siteChanged = materializeFPSolution(S, *st->F, *st, perSite[st]);
+    // An unrewritten site calls the original body again: the preprocessed
+    // clone need not lower bit-identically.
+    if (joint && !siteChanged)
+      redirectNoopSite(S, st->F);
+    changed |= siteChanged;
+  }
+  // The host-dispatch descriptors of a joint solve are known only once every
+  // site is materialized.
+  if (joint)
+    flushPendingGemmDispatches(S);
+  return changed;
+}
+
 bool fpOptimize(Session &S, Function &F, double errorTol) {
   const Options &O = S.Opts;
   // A target written at the site wins over -poseidon-tau, the target of every
@@ -526,52 +606,8 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
                  << ": the site's own accuracy target " << errorTol
                  << " overrides -poseidon-tau=" << O.Solver.Tau << '\n';
 
-  SolveRecord record;
-  SolveRecord *rec = explainWanted(O, F) ? &record : nullptr;
-  record.accScale = st.accScale;
-  record.profiledCost = st.profiledCost;
-  record.tau = target;
-  record.siteTarget = errorTol > 0.0;
-  FunctionFPState *site = &st;
-  SmallVector<SolutionStep> steps;
-  if (!O.Solver.ApplyRewrites.empty()) {
-    steps = parseManualRewrites(S, st);
-    record.selector = "manual";
-  } else if (target > 0.0 && !st.CMs.empty()) {
-    // The target is a relative error, which is what errorBudgetSelector
-    // compares a matrix product against. The elementwise units are solved by
-    // the normalized DP under the same number.
-    steps = errorBudgetSelector(O, st.CMs, target);
-    if (!st.COs.empty() || !st.CSs.empty()) {
-      const SmallVector<SiteUnit *> elemUnits =
-          solvedUnits(st, /*target=*/true);
-      SmallVector<SolutionStep> elem =
-          solveSites(S, site, ArrayRef<SiteUnit *>(elemUnits), target,
-                     /*joint=*/false, rec);
-      for (const SolutionStep &e : elem) {
-        // The two selectors run independently, so the DP's footprint rule is
-        // applied between their results here, loudly: dropping a priced
-        // rewrite changes what the site emits.
-        if (overlapsConsumed(e, steps)) {
-          llvm::errs() << "[poseidon] " << F.getName()
-                       << ": an elementwise rewrite the DP selected edits "
-                          "instructions a selected matrix-product raise "
-                          "consumes; keeping the raise and dropping the "
-                          "rewrite\n";
-          continue;
-        }
-        steps.push_back(e);
-      }
-    }
-    record.selector = "error-budget";
-  } else {
-    steps = solveSites(S, site, ArrayRef<SiteUnit *>(st.units), target,
-                       /*joint=*/false, rec);
-  }
-  if (rec)
-    explainSolve(S, F, st, steps, record);
-  eraseScratchDeclarations(*F.getParent(), declared);
-  return materializeFPSolution(S, F, st, steps);
+  return solveAndApply(S, *F.getParent(), declared, {&st}, target,
+                       errorTol > 0.0, /*joint=*/false);
 }
 
 bool solveJointly(Session &S, Module &M) {
@@ -642,56 +678,11 @@ bool solveJointly(Session &S, Module &M) {
   if (states.empty())
     return false;
 
-  SmallVector<FunctionFPState *, 4> raw;
-  SmallVector<ArrayRef<SiteUnit *>, 4> units;
-  for (auto &s : states) {
-    raw.push_back(s.get());
-    units.push_back(s->units);
-  }
-
-  SolveRecord record;
-  const bool explain = llvm::any_of(
-      raw, [&](FunctionFPState *st) { return explainWanted(O, *st->F); });
-  record.tau = jointErrTol;
-  record.siteTarget = allFromSite;
-  for (FunctionFPState *st : raw) {
-    record.profiledCost += st->profiledCost;
-    record.accScale += st->accScale;
-    record.sites.push_back(st->F->getName().str());
-  }
-  SmallVector<SolutionStep> steps;
-  if (!O.Solver.ApplyRewrites.empty()) {
-    for (auto *st : raw) {
-      auto s = parseManualRewrites(S, *st);
-      steps.append(s.begin(), s.end());
-    }
-    record.selector = "manual";
-  } else {
-    steps = solveSites(S, raw, units, jointErrTol, /*joint=*/true,
-                       explain ? &record : nullptr);
-  }
-
-  std::unordered_map<FunctionFPState *, SmallVector<SolutionStep>> perState;
-  for (auto &step : steps)
-    perState[&unitOf(step).site()].push_back(step);
-
-  if (explain)
-    for (auto *st : raw)
-      explainSolve(S, *st->F, *st, perState[st], record);
-  eraseScratchDeclarations(M, declared);
-  bool changed = false;
-  for (auto *st : raw) {
-    bool ch = materializeFPSolution(S, *st->F, *st, perState[st]);
-    // An unrewritten site calls the original body again: the preprocessed
-    // clone need not lower bit-identically.
-    if (!ch)
-      redirectNoopSite(S, st->F);
-    changed |= ch;
-  }
-  // The host-dispatch descriptors of a joint solve are known only once every
-  // site is materialized.
-  flushPendingGemmDispatches(S);
-  return changed;
+  SmallVector<FunctionFPState *, 4> sites;
+  for (auto &st : states)
+    sites.push_back(st.get());
+  return solveAndApply(S, M, declared, sites, jointErrTol, allFromSite,
+                       /*joint=*/true);
 }
 
 } // namespace poseidon
