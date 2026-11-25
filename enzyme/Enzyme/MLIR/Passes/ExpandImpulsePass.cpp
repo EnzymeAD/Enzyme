@@ -496,7 +496,83 @@ struct WarmupCarry {
     return carry;
   }
 };
+
+/// The results of one HMC/NUTS chain, in the order of the op's results.
+struct ChainResult {
+  Value trace;
+  Value diagnostics;
+  Value logDensities;
+  Value rng;
+  SmallVector<Value> stateOut;
+
+  SmallVector<Value> toValues() const {
+    SmallVector<Value> values = {trace, diagnostics, logDensities, rng};
+    llvm::append_range(values, stateOut);
+    return values;
+  }
+};
 } // namespace
+
+/// Stacks the per-chain results into the op's chain-major results. The output
+/// RNG state is the last chain's key; with a state schema, the keys of all
+/// chains also go into the trailing `rng` slot.
+static SmallVector<Value> stackChainResults(OpBuilder &builder, Location loc,
+                                            ArrayRef<ChainResult> chains,
+                                            bool hasStateSchema) {
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+  auto indexConst = [&](int64_t v) -> Value {
+    return arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(v)));
+  };
+  Value zeroIdx = indexConst(0);
+  int64_t numChains = chains.size();
+
+  auto stack = [&](function_ref<Value(const ChainResult &)> pick,
+                   bool isRng) -> Value {
+    auto type = cast<RankedTensorType>(pick(chains.front()).getType());
+    SmallVector<int64_t> stackedShape = {numChains};
+    llvm::append_range(stackedShape, type.getShape());
+    auto stackedType = RankedTensorType::get(stackedShape, type.getElementType());
+    SmallVector<int64_t> oneShape = {1};
+    llvm::append_range(oneShape, type.getShape());
+    auto oneType = RankedTensorType::get(oneShape, type.getElementType());
+    Value buffer;
+    // ui64 has no arith.constant, so the key buffer starts from chain 0's key.
+    if (isRng)
+      buffer = enzyme::BroadcastOp::create(
+          builder, loc, stackedType, pick(chains.front()),
+          builder.getDenseI64ArrayAttr({numChains}));
+    else
+      buffer = arith::ConstantOp::create(builder, loc, stackedType,
+                                         builder.getZeroAttr(stackedType));
+    for (auto [c, chain] : llvm::enumerate(chains)) {
+      Value reshaped =
+          impulse::ReshapeOp::create(builder, loc, oneType, pick(chain));
+      SmallVector<Value> idxs = {indexConst(c)};
+      idxs.append(type.getRank(), zeroIdx);
+      buffer = impulse::DynamicUpdateSliceOp::create(builder, loc, stackedType,
+                                                     buffer, reshaped, idxs);
+    }
+    return buffer;
+  };
+
+  SmallVector<Value> results;
+  results.push_back(
+      stack([](const ChainResult &c) { return c.trace; }, /*isRng=*/false));
+  results.push_back(stack([](const ChainResult &c) { return c.diagnostics; },
+                          /*isRng=*/false));
+  results.push_back(stack([](const ChainResult &c) { return c.logDensities; },
+                          /*isRng=*/false));
+  results.push_back(chains.back().rng);
+  for (size_t i = 0, e = chains.front().stateOut.size(); i < e; ++i)
+    results.push_back(stack(
+        [i](const ChainResult &c) { return c.stateOut[i]; }, /*isRng=*/false));
+  if (hasStateSchema)
+    results.push_back(
+        stack([](const ChainResult &c) { return c.rng; }, /*isRng=*/true));
+  return results;
+}
 
 static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
                                    Attribute targetSymbol) {
@@ -1543,7 +1619,7 @@ struct ExpandImpulsePass
 
       // All rng-dependent work lives here; it is replayed per chain.
       auto runOneChain = [&](Value chainRng,
-                             int64_t chainIdx) -> SmallVector<Value> {
+                             int64_t chainIdx) -> ChainResult {
         auto chainStateInSlot = [&](StringRef name) -> Value {
           Value v = stateInSlot(mcmcOp, name);
           if (v && numChains > 1)
@@ -2065,9 +2141,8 @@ struct ExpandImpulsePass
             conditionalDump(rewriter, loc, finalSamplesBuffer,
                             "MCMC: collected samples", debugDump);
 
-        SmallVector<Value> replacements = {finalSamplesBuffer,
-                                           finalDiagnosticsBuffer,
-                                           finalLogDensityBuffer, finalRng};
+        ChainResult result = {finalSamplesBuffer, finalDiagnosticsBuffer,
+                              finalLogDensityBuffer, finalRng, {}};
 
         if (schema && !schema.empty()) {
           Value warmupOffsetIn = chainStateInSlot(state_slot::kWarmupOffset);
@@ -2108,14 +2183,14 @@ struct ExpandImpulsePass
           auto invMassTy = cast<RankedTensorType>(adaptedInvMass.getType());
           for (const impulse::StateSlot &slot : impulse::buildStateSchema(
                    exposeAdaptation, positionSize, elemType, invMassTy))
-            replacements.push_back(slotValue(slot.name));
+            result.stateOut.push_back(slotValue(slot.name));
         }
 
-        return replacements;
+        return result;
       };
 
       if (numChains <= 1) {
-        rewriter.replaceOp(mcmcOp, runOneChain(rngInput, 0));
+        rewriter.replaceOp(mcmcOp, runOneChain(rngInput, 0).toValues());
         return success();
       }
 
@@ -2129,88 +2204,17 @@ struct ExpandImpulsePass
                                                  rngInput);
       }
 
-      SmallVector<SmallVector<Value>> perChain;
-      perChain.reserve(numChains);
+      SmallVector<ChainResult> chains;
+      chains.reserve(numChains);
       for (int64_t c = 0; c < numChains; ++c) {
         Value chainRng =
             rngSlotIn ? sliceChainDim(rngSlotIn, c) : splitOp.getResult(c);
-        perChain.push_back(runOneChain(chainRng, c));
+        chains.push_back(runOneChain(chainRng, c));
       }
 
-      auto idxConst = [&](int64_t v) -> Value {
-        return arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(v)));
-      };
-      Value zeroIdx = idxConst(0);
-
-      // Needs an arith.constant-able element type; not for the ui64 rng.
-      auto stackChainMajor = [&](unsigned resultIdx) -> Value {
-        auto slotTy = cast<RankedTensorType>(perChain[0][resultIdx].getType());
-        SmallVector<int64_t> cmShape;
-        cmShape.push_back(numChains);
-        cmShape.append(slotTy.getShape().begin(), slotTy.getShape().end());
-        auto cmType = RankedTensorType::get(cmShape, slotTy.getElementType());
-        SmallVector<int64_t> oneShape;
-        oneShape.push_back(1);
-        oneShape.append(slotTy.getShape().begin(), slotTy.getShape().end());
-        auto oneType = RankedTensorType::get(oneShape, slotTy.getElementType());
-        Value buf = arith::ConstantOp::create(rewriter, loc, cmType,
-                                              rewriter.getZeroAttr(cmType));
-        for (int64_t c = 0; c < numChains; ++c) {
-          Value reshaped = impulse::ReshapeOp::create(rewriter, loc, oneType,
-                                                      perChain[c][resultIdx]);
-          SmallVector<Value> idxs;
-          idxs.push_back(idxConst(c));
-          for (int64_t d = 0; d < slotTy.getRank(); ++d)
-            idxs.push_back(zeroIdx);
-          buf = impulse::DynamicUpdateSliceOp::create(rewriter, loc, cmType,
-                                                      buf, reshaped, idxs);
-        }
-        return buf;
-      };
-
-      // ui64 has no arith.constant; seed the buffer with chain 0's key.
-      auto stackRngChainMajor = [&]() -> Value {
-        // perChain layout: trace, diagnostics, log_densities, rng, state...
-        auto rngTy = cast<RankedTensorType>(perChain[0][3].getType());
-        SmallVector<int64_t> cmShape;
-        cmShape.push_back(numChains);
-        cmShape.append(rngTy.getShape().begin(), rngTy.getShape().end());
-        auto cmType = RankedTensorType::get(cmShape, rngTy.getElementType());
-        SmallVector<int64_t> oneShape;
-        oneShape.push_back(1);
-        oneShape.append(rngTy.getShape().begin(), rngTy.getShape().end());
-        auto oneType = RankedTensorType::get(oneShape, rngTy.getElementType());
-        Value buf = enzyme::BroadcastOp::create(
-            rewriter, loc, cmType, perChain[0][3],
-            rewriter.getDenseI64ArrayAttr({numChains}));
-        for (int64_t c = 0; c < numChains; ++c) {
-          Value reshaped = impulse::ReshapeOp::create(rewriter, loc, oneType,
-                                                      perChain[c][3]);
-          SmallVector<Value> idxs;
-          idxs.push_back(idxConst(c));
-          for (int64_t d = 0; d < rngTy.getRank(); ++d)
-            idxs.push_back(zeroIdx);
-          buf = impulse::DynamicUpdateSliceOp::create(rewriter, loc, cmType,
-                                                      buf, reshaped, idxs);
-        }
-        return buf;
-      };
-
-      SmallVector<Value> stacked;
-      stacked.push_back(stackChainMajor(0));
-      stacked.push_back(stackChainMajor(1));
-      stacked.push_back(stackChainMajor(2));
-      // output_rng_state is the last chain's key; all keys go in `rng`.
-      stacked.push_back(perChain[numChains - 1][3]);
-      for (unsigned j = 4; j < perChain[0].size(); ++j)
-        stacked.push_back(stackChainMajor(j));
-      if (schema && !schema.empty())
-        stacked.push_back(stackRngChainMajor());
-
-      rewriter.replaceOp(mcmcOp, stacked);
+      rewriter.replaceOp(mcmcOp,
+                         stackChainResults(rewriter, loc, chains,
+                                           schema && !schema.empty()));
       return success();
     }
   };
