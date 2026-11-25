@@ -1725,6 +1725,64 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
   return mergeColumnWindows(windows);
 }
 
+namespace {
+/// A proposed MH move. `weight` is the new joint density, or its change for a
+/// score-tail trace; `corr` is subtracted from the joint ratio to form log
+/// alpha unless `logRatio` gives log alpha directly.
+struct MHProposal {
+  Value trace;
+  Value weight;
+  Value corr;
+  Value rng;
+  Value logRatio;
+};
+
+/// The trace, weight and rng after one MH step, and whether it accepted.
+struct MHStep {
+  Value trace;
+  Value weight;
+  Value rng;
+  Value accepted;
+};
+} // namespace
+
+/// Accepts `proposal` over the current `trace` and `weight` when a uniform
+/// draw from the proposal's rng falls below exp(log alpha). Only the
+/// `changedColumns` of the trace are selected.
+static MHStep
+emitMHAccept(OpBuilder &builder, Location loc, Value trace, Value weight,
+             Type rngType, const MHProposal &proposal, bool deltaWeight,
+             ArrayRef<std::pair<int64_t, int64_t>> changedColumns) {
+  auto weightType = cast<RankedTensorType>(weight.getType());
+  Value jointRatio =
+      deltaWeight ? proposal.weight
+                  : arith::SubFOp::create(builder, loc, proposal.weight, weight)
+                        .getResult();
+  Value logAlpha =
+      proposal.logRatio
+          ? proposal.logRatio
+          : arith::SubFOp::create(builder, loc, jointRatio, proposal.corr)
+                .getResult();
+  Value acceptWeight =
+      deltaWeight ? arith::AddFOp::create(builder, loc, weight, proposal.weight)
+                        .getResult()
+                  : proposal.weight;
+  Value zero = f64Const(builder, loc, weightType, 0.0);
+  Value one = f64Const(builder, loc, weightType, 1.0);
+  auto draw = impulse::RandomOp::create(
+      builder, loc, TypeRange{rngType, weightType}, proposal.rng, zero, one,
+      impulse::RngDistributionAttr::get(builder.getContext(),
+                                        impulse::RngDistribution::UNIFORM));
+  Value logRand = math::LogOp::create(builder, loc, draw.getResult());
+  Value accepted = arith::CmpFOp::create(
+      builder, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
+  Value newTrace = writeBackMHWindows(builder, loc, trace, proposal.trace,
+                                      accepted, changedColumns);
+  Value newWeight =
+      arith::SelectOp::create(builder, loc, accepted, acceptWeight, weight);
+  return {newTrace, newWeight, draw.getOutputRngState(), accepted};
+}
+
 /// Which per-site yields (terminator operands 1..) depend on `seeds`.
 static SmallVector<bool> taintedSiteYields(Block &lpBlock, ValueRange seeds) {
   DenseSet<Value> tainted(seeds.begin(), seeds.end());
@@ -2880,55 +2938,32 @@ struct ExpandImpulsePass
                                  traceType.getShape()[1], symbolTable);
 
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
-                         Value rng) -> std::array<Value, 4> {
-        Value newTrace, newWeight, corr, stepRng, logRatio;
+                         Value rng) -> MHStep {
+        MHProposal proposal;
         if constexpr (isRegionForm)
-          std::tie(newTrace, newWeight, corr, stepRng) =
+          std::tie(proposal.trace, proposal.weight, proposal.corr,
+                   proposal.rng) =
               proposeRegion(b, loc, op, trace, rng, selection, allAddresses,
-                            deltaWeight, changedColumns, nullptr, &logRatio);
+                            deltaWeight, changedColumns, nullptr,
+                            &proposal.logRatio);
         else
-          std::tie(newTrace, newWeight, corr, stepRng) =
+          std::tie(proposal.trace, proposal.weight, proposal.corr,
+                   proposal.rng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
                           allAddresses);
-
-        Value jointRatio =
-            deltaWeight
-                ? newWeight
-                : arith::SubFOp::create(b, loc, newWeight, weight).getResult();
-        Value logAlpha =
-            logRatio
-                ? logRatio
-                : arith::SubFOp::create(b, loc, jointRatio, corr).getResult();
-        Value acceptWeight =
-            deltaWeight
-                ? arith::AddFOp::create(b, loc, weight, newWeight).getResult()
-                : newWeight;
-        Value zero = f64Const(b, loc, weightType, 0.0);
-        Value one = f64Const(b, loc, weightType, 1.0);
-        auto rnd = impulse::RandomOp::create(
-            b, loc, TypeRange{rngType, weightType}, stepRng, zero, one,
-            impulse::RngDistributionAttr::get(
-                b.getContext(), impulse::RngDistribution::UNIFORM));
-        Value logRand = math::LogOp::create(b, loc, rnd.getResult());
-        Value finalRng = rnd.getOutputRngState();
-        Value accepted = arith::CmpFOp::create(
-            b, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
-        Value selTrace = writeBackMHWindows(b, loc, trace, newTrace, accepted,
-                                            changedColumns);
-        Value selWeight =
-            arith::SelectOp::create(b, loc, accepted, acceptWeight, weight);
-        return {selTrace, selWeight, finalRng, accepted};
+        return emitMHAccept(b, loc, trace, weight, rngType, proposal,
+                            deltaWeight, changedColumns);
       };
 
       int64_t numSamples = op.getNumSamples();
       Value outTrace, outWeight, outRng, outAccepted;
 
       if (numSamples <= 1) {
-        auto r = oneStep(rewriter, initTrace, initWeight, initRng);
-        outTrace = r[0];
-        outWeight = r[1];
-        outRng = r[2];
-        outAccepted = r[3];
+        MHStep step = oneStep(rewriter, initTrace, initWeight, initRng);
+        outTrace = step.trace;
+        outWeight = step.weight;
+        outRng = step.rng;
+        outAccepted = step.accepted;
       } else {
         Value c0 = i64Const(rewriter, loc, 0),
               cN = i64Const(rewriter, loc, numSamples),
@@ -2945,10 +2980,11 @@ struct ExpandImpulsePass
         for (Type t : loopTypes)
           body->addArgument(t, loc);
         rewriter.setInsertionPointToStart(body);
-        auto r = oneStep(rewriter, body->getArgument(1), body->getArgument(2),
-                         body->getArgument(3));
-        impulse::YieldOp::create(rewriter, loc,
-                                 ValueRange{r[0], r[1], r[2], r[3]});
+        MHStep step = oneStep(rewriter, body->getArgument(1),
+                              body->getArgument(2), body->getArgument(3));
+        impulse::YieldOp::create(
+            rewriter, loc,
+            ValueRange{step.trace, step.weight, step.rng, step.accepted});
         rewriter.setInsertionPointAfter(forOp);
         outTrace = forOp.getResult(0);
         outWeight = forOp.getResult(1);
@@ -4051,7 +4087,6 @@ struct ExpandImpulsePass
       auto selection = mhOp.getSelectionAttr();
 
       auto traceType = oldTrace.getType();
-      auto weightType = cast<RankedTensorType>(oldWeight.getType());
       auto rngStateType = inputs[0].getType();
 
       // 1. Create regenerate op with the same function and selection
@@ -4087,49 +4122,19 @@ struct ExpandImpulsePass
           /*name*/ nameAttr);
 
       regenerateOp->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
-      Value newTrace = regenerateOp.getNewTrace();
-      auto [newWeight, corr] =
+      MHProposal proposal;
+      proposal.trace = regenerateOp.getNewTrace();
+      std::tie(proposal.weight, proposal.corr) =
           unpackHastingsWeight(rewriter, loc, regenerateOp.getWeight());
-      Value newRng = regenerateOp.getOutputs()[0];
+      proposal.rng = regenerateOp.getOutputs()[0];
 
-      // 2. Compute log_alpha = new_weight - old_weight - corr
-      Value jointRatio =
-          delta ? newWeight
-                : arith::SubFOp::create(rewriter, loc, newWeight, oldWeight)
-                      .getResult();
-      Value logAlpha = arith::SubFOp::create(rewriter, loc, jointRatio, corr);
-      Value acceptWeight =
-          delta ? arith::AddFOp::create(rewriter, loc, oldWeight, newWeight)
-                      .getResult()
-                : newWeight;
-
-      // 3. Sample uniform random in (0, 1) and compute log
-      Value zeroConst = f64Const(rewriter, loc, weightType, 0.0);
-      Value oneConst = f64Const(rewriter, loc, weightType, 1.0);
-
-      auto randomOp = impulse::RandomOp::create(
-          rewriter, loc, TypeRange{rngStateType, weightType}, newRng, zeroConst,
-          oneConst,
-          impulse::RngDistributionAttr::get(rewriter.getContext(),
-                                            impulse::RngDistribution::UNIFORM));
-      auto logRand = math::LogOp::create(rewriter, loc, randomOp.getResult());
-      Value finalRng = randomOp.getOutputRngState();
-
-      // 4. Check if proposal is accepted: log(rand()) < log_alpha
-      auto accepted = arith::CmpFOp::create(
-          rewriter, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
-
-      // 5. Select trace and weight based on acceptance
-      Value selectedTrace = writeBackMHWindows(
-          rewriter, loc, oldTrace, newTrace, accepted,
+      MHStep step = emitMHAccept(
+          rewriter, loc, oldTrace, oldWeight, rngStateType, proposal, delta,
           mhChangedColumnsFlat(mhOp, fn, selection, regenerateAddresses,
                                cast<RankedTensorType>(traceType).getShape()[1],
                                symbolTable));
-      auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
-                                                    acceptWeight, oldWeight);
-
       rewriter.replaceOp(mhOp,
-                         {selectedTrace, selectedWeight, accepted, finalRng});
+                         {step.trace, step.weight, step.accepted, step.rng});
       return success();
     }
   };
