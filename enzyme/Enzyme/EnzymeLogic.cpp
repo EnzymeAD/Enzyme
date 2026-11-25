@@ -158,6 +158,9 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
     case Intrinsic::lifetime_start:
     case Intrinsic::lifetime_end:
     case Intrinsic::assume:
+#if LLVM_VERSION_MAJOR >= 20
+    case Intrinsic::fake_use:
+#endif
 #if LLVM_VERSION_MAJOR >= 13
     case Intrinsic::experimental_noalias_scope_decl:
 #endif
@@ -6876,6 +6879,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:
   case Intrinsic::lifetime_end:
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::fake_use:
+#endif
   case Intrinsic::memcpy:
   case Intrinsic::memmove:
   case Intrinsic::memset:
