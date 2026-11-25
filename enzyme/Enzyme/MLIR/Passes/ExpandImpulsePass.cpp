@@ -2933,10 +2933,8 @@ struct MHRunBatcher {
       op.getDiagnostics().replaceAllUsesWith(acceptedOf[k]);
       auto ldType = cast<ShapedType>(op.getLogDensities().getType());
       if (!op.getLogDensities().use_empty())
-        op.getLogDensities().replaceAllUsesWith(arith::ConstantOp::create(
-            b, loc, ldType,
-            DenseElementsAttr::get(
-                ldType, b.getFloatAttr(ldType.getElementType(), 0.0))));
+        op.getLogDensities().replaceAllUsesWith(
+            arith::ConstantOp::create(b, loc, b.getZeroAttr(ldType)));
     }
     last.getTrace().replaceAllUsesWith(trace);
     last.getOutputRngState().replaceAllUsesWith(accepts.getOutputRngState());
@@ -3026,7 +3024,8 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Call);
+      std::unique_ptr<ImpulseUtils> putils(
+          ImpulseUtils::CreateFromClone(fn, ImpulseMode::Call));
       FunctionOpInterface NewF = putils->newFunc;
 
       SmallVector<Operation *, 4> toErase;
@@ -3049,8 +3048,6 @@ struct ExpandImpulsePass
                                NewF.getResultTypes(), CI.getOperands());
 
       rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
 
       return success();
     }
@@ -3088,8 +3085,8 @@ struct ExpandImpulsePass
           cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
       int64_t scoreTailSize = declaredWidth - positionSize;
       SmallVector<Value> siteScores;
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Simulate,
-                                                  declaredWidth);
+      std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
+          fn, ImpulseMode::Simulate, declaredWidth));
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -3233,8 +3230,6 @@ struct ExpandImpulsePass
                                         NewF.getResultTypes(), CI.getInputs());
 
       rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
 
       return success();
     }
@@ -3632,13 +3627,7 @@ struct ExpandImpulsePass
 
       // MH reports no per-sample log density; `log_densities` is zero.
       Value outLogDensities = arith::ConstantOp::create(
-          rewriter, loc, op.getLogDensities().getType(),
-          DenseElementsAttr::get(
-              cast<ShapedType>(op.getLogDensities().getType()),
-              rewriter.getFloatAttr(
-                  cast<ShapedType>(op.getLogDensities().getType())
-                      .getElementType(),
-                  0.0)));
+          rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
       rewriter.replaceOp(
           op, {outTrace, outAccepted, outLogDensities, outRng, outWeight});
       return success();
@@ -4011,11 +4000,8 @@ struct ExpandImpulsePass
       Value diagnostics = arith::ConstantOp::create(
           rewriter, loc, diagType,
           DenseElementsAttr::get(diagType, rewriter.getBoolAttr(true)));
-      auto ldType = cast<ShapedType>(op.getLogDensities().getType());
       Value logDensities = arith::ConstantOp::create(
-          rewriter, loc, ldType,
-          DenseElementsAttr::get(
-              ldType, rewriter.getFloatAttr(ldType.getElementType(), 0.0)));
+          rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
       rewriter.replaceOp(
           op, {outTrace, diagnostics, logDensities, outRng, outWeight});
       return success();
@@ -4085,17 +4071,10 @@ struct ExpandImpulsePass
       for (auto t : fn.getResultTypes())
         regenResultTypes.push_back(t);
 
-      auto regenerateOp = rewriter.create<impulse::RegenerateOp>(
-          loc,
-          /*resultTypes*/ regenResultTypes,
-          /*fn*/ mhOp.getFnAttr(),
-          /*inputs*/ inputs,
-          /*original_trace*/ oldTrace,
-          /*constraint*/ mhOp.getConstraint(),
-          /*selection*/ selection,
-          /*regenerate_addresses*/ regenerateAddresses,
-          /*constrained_addresses*/ mhOp.getConstrainedAddressesAttr(),
-          /*name*/ nameAttr);
+      auto regenerateOp = impulse::RegenerateOp::create(
+          rewriter, loc, regenResultTypes, mhOp.getFnAttr(), inputs, oldTrace,
+          mhOp.getConstraint(), selection, regenerateAddresses,
+          mhOp.getConstrainedAddressesAttr(), nameAttr);
 
       regenerateOp->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
       MHProposal proposal;
@@ -4155,8 +4134,8 @@ struct ExpandImpulsePass
           cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
       int64_t scoreTailSize = declaredWidth - positionSize;
       SmallVector<Value> siteScores;
-      auto putils = ImpulseUtils::CreateFromClone(
-          fn, ImpulseMode::Generate, declaredWidth, constraintSize);
+      std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
+          fn, ImpulseMode::Generate, declaredWidth, constraintSize));
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -4355,8 +4334,6 @@ struct ExpandImpulsePass
 
       rewriter.replaceOp(CI, newCI.getResults());
 
-      delete putils;
-
       return success();
     }
   };
@@ -4402,8 +4379,8 @@ struct ExpandImpulsePass
       int64_t scoreTailSize = declaredWidth - positionSize;
       SmallVector<Value> siteScores;
       int64_t siteOrdinal = 0;
-      auto putils = ImpulseUtils::CreateFromClone(
-          fn, ImpulseMode::Regenerate, declaredWidth, constraintSize);
+      std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
+          fn, ImpulseMode::Regenerate, declaredWidth, constraintSize));
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -4874,8 +4851,6 @@ struct ExpandImpulsePass
                                         NewF.getResultTypes(), operands);
 
       rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
 
       return success();
     }
