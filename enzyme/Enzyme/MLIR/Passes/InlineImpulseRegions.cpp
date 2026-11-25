@@ -113,8 +113,12 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
   return true;
 }
 
-static void inlineFunctionIntoRegion(OpBuilder &builder, FunctionOpInterface fn,
-                                     Region &targetRegion) {
+/// Copies the entry block of `fn` into a new block of `targetRegion`, with
+/// the function's return turned into an `impulse.yield`. Each other op is
+/// handed to `cloneOp`, which by default clones it.
+static void inlineFunctionIntoRegion(
+    OpBuilder &builder, FunctionOpInterface fn, Region &targetRegion,
+    function_ref<void(Operation &, IRMapping &)> cloneOp = nullptr) {
   OpBuilder::InsertionGuard insertionGuard(builder);
   Block *block = builder.createBlock(&targetRegion);
   Block &fnEntry = fn.getFunctionBody().front();
@@ -137,7 +141,10 @@ static void inlineFunctionIntoRegion(OpBuilder &builder, FunctionOpInterface fn,
       impulse::YieldOp::create(builder, op.getLoc(), yieldOperands);
       continue;
     }
-    builder.clone(op, fnMapper);
+    if (cloneOp)
+      cloneOp(op, fnMapper);
+    else
+      builder.clone(op, fnMapper);
   }
 }
 
@@ -205,34 +212,22 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
       sampleOp.getFnAttr(), sampleOp.getLogpdfAttr(),
       ArrayAttr::get(ctx, address), support, dist, sampleOp.getNameAttr());
 
-  if (dist) {
+  auto inlineCallee = [&](SymbolRefAttr callee, Region &region) {
+    auto calleeFn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(sampleOp, callee));
+    if (calleeFn && !calleeFn.getFunctionBody().empty())
+      inlineFunctionIntoRegion(builder, calleeFn, region);
+  };
+  if (dist)
     emitDistLogpdfIntoRegion(builder, sampleOp, dist,
                              sampleRegionOp.getLogpdf());
-    if (impulse::distSamplerEmittable(dist)) {
-      emitDistSamplerIntoRegion(builder, sampleOp, dist,
-                                sampleRegionOp.getSampling());
-    } else {
-      auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-      if (samplerFn && !samplerFn.getFunctionBody().empty())
-        inlineFunctionIntoRegion(builder, samplerFn,
-                                 sampleRegionOp.getSampling());
-    }
-  } else {
-    auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-    if (samplerFn && !samplerFn.getFunctionBody().empty())
-      inlineFunctionIntoRegion(builder, samplerFn,
-                               sampleRegionOp.getSampling());
-
-    if (sampleOp.getLogpdfAttr()) {
-      auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(sampleOp,
-                                              sampleOp.getLogpdfAttr()));
-      if (logpdfFn && !logpdfFn.getFunctionBody().empty())
-        inlineFunctionIntoRegion(builder, logpdfFn, sampleRegionOp.getLogpdf());
-    }
-  }
+  if (dist && impulse::distSamplerEmittable(dist))
+    emitDistSamplerIntoRegion(builder, sampleOp, dist,
+                              sampleRegionOp.getSampling());
+  else
+    inlineCallee(sampleOp.getFnAttr(), sampleRegionOp.getSampling());
+  if (!dist && sampleOp.getLogpdfAttr())
+    inlineCallee(sampleOp.getLogpdfAttr(), sampleRegionOp.getLogpdf());
 
   for (auto [oldResult, newResult] :
        llvm::zip(sampleOp.getResults(), sampleRegionOp.getResults()))
@@ -282,6 +277,20 @@ static bool dissolveSubmodelSites(impulse::InferRegionOp regionOp,
   }
 
   return !submodels.empty();
+}
+
+/// Creates an `impulse.infer_region` with the operands, result types and
+/// attributes of `inferOp` and two empty regions.
+static impulse::InferRegionOp createInferRegion(PatternRewriter &rewriter,
+                                                impulse::InferOp inferOp) {
+  OperationState state(inferOp.getLoc(),
+                       impulse::InferRegionOp::getOperationName());
+  state.addOperands(inferOp->getOperands());
+  state.addTypes(inferOp->getResultTypes());
+  state.addAttributes(inferOp->getAttrs());
+  state.addRegion();
+  state.addRegion();
+  return cast<impulse::InferRegionOp>(rewriter.create(state));
 }
 
 namespace {
@@ -351,60 +360,34 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
       if (!allSet.contains(addr))
         return failure();
 
-    OperationState state(inferOp.getLoc(),
-                         impulse::InferRegionOp::getOperationName());
-    // infer_region mirrors infer's operands and attributes one-to-one.
-    state.addOperands(inferOp->getOperands());
-    state.addTypes(inferOp->getResultTypes());
-    for (NamedAttribute attr : inferOp->getAttrs())
-      state.addAttribute(attr.getName(), attr.getValue());
-    state.addRegion();
-    state.addRegion();
-    auto regionOp = cast<impulse::InferRegionOp>(rewriter.create(state));
-
-    Block &fnEntry = fn.getFunctionBody().front();
-    Block *bodyBlock = rewriter.createBlock(&regionOp.getSampling());
-    for (auto arg : fnEntry.getArguments())
-      bodyBlock->addArgument(arg.getType(), arg.getLoc());
-
-    rewriter.setInsertionPointToStart(bodyBlock);
-
-    IRMapping mapper;
-    for (auto [fnArg, blockArg] :
-         llvm::zip(fnEntry.getArguments(), bodyBlock->getArguments()))
-      mapper.map(fnArg, blockArg);
-
-    for (Operation &op : fnEntry.getOperations()) {
-      if (op.hasTrait<OpTrait::ReturnLike>()) {
-        SmallVector<Value> yieldOperands;
-        for (Value operand : op.getOperands())
-          yieldOperands.push_back(mapper.lookupOrDefault(operand));
-        impulse::YieldOp::create(rewriter, op.getLoc(), yieldOperands);
-        continue;
-      }
-      if (auto sampleOp = dyn_cast<impulse::SampleOp>(&op)) {
-        convertSampleToSampleRegion(rewriter, sampleOp, mapper, symbolTable);
-        continue;
-      }
-      Operation *cloned = rewriter.clone(op, mapper);
-      if (hasBranchSites && cloned->getNumRegions() != 0) {
-        SmallVector<impulse::SampleOp> nestedSites;
-        cloned->walk([&](impulse::SampleOp nestedSite) {
-          nestedSites.push_back(nestedSite);
+    impulse::InferRegionOp regionOp = createInferRegion(rewriter, inferOp);
+    inlineFunctionIntoRegion(
+        rewriter, fn, regionOp.getSampling(),
+        [&](Operation &op, IRMapping &mapper) {
+          if (auto sampleOp = dyn_cast<impulse::SampleOp>(&op)) {
+            convertSampleToSampleRegion(rewriter, sampleOp, mapper,
+                                        symbolTable);
+            return;
+          }
+          Operation *cloned = rewriter.clone(op, mapper);
+          if (!hasBranchSites || cloned->getNumRegions() == 0)
+            return;
+          SmallVector<impulse::SampleOp> nestedSites;
+          cloned->walk([&](impulse::SampleOp nestedSite) {
+            nestedSites.push_back(nestedSite);
+          });
+          for (impulse::SampleOp nestedSite : nestedSites) {
+            OpBuilder::InsertionGuard guard(rewriter);
+            rewriter.setInsertionPoint(nestedSite);
+            IRMapping nestedMapper;
+            convertSampleToSampleRegion(rewriter, nestedSite, nestedMapper,
+                                        symbolTable);
+            SmallVector<Value> replacements;
+            for (Value result : nestedSite.getResults())
+              replacements.push_back(nestedMapper.lookup(result));
+            rewriter.replaceOp(nestedSite, replacements);
+          }
         });
-        for (impulse::SampleOp nestedSite : nestedSites) {
-          OpBuilder::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPoint(nestedSite);
-          IRMapping nestedMapper;
-          convertSampleToSampleRegion(rewriter, nestedSite, nestedMapper,
-                                      symbolTable);
-          SmallVector<Value> replacements;
-          for (Value result : nestedSite.getResults())
-            replacements.push_back(nestedMapper.lookup(result));
-          rewriter.replaceOp(nestedSite, replacements);
-        }
-      }
-    }
 
     rewriter.replaceOp(inferOp, regionOp.getResults());
     return success();
@@ -439,16 +422,7 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
     if (logpdfFn.getNumArguments() != inferOp.getInputs().size())
       return failure();
 
-    OperationState state(inferOp.getLoc(),
-                         impulse::InferRegionOp::getOperationName());
-    // infer_region mirrors infer's operands and attributes one-to-one.
-    state.addOperands(inferOp->getOperands());
-    state.addTypes(inferOp->getResultTypes());
-    for (NamedAttribute attr : inferOp->getAttrs())
-      state.addAttribute(attr.getName(), attr.getValue());
-    state.addRegion();
-    state.addRegion();
-    auto regionOp = cast<impulse::InferRegionOp>(rewriter.create(state));
+    impulse::InferRegionOp regionOp = createInferRegion(rewriter, inferOp);
 
     inlineFunctionIntoRegion(rewriter, logpdfFn, regionOp.getLogpdf());
 
@@ -469,9 +443,9 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
   }
 };
 
-struct InlineInferIntoRegion
+struct InlineInferIntoRegionPass
     : public enzyme::impl::InlineInferIntoRegionPassBase<
-          InlineInferIntoRegion> {
+          InlineInferIntoRegionPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<InlineInferOp, InlineLogpdfInferOp>(&getContext());
