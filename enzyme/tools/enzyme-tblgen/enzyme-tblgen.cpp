@@ -2439,6 +2439,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           continue;
         os << "        if (!gutils->isConstantValue(" << origName
            << "->getResult(" << i << "))) {\n";
+        initializeNames("          ", os, duals->getArg(i), "local", intrinsic);
         os << "          mlir::Value res = ";
         ArrayRef<unsigned> retidx{};
         bool vectorValued =
@@ -2453,7 +2454,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "        }\n";
       }
     } else {
-
+      initializeNames("            ", os, duals, "local", intrinsic);
       if (intrinsic == MLIRDerivatives) {
         os << "            mlir::Value res = ";
       } else {
