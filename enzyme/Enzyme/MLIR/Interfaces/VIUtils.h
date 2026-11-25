@@ -14,20 +14,10 @@ namespace mlir {
 namespace impulse {
 namespace VI {
 
-/// The model and configuration for lowering one VI inference op.
-struct VIContext {
-  FlatSymbolRefAttr fn;
-  ArrayRef<Value> fnInputs;
-  SmallVector<Type> fnResultTypes;
-  Value originalTrace;
-  ArrayAttr selection;
-  ArrayAttr allAddresses;
-  Value stepSize; // learning rate
-  int64_t positionSize;
+/// The model and configuration for lowering one VI inference op. `stepSize`
+/// is the learning rate.
+struct VIContext : public ModelContext {
   int64_t numSamples; // optimizer steps
-  SmallVector<SupportInfo> supports;
-  FlatSymbolRefAttr logpdfFn;
-  DictionaryAttr autodiffAttrs;
 
   GuideKind guideKind;
   OptimizerKind optimizerKind;
@@ -45,50 +35,32 @@ struct VIContext {
   double rmspropEps = 1.0e-8;
   // Skip steps whose ELBO or gradient is not finite; the key still advances.
   bool stableUpdate = false;
-  // Set when the op resumes from `state_in`.
-  bool isResume = false;
   bool debugDump = false;
 
-  // When set, the joint density is cloned from here, not `@fn.generate`.
-  // Block argument k binds to the (offset, size) slice logpdfArgSlices[k] of z.
-  Region *logpdfRegion = nullptr;
+  // Block argument k of `logpdfRegion` binds to the (offset, size) slice
+  // logpdfArgSlices[k] of the position.
   SmallVector<std::pair<int64_t, int64_t>> logpdfArgSlices;
-  bool hasLogpdfRegion() const { return logpdfRegion != nullptr; }
 
   VIContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
             ArrayRef<Type> fnResultTypes, Value originalTrace,
-            ArrayAttr selection, ArrayAttr allAddresses, Value stepSize,
-            int64_t positionSize, int64_t numSamples,
-            ArrayRef<SupportInfo> supports, GuideKind guideKind,
-            OptimizerKind optimizerKind, int64_t numParticles, double initScale,
-            double adamB1, double adamB2, double adamEps)
-      : fn(fn), fnInputs(fnInputs),
-        fnResultTypes(fnResultTypes.begin(), fnResultTypes.end()),
-        originalTrace(originalTrace), selection(selection),
-        allAddresses(allAddresses), stepSize(stepSize),
-        positionSize(positionSize), numSamples(numSamples),
-        supports(supports.begin(), supports.end()), guideKind(guideKind),
+            ArrayAttr allAddresses, Value stepSize, int64_t positionSize,
+            int64_t numSamples, ArrayRef<SupportInfo> supports,
+            GuideKind guideKind, OptimizerKind optimizerKind,
+            int64_t numParticles, double initScale, double adamB1,
+            double adamB2, double adamEps)
+      : ModelContext{fn,
+                     fnInputs,
+                     SmallVector<Type>(fnResultTypes),
+                     originalTrace,
+                     allAddresses,
+                     stepSize,
+                     positionSize,
+                     SmallVector<SupportInfo>(supports),
+                     /*logpdfFn=*/{},
+                     /*autodiffAttrs=*/{}},
+        numSamples(numSamples), guideKind(guideKind),
         optimizerKind(optimizerKind), numParticles(numParticles),
         initScale(initScale), adamB1(adamB1), adamB2(adamB2), adamEps(adamEps) {
-  }
-
-  bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
-
-  Type getElementType() const {
-    return cast<RankedTensorType>(stepSize.getType()).getElementType();
-  }
-
-  RankedTensorType getPositionType() const {
-    return RankedTensorType::get({1, positionSize}, getElementType());
-  }
-
-  RankedTensorType getScalarType() const {
-    return RankedTensorType::get({}, getElementType());
-  }
-
-  int64_t getFullTraceSize() const {
-    auto traceType = cast<RankedTensorType>(originalTrace.getType());
-    return traceType.getShape()[1];
   }
 };
 
@@ -96,8 +68,7 @@ struct VIContext {
 /// `state_in` when it has one. Fails with a diagnostic on guide kinds and
 /// modes the lowering does not support.
 template <typename OpT>
-LogicalResult lowerVI(PatternRewriter &rewriter, OpT op, VIContext ctx,
-                      bool debugDump = false);
+LogicalResult lowerVI(PatternRewriter &rewriter, OpT op, VIContext ctx);
 
 } // namespace VI
 } // namespace impulse

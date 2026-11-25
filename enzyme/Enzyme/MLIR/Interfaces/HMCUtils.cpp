@@ -246,9 +246,9 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
   }
 }
 
-static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
-                                    Value position2d, Value fullTrace,
-                                    const HMCContext &ctx) {
+Value impulse::scatterPositionToTrace(OpBuilder &builder, Location loc,
+                                      Value position2d, Value fullTrace,
+                                      const ModelContext &ctx) {
   auto elemType =
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
   auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
@@ -321,11 +321,9 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
   return result;
 }
 
-/// Writes `qConstrained` into the original trace and emits a generate op of
-/// the model on that trace.
-static impulse::GenerateOp emitGenerateAt(OpBuilder &builder, Location loc,
-                                          Value qConstrained, Value rng,
-                                          const HMCContext &ctx) {
+GenerateOp impulse::emitGenerateAt(OpBuilder &builder, Location loc,
+                                   Value qConstrained, Value rng,
+                                   const ModelContext &ctx) {
   Value fullTrace = scatterPositionToTrace(builder, loc, qConstrained,
                                            ctx.originalTrace, ctx);
   SmallVector<Value> inputs{rng};

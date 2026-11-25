@@ -23,31 +23,6 @@ using namespace mlir::enzyme;
 using namespace mlir::impulse;
 using namespace mlir::impulse::VI;
 
-/// Writes each site's slice of `position2d` into its columns of `fullTrace`.
-static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
-                                    Value position2d, Value fullTrace,
-                                    const VIContext &ctx) {
-  auto elemType = ctx.getElementType();
-  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-  auto c0 = emitI64ScalarConstant(builder, loc, 0);
-
-  Value result = fullTrace;
-  for (const auto &info : ctx.supports) {
-    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
-    auto posOffset = emitI64ScalarConstant(builder, loc, info.offset);
-    SmallVector<Value> extractIdx{c0, posOffset};
-    auto slice = impulse::DynamicSliceOp::create(
-        builder, loc, sliceType, position2d, extractIdx,
-        builder.getDenseI64ArrayAttr({1, info.size}));
-
-    auto traceOffset = emitI64ScalarConstant(builder, loc, info.traceOffset);
-    SmallVector<Value> updateIdx{c0, traceOffset};
-    result = impulse::DynamicUpdateSliceOp::create(builder, loc, traceType,
-                                                   result, slice, updateIdx);
-  }
-  return result;
-}
-
 /// Sums all elements of `tensor` into a rank-0 tensor with a dot against ones.
 static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
   auto tensorType = cast<RankedTensorType>(tensor.getType());
@@ -165,26 +140,7 @@ static LogPResult emitModelLogDensity(OpBuilder &builder, Location loc, Value z,
   if (ctx.hasLogpdfRegion())
     return {cloneVILogpdfRegion(builder, loc, z, ctx), modelRng};
 
-  auto elemType = ctx.getElementType();
-  auto scalarType = ctx.getScalarType();
-  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-
-  Value fullTrace =
-      scatterPositionToTrace(builder, loc, z, ctx.originalTrace, ctx);
-
-  SmallVector<Value> genInputs;
-  genInputs.push_back(modelRng);
-  genInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-  SmallVector<Type> genResultTypes;
-  genResultTypes.push_back(traceType);
-  genResultTypes.push_back(scalarType);
-  genResultTypes.append(ctx.fnResultTypes.begin(), ctx.fnResultTypes.end());
-
-  auto genOp = impulse::GenerateOp::create(
-      builder, loc, genResultTypes, ctx.fn, genInputs, fullTrace,
-      ctx.allAddresses, ctx.allAddresses, builder.getStringAttr(""));
-
+  impulse::GenerateOp genOp = emitGenerateAt(builder, loc, z, modelRng, ctx);
   // Result 2 is the model's first output, the rng by convention.
   Value rngAfter = genOp.getNumResults() >= 3 ? genOp.getResult(2) : modelRng;
   return {genOp.getWeight(), rngAfter};
@@ -842,7 +798,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
 
 template <typename OpT>
 LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
-                                         VIContext ctx, bool debugDump) {
+                                         VIContext ctx) {
   Location loc = op.getLoc();
 
   if (ctx.guideKind != impulse::GuideKind::AUTO_NORMAL &&
@@ -867,7 +823,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   auto positionType = ctx.getPositionType();
 
   bool isResume = !op.getStateIn().empty();
-  ctx.isResume = isResume;
   ArrayAttr schema = op.getStateSchemaAttr();
   auto slotIn = [&](StringRef name) -> Value {
     auto idx = impulse::slotIndex(schema, name);
@@ -1030,6 +985,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
 
 template LogicalResult
 mlir::impulse::VI::lowerVI<impulse::InferOp>(PatternRewriter &,
-                                             impulse::InferOp, VIContext, bool);
+                                             impulse::InferOp, VIContext);
 template LogicalResult mlir::impulse::VI::lowerVI<impulse::InferRegionOp>(
-    PatternRewriter &, impulse::InferRegionOp, VIContext, bool);
+    PatternRewriter &, impulse::InferRegionOp, VIContext);

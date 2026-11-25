@@ -3370,9 +3370,8 @@ struct ExpandImpulsePass
 
       VI::VIContext viCtx(
           model.fn, model.fnInputs, model.fnResultTypes, model.originalTrace,
-          model.selection, model.allAddresses, stepSize, model.positionSize,
-          op.getNumSamples(), model.supports,
-          viConfig.getGuideKind().getValue(),
+          model.allAddresses, stepSize, model.positionSize, op.getNumSamples(),
+          model.supports, viConfig.getGuideKind().getValue(),
           viConfig.getOptimizerKind().getValue(), viConfig.getNumParticles(),
           floatOr(viConfig.getInitScale(), 0.1),
           floatOr(viConfig.getAdamB1(), 0.9),
@@ -3393,7 +3392,7 @@ struct ExpandImpulsePass
       if constexpr (isRegionForm)
         viCtx.logpdfArgSlices = regionLayout.argSlices;
 
-      return VI::lowerVI(rewriter, op, viCtx, debugDump);
+      return VI::lowerVI(rewriter, op, viCtx);
     }
   };
 

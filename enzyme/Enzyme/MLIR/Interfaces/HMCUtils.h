@@ -102,50 +102,26 @@ struct IntegratorState {
   Value grad;
 };
 
-struct HMCContext {
+/// The density an MCMC or VI lowering targets: the model `fn` evaluated on
+/// `originalTrace` with the position written into the columns of `supports`,
+/// or the log density `logpdfFn` of the position, or the `logpdfRegion` of an
+/// `impulse.infer_region`. The element type is that of `stepSize`.
+struct ModelContext {
   FlatSymbolRefAttr fn;
   ArrayRef<Value> fnInputs;
   SmallVector<Type> fnResultTypes;
   Value originalTrace;
-  ArrayAttr selection;
   ArrayAttr allAddresses;
-  Value invMass;
-  Value massMatrixSqrt;
   Value stepSize;
-  Value trajectoryLength;
-  // 0 derives the step count from trajectoryLength.
-  int64_t numSteps = 0;
   int64_t positionSize;
   SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
   DictionaryAttr autodiffAttrs;
 
-  /// Block arguments take constrained position slices in `selection` order.
+  /// When set, the log density is cloned from this region, whose block
+  /// arguments take slices of the constrained position, instead of evaluated
+  /// through `fn`.
   Region *logpdfRegion = nullptr;
-
-  HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-             ArrayRef<Type> fnResultTypes, Value originalTrace,
-             ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
-             Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
-             int64_t positionSize, ArrayRef<SupportInfo> supports,
-             DictionaryAttr autodiffAttrs = {})
-      : fn(fn), fnInputs(fnInputs),
-        fnResultTypes(fnResultTypes.begin(), fnResultTypes.end()),
-        originalTrace(originalTrace), selection(selection),
-        allAddresses(allAddresses), invMass(invMass),
-        massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
-        trajectoryLength(trajectoryLength), positionSize(positionSize),
-        supports(supports.begin(), supports.end()),
-        autodiffAttrs(autodiffAttrs) {}
-
-  HMCContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
-             Value invMass, Value massMatrixSqrt, Value stepSize,
-             Value trajectoryLength, int64_t positionSize,
-             DictionaryAttr autodiffAttrs = {})
-      : fnInputs(fnInputs), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
-        stepSize(stepSize), trajectoryLength(trajectoryLength),
-        positionSize(positionSize), logpdfFn(logpdfFn),
-        autodiffAttrs(autodiffAttrs) {}
 
   bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
 
@@ -167,6 +143,51 @@ struct HMCContext {
   RankedTensorType getScalarType() const {
     return RankedTensorType::get({}, getElementType());
   }
+};
+
+struct HMCContext : public ModelContext {
+  ArrayAttr selection;
+  Value invMass;
+  Value massMatrixSqrt;
+  Value trajectoryLength;
+  // 0 derives the step count from trajectoryLength.
+  int64_t numSteps = 0;
+
+  HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
+             ArrayRef<Type> fnResultTypes, Value originalTrace,
+             ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
+             Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
+             int64_t positionSize, ArrayRef<SupportInfo> supports,
+             DictionaryAttr autodiffAttrs = {})
+      : ModelContext{fn,
+                     fnInputs,
+                     SmallVector<Type>(fnResultTypes),
+                     originalTrace,
+                     allAddresses,
+                     stepSize,
+                     positionSize,
+                     SmallVector<SupportInfo>(supports),
+                     /*logpdfFn=*/{},
+                     autodiffAttrs},
+        selection(selection), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
+        trajectoryLength(trajectoryLength) {}
+
+  HMCContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
+             Value invMass, Value massMatrixSqrt, Value stepSize,
+             Value trajectoryLength, int64_t positionSize,
+             DictionaryAttr autodiffAttrs = {})
+      : ModelContext{/*fn=*/{},
+                     fnInputs,
+                     /*fnResultTypes=*/{},
+                     /*originalTrace=*/{},
+                     /*allAddresses=*/{},
+                     stepSize,
+                     positionSize,
+                     /*supports=*/{},
+                     logpdfFn,
+                     autodiffAttrs},
+        invMass(invMass), massMatrixSqrt(massMatrixSqrt),
+        trajectoryLength(trajectoryLength) {}
 
   bool hasConstrainedSupports() const {
     for (const auto &info : supports) {
@@ -267,6 +288,16 @@ std::pair<Value, Value> sampleMomentum(OpBuilder &builder, Location loc,
                                        Value massMatrixSqrt,
                                        RankedTensorType positionType,
                                        bool debugDump = false);
+
+/// Writes each site's slice of the `1xN` position `position2d` into its
+/// columns of `fullTrace`.
+Value scatterPositionToTrace(OpBuilder &builder, Location loc, Value position2d,
+                             Value fullTrace, const ModelContext &ctx);
+
+/// Writes `qConstrained` into the original trace and emits a generate op of
+/// the model on that trace.
+GenerateOp emitGenerateAt(OpBuilder &builder, Location loc, Value qConstrained,
+                          Value rng, const ModelContext &ctx);
 
 /// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
 GradientResult computePotentialAndGradient(OpBuilder &builder, Location loc,
