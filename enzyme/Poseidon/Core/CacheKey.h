@@ -17,7 +17,6 @@
 #ifndef POSEIDON_CACHEKEY_H
 #define POSEIDON_CACHEKEY_H
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -35,15 +34,11 @@ public:
   // under another format is a miss.
   static constexpr unsigned kFormat = 1;
 
-  // Earlier values of one part, declared to give the result the computed
-  // value gives.
-  struct Equivalents {
-    llvm::StringRef part;
-    llvm::ArrayRef<const char *> values;
-  };
-
   CacheKey();
   void add(llvm::StringRef name, llvm::StringRef value);
+  // Part "compiler": this build of the pass (the digest of its sources) and the
+  // LLVM it is built against, so that a result another build computed misses.
+  void addCompiler();
   // For a part too large to store, such as a file: kept as its digest.
   void addContent(llvm::StringRef name, llvm::StringRef bytes);
 
@@ -52,8 +47,7 @@ public:
   // The name of the first part `stored` disagrees on, "format" when it was
   // written under another format or under none; nullopt when it agrees.
   std::optional<std::string>
-  firstDifference(const llvm::json::Object *stored,
-                  const Equivalents &equivalents = {}) const;
+  firstDifference(const llvm::json::Object *stored) const;
 
 private:
   llvm::SmallVector<std::pair<std::string, std::string>, 64> parts;
@@ -77,8 +71,7 @@ struct CacheEntryRead {
   std::string differs;
   std::string unreadable;
 };
-CacheEntryRead readCacheEntry(llvm::StringRef path, const CacheKey &key,
-                              const CacheKey::Equivalents &equivalents = {});
+CacheEntryRead readCacheEntry(llvm::StringRef path, const CacheKey &key);
 
 } // namespace poseidon
 #endif // POSEIDON_CACHEKEY_H

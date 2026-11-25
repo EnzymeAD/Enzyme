@@ -8,13 +8,10 @@
 //
 // A matrix accuracy model's result is a deterministic function of its inputs,
 // so it is kept in -poseidon-cache, one entry file per key. The key holds the
-// model's inputs and the model's identity, never its results: hosts differ in
-// the last digits of a result for equal inputs. An entry is filed under every
-// part but the identity, so one computed by another model is found and
-// reported, and one computed by a model declared equivalent is reused.
-//
-// This code is kept out of the files the model's identity is a digest of, so
-// changing it leaves every stored result valid.
+// model's inputs and the compiler that computed it, never its results: hosts
+// differ in the last digits of a result for equal inputs. An entry is filed
+// under every part but the compiler, so one computed by another build is found
+// and reported.
 //
 //===----------------------------------------------------------------------===//
 

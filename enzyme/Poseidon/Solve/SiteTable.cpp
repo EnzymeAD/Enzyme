@@ -16,7 +16,6 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/StructuralHash.h"
 #include "llvm/Support/Error.h"
@@ -27,11 +26,6 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
-#if __has_include("llvm/Support/VCSRevision.h")
-#include "llvm/Support/VCSRevision.h"
-#endif
-
-#include "BuildIdentity.h"
 
 #include <map>
 #include <string>
@@ -92,14 +86,7 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
   const Options &O = S.Opts;
   const Function &F = *st.F;
   CacheKey key;
-  // Two LLVM snapshots report one version string; the revision, which an LLVM
-  // built without it does not define, tells them apart.
-  std::string compiler =
-      std::string(kPassIdentity) + " LLVM " + LLVM_VERSION_STRING;
-#ifdef LLVM_REVISION
-  compiler += " " LLVM_REVISION;
-#endif
-  key.add("compiler", compiler);
+  key.addCompiler();
   std::string body;
   raw_string_ostream bodyOS(body);
   bodyOS << StructuralHash(F, /*DetailedHash=*/true);

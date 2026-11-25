@@ -14,8 +14,7 @@
 ; entries under the same key and computes nothing; a single-threaded compile
 ; writes the same entries. An entry whose stored key differs in one part is
 ; recomputed, and the compile names the part: the sampling seed, and the
-; identity of the accuracy model, which no earlier model is listed as
-; equivalent to.
+; compiler, here another build of the pass.
 ; RUN: mkdir %t/entry
 ; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/c 2>&1 | FileCheck --check-prefixes=ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not=recomputing %s
 ; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/c 2>&1 | FileCheck --check-prefix=ENTRY-PRICED --implicit-check-not=DOMERR --implicit-check-not=recomputing %s
@@ -24,15 +23,15 @@
 ; RUN: cp -r %t/entry/c %t/entry/seed && sed -i 's/^\( *"seed": "\)[0-9]*"/\11"/' %t/entry/seed/matmulacc_*.json
 ; RUN: cat %t/entry/seed/matmulacc_*.json | FileCheck --check-prefix=ENTRY-EDITED-SEED --implicit-check-not='"seed"' %s
 ; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/seed 2>&1 | FileCheck --check-prefixes=ENTRY-SEED,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different seed" %s
-; RUN: cp -r %t/entry/c %t/entry/model && sed -i 's/^\( *"accuracy model": "\)[0-9A-F]*"/\10123456789ABCDEF"/' %t/entry/model/matmulacc_*.json
-; RUN: cat %t/entry/model/matmulacc_*.json | FileCheck --check-prefix=ENTRY-EDITED-MODEL --implicit-check-not='"accuracy model"' %s
-; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/model 2>&1 | FileCheck --check-prefixes=ENTRY-MODEL,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different accuracy model" %s
+; RUN: cp -r %t/entry/c %t/entry/compiler && sed -i 's/^\( *"compiler": "\)[0-9A-F]* /\10123456789ABCDEF /' %t/entry/compiler/matmulacc_*.json
+; RUN: cat %t/entry/compiler/matmulacc_*.json | FileCheck --check-prefix=ENTRY-EDITED-COMPILER --implicit-check-not='"compiler"' %s
+; RUN: %{opt} %{prof} -poseidon-cache=%t/entry/compiler 2>&1 | FileCheck --check-prefixes=ENTRY-COMPILER,ENTRY-COMPUTE,ENTRY-PRICED --implicit-check-not="different compiler" %s
 
 ; ENTRY-EDITED-SEED-COUNT-13: "seed": "1"
-; ENTRY-EDITED-MODEL-COUNT-13: "accuracy model": "0123456789ABCDEF",
+; ENTRY-EDITED-COMPILER-COUNT-13: "compiler": "0123456789ABCDEF LLVM {{[^"]+}}",
 
 ; ENTRY-SEED-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different seed; recomputing it.
-; ENTRY-MODEL-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different accuracy model; recomputing it.
+; ENTRY-COMPILER-COUNT-13: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different compiler; recomputing it.
 
 ; ENTRY-COMPUTE: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
 

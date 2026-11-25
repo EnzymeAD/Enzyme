@@ -10,11 +10,17 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
+#if __has_include("llvm/Support/VCSRevision.h")
+#include "llvm/Support/VCSRevision.h"
+#endif
+
+#include "BuildIdentity.h"
 
 using namespace llvm;
 
@@ -28,6 +34,17 @@ CacheKey::CacheKey() { add("format", std::to_string(kFormat)); }
 
 void CacheKey::add(StringRef name, StringRef value) {
   parts.emplace_back(name.str(), value.str());
+}
+
+void CacheKey::addCompiler() {
+  // Two LLVM snapshots report one version string; the revision, which an LLVM
+  // built without it does not define, tells them apart.
+  std::string compiler =
+      std::string(kPassIdentity) + " LLVM " + LLVM_VERSION_STRING;
+#ifdef LLVM_REVISION
+  compiler += " " LLVM_REVISION;
+#endif
+  add("compiler", compiler);
 }
 
 void CacheKey::addContent(StringRef name, StringRef bytes) {
@@ -53,19 +70,12 @@ json::Object CacheKey::toJSON() const {
 }
 
 std::optional<std::string>
-CacheKey::firstDifference(const json::Object *stored,
-                          const Equivalents &equivalents) const {
+CacheKey::firstDifference(const json::Object *stored) const {
   if (!stored)
     return std::string("format");
-  for (const auto &[name, value] : parts) {
-    std::optional<StringRef> got = stored->getString(name);
-    if (got && *got == value)
-      continue;
-    if (got && name == equivalents.part &&
-        llvm::is_contained(equivalents.values, *got))
-      continue;
-    return name;
-  }
+  for (const auto &[name, value] : parts)
+    if (stored->getString(name) != StringRef(value))
+      return name;
   // By name: the object holds its keys in hash order.
   if (stored->size() != parts.size())
     for (const json::Object::value_type *kv : json::sortedElements(*stored))
@@ -90,8 +100,7 @@ Error writeCacheEntry(StringRef path, const CacheKey &key, json::Value value) {
       path, formatv("{0:2}", json::Value(std::move(entry))).str() + "\n");
 }
 
-CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key,
-                              const CacheKey::Equivalents &equivalents) {
+CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key) {
   CacheEntryRead read;
   if (!sys::fs::exists(path))
     return read;
@@ -112,7 +121,7 @@ CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key,
     return read;
   }
   if (std::optional<std::string> part =
-          key.firstDifference(entry->getObject("key"), equivalents)) {
+          key.firstDifference(entry->getObject("key"))) {
     read.differs = *part;
     return read;
   }

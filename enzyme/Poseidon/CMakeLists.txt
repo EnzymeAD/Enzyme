@@ -145,19 +145,8 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler)
 target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
 
-# What a cached result was computed by: the pass's own sources, and the subset
-# that decides what the matrix accuracy model returns. Hashed when they change,
-# not when the build is configured.
-set(POSEIDON_ACCURACY_MODEL_FILES
-    Techniques/Matmul/MatmulAccuracy.cpp
-    Techniques/Matmul/MatmulSimulation.h
-    Techniques/Matmul/MatmulSimulation.cpp
-    runtime/ozaki/OzakiII.h
-    runtime/tcec/tcec_scale.h
-    Core/FPKind.h
-    Core/FPKind.cpp
-    Core/UniformReal.h
-    Core/UniformReal.cpp)
+# What a cached result was computed by: the pass's own sources. Hashed when
+# they change, not when the build is configured.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake)
 poseidon_pass_sources(POSEIDON_PASS_FILES ${CMAKE_CURRENT_SOURCE_DIR}
                       ${CMAKE_CURRENT_BINARY_DIR} CONFIGURE_DEPENDS)
@@ -170,22 +159,17 @@ file(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
   CONTENT "${_poseidon_pass_list}\n")
 set(POSEIDON_BUILD_IDENTITY ${CMAKE_CURRENT_BINARY_DIR}/identity/BuildIdentity.h)
-string(
-  REPLACE ";" "," _poseidon_accuracy_arg "${POSEIDON_ACCURACY_MODEL_FILES}")
 add_custom_command(
   OUTPUT ${POSEIDON_BUILD_IDENTITY}
   COMMAND
     ${CMAKE_COMMAND}
     -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
     -DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
-    -DACCURACY_FILES=${_poseidon_accuracy_arg}
-    -DEQUIVALENTS=${CMAKE_CURRENT_SOURCE_DIR}/Techniques/Matmul/MatmulAccuracyEquivalents.txt
     -DOUT=${POSEIDON_BUILD_IDENTITY}
     -P
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
   DEPENDS
     ${POSEIDON_PASS_FILES} ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
-    ${CMAKE_CURRENT_SOURCE_DIR}/Techniques/Matmul/MatmulAccuracyEquivalents.txt
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake
   VERBATIM)

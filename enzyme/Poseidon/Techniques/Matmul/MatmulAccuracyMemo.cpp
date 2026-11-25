@@ -8,7 +8,6 @@
 
 #include "MatmulAccuracyMemo.h"
 
-#include "BuildIdentity.h"
 #include "Matmul.h"
 #include "Pass/Session.h"
 #include "Sites/Annotations.h"
@@ -126,7 +125,7 @@ MatmulAccuracyMemo MatmulAccuracyMemo::matmul(
   memo.key.add("inputMantBits", std::to_string(inputMantBits));
   addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
   memo.path = entryPath(O, memo.key);
-  memo.key.add("accuracy model", kAccuracyModelIdentity);
+  memo.key.addCompiler();
   if (!O.Herbie.ImportAccuracyMemo.empty()) {
     LegacyAccHash legacy(O, m, prof, sampleLogBits);
     legacy.mix(0x6d6dULL);
@@ -156,7 +155,7 @@ MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
   memo.key.add("moduli", std::to_string(moduli));
   addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
   memo.path = entryPath(O, memo.key);
-  memo.key.add("accuracy model", kAccuracyModelIdentity);
+  memo.key.addCompiler();
   return memo;
 }
 
@@ -170,7 +169,7 @@ MatmulAccuracyMemo::tcecLibrary(const Options &O, const AbstractMatmul &m,
   memo.key.add("TCEC backend", "cuMpSGEMM");
   addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
   memo.path = entryPath(O, memo.key);
-  memo.key.add("accuracy model", kAccuracyModelIdentity);
+  memo.key.addCompiler();
   return memo;
 }
 
@@ -221,8 +220,7 @@ bool MatmulAccuracyMemo::lookup(Session &S, double &accuracyCost,
   const Options &O = S.Opts;
   if (O.Herbie.Cache.empty())
     return false;
-  CacheEntryRead read =
-      readCacheEntry(path, key, {"accuracy model", kAccuracyModelEquivalents});
+  CacheEntryRead read = readCacheEntry(path, key);
   if (read.value) {
     const json::Object *value = read.value->getAsObject();
     if (value && parseAccNumber(*value, "accuracy cost", accuracyCost) &&

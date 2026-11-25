@@ -7,9 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // Matmul accuracy model: profile-driven sampling and the arithmetic of each
-// candidate on the samples. The model's identity is a digest of the files
-// POSEIDON_ACCURACY_MODEL_FILES names (CMakeLists.txt), so they hold only what
-// decides the numbers it returns; storing and finding those numbers is
+// candidate on the samples. Storing and finding the numbers it returns is
 // MatmulAccuracyMemo's.
 //
 //===----------------------------------------------------------------------===//
