@@ -159,6 +159,9 @@ install(
 # --- poseidon-probe and poseidon-explain
 
 add_executable(poseidon-probe probe/poseidon-probe.cpp)
+target_include_directories(
+  poseidon-probe
+  PRIVATE ${POSEIDON_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
 install(
   TARGETS poseidon-probe
   EXPORT PoseidonTargets

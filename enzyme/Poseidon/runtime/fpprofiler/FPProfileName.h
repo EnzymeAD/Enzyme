@@ -10,8 +10,9 @@
 // profile of a site to <name>.fpprofile, where <name> is the string the
 // compile gave the site's probes (SiteIdentity.h, bodyProfileStem).
 //
-// Also the format both sides spell, and the file handling both runtime halves
-// share. Free of LLVM: included by the pass and the runtimes.
+// Also the format both sides spell, and the file handling the runtime halves
+// and poseidon-probe share. Free of LLVM: included by the pass, the runtimes
+// and poseidon-probe.
 //
 // A profile is a header, lines "<key> = <value>", then one record per profiled
 // instruction executed: its slot index alone on a line, then, each on a line
@@ -34,6 +35,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <ostream>
@@ -215,6 +217,35 @@ inline unsigned long long profileEnvPositive(const char *name,
   return (unsigned long long)parsed;
 }
 
+// Replaces the Kappa lines of the profile at `path` with `lines`, kept in the
+// header block the profile-use compile reads before the first slot.
+inline void profileReplaceKappa(const std::string &path,
+                                const std::vector<std::string> &lines) {
+  std::vector<std::string> kept;
+  {
+    std::ifstream in(path);
+    std::string l;
+    while (std::getline(in, l))
+      if (l.compare(0, strlen(kProfileKeyKappa), kProfileKeyKappa) != 0)
+        kept.push_back(l);
+  }
+  size_t at = 0;
+  for (size_t i = 0; i < kept.size(); ++i) {
+    if (!kept[i].empty() &&
+        kept[i].find_first_not_of("0123456789") == std::string::npos)
+      break;
+    at = i + 1;
+    if (kept[i].compare(0, strlen(kProfileKeyCanonicalHash),
+                        kProfileKeyCanonicalHash) == 0)
+      break;
+  }
+  kept.insert(kept.begin() + at, lines.begin(), lines.end());
+  std::string text;
+  for (const std::string &l : kept)
+    text += l + "\n";
+  profileWriteFile(path, text, "the condition number");
+}
+
 // A positive finite number.
 inline bool profileParsePositive(const char *text, const char *stop,
                                  double &out) {
@@ -251,6 +282,12 @@ inline std::vector<double> profileEnvPositiveList(const char *name,
       return out;
     p = comma + 1;
   }
+}
+
+// The relative perturbations the condition-number measurement runs each site
+// at, POSEIDON_PROBE_LADDER.
+inline std::vector<double> profileProbeLadder() {
+  return profileEnvPositiveList("POSEIDON_PROBE_LADDER", {1e-8, 1e-6, 1e-4});
 }
 
 } // namespace poseidon

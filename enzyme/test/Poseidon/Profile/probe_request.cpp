@@ -8,13 +8,14 @@
 // RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
 
-// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6,1e-5 POSEIDON_PROFILE_DIR=%t/env %t/gen %t/env.runs > /dev/null 2> %t/env.err
+// RUN: env POSEIDON_PROBE_LADDER=1e-6,1e-5 POSEIDON_PROFILE_DIR=%t/env %poseidon_probe -- %t/gen %t/env.runs > /dev/null 2> %t/env.err
 // RUN: FileCheck --check-prefix=SIX %s < %t/env.runs
 // RUN: FileCheck --check-prefix=MEASURE -DRUNS=5 %s < %t/env.err
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/env/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/env/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
 // RUN: ls -A %t/env | FileCheck --check-prefix=FILES %s
-// RUN: not env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6,x POSEIDON_PROFILE_DIR=%t/badladder %t/gen %t/badladder.runs 2>&1 | FileCheck --check-prefix=LADDER %s
+// RUN: not env POSEIDON_PROBE_LADDER=1e-6,x POSEIDON_PROFILE_DIR=%t/badladder %poseidon_probe -- %t/gen %t/badladder.runs 2>&1 | FileCheck --check-prefix=LADDER %s
+// RUN: not ls %t/badladder.runs
 
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/tool %poseidon_probe -- %t/gen %t/tool.runs > /dev/null 2> %t/tool.err
 // RUN: FileCheck --check-prefix=FOUR %s < %t/tool.runs
@@ -35,13 +36,14 @@
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=DECLINED-USE --implicit-check-not=error: %s
 
-// A profiling run whose program declares a metric re-executes itself to
-// measure the condition numbers only when asked (POSEIDON_PROBE=1, or under
-// poseidon-probe), and says so before the first extra run. Not asked, it runs
-// once, says what measuring would take, and marks the profiles so that profile
-// use stops on them; POSEIDON_PROBE=0 declines, and profile use then solves
-// each site against its own target. The program counts its own runs. A run of
-// the measurement writes the metric and no profile.
+// The condition numbers of a program that declares a metric are measured by
+// poseidon-probe, which runs it again and says so before the first extra run.
+// Run alone, the program runs once, says what measuring would take, and marks
+// the profiles so that profile use stops on them; POSEIDON_PROBE=0 declines,
+// and profile use then solves each site against its own target. The program
+// counts its own runs. A run of the measurement writes the metric and no
+// profile. A ladder that does not parse stops poseidon-probe before the
+// program runs.
 // Both sites move the metric well above the noise of its runs, so each gets a
 // nonzero condition number. The metric's name holds a space, which the
 // measurement runs have to read back, and is longer than a string keeps
@@ -108,7 +110,7 @@ int main(int argc, char **argv) {
 // UNMEASURED-NOT: Kappa
 
 // MEASURE-NOT: [probe]
-// MEASURE: [probe] measuring the condition numbers of metric "sum of y and z at a third" at 2 sites: [[RUNS]] more runs of this program (run it without POSEIDON_PROBE=1 to skip)
+// MEASURE: [probe] measuring the condition numbers of metric "sum of y and z at a third" at 2 sites: [[RUNS]] more runs of this program (run it without poseidon-probe to skip)
 // MEASURE-NEXT: [probe] baseline run 2 -> noise floor
 // MEASURE-NOT: not measured
 // MEASURE: [probe] profile run: {{[0-9.]+}} s

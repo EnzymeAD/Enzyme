@@ -118,11 +118,6 @@ static std::vector<T> poseidonReadBack(const T *from, size_t n) {
   return to;
 }
 
-// Whether the host profiler measures the condition numbers after this
-// writer, by running the program again. Weak: a program without the host
-// profiler does not.
-extern "C" bool poseidonProbeWillMeasure() __attribute__((weak));
-
 namespace {
 // The tables read back at exit, a row per registry entry.
 struct ProfileTables {
@@ -360,14 +355,6 @@ extern "C" void __poseidon_profile_register_module(const void *table,
   poseidonBindModule(table);
 }
 
-// Runs after the profile writer: the condition-number measurement runs the
-// program again while this process exits, and those runs need the device
-// memory this one holds.
-static void poseidonReleaseForProbe() {
-  if (poseidonProbeWillMeasure && poseidonProbeWillMeasure())
-    (void)cudaDeviceReset();
-}
-
 // The CUDA half of registration, called from the top of main. It cannot run
 // from a static constructor: in a multi-translation-unit binary a dynamic
 // initializer can run before the device module carrying the __constant__
@@ -418,9 +405,7 @@ extern "C" void __poseidon_profile_init_cuda() {
   POSEIDON_CUDA_OK(cudaDeviceSynchronize());
   // atexit handlers run in reverse registration order, and the CUDA runtime
   // registers its own teardown when it is first initialized above, so the
-  // writer runs before the driver shuts down and the release after the
-  // writer.
-  std::atexit(poseidonReleaseForProbe);
+  // writer runs before the driver shuts down.
   std::atexit(writeAllCUDAProfiles);
 }
 
