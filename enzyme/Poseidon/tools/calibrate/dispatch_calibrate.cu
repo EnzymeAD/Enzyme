@@ -13,7 +13,10 @@
 //   poseidon-dispatch-calibrate ozaki N reps   ozaki_dispatch_rel,nm<8..14>
 //                                              and ozaki_dispatch_rel,dgemm
 //   poseidon-dispatch-calibrate ozaki N reps MxK|MxNxK...
-//                                              ozaki_dispatch_rect_rel rows
+//                                              ozaki_dispatch_rect_rel rows:
+//                                              MxK nm<k>_m<M>k<K>, MxNxK
+//                                              nm<k>_m<M>n<N>k<K> and
+//                                              dgemm_m<M>n<N>k<K>
 //   poseidon-dispatch-calibrate direct N reps  direct_dispatch_rel,<in>_<acc>
 //   poseidon-dispatch-calibrate tcec N reps    tcec_dispatch_rel,fp16tcec
 //
@@ -117,8 +120,11 @@ double *randomDevice(size_t n) {
   return d;
 }
 
-/// The column count the Ozaki-II rows of an M x K operand A are measured at;
-/// their cost is linear in it, so they are keyed by (M, K) alone.
+/// The column count the (M, K) Ozaki-II rows are measured at. They stand for
+/// a product whose column count is a run-time extent, on the assumption that
+/// its cost is linear in the column count; the conversion of A is paid once
+/// per call, so a call with few columns costs more per MAC than that, and a
+/// product of constant extents is measured at them instead (fullRows).
 const int kRectCols = 12288;
 
 /// The time per MAC of `call` on a product with an M x K operand A and
@@ -154,11 +160,23 @@ void rectRows(int M, int K, float tRef) {
   POSEIDON_GEMM_CK(cudaFree(A));
 }
 
-/// Prints the native DGEMM row of a call of exactly these extents, which a
-/// DGEMM with few columns runs far below the square rate at.
-void fullRow(int M, int Ncols, int K, float tRef) {
+/// Prints the Ozaki-II rows, one per modulus count, and the native DGEMM row of
+/// a call of exactly these extents: a call with few columns does not amortize
+/// the conversion of A, and a DGEMM with few columns runs far below the square
+/// rate.
+void fullRows(int M, int Ncols, int K, float tRef) {
   const double refPerMac = (double)tRef / ((double)N * N * N);
   double *A = randomDevice((size_t)M * K);
+  for (unsigned nm : kOzIIModuliCounts) {
+    double rel =
+        rectPerMac(A, M, K, Ncols, [&](const Gemm &g) { g.ozaki(nm); }) /
+        refPerMac;
+    fprintf(stderr,
+            "[dispatch_calibrate] rect nm=%2u M=%d Ncols=%d K=%d  rel = %.6f\n",
+            nm, M, Ncols, K, rel);
+    printf("ozaki_dispatch_rect_rel,nm%u_m%dn%dk%d,%.6f\n", nm, M, Ncols, K,
+           rel);
+  }
   double rel =
       rectPerMac(A, M, K, Ncols, [](const Gemm &g) { g.native(); }) / refPerMac;
   fprintf(stderr,
@@ -189,7 +207,7 @@ int ozaki(int argc, char **argv, float tRef) {
       int M = 0, Ncols = 0, K = 0, end = 0;
       if (sscanf(argv[i], "%dx%dx%d%n", &M, &Ncols, &K, &end) == 3 &&
           !argv[i][end] && M > 0 && Ncols > 0 && K > 0) {
-        fullRow(M, Ncols, K, tRef);
+        fullRows(M, Ncols, K, tRef);
         continue;
       }
       if (sscanf(argv[i], "%dx%d%n", &M, &K, &end) != 2 || argv[i][end] ||

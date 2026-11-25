@@ -589,14 +589,20 @@ struct LibrarySite {
   std::optional<GemmBodyNote> note;
   bool dispatchable = false;
   // The M x Ncols x K the call runs at, when all three are constants of this
-  // compile (a scalar-loop product's descriptor). Both library families price
-  // such a product from the rows of this shape: a rectangular one from the
-  // rows measured at it, a square one from the square rows. The shape of a
-  // product whose extents are run-time values is not known to the compile,
-  // and the two families stand in for it differently: Ozaki-II with
-  // `profileShape`, the extents at profile scale, and the native DGEMM with
-  // the square row.
+  // compile (a scalar-loop product's descriptor). The shape each library row
+  // is read at:
+  //   ozaki_dispatch_rect_rel,nm<k>_m<M>n<N>k<K>  runShape: the rows are
+  //       measured at the extents of the call, which are those it runs at.
+  //   ozaki_dispatch_rect_rel,nm<k>_m<M>k<K>      (M, K) of `profileShape`,
+  //       for a product whose extents are run-time values; measured at many
+  //       columns.
+  //   ozaki_dispatch_rect_rel,dgemm_m<M>n<N>k<K>  runShape.
+  //   ozaki_dispatch_rel,nm<k> and ,dgemm         a square, read as they are;
+  //       the estimate of a missing rectangular Ozaki-II row multiplies the
+  //       square row by the padding of `profileShape` (squarePaddingRatio).
+  // A square runShape reads the square rows.
   std::optional<std::array<unsigned, 3>> runShape;
+  // The extents at profile scale: the profiled global extents of the product.
   std::array<unsigned, 3> profileShape = {0, 0, 0};
 };
 } // namespace
@@ -645,14 +651,14 @@ static double squarePaddingRatio(const AbstractMatmul &m) {
   return (S * S * S) / (M * N * K);
 }
 
-// A rectangular product is priced from the rows measured at its (M, K),
-// since the runtime's per-MAC cost depends on M and K but not on the column
-// count, and a square one from the square rows; the shape is the one
-// LibrarySite gives Ozaki-II. A rectangular product whose row is missing is
-// priced as the square product it embeds in: the square row times the padding
-// ratio, an estimate meant to err dear, so that the missing row costs picks
-// rather than admitting one the measured row would refuse. A modulus count
-// with neither row is not proposed.
+// A rectangular product is priced from the rows measured at its shape: all
+// three extents for a call of constant extents, (M, K) for one whose column
+// count is a run-time extent; a square one from the square rows. The shape is
+// the one LibrarySite gives Ozaki-II. A rectangular product whose row is
+// missing is priced as the square product it embeds in: the square row times
+// the padding ratio, an estimate meant to err dear, so that the missing row
+// costs picks rather than admitting one the measured row would refuse. A
+// modulus count with neither row is not proposed.
 static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
                                    MatmulUnit &cm) {
   if (!L.dispatchable)
@@ -674,9 +680,15 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
   const std::array<unsigned, 3> &shape =
       L.runShape ? *L.runShape : L.profileShape;
   const bool square = shape[0] == shape[1] && shape[1] == shape[2];
+  // A call of constant extents is keyed by all three, as it is measured at
+  // them; one whose column count is a run-time extent by (M, K), whose rows
+  // are measured at many columns.
   const std::string shapeM = std::to_string(shape[0]),
+                    shapeN = std::to_string(shape[1]),
                     shapeK = std::to_string(shape[2]);
-  const std::string shapeKey = "m" + shapeM + "k" + shapeK;
+  const std::string shapeKey = L.runShape
+                                   ? "m" + shapeM + "n" + shapeN + "k" + shapeK
+                                   : "m" + shapeM + "k" + shapeK;
   const std::string family =
       square ? "ozaki_dispatch_rel" : "ozaki_dispatch_rect_rel";
   const double padding = squarePaddingRatio(m);
@@ -707,9 +719,9 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
   const std::string rows =
       family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey);
   const std::string measure =
-      square
-          ? std::string(kCalibrate)
-          : std::string(kCalibrate) + " --ozaki-rect " + shapeM + "x" + shapeK;
+      square ? std::string(kCalibrate)
+             : std::string(kCalibrate) + " --ozaki-rect " + shapeM + "x" +
+                   (L.runShape ? shapeN + "x" : std::string()) + shapeK;
   if (!estimated.empty())
     if (Error E = reportEstimatedRow(
             P.S, m, "ozaki-ii host dispatch at nm=" + estimated, rows, measure,

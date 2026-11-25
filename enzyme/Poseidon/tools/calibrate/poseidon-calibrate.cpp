@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Core/CostTable.h"
+#include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
@@ -88,11 +89,12 @@ static cl::opt<std::string>
                     "(default: the one this build was configured with)"));
 static cl::opt<std::string> OzakiRect(
     "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
-    cl::desc("(M, K) of the M x Ncols x K host GEMMs whose Ozaki-II rows the "
-             "ozaki-rect arm measures; MxNxK instead measures "
-             "the native DGEMM row of a call with exactly those extents. "
-             "The shapes are the ones the calls run at, which a compile's "
-             "missing-row warning names"));
+    cl::desc("Shapes of host GEMMs the ozaki-rect arm measures: MxNxK the "
+             "Ozaki-II and native DGEMM rows of a call with exactly those "
+             "extents (a product of constant extents); MxK the Ozaki-II rows "
+             "of an M x K operand at many columns (a product whose column "
+             "count is a run-time extent). The shapes are the ones the calls "
+             "run at, which a compile's missing-row warning names"));
 static cl::opt<unsigned>
     RefN("n", cl::init(2048), cl::value_desc("N"),
          cl::desc("Square reference shape the dispatch arms and "
@@ -565,8 +567,8 @@ static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
 }
 
 /// Measures the rows of the --ozaki-rect shapes: MxK the Ozaki-II rows of
-/// (M, K), MxNxK the native DGEMM row of a call of those extents. Rows of
-/// other shapes are kept.
+/// (M, K), MxNxK the Ozaki-II and native DGEMM rows of a call of those
+/// extents. Rows of other shapes are kept.
 static void armOzakiRect(StringRef Csv, const Device &D) {
   if (OzakiRect.empty()) {
     outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
@@ -594,10 +596,12 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
       fail("--ozaki-rect: '" + Shape + "' is not a shape MxK or MxNxK");
     std::string Arg = Extents[0] + "x" + Extents[1],
                 Key = "_m" + Extents[0] + "k" + Extents[1] + ",";
+    // A shape counts as measured when its first Ozaki-II row is in the model.
     if (Extents.size() == 3) {
       Arg += "x" + Extents[2];
       Key = "_m" + Extents[0] + "n" + Extents[1] + "k" + Extents[2] + ",";
     }
+    Key = "nm" + utostr(kOzIIModuliCounts[0]) + Key;
     if (!Force && StringRef(Content).contains(Key)) {
       outs() << "  = " << Shape << " already measured\n";
       continue;
@@ -867,8 +871,8 @@ int main(int argc, char **argv) {
       "                   and on NVIDIA wmma_mma_<tile>,<in>_<acc>\n"
       "  herbie-platform  no rows: the Herbie platform <csv>.herbie.rkt\n"
       "  ozaki            ozaki_dispatch_rel,nm<8..14> and ,dgemm\n"
-      "  ozaki-rect       ozaki_dispatch_rect_rel,nm<k>_m<M>k<K> and\n"
-      "                   ,dgemm_m<M>n<N>k<K>\n"
+      "  ozaki-rect       ozaki_dispatch_rect_rel,nm<k>_m<M>n<N>k<K> and\n"
+      "                   ,dgemm_m<M>n<N>k<K> (MxNxK), ,nm<k>_m<M>k<K> (MxK)\n"
       "  tcec             tcec_dispatch_rel,fp16tcec\n"
       "  direct           direct_dispatch_rel,<in>_<acc>\n"
       "  inkernel         wmma_inkernel_rel,<class>\n"

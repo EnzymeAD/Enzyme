@@ -1,6 +1,6 @@
 // poseidon-calibrate's ozaki-rect arm: one ozaki_dispatch_rect_rel row per
-// modulus count and (M, K) shape, and only the native DGEMM row of an MxNxK
-// shape, measured into an existing model. A shape the model already has is not
+// modulus count and (M, K) shape, and per modulus count plus the native DGEMM
+// row of an MxNxK shape, measured into an existing model. A shape the model already has is not
 // measured again, --force measures it again, and the rows of the shapes a run
 // does not name are kept, as is every other row.
 //
@@ -13,6 +13,7 @@
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x16x648,64x16x512 --n 512 --reps 3 | FileCheck --check-prefix=FULL %s
 // RUN: grep -c '^ozaki_dispatch_rect_rel,nm[0-9]*_m125k648,' %t/cm.csv | FileCheck --check-prefix=SEVEN %s
 // RUN: grep -c '^ozaki_dispatch_rect_rel,nm[0-9]*_m216k1029,' %t/cm.csv | FileCheck --check-prefix=SEVEN %s
+// RUN: grep -c '^ozaki_dispatch_rect_rel,nm[0-9]*_m125n16k648,' %t/cm.csv | FileCheck --check-prefix=SEVEN %s
 // RUN: grep -c '^ozaki_dispatch_rect_rel,dgemm_' %t/cm.csv | FileCheck --check-prefix=TWO %s
 // RUN: not grep '_m64k512,' %t/cm.csv
 // RUN: grep -v '^ozaki_dispatch_rect_rel,' %t/cm.csv > %t/rest.csv
@@ -32,6 +33,8 @@
 
 // FULL-NOT: already measured
 // FULL: [calibrate] measuring ozaki-rect host dispatch
+// FULL: ozaki_dispatch_rect_rel,nm8_m125n16k648,
+// FULL: ozaki_dispatch_rect_rel,nm14_m125n16k648,
 // FULL: ozaki_dispatch_rect_rel,dgemm_m125n16k648,
 // FULL: ozaki_dispatch_rect_rel,dgemm_m64n16k512,
 
