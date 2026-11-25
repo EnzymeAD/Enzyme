@@ -99,5 +99,5 @@ a second pass plugin on top of Enzyme: it profiles a program's floating-point
 instructions (Enzyme differentiates the probes), then rewrites the program to
 run as fast as a user accuracy target allows, on CPUs, NVIDIA GPUs (CUDA) and
 AMD GPUs (HIP).
-Configure with `-DENZYME_POSEIDON=ON`; `enzyme/Poseidon/README.md` has the
-build and the usage.
+Configure with `-DENZYME_POSEIDON=ON` (`enzyme/Poseidon/README.md`); the project
+website is <https://prontolab.github.io/numerics/>.
