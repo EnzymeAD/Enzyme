@@ -13,6 +13,7 @@
 #include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Markers.h"
+#include "Pass/Session.h"
 #include "Site.h"
 #include "SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
@@ -305,7 +306,8 @@ routeAutomaticMarkers(Module &M,
 // There the call through the identity is left for the inliner to fold. The
 // calls through the explicit identity and the marker calls are read first
 // (lowerExplicitCalls, routeAutomaticMarkers).
-bool lowerPerCallSites(const Options &O, Module &M) {
+bool lowerPerCallSites(Session &S, Module &M) {
+  const Options &O = S.Opts;
   // The targets of the explicit calls are left out of their callers' names
   // too, so they are read before those calls become marker calls; the
   // targets poseidon_tau gives in marker calls are added as those calls
@@ -392,6 +394,10 @@ bool lowerPerCallSites(const Options &O, Module &M) {
     B->addFnAttr(Attribute::NoInline);
     B->addFnAttr(kHostBody, *tau > 0.0 ? exactDouble(*tau) : "");
     resetClonedGUID(B);
+    noteSiteIdentity(S, *B,
+                     (functionIdentity(*fn) + kPerCallInfix +
+                      functionIdentity(*caller, callerKey) + "." + Twine(k))
+                         .str());
     appendToCompilerUsed(M, {B});
     call->setCalledOperand(B);
     H->eraseFromParent();

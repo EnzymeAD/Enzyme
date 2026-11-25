@@ -12,11 +12,11 @@
 #include "IR/Utils.h"
 #include "SiteIdentity.h"
 #include "Targets/MathLibrary.h"
-#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/CallGraph.h"
@@ -216,7 +216,13 @@ std::string canonicalFormHash(const Function &F) {
     }
     os << '\n';
   }
-  return profileNameHex16(profileNameHash(form.data(), form.size()));
+  // FNV-1a, 64 bits.
+  uint64_t h = 14695981039346656037ULL;
+  for (unsigned char c : form) {
+    h ^= c;
+    h *= 1099511628211ULL;
+  }
+  return utohexstr(h, /*LowerCase=*/true, /*Width=*/16);
 }
 
 namespace {

@@ -598,7 +598,7 @@ outlineInto(Function &F, Function &B,
 // structure they already handle: a function holding the annotated computation,
 // reached through one call whose arguments are the site's inputs. Returns that
 // call, or null if the kernel cannot be a site.
-CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
+CallInst *outlineKernelBody(Session &S, Function &K, Function *&bodyOut) {
   if (K.isVarArg() || !K.getReturnType()->isVoidTy()) {
     diagnoseSite(K, "an annotated kernel must be a void, non-variadic function",
                  DS_Error);
@@ -630,6 +630,7 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
       GlobalValue::InternalLinkage,
       withoutExternalizedPostfix(K.getName()) + kBodySuffix, &M);
   B->setAttributes(K.getAttributes());
+  noteSiteIdentity(S, *B, functionIdentity(K));
   // The body reads the kernel's own copy of a by-value aggregate. Left byval,
   // folding the body back would copy the aggregate a second time.
   for (Argument &A : B->args())
@@ -663,7 +664,8 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
 // inliner puts F into calls the body itself. Until the site is lowered the
 // body is kept from being inlined and from interprocedural rewriting, so that
 // it keeps the signature and the code F was written with.
-static void outlineHostFunction(Function &F, std::optional<double> tau) {
+static void outlineHostFunction(Session &S, Function &F,
+                                std::optional<double> tau) {
   Module &M = *F.getParent();
   Function *B =
       Function::Create(F.getFunctionType(), GlobalValue::InternalLinkage,
@@ -676,6 +678,7 @@ static void outlineHostFunction(Function &F, std::optional<double> tau) {
   B->removeFnAttr(Attribute::InlineHint);
   B->addFnAttr(Attribute::NoInline);
   B->addFnAttr(kHostBody, tau ? exactDouble(*tau) : "");
+  noteSiteIdentity(S, *B, functionIdentity(F));
   CallInst *call = outlineInto(
       F, *B, [](Argument &From, Argument &To) { From.replaceAllUsesWith(&To); },
       [](IRBuilder<> &, Argument &A) -> Value * { return &A; });
@@ -689,7 +692,8 @@ static void outlineHostFunction(Function &F, std::optional<double> tau) {
 
 // As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
 // site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
-bool outlineHostSites(const Options &O, Module &M) {
+bool outlineHostSites(Session &S, Module &M) {
+  const Options &O = S.Opts;
   if (Target::of(M).isDevice() || isOffloadHostHalf(M))
     return false;
   auto annotated = annotatedFunctions(M);
@@ -737,7 +741,7 @@ bool outlineHostSites(const Options &O, Module &M) {
       continue;
     }
     noteSiteTarget(O, *F, tau);
-    outlineHostFunction(*F, tau);
+    outlineHostFunction(S, *F, tau);
     changed = true;
   }
   return changed;

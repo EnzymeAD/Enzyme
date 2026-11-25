@@ -71,7 +71,8 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   // from.
   SmallVector<std::pair<size_t, unsigned>, 4> trips;
   collectScalarLoopReductionTrips(S.Opts, *clone, trips);
-  if (!instrumentForProfiling(*clone, siteId)) {
+  const std::string profileName = bodyProfileStem(S, F);
+  if (!instrumentForProfiling(*clone, siteId, profileName)) {
     clone->eraseFromParent();
     return nullptr;
   }
@@ -84,7 +85,7 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
     os << kProfileKeyCanonicalHash << " = " << canonicalFormHash(*clone)
        << '\n';
   }
-  emitProfileStaticData(*clone, staticData);
+  emitProfileStaticData(*clone, profileName, staticData);
   if (staticOut)
     *staticOut = staticData;
   return clone;
@@ -316,7 +317,7 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   const DataLayout &DL = M.getDataLayout();
 
   Function *body = nullptr;
-  CallInst *call = outlineKernelBody(K, body);
+  CallInst *call = outlineKernelBody(S, K, body);
   if (!call)
     return false;
   const unsigned nOrigArgs = K.arg_size();
@@ -334,7 +335,7 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
     return true;
   }
   unsigned siteId = nextSiteId++;
-  const std::string profileName = clone->getName().str();
+  const std::string profileName = bodyProfileStem(S, *body);
 
   SmallVector<unsigned, 8> seedWidth;
   collectOutputParams(*clone, seedWidth);

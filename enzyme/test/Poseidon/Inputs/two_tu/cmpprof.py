@@ -8,8 +8,12 @@ mismatch or a missing/extra file, and with --sum-tol T on a sum whose relative
 difference exceeds T. --ignore KEY drops header lines "KEY = ..." from the
 comparison (SiteId numbers sites per translation unit, so it differs between
 a program built as one unit and the same program built as several).
+--by-function matches files by the function they are named after: the name
+of a static function's profile ends in a hash of its source file, which
+differs between those two builds.
 """
 import os
+import re
 import sys
 
 SUMS = ("SumSens", "SumGrad", "SumAbsGrad")
@@ -30,17 +34,26 @@ def parse(path, ignore=()):
     return header, slots
 
 
-def main(a, b, ignore=(), tol=None):
-    fa = sorted(f for f in os.listdir(a) if f.endswith(".fpprofile"))
-    fb = sorted(f for f in os.listdir(b) if f.endswith(".fpprofile"))
+def profiles(d, by_function):
+    out = {}
+    for f in os.listdir(d):
+        if f.endswith(".fpprofile"):
+            key = re.sub(r"~[0-9a-f]{16}(?=\.fpprofile$)", "", f) if by_function else f
+            out[key] = os.path.join(d, f)
+    return out
+
+
+def main(a, b, ignore=(), tol=None, by_function=False):
+    pa, pb = profiles(a, by_function), profiles(b, by_function)
+    fa, fb = sorted(pa), sorted(pb)
     bad = 0
     if fa != fb:
         print("file sets differ:", sorted(set(fa) ^ set(fb)))
         bad = 1
     worst = 0.0
     for f in sorted(set(fa) & set(fb)):
-        ha, sa = parse(os.path.join(a, f), ignore)
-        hb, sb = parse(os.path.join(b, f), ignore)
+        ha, sa = parse(pa[f], ignore)
+        hb, sb = parse(pb[f], ignore)
         diffs = []
         if ha != hb:
             diffs.append("header")
@@ -70,11 +83,15 @@ def main(a, b, ignore=(), tol=None):
 
 
 if __name__ == "__main__":
-    args, ignore, tol = sys.argv[1:], [], None
-    while args and args[0] in ("--ignore", "--sum-tol"):
+    args, ignore, tol, by_function = sys.argv[1:], [], None, False
+    while args and args[0] in ("--ignore", "--sum-tol", "--by-function"):
+        if args[0] == "--by-function":
+            by_function = True
+            args = args[1:]
+            continue
         if args[0] == "--ignore":
             ignore.append(args[1])
         else:
             tol = float(args[1])
         args = args[2:]
-    sys.exit(main(args[0], args[1], tuple(ignore), tol))
+    sys.exit(main(args[0], args[1], tuple(ignore), tol, by_function))

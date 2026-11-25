@@ -6,17 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The FP profiler runtime (FPProfiler.cpp, FPProfilerCUDA.cu) writes and the
-// Poseidon pass reads a file named after the profiled function; both derive
-// that name by this rule, a pure function of the name:
-//
-//   stem(n) = n                                      if |n| <= 200
-//           = n[0:160] + "~" + hex16(fnv1a64(n))     otherwise
-//
-// The 177-character stem leaves room for the longest name built from it,
-// "launches_" + stem + "_" + 16 hex digits + ".json", under NAME_MAX = 255.
-// The hash is over the full name so instantiations sharing a 160-character
-// prefix stay apart.
+// The FP profiler runtime (FPProfiler.cpp, FPProfilerCUDA.cu) writes the
+// profile of a site to <name>.fpprofile, where <name> is the string the
+// compile gave the site's probes (SiteIdentity.h, bodyProfileStem).
 //
 // Also the format both sides spell, and the file handling both runtime halves
 // share. Free of LLVM: included by the pass and the runtimes.
@@ -52,46 +44,11 @@
 
 namespace poseidon {
 
-// Names at or below this length are used verbatim.
-static const size_t kProfileNameStemThreshold = 200;
-// Readable prefix retained when a name is stemmed.
-static const size_t kProfileNameStemPrefix = 160;
-
-inline uint64_t profileNameHash(const char *s, size_t n) {
-  uint64_t h = 14695981039346656037ULL; // FNV-1a 64 offset basis
-  for (size_t i = 0; i < n; ++i) {
-    h ^= (uint64_t)(unsigned char)s[i];
-    h *= 1099511628211ULL; // FNV-1a 64 prime
-  }
-  return h;
-}
-
-inline std::string profileNameHex16(uint64_t v) {
-  static const char *digits = "0123456789abcdef";
-  std::string out(16, '0');
-  for (int i = 15; i >= 0; --i) {
-    out[(size_t)i] = digits[v & 0xFULL];
-    v >>= 4;
-  }
-  return out;
-}
-
-inline std::string profileNameStem(const char *name, size_t n) {
-  if (n <= kProfileNameStemThreshold)
-    return std::string(name, n);
-  return std::string(name, kProfileNameStemPrefix) + "~" +
-         profileNameHex16(profileNameHash(name, n));
-}
-
-inline std::string profileNameStem(const std::string &name) {
-  return profileNameStem(name.data(), name.size());
-}
-
 inline constexpr char kProfileFileSuffix[] = ".fpprofile";
 
-// The file the profile of the function `name` is written to.
+// The file the profile of the site the compile named `name` is written to.
 inline std::string profileFileName(const std::string &name) {
-  return profileNameStem(name) + kProfileFileSuffix;
+  return name + kProfileFileSuffix;
 }
 
 // Header keys.

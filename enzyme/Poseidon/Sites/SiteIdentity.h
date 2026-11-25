@@ -24,6 +24,7 @@
 
 namespace llvm {
 class Function;
+class Module;
 class Value;
 } // namespace llvm
 
@@ -39,6 +40,32 @@ constexpr llvm::StringLiteral kBodySuffix = "_poseidon_body";
 constexpr llvm::StringLiteral kPerCallInfix = ".poseidon.";
 // A site's canonical clone is named <body> after this prefix.
 constexpr llvm::StringLiteral kCanonicalPrefix = "preprocess_";
+
+// The name LLVM's PGO knows `F` by (GlobalValue::getGlobalIdentifier):
+// its symbol, after the source file name and ';' when it has local linkage.
+// A kernel -fgpu-rdc externalized is named as without it.
+std::string functionIdentity(const llvm::Function &F);
+// The same for the name `name` of `F`'s linkage.
+std::string functionIdentity(const llvm::Function &F, llvm::StringRef name);
+// Records `identity` as that of the site whose body is `body`.
+void noteSiteIdentity(Session &S, llvm::Function &body, std::string identity);
+// The identity of the site whose body is `body`: what noteSiteIdentity
+// recorded, or else the body's own, a marker's target being a function as
+// written.
+std::string siteIdentity(const Session &S, const llvm::Function &body);
+// Records the identity of each marker's target as written, before the
+// optimizer can change its linkage.
+void recordMarkerIdentities(Session &S, llvm::Module &M);
+
+// The stem of a file named after `name`: `name` itself, unless it is longer
+// than a file name can hold or `identity`, the function the file stands for,
+// has local linkage; then its first 160 characters, '~' and the GUID (the
+// 64-bit MD5 hash PGO keys a function by) of `name` as PGO would name a
+// function of that name and linkage in that function's source file.
+std::string fileStem(llvm::StringRef name, llvm::StringRef identity);
+inline std::string profileNameStem(llvm::StringRef name) {
+  return fileStem(name, name);
+}
 
 // A site's name for a diagnostic: the demangled function, and for a per-call
 // copy the call and caller it was made for.
@@ -57,8 +84,8 @@ void noteSiteClone(Session &S, llvm::Function *clone, llvm::Function *origin,
 const llvm::Function *siteOriginOf(const Session &S,
                                    const llvm::Function &clone);
 // The profile stem and file name of the site cut from `body`.
-std::string bodyProfileStem(const llvm::Function &body);
-std::string bodyProfileFile(const llvm::Function &body);
+std::string bodyProfileStem(const Session &S, const llvm::Function &body);
+std::string bodyProfileFile(const Session &S, const llvm::Function &body);
 // The ".fpprofile" file name of a site clone. The profiling run writes one
 // record per marked body, so every clone of one body reads the same file.
 std::string siteProfileFile(const Session &S, const llvm::Function &clone);

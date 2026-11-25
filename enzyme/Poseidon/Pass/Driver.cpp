@@ -331,7 +331,7 @@ static bool optimizeHostBody(Session &S, const Site &site) {
 // profile recorded against another canonical form is an error at the site.
 static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
-  llvm::sys::path::append(profilePath, bodyProfileFile(body));
+  llvm::sys::path::append(profilePath, bodyProfileFile(S, body));
   if (!llvm::sys::fs::exists(profilePath.str()))
     return 0.0;
 
@@ -387,7 +387,7 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
   if (!filter) {
     for (const Site *site : kernels) {
       Function *body = nullptr;
-      if (CallInst *call = outlineKernelBody(*site->fn, body)) {
+      if (CallInst *call = outlineKernelBody(Sess, *site->fn, body)) {
         markOutlineTransparent(body);
         optimize(call, body, *site);
         changed = true;
@@ -409,7 +409,7 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
   double regexTotal = 0.0;
   for (const Site *site : kernels) {
     Function *body = nullptr;
-    CallInst *call = outlineKernelBody(*site->fn, body);
+    CallInst *call = outlineKernelBody(Sess, *site->fn, body);
     if (!call)
       continue;
     markOutlineTransparent(body);

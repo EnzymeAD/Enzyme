@@ -9,17 +9,22 @@
 #include "SiteIdentity.h"
 
 #include "Annotations.h"
+#include "Markers.h"
 #include "Pass/Session.h"
+#include "Targets/OffloadRuntime.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
 
-// The profile file name rule, shared with both FP profiler runtimes.
 #include "runtime/fpprofiler/FPProfileName.h"
 
 using namespace llvm;
@@ -38,12 +43,60 @@ const Function *siteOriginOf(const Session &S, const Function &clone) {
   return it == S.SiteCloneOf.end() ? nullptr : it->second.Origin;
 }
 
-std::string bodyProfileStem(const Function &body) {
-  return profileNameStem((kCanonicalPrefix + body.getName()).str());
+std::string functionIdentity(const Function &F, StringRef name) {
+  StringRef symbol = withoutExternalizedPostfix(name);
+  const bool local = F.hasLocalLinkage() || symbol.size() != name.size();
+  return GlobalValue::getGlobalIdentifier(symbol,
+                                          local ? GlobalValue::InternalLinkage
+                                                : GlobalValue::ExternalLinkage,
+                                          F.getParent()->getSourceFileName());
 }
 
-std::string bodyProfileFile(const Function &body) {
-  return bodyProfileStem(body) + kProfileFileSuffix;
+std::string functionIdentity(const Function &F) {
+  return functionIdentity(F, F.getName());
+}
+
+void noteSiteIdentity(Session &S, Function &body, std::string identity) {
+  S.SiteIdentities[&body] = std::move(identity);
+}
+
+std::string siteIdentity(const Session &S, const Function &body) {
+  auto it = S.SiteIdentities.find(const_cast<Function *>(&body));
+  return it != S.SiteIdentities.end() ? it->second : functionIdentity(body);
+}
+
+void recordMarkerIdentities(Session &S, Module &M) {
+  SmallVector<CallInst *, 4> markers;
+  collectMarkerCalls(M, markers);
+  for (CallInst *CI : markers)
+    if (Function *target = markerTargetOrNull(CI))
+      S.SiteIdentities.insert({target, functionIdentity(*target)});
+}
+
+std::string fileStem(StringRef name, StringRef identity) {
+  // The longest file named after a stem, "launches_" + stem + "_" + 16 hex
+  // digits + ".json", stays under NAME_MAX = 255.
+  constexpr size_t kVerbatim = 200, kKept = 160;
+  auto [file, symbol] = identity.split(GlobalIdentifierDelimiter);
+  const bool local = !symbol.empty();
+  if (name.size() <= kVerbatim && !local)
+    return name.str();
+  const std::string named = local
+                                ? GlobalValue::getGlobalIdentifier(
+                                      name, GlobalValue::InternalLinkage, file)
+                                : name.str();
+  return (name.take_front(kKept) + "~" +
+          utohexstr(MD5Hash(named), /*LowerCase=*/true, /*Width=*/16))
+      .str();
+}
+
+std::string bodyProfileStem(const Session &S, const Function &body) {
+  return fileStem((kCanonicalPrefix + body.getName()).str(),
+                  siteIdentity(S, body));
+}
+
+std::string bodyProfileFile(const Session &S, const Function &body) {
+  return bodyProfileStem(S, body) + kProfileFileSuffix;
 }
 
 std::string perCallSiteName(StringRef symbol) {
@@ -78,7 +131,7 @@ std::optional<DemangledFunction> demangleFunction(StringRef mangled) {
 // per call and LLVM uniques the second and later clone names.
 static std::string siteProfileStem(const Session &S, const Function &clone) {
   if (const Function *origin = siteOriginOf(S, clone))
-    return bodyProfileStem(*origin);
+    return bodyProfileStem(S, *origin);
   return profileNameStem(clone.getName().str());
 }
 

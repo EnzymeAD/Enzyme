@@ -69,10 +69,12 @@ Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
   return ptr;
 }
 
-// The profile record is keyed by this string, which both FP profiler runtimes
-// use as the registry key and as the .fpprofile stem.
-static Constant *getProfileNamePointer(Module &M, StringRef cloneName) {
-  return getStringPointer(M, ("poseidon_site_" + cloneName).str(), cloneName);
+// The profile record of the function `key` is keyed by this string, which
+// both FP profiler runtimes use as the registry key and as the .fpprofile
+// stem.
+static Constant *getProfileNamePointer(Module &M, StringRef key,
+                                       StringRef profileName) {
+  return getStringPointer(M, ("poseidon_site_" + key).str(), profileName);
 }
 
 FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
@@ -189,7 +191,8 @@ struct ProbeBuilder {
 
 } // namespace
 
-size_t instrumentForProfiling(Function &clone, unsigned siteId) {
+size_t instrumentForProfiling(Function &clone, unsigned siteId,
+                              StringRef profileName) {
   Module &M = *clone.getParent();
   LLVMContext &Ctx = M.getContext();
   const ProbeABI &P = Target::of(M).probes();
@@ -218,7 +221,7 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
                   P,
                   siteId,
                   clone.getName(),
-                  getProfileNamePointer(M, clone.getName())};
+                  getProfileNamePointer(M, clone.getName(), profileName)};
 
   FunctionCallee logValue = getProfilerHook(M, P.LogValue, logValueType(Ctx));
 
@@ -268,19 +271,20 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
   return targets.size();
 }
 
-void emitProfileStaticData(Function &clone, StringRef text) {
+void emitProfileStaticData(Function &clone, StringRef profileName,
+                           StringRef text) {
   if (text.empty())
     return;
   Module &M = *clone.getParent();
   const ProbeABI &P = Target::of(M).probes();
   if (P.PublishStatic.empty()) {
-    registerProfileStatic(M, clone.getName(), text);
+    registerProfileStatic(M, profileName, text);
     return;
   }
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = getInt8PtrTy(Ctx);
 
-  Constant *namePtr = getProfileNamePointer(M, clone.getName());
+  Constant *namePtr = getProfileNamePointer(M, clone.getName(), profileName);
   Constant *textPtr =
       getStringPointer(M, ("fpprofile_static_" + clone.getName()).str(), text);
   FunctionType *FT =
@@ -302,7 +306,7 @@ bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
   Type *VoidTy = Type::getVoidTy(Ctx);
   Type *PtrTy = getInt8PtrTy(Ctx);
 
-  Constant *namePtr = getProfileNamePointer(M, name);
+  Constant *namePtr = getProfileNamePointer(M, name, name);
   Constant *textPtr =
       getStringPointer(M, ("fpprofile_static_" + name).str(), text);
   FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);

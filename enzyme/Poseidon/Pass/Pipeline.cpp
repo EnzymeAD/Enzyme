@@ -18,6 +18,7 @@
 #include "Sites/LaunchStubs.h"
 #include "Sites/Markers.h"
 #include "Sites/Site.h"
+#include "Sites/SiteIdentity.h"
 #include "Solve/Optimize.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
@@ -143,9 +144,11 @@ struct OptimizePass : PassParent<OptimizePass> {
     const Options &O = S.Opts;
     requirePluginOrder(O, M);
 
-    bool changed = lowerPerCallSites(O, M);
+    bool changed = lowerPerCallSites(S, M);
+    if (O.Profiling.profileAction())
+      recordMarkerIdentities(S, M);
     changed |= lowerDeviceCallSites(O, M);
-    changed |= outlineHostSites(O, M);
+    changed |= outlineHostSites(S, M);
     changed |= foldDeviceSiteCallees(O, M);
     changed |= prepareModule(S, M);
     SmallVector<CallBase *, 4> calls;
@@ -379,9 +382,11 @@ struct HostSitePass : PassParent<HostSitePass> {
         requireDeviceMathMacro(M);
       changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
     }
-    changed |= lowerPerCallSites(O, M);
+    changed |= lowerPerCallSites(S, M);
+    if (O.Profiling.profileAction())
+      recordMarkerIdentities(S, M);
     changed |= propagateDeviceSites(O, M);
-    changed |= outlineHostSites(O, M);
+    changed |= outlineHostSites(S, M);
     changed |= registerDeviceProfileTable(O, M);
     if (!O.Profiling.profileAction())
       changed |= leaveSitesAsWritten(S, M);

@@ -29,8 +29,9 @@ class Value;
 namespace poseidon {
 
 struct Options;
+class Session;
 
-bool lowerPerCallSites(const Options &O, llvm::Module &M);
+bool lowerPerCallSites(Session &S, llvm::Module &M);
 bool lowerDeviceCallSites(const Options &O, llvm::Module &M);
 
 // The object of `caller` that `p` points into, through the address arithmetic

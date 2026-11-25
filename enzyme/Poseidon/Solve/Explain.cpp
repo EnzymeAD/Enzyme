@@ -1736,7 +1736,7 @@ void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
   if (!profile.empty())
     result["profile"] = profile;
   writeExplanation(
-      S, body ? bodyProfileStem(F) : profileNameStem(F.getName().str()),
+      S, body ? bodyProfileStem(S, F) : profileNameStem(F.getName().str()),
       json::Object{{"schema", kSchema},
                    {"function", functionJSON(S, F)},
                    {"target", targetJSON(S.Opts, tau, siteTarget)},

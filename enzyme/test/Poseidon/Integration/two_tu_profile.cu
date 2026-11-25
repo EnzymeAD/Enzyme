@@ -10,8 +10,8 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.two %t/two | FileCheck --check-prefix=OUT %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.lib %t/lib | FileCheck --check-prefix=OUT %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.one %t/one | FileCheck --check-prefix=OUT %s
-// RUN: %python %S/../Inputs/two_tu/cmpprof.py --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.two | FileCheck --check-prefix=SAME %s
-// RUN: %python %S/../Inputs/two_tu/cmpprof.py --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.lib | FileCheck --check-prefix=SAME %s
+// RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.two | FileCheck --check-prefix=SAME %s
+// RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.lib | FileCheck --check-prefix=SAME %s
 // RUN: cat %t/p.two/preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile | FileCheck --check-prefix=MERGED %s
 //
 // The same, with relocatable device code, against the one-unit program built
@@ -23,10 +23,11 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -fcuda-rdc -poseidon-profile-generate -poseidon-cache=%t/r1 -I%S/../Inputs/two_tu %S/../Inputs/two_tu/one.cu -o %t/rone
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.rtwo %t/rtwo | FileCheck --check-prefix=OUT %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.rone %t/rone | FileCheck --check-prefix=OUT %s
-// RUN: %python %S/../Inputs/two_tu/cmpprof.py --ignore SiteId --sum-tol 1e-12 %t/p.rone %t/p.rtwo | FileCheck --check-prefix=SAME %s
+// RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.rone %t/p.rtwo | FileCheck --check-prefix=SAME %s
 //
-// Two different functions under one name, one in each unit, are refused when
-// the profile is written.
+// Two different static functions under one name in two units of one source
+// file are one function to PGO's naming, and are refused when the profile is
+// written.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -DVARIANT=1 -c %S/../Inputs/two_tu/clash.cu -o %t/k1.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -DVARIANT=2 -c %S/../Inputs/two_tu/clash.cu -o %t/k2.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -c %S/../Inputs/two_tu/clash_main.cu -o %t/kmain.o
@@ -34,7 +35,17 @@
 // RUN: not env POSEIDON_PROFILE_DIR=%t/p.clash %t/clash > %t/clash.out 2> %t/clash.err
 // RUN: FileCheck --check-prefix=STATUS %s < %t/clash.out
 // RUN: FileCheck --check-prefix=CLASH %s < %t/clash.err
-// RUN: not ls %t/p.clash/preprocess__ZL4stepPdi_poseidon_body.fpprofile
+// RUN: ls %t/p.clash | FileCheck --allow-empty --check-prefix=NOSTEP %s
+//
+// In two source files they are two sites: each gets a profile of its own,
+// which profile use of its unit finds.
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/s -c %S/../Inputs/two_tu/step_a.cu -o %t/s1.o
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/s -c %S/../Inputs/two_tu/step_b.cu -o %t/s2.o
+// RUN: %poseidon_clangxx -poseidon-profile-generate %t/s1.o %t/s2.o %t/kmain.o -L%cuda_lib_dir -lcudart -o %t/steps
+// RUN: env POSEIDON_PROFILE_DIR=%t/p.steps %t/steps | FileCheck --check-prefix=STATUS %s
+// RUN: ls %t/p.steps | FileCheck --check-prefix=STEPS %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_a.cu -o %t/u1.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_b.cu -o %t/u2.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
 
 // A program of two CUDA translation units and a main, compiled one unit at a
 // time without relocatable device code, and linked as objects or with the
@@ -55,4 +66,10 @@
 // MERGED: Exec = 8192
 
 // STATUS: status no error
-// CLASH: Poseidon FPProfiler: two different functions were profiled under the name 'preprocess__ZL4stepPdi_poseidon_body' in two device modules (CanonicalHash = {{[0-9a-f]+}}, CanonicalHash = {{[0-9a-f]+}}), and one profile file cannot hold both.
+// CLASH: Poseidon FPProfiler: two different functions were profiled under the name 'preprocess__ZL4stepPdi_poseidon_body~{{[0-9a-f]+}}' in two device modules (CanonicalHash = {{[0-9a-f]+}}, CanonicalHash = {{[0-9a-f]+}}), and one profile file cannot hold both.
+// NOSTEP-NOT: step
+
+// STEPS-COUNT-2: preprocess__ZL4stepPdi_poseidon_body~{{[0-9a-f]+}}.fpprofile
+// STEPS-NOT: step
+
+// STEPUSE: [poseidon] Optimizing preprocess__ZL4stepPdi_poseidon_body with relative error tolerance

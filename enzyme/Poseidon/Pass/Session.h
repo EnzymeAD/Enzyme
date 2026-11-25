@@ -30,6 +30,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
 #include "llvm/Passes/PassBuilder.h"
 
 #include <map>
@@ -77,6 +78,10 @@ public:
     llvm::SmallVector<llvm::WeakTrackingVH, 12> Args;
   };
   std::map<const llvm::Function *, SiteClone> SiteCloneOf;
+  // The identity (SiteIdentity.h) of each body the pass made for a site and
+  // of each marker's target, taken before the optimizer could change its
+  // linkage.
+  llvm::ValueMap<llvm::Function *, std::string> SiteIdentities;
 
   // Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;

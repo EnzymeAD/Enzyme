@@ -52,15 +52,17 @@ llvm::Constant *getStringPointer(llvm::Module &M, llvm::StringRef gvName,
 // result routed through an identity probe whose Enzyme custom derivative logs
 // the accumulated adjoint. That probe's augmented forward also carries the
 // condition-number perturbation, armed at run time by `siteId`, so an armed run
-// computes the whole site at the probed relative precision. Returns the number
-// of instrumented instructions.
-size_t instrumentForProfiling(llvm::Function &clone, unsigned siteId);
+// computes the whole site at the probed relative precision. The profile is
+// written as `profileName`. Returns the number of instrumented instructions.
+size_t instrumentForProfiling(llvm::Function &clone, unsigned siteId,
+                              llvm::StringRef profileName);
 
 // Embed the site's compile-time static data (header lines the profile-use
 // compile cannot recompute) in the instrumented module and register it with the
 // profiler runtime, which copies it verbatim into the site's .fpprofile header.
 // `text` is a sequence of newline-terminated "Key = value" lines.
-void emitProfileStaticData(llvm::Function &clone, llvm::StringRef text);
+void emitProfileStaticData(llvm::Function &clone, llvm::StringRef profileName,
+                           llvm::StringRef text);
 
 // Register `text` before main with the host profiler runtime as the header of
 // the site whose profile is written under `name`. False if host module M

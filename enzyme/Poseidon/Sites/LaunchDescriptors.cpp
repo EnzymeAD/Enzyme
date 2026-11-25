@@ -11,8 +11,8 @@
 #include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Pass/Session.h"
+#include "SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
-#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
