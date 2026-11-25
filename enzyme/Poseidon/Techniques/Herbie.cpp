@@ -1828,7 +1828,7 @@ Error RewriteUnit::materialize(size_t candidateIndex) {
     cast<FPLLValue>(valueToNodeMap[I])->value = nullptr;
   }
 
-  subgraph->outputs_rewritten += roots.size();
+  subgraph->outputsRewritten += roots.size();
   return Error::success();
 }
 
@@ -1946,6 +1946,13 @@ void RewriteUnit::printPriced(raw_ostream &OS) {
   OS << "Initial ComputationCost: " << initialCompCost << '\n';
   OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << '\n';
   OS << "Initial Expression: " << expr << '\n';
+  // One output's gradient; for an array, the sum of its outputs' magnitudes.
+  double grad = rootGrads.front();
+  if (rootGrads.size() > 1) {
+    grad = 0.0;
+    for (double g : rootGrads)
+      grad += std::fabs(g);
+  }
   OS << "Grad: " << grad << "\n\n";
   OS << "Candidates:\n";
   OS << "accuracy delta\t\tcost delta\t\tHerbie cost\t\taccuracy\t\t"

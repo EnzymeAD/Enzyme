@@ -538,7 +538,7 @@ static Expected<bool> materializeFPSolution(Session &S, Function &F,
   if (changed) {
     for (auto &subgraph : subgraphs) {
       // Intermediate operations cannot be erased safely.
-      if (subgraph.outputs_rewritten != subgraph.outputs.size())
+      if (subgraph.outputsRewritten != subgraph.outputs.size())
         continue;
       for (auto *I : subgraph.operations) {
         if (!I->use_empty()) {

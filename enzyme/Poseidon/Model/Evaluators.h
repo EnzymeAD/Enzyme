@@ -38,9 +38,10 @@ class FPEvaluator {
 private:
   llvm::DenseMap<const FPNode *, double> cache;
   std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
-  /// The change of the candidate a node belongs to, and the components of the
-  /// nodes evaluated as an FP32 expansion.
+  /// The position, among the candidate's changes, of the change a node
+  /// belongs to.
   std::unordered_map<const FPNode *, size_t> nodeChange;
+  /// The components of each node evaluated as an FP32 expansion.
   std::unordered_map<const FPNode *, ExpansionLimbs> limbs;
   /// The relative error bound of the square roots a change makes approximate.
   std::unordered_map<const FPNode *, double> approxSqrtError;

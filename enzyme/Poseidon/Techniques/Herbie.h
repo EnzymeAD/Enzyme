@@ -94,9 +94,6 @@ class RewriteUnit : public SubgraphUnit<RewriteCandidate> {
 public:
   /// The core's FPCore body, over the subgraph's input symbols.
   std::string expr;
-  /// The gradient of a single output; for an array, the sum of its outputs'
-  /// gradient magnitudes.
-  double grad = std::numeric_limits<double>::quiet_NaN();
   /// Herbie's accuracy estimate of the core as written, as for a candidate.
   double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   /// The outputs and the operations only they use, in an order that erases
@@ -117,8 +114,7 @@ public:
   /// The bits Herbie measures the core's error in.
   double herbieBits = std::numeric_limits<double>::quiet_NaN();
 
-  /// The unit of `outputs` with their gradients `grads`; its gradient is that
-  /// of a single output, and the sum of magnitudes of an array's.
+  /// The unit of `outputs` with their gradients `grads`.
   explicit RewriteUnit(Subgraph &subgraph,
                        llvm::ArrayRef<llvm::Value *> outputs,
                        llvm::ArrayRef<double> grads, std::string expr,
@@ -127,12 +123,6 @@ public:
         roots(outputs.begin(), outputs.end()),
         rootGrads(grads.begin(), grads.end()) {
     this->executions = executions;
-    grad = grads.front();
-    if (grads.size() > 1) {
-      grad = 0.0;
-      for (double g : grads)
-        grad += std::fabs(g);
-    }
     findErasableInstructions();
   }
 

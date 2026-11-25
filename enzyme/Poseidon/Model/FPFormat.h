@@ -89,8 +89,6 @@ llvm::Type *getLLVMFPType(PrecisionChangeType type, llvm::LLVMContext &context);
 /// The precision change type of `type`, which must be a floating-point type of
 /// a format of the pass.
 PrecisionChangeType getPrecisionChangeType(llvm::Type *type);
-/// The report name of `type` ("FP32", "Expansion2").
-llvm::StringRef getPrecisionChangeTypeString(PrecisionChangeType type);
 
 /// The matrix-model kind of `T`; Invalid for a type of no such kind.
 FPKind fpKindFromType(llvm::Type *T);

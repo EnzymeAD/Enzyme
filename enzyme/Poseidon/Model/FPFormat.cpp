@@ -98,8 +98,4 @@ PrecisionChangeType getPrecisionChangeType(Type *type) {
   llvm_unreachable("Unsupported FP precision");
 }
 
-StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
-  return formatOf(type).Name;
-}
-
 } // namespace poseidon

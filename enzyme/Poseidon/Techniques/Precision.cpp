@@ -72,10 +72,9 @@ static Value *changedLibmCall(IRBuilder<> &B, CallInst *CI,
   StringRef funcName = CI->getCalledFunction()->getName();
   std::string newFuncName = getLibmFunctionForPrecision(funcName, newType);
   if (newFuncName.empty())
-    report_fatal_error(
-        "Poseidon: no " +
-        getPrecisionChangeTypeString(getPrecisionChangeType(newType)) +
-        " variant of the library call " + getValueStr(CI));
+    report_fatal_error("Poseidon: no " +
+                       formatOf(getPrecisionChangeType(newType)).Name +
+                       " variant of the library call " + getValueStr(CI));
 
   Type *funcType = newType;
   const bool needsPromotion = newType->isHalfTy() || newType->isBFloatTy();
@@ -1013,8 +1012,7 @@ fmtTiers(ArrayRef<std::pair<PrecisionChangeType, int>> tierPcts) {
   for (const auto &[t, pct] : tierPcts) {
     if (!s.empty())
       s += " + ";
-    s += getPrecisionChangeTypeString(t).str() + "(" + std::to_string(pct) +
-         "%)";
+    s += formatOf(t).Name.str() + "(" + std::to_string(pct) + "%)";
   }
   return s;
 }

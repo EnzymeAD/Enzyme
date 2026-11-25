@@ -212,7 +212,7 @@ struct Subgraph {
   llvm::SetVector<llvm::Instruction *> operations;
   /// How many outputs the materialized rewrites replaced; the operations are
   /// erased when it reaches the output count.
-  size_t outputs_rewritten = 0;
+  size_t outputsRewritten = 0;
   /// The points its units are priced at, while they are priced.
   std::shared_ptr<SubgraphSamples> samples;
   /// Frequency scale for synthetic output-boundary casts: they execute at the

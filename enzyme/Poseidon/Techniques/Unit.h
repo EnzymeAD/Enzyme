@@ -87,7 +87,9 @@ public:
   static bool classof(const OptimizationUnit *) { return true; }
 
   /// Binds the unit to the session and the site it was proposed for, as the
-  /// site's `indexInKind`-th unit of its kind. Once.
+  /// site's `indexInKind`-th unit of its kind. Once. `graph` is the site as its
+  /// graph: the caller converts, since the site's type is defined above this
+  /// layer.
   void bind(Session &S, FunctionFPState &site, FPGraph &graph,
             size_t indexInKind);
   /// The session, site and graph bind gave; the unit must be bound.

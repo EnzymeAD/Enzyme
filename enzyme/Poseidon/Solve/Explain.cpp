@@ -118,7 +118,7 @@ static std::string precisionWords(PrecisionChangeType t) {
   case PrecisionChangeType::FP128:
     return "quad";
   default:
-    return getPrecisionChangeTypeString(t).str();
+    return formatOf(t).Name.str();
   }
 }
 
@@ -801,8 +801,8 @@ Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       for (const PrecisionChange &ch : cand.changes) {
         expansion |= expansionComponents(ch.newType) != 0;
         json::Object c;
-        c["from"] = getPrecisionChangeTypeString(ch.oldType).str();
-        c["to"] = getPrecisionChangeTypeString(ch.newType).str();
+        c["from"] = formatOf(ch.oldType).Name.str();
+        c["to"] = formatOf(ch.newType).Name.str();
         json::Array idx;
         SmallVector<std::string, 4> names;
         MapVector<std::string, unsigned, std::map<std::string, unsigned>>
