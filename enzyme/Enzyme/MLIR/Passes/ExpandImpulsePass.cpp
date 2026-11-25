@@ -1645,6 +1645,12 @@ static LogicalResult appendSiteValues(OpBuilder &builder,
   return success();
 }
 
+/// Returns the parameters of `site`: its inputs after the rng.
+static ValueRange siteParams(impulse::SampleOp site) {
+  ValueRange inputs = site.getInputs();
+  return inputs.empty() ? inputs : inputs.drop_front();
+}
+
 /// Draws fresh values for `site`: inline from its distribution when that
 /// sampler can be emitted, else by calling its `fn`. Returns replacements for
 /// all results of `site`, the rng first.
@@ -1655,14 +1661,48 @@ static SmallVector<Value> emitSiteDraw(OpBuilder &builder,
   if (impulse::DistAttr dist = site.getDistAttr();
       dist && impulse::distSamplerEmittable(dist))
     return impulse::emitDistSampler(
-        builder, loc, dist, site.getInputs().front(),
-        site.getInputs().drop_front(),
+        builder, loc, dist, site.getInputs().front(), siteParams(site),
         cast<RankedTensorType>(site.getResult(1).getType()));
   auto fn = cast<FunctionOpInterface>(
       symbolTable.lookupNearestSymbolFrom(site, site.getFnAttr()));
   auto call = func::CallOp::create(builder, loc, fn.getName(),
                                    fn.getResultTypes(), site.getInputs());
   return SmallVector<Value>(call.getResults());
+}
+
+/// Checks that the `logpdf` function of `site`, if it has one, takes the
+/// `numValues` values of the site followed by its parameters. `call` names
+/// the call in the diagnostic.
+static LogicalResult verifySiteLogpdf(SymbolTableCollection &symbolTable,
+                                      impulse::SampleOp site, size_t numValues,
+                                      StringRef call = "logpdf call") {
+  if (!site.getLogpdfAttr())
+    return success();
+  auto logpdfFn = cast<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfAttr()));
+  if (numValues + siteParams(site).size() == logpdfFn.getNumArguments())
+    return success();
+  return site.emitError("Impulse: failed to construct ")
+         << call << "; logpdf function has wrong number of arguments";
+}
+
+/// Emits the log density of `values` (the site's results after the rng) under
+/// `site`: from its distribution, or by calling its `logpdf` function on the
+/// values followed by the site's parameters.
+static Value emitSiteLogpdf(OpBuilder &builder,
+                            SymbolTableCollection &symbolTable,
+                            impulse::SampleOp site, ValueRange values) {
+  Location loc = site.getLoc();
+  if (impulse::DistAttr dist = site.getDistAttr())
+    return impulse::emitDistLogpdf(builder, loc, dist, values.front(),
+                                   siteParams(site));
+  auto logpdfFn = cast<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfAttr()));
+  SmallVector<Value> operands(values);
+  llvm::append_range(operands, siteParams(site));
+  return func::CallOp::create(builder, loc, logpdfFn.getName(),
+                              logpdfFn.getResultTypes(), operands)
+      .getResult(0);
 }
 
 /// Reads a value of `type` from row 0 of `trace`, starting at column `column`.
@@ -2223,98 +2263,21 @@ struct ExpandImpulsePass
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
-        SmallVector<Value> sampledValues; // Values to replace uses of sample op
-
-        if (auto dist = sampleOp.getDistAttr()) {
-          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
-                                      sampleOp.getInputs().end());
-          auto sampleType =
-              cast<RankedTensorType>(sampleOp.getResult(1).getType());
-
-          if (impulse::distSamplerEmittable(dist)) {
-            Value rng = sampleOp.getInputs().front();
-            sampledValues = impulse::emitDistSampler(
-                rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
-          } else {
-            auto distFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getFnAttr()));
-            auto distCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), distFn.getName(),
-                distFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(distCall.getResults().begin(),
-                                 distCall.getResults().end());
-          }
-
-          Value logpdf = impulse::emitDistLogpdf(
-              rewriter, sampleOp.getLoc(), dist, sampledValues[1], distArgs);
+        SmallVector<Value> sampledValues;
+        if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
+          sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
+          ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
+          if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
+            return failure();
+          Value logpdf =
+              emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
           weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                     weightAccumulator, logpdf);
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
-
           if (addressInList(sampleOp, selection) &&
-              failed(
-                  appendSiteValues(rewriter, sampleOp,
-                                   ArrayRef<Value>(sampledValues).drop_front(),
-                                   currTrace, currentOffset)))
-            return failure();
-
-          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
-          toErase.push_back(sampleOp);
-          return success();
-        }
-
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          // A1. Distribution function: call the distribution function.
-          auto distFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-
-          auto distCall = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), distFn.getName(),
-              distFn.getResultTypes(), sampleOp.getInputs());
-
-          sampledValues.append(distCall.getResults().begin(),
-                               distCall.getResults().end());
-
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-
-          // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
-          SmallVector<Value> logpdfOperands;
-          for (unsigned i = 1; i < sampledValues.size(); ++i) {
-            logpdfOperands.push_back(sampledValues[i]);
-          }
-          for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-            logpdfOperands.push_back(sampleOp.getOperand(i));
-          }
-
-          if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("Impulse: failed to construct logpdf call; "
-                               "logpdf function has wrong number of arguments");
-            return failure();
-          }
-
-          // A2. Compute and accumulate weight.
-          auto logpdf = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-              logpdfFn.getResultTypes(), logpdfOperands);
-          weightAccumulator =
-              arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                    weightAccumulator, logpdf.getResult(0));
-          if (scoreTailSize > 0)
-            siteScores.push_back(logpdf.getResult(0));
-
-          // A3. Check if this sample is in the selection and insert into trace
-          if (addressInList(sampleOp, selection) &&
-              failed(
-                  appendSiteValues(rewriter, sampleOp,
-                                   ArrayRef<Value>(sampledValues).drop_front(),
-                                   currTrace, currentOffset)))
+              failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
+                                      currentOffset)))
             return failure();
         } else {
           // B. Generative function: recursively simulate the nested function
@@ -2337,13 +2300,7 @@ struct ExpandImpulsePass
           ArrayAttr subSelection =
               buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
           if (subSelection.empty()) {
-            // No samples from this generative function are in the selection
-            // Just call the function directly
-            auto genCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), genFn.getName(),
-                genFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(genCall.getResults().begin(),
-                                 genCall.getResults().end());
+            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             int64_t subPositionSize = computePositionSizeForSelection(
                 sampleOp, genFn, subSelection, symbolTable);
