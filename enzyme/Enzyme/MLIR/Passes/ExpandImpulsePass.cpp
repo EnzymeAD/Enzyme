@@ -1940,13 +1940,15 @@ static ColumnWindows mhChangedColumnsFlat(const FlatTraceLayout &layout,
 namespace {
 /// A proposed MH move. `weight` is the new joint density, or its change for a
 /// score-tail trace; `correction` is subtracted from the joint ratio to form
-/// log alpha unless `logRatio` gives log alpha directly.
+/// log alpha unless `logRatio` gives log alpha directly. Only the `changed`
+/// columns of `trace` can differ from the current trace.
 struct MHProposal {
   Value trace;
   Value weight;
   Value correction;
   Value rng;
   Value logRatio;
+  ColumnWindows changed;
 };
 
 /// The MH accept test of a proposal: whether it is accepted, the weight it
@@ -1998,16 +2000,14 @@ static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
 }
 
 /// Emits the MH step of `proposal` from `trace` and `weight`: the accept test,
-/// and the trace and weight of the proposal where it is accepted. Only the
-/// columns in `windows` take the proposed values.
+/// and the trace and weight of the proposal where it is accepted.
 static MHStep emitMHStep(OpBuilder &builder, Location loc, Value trace,
                          Value weight, const MHProposal &proposal,
-                         bool hasScoreTail,
-                         ArrayRef<std::pair<int64_t, int64_t>> windows) {
+                         bool hasScoreTail) {
   MHDecision decision =
       emitMHDecision(builder, loc, weight, proposal, hasScoreTail);
   Value newTrace = writeBackMHWindows(builder, loc, trace, proposal.trace,
-                                      decision.accepted, windows);
+                                      decision.accepted, proposal.changed);
   Value newWeight = arith::SelectOp::create(builder, loc, decision.accepted,
                                             decision.acceptWeight, weight);
   return {newTrace, newWeight, decision.rng, decision.accepted};
@@ -2208,44 +2208,45 @@ static Value sumOrZero(OpBuilder &builder, Location loc, Value sum,
   return sum ? sum : emitSplatConstant(builder, loc, type, 0.0);
 }
 
-/// Proposes fresh values for the selected sites of `op` from its sampler,
-/// reads the other sites from `trace` and scores the result with the logpdf
-/// region. `drawOverride` gives the values of replaced sampler draws.
-/// `changedColumns` receives the trace columns the move can change. With
-/// `delta`, the weight is the sum of new-minus-old scores over the terms the
-/// move can change, else the new joint density; with `withLogRatio` too, a
-/// move of several sites on a score-tail trace also returns log alpha.
-static MHProposal
-proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
-                  const RegionTraceLayout &layout, Value trace, Value rng,
-                  bool delta, bool withLogRatio,
-                  SmallVectorImpl<std::pair<int64_t, int64_t>> &changedColumns,
-                  const DenseMap<Operation *, Value> *drawOverride = nullptr) {
-  changedColumns.clear();
+namespace {
+/// The sampler of a region-form MH move, cloned with fresh values for the
+/// selected sites.
+struct SamplerProposal {
+  /// The trace with the fresh values in their columns.
+  Value trace;
+  /// The key after the last site.
+  Value rng;
+  /// The fresh values of each selected address.
+  DenseMap<Attribute, SmallVector<Value>> valuesOf;
+  /// The program-order index of each selected site, which is also the index
+  /// of its per-site yield and of its score-tail column.
+  SmallVector<int64_t> selectedOrdinals;
+  /// The columns of the fresh values.
+  ColumnWindows valueColumns;
+};
+} // namespace
+
+/// Clones the sampler of `op` from key `rng`. The selected sites draw fresh
+/// values, which go into `trace` at their columns of `layout`; the other sites
+/// read theirs from `trace`. A draw of a selected site for which
+/// `drawOverride` returns a value takes that value instead of being cloned.
+static SamplerProposal
+cloneSamplerWithProposal(OpBuilder &b, Location loc, impulse::InferRegionOp op,
+                         const RegionTraceLayout &layout, Value trace,
+                         Value rng,
+                         function_ref<Value(Operation *)> drawOverride) {
   ArrayAttr selection = op.getSelectionAttr();
-  Region &sampler = op.getSampling();
-  Region &logpdf = op.getLogpdf();
-  Block &samplerBlock = sampler.front();
-  auto traceType = cast<RankedTensorType>(trace.getType());
-  int64_t positionSize = layout.positionSize;
-  int64_t width = traceType.getShape()[1];
-  bool hasScoreTail = width > positionSize;
-
   DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
-
+  Block &samplerBlock = op.getSampling().front();
   IRMapping map;
   map.map(samplerBlock.getArgument(0), rng);
   for (unsigned i = 1, e = samplerBlock.getNumArguments(); i < e; ++i)
     map.map(samplerBlock.getArgument(i), op.getInputs()[i]);
 
-  Value curRng = rng;
-  Value newTrace = trace;
-  DenseMap<Attribute, SmallVector<Value>> proposedSelected;
-  // Sites count in program order, the order of the per-site yields and of the
-  // score-tail columns.
-  SmallVector<int64_t> selectedOrdinals;
+  SamplerProposal proposal;
+  proposal.trace = trace;
+  proposal.rng = rng;
   int64_t siteOrdinal = -1;
-
   for (Operation &bodyOp : samplerBlock.without_terminator()) {
     auto site = dyn_cast<impulse::SampleRegionOp>(&bodyOp);
     if (!site) {
@@ -2255,128 +2256,165 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     ++siteOrdinal;
     Attribute addr = site.getAddressAttr();
     int64_t siteColumn = layout.columnOf.lookup(addr);
-    if (selectedSet.contains(addr)) {
-      selectedOrdinals.push_back(siteOrdinal);
-      changedColumns.push_back(
-          {siteColumn, siteColumn + sampleRegionSize(site)});
-      Block &sub = site.getSampling().front();
-      IRMapping subMap;
-      subMap.map(sub.getArgument(0), curRng);
-      for (unsigned j = 1, e = site.getInputs().size(); j < e; ++j)
-        subMap.map(sub.getArgument(j),
-                   map.lookupOrDefault(site.getInputs()[j]));
-      for (Operation &subOp : sub.without_terminator()) {
-        if (drawOverride) {
-          auto it = drawOverride->find(&subOp);
-          if (it != drawOverride->end()) {
-            subMap.map(subOp.getResult(0),
-                       subMap.lookupOrDefault(subOp.getOperand(0)));
-            subMap.map(subOp.getResult(1), it->second);
-            continue;
-          }
-        }
-        b.clone(subOp, subMap);
-      }
-      Operation *samplerYield = sub.getTerminator();
-      curRng = subMap.lookupOrDefault(samplerYield->getOperand(0));
-      map.map(site.getResult(0), curRng);
-      SmallVector<Value> values;
-      int64_t column = siteColumn;
-      for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
-        Value v = subMap.lookupOrDefault(samplerYield->getOperand(k));
-        map.map(site.getResult(k), v);
-        values.push_back(v);
-        newTrace = writeTraceColumns(b, loc, newTrace, v, column);
-        column += cast<RankedTensorType>(v.getType()).getNumElements();
-      }
-      proposedSelected[addr] = values;
-    } else {
-      map.map(site.getResult(0), curRng);
+    if (!selectedSet.contains(addr)) {
+      map.map(site.getResult(0), proposal.rng);
       map.map(site.getResults().drop_front(),
               sliceTraceValues(b, loc, trace, siteColumn,
                                TypeRange(site->getResultTypes()).drop_front()));
+      continue;
     }
+    proposal.selectedOrdinals.push_back(siteOrdinal);
+    proposal.valueColumns.push_back(
+        {siteColumn, siteColumn + sampleRegionSize(site)});
+    Block &sub = site.getSampling().front();
+    IRMapping subMap;
+    subMap.map(sub.getArgument(0), proposal.rng);
+    for (unsigned j = 1, e = site.getInputs().size(); j < e; ++j)
+      subMap.map(sub.getArgument(j), map.lookupOrDefault(site.getInputs()[j]));
+    for (Operation &subOp : sub.without_terminator()) {
+      Value drawn = drawOverride ? drawOverride(&subOp) : Value();
+      if (!drawn) {
+        b.clone(subOp, subMap);
+        continue;
+      }
+      subMap.map(subOp.getResult(0),
+                 subMap.lookupOrDefault(subOp.getOperand(0)));
+      subMap.map(subOp.getResult(1), drawn);
+    }
+    Operation *samplerYield = sub.getTerminator();
+    proposal.rng = subMap.lookupOrDefault(samplerYield->getOperand(0));
+    map.map(site.getResult(0), proposal.rng);
+    SmallVector<Value> values;
+    int64_t column = siteColumn;
+    for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
+      Value v = subMap.lookupOrDefault(samplerYield->getOperand(k));
+      map.map(site.getResult(k), v);
+      values.push_back(v);
+      proposal.trace = writeTraceColumns(b, loc, proposal.trace, v, column);
+      column += cast<RankedTensorType>(v.getType()).getNumElements();
+    }
+    proposal.valuesOf[addr] = values;
   }
+  return proposal;
+}
 
-  Block &lpBlock = logpdf.front();
+/// Returns the Hastings correction of the selected sites of `sampled`: the
+/// sum of their new minus old per-site scores, the new ones in `newYields`.
+/// The old ones come from the score tail of `trace`, or on a trace that holds
+/// exactly the positions of `layout`, from the logpdf region of `op` at the
+/// old positions.
+static Value emitProposalCorrection(OpBuilder &b, Location loc,
+                                    impulse::InferRegionOp op,
+                                    const RegionTraceLayout &layout,
+                                    Value trace, SamplerProposal &sampled,
+                                    ArrayRef<Value> newYields) {
+  int64_t positionSize = layout.positionSize;
+  bool exactWidth =
+      cast<RankedTensorType>(trace.getType()).getShape()[1] == positionSize;
+  SmallVector<Value> oldYields;
+  if (exactWidth) {
+    SmallVector<Value> oldPositions;
+    for (Attribute addr : op.getSelectionAttr())
+      llvm::append_range(
+          oldPositions,
+          sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
+                           ValueRange(sampled.valuesOf[addr]).getTypes()));
+    oldYields = cloneLogpdfBody(b, op.getLogpdf().front(), oldPositions);
+  }
+  Value correction;
+  for (int64_t j : sampled.selectedOrdinals) {
+    Value oldScore = exactWidth
+                         ? oldYields[1 + j]
+                         : scalarAt(b, loc, trace, {0, positionSize + j});
+    accumulate(b, loc, correction,
+               arith::SubFOp::create(b, loc, newYields[1 + j], oldScore));
+  }
+  return correction;
+}
+
+/// Returns the sum of the changes of the `dirty` per-site scores, from the
+/// score tail of `trace` at `positionSize` to `newYields`. With `splitRatio`,
+/// also returns log alpha: the same sum without the terms of the selected
+/// sites at `selectedOrdinals`, which cancel against the proposal density.
+static std::pair<Value, Value>
+emitDeltaWeight(OpBuilder &b, Location loc, Value trace, int64_t positionSize,
+                ArrayRef<Value> newYields, ArrayRef<bool> dirty,
+                ArrayRef<int64_t> selectedOrdinals, bool splitRatio) {
+  llvm::SmallDenseSet<int64_t> ownTerms(selectedOrdinals.begin(),
+                                        selectedOrdinals.end());
+  Value sum;
+  Value ratio;
+  for (auto [j, isDirty] : llvm::enumerate(dirty)) {
+    if (!isDirty)
+      continue;
+    Value oldScore = scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
+    Value change = arith::SubFOp::create(b, loc, newYields[1 + j], oldScore);
+    accumulate(b, loc, sum, change);
+    if (splitRatio && !ownTerms.contains(j))
+      accumulate(b, loc, ratio, change);
+  }
+  auto scalarType = RankedTensorType::get({}, b.getF64Type());
+  Value logRatio = splitRatio ? sumOrZero(b, loc, ratio, scalarType) : Value();
+  return {sumOrZero(b, loc, sum, scalarType), logRatio};
+}
+
+/// Proposes fresh values for the selected sites of `op` from its sampler,
+/// reads the other sites from `trace` and scores the result with the logpdf
+/// region; `drawOverride` is as for `cloneSamplerWithProposal`. With `delta`,
+/// the weight is the sum of new-minus-old scores over the terms the move can
+/// change, else the new joint density; with `withLogRatio` too, a move of
+/// several sites on a score-tail trace also returns log alpha.
+static MHProposal
+proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
+                  const RegionTraceLayout &layout, Value trace, Value rng,
+                  bool delta, bool withLogRatio,
+                  function_ref<Value(Operation *)> drawOverride = nullptr) {
+  SamplerProposal sampled =
+      cloneSamplerWithProposal(b, loc, op, layout, trace, rng, drawOverride);
+  int64_t positionSize = layout.positionSize;
+  int64_t width = cast<RankedTensorType>(trace.getType()).getShape()[1];
+  bool hasScoreTail = width > positionSize;
+
+  Block &lpBlock = op.getLogpdf().front();
   SmallVector<Value> newPositions;
-  for (Attribute addr : selection)
-    llvm::append_range(newPositions, proposedSelected[addr]);
+  for (Attribute addr : op.getSelectionAttr())
+    llvm::append_range(newPositions, sampled.valuesOf[addr]);
   SmallVector<Value> newYields = cloneLogpdfBody(b, lpBlock, newPositions);
-  Value newWeight = newYields[0];
   SmallVector<bool> dirty =
       delta ? taintedSiteYields(lpBlock, lpBlock.getArguments())
             : SmallVector<bool>(newYields.size() - 1, true);
 
+  MHProposal proposal;
+  proposal.trace = sampled.trace;
+  proposal.weight = newYields[0];
+  proposal.rng = sampled.rng;
   if (hasScoreTail) {
     Value row0 = emitI64ScalarConstant(b, loc, 0);
     SmallVector<std::pair<int64_t, Value>> cells;
     for (auto [j, isDirty] : llvm::enumerate(dirty))
       if (isDirty)
         cells.push_back({positionSize + (int64_t)j, newYields[1 + j]});
-    newTrace = writeScoreCells(b, loc, newTrace, row0, cells);
+    proposal.trace = writeScoreCells(b, loc, proposal.trace, row0, cells);
   }
-
-  SmallVector<Value> oldYields;
-  if (width == positionSize) {
-    SmallVector<Value> oldPositions;
-    for (Attribute addr : selection)
-      llvm::append_range(
-          oldPositions,
-          sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
-                           ValueRange(proposedSelected[addr]).getTypes()));
-    oldYields = cloneLogpdfBody(b, lpBlock, oldPositions);
-  }
-  Value correction;
-  Value logRatio;
-  for (int64_t j : selectedOrdinals) {
-    Value newScore = newYields[1 + j];
-    Value oldScore = width == positionSize
-                         ? oldYields[1 + j]
-                         : scalarAt(b, loc, trace, {0, positionSize + j});
-    accumulate(b, loc, correction,
-               arith::SubFOp::create(b, loc, newScore, oldScore));
-  }
-
-  if (delta) {
-    SmallVector<int64_t> dirtyTerms;
-    for (auto [j, isDirty] : llvm::enumerate(dirty))
-      if (isDirty)
-        dirtyTerms.push_back(j);
-    // Selected sites' own terms cancel against the proposal density, so log
-    // alpha is the sum of the remaining dirty terms.
-    bool splitRatio =
-        withLogRatio && selectedOrdinals.size() >= 2 && hasScoreTail;
-    llvm::SmallDenseSet<int64_t> ownTerms(selectedOrdinals.begin(),
-                                          selectedOrdinals.end());
-    Value ratio;
-    Value sum;
-    for (int64_t j : dirtyTerms) {
-      Value newScore = newYields[1 + j];
-      Value oldScore = scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
-      Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
-      accumulate(b, loc, sum, change);
-      if (splitRatio && !ownTerms.contains(j))
-        accumulate(b, loc, ratio, change);
-    }
-    auto scalarType = RankedTensorType::get({}, b.getF64Type());
-    if (splitRatio)
-      logRatio = sumOrZero(b, loc, ratio, scalarType);
-    newWeight = sumOrZero(b, loc, sum, scalarType);
-  }
+  proposal.correction =
+      emitProposalCorrection(b, loc, op, layout, trace, sampled, newYields);
+  if (delta)
+    std::tie(proposal.weight, proposal.logRatio) = emitDeltaWeight(
+        b, loc, trace, positionSize, newYields, dirty, sampled.selectedOrdinals,
+        withLogRatio && sampled.selectedOrdinals.size() >= 2 && hasScoreTail);
 
   // Only dirty score columns can change; write back just those.
+  proposal.changed = std::move(sampled.valueColumns);
   if (delta) {
     for (auto [j, isDirty] : llvm::enumerate(dirty))
       if (isDirty)
-        changedColumns.push_back(
+        proposal.changed.push_back(
             {positionSize + (int64_t)j, positionSize + (int64_t)j + 1});
   } else if (hasScoreTail) {
-    changedColumns.push_back({positionSize, width});
+    proposal.changed.push_back({positionSize, width});
   }
-  changedColumns = mergeColumnWindows(std::move(changedColumns));
-
-  return {newTrace, newWeight, correction, curRng, logRatio};
+  proposal.changed = mergeColumnWindows(std::move(proposal.changed));
+  return proposal;
 }
 
 /// Proposes the move of the flat-form MH op `op`, an `impulse.mh` or an MH
@@ -2827,11 +2865,13 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
     return emitColumnSlice(b, loc, colType, t, c);
   };
   for (unsigned k = 0; k < numMoves; ++k) {
-    DenseMap<Operation *, Value> drawOverride;
-    drawOverride[moves[k].draw] = takeLeading(b, loc, proposals.getResult(), k);
+    Operation *draw = moves[k].draw;
+    Value drawn = takeLeading(b, loc, proposals.getResult(), k);
     MHProposal proposal = proposeRegionMove(
         b, loc, moves[k].op, moves[k].layout, trace0, rng0, /*delta=*/true,
-        /*withLogRatio=*/false, changedWindows[k], &drawOverride);
+        /*withLogRatio=*/false,
+        [&](Operation *o) { return o == draw ? drawn : Value(); });
+    changedWindows[k] = std::move(proposal.changed);
     newTraces.push_back(proposal.trace);
     deltaCells.push_back(proposal.weight);
     correctionCells.push_back(proposal.correction);
@@ -4130,8 +4170,7 @@ struct ExpandImpulsePass
 
       int64_t fullPositionSize = 0;
       RegionTraceLayout layout;
-      // The region form fills this in during the proposal.
-      ColumnWindows changedColumns;
+      ColumnWindows flatChangedColumns;
       if constexpr (isRegionForm) {
         FailureOr<RegionTraceLayout> regionLayout =
             getRegionTraceLayout(op, /*topLevelOnly=*/true);
@@ -4151,8 +4190,8 @@ struct ExpandImpulsePass
         if (failed(flatLayout))
           return failure();
         fullPositionSize = flatLayout->positionSize;
-        changedColumns = mhChangedColumnsFlat(*flatLayout, selection,
-                                              traceType.getShape()[1]);
+        flatChangedColumns = mhChangedColumnsFlat(*flatLayout, selection,
+                                                  traceType.getShape()[1]);
       }
       bool hasScoreTail = traceType.getShape()[1] > fullPositionSize;
 
@@ -4162,17 +4201,17 @@ struct ExpandImpulsePass
         MHProposal proposal;
         if constexpr (isRegionForm) {
           proposal = proposeRegionMove(rewriter, loc, op, layout, trace, rng,
-                                       hasScoreTail,
-                                       /*withLogRatio=*/true, changedColumns);
+                                       hasScoreTail, /*withLogRatio=*/true);
         } else {
           SmallVector<Value> inputs(op.getInputs());
           inputs[0] = rng;
           proposal =
               proposeFlatMove(rewriter, loc, op, inputs, trace,
                               rewriter.getStringAttr(""), fn.getResultTypes());
+          proposal.changed = flatChangedColumns;
         }
         MHStep step = emitMHStep(rewriter, loc, trace, carried[1], proposal,
-                                 hasScoreTail, changedColumns);
+                                 hasScoreTail);
         return {step.trace, step.weight, step.rng, step.accepted};
       };
       SmallVector<Value> out = emitRepeated(
@@ -4570,9 +4609,9 @@ struct ExpandImpulsePass
       MHProposal proposal =
           proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
                           nameAttr, fn.getResultTypes());
-      MHStep step =
-          emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal, hasScoreTail,
-                     mhChangedColumnsFlat(*layout, selection, width));
+      proposal.changed = mhChangedColumnsFlat(*layout, selection, width);
+      MHStep step = emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal,
+                               hasScoreTail);
       rewriter.replaceOp(mhOp,
                          {step.trace, step.weight, step.accepted, step.rng});
       return success();
