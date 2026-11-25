@@ -22,4 +22,4 @@ void axpy(int n, double a, const double *x, double *y) {
   forall(n, [=] (int i) POSEIDON_OPTIMIZE_TAU(1e-9) { y[i] += a * x[i]; });
 }
 
-// CHECK: annotated_lambda_host.cpp:[[@LINE-3]]:{{[0-9]+}}: warning: Poseidon: axpy(int, double, double const*, double*)::$_0::operator()(int) const is a lambda; POSEIDON_OPTIMIZE on a lambda marks the GPU kernels that call it, and this compilation has none. Emitting the original computation.
+// CHECK: annotated_lambda_host.cpp:[[@LINE-3]]:{{[0-9]+}}: warning: Poseidon: axpy(int, double, double const*, double*)::$_0::operator()(int) const is a lambda and this compilation has no GPU kernel that calls it, so it is left as written; POSEIDON_OPTIMIZE on a lambda marks the kernels that call it in a CUDA or HIP compilation

@@ -186,9 +186,9 @@
 ; UNWRITABLE-DISPATCH: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory. The manifest is kept in the -poseidon-launch-dir directory, or else the -poseidon-cache one, which has to be writable.{{$}}
 ; UNWRITABLE-DISPATCH-NOT: wrote descriptor
 
-; UNWRITABLE-PROFILE-NOT: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site
+; UNWRITABLE-PROFILE-NOT: [poseidon] _Z13matmul_kernelPKdS0_PdS1_: site
 ; UNWRITABLE-PROFILE: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory. The manifest is kept in the -poseidon-launch-dir directory, or else the -poseidon-cache one, which has to be writable.{{$}}
-; UNWRITABLE-PROFILE-NOT: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site
+; UNWRITABLE-PROFILE-NOT: [poseidon] _Z13matmul_kernelPKdS0_PdS1_: site
 
 ; UNWRITABLE-NONE: [poseidon] no rewrite applied for preprocess_matmul_body; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
 ; UNWRITABLE-NONE-NOT: launch manifest

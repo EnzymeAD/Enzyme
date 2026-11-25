@@ -41,7 +41,7 @@
 ; operand count it does not model, stops the compile with an error at the site
 ; naming the answer's cache file, before anything evaluates or lowers it.
 
-; FRESH: Saved Herbie output to cache file
+; FRESH: [poseidon] Saved Herbie output to cache file
 
 ; NO-ALTERNATIVES: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"), so the subgraph has no algebraic candidate from it{{$}}
 ; NO-ALTERNATIVES: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}

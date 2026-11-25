@@ -19,11 +19,11 @@
 ; ERR: error: <unknown>:0:0: in function variadic double (double, ...): Poseidon: variadic is variadic, so it cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function recur double (double): Poseidon: recur calls itself, so it cannot be a Poseidon site
 ; ERR: 5 errors generated.
-; OFF: warning: <unknown>:0:0: in function pair { double, double } (double): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
-; OFF: warning: <unknown>:0:0: in function vec <2 x double> (<2 x double>): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
-; OFF: warning: <unknown>:0:0: in function viasret void (ptr, double): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
-; OFF: warning: <unknown>:0:0: in function variadic double (double, ...): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
-; OFF: warning: <unknown>:0:0: in function recur double (double): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
+; OFF: warning: <unknown>:0:0: in function pair { double, double } (double): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
+; OFF: warning: <unknown>:0:0: in function vec <2 x double> (<2 x double>): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
+; OFF: warning: <unknown>:0:0: in function viasret void (ptr, double): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
+; OFF: warning: <unknown>:0:0: in function variadic double (double, ...): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
+; OFF: warning: <unknown>:0:0: in function recur double (double): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
 ; OFF-NOT: error
 
 ; Each body stays as written; the pass only marks the function as no site.

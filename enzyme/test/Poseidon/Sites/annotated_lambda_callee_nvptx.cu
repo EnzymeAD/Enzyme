@@ -57,8 +57,8 @@ POSEIDON_OPTIMIZE __attribute__((global)) void copy(double *y,
 // GEN: annotated_lambda_callee_nvptx.cu:[[@LINE-10]]:{{[0-9]+}}: warning: Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
 // GEN: annotated_lambda_callee_nvptx.cu:[[@LINE-6]]:{{[0-9]+}}: warning: Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
 // GEN: [poseidon] block-geometry probe placed in 2 profiled function(s)
-// GEN: [poseidon-profgen] _Z4deepPdi: site 0, 1 shadow buffer(s), output(s) 0
-// GEN-NEXT: [poseidon-profgen] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_: site 1, 2 shadow buffer(s), output(s) 1[+8]
+// GEN: [poseidon] _Z4deepPdi: site 0, 1 shadow buffer(s), output(s) 0
+// GEN-NEXT: [poseidon] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_: site 1, 2 shadow buffer(s), output(s) 1[+8]
 // GEN-NEXT: 2 warnings generated when compiling for {{.*}}
 
 // The four operations of `element` (two of them fused multiply-adds, which

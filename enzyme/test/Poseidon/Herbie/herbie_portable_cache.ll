@@ -22,19 +22,19 @@
 ; question with no cached answer and no Herbie gives is checked in
 ; herbie_cannot_run.ll.
 
-; FRESH: Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_[[KEY:[0-9A-F]+]].txt{{$}}
+; FRESH: [poseidon] Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_[[KEY:[0-9A-F]+]].txt{{$}}
 ; FRESH: [poseidon] Herbie subgraph 0 of preprocess_tester: completed in {{.*}}, a fresh answer of the Herbie with digest {{[0-9A-F]+$}}
 
-; CACHED: Using cached Herbie output from {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt{{$}}
+; CACHED: [poseidon] Using cached Herbie output from {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt{{$}}
 ; CACHED: Applying solution for
 
-; OTHER-NOT: Using cached Herbie output
+; OTHER-NOT: [poseidon] Using cached Herbie output
 ; OTHER: [poseidon] Herbie subgraph 0 of preprocess_tester: the cache file {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt holds the answer of another Herbie; running Herbie to replace it{{$}}
-; OTHER: Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt{{$}}
+; OTHER: [poseidon] Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt{{$}}
 
-; ENTRY: Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_[[KEY:[0-9A-F]+]].txt{{$}}
+; ENTRY: [poseidon] Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_[[KEY:[0-9A-F]+]].txt{{$}}
 ; ENTRY: a fresh answer of the Herbie with digest [[A:[0-9A-F]+]]{{$}}
-; ENTRY: Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_[[KEY]].txt{{$}}
+; ENTRY: [poseidon] Saved Herbie output to cache file {{.*}}/c/cachedHerbieOutput_default_[[KEY]].txt{{$}}
 ; ENTRY: a fresh answer of the Herbie with digest [[B:[0-9A-F]+]]{{$}}
 ; ENTRY-NOT: "Herbie binary": "[[A]]"
 ; ENTRY: "Herbie binary": "[[B]]"

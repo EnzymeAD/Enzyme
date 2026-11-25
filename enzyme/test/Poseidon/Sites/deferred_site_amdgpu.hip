@@ -54,7 +54,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy,
 
 // PLAIN: [poseidon] jvp_body: marked body still holds an __enzyme_* request; deferred to the late run
 // PLAIN-NEXT: [poseidon] jvp_body: folded 1 Enzyme-generated call(s) into the deferred body
-// PLAIN-NEXT: deferred_site_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
+// PLAIN-NEXT: deferred_site_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
 
 // The kernel passes its locals to the module's copy of the tangent and
 // stores what the copy wrote; the copy sums x[i] * x[i] and 2 * dx[i] * x[i]

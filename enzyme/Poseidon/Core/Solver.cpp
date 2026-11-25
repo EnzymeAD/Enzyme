@@ -422,7 +422,7 @@ ExactDP::Table ExactDP::step(int k, const Table &table) const {
 }
 
 void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
-                CostMap &cost, SolutionMap &sol) {
+                CostMap &cost, SolutionMap &sol, bool progress) {
   const int n = units.size();
   ExactDP dp(units, scale);
   ExactDP::Table table;
@@ -441,9 +441,10 @@ void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
       peak = entries;
       peakSignatures = table.size();
     }
-    llvm::errs() << "##### Exact DP: finished unit " << k + 1 << " of " << n
-                 << ": " << entries << " entries in " << table.size()
-                 << " signatures #####\n";
+    if (progress)
+      llvm::errs() << "[poseidon] Exact DP: finished unit " << k + 1 << " of "
+                   << n << ": " << entries << " entries in " << table.size()
+                   << " signatures\n";
   }
   assert(table.size() == 1 && table.begin()->first.empty() &&
          "exact DP: a signature outlived the last unit");
@@ -457,9 +458,12 @@ void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
   const double secs =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
           .count();
-  llvm::errs() << "Exact DP: " << cost.size() << " frontier points; peak "
-               << peak << " entries in " << peakSignatures << " signatures; "
-               << pricings << " precision changes priced; " << secs << " s\n";
+  if (!progress)
+    return;
+  llvm::errs() << "[poseidon] Exact DP: " << cost.size()
+               << " frontier points; peak " << peak << " entries in "
+               << peakSignatures << " signatures; " << pricings
+               << " precision changes priced; " << secs << " s\n";
 }
 
 void solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
@@ -473,9 +477,10 @@ void solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
     if (!progress)
       continue;
     auto &[done, total] = counts[unit->kindName()];
-    llvm::errs() << "##### Finished processing " << ++done << " of " << total
-                 << ' ' << unit->kindName() << "s #####\n";
-    llvm::errs() << "Current DP table sizes: " << cost.size() << '\n';
+    llvm::errs() << "[poseidon] Finished processing " << ++done << " of "
+                 << total << ' ' << unit->kindName()
+                 << " unit(s); the DP table has " << cost.size()
+                 << " point(s)\n";
   }
 }
 

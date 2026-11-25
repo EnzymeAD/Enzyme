@@ -52,9 +52,10 @@ enum class UnitKind { R, PT, M };
 // What the pass's fixed formats call one kind of unit.
 struct UnitKindInfo {
   UnitKind kind;
-  // The DP table's itemType; the noun of the solver's progress lines and of
-  // the pin errors.
+  // The DP table's itemType.
   llvm::StringLiteral tag;
+  // What the solver's progress lines call the kind.
+  llvm::StringLiteral noun;
   // The <unit> of the ids <unit><i>_<j> and of the pins <unit><i>=<name>.
   llvm::StringLiteral idPrefix;
   // What the duplicate-pin error says the unit already has.
@@ -101,7 +102,7 @@ public:
 
   UnitKind unitKind() const { return UnitKind(kind()); }
   const UnitKindInfo &info() const { return infoOf(unitKind()); }
-  llvm::StringRef kindName() const final { return info().tag; }
+  llvm::StringRef kindName() const final { return info().noun; }
 
   // The instructions the unit's candidates edit or consume; null for none.
   virtual const llvm::SetVector<llvm::Instruction *> *footprint() const = 0;

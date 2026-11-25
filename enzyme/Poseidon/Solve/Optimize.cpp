@@ -232,9 +232,9 @@ static void putOnApplicationScale(Session &S, Function &F,
                  "noise (Kappa = " +
                  shortDouble(profileHeader.kappa) + ", " +
                  kappaMarkName(profileHeader.kappaMark) +
-                 "); the site is solved against its own target. Probe it "
-                 "with larger perturbations (POSEIDON_PROBE_LADDER) to "
-                 "measure it.",
+                 "), so the site is solved against its own target; probe "
+                 "it with larger perturbations (POSEIDON_PROBE_LADDER) to "
+                 "measure it",
              DS_Warning);
   if (profileHeader.hasKappa && !unresolved) {
     double sumSens = siteSumSens;

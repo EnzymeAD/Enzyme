@@ -53,8 +53,8 @@ void capture_view(int nd, int ne, const double *x, double *y) {
   (void)k;
 }
 
-// GEN-DAG: [poseidon-profgen] _Z10param_viewPdPKdii: site {{[0-9]+}}, 2 shadow buffer(s), output(s) 0{{$}}
-// GEN-DAG: [poseidon-profgen] _ZL10CuKernel1DIZ12capture_viewiiPKdPdEUliE_EviT_: site {{[0-9]+}}, 2 shadow buffer(s), output(s) 1[+0]{{$}}
+// GEN-DAG: [poseidon] _Z10param_viewPdPKdii: site {{[0-9]+}}, 2 shadow buffer(s), output(s) 0{{$}}
+// GEN-DAG: [poseidon] _ZL10CuKernel1DIZ12capture_viewiiPKdPdEUliE_EviT_: site {{[0-9]+}}, 2 shadow buffer(s), output(s) 1[+0]{{$}}
 
 // The pointers among the launch arguments and the seed width of each.
 // DESC-DAG: "_Z10param_viewPdPKdii {{[0-9]+}} 4 2 0 1 8 0"

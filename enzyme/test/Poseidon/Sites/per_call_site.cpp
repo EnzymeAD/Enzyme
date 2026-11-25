@@ -75,10 +75,10 @@ int main(int argc, char **argv) {
          y2[100], y3[100]);
 }
 
-// GEN: [poseidon-profgen] sq(double, double) at call 0 in main: site 0, 0 shadow buffer(s), output(s) return, 1 call(s)
-// GEN: [poseidon-profgen] sq(double, double) at call 1 in main: site 1, 0 shadow buffer(s), output(s) return, 1 call(s)
-// GEN: [poseidon-profgen] wave(double const*, double*, int) at call 2 in main: site 2, 2 shadow buffer(s), output(s) 1, 1 call(s)
-// GEN: [poseidon-profgen] wave(double const*, double*, int) at call 3 in main: site 3, 2 shadow buffer(s), output(s) 1, 1 call(s)
+// GEN: [poseidon] sq(double, double) at call 0 in main: site 0, 0 shadow buffer(s), output(s) return, 1 call(s)
+// GEN: [poseidon] sq(double, double) at call 1 in main: site 1, 0 shadow buffer(s), output(s) return, 1 call(s)
+// GEN: [poseidon] wave(double const*, double*, int) at call 2 in main: site 2, 2 shadow buffer(s), output(s) 1, 1 call(s)
+// GEN: [poseidon] wave(double const*, double*, int) at call 3 in main: site 3, 2 shadow buffer(s), output(s) 1, 1 call(s)
 
 // PROFILES: _Z2sqdd.poseidon.main.0.fpprofile
 // PROFILES-NEXT: _Z2sqdd.poseidon.main.1.fpprofile

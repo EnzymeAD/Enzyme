@@ -501,7 +501,7 @@ SmallVector<SolutionStep> solveSites(Session &S,
     // the pruned frontier can miss points the exact solve finds.
     if (!O.Solver.EarlyPrune)
       solveExact(solveOrder(O, units), scale, costToAccuracyMap,
-                 costToSolutionMap);
+                 costToSolutionMap, /*progress=*/print);
     else
       solvePruned(solveOrder(O, units), scale, costToAccuracyMap,
                   costToSolutionMap, /*progress=*/print);

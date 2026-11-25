@@ -31,7 +31,7 @@ template __attribute__((global)) void stage<4096>(const double *, double *);
 template __attribute__((global)) void stage<256>(const double *, double *);
 #endif
 
-// GEN: {{^}}[poseidon-profgen] _Z5stageILi256EEvPKdPd: site 0, 2 shadow buffer(s), output(s) 1{{$}}
+// GEN: {{^}}[poseidon] _Z5stageILi256EEvPKdPd: site 0, 2 shadow buffer(s), output(s) 1{{$}}
 
 // OVER: shared_limit_nvptx.cu:[[@LINE-18]]:48: error: Poseidon: void stage<4096>(double const*, double*) reaches 65536 bytes of static shared memory once profiled, above the 49152 a kernel can declare: its own buffers void stage<4096>(double const*, double*)::buf (32768 bytes); the shadows of its buffers void stage<4096>(double const*, double*)::buf (32768 bytes); the shadows of other kernels' buffers none. Profile the kernel with smaller shared buffers, or the kernels whose shadows it reaches in another translation unit.
 

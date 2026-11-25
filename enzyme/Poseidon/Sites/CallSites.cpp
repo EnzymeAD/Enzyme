@@ -376,10 +376,10 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
            name + " " + *why + ", so this call cannot be a Poseidon site");
     else if (why)
       warn(call, name + " " + *why +
-                     ", so this call is not a Poseidon site. The call runs as "
-                     "written.");
+                     ", so this call is not a Poseidon site and runs as "
+                     "written");
     else if (!active)
-      warn(call, Twine(kNoProfileAction) + " The call runs as written.");
+      warn(call, kNoProfileAction);
     if (why || !active) {
       asWritten();
       continue;

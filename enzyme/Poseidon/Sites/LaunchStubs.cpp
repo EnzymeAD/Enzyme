@@ -160,7 +160,7 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
     launch->replaceAllUsesWith(Constant::getNullValue(launch->getType()));
     launch->eraseFromParent();
     if (O.Diagnostics.Print)
-      errs() << "[poseidon-profgen] launch of " << d.kernel
+      errs() << "[poseidon] launch of " << d.kernel
              << " now allocates and seeds " << d.ptrIdx.size()
              << " shadow buffer(s)\n";
     changed = true;

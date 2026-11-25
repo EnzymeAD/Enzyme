@@ -58,15 +58,12 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     const double ratio = perExec / ref;
     if (print && ratio < kSensNullRatio) {
       llvm::errs()
-          << "Poseidon: profiled instruction " << kv.first << " of "
+          << "[poseidon] profiled instruction " << kv.first << " of "
           << functionName << " has per-execution sensitivity " << perExec
           << ", " << ratio
-          << " of this site's largest. Either the value is negligible where "
-             "it is used, the largest is amplified by a cancellation, or the "
-             "adjoint seed lies in the left null space of the operator (a "
-             "constant seed does for any partition-of-unity basis with a "
-             "derivative contraction); in the last case re-profile with a "
-             "non-degenerate seed.\n";
+          << " of this site's largest; if the adjoint seed lies in the left "
+             "null space of the operator, re-profile with a non-degenerate "
+             "seed\n";
     }
     // The weight multiplies an absolute error, so the gradient a sensitivity
     // floor implies scales with 1 / the value's magnitude.
@@ -78,10 +75,11 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     }
   }
   if (print && floored)
-    llvm::errs() << "Poseidon: sensitivity floor raised the accuracy weight of "
-                 << floored << " of " << profileMap.size()
-                 << " profiled instruction(s) in " << functionName << " to "
-                 << kSensFloorRatio << " x the site maximum sensitivity\n";
+    llvm::errs()
+        << "[poseidon] sensitivity floor raised the accuracy weight of "
+        << floored << " of " << profileMap.size()
+        << " profiled instruction(s) in " << functionName << " to "
+        << kSensFloorRatio << " x the site maximum sensitivity\n";
   return floored;
 }
 

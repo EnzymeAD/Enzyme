@@ -172,10 +172,10 @@ static ShardPlan planShards(size_t numCores, const HerbieRunOptions &Opts) {
   unsigned rounds = std::max<unsigned>(
       1, (perShard + plan.threadsPerShard - 1) / plan.threadsPerShard);
   plan.wallBudget = plan.coreTimeout * rounds + plan.coreTimeout / 10 + 60;
-  if (plan.coreTimeout < (unsigned)Opts.CoreTimeout)
+  if (Opts.Print && plan.coreTimeout < (unsigned)Opts.CoreTimeout)
     llvm::errs() << "[poseidon] Herbie per-core --timeout clamped from "
                  << Opts.CoreTimeout << " s to " << plan.coreTimeout
-                 << " s by -poseidon-herbie-subgraph-timeout.\n";
+                 << " s by -poseidon-herbie-subgraph-timeout\n";
   return plan;
 }
 
@@ -195,7 +195,8 @@ static SmallVector<std::string> herbieCommand(const HerbieRunOptions &Opts,
   args.push_back("--platform");
   args.push_back(Platform.Path.empty() ? Platform.Name : Platform.Path);
   if (Opts.Print)
-    llvm::errs() << "Poseidon: using Herbie platform '" << Platform.Name << '\''
+    llvm::errs() << "[poseidon] using Herbie platform '" << Platform.Name
+                 << '\''
                  << (Platform.Path.empty()
                          ? std::string()
                          : " from " + Platform.Path + " (digest " +
@@ -233,8 +234,9 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
   if (cached.value) {
     raw_string_ostream(Run.ResultsJson) << *cached.value;
     if (Opts.Print)
-      llvm::errs() << "Using cached Herbie output from " << cache.answerPath
-                   << "\nHerbie output: " << Run.ResultsJson << '\n';
+      llvm::errs() << "[poseidon] Using cached Herbie output from "
+                   << cache.answerPath
+                   << "\n[poseidon] Herbie output: " << Run.ResultsJson << '\n';
     Run.Result = HerbieRunResult::Outcome::Ok;
     Run.From = HerbieRunResult::Origin::Cache;
     Run.CacheFile = cache.answerPath;
@@ -245,7 +247,7 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
                              "the Herbie cache file " + cache.answerPath +
                                  " for " + Label + " is not a cache entry (" +
                                  cached.unreadable + ")");
-  if (!cached.unreadable.empty() || !cached.differs.empty())
+  if (Opts.Print && (!cached.unreadable.empty() || !cached.differs.empty()))
     llvm::errs() << "[poseidon] Herbie " << Label << ": the cache file "
                  << cache.answerPath << " holds "
                  << (cached.unreadable.empty()
@@ -306,10 +308,10 @@ ShardFiles::~ShardFiles() {
   for (unsigned s = 0; s < inputs.size(); ++s) {
     if (!inputs[s].empty())
       sys::fs::remove(inputs[s]);
+    // A temporary directory left behind is harmless; llvm::FileRemover
+    // ignores the same failure.
     if (!outputs[s].empty())
-      if (std::error_code EC = sys::fs::remove_directories(outputs[s]))
-        llvm::errs() << "Warning: Failed to remove temporary output directory: "
-                     << EC.message() << '\n';
+      sys::fs::remove_directories(outputs[s]);
   }
 }
 
@@ -442,14 +444,14 @@ static AnswerCache answerCache(const HerbieRunOptions &Opts,
 static void announceRun(const HerbieRunOptions &Opts, StringRef Label,
                         size_t numCores, const ShardPlan &plan,
                         ArrayRef<std::string> command, StringRef keyDigest) {
-  if (Opts.Print) {
-    llvm::errs() << "Executing Herbie (" << plan.shards
-                 << " process(es), one input file and output directory "
-                    "each) with arguments: ";
-    for (const std::string &arg : command)
-      llvm::errs() << arg << ' ';
-    llvm::errs() << '\n';
-  }
+  if (!Opts.Print)
+    return;
+  llvm::errs() << "[poseidon] Executing Herbie (" << plan.shards
+               << " process(es), one input file and output directory "
+                  "each) with arguments: ";
+  for (const std::string &arg : command)
+    llvm::errs() << arg << ' ';
+  llvm::errs() << '\n';
   llvm::errs() << "[poseidon] Herbie " << Label << ": " << numCores
                << " FPCore(s) in " << plan.shards << " process(es) of "
                << plan.threadsPerShard << " worker(s), per-core timeout "
@@ -545,18 +547,20 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
          " but wrote a usable results.json, which is used")
             .str();
   if (Opts.Print)
-    llvm::errs() << "Herbie output: " << Run.ResultsJson << '\n';
+    llvm::errs() << "[poseidon] Herbie output: " << Run.ResultsJson << '\n';
   if (!cache.answerPath.empty()) {
     if (Error E = writeAnswer(Opts.CacheDir, cache.answerPath, cache.answeredBy,
                               std::move(*answer)))
       return std::move(E);
     if (Opts.Print)
-      llvm::errs() << "Saved Herbie output to cache file " << cache.answerPath
-                   << '\n';
+      llvm::errs() << "[poseidon] Saved Herbie output to cache file "
+                   << cache.answerPath << '\n';
   }
-  llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
-               << ran.seconds << " s, a fresh answer of the Herbie with digest "
-               << binaryDigest << '\n';
+  if (Opts.Print)
+    llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
+                 << ran.seconds
+                 << " s, a fresh answer of the Herbie with digest "
+                 << binaryDigest << '\n';
   Run.Result = HerbieRunResult::Outcome::Ok;
   Run.CacheFile = cache.answerPath;
   return Run;

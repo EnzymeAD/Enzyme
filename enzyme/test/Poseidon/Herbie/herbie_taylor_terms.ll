@@ -39,9 +39,9 @@
 ; the option stops the compile.
 
 ; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 2 Taylor terms: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout {{.*}}, key [[KEY2:[0-9A-F]+]]
-; SEARCH24: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY2]].txt
+; SEARCH24: [poseidon] Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY2]].txt
 ; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 4 Taylor terms: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout {{.*}}, key [[KEY4:[0-9A-F]+]]
-; SEARCH24: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY4]].txt
+; SEARCH24: [poseidon] Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY4]].txt
 
 ; CALLS24: report {{.*}} --enable reduce:dag-cost --num-taylor-terms 2 {{[^ ]+}} {{[^ ]+$}}
 ; CALLS24-NEXT: report {{.*}} --enable reduce:dag-cost --num-taylor-terms 4 {{[^ ]+}} {{[^ ]+$}}
@@ -52,7 +52,7 @@
 ; UNION24-NOT: R0_
 
 ; SEARCH4-NOT: FPCore(s) in
-; SEARCH4: Using cached Herbie output from {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
+; SEARCH4: [poseidon] Using cached Herbie output from {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
 ; SEARCH4-NOT: FPCore(s) in
 
 ; NOCALL-NOT: report
@@ -61,7 +61,7 @@
 ; UNION4-NEXT: R0_1 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
 ; UNION4-NOT: R0_
 
-; SEARCH46: Using cached Herbie output from
+; SEARCH46: [poseidon] Using cached Herbie output from
 ; SEARCH46: [poseidon] Herbie subgraph 0 of preprocess_tester at 6 Taylor terms: 2 FPCore(s) in
 ; SEARCH46-NOT: at 4 Taylor terms: 2 FPCore(s) in
 
@@ -74,6 +74,6 @@
 ; UNION46-NOT: R0_
 
 ; UNSET-NOT: Taylor terms
-; UNSET: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_7D7D1B4F7D656892.txt
+; UNSET: [poseidon] Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_7D7D1B4F7D656892.txt
 
 ; NOOPTION: error: {{.*}}Poseidon: the cache {{.*}}old holds no Herbie answer for subgraph 0 of preprocess_tester at {{[0-9]+}} Taylor terms, and the Herbie at {{.*}}no-option-herbie.sh cannot run (-poseidon-herbie-num-taylor-terms passes it --num-taylor-terms, which it does not take ('report --help' does not list it); use a Herbie built with the option, or leave the flag out)

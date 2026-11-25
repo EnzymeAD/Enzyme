@@ -92,11 +92,11 @@ int main(int argc, char **argv) {
 #endif
 
 // GEN: [poseidon] site energy(double const*, int): accuracy target 1e-06
-// GEN-NEXT: [poseidon-profgen] wave(double const*, double*, int): site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
-// GEN-NEXT: [poseidon-profgen] energy(double const*, int): site 1, 1 shadow buffer(s), output(s) return, 2 call(s)
-// GEN-NEXT: [poseidon-profgen] Integrator::step(double*, double const*, int): site 2, 3 shadow buffer(s), output(s) 1, 2 call(s)
-// GEN-NEXT: [poseidon-profgen] clip(double const*, double*, int): site 3, 2 shadow buffer(s), output(s) 1 return, 2 call(s)
-// GEN-NEXT: [poseidon-profgen] double poly<double>(double): site 4, 0 shadow buffer(s), output(s) return, 3 call(s)
+// GEN-NEXT: [poseidon] wave(double const*, double*, int): site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
+// GEN-NEXT: [poseidon] energy(double const*, int): site 1, 1 shadow buffer(s), output(s) return, 2 call(s)
+// GEN-NEXT: [poseidon] Integrator::step(double*, double const*, int): site 2, 3 shadow buffer(s), output(s) 1, 2 call(s)
+// GEN-NEXT: [poseidon] clip(double const*, double*, int): site 3, 2 shadow buffer(s), output(s) 1 return, 2 call(s)
+// GEN-NEXT: [poseidon] double poly<double>(double): site 4, 0 shadow buffer(s), output(s) return, 3 call(s)
 // GEN-NOT: {{.}}
 
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06

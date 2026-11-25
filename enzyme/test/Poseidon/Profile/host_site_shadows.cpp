@@ -73,7 +73,7 @@ int main() {
   printf("%g %g %g %g %g %g\n", my[3], vy[3], fileY[3], localY[3], stackY[3] + stackZ[3], iy[9]);
 }
 
-// GEN: [poseidon-profgen] scale(double const*, double*, int): site 0, 2 shadow buffer(s), output(s) 1
+// GEN: [poseidon] scale(double const*, double*, int): site 0, 2 shadow buffer(s), output(s) 1
 
 // SYM: {{[VvDdRr]}} __poseidon_host_sites_present
 

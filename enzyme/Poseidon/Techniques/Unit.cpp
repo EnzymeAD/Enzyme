@@ -24,9 +24,9 @@ using namespace llvm;
 namespace poseidon {
 
 static constexpr UnitKindInfo kUnitKinds[] = {
-    {UnitKind::R, "CO", "R", "a rewrite", true},
-    {UnitKind::PT, "CS", "PT", "a precision change", true},
-    {UnitKind::M, "CM", "M", "a candidate", false},
+    {UnitKind::R, "CO", "rewrite", "R", "a rewrite", true},
+    {UnitKind::PT, "CS", "precision change", "PT", "a precision change", true},
+    {UnitKind::M, "CM", "matrix product", "M", "a candidate", false},
 };
 
 ArrayRef<UnitKindInfo> unitKinds() { return kUnitKinds; }

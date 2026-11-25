@@ -114,7 +114,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; nothing the outline is folded back. With a rewrite applied the materialized
 ; body is folded back the same way. In every case the kernel is one entry
 ; function with the arithmetic inline and no _poseidon_body symbol survives.
-; NOPROFILE-WARN: warning: <unknown>:0:0: in function fms_kernel void (ptr, ptr, ptr): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
+; NOPROFILE-WARN: warning: <unknown>:0:0: in function fms_kernel void (ptr, ptr, ptr): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
 ; NOPROFILE-WARN-NOT: warning
 ; NOPROFILE-LABEL: define {{.*}} @fms_kernel(
 ; NOOP-LABEL: define {{.*}} @fms_kernel(

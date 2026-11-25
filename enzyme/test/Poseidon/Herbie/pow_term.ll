@@ -72,7 +72,7 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; BASE: Poseidon: sensitivity floor raised the accuracy weight of 5 of 8 profiled instruction(s) in preprocess_tester to 1.000000e-06 x the site maximum sensitivity
+; BASE: [poseidon] sensitivity floor raised the accuracy weight of 5 of 8 profiled instruction(s) in preprocess_tester to 1.000000e-06 x the site maximum sensitivity
 ; BASE: Found a subgraph with 8 operations and 2 inputs and 2 outputs
 ; BASE-NOT: Bottleneck:
 ; BASE: [poseidon] After splitting, have 1 subgraphs in preprocess_tester

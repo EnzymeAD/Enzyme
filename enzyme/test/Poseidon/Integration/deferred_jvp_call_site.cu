@@ -153,7 +153,7 @@ int main() {
 // DEFER-NEXT: [poseidon] jvp_body: marked body still holds an __enzyme_* request; deferred to the late run
 // DEFER-NEXT: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: folded 1 Enzyme-generated call(s) into the deferred body
 // DEFER-NEXT: [poseidon] jvp_body: folded 1 Enzyme-generated call(s) into the deferred body
-// DEFER-NEXT: [poseidon-profgen] jvp_body at call 0 in jvp_call(double const*, double const*, double*, double*): 4 shadow object(s), output(s) 2 3
+// DEFER-NEXT: [poseidon] jvp_body at call 0 in jvp_call(double const*, double const*, double*, double*): 4 shadow object(s), output(s) 2 3
 // DEFER-NEXT: [poseidon] block-geometry probe placed in 2 profiled function(s)
 
 // PRIMAL: call: y = 0.7949 0.0631 dy = 1.1347 0.5354 jvp_rel_l2 = {{[0-9.]+e-1[5-9]}}

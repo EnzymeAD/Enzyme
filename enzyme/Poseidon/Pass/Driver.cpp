@@ -193,7 +193,7 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
   const Options &O = S.Opts;
   const bool profileUse = O.Profiling.usesProfile();
   if (!profileUse) {
-    warn(CI, Twine(kNoProfileAction) + " Emitting the original computation.");
+    warn(CI, kNoProfileAction);
   } else {
     noteSiteForPins(S, *F);
     auto key = std::make_pair((const Function *)F, errTol);

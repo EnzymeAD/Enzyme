@@ -93,8 +93,8 @@ int main() {
 // BIND: declare void @__poseidon_profile_init_cuda()
 
 // The call in qpoint is lowered twice: in qpoint and where k inlines it.
-// DEV: per_call_host_half_nvptx.cu:[[@LINE-44]]:{{[0-9]+}}: warning: Poseidon: area(double) is a device function no kernel of this translation unit calls; on the device, POSEIDON_OPTIMIZE marks a kernel or a function a kernel calls. Emitting the original computation.
-// DEV: [poseidon-profgen] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
-// DEV-NEXT: [poseidon-profgen] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
+// DEV: per_call_host_half_nvptx.cu:[[@LINE-44]]:{{[0-9]+}}: warning: Poseidon: area(double) is a device function no kernel of this translation unit calls, so it is left as written; on the device, put POSEIDON_OPTIMIZE on a kernel or on a function a kernel calls
+// DEV: [poseidon] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
+// DEV-NEXT: [poseidon] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
 // DEV-NEXT: [poseidon] block-geometry probe placed in 1 profiled function(s)
-// DEV-NOT: [poseidon-profgen]
+// DEV-NOT: {{shadow (buffer|object)\(s\)}}

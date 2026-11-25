@@ -4,8 +4,8 @@
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=1e9 -S -o /dev/null
 ; RUN: rm -rf %t && mkdir -p %t/tmp %t/used %t/none %t/sig && touch %t/file
-; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=ENABLED %s
-; RUN: not env TMPDIR=%t/tmp %clang -O1 -c -x ir %S/../Inputs/regime_split/tester.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/regime_split/profiles -mllvm -poseidon-enable-herbie=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-pt=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c -poseidon-print 2>&1 | FileCheck --check-prefix=ENABLED %s
+; RUN: not env TMPDIR=%t/tmp %clang -O1 -c -x ir %S/../Inputs/regime_split/tester.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/regime_split/profiles -mllvm -poseidon-enable-herbie=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-pt=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -mllvm -poseidon-print -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: not ls %t/site.o
 ; RUN: ls %t/tmp | count 0
 ; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | count 0
@@ -29,7 +29,7 @@
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/used -poseidon-print 2>&1 | FileCheck --check-prefix=USED --implicit-check-not=crash %s
 ; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-results.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NONE --implicit-check-not=crashed %s
 
-; USED: Saved Herbie output to cache file
+; USED: [poseidon] Saved Herbie output to cache file
 ; USED: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: Herbie subgraph 0 of preprocess_tester exited with status 1 but wrote a usable results.json, which is used{{$}}
 ; USED: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
 
@@ -41,7 +41,7 @@
 ; as written; under -poseidon-strict-mode the crash is fatal. Neither compile
 ; caches anything, so the next compile runs Herbie again.
 ; RUN: printf '#!/bin/sh\n[ -z "$FAKE_HERBIE_SIGNAL" ] || kill -KILL $$\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/signal.sh && chmod +x %t/signal.sh
-; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=SIGNAL --implicit-check-not="was stopped after" --implicit-check-not="Saved Herbie output" %s
+; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=SIGNAL --implicit-check-not="was stopped after" --implicit-check-not="[poseidon] Saved Herbie output" %s
 ; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=STRICT %s
 ; RUN: ls %t/sig | FileCheck --allow-empty --check-prefix=FILES %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=RETRY %s
@@ -58,7 +58,7 @@
 
 ; RETRY-NOT: timed out before
 ; RETRY: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key [[KEY:[0-9A-F]+]]{{$}}
-; RETRY: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY]].txt{{$}}
+; RETRY: [poseidon] Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY]].txt{{$}}
 ; RETRY-NEXT: [poseidon] Herbie subgraph 0 of preprocess_tester: completed in {{[0-9.e+-]+}} s, a fresh answer of the Herbie with digest {{[0-9A-F]+}}{{$}}
 ; RETRY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 ; RETRY: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}

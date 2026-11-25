@@ -34,7 +34,7 @@ template <typename BODY> __global__ static void HipKernel2D(int N, BODY body) {
 }
 
 // A kernel that computes more than the lambda cannot be its site.
-// WRAPPER: annotated_lambda_amdgpu.hip:[[@LINE+4]]:{{[0-9]+}}: error: Poseidon: void Scaled<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, double*, reduce(int, int, int, double*, double*, double*)::'lambda'(int)) calls reduce(int, int, int, double*, double*, double*)::'lambda'(int)::operator()(int) const, which carry POSEIDON_OPTIMIZE, and does floating-point work outside them (in void Scaled<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, double*, reduce(int, int, int, double*, double*, double*)::'lambda'(int))); a kernel is the site of an annotated function only when it is a wrapper around the call. Move that work out of the kernel, or annotate the kernel instead.
+// WRAPPER: annotated_lambda_amdgpu.hip:[[@LINE+4]]:{{[0-9]+}}: error: Poseidon: void Scaled<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, double*, reduce(int, int, int, double*, double*, double*)::'lambda'(int)) calls reduce(int, int, int, double*, double*, double*)::'lambda'(int)::operator()(int) const, which carry POSEIDON_OPTIMIZE, and does floating-point work outside them (in void Scaled<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, double*, reduce(int, int, int, double*, double*, double*)::'lambda'(int))), so it is no wrapper around the call and not their site; move that work out of the kernel, or annotate the kernel instead
 // WRAPPER-NOT: error:
 // WRAPPER: {{[12] warnings? and 1 error}} generated when compiling for {{.*}}
 template <typename BODY>
@@ -69,10 +69,10 @@ void reduce(int nq, int ne, int nd, double *Q, double *G, double *y) {
 // An annotated device function no kernel calls is not a site.
 POSEIDON_OPTIMIZE __device__ double unused(double x) { return x * x; }
 
-// GEN: annotated_lambda_amdgpu.hip:[[@LINE-2]]:{{[0-9]+}}: warning: Poseidon: unused(double) is a device function no kernel of this translation unit calls; on the device, POSEIDON_OPTIMIZE marks a kernel or a function a kernel calls. Emitting the original computation.
+// GEN: annotated_lambda_amdgpu.hip:[[@LINE-2]]:{{[0-9]+}}: warning: Poseidon: unused(double) is a device function no kernel of this translation unit calls, so it is left as written; on the device, put POSEIDON_OPTIMIZE on a kernel or on a function a kernel calls
 // GEN: [poseidon] block-geometry probe placed in 1 profiled function(s)
-// GEN-NEXT: [poseidon-profgen] _ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
-// GEN-NOT: [poseidon-profgen] {{.*}}Scaled
+// GEN-NEXT: [poseidon] _ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
+// GEN-NOT: [poseidon] {{.*}}Scaled
 // GEN: 1 warning generated when compiling for {{.*}}
 
 // The kernel, its two launch arguments, its three pointers (all in argument

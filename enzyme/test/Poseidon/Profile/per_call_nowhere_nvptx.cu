@@ -28,7 +28,7 @@ __attribute__((global)) void k(double *x) {
 }
 
 // CHECK-NOT: warning
-// CHECK: [poseidon-profgen] void apply<square>(square const*, double const*, double*) at call 0 in k(double*): 2 shadow object(s), output(s) 2
+// CHECK: [poseidon] void apply<square>(square const*, double const*, double*) at call 0 in k(double*): 2 shadow object(s), output(s) 2
 // CHECK-NOT: warning
 // The call passes a and b with their shadows, zero and seeded, and no functor
 // operand.

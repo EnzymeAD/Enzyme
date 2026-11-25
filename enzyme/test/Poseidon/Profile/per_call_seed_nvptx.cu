@@ -37,8 +37,8 @@ __attribute__((global)) void k(double *x, int n) {
   }
 }
 
-// CHECK-DAG: [poseidon-profgen] both(double const*, double*, double*) at call 0 in k(double*, int): 3 shadow object(s), output(s) 2, not read after the call: 1
-// CHECK-DAG: [poseidon-profgen] step(double*, double*) at call 1 in k(double*, int): 2 shadow object(s), output(s) 0 1
+// CHECK-DAG: [poseidon] both(double const*, double*, double*) at call 0 in k(double*, int): 3 shadow object(s), output(s) 2, not read after the call: 1
+// CHECK-DAG: [poseidon] step(double*, double*) at call 1 in k(double*, int): 2 shadow object(s), output(s) 0 1
 // The seeds of t, s and y, and no other.
 // IR-LABEL: define {{.*}} @_Z1kPdi(
 // IR-COUNT-3: store double 1.000000e+00

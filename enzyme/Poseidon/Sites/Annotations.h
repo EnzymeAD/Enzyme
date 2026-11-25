@@ -59,11 +59,11 @@ constexpr llvm::StringLiteral kSiteCallee = "poseidon-site-callee";
 /// empty when the annotation carried none.
 constexpr llvm::StringLiteral kHostBody = "poseidon-site-body";
 
-/// What a site compiled without a profile action is warned with, before what
-/// becomes of it.
+/// What a site compiled without a profile action is warned with.
 constexpr llvm::StringLiteral kNoProfileAction =
     "a Poseidon site was compiled without -poseidon-profile-generate or "
-    "-poseidon-profile-use=<dir>.";
+    "-poseidon-profile-use=<dir>, so it is left as written; compile with one "
+    "of the two to profile or optimize it";
 
 /// Reports `message` at the annotated function `F` with `severity`.
 void diagnoseSite(llvm::Function &F, const llvm::Twine &message,

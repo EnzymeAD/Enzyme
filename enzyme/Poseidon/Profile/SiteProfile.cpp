@@ -459,7 +459,7 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
   std::string message;
   if (S.Opts.Diagnostics.Print) {
     raw_string_ostream msg(message);
-    msg << "[poseidon-profgen] " << kernelName << ": site " << siteId << ", "
+    msg << "[poseidon] " << kernelName << ": site " << siteId << ", "
         << shadowed.size() << " shadow buffer(s), output(s)";
     for (const Shadowed &s : shadowed)
       if (s.seed) {
@@ -775,7 +775,7 @@ static bool profileHostBody(Session &S, Function &B, unsigned &nextSiteId) {
 
   if (!S.Opts.Diagnostics.Print)
     return true;
-  errs() << "[poseidon-profgen] " << name << ": site " << D.siteId << ", "
+  errs() << "[poseidon] " << name << ": site " << D.siteId << ", "
          << D.ptrParams.size() << " shadow buffer(s), output(s)";
   for (unsigned p : D.ptrParams)
     if (seedWidth[p])
@@ -1199,8 +1199,8 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
 
   if (!print)
     return NC;
-  errs() << "[poseidon-profgen] " << site << ": "
-         << objects.size() + regions.size() << " shadow object(s), output(s)";
+  errs() << "[poseidon] " << site << ": " << objects.size() + regions.size()
+         << " shadow object(s), output(s)";
   for (const MarkerArgs::MadeShadow &S : marker.madeShadows)
     if (!constant.count(S.activity) && seedWidth[S.param] &&
         !unread.count(objectOf.lookup(S.arg)))

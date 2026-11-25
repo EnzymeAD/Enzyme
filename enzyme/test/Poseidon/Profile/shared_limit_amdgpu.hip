@@ -29,7 +29,7 @@ template __global__ void stage<6144>(const double *, double *);
 template __global__ void stage<4096>(const double *, double *);
 #endif
 
-// GEN: {{^}}[poseidon-profgen] _Z5stageILi4096EEvPKdPd: site 0, 2 shadow buffer(s), output(s) 1{{$}}
+// GEN: {{^}}[poseidon] _Z5stageILi4096EEvPKdPd: site 0, 2 shadow buffer(s), output(s) 1{{$}}
 
 // OVER: shared_limit_amdgpu.hip:[[@LINE-16]]:35: error: Poseidon: void stage<6144>(double const*, double*) reaches 98304 bytes of static shared memory once profiled, above the 65536 a kernel can declare: its own buffers void stage<6144>(double const*, double*)::buf (49152 bytes); the shadows of its buffers void stage<6144>(double const*, double*)::buf (49152 bytes); the shadows of other kernels' buffers none. Profile the kernel with smaller shared buffers, or the kernels whose shadows it reaches in another translation unit.
 

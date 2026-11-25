@@ -322,11 +322,9 @@ bool propagateDeviceSites(const Options &O, Module &M) {
       diagnoseSite(K,
                    displayName(K) + " calls " + names +
                        ", which carry POSEIDON_OPTIMIZE, and " + why +
-                       "; a kernel is the site of an annotated function only "
-                       "when it is a wrapper around the call" +
-                       (active ? ". Move that work out of the kernel, or "
-                                 "annotate the kernel instead."
-                               : ". Emitting the original computation."),
+                       ", so it is no wrapper around the call and not their "
+                       "site; move that work out of the kernel, or annotate "
+                       "the kernel instead",
                    active ? DS_Error : DS_Warning);
       continue;
     }
@@ -394,9 +392,7 @@ void warnSitesWithoutProfile(const Options &O, SiteRecords &T, Module &M) {
     return;
   T.WarnedWithoutProfile = true;
   for (Site &site : collectSites(O, M, {Site::Form::Kernel}))
-    diagnose(*site.fn, site.fn->getSubprogram(),
-             Twine(kNoProfileAction) + " Emitting the original computation.",
-             DS_Warning);
+    diagnose(*site.fn, site.fn->getSubprogram(), kNoProfileAction, DS_Warning);
 }
 
 /// The module's POSEIDON_OPTIMIZE annotations removed, with what only they
@@ -714,16 +710,15 @@ bool outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
     if (isLambdaCallOperator(*F)) {
       diagnoseSite(*F,
                    displayName(*F) +
-                       " is a lambda; POSEIDON_OPTIMIZE on a lambda marks the "
-                       "GPU kernels that call it, and this compilation has "
-                       "none. Emitting the original computation.",
+                       " is a lambda and this compilation has no GPU kernel "
+                       "that calls it, so it is left as written; "
+                       "POSEIDON_OPTIMIZE on a lambda marks the kernels that "
+                       "call it in a CUDA or HIP compilation",
                    DS_Warning);
       continue;
     }
     if (!active) {
-      diagnoseSite(
-          *F, Twine(kNoProfileAction) + " Emitting the original computation.",
-          DS_Warning);
+      diagnoseSite(*F, kNoProfileAction, DS_Warning);
       continue;
     }
     auto both = llvm::find_if(

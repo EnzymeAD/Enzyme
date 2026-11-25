@@ -52,9 +52,9 @@ static void collectKernels(const Options &O, Module &M,
         diagnoseSite(*fn,
                      displayName(*fn) +
                          " is a device function no kernel of this translation "
-                         "unit calls; on the device, POSEIDON_OPTIMIZE marks a "
-                         "kernel or a function a kernel calls. Emitting the "
-                         "original computation.",
+                         "unit calls, so it is left as written; on the device, "
+                         "put POSEIDON_OPTIMIZE on a kernel or on a function a "
+                         "kernel calls",
                      DS_Warning);
       continue;
     }

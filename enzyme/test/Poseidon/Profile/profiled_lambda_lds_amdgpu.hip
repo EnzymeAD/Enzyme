@@ -48,17 +48,17 @@ template void istage<2>(int, const int *, int *);
 template void istage<3>(int, const int *, int *);
 
 // GEN-NOT: error
-// GEN-NOT: [poseidon-profgen] {{.*}}istage
+// GEN-NOT: [poseidon] {{.*}}istage
 // GEN: profiled_lambda_lds_amdgpu.hip:[[@LINE-32]]:42: warning: Poseidon: void forall<void istage<1>(int, int const*, int*)::'lambda'(int)>(int, void istage<1>(int, int const*, int*)::'lambda'(int)) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written{{$}}
 // GEN: profiled_lambda_lds_amdgpu.hip:[[@LINE-33]]:42: warning: Poseidon: void forall<void istage<2>(int, int const*, int*)::'lambda'(int)>(int, void istage<2>(int, int const*, int*)::'lambda'(int)) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written{{$}}
 // GEN: profiled_lambda_lds_amdgpu.hip:[[@LINE-34]]:42: warning: Poseidon: void forall<void istage<3>(int, int const*, int*)::'lambda'(int)>(int, void istage<3>(int, int const*, int*)::'lambda'(int)) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written{{$}}
 // GEN-NOT: error
 // GEN: {{^}}[poseidon] block-geometry probe placed in 1 profiled function(s){{$}}
 // GEN-NOT: error
-// GEN-NOT: [poseidon-profgen] {{.*}}istage
-// GEN: {{^}}[poseidon-profgen] _Z6forallIZ5stageILi1EEviPKdPdEUliE_EviT_: site 0, 2 shadow buffer(s), output(s) 1[+8]{{$}}
+// GEN-NOT: [poseidon] {{.*}}istage
+// GEN: {{^}}[poseidon] _Z6forallIZ5stageILi1EEviPKdPdEUliE_EviT_: site 0, 2 shadow buffer(s), output(s) 1[+8]{{$}}
 // GEN-NOT: error
-// GEN-NOT: [poseidon-profgen]
+// GEN-NOT: {{shadow (buffer|object)\(s\)}}
 
 // CHECK: amdhsa.kernels:
 // CHECK: .group_segment_fixed_size: 20480{{$}}

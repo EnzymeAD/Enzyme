@@ -79,7 +79,7 @@ public:
 
   // The subclass, for isa<> and dyn_cast<>.
   unsigned kind() const { return kindId; }
-  // What logs and the DP table call the unit's kind.
+  // What the solver's progress lines call the unit's kind.
   virtual llvm::StringRef kindName() const = 0;
 
   // How many candidates the unit offers.
@@ -157,9 +157,10 @@ prunedOrder(llvm::ArrayRef<llvm::ArrayRef<OptimizationUnit *>> sites);
 // cost 0 and error 0.
 
 // The frontier of every footprint-compatible strategy over `units`, taken in
-// that order.
+// that order. With `progress`, a line after each unit and a closing summary.
 void solveExact(llvm::ArrayRef<OptimizationUnit *> units,
-                const CostScale &scale, CostMap &cost, SolutionMap &sol);
+                const CostScale &scale, CostMap &cost, SolutionMap &sol,
+                bool progress);
 
 // The frontier pruned after each unit of `units`, taken in that order. With
 // `progress`, a line after each unit counts the units of its kind done.

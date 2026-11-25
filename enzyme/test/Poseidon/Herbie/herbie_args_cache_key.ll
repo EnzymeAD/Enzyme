@@ -23,26 +23,26 @@
 ; searches again, and its answers, the same, read the table back: the table
 ; depends on the answers, not on which Herbie gave them.
 
-; FIRST: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
+; FIRST: [poseidon] Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
 ; FIRST-NOT: DP cache entry
 ; FIRST: Solving the DP for preprocess_tester.
 
-; OTHER-NOT: Using cached Herbie output
-; OTHER: Saved Herbie output to cache file
+; OTHER-NOT: [poseidon] Using cached Herbie output
+; OTHER: [poseidon] Saved Herbie output to cache file
 ; OTHER-NOT: DP cache entry
 ; OTHER: Solving the DP for preprocess_tester.
 
-; BACK-NOT: Saved Herbie output
-; BACK: Using cached Herbie output from {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
+; BACK-NOT: [poseidon] Saved Herbie output
+; BACK: [poseidon] Using cached Herbie output from {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
 ; BACK-NOT: DP cache entry
 ; BACK: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 
-; HIT-NOT: Saved Herbie output
-; HIT: Using cached Herbie output from
+; HIT-NOT: [poseidon] Saved Herbie output
+; HIT: [poseidon] Using cached Herbie output from
 ; HIT-NOT: DP cache entry
 ; HIT: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 
-; BINARY-NOT: Using cached Herbie output
-; BINARY: Saved Herbie output to cache file
+; BINARY-NOT: [poseidon] Using cached Herbie output
+; BINARY: [poseidon] Saved Herbie output to cache file
 ; BINARY-NOT: DP cache entry
 ; BINARY: Cache entry for preprocess_tester found. Loaded DP tables from cache.

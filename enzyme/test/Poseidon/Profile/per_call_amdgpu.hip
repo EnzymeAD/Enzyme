@@ -54,9 +54,9 @@ __global__ void k(double *x) {
 // IR-NOT: __poseidon_fp_optimize
 // IR-NOT: __poseidon_site
 
-// GEN-DAG: [poseidon-profgen] scale(double const*, double*) at call 1 in k(double*): 2 shadow object(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] scale(double const*, double*) at call 2 in k(double*): 1 shadow object(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] weigh(holder const&, double const*, double*) at call 3 in k(double*): 2 shadow object(s), output(s) 2
+// GEN-DAG: [poseidon] scale(double const*, double*) at call 1 in k(double*): 2 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] scale(double const*, double*) at call 2 in k(double*): 1 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] weigh(holder const&, double const*, double*) at call 3 in k(double*): 2 shadow object(s), output(s) 2
 // GENIR-LABEL: define {{.*}}amdgpu_kernel void @_Z1kPd(
 // GENIR-SAME: ptr addrspace(1) noundef %[[XP:[0-9]+]])
 // GENIR-DAG: %[[X:[0-9]+]] = alloca [32 x i8], align {{[0-9]+}}, addrspace(5)

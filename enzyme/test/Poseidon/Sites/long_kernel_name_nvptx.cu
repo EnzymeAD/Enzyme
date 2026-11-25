@@ -47,7 +47,7 @@ void reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_
 }
 
 // GEN-NOT: cannot write
-// GEN: [poseidon-profgen] _ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
+// GEN: [poseidon] _ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
 // GEN-NOT: cannot write
 
 // FILE: {{^}}launches_long_kernel_name_nvptx.cu_{{[0-9A-F]+}}.json{{$}}

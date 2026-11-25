@@ -67,8 +67,8 @@
 ; GEN-NEXT: ret void
 
 ; GEN-ERR: [poseidon] site dot: accuracy target 1e-07
-; GEN-ERR: [poseidon-profgen] scale: site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
-; GEN-ERR: [poseidon-profgen] dot: site 1, 1 shadow buffer(s), output(s) return, 1 call(s)
+; GEN-ERR: [poseidon] scale: site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
+; GEN-ERR: [poseidon] dot: site 1, 1 shadow buffer(s), output(s) return, 1 call(s)
 
 ; Without a profile the site keeps the body it was written with, folded back.
 ; USE-LABEL: define void @scale(ptr %x, ptr %out)
@@ -113,8 +113,8 @@
 ; OFF-NEXT: %d = call double @dot(ptr %buf, double 2.000000e+00, i32 4)
 ; OFF-NEXT: ret double %d
 ; OFF-NOT: _poseidon_body
-; OFF-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
-; OFF-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
+; OFF-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
+; OFF-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
 
 ; POSEIDON_OPTIMIZE on a host function makes the function a wrapper around its
 ; outlined body, so every call of it is the site. Under profile generation

@@ -136,7 +136,7 @@ int main() {
 // PRIMAL-NEXT: call_rel_l2 = [[E:[^ ]+]]
 // PRIMAL-NEXT: explicit_rel_l2 = [[E]]
 
-// GEN: [poseidon-profgen] hooke_vol(mat3 const&, float, float*) at call 0 in vol_call(float const*, float, float*, int): 2 shadow object(s), output(s) 2
+// GEN: [poseidon] hooke_vol(mat3 const&, float, float*) at call 0 in vol_call(float const*, float, float*, int): 2 shadow object(s), output(s) 2
 
 // PROF: Exec = 4096
 

@@ -58,9 +58,9 @@ define double @indirect(ptr %fp, double %x) {
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
-; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call is not a Poseidon site. The call runs as written.
-; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call is not a Poseidon site. The call runs as written.
-; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call is not a Poseidon site. The call runs as written.
+; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call is not a Poseidon site and runs as written
+; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call is not a Poseidon site and runs as written
+; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call is not a Poseidon site and runs as written
 define double @refused(double %x) {
   %h0 = call ptr @__poseidon_site(ptr @variadic)
   %r0 = call double (double, ...) %h0(double %x)

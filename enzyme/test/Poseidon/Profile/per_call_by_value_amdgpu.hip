@@ -81,9 +81,9 @@ __attribute__((noinline)) __device__ double run(state st) {
 
 __global__ void k_state(double *u) { u[0] = run(state{{u[0], u[1]}}); }
 
-// GEN-DAG: [poseidon-profgen] void body<qfunc>(qfunc const*, double const*, double*) at call 0 in void call_site<qfunc>(qfunc const&, double const*, double*): 3 shadow object(s), output(s) 2
-// GEN-DAG: [poseidon-profgen] void body<qfunc>(qfunc const*, double const*, double*) at call 0 in k_data(data_t, int): 3 shadow object(s), output(s) 2
-// GEN-DAG: [poseidon-profgen] advance(state*) at call 0 in run(state): 1 shadow object(s), output(s) 0
+// GEN-DAG: [poseidon] void body<qfunc>(qfunc const*, double const*, double*) at call 0 in void call_site<qfunc>(qfunc const&, double const*, double*): 3 shadow object(s), output(s) 2
+// GEN-DAG: [poseidon] void body<qfunc>(qfunc const*, double const*, double*) at call 0 in k_data(data_t, int): 3 shadow object(s), output(s) 2
+// GEN-DAG: [poseidon] advance(state*) at call 0 in run(state): 1 shadow object(s), output(s) 0
 
 // The functor's primal is the closure's local copy, its shadow a zero closure.
 // a holds u[i], its shadow is zero; b is read after the call, its shadow is

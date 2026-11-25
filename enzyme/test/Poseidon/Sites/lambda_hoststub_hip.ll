@@ -10,7 +10,7 @@
 ; operand is the kernel's handle, not the stub. The device-side name carries
 ; HIP's -fgpu-rdc postfix of an internal kernel.
 
-; GEN: [poseidon-profgen] launch of _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd now allocates and seeds 3 shadow buffer(s)
+; GEN: [poseidon] launch of _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd now allocates and seeds 3 shadow buffer(s)
 ; GEN: @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd = private unnamed_addr constant [3 x i32] [i32 1, i32 1, i32 1]
 ; GEN-NEXT: @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd = private unnamed_addr constant [3 x i32] [i32 16, i32 40, i32 64]
 ; GEN-NEXT: @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd = private unnamed_addr constant [3 x i32] [i32 0, i32 0, i32 8]

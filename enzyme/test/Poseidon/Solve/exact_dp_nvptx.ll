@@ -30,13 +30,13 @@
 ; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/reuse -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-TO-PRUNE %s
 ; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-REPLAY %s
 
-; ONE-PRUNE: Using cached Herbie output
+; ONE-PRUNE: [poseidon] Using cached Herbie output
 ; ONE-PRUNE: DP table contains 1 entries.
 ; ONE-PRUNE: [poseidon] No solution found within the computation cost budget
 ; ONE-PRUNE-NOT: Applying solution
 ; ONE-PRUNE: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
 ; ONE-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}
-; ONE-EXACT: Exact DP: 2 frontier points; peak 2 entries in 2 signatures; 0 precision changes priced; {{.*}} s
+; ONE-EXACT: [poseidon] Exact DP: 2 frontier points; peak 2 entries in 2 signatures; 0 precision changes priced; {{.*}} s
 ; ONE-EXACT: DP table contains 2 entries.
 ; ONE-EXACT: Minimum accuracy cost within budget: 7.671461e-05
 ; ONE-EXACT-NEXT: Computation cost budget used: -7.480469e-01
@@ -76,7 +76,7 @@
 ; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
 ; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_b; wrapper call restored to original body tester_b (bit-transparent no-op)
 ; JOINT-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}
-; JOINT-EXACT: Exact DP: 3 frontier points; peak 4 entries in 2 signatures; 0 precision changes priced; {{.*}} s
+; JOINT-EXACT: [poseidon] Exact DP: 3 frontier points; peak 4 entries in 2 signatures; 0 precision changes priced; {{.*}} s
 ; JOINT-EXACT: Critical computation cost range: [-7.480469e-01, -5.859375e-02]
 ; JOINT-EXACT-NEXT: DP table contains 3 entries.
 ; JOINT-EXACT: Minimum accuracy cost within budget: 1.534292e-04
@@ -103,7 +103,7 @@
 ; REFUSAL-PRUNE-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.801088e+06
 ; REFUSAL-PRUNE: DP table contains 1 entries.
 ; REFUSAL-PRUNE-BUDGETS: {{^}}-0.10526315789473684{{$}}
-; REFUSAL-EXACT: Exact DP: 4 frontier points
+; REFUSAL-EXACT: [poseidon] Exact DP: 4 frontier points
 ; REFUSAL-EXACT: DP table contains 4 entries.
 ; REFUSAL-EXACT-BUDGETS: {{^}}-0.78947368421052633,-0.77631578947368418,-0.76315789473684215,-0.10526315789473684{{$}}
 
@@ -126,7 +126,7 @@
 ; REPRICE-PRUNE: DP table contains 17 entries.
 ; REPRICE-PRUNE-BUDGETS-NOT: -0.95376420454545452
 ; REPRICE-PRUNE-BUDGETS: {{^}}-0.70823863636363638,-0.69236505681818183,-0.68103693181818181,-0.49815340909090911,-0.48227982954545456,-0.47095170454545454,-0.40106534090909091,-0.36573153409090908,-0.34985795454545454,-0.33852982954545452,-0.27727272727272728,-0.20738636363636365,-0.13750000000000001,-0.067613636363636362,0,0.13412642045454545,0.14545454545454545{{$}}
-; REPRICE-EXACT: Exact DP: 21 frontier points
+; REPRICE-EXACT: [poseidon] Exact DP: 21 frontier points
 ; REPRICE-EXACT: DP table contains 21 entries.
 ; REPRICE-EXACT-BUDGETS: {{^}}-0.95376420454545452,-0.94921875,-0.94467329545454548,-0.73458806818181821,-0.70823863636363638,-0.69236505681818183,-0.68103693181818181,-0.49815340909090911,-0.48227982954545456,-0.47095170454545454,-0.40106534090909091,-0.36573153409090908,-0.34985795454545454,-0.33852982954545452,-0.27727272727272728,-0.20738636363636365,-0.13750000000000001,-0.067613636363636362,0,0.13412642045454545,0.14545454545454545{{$}}
 
@@ -145,7 +145,7 @@
 ; TWO-PRUNE-TABLE: "accuracy_cost": 1633.8211240338183{{[0-9]*}},
 ; TWO-PRUNE-TABLE-NEXT: "cost": -4261412864,
 ; TWO-PRUNE-TABLE-NOT: "index": 1
-; TWO-EXACT: Exact DP: 9 frontier points
+; TWO-EXACT: [poseidon] Exact DP: 9 frontier points
 ; TWO-EXACT: DP table contains 9 entries.
 ; TWO-EXACT-TABLE: "accuracy_cost": 163.38211240338188{{[0-9]*}},
 ; TWO-EXACT-TABLE-NEXT: "cost": -4261412864,

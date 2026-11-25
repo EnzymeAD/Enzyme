@@ -147,12 +147,12 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 }
 #endif
 
-// GEN-DAG: [poseidon-profgen] qf(double const*, double*) at call 0 in k_inout(double const*, double*, int): 2 shadow object(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] qf(double const*, double*) at call 0 in k_out(double const*, double*, int): 2 shadow object(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] qf(double const*, double*) at call 0 in k_inplace(double*, int): 1 shadow object(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] qf(double const*, double*) at call 0 in k_select(double const*, double*, int): 2 shadow object(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] body(qfunc const*, double const*, double*) at call 0 in run_ref(qfunc const&, double*, int): 3 shadow object(s), output(s) 2
-// GEN-DAG: [poseidon-profgen] lean(pair const*, double*) at call 0 in k_align(double const*, double*): 2 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] qf(double const*, double*) at call 0 in k_inout(double const*, double*, int): 2 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] qf(double const*, double*) at call 0 in k_out(double const*, double*, int): 2 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] qf(double const*, double*) at call 0 in k_inplace(double*, int): 1 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] qf(double const*, double*) at call 0 in k_select(double const*, double*, int): 2 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon] body(qfunc const*, double const*, double*) at call 0 in run_ref(qfunc const&, double*, int): 3 shadow object(s), output(s) 2
+// GEN-DAG: [poseidon] lean(pair const*, double*) at call 0 in k_align(double const*, double*): 2 shadow object(s), output(s) 1
 
 // REFUSED-DAG: per_call_extent_amdgpu.hip:[[@LINE-20]]:13: error: Poseidon: sum(double const*, double*, int) at call 0 in k_refused(double const*, double*, int) cannot be a Poseidon site: argument 1 is a pointer the call indexes with a value that is not a constant. The pass makes the shadow of a pointer into a local object of the caller or an aggregate it takes by value, or else of the constant range of memory the call reaches through the pointer. Copy such an argument into a local object, or pass its shadow in the call: enzyme_dup before the pointer and the shadow after it.
 // REFUSED-DAG: per_call_extent_amdgpu.hip:[[@LINE-21]]:13: error: Poseidon: leak(double const*, double*) at call 1 in k_refused(double const*, double*, int) cannot be a Poseidon site: argument 1 is a pointer the call passes to sink(double const*), whose body the pass cannot see. The pass makes the shadow of a pointer into a local object of the caller or an aggregate it takes by value, or else of the constant range of memory the call reaches through the pointer. Copy such an argument into a local object, or pass its shadow in the call: enzyme_dup before the pointer and the shadow after it.

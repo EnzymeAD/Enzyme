@@ -36,7 +36,7 @@
 ; PRUNE-EXPLAIN-NEXT: "M0_0"
 ; PRUNE-EXPLAIN-NEXT: ]
 
-; EXACT: Exact DP: 69 frontier points; peak 146 entries in 4 signatures; 234 precision changes priced;
+; EXACT: [poseidon] Exact DP: 69 frontier points; peak 146 entries in 4 signatures; 234 precision changes priced;
 ; EXACT: Critical computation cost range: [-9.537642e-01, 1.454545e-01]
 ; EXACT-NEXT: DP table contains 69 entries.
 ; EXACT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
