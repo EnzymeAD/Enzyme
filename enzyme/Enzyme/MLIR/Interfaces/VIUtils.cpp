@@ -544,15 +544,17 @@ mlir::impulse::VI::emitELBOStep(OpBuilder &builder, Location loc,
   return {elboMean, gradLocMean, gradScaleMean};
 }
 
-Value mlir::impulse::VI::applySGDUpdate(OpBuilder &builder, Location loc,
-                                        Value param, Value gradElbo, Value lr) {
+mlir::impulse::VI::OptimizerUpdate
+mlir::impulse::VI::applySGDUpdate(OpBuilder &builder, Location loc, Value param,
+                                  Value gradElbo, Value m, Value v, Value lr) {
   auto ty = cast<RankedTensorType>(param.getType());
   Value lrBcast = broadcastScalar(builder, loc, lr, ty);
   Value scaledGrad = arith::MulFOp::create(builder, loc, lrBcast, gradElbo);
-  return arith::AddFOp::create(builder, loc, param, scaledGrad);
+  Value paramNew = arith::AddFOp::create(builder, loc, param, scaledGrad);
+  return {paramNew, m, v};
 }
 
-mlir::impulse::VI::AdamStepResult
+mlir::impulse::VI::OptimizerUpdate
 mlir::impulse::VI::applyAdamUpdate(OpBuilder &builder, Location loc,
                                    Value param, Value gradElbo, Value m,
                                    Value v, Value stepIdx, Value lr, double b1,
@@ -625,10 +627,10 @@ mlir::impulse::VI::applyAdamUpdate(OpBuilder &builder, Location loc,
   return {paramNew, mNew, vNew};
 }
 
-mlir::impulse::VI::GenericOptimStepResult
+mlir::impulse::VI::OptimizerUpdate
 mlir::impulse::VI::applyMomentumUpdate(OpBuilder &builder, Location loc,
-                                       Value param, Value gradElbo,
-                                       Value velocity, Value lr, double mass) {
+                                       Value param, Value gradElbo, Value m,
+                                       Value v, Value lr, double mass) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -636,18 +638,17 @@ mlir::impulse::VI::applyMomentumUpdate(OpBuilder &builder, Location loc,
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
   Value massBcast = broadcastScalar(
       builder, loc, scalarConst(builder, loc, scalarType, mass), paramType);
-  Value vScaled = arith::MulFOp::create(builder, loc, massBcast, velocity);
-  Value vNew = arith::AddFOp::create(builder, loc, vScaled, g);
+  Value mScaled = arith::MulFOp::create(builder, loc, massBcast, m);
+  Value mNew = arith::AddFOp::create(builder, loc, mScaled, g);
   Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
-  Value scaledV = arith::MulFOp::create(builder, loc, lrBcast, vNew);
-  Value paramNew = arith::SubFOp::create(builder, loc, param, scaledV);
-  Value zeroSlot = scalarConst(builder, loc, paramType, 0.0);
-  return {paramNew, vNew, zeroSlot};
+  Value scaledM = arith::MulFOp::create(builder, loc, lrBcast, mNew);
+  Value paramNew = arith::SubFOp::create(builder, loc, param, scaledM);
+  return {paramNew, mNew, v};
 }
 
-mlir::impulse::VI::GenericOptimStepResult mlir::impulse::VI::applyRMSPropUpdate(
-    OpBuilder &builder, Location loc, Value param, Value gradElbo,
-    Value avgSqGrad, Value lr, double gamma, double eps) {
+mlir::impulse::VI::OptimizerUpdate mlir::impulse::VI::applyRMSPropUpdate(
+    OpBuilder &builder, Location loc, Value param, Value gradElbo, Value m,
+    Value v, Value lr, double gamma, double eps) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -665,7 +666,7 @@ mlir::impulse::VI::GenericOptimStepResult mlir::impulse::VI::applyRMSPropUpdate(
   Value gSq = arith::MulFOp::create(builder, loc, g, g);
   Value oneMinusGammaGSq =
       arith::MulFOp::create(builder, loc, oneMinusGammaBcast, gSq);
-  Value gammaAvg = arith::MulFOp::create(builder, loc, gammaBcast, avgSqGrad);
+  Value gammaAvg = arith::MulFOp::create(builder, loc, gammaBcast, m);
   Value avgNew =
       arith::AddFOp::create(builder, loc, gammaAvg, oneMinusGammaGSq);
 
@@ -675,15 +676,13 @@ mlir::impulse::VI::GenericOptimStepResult mlir::impulse::VI::applyRMSPropUpdate(
   Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
   Value update = arith::MulFOp::create(builder, loc, lrBcast, gOverSqrt);
   Value paramNew = arith::SubFOp::create(builder, loc, param, update);
-
-  Value zeroSlot = scalarConst(builder, loc, paramType, 0.0);
-  return {paramNew, avgNew, zeroSlot};
+  return {paramNew, avgNew, v};
 }
 
-mlir::impulse::VI::GenericOptimStepResult
+mlir::impulse::VI::OptimizerUpdate
 mlir::impulse::VI::applyAdagradUpdate(OpBuilder &builder, Location loc,
-                                      Value param, Value gradElbo, Value gSq,
-                                      Value m, Value lr, double momentum) {
+                                      Value param, Value gradElbo, Value m,
+                                      Value v, Value lr, double momentum) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -691,7 +690,7 @@ mlir::impulse::VI::applyAdagradUpdate(OpBuilder &builder, Location loc,
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
 
   Value gSquared = arith::MulFOp::create(builder, loc, g, g);
-  Value gSqNew = arith::AddFOp::create(builder, loc, gSq, gSquared);
+  Value gSqNew = arith::AddFOp::create(builder, loc, m, gSquared);
 
   // where(g_sq > 0, 1/sqrt(g_sq), 0), as JAX's adagrad.
   Value sqrtGSq = math::SqrtOp::create(builder, loc, gSqNew);
@@ -715,20 +714,19 @@ mlir::impulse::VI::applyAdagradUpdate(OpBuilder &builder, Location loc,
       paramType);
   Value oneMinusMomDx =
       arith::MulFOp::create(builder, loc, oneMinusMomBcast, dx);
-  Value momTimesM = arith::MulFOp::create(builder, loc, momBcast, m);
-  Value mNew = arith::AddFOp::create(builder, loc, oneMinusMomDx, momTimesM);
+  Value momTimesV = arith::MulFOp::create(builder, loc, momBcast, v);
+  Value vNew = arith::AddFOp::create(builder, loc, oneMinusMomDx, momTimesV);
 
-  Value paramNew = arith::AddFOp::create(builder, loc, param, mNew);
-
-  return {paramNew, gSqNew, mNew};
+  Value paramNew = arith::AddFOp::create(builder, loc, param, vNew);
+  return {paramNew, gSqNew, vNew};
 }
 
-mlir::impulse::VI::GenericOptimStepResult
+mlir::impulse::VI::OptimizerUpdate
 mlir::impulse::VI::applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
                                               Value param, Value gradElbo,
-                                              Value avgSqGrad, Value mom,
-                                              Value lr, double gamma,
-                                              double eps, double momentumMass) {
+                                              Value m, Value v, Value lr,
+                                              double gamma, double eps,
+                                              double momentumMass) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -749,7 +747,7 @@ mlir::impulse::VI::applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
   Value gSq = arith::MulFOp::create(builder, loc, g, g);
   Value oneMinusGammaGSq =
       arith::MulFOp::create(builder, loc, oneMinusGammaBcast, gSq);
-  Value gammaAvg = arith::MulFOp::create(builder, loc, gammaBcast, avgSqGrad);
+  Value gammaAvg = arith::MulFOp::create(builder, loc, gammaBcast, m);
   Value avgNew =
       arith::AddFOp::create(builder, loc, gammaAvg, oneMinusGammaGSq);
 
@@ -758,7 +756,7 @@ mlir::impulse::VI::applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
   Value gOverSqrt = arith::DivFOp::create(builder, loc, g, sqrtAvgPlusEps);
   Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
   Value lrGOverSqrt = arith::MulFOp::create(builder, loc, lrBcast, gOverSqrt);
-  Value momTimesMom = arith::MulFOp::create(builder, loc, momBcast, mom);
+  Value momTimesMom = arith::MulFOp::create(builder, loc, momBcast, v);
   Value momNew = arith::AddFOp::create(builder, loc, momTimesMom, lrGOverSqrt);
 
   Value paramNew = arith::SubFOp::create(builder, loc, param, momNew);
@@ -834,51 +832,41 @@ mlir::impulse::VI::emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
     auto runOpt = [&](Value param, Value gradElbo, Value m,
-                      Value v) -> std::tuple<Value, Value, Value> {
+                      Value v) -> OptimizerUpdate {
       switch (ctx.optimizerKind) {
       case OptimizerKind::ADAM:
-      case OptimizerKind::CLIPPED_ADAM: {
-        auto r = applyAdamUpdate(builder, loc, param, gradElbo, m, v,
-                                 effectiveStep, ctx.stepSize, ctx.adamB1,
-                                 ctx.adamB2, ctx.adamEps, clipNorm);
-        return {r.paramNew, r.mNew, r.vNew};
-      }
-      case OptimizerKind::MOMENTUM: {
-        auto r = applyMomentumUpdate(builder, loc, param, gradElbo, m,
-                                     ctx.stepSize, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, v};
-      }
-      case OptimizerKind::RMSPROP: {
-        auto r =
-            applyRMSPropUpdate(builder, loc, param, gradElbo, m, ctx.stepSize,
-                               ctx.rmspropGamma, ctx.rmspropEps);
-        return {r.paramNew, r.slot1New, v};
-      }
-      case OptimizerKind::ADAGRAD: {
-        auto r = applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
-                                    ctx.stepSize, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, r.slot2New};
-      }
-      case OptimizerKind::RMSPROP_MOMENTUM: {
-        auto r = applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                            ctx.stepSize, ctx.rmspropGamma,
-                                            ctx.rmspropEps, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, r.slot2New};
-      }
+      case OptimizerKind::CLIPPED_ADAM:
+        return applyAdamUpdate(builder, loc, param, gradElbo, m, v,
+                               effectiveStep, ctx.stepSize, ctx.adamB1,
+                               ctx.adamB2, ctx.adamEps, clipNorm);
+      case OptimizerKind::MOMENTUM:
+        return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                   ctx.stepSize, ctx.momentumMass);
+      case OptimizerKind::RMSPROP:
+        return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
+                                  ctx.stepSize, ctx.rmspropGamma,
+                                  ctx.rmspropEps);
+      case OptimizerKind::ADAGRAD:
+        return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
+                                  ctx.stepSize, ctx.momentumMass);
+      case OptimizerKind::RMSPROP_MOMENTUM:
+        return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                          ctx.stepSize, ctx.rmspropGamma,
+                                          ctx.rmspropEps, ctx.momentumMass);
       case OptimizerKind::SGD:
-      default: {
-        Value pNew =
-            applySGDUpdate(builder, loc, param, gradElbo, ctx.stepSize);
-        return {pNew, m, v};
-      }
+      default:
+        return applySGDUpdate(builder, loc, param, gradElbo, m, v,
+                              ctx.stepSize);
       }
     };
 
-    Value locNew, scaleNew, mLocNew, vLocNew, mScaleNew, vScaleNew;
-    std::tie(locNew, mLocNew, vLocNew) =
+    OptimizerUpdate locUpd =
         runOpt(locIter, elboRes.gradLoc, mLocIter, vLocIter);
-    std::tie(scaleNew, mScaleNew, vScaleNew) =
+    OptimizerUpdate scaleUpd =
         runOpt(scaleIter, elboRes.gradScale, mScaleIter, vScaleIter);
+    Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
+    Value scaleNew = scaleUpd.param, mScaleNew = scaleUpd.m,
+          vScaleNew = scaleUpd.v;
 
     // A skipped step still records its ELBO, as numpyro's stable_update does.
     if (ctx.stableUpdate) {
@@ -1030,49 +1018,36 @@ mlir::impulse::VI::emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
     auto runOpt = [&](Value param, Value gradElbo, Value m,
-                      Value v) -> std::tuple<Value, Value, Value> {
+                      Value v) -> OptimizerUpdate {
       switch (ctx.optimizerKind) {
       case OptimizerKind::ADAM:
-      case OptimizerKind::CLIPPED_ADAM: {
-        auto r = applyAdamUpdate(builder, loc, param, gradElbo, m, v,
-                                 effectiveStep, ctx.stepSize, ctx.adamB1,
-                                 ctx.adamB2, ctx.adamEps, clipNorm);
-        return {r.paramNew, r.mNew, r.vNew};
-      }
-      case OptimizerKind::MOMENTUM: {
-        auto r = applyMomentumUpdate(builder, loc, param, gradElbo, m,
-                                     ctx.stepSize, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, v};
-      }
-      case OptimizerKind::RMSPROP: {
-        auto r =
-            applyRMSPropUpdate(builder, loc, param, gradElbo, m, ctx.stepSize,
-                               ctx.rmspropGamma, ctx.rmspropEps);
-        return {r.paramNew, r.slot1New, v};
-      }
-      case OptimizerKind::ADAGRAD: {
-        auto r = applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
-                                    ctx.stepSize, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, r.slot2New};
-      }
-      case OptimizerKind::RMSPROP_MOMENTUM: {
-        auto r = applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                            ctx.stepSize, ctx.rmspropGamma,
-                                            ctx.rmspropEps, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, r.slot2New};
-      }
+      case OptimizerKind::CLIPPED_ADAM:
+        return applyAdamUpdate(builder, loc, param, gradElbo, m, v,
+                               effectiveStep, ctx.stepSize, ctx.adamB1,
+                               ctx.adamB2, ctx.adamEps, clipNorm);
+      case OptimizerKind::MOMENTUM:
+        return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                   ctx.stepSize, ctx.momentumMass);
+      case OptimizerKind::RMSPROP:
+        return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
+                                  ctx.stepSize, ctx.rmspropGamma,
+                                  ctx.rmspropEps);
+      case OptimizerKind::ADAGRAD:
+        return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
+                                  ctx.stepSize, ctx.momentumMass);
+      case OptimizerKind::RMSPROP_MOMENTUM:
+        return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                          ctx.stepSize, ctx.rmspropGamma,
+                                          ctx.rmspropEps, ctx.momentumMass);
       case OptimizerKind::SGD:
-      default: {
-        Value pNew =
-            applySGDUpdate(builder, loc, param, gradElbo, ctx.stepSize);
-        return {pNew, m, v};
-      }
+      default:
+        return applySGDUpdate(builder, loc, param, gradElbo, m, v,
+                              ctx.stepSize);
       }
     };
 
-    Value locNew, mLocNew, vLocNew;
-    std::tie(locNew, mLocNew, vLocNew) =
-        runOpt(locIter, gradLocMean, mLocIter, vLocIter);
+    OptimizerUpdate locUpd = runOpt(locIter, gradLocMean, mLocIter, vLocIter);
+    Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
 
     if (ctx.stableUpdate) {
       Value isFinite = computeIsFiniteForStableUpdate(
@@ -1235,50 +1210,38 @@ mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
     auto runOpt = [&](Value param, Value gradElbo, Value m,
-                      Value v) -> std::tuple<Value, Value, Value> {
+                      Value v) -> OptimizerUpdate {
       switch (ctx.optimizerKind) {
       case OptimizerKind::ADAM:
-      case OptimizerKind::CLIPPED_ADAM: {
-        auto r = applyAdamUpdate(builder, loc, param, gradElbo, m, v,
-                                 effectiveStep, ctx.stepSize, ctx.adamB1,
-                                 ctx.adamB2, ctx.adamEps, clipNorm);
-        return {r.paramNew, r.mNew, r.vNew};
-      }
-      case OptimizerKind::MOMENTUM: {
-        auto r = applyMomentumUpdate(builder, loc, param, gradElbo, m,
-                                     ctx.stepSize, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, v};
-      }
-      case OptimizerKind::RMSPROP: {
-        auto r =
-            applyRMSPropUpdate(builder, loc, param, gradElbo, m, ctx.stepSize,
-                               ctx.rmspropGamma, ctx.rmspropEps);
-        return {r.paramNew, r.slot1New, v};
-      }
-      case OptimizerKind::ADAGRAD: {
-        auto r = applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
-                                    ctx.stepSize, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, r.slot2New};
-      }
-      case OptimizerKind::RMSPROP_MOMENTUM: {
-        auto r = applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                            ctx.stepSize, ctx.rmspropGamma,
-                                            ctx.rmspropEps, ctx.momentumMass);
-        return {r.paramNew, r.slot1New, r.slot2New};
-      }
+      case OptimizerKind::CLIPPED_ADAM:
+        return applyAdamUpdate(builder, loc, param, gradElbo, m, v,
+                               effectiveStep, ctx.stepSize, ctx.adamB1,
+                               ctx.adamB2, ctx.adamEps, clipNorm);
+      case OptimizerKind::MOMENTUM:
+        return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                   ctx.stepSize, ctx.momentumMass);
+      case OptimizerKind::RMSPROP:
+        return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
+                                  ctx.stepSize, ctx.rmspropGamma,
+                                  ctx.rmspropEps);
+      case OptimizerKind::ADAGRAD:
+        return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
+                                  ctx.stepSize, ctx.momentumMass);
+      case OptimizerKind::RMSPROP_MOMENTUM:
+        return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                          ctx.stepSize, ctx.rmspropGamma,
+                                          ctx.rmspropEps, ctx.momentumMass);
       case OptimizerKind::SGD:
-      default: {
-        Value pNew =
-            applySGDUpdate(builder, loc, param, gradElbo, ctx.stepSize);
-        return {pNew, m, v};
-      }
+      default:
+        return applySGDUpdate(builder, loc, param, gradElbo, m, v,
+                              ctx.stepSize);
       }
     };
 
-    Value locNew, xNew, mLocNew, vLocNew, mXNew, vXNew;
-    std::tie(locNew, mLocNew, vLocNew) =
-        runOpt(locIter, gradLoc, mLocIter, vLocIter);
-    std::tie(xNew, mXNew, vXNew) = runOpt(xIter, gradX, mXIter, vXIter);
+    OptimizerUpdate locUpd = runOpt(locIter, gradLoc, mLocIter, vLocIter);
+    OptimizerUpdate xUpd = runOpt(xIter, gradX, mXIter, vXIter);
+    Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
+    Value xNew = xUpd.param, mXNew = xUpd.m, vXNew = xUpd.v;
 
     if (ctx.stableUpdate) {
       Value isFinite =

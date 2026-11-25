@@ -120,52 +120,47 @@ MultiParticleELBOResult emitELBOStep(OpBuilder &builder, Location loc,
                                      Value locParam, Value scaleParam,
                                      Value rngStep, const VIContext &ctx);
 
+/// A parameter and its two optimizer state slots after one step. A rule that
+/// keeps fewer slots returns the unused ones unchanged.
+struct OptimizerUpdate {
+  Value param;
+  Value m;
+  Value v;
+};
+
 /// `gradElbo` is d(elbo)/dp; the minimized loss is -elbo.
-Value applySGDUpdate(OpBuilder &builder, Location loc, Value param,
-                     Value gradElbo, Value lr);
+OptimizerUpdate applySGDUpdate(OpBuilder &builder, Location loc, Value param,
+                               Value gradElbo, Value m, Value v, Value lr);
 
-/// jax.example_libraries.optimizers.adam; `stepIdx` counts from 0.
-struct AdamStepResult {
-  Value paramNew;
-  Value mNew;
-  Value vNew;
-};
+/// jax.example_libraries.optimizers.adam; `stepIdx` counts from 0. A positive
+/// `clipNorm` clips each gradient element, as ClippedAdam does.
+OptimizerUpdate applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
+                                Value gradElbo, Value m, Value v, Value stepIdx,
+                                Value lr, double b1, double b2, double eps,
+                                double clipNorm = 0.0);
 
-AdamStepResult applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
-                               Value gradElbo, Value m, Value v, Value stepIdx,
-                               Value lr, double b1, double b2, double eps,
-                               // > 0 enables ClippedAdam's per-element clip.
-                               double clipNorm = 0.0);
+/// jax.example_libraries.optimizers.momentum; `m` is the velocity.
+OptimizerUpdate applyMomentumUpdate(OpBuilder &builder, Location loc,
+                                    Value param, Value gradElbo, Value m,
+                                    Value v, Value lr, double mass);
 
-struct GenericOptimStepResult {
-  Value paramNew;
-  Value slot1New;
-  Value slot2New;
-};
+/// jax.example_libraries.optimizers.rmsprop; `m` is the squared-gradient
+/// average.
+OptimizerUpdate applyRMSPropUpdate(OpBuilder &builder, Location loc,
+                                   Value param, Value gradElbo, Value m,
+                                   Value v, Value lr, double gamma, double eps);
 
-/// jax.example_libraries.optimizers.momentum.
-GenericOptimStepResult applyMomentumUpdate(OpBuilder &builder, Location loc,
-                                           Value param, Value gradElbo,
-                                           Value velocity, Value lr,
-                                           double mass);
+/// jax.example_libraries.optimizers.adagrad; `m` is g_sq, `v` the momentum.
+OptimizerUpdate applyAdagradUpdate(OpBuilder &builder, Location loc,
+                                   Value param, Value gradElbo, Value m,
+                                   Value v, Value lr, double momentum);
 
-/// jax.example_libraries.optimizers.rmsprop.
-GenericOptimStepResult applyRMSPropUpdate(OpBuilder &builder, Location loc,
-                                          Value param, Value gradElbo,
-                                          Value avgSqGrad, Value lr,
-                                          double gamma, double eps);
-
-/// jax.example_libraries.optimizers.adagrad; slot1 = g_sq, slot2 = m.
-GenericOptimStepResult applyAdagradUpdate(OpBuilder &builder, Location loc,
-                                          Value param, Value gradElbo,
-                                          Value gSq, Value m, Value lr,
-                                          double momentum);
-
-/// jax.example_libraries.optimizers.rmsprop_momentum; slot1 = avg, slot2 = mom.
-GenericOptimStepResult
-applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc, Value param,
-                           Value gradElbo, Value avgSqGrad, Value mom, Value lr,
-                           double gamma, double eps, double momentumMass);
+/// jax.example_libraries.optimizers.rmsprop_momentum; `m` is the
+/// squared-gradient average, `v` the momentum.
+OptimizerUpdate applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
+                                           Value param, Value gradElbo, Value m,
+                                           Value v, Value lr, double gamma,
+                                           double eps, double momentumMass);
 
 /// `ctx.numSamples` iterations of NumPyro's SVI.update.
 struct SVILoopResult {
