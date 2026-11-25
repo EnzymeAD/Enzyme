@@ -52,6 +52,10 @@ struct ProfileInfo {
 /// summed over them and reported about them does not depend on hashing.
 using ProfileMap = std::map<size_t, ProfileInfo>;
 
+/// The KappaMark of a profile: how the profiling runs measured the condition
+/// number of the declared quantity of interest.
+enum class KappaMark { None, Ok, BelowNoise, Nonlinear, Diverged, Unmeasured };
+
 /// The header of a site's profile.
 struct FunctionProfileHeader {
   /// Launch geometry over the launches of a kernel (largest block and grid,
@@ -70,15 +74,18 @@ struct FunctionProfileHeader {
   /// Kappa line.
   double kappa = 1.0;
   bool hasKappa = false;
-  /// "ok", "below-noise", "nonlinear" or "diverged" with a Kappa line;
-  /// kKappaUnmeasured without one when the run declared a quantity of interest
-  /// and did not measure the condition number; empty otherwise.
-  std::string kappaMark;
+  /// How the run measured Kappa; Unmeasured without a Kappa line when the run
+  /// declared a quantity of interest and did not measure the condition number;
+  /// None when the profile carries no KappaMark line.
+  KappaMark kappaMark = KappaMark::None;
   /// False for a site the profiling run instrumented and never executed.
   bool executed = true;
 };
 
 inline constexpr llvm::StringLiteral kKappaUnmeasured = kProfileKappaUnmeasured;
+
+/// The word a profile's KappaMark line spells `M` with.
+llvm::StringRef kappaMarkName(KappaMark M);
 
 /// The records and the header of the profile at `profilePath`. A profile that
 /// cannot be read, or does not parse, is an error at the site `F`.

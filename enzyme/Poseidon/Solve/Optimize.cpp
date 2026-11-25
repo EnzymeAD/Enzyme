@@ -220,9 +220,9 @@ static void putOnApplicationScale(Session &S, Function &F,
   // within their noise, or not at all) is no measurement, and scaling the
   // site's errors by it would let any rewrite through. The site is solved
   // against its own target, as a site of a run without a metric is.
-  const bool unresolved =
-      profileHeader.hasKappa && (profileHeader.kappaMark == "below-noise" ||
-                                 !(profileHeader.kappa > 0.0));
+  const bool unresolved = profileHeader.hasKappa &&
+                          (profileHeader.kappaMark == KappaMark::BelowNoise ||
+                           !(profileHeader.kappa > 0.0));
   if (unresolved)
     diagnose(F, F.getSubprogram(),
              Twine("the profiling runs did not resolve the condition "
@@ -231,7 +231,7 @@ static void putOnApplicationScale(Session &S, Function &F,
                  " against the declared metric from their "
                  "noise (Kappa = " +
                  shortDouble(profileHeader.kappa) + ", " +
-                 profileHeader.kappaMark +
+                 kappaMarkName(profileHeader.kappaMark) +
                  "); the site is solved against its own target. Probe it "
                  "with larger perturbations (POSEIDON_PROBE_LADDER) to "
                  "measure it.",
@@ -245,7 +245,7 @@ static void putOnApplicationScale(Session &S, Function &F,
                           "total sensitivity, so the accuracy costs cannot "
                           "be put on the scale the condition number was "
                           "measured against; re-run profile generation.");
-    factor = profileHeader.kappaMark == "diverged"
+    factor = profileHeader.kappaMark == KappaMark::Diverged
                  ? 1e30
                  : profileHeader.kappa / sumSens;
     st.kappa = profileHeader.kappa;
@@ -253,7 +253,7 @@ static void putOnApplicationScale(Session &S, Function &F,
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << F.getName()
                    << ": measured condition number " << profileHeader.kappa
-                   << " (" << profileHeader.kappaMark
+                   << " (" << kappaMarkName(profileHeader.kappaMark)
                    << "), profiled sensitivity " << sumSens << ", error scale "
                    << factor << '\n';
   }

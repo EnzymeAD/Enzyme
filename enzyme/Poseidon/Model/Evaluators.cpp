@@ -65,9 +65,10 @@ static float approxSqrtModel(float x, double bound) {
 // node's value is the result restored to its own type. Returns false for an
 // operation with no expansion form.
 bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
-  const std::string &op = node->op;
-  const bool supported = op == "neg" || op == "+" || op == "-" || op == "*" ||
-                         op == "/" || op == "sqrt" || op == "fma";
+  const bool supported = node->is(fpcore::Neg) || node->is(fpcore::Add) ||
+                         node->is(fpcore::Sub) || node->is(fpcore::Mul) ||
+                         node->is(fpcore::Div) || node->is(fpcore::Sqrt) ||
+                         node->is(fpcore::Fma);
   if (!supported)
     return false;
   auto operand = [&](unsigned i) -> ExpansionLimbs {
@@ -76,32 +77,34 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     if (kept != limbs.end() && nodeChange.at(o) == nodeChange.at(node))
       return kept->second;
     double v = getResult(o);
-    return o->dtype == "f32" ? expansionFromF32((float)v, n)
-                             : expansionFromF64(v, n);
+    return o->hasPrecision(PrecisionChangeType::FP32)
+               ? expansionFromF32((float)v, n)
+               : expansionFromF64(v, n);
   };
   // A value multiplied by itself is materialized as a square.
   const bool sameFactor =
       node->operands.size() >= 2 && node->operands[0] == node->operands[1];
   ExpansionLimbs r;
-  if (op == "neg")
+  if (node->is(fpcore::Neg))
     r = expansionNeg(operand(0));
-  else if (op == "+")
+  else if (node->is(fpcore::Add))
     r = expansionAdd(operand(0), operand(1));
-  else if (op == "-")
+  else if (node->is(fpcore::Sub))
     r = expansionSub(operand(0), operand(1));
-  else if (op == "*")
+  else if (node->is(fpcore::Mul))
     r = sameFactor ? expansionSqr(operand(0))
                    : expansionMul(operand(0), operand(1));
-  else if (op == "/")
+  else if (node->is(fpcore::Div))
     r = expansionDiv(operand(0), operand(1));
-  else if (op == "sqrt")
+  else if (node->is(fpcore::Sqrt))
     r = expansionSqrt(operand(0));
   else
     r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
                    : expansionFma(operand(0), operand(1), operand(2));
   limbs[node] = r;
-  cache.try_emplace(node, node->dtype == "f32" ? (double)expansionToF32(r)
-                                               : expansionToF64(r));
+  cache.try_emplace(node, node->hasPrecision(PrecisionChangeType::FP32)
+                              ? (double)expansionToF32(r)
+                              : expansionToF64(r));
   return true;
 }
 
@@ -109,11 +112,9 @@ PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
   auto it = nodePrecisions.find(node);
   if (it != nodePrecisions.end())
     return it->second;
-  const FPFormatInfo *F = formatOfDtype(node->dtype);
-  if (!F || F->Kind == FPKind::Invalid)
-    llvm_unreachable(
-        ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
-            .c_str());
+  const FPFormatInfo *F = node->format;
+  assert(F && F->Kind != FPKind::Invalid &&
+         "an evaluated node has a format the matrix model has a kind for");
   return F->Precision;
 }
 
@@ -153,18 +154,18 @@ bool FPEvaluator::evaluateLogic(const FPNode *node,
     return getResult(node->operands[i].get()) == 1.0;
   };
   double res;
-  if (node->op == "if") {
+  if (node->is(fpcore::If)) {
     unsigned arm = truth(0) ? 1 : 2;
     evaluateNode(node->operands[arm].get(), inputValues);
     res = getResult(node->operands[arm].get());
-  } else if (node->op == "and") {
+  } else if (node->is(fpcore::And)) {
     res = truth(0) && truth(1);
-  } else if (node->op == "or") {
+  } else if (node->is(fpcore::Or)) {
     res = truth(0) || truth(1);
-  } else if (node->op == "not") {
+  } else if (node->is(fpcore::Not)) {
     res = !truth(0);
-  } else if (node->op == "TRUE" || node->op == "FALSE") {
-    res = node->op == "TRUE";
+  } else if (node->is(fpcore::True) || node->is(fpcore::False)) {
+    res = node->is(fpcore::True);
   } else {
     return false;
   }
@@ -188,9 +189,9 @@ double FPEvaluator::evaluateOperation(const FPNode *node,
   auto operand = [&](unsigned i) { return getResult(node->operands[i].get()); };
 
   if (auto approx = approxSqrtError.find(node);
-      node->op == "sqrt" && approx != approxSqrtError.end())
+      node->is(fpcore::Sqrt) && approx != approxSqrtError.end())
     return approxSqrtModel(toF(operand(0)), approx->second);
-  const FPCoreOperator *O = fpcoreOperator(node->op);
+  const FPCoreOperator *O = node->op;
   assert(O && "the parser admits only modelled operators");
   if (O->F64Unary)
     return useReducedFloat ? (double)truncToPrec(O->F32Unary(toF(operand(0))))
@@ -199,7 +200,7 @@ double FPEvaluator::evaluateOperation(const FPNode *node,
     return useReducedFloat ? (double)truncToPrec(
                                  O->F32Binary(toF(operand(0)), toF(operand(1))))
                            : O->F64Binary(operand(0), operand(1));
-  if (node->op == "fma")
+  if (node->is(fpcore::Fma))
     return useReducedFloat
                ? (double)truncToPrec(
                      fmaf(toF(operand(0)), toF(operand(1)), toF(operand(2))))
@@ -311,7 +312,7 @@ void MPFREvaluator::evaluateNode(
   } else if (auto *LL = dyn_cast<FPLLValue>(node);
              LL && inputValues.count(LL->value)) {
     leaf = inputValues.lookup(LL->value);
-  } else if (node->op == "if") {
+  } else if (node->is(fpcore::If)) {
     evaluateChoice(node, inputValues);
     return;
   } else {
@@ -363,14 +364,14 @@ void MPFREvaluator::evaluateOperation(
   };
   auto truth = [](mpfr_srcptr x) { return 0 == mpfr_cmp_ui(x, 1); };
 
-  const FPCoreOperator *O = fpcoreOperator(node->op);
+  const FPCoreOperator *O = node->op;
   assert(O && "the parser admits only modelled operators");
   if (O->MPFRUnary) {
     O->MPFRUnary(res, rounded()[0], MPFR_RNDN);
   } else if (O->MPFRBinary) {
     SmallVector<mpfr_ptr, 3> ops = rounded();
     O->MPFRBinary(res, ops[0], ops[1], MPFR_RNDN);
-  } else if (node->op == "fma") {
+  } else if (node->is(fpcore::Fma)) {
     SmallVector<mpfr_ptr, 3> ops = rounded();
     mpfr_fma(res, ops[0], ops[1], ops[2], MPFR_RNDN);
   } else if (O->Predicate != CmpInst::BAD_FCMP_PREDICATE) {
@@ -381,19 +382,19 @@ void MPFREvaluator::evaluateOperation(
     mpfr_set_ui(res, comparisonHolds(O->Predicate, order), MPFR_RNDN);
   } else if (O->MPFRConstant) {
     O->MPFRConstant(res, MPFR_RNDN);
-  } else if (node->op == "and" || node->op == "or") {
+  } else if (node->is(fpcore::And) || node->is(fpcore::Or)) {
     SmallVector<mpfr_ptr, 2> ops = operands();
     bool a = truth(ops[0]), b = truth(ops[1]);
-    mpfr_set_ui(res, node->op == "and" ? a && b : a || b, MPFR_RNDN);
-  } else if (node->op == "not") {
+    mpfr_set_ui(res, node->is(fpcore::And) ? a && b : a || b, MPFR_RNDN);
+  } else if (node->is(fpcore::Not)) {
     mpfr_set_ui(res, !truth(operands()[0]), MPFR_RNDN);
-  } else if (node->op == "TRUE" || node->op == "FALSE") {
-    mpfr_set_ui(res, node->op == "TRUE", MPFR_RNDN);
+  } else if (node->is(fpcore::True) || node->is(fpcore::False)) {
+    mpfr_set_ui(res, node->is(fpcore::True), MPFR_RNDN);
   } else {
     // A conversion is the identity on the value: the reference does not
     // narrow.
-    assert(node->op == "binary64->binary32" ||
-           node->op == "binary32->binary64");
+    assert((node->is(fpcore::ToBinary32) || node->is(fpcore::ToBinary64)) &&
+           "every other operator has a row the evaluator reads");
     mpfr_set(res, operands()[0], MPFR_RNDN);
   }
 }

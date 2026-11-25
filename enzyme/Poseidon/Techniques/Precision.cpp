@@ -18,6 +18,7 @@
 #include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
+#include "Model/FPCore.h"
 #include "Model/Sampling.h"
 #include "Pass/Session.h"
 #include "Profile/ProfileRead.h"
@@ -1235,7 +1236,7 @@ void proposePrecisionCandidates(
   for (Instruction *I : subgraph.operations) {
     auto *node = cast<FPLLValue>(valueToNodeMap[I].get());
     allSet.insert(node);
-    if (PTFuncs.count(node->op) != 0) {
+    if (PTFuncs.count(operationName(*node)) != 0) {
       funcsSet.insert(node);
       if (O.Diagnostics.Print)
         llvm::errs() << "[poseidon] PT Function identified: " << *I << '\n';

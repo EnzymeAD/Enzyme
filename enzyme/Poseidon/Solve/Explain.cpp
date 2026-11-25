@@ -791,7 +791,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
             idx.push_back((int64_t)it->second);
           changedInsts.insert(node->value);
           SourceLoc L = locOf(node->value);
-          std::string w = opWord(node->op);
+          std::string w = opWord(operationName(*node));
           ++counts[w];
           if (L.valid())
             w += formatv(" ({0}:{1})", L.line, L.col).str();
@@ -1091,10 +1091,11 @@ void Explainer::buildSubgraph(size_t s) {
     opIdx[&I] = U.ops.size();
     json::Object op;
     FPNode *N = nodeOf(&I);
+    const std::string opcode = N ? operationName(*N) : "";
     if (N)
-      op["opcode"] = N->op;
-    if (N && hasFloatSuffixInC(N->op))
-      op["float_call"] = N->op + "f";
+      op["opcode"] = opcode;
+    if (N && hasFloatSuffixInC(opcode))
+      op["float_call"] = opcode + "f";
     op["type"] = typeName(I.getType());
     putLoc(op, "loc", locOf(&I));
     if (N) {
@@ -1328,7 +1329,7 @@ json::Object Explainer::toJSON() {
   putNum(scaleObj, "profiled_cost", rec.profiledCost);
   if (st.kappa) {
     scaleObj["kappa"] = *st.kappa;
-    scaleObj["kappa_mark"] = st.kappaMark;
+    scaleObj["kappa_mark"] = kappaMarkName(st.kappaMark);
     scaleObj["kappa_factor"] = st.scaleFactor;
   }
   root["scale"] = std::move(scaleObj);

@@ -40,8 +40,10 @@ static DPCost onAxis(double value, int exponent, StringRef what) {
   if (!(std::fabs(q) < 0x1p63)) {
     std::string Text;
     raw_string_ostream(Text) << value;
-    report_fatal_error("Poseidon: " + Twine(what) + " " + Twine(Text) +
-                       " does not fit the DP's cost axis");
+    reportFatalUsageError("Poseidon: " + Twine(what) + " " + Twine(Text) +
+                          " does not fit the DP's cost axis; a cost-model row "
+                          "prices a candidate beyond 2^30 times the profiled "
+                          "cost");
   }
   return std::llround(q);
 }
@@ -51,12 +53,8 @@ static DPCost onAxis(double value, int exponent, StringRef what) {
 static constexpr int kProfiledCostLog2 = 32;
 
 CostScale::CostScale(double profiledCost) : ProfiledCost(profiledCost) {
-  if (!(profiledCost >= 0.0) || !std::isfinite(profiledCost)) {
-    std::string Text;
-    raw_string_ostream(Text) << profiledCost;
-    report_fatal_error("Poseidon: the profiled cost " + Twine(Text) +
-                       " cannot scale the DP's cost axis");
-  }
+  assert(profiledCost >= 0.0 && std::isfinite(profiledCost) &&
+         "a profiled cost is a sum of checked prices times counts");
   if (profiledCost > 0.0)
     Exponent = kProfiledCostLog2 - std::ilogb(profiledCost);
 }
@@ -65,12 +63,8 @@ DPCost CostScale::toDPCost(double delta) const {
   // A solve the profile never reached costs nothing and saves nothing.
   if (delta == 0.0)
     return 0;
-  if (ProfiledCost == 0.0) {
-    std::string Text;
-    raw_string_ostream(Text) << delta;
-    report_fatal_error("Poseidon: a cost change of " + Twine(Text) +
-                       " in a solve whose profiled run spent nothing");
-  }
+  assert(ProfiledCost != 0.0 &&
+         "a cost change in a solve whose profiled run spent nothing");
   return onAxis(delta, Exponent, "a cost change of");
 }
 
@@ -84,12 +78,7 @@ DPCost CostScale::fromShare(double share) const {
   // Nothing ran, so no change saves anything: a budget keeps only its sign.
   if (ProfiledCost == 0.0)
     return (share > 0.0) - (share < 0.0);
-  if (!std::isfinite(share)) {
-    std::string Text;
-    raw_string_ostream(Text) << share;
-    report_fatal_error("Poseidon: a budget of " + Twine(Text) +
-                       " of the profiled cost does not fit the DP's cost axis");
-  }
+  assert(std::isfinite(share) && "-poseidon-cost-budget is checked finite");
   return onAxis(share * ProfiledCost, Exponent, "a budget of");
 }
 
@@ -97,8 +86,10 @@ DPCost CostScale::fromShare(double share) const {
 static DPCost addDPCost(DPCost a, DPCost b) {
   if (std::optional<DPCost> sum = checkedAdd(a, b))
     return *sum;
-  report_fatal_error("Poseidon: the cost " + Twine(a) + " + " + Twine(b) +
-                     " leaves the DP's integer cost axis");
+  reportFatalUsageError("Poseidon: the cost " + Twine(a) + " + " + Twine(b) +
+                        " leaves the DP's integer cost axis; a cost-model row "
+                        "prices a candidate beyond 2^30 times the profiled "
+                        "cost");
 }
 
 // Whether `a` and `b` cannot be in one strategy: they rewrite one output, or

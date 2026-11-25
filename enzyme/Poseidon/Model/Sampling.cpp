@@ -11,6 +11,7 @@
 #include "Core/Parallel.h"
 #include "Core/UniformReal.h"
 #include "Evaluators.h"
+#include "FPCore.h"
 #include "FPNode.h"
 #include "IR/Utils.h"
 
@@ -83,7 +84,7 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
       continue;
     FPNode *node = it->second.get();
 
-    if (node->op == "-" && node->operands.size() == 2) {
+    if (node->is(fpcore::Sub) && node->operands.size() == 2) {
       // One entry per unordered pair.
       auto *a = dyn_cast<FPLLValue>(node->operands[0].get());
       auto *b = dyn_cast<FPLLValue>(node->operands[1].get());
@@ -96,10 +97,10 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
         if (!seen)
           plan.pairs.push_back({a->value, b->value});
       }
-    } else if (node->op == "sqrt" && node->operands.size() >= 1) {
+    } else if (node->is(fpcore::Sqrt) && node->operands.size() >= 1) {
       if (minMagnitude(node->operands[0].get()) < kCancellationThreshold)
         nearSingular = true;
-    } else if (node->op == "/" && node->operands.size() == 2) {
+    } else if (node->is(fpcore::Div) && node->operands.size() == 2) {
       if (minMagnitude(node->operands[1].get()) < kCancellationThreshold)
         nearSingular = true;
     }

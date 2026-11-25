@@ -80,9 +80,9 @@ Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
   case FPKind::S32:
     return Type::getInt32Ty(ctx);
   case FPKind::Invalid:
-    report_fatal_error("llvmTypeForFPKind: Invalid FPKind");
+    break;
   }
-  llvm_unreachable("unknown FPKind");
+  llvm_unreachable("no LLVM type for an invalid format");
 }
 
 Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {

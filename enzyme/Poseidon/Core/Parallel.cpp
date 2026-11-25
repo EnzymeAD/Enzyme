@@ -5,11 +5,6 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-//
-// The pool is the plugin's own: a plugin calls only what its host exports, and
-// opt does not export llvm::StdThreadPool.
-//
-//===----------------------------------------------------------------------===//
 
 #include "Parallel.h"
 

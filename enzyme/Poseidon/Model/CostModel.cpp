@@ -80,12 +80,12 @@ const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
   return CM.ScalarTypes;
 }
 
-// An instruction no row family prices.
+// An instruction of the program no row family prices.
 [[noreturn]] static void unpriced(const Instruction *I) {
   std::string Text;
   raw_string_ostream(Text) << *I;
-  report_fatal_error("Poseidon: no cost-model row prices the instruction" +
-                     Twine(Text));
+  reportUserError(*I, "no cost-model row family prices the instruction" +
+                          Twine(Text));
 }
 
 // The row family pricing `Call`: the math function it computes, a device fmax

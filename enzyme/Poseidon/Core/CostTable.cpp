@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -54,13 +55,12 @@ const std::string &costModelPath(CostModelState &CM) {
 }
 
 std::string userCacheDir() {
-  if (const char *X = std::getenv("XDG_CACHE_HOME"))
-    if (*X)
-      return std::string(X) + "/poseidon";
-  if (const char *H = std::getenv("HOME"))
-    if (*H)
-      return std::string(H) + "/.cache/poseidon";
-  return std::string();
+  SmallString<256> Dir;
+  if (const char *X = std::getenv("XDG_CACHE_HOME"); X && *X)
+    sys::path::append(Dir, X, "poseidon");
+  else if (const char *H = std::getenv("HOME"); H && *H)
+    sys::path::append(Dir, H, ".cache", "poseidon");
+  return std::string(Dir);
 }
 
 // One measured model per device: the file name carries the architecture it was
@@ -218,9 +218,7 @@ Error loadCostModel(CostModelState &CM) {
 
 const std::map<std::pair<std::string, std::string>, double> &
 getCostModel(CostModelState &CM) {
-  if (!CM.Loaded)
-    report_fatal_error("Poseidon: the cost model is read before a site "
-                       "required it");
+  assert(CM.Loaded && "the cost model is read before a site required it");
   return CM.Model;
 }
 

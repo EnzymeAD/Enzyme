@@ -41,11 +41,13 @@ namespace poseidon {
 
 // The dtype of a node of type T, which an optimizable instruction and its
 // operands only ever have as float or double.
-static std::string nodeDtype(Type *T) {
-  std::string dtype = dtypeOfType(T);
-  assert((dtype == "f32" || dtype == "f64") &&
+static const FPFormatInfo *nodeFormat(Type *T) {
+  const FPFormatInfo *F = formatOf(T);
+  assert(F &&
+         (F->Precision == PrecisionChangeType::FP32 ||
+          F->Precision == PrecisionChangeType::FP64) &&
          "an optimizable instruction computes float or double");
-  return dtype;
+  return F;
 }
 
 // Whether the profiling run executed `I`, an optimizable instruction of the
@@ -108,15 +110,15 @@ void buildSubgraphs(
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!isOptimizable(I)) {
-        valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, "__nh", "__nh");
+        valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, nullptr, nullptr);
         if (O.Diagnostics.Print)
           llvm::errs() << "[poseidon] not an optimizable operation: " << I
                        << '\n';
         continue;
       }
 
-      valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, getHerbieOperator(I),
-                                                       nodeDtype(I.getType()));
+      valueToNodeMap[&I] = std::make_shared<FPLLValue>(
+          &I, fpcoreOperator(getHerbieOperator(I)), nodeFormat(I.getType()));
     }
   }
 
@@ -129,18 +131,18 @@ void buildSubgraphs(
         if (!valueToNodeMap.count(operand)) {
           if (auto Arg = dyn_cast<Argument>(operand)) {
             valueToNodeMap[operand] = std::make_shared<FPLLValue>(
-                Arg, "__arg", nodeDtype(Arg->getType()));
+                Arg, nullptr, nodeFormat(Arg->getType()));
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
             valueToNodeMap[operand] = std::make_shared<FPConst>(
-                value.c_str(), nodeDtype(C->getType()));
+                value.c_str(), nodeFormat(C->getType()));
           } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
             // e.g., powi intrinsic has a constant int as its exponent
             double exponent = static_cast<double>(CI->getSExtValue());
             std::string doubleStr = std::to_string(exponent);
-            valueToNodeMap[operand] =
-                std::make_shared<FPConst>(doubleStr.c_str(), "f64");
+            valueToNodeMap[operand] = std::make_shared<FPConst>(
+                doubleStr.c_str(), &formatOf(PrecisionChangeType::FP64));
           } else {
             llvm_unreachable("isOptimizable admits no other operand");
           }

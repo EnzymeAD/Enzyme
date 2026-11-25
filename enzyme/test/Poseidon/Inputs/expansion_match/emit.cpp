@@ -314,17 +314,18 @@ std::shared_ptr<FPNode>
 nodeOf(Value *V, std::unordered_map<Value *, std::shared_ptr<FPNode>> &m) {
   if (auto it = m.find(V); it != m.end())
     return it->second;
-  std::string dtype = V->getType()->isFloatTy() ? "f32" : "f64";
+  const FPFormatInfo *format = formatOf(V->getType());
   std::shared_ptr<FPNode> node;
   if (auto *A = dyn_cast<Argument>(V)) {
-    node = std::make_shared<FPLLValue>(A, "__arg", dtype);
+    node = std::make_shared<FPLLValue>(A, nullptr, format);
   } else if (auto *CF = dyn_cast<ConstantFP>(V)) {
     SmallString<16> s;
     CF->getValueAPF().toString(s);
-    node = std::make_shared<FPConst>(s.c_str(), dtype);
+    node = std::make_shared<FPConst>(s.c_str(), format);
   } else {
     auto *I = cast<Instruction>(V);
-    node = std::make_shared<FPLLValue>(I, getHerbieOperator(*I), dtype);
+    node = std::make_shared<FPLLValue>(I, fpcoreOperator(getHerbieOperator(*I)),
+                                       format);
     for (Value *op : I->operands())
       if (!isa<Function>(op))
         node->addOperand(nodeOf(op, m));

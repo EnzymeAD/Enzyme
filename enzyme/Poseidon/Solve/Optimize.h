@@ -52,7 +52,7 @@ struct FunctionFPState : FPGraph {
   // The condition number the profiling run measured, when it measured one,
   // and the factor it put the accuracy costs on the application's scale by.
   std::optional<double> kappa;
-  std::string kappaMark;
+  KappaMark kappaMark = KappaMark::None;
   double scaleFactor = 1.0;
   llvm::SmallVector<Subgraph, 1> subgraphs;
   // Backing storage for the matmuls; MatmulUnit::matmul points into this,

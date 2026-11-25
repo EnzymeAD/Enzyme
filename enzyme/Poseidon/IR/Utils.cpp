@@ -40,13 +40,19 @@ void diagnose(const Function &F, const DiagnosticLocation &Loc,
       F, "Poseidon: " + Message.str(), Loc, Severity));
 }
 
+// Ends the compile after its error diagnostic with status 1 and none of a
+// crash's reporting, removing the files registered for removal. LLVM's own
+// ways out, reportFatalUsageError and sys::Process::Exit, unwind clang's
+// in-process cc1 through a CrashRecoveryContext that dumps the stack.
+[[noreturn]] static void endCompile() {
+  sys::RunInterruptHandlers();
+  exit(1);
+}
+
 void reportUserError(const Function &F, const DiagnosticLocation &Loc,
                      const Twine &Message) {
   diagnose(F, Loc, Message, DS_Error);
-  // What LLVM's own handler does for a fatal error that is not a crash, short
-  // of the crash recovery an in-process clang would turn it into.
-  sys::RunInterruptHandlers();
-  exit(1);
+  endCompile();
 }
 
 void reportUserError(const Instruction &I, const Twine &Message) {
@@ -55,8 +61,7 @@ void reportUserError(const Instruction &I, const Twine &Message) {
 
 void reportUserError(LLVMContext &Ctx, const Twine &Message) {
   Ctx.diagnose(DiagnosticInfoGeneric("Poseidon: " + Message, DS_Error));
-  sys::RunInterruptHandlers();
-  exit(1);
+  endCompile();
 }
 
 unsigned inlineCallsWhile(Function &F, function_ref<bool(CallBase &)> pick) {
@@ -106,7 +111,7 @@ void simplifyFunction(Function &F, PassBuilder &PB, OptimizationLevel Level,
 
   if (verifyFunction(F, &llvm::errs())) {
     F.print(llvm::errs());
-    report_fatal_error("Poseidon intermediate function failed verification");
+    reportFatalInternalError("Poseidon: a rewritten function does not verify");
   }
 
   FunctionPassManager FPM =
@@ -172,10 +177,8 @@ void topoSort(const SetVector<Instruction *> &insts,
     for (Value *op : fpOperands(*I)) {
       if (auto *oI = dyn_cast<Instruction>(op)) {
         if (insts.contains(oI)) {
-          if (onStack.count(oI)) {
-            report_fatal_error(
-                "topoSort: Cycle detected in instruction dependencies!");
-          }
+          assert(!onStack.count(oI) &&
+                 "a subgraph's instructions depend on each other in a cycle");
           dfsVisit(oI);
         }
       }

@@ -64,9 +64,8 @@ static const fltSemantics *semanticsForKind(FPKind k) {
 }
 
 Rounding::Rounding(FPKind k) : kind(k) {
-  if (k == FPKind::S8 || k == FPKind::S32)
-    report_fatal_error(
-        "roundToPrec: integer FPKind (S8/S32) has no FP rounding semantics");
+  assert(k != FPKind::S8 && k != FPKind::S32 &&
+         "an integer format has no floating-point rounding");
   const fltSemantics *sem = semanticsForKind(k);
   if (!sem)
     return;

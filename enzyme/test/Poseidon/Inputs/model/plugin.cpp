@@ -72,7 +72,8 @@ struct LowerFPCore : PassParent<LowerFPCore> {
       std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
       std::unordered_map<std::string, Value *> SymbolToValue;
       for (auto [Symbol, Arg] : zip(StringRef("xy"), Scratch->args())) {
-        auto Node = std::make_shared<FPLLValue>(&Arg, "__arg", "f64");
+        auto Node = std::make_shared<FPLLValue>(
+            &Arg, nullptr, &formatOf(PrecisionChangeType::FP64));
         Node->symbol = std::string(1, Symbol);
         ValueToNode[&Arg] = Node;
         SymbolToValue[Node->symbol] = &Arg;

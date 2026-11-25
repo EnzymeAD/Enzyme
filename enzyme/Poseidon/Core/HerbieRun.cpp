@@ -19,6 +19,7 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -30,6 +31,13 @@
 using namespace llvm;
 
 namespace poseidon {
+
+// `Name` in the directory `Dir`.
+static std::string inDirectory(StringRef Dir, const Twine &Name) {
+  SmallString<256> Path(Dir);
+  sys::path::append(Path, Name);
+  return std::string(Path);
+}
 
 std::string readFileDigest(StringRef Path) {
   auto Buf = MemoryBuffer::getFile(Path);
@@ -361,7 +369,7 @@ static std::optional<json::Value> readShardResults(const ShardFiles &files,
                                                    std::string &content) {
   std::optional<json::Value> answer;
   for (const SmallString<64> &output : files.outputs) {
-    auto Buf = MemoryBuffer::getFile(output + "/results.json");
+    auto Buf = MemoryBuffer::getFile(inDirectory(output, "results.json"));
     if (!Buf)
       return std::nullopt;
     Expected<json::Value> parsed = json::parse((*Buf)->getBuffer());
@@ -423,10 +431,11 @@ static AnswerCache answerCache(const HerbieRunOptions &Opts,
   if (Opts.CacheDir.empty())
     return cache;
   std::string keyStem = Opts.Platform.Name + "_" + keyDigest.str();
-  cache.answerPath = Opts.CacheDir + "/cachedHerbieOutput_" + keyStem + ".txt";
+  cache.answerPath =
+      inDirectory(Opts.CacheDir, "cachedHerbieOutput_" + keyStem + ".txt");
   // A timeout gets its own marker so it never looks like an empty result.
   cache.timeoutPath =
-      Opts.CacheDir + "/cachedHerbieTimeout_" + keyStem + ".txt";
+      inDirectory(Opts.CacheDir, "cachedHerbieTimeout_" + keyStem + ".txt");
   return cache;
 }
 

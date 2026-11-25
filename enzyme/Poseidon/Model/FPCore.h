@@ -70,6 +70,12 @@ struct FPCoreOperator {
 // The row of `Name`, or null for an operator the pass does not model.
 const FPCoreOperator *fpcoreOperator(llvm::StringRef Name);
 
+// The rows the model treats by name.
+namespace fpcore {
+extern const FPCoreOperator &Neg, &Add, &Sub, &Mul, &Div, &Pow, &Sqrt, &Fma,
+    &And, &Or, &Not, &True, &False, &If, &Array, &ToBinary32, &ToBinary64;
+} // namespace fpcore
+
 // The expression graph of the FPCore expression `expr`, over the values its
 // symbols name. An error, saying what and where, for an expression that is not
 // one the evaluators and the lowering model: an unknown symbol or operator, an
@@ -106,6 +112,10 @@ llvm::SmallVector<std::string, 1> fpcoreToC(
         nullptr);
 
 std::string getHerbieOperator(const llvm::Instruction &I);
+// The FPCore name of `N`'s operation: its operator's, or for an operation of
+// the program the operator table does not model, getHerbieOperator's; empty
+// for a node that is no operation.
+std::string operationName(const FPNode &N);
 
 // The name of intrinsic `Callee` without its "llvm." prefix and type suffixes:
 // "sin" for llvm.sin.f64.

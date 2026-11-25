@@ -10,6 +10,11 @@
 // own slot and the caller combines the slots in index order, so a result does
 // not depend on the number of threads or on how the calls are scheduled.
 //
+// The pool is the plugin's own: llvm::parallelFor sizes its one executor by the
+// process-wide parallel::strategy, which a plugin must not set for its host and
+// which cannot give each solve -poseidon-threads, and opt does not export
+// llvm::StdThreadPool.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_CORE_PARALLEL_H

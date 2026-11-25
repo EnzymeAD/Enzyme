@@ -36,6 +36,10 @@
 
 namespace poseidon {
 
+struct FPCoreOperator;
+struct FPFormatInfo;
+enum class PrecisionChangeType;
+
 class FPNode {
 public:
   enum class NodeType { Node, LLValue, Const };
@@ -44,8 +48,13 @@ private:
   const NodeType ntype;
 
 public:
-  std::string op;
-  std::string dtype;
+  // The operator of an operation: a row of the FPCore operator table. Null for
+  // a value, a literal, and an operation of the program the table does not
+  // model.
+  const FPCoreOperator *op;
+  // The format of the node's value; null for a value that is not a
+  // floating-point number of a format of the pass.
+  const FPFormatInfo *format;
   std::string symbol;
   llvm::SmallVector<std::shared_ptr<FPNode>, 2> operands;
   // Sensitivity score, the sum of |grad * value|.
@@ -54,13 +63,17 @@ public:
   double grad = std::numeric_limits<double>::quiet_NaN();
   uint64_t executions = 0;
 
-  explicit FPNode(std::string op, std::string dtype)
-      : ntype(NodeType::Node), op(std::move(op)), dtype(std::move(dtype)) {}
-  explicit FPNode(NodeType ntype, std::string op, std::string dtype)
-      : ntype(ntype), op(std::move(op)), dtype(std::move(dtype)) {}
+  explicit FPNode(const FPCoreOperator &op, const FPFormatInfo *format)
+      : ntype(NodeType::Node), op(&op), format(format) {}
+  explicit FPNode(NodeType ntype, const FPCoreOperator *op,
+                  const FPFormatInfo *format)
+      : ntype(ntype), op(op), format(format) {}
   virtual ~FPNode() = default;
 
   NodeType getType() const;
+  bool is(const FPCoreOperator &O) const { return op == &O; }
+  // Whether the node's value has the format of precision `P`.
+  bool hasPrecision(PrecisionChangeType P) const;
   void addOperand(std::shared_ptr<FPNode> operand);
   bool hasSymbol() const { return !symbol.empty(); }
   // The Herbie expression of a node of the original graph, a value or a
@@ -107,9 +120,10 @@ class FPLLValue : public FPNode {
 public:
   llvm::Value *value;
 
-  explicit FPLLValue(llvm::Value *value, std::string op, std::string dtype)
-      : FPNode(NodeType::LLValue, std::move(op), std::move(dtype)),
-        value(value) {}
+  // `op` is the operator of the operation `value` is, null for any other value.
+  explicit FPLLValue(llvm::Value *value, const FPCoreOperator *op,
+                     const FPFormatInfo *format)
+      : FPNode(NodeType::LLValue, op, format), value(value) {}
 
   llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
@@ -127,9 +141,8 @@ private:
   static double literalValue(const std::string &strValue);
 
 public:
-  explicit FPConst(std::string literal, std::string dtype)
-      : FPNode(NodeType::Const, "__const", std::move(dtype)),
-        strValue(std::move(literal)) {
+  explicit FPConst(std::string literal, const FPFormatInfo *format)
+      : FPNode(NodeType::Const, nullptr, format), strValue(std::move(literal)) {
     lb = ub = literalValue(strValue);
   }
 

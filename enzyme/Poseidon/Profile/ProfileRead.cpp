@@ -240,9 +240,17 @@ void ProfileParser::header(StringRef Key, StringRef Value,
     Header.kappa = real(Value, Key);
     Header.hasKappa = true;
   } else if (Key == kProfileKeyKappaMark) {
-    if (Value.empty() || Value.contains(' '))
-      refuse(Twine(Key) + " " + Value + " is not one word");
-    Header.kappaMark = Value.str();
+    Header.kappaMark = StringSwitch<KappaMark>(Value)
+                           .Case("ok", KappaMark::Ok)
+                           .Case("below-noise", KappaMark::BelowNoise)
+                           .Case("nonlinear", KappaMark::Nonlinear)
+                           .Case("diverged", KappaMark::Diverged)
+                           .Case(kKappaUnmeasured, KappaMark::Unmeasured)
+                           .Default(KappaMark::None);
+    if (Header.kappaMark == KappaMark::None)
+      refuse(Twine(Key) + " " + Value +
+             " is not ok, below-noise, nonlinear, diverged or " +
+             kKappaUnmeasured);
   } else if (Key == kProfileKeyExecuted) {
     if (Value != "0")
       refuse(Twine(Key) + " " + Value + " is not 0");
@@ -337,9 +345,27 @@ void requireCanonicalHash(const FunctionProfileHeader &header,
             "instructions; re-run profile generation.");
 }
 
+StringRef kappaMarkName(KappaMark M) {
+  switch (M) {
+  case KappaMark::None:
+    return "";
+  case KappaMark::Ok:
+    return "ok";
+  case KappaMark::BelowNoise:
+    return "below-noise";
+  case KappaMark::Nonlinear:
+    return "nonlinear";
+  case KappaMark::Diverged:
+    return "diverged";
+  case KappaMark::Unmeasured:
+    return kKappaUnmeasured;
+  }
+  llvm_unreachable("every KappaMark has a word");
+}
+
 void requireMeasuredKappa(const FunctionProfileHeader &header,
                           StringRef profilePath, const Function &F) {
-  if (header.hasKappa || header.kappaMark != kKappaUnmeasured)
+  if (header.hasKappa || header.kappaMark != KappaMark::Unmeasured)
     return;
   reportUserError(
       F, F.getSubprogram(),

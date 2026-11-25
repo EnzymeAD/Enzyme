@@ -30,6 +30,7 @@
 #include <optional>
 #include <regex>
 #include <string>
+#include <string_view>
 
 using namespace llvm;
 
@@ -240,6 +241,37 @@ static constexpr FPCoreOperator kOperators[] = {
     special("array", 0),
 };
 
+// The index of the row of `Name`.
+static constexpr size_t rowOf(std::string_view Name) {
+  for (size_t I = 0; I < std::size(kOperators); ++I)
+    if (std::string_view(kOperators[I].Name.data(),
+                         kOperators[I].Name.size()) == Name)
+      return I;
+  return std::size(kOperators);
+}
+
+#define POSEIDON_FPCORE_ROW(Var, Name)                                         \
+  static_assert(rowOf(Name) < std::size(kOperators), Name " has no row");      \
+  const FPCoreOperator &fpcore::Var = kOperators[rowOf(Name)];
+POSEIDON_FPCORE_ROW(Neg, "neg")
+POSEIDON_FPCORE_ROW(Add, "+")
+POSEIDON_FPCORE_ROW(Sub, "-")
+POSEIDON_FPCORE_ROW(Mul, "*")
+POSEIDON_FPCORE_ROW(Div, "/")
+POSEIDON_FPCORE_ROW(Pow, "pow")
+POSEIDON_FPCORE_ROW(Sqrt, "sqrt")
+POSEIDON_FPCORE_ROW(Fma, "fma")
+POSEIDON_FPCORE_ROW(And, "and")
+POSEIDON_FPCORE_ROW(Or, "or")
+POSEIDON_FPCORE_ROW(Not, "not")
+POSEIDON_FPCORE_ROW(True, "TRUE")
+POSEIDON_FPCORE_ROW(False, "FALSE")
+POSEIDON_FPCORE_ROW(If, "if")
+POSEIDON_FPCORE_ROW(Array, "array")
+POSEIDON_FPCORE_ROW(ToBinary32, "binary64->binary32")
+POSEIDON_FPCORE_ROW(ToBinary64, "binary32->binary64")
+#undef POSEIDON_FPCORE_ROW
+
 const FPCoreOperator *fpcoreOperator(StringRef Name) {
   static const StringMap<const FPCoreOperator *> ByName = [] {
     StringMap<const FPCoreOperator *> Map;
@@ -255,10 +287,9 @@ const FPCoreOperator *fpcoreOperator(StringRef Name) {
 static bool isBoolean(const FPNode &N) {
   if (N.getType() != FPNode::NodeType::Node)
     return false;
-  if (N.op == "if")
+  if (N.is(fpcore::If))
     return isBoolean(*N.operands[1]);
-  const FPCoreOperator *O = fpcoreOperator(N.op);
-  return O && O->Boolean;
+  return N.op->Boolean;
 }
 
 static Error malformed(const Twine &Why, StringRef Expr) {
@@ -341,24 +372,24 @@ FPCoreParser::parseLiteral(const std::string &expr) {
            Denominator.find_first_not_of('0') == StringRef::npos;
   };
   std::smatch matches;
-  std::string dtype;
+  const FPFormatInfo *format;
   if (std::regex_match(expr, matches, constantPattern)) {
-    dtype = StringSwitch<std::string>(matches[3].str())
-                .Case("binary64", "f64")
-                .Case("binary32", "f32")
-                .Default("");
-    if (dtype.empty())
+    format = StringSwitch<const FPFormatInfo *>(matches[3].str())
+                 .Case("binary64", &formatOf(PrecisionChangeType::FP64))
+                 .Case("binary32", &formatOf(PrecisionChangeType::FP32))
+                 .Default(nullptr);
+    if (!format)
       return malformed("a literal of the unmodelled format " + matches[3].str(),
                        expr);
   } else if (std::regex_match(expr, matches, plainConstantPattern)) {
-    dtype = "f64";
+    format = &formatOf(PrecisionChangeType::FP64);
   } else {
     return nullptr;
   }
   std::string value = matches[1].str();
   if (zeroDenominator(value))
     return malformed("a rational literal with denominator 0", expr);
-  return std::make_shared<FPConst>(value, dtype);
+  return std::make_shared<FPConst>(value, format);
 }
 
 Expected<std::shared_ptr<FPNode>> FPCoreParser::parseApprox(StringRef expr,
@@ -390,8 +421,9 @@ FPCoreParser::parseProjection(StringRef expr, StringRef head, StringRef args) {
       return parseNumber(elems[idx]);
     if ((of == "sincos.f64" || of == "sincos.f32") && elems.size() == 1 &&
         idx < 2) {
-      auto node = std::make_shared<FPNode>(idx == 0 ? "sin" : "cos",
-                                           of.split('.').second.str());
+      auto node =
+          std::make_shared<FPNode>(*fpcoreOperator(idx == 0 ? "sin" : "cos"),
+                                   formatOfDtype(of.split('.').second));
       Expected<std::shared_ptr<FPNode>> operand = parseNumber(elems[0]);
       if (!operand)
         return operand.takeError();
@@ -406,18 +438,17 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
                                                                StringRef head,
                                                                StringRef args,
                                                                bool top) {
-  std::string dtype;
-  std::string op;
+  StringRef op = head;
+  const FPFormatInfo *format = nullptr;
   if (head.starts_with("array<")) {
-    op = "array";
+    op = fpcore::Array.Name;
   } else if (size_t pos = head.find('.'); pos != StringRef::npos) {
-    op = head.substr(0, pos).str();
-    dtype = head.substr(pos + 1).str();
-    if (dtype != "f64" && dtype != "f32")
+    op = head.substr(0, pos);
+    format = formatOfDtype(head.substr(pos + 1));
+    if (!format || (format->Precision != PrecisionChangeType::FP64 &&
+                    format->Precision != PrecisionChangeType::FP32))
       return malformed("the operator " + head + " of an unmodelled format",
                        expr);
-  } else {
-    op = head.str();
   }
 
   const FPCoreOperator *O = fpcoreOperator(op);
@@ -425,9 +456,9 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
     return malformed("the operator " + op + ", which Poseidon does not model",
                      expr);
   SmallVector<StringRef, 4> operandTexts = splitTopLevel(args);
-  if (op == "array" ? !top || operandTexts.empty()
-                    : operandTexts.size() != O->Arity)
-    return malformed(op == "array"
+  if (O == &fpcore::Array ? !top || operandTexts.empty()
+                          : operandTexts.size() != O->Arity)
+    return malformed(O == &fpcore::Array
                          ? Twine("an array that is not a whole expression")
                          : "the operator " + op + " with " +
                                Twine(operandTexts.size()) +
@@ -436,29 +467,30 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
 
   // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
   // destination precision, which makes it an identity at that precision.
-  if (dtype.empty()) {
-    if (op == "binary64->binary32")
-      dtype = "f32";
-    else if (op == "binary32->binary64")
-      dtype = "f64";
+  if (!format) {
+    if (O == &fpcore::ToBinary32)
+      format = &formatOf(PrecisionChangeType::FP32);
+    else if (O == &fpcore::ToBinary64)
+      format = &formatOf(PrecisionChangeType::FP64);
   }
 
-  auto node = std::make_shared<FPNode>(op, dtype);
+  auto node = std::make_shared<FPNode>(*O, format);
   // A logical operation, and the condition of a choice, take truth values;
   // every other operand is a number.
-  const bool logical = op == "and" || op == "or" || op == "not";
+  const bool logical =
+      O == &fpcore::And || O == &fpcore::Or || O == &fpcore::Not;
+  const bool choice = O == &fpcore::If;
   for (auto [k, text] : enumerate(operandTexts)) {
-    const bool truth = logical || (op == "if" && k == 0);
+    const bool truth = logical || (choice && k == 0);
     Expected<std::shared_ptr<FPNode>> operand =
-        truth || op == "if" ? parse(text, /*top=*/false) : parseNumber(text);
+        truth || choice ? parse(text, /*top=*/false) : parseNumber(text);
     if (!operand)
       return operand.takeError();
     if (truth && !isBoolean(**operand))
       return malformed("a number where a truth value is expected", text);
     node->addOperand(*operand);
   }
-  if (op == "if" &&
-      isBoolean(*node->operands[1]) != isBoolean(*node->operands[2]))
+  if (choice && isBoolean(*node->operands[1]) != isBoolean(*node->operands[2]))
     return malformed("a choice between a number and a truth value", expr);
 
   if (subgraphInputs)
@@ -575,7 +607,7 @@ class CRenderer {
     if (auto *LL = dyn_cast<FPLLValue>(&N))
       if (LL->value)
         return dtypeOfType(LL->value->getType());
-    return N.dtype;
+    return N.format ? N.format->Dtype.str() : "";
   }
 
   bool isLeaf(const FPNode &N) const {
@@ -631,7 +663,7 @@ public:
       return {"", kPrecPrimary, ""};
     --budget;
     if (auto *C = dyn_cast<FPConst>(&N))
-      return literal(*C, C->dtype.empty() ? StringRef("f64") : C->dtype);
+      return literal(*C, C->format ? StringRef(C->format->Dtype) : "f64");
     if (isLeaf(N))
       return leaf(cast<FPLLValue>(N));
     std::string dt = dtypeOf(N);
@@ -648,48 +680,50 @@ private:
 
   // The operation `N`, its result wanted as `want`, a format's dtype or empty.
   CExpr renderOperation(const FPNode &N, const std::string &want) {
-    const std::string &op = N.op;
-    if (op == "binary64->binary32" || op == "binary32->binary64")
+    if (N.is(fpcore::ToBinary32) || N.is(fpcore::ToBinary64))
       return renderConversion(N);
-    if (op == "if" && N.operands.size() == 3)
+    if (N.is(fpcore::If) && N.operands.size() == 3)
       return renderChoice(N, want);
-    if (int P = infixPrecedence(op); P && N.operands.size() >= 2)
+    if (int P = infixPrecedence(N); P && N.operands.size() >= 2)
       return renderInfix(N, want, P);
-    if (op == "not" && N.operands.size() == 1)
+    if (N.is(fpcore::Not) && N.operands.size() == 1)
       return {"!" + paren(render(*N.operands[0]), kPrecUnary), kPrecUnary,
               "bool"};
     if (N.operands.empty())
-      return renderConstant(op, want);
-    if (op == "neg" || (op == "-" && N.operands.size() == 1))
+      return renderConstant(N, want);
+    if (N.is(fpcore::Neg) || (N.is(fpcore::Sub) && N.operands.size() == 1))
       return renderNegation(N, want);
-    if (op == "fma" && N.operands.size() == 3 && isFMulAdd(N))
+    if (N.is(fpcore::Fma) && N.operands.size() == 3 && isFMulAdd(N))
       return renderFMulAdd(N, want);
     if (std::optional<CExpr> e = renderNegativeLiteralTerm(N, want))
       return *e;
-    if ((op == "+" || op == "-" || op == "*" || op == "/") &&
+    if ((N.is(fpcore::Add) || N.is(fpcore::Sub) || N.is(fpcore::Mul) ||
+         N.is(fpcore::Div)) &&
         N.operands.size() >= 2)
       return renderArithmetic(N, want);
-    if (op == "array")
+    if (N.is(fpcore::Array))
       return renderArray(N);
     return renderCall(N, want);
   }
 
-  static int infixPrecedence(StringRef op) {
-    return StringSwitch<int>(op)
-        .Case("<", kPrecRel)
-        .Case("<=", kPrecRel)
-        .Case(">", kPrecRel)
-        .Case(">=", kPrecRel)
-        .Case("==", kPrecEq)
-        .Case("!=", kPrecEq)
-        .Case("and", kPrecAnd)
-        .Case("or", kPrecOr)
-        .Default(0);
+  static int infixPrecedence(const FPNode &N) {
+    if (!N.op)
+      return 0;
+    if (N.op->Predicate == CmpInst::FCMP_OEQ ||
+        N.op->Predicate == CmpInst::FCMP_UNE)
+      return kPrecEq;
+    if (N.op->Predicate != CmpInst::BAD_FCMP_PREDICATE)
+      return kPrecRel;
+    if (N.is(fpcore::And))
+      return kPrecAnd;
+    if (N.is(fpcore::Or))
+      return kPrecOr;
+    return 0;
   }
 
   CExpr renderConversion(const FPNode &N) {
     CExpr inner = render(*N.operands[0]);
-    std::string target = N.op == "binary64->binary32" ? "f32" : "f64";
+    std::string target = N.is(fpcore::ToBinary32) ? "f32" : "f64";
     return inner.dtype == target ? inner : castTo(inner, target);
   }
 
@@ -704,16 +738,17 @@ private:
 
   CExpr renderInfix(const FPNode &N, const std::string &want, int P) {
     SmallVector<CExpr, 3> es = operands(N, want);
-    StringRef sym = N.op == "and"  ? "&&"
-                    : N.op == "or" ? "||"
-                                   : StringRef(N.op);
+    StringRef sym = N.is(fpcore::And)  ? "&&"
+                    : N.is(fpcore::Or) ? "||"
+                                       : StringRef(N.op->Name);
     std::string t;
     for (auto [k, e] : llvm::enumerate(es))
       t += (k ? " " + sym.str() + " " : "") + paren(e, P + 1);
     return {t, P, "bool"};
   }
 
-  CExpr renderConstant(const std::string &op, const std::string &want) {
+  CExpr renderConstant(const FPNode &N, const std::string &want) {
+    const std::string op = operationName(N);
     std::string t = StringSwitch<std::string>(op)
                         .Case("PI", "M_PI")
                         .Case("E", "M_E")
@@ -722,7 +757,7 @@ private:
                         .Case("TRUE", "true")
                         .Case("FALSE", "false")
                         .Default(op);
-    bool isBool = op == "TRUE" || op == "FALSE";
+    bool isBool = N.is(fpcore::True) || N.is(fpcore::False);
     CExpr e{t, kPrecPrimary, isBool ? "bool" : "f64"};
     if (!isBool && !want.empty() && want != "f64")
       e = castTo(e, want);
@@ -748,7 +783,7 @@ private:
   // `a + c` or `a - c` with a negative literal c, as `a - |c|` or `a + |c|`.
   std::optional<CExpr> renderNegativeLiteralTerm(const FPNode &N,
                                                  const std::string &want) {
-    if ((N.op != "+" && N.op != "-") || N.operands.size() != 2)
+    if ((!N.is(fpcore::Add) && !N.is(fpcore::Sub)) || N.operands.size() != 2)
       return std::nullopt;
     auto *C = dyn_cast<FPConst>(N.operands[1].get());
     if (!C || !(C->getLowerBound() < 0.0))
@@ -757,17 +792,18 @@ private:
     std::string rdt = want.empty() ? a.dtype : want;
     std::string lit =
         cLiteral(-C->getLowerBound(), rdt.empty() ? StringRef("f64") : rdt);
-    return CExpr{paren(a, kPrecAdd) + (N.op == "+" ? " - " : " + ") + lit,
+    return CExpr{paren(a, kPrecAdd) + (N.is(fpcore::Add) ? " - " : " + ") + lit,
                  kPrecAdd, rdt};
   }
 
   CExpr renderArithmetic(const FPNode &N, const std::string &want) {
-    int P = (N.op == "+" || N.op == "-") ? kPrecAdd : kPrecMul;
+    int P = (N.is(fpcore::Add) || N.is(fpcore::Sub)) ? kPrecAdd : kPrecMul;
     SmallVector<CExpr, 3> es = operands(N, want);
     std::string rdt = want.empty() ? firstFP(es) : want;
     CExpr acc = es[0];
     for (size_t k = 1; k < es.size(); ++k)
-      acc = {paren(acc, P) + " " + N.op + " " + paren(es[k], P + 1), P, rdt};
+      acc = {paren(acc, P) + " " + N.op->Name.str() + " " + paren(es[k], P + 1),
+             P, rdt};
     return acc;
   }
 
@@ -781,7 +817,7 @@ private:
   CExpr renderCall(const FPNode &N, const std::string &want) {
     SmallVector<CExpr, 3> es = operands(N, want);
     std::string rdt = want.empty() ? firstFP(es) : want;
-    std::string name = N.op;
+    std::string name = operationName(N);
     if (hasFloatSuffixInC(name) && rdt == "f32")
       name += "f";
     std::string t = name + "(";
@@ -869,12 +905,21 @@ fpcoreToC(StringRef expr,
     return out;
   }
   std::shared_ptr<FPNode> node = *parsed;
-  if (node->op == "array")
+  if (node->is(fpcore::Array))
     for (const auto &element : node->operands)
       out.push_back(renderC(*element, how, resultDtype));
   else
     out.push_back(renderC(*node, how, resultDtype));
   return out;
+}
+
+std::string operationName(const FPNode &N) {
+  if (N.op)
+    return N.op->Name.str();
+  auto *LL = dyn_cast<FPLLValue>(&N);
+  auto *I = LL && !N.operands.empty() ? dyn_cast_or_null<Instruction>(LL->value)
+                                      : nullptr;
+  return I ? getHerbieOperator(*I) : "";
 }
 
 std::string getHerbieOperator(const Instruction &I) {
@@ -907,7 +952,7 @@ std::string getHerbieOperator(const Instruction &I) {
     return (Fn.empty() ? Name : Fn).str();
   }
   default:
-    report_fatal_error("getHerbieOperator: Unknown operator");
+    llvm_unreachable("only an optimizable instruction has an FPCore operator");
   }
 }
 

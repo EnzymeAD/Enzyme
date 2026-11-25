@@ -582,7 +582,8 @@ static std::string arrayCoreBody(
   DenseMap<FPNode *, std::string> names;
   std::function<std::string(FPNode *)> ref;
   auto define = [&](FPNode *N) {
-    std::string expr = "(" + (N->op == "neg" ? std::string("-") : N->op);
+    std::string expr =
+        "(" + (N->is(fpcore::Neg) ? std::string("-") : operationName(*N));
     for (auto &operand : N->operands)
       expr += " " + ref(operand.get());
     return expr + ")";
@@ -682,7 +683,7 @@ private:
 void SubgraphCores::nameInputs(int &symbolCounter) {
   for (Value *input : subgraph.inputs) {
     FPNode &node = *valueToNodeMap[input];
-    if (node.op == "__const")
+    if (isa<FPConst>(node))
       continue;
     if (!node.hasSymbol())
       node.symbol = "v" + std::to_string(symbolCounter++);
@@ -911,7 +912,7 @@ static void collectIfNodes(const FPNode *node,
                            SmallVectorImpl<const FPNode *> &ifs) {
   if (!seen.insert(node).second)
     return;
-  if (node->op == "if")
+  if (node->is(fpcore::If))
     ifs.push_back(node);
   for (const auto &operand : node->operands)
     collectIfNodes(operand.get(), seen, ifs);
@@ -926,7 +927,7 @@ static void collectTakenArms(const FPNode *node,
                              SmallVectorImpl<RegimeArm> &arms) {
   if (!seen.insert(node).second)
     return;
-  if (node->op != "if") {
+  if (!node->is(fpcore::If)) {
     for (const auto &operand : node->operands)
       collectTakenArms(operand.get(), point, ev, seen, arms);
     return;
@@ -1249,7 +1250,7 @@ elementsOf(const std::shared_ptr<FPNode> &parsed, const RewriteUnit &CO) {
     elements.push_back(parsed);
     return elements;
   }
-  if (parsed->op != "array" || parsed->operands.size() != CO.roots.size())
+  if (!parsed->is(fpcore::Array) || parsed->operands.size() != CO.roots.size())
     return std::nullopt;
   elements.append(parsed->operands.begin(), parsed->operands.end());
   return elements;
@@ -1569,10 +1570,11 @@ ScratchFunction::ScratchFunction(
       stack.push_back(op.get());
   }
 
-  Type *ReturnType = scratchReturnType(argTypes, parsedNode->dtype, Ctx);
+  Type *ReturnType = scratchReturnType(
+      argTypes, parsedNode->format ? parsedNode->format->Dtype : "", Ctx);
   // An array candidate returns all of its elements, so none is dead and the
   // subterms they share are simplified into one computation before costing.
-  const bool isArray = parsedNode->op == "array";
+  const bool isArray = parsedNode->is(fpcore::Array);
   Type *FuncRetType = ReturnType;
   if (isArray)
     FuncRetType = StructType::get(
@@ -1824,7 +1826,7 @@ void RewriteUnit::materialize(size_t candidateIndex) {
     root->replaceAllUsesWith(newOutput);
     symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
     valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
-        newOutput, "__no", valueToNodeMap[root]->dtype);
+        newOutput, nullptr, valueToNodeMap[root]->format);
   }
 
   for (Instruction *I : erasableInsts) {

@@ -41,9 +41,9 @@ namespace poseidon {
 static constexpr unsigned kMaxExprDepth = 100;
 static constexpr unsigned kMaxInlinedOps = 3;
 
-static Type *fpTypeFromDtype(StringRef dtype, IRBuilder<> &builder) {
-  const FPFormatInfo *F = formatOfDtype(dtype);
-  return F ? F->LLVMType(builder.getContext()) : nullptr;
+// The LLVM type of `format`; null for none.
+static Type *llvmTypeOf(const FPFormatInfo *format, IRBuilder<> &builder) {
+  return format ? format->LLVMType(builder.getContext()) : nullptr;
 }
 
 static std::string libmFuncName(Module *M, Type *Ty, StringRef base) {
@@ -63,6 +63,10 @@ static Value *mathLibraryCall(IRBuilder<> &b, Module *M, StringRef name,
 }
 
 FPNode::NodeType FPNode::getType() const { return ntype; }
+
+bool FPNode::hasPrecision(PrecisionChangeType P) const {
+  return format && format->Precision == P;
+}
 
 void FPNode::addOperand(std::shared_ptr<FPNode> operand) {
   operands.push_back(operand);
@@ -99,38 +103,38 @@ static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
   return mathLibraryCall(b, M, "pow", ops);
 }
 
-// The operation `op` on `ops`, for an operator the table lowers by name.
-static Value *lowerByName(IRBuilder<> &b, Module *M, StringRef op,
+// The operation `O` on `ops`, for an operator the table lowers by name.
+static Value *lowerByName(IRBuilder<> &b, Module *M, const FPCoreOperator &O,
                           ArrayRef<Value *> ops) {
-  if (op == "neg")
+  if (&O == &fpcore::Neg)
     return b.CreateFNeg(ops[0], "herbie.neg");
-  if (op == "+")
+  if (&O == &fpcore::Add)
     return b.CreateFAdd(ops[0], ops[1], "herbie.add");
-  if (op == "-")
+  if (&O == &fpcore::Sub)
     return b.CreateFSub(ops[0], ops[1], "herbie.sub");
-  if (op == "*")
+  if (&O == &fpcore::Mul)
     return b.CreateFMul(ops[0], ops[1], "herbie.mul");
-  if (op == "/")
+  if (&O == &fpcore::Div)
     return b.CreateFDiv(ops[0], ops[1], "herbie.div");
-  if (op == "pow")
+  if (&O == &fpcore::Pow)
     return lowerPow(b, M, ops);
-  if (op == "fma")
+  if (&O == &fpcore::Fma)
     return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()}, ops, nullptr,
                              "herbie.fma");
-  if (op == "and")
+  if (&O == &fpcore::And)
     return b.CreateAnd(ops[0], ops[1], "herbie.and");
-  if (op == "or")
+  if (&O == &fpcore::Or)
     return b.CreateOr(ops[0], ops[1], "herbie.or");
-  if (op == "not")
+  if (&O == &fpcore::Not)
     return b.CreateNot(ops[0], "herbie.not");
-  if (op == "TRUE" || op == "FALSE")
-    return ConstantInt::getBool(b.getContext(), op == "TRUE");
+  if (&O == &fpcore::True || &O == &fpcore::False)
+    return ConstantInt::getBool(b.getContext(), &O == &fpcore::True);
   // CreateFPCast rather than FPTrunc/FPExt: the operand may already carry the
-  // destination type, coerced to the node's dtype, and FPCast is then the
+  // destination type, coerced to the node's format, and FPCast is then the
   // identity.
-  if (op == "binary64->binary32")
+  if (&O == &fpcore::ToBinary32)
     return b.CreateFPCast(ops[0], b.getFloatTy(), "herbie.f64tof32");
-  assert(op == "binary32->binary64" && "the parser admits no other operator");
+  assert(&O == &fpcore::ToBinary64 && "the parser admits no other operator");
   return b.CreateFPCast(ops[0], b.getDoubleTy(), "herbie.f32tof64");
 }
 
@@ -141,7 +145,7 @@ Value *FPNode::lowerChoice(IRBuilder<> &builder,
   Value *falseValue = operands[2]->getLLValue(builder, VMap);
   // A regime split at one precision may fall back to a bare input of
   // another; both arms take the split's precision.
-  Type *armTy = fpTypeFromDtype(dtype, builder);
+  Type *armTy = llvmTypeOf(format, builder);
   if (!armTy)
     armTy = trueValue->getType();
   if (trueValue->getType() != armTy)
@@ -154,14 +158,14 @@ Value *FPNode::lowerChoice(IRBuilder<> &builder,
 
 Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
   Module *M = builder.GetInsertBlock()->getModule();
-  if (op == "array")
-    report_fatal_error("Poseidon: an array rewrite is lowered element by "
-                       "element at its outputs, never as one value");
-  if (op == "if")
+  assert(op && "a parsed rewrite's operation has an operator");
+  assert(!is(fpcore::Array) && "an array rewrite is lowered element by element "
+                               "at its outputs, never as one value");
+  if (is(fpcore::If))
     return lowerChoice(builder, VMap);
 
   SmallVector<Value *, 3> operandValues;
-  Type *targetTy = fpTypeFromDtype(dtype, builder);
+  Type *targetTy = llvmTypeOf(format, builder);
   for (auto operand : operands) {
     Value *val = operand->getLLValue(builder, VMap);
     assert(val && "Operand produced a null value!");
@@ -173,27 +177,26 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
 
   // What the target's math library provides where its intrinsic would not
   // lower.
+  const FPCoreOperator *O = op;
   if (!operandValues.empty() &&
-      Target::of(*M).callsMathLibrary(op, operandValues[0]->getType()))
-    return mathLibraryCall(builder, M, op, operandValues);
+      Target::of(*M).callsMathLibrary(O->Name, operandValues[0]->getType()))
+    return mathLibraryCall(builder, M, O->Name, operandValues);
 
-  const FPCoreOperator *O = fpcoreOperator(op);
-  assert(O && "the parser admits only modelled operators");
   if (O->Intrinsic != Intrinsic::not_intrinsic && O->Arity == 1)
     return builder.CreateUnaryIntrinsic(O->Intrinsic, operandValues[0], nullptr,
-                                        "herbie." + op);
+                                        "herbie." + O->Name);
   if (O->Intrinsic != Intrinsic::not_intrinsic)
     return builder.CreateBinaryIntrinsic(O->Intrinsic, operandValues[0],
                                          operandValues[1], nullptr,
-                                         "herbie." + op);
+                                         "herbie." + O->Name);
   if (O->LibraryCall)
-    return mathLibraryCall(builder, M, op, operandValues);
+    return mathLibraryCall(builder, M, O->Name, operandValues);
   if (O->Predicate != CmpInst::BAD_FCMP_PREDICATE)
     return builder.CreateFCmp(O->Predicate, operandValues[0], operandValues[1],
                               "herbie." + O->LoweredName);
   if (O->MPFRConstant)
     return ConstantFP::get(builder.getDoubleTy(), O->Constant);
-  return lowerByName(builder, M, op, operandValues);
+  return lowerByName(builder, M, *O, operandValues);
 }
 
 // Memoized: an input is consulted once per input defined over it, so a chain
@@ -227,11 +230,11 @@ std::shared_ptr<FPNode> existingDefinition(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
   auto same = [](const FPNode &A, const FPNode &B) {
     auto *CA = dyn_cast<FPConst>(&A), *CB = dyn_cast<FPConst>(&B);
-    return &A == &B || (CA && CB && CA->dtype == CB->dtype &&
+    return &A == &B || (CA && CB && CA->format == CB->format &&
                         CA->getLowerBound() == CB->getLowerBound());
   };
   auto matches = [&](const FPNode &W, bool swapped) {
-    if (W.op != N.op || W.dtype != N.dtype ||
+    if (W.op != N.op || W.format != N.format ||
         W.operands.size() != N.operands.size())
       return false;
     for (size_t i = 0; i < W.operands.size(); ++i)
@@ -240,7 +243,8 @@ std::shared_ptr<FPNode> existingDefinition(
         return false;
     return true;
   };
-  bool commutes = (N.op == "+" || N.op == "*") && N.operands.size() == 2;
+  bool commutes =
+      (N.is(fpcore::Add) || N.is(fpcore::Mul)) && N.operands.size() == 2;
   for (Value *V : inputs) {
     auto *VN = dyn_cast<FPLLValue>(valueToNodeMap.at(V).get());
     if (!VN || !inlinedOps(*VN, inputs))
@@ -279,10 +283,10 @@ std::string FPNode::toFullExpression(
   if (depth > kMaxExprDepth)
     reportUserError(*cast<Instruction>(value),
                     "Expression depth exceeded maximum allowed depth of " +
-                        Twine(kMaxExprDepth) + " for " + op +
+                        Twine(kMaxExprDepth) + " for " + operationName(*this) +
                         "; consider disabling loop unrolling");
 
-  std::string expr = "(" + (op == "neg" ? "-" : op);
+  std::string expr = "(" + (is(fpcore::Neg) ? "-" : operationName(*this));
   for (auto operand : operands) {
     expr += " " + operand->toFullExpression(valueToNodeMap, subgraphInputs,
                                             depth + 1);
@@ -293,9 +297,7 @@ std::string FPNode::toFullExpression(
 
 Value *FPLLValue::getLLValue(IRBuilder<> &builder,
                              const ValueToValueMapTy *VMap) {
-  if (!value)
-    report_fatal_error("Poseidon: a rewrite names a value an earlier step "
-                       "erased");
+  assert(value && "a rewrite names a value an earlier step erased");
   if (VMap) {
     assert(VMap->count(value) && "FPLLValue not found in passed-in VMap!");
     return VMap->lookup(value);
@@ -314,7 +316,8 @@ void FPGraph::replaceErased(Value *erased, Value *now) {
   auto *node = cast<FPLLValue>(it->second.get());
   if (node->hasSymbol()) {
     symbolToValueMap[node->symbol] = now;
-    valueToNodeMap[now] = std::make_shared<FPLLValue>(now, "__no", node->dtype);
+    valueToNodeMap[now] =
+        std::make_shared<FPLLValue>(now, nullptr, node->format);
   }
   node->value = nullptr;
 }
@@ -352,11 +355,8 @@ double FPConst::literalValue(const std::string &strValue) {
 
 Value *FPConst::getLLValue(IRBuilder<> &builder,
                            const ValueToValueMapTy *VMap) {
-  Type *Ty = fpTypeFromDtype(dtype, builder);
-  if (!Ty) {
-    std::string msg = "FPConst getValue: Unexpected dtype: " + dtype;
-    llvm_unreachable(msg.c_str());
-  }
+  Type *Ty = llvmTypeOf(format, builder);
+  assert(Ty && "a literal has a format of an LLVM type");
   if (strValue == "+inf.0") {
     return ConstantFP::getInfinity(Ty, false);
   }
@@ -378,6 +378,9 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
   std::unordered_map<Value *, std::shared_ptr<FPNode>> noNodes;
   SetVector<Value *> noInputs;
   DenseMap<const FPNode *, std::string> keys;
+  auto formatName = [](const FPNode *N) {
+    return N->format ? N->format->Dtype.str() : std::string();
+  };
   std::function<const std::string &(const FPNode *)> key =
       [&](const FPNode *N) -> const std::string & {
     auto It = keys.find(N);
@@ -387,10 +390,10 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
     if (auto *LL = dyn_cast<FPLLValue>(N))
       k = "%" + utohexstr((uintptr_t)LL->value);
     else if (isa<FPConst>(N))
-      k = N->dtype + ":" +
+      k = formatName(N) + ":" +
           const_cast<FPNode *>(N)->toFullExpression(noNodes, noInputs);
     else {
-      k = N->op + "." + N->dtype + "(";
+      k = N->op->Name.str() + "." + formatName(N) + "(";
       for (const auto &operand : N->operands)
         k += key(operand.get()) + ",";
       k += ")";
@@ -414,10 +417,10 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
     count(element.get());
 
   StringMap<Value *> emitted;
-  auto placeholder = [&](Value *V, const std::string &dtype) {
+  auto placeholder = [&](Value *V, const FPFormatInfo *format) {
     if (VMap)
       (*VMap)[V] = V;
-    return std::make_shared<FPLLValue>(V, "__shared", dtype);
+    return std::make_shared<FPLLValue>(V, nullptr, format);
   };
   SmallVector<Value *, 4> out;
   for (auto [k, element] : llvm::enumerate(elements)) {
@@ -439,10 +442,10 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
         return N;
       auto It = emitted.find(k);
       if (It != emitted.end() && available(It->second))
-        return placeholder(It->second, N->dtype);
+        return placeholder(It->second, N->format);
       Value *V = N->getLLValue(B, VMap);
       emitted[k] = V;
-      return placeholder(V, N->dtype);
+      return placeholder(V, N->format);
     };
     out.push_back(share(element)->getLLValue(B, VMap));
   }
