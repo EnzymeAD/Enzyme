@@ -251,6 +251,7 @@ set(POSEIDON_SRC
     Techniques/Precision.cpp
     Model/FPFormat.cpp
     Profile/ProfileRead.cpp
+    Profile/ProfiledLaunch.cpp
     Model/Sampling.cpp
     Solve/Solvers.cpp
     Solve/Pins.cpp
