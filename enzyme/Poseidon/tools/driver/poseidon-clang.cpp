@@ -180,8 +180,9 @@ namespace {
 struct Invocation {
   /// Whether clang compiles or links an input, and whether it links an image.
   bool HasInput = false, Links = false;
-  /// Whether it offloads to CUDA or HIP.
-  bool CUDA = false, HIP = false;
+  /// Whether it offloads to CUDA or HIP, and whether it compiles only the
+  /// device or only the host half of the units it offloads.
+  bool CUDA = false, HIP = false, OneHalf = false;
   /// Whether an input is C++ (CUDA and HIP among them), and whether one is not
   /// an object.
   bool CXX = false, Source = false;
@@ -250,6 +251,8 @@ static Invocation analyze(StringRef Clang, ArrayRef<const char *> Argv) {
   });
   I.CUDA = C->hasOffloadToolChain<Action::OFK_Cuda>();
   I.HIP = C->hasOffloadToolChain<Action::OFK_HIP>();
+  I.OneHalf = Args.hasArg(clang_options::OPT_offload_device_only,
+                          clang_options::OPT_offload_host_only);
   SmallVector<const Action *, 16> Work(C->getActions().begin(),
                                        C->getActions().end());
   while (!Work.empty()) {
@@ -279,7 +282,7 @@ namespace {
 /// the pass, and the action they ask for.
 struct Request {
   SmallVector<std::string, 0> User;
-  bool ProfileGenerate = false, ProfileUse = false;
+  bool ProfileGenerate = false, ProfileUse = false, LaunchDir = false;
 };
 } // namespace
 
@@ -294,6 +297,7 @@ static Request convertFlags(ArrayRef<const char *> Args,
     StringRef Name = Flag.split('=').first;
     R.ProfileGenerate |= Name == "profile-generate";
     R.ProfileUse |= Name == "profile-use";
+    R.LaunchDir |= Name == "launch-dir";
   };
   // The converted flag that replaces Args[I], or the empty string for an
   // argument a converted flag consumes as well.
@@ -494,6 +498,15 @@ static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
   return In;
 }
 
+/// Removes the directory `Path` names, with what it holds, when it goes.
+struct DirectoryRemover {
+  SmallString<128> Path;
+  ~DirectoryRemover() {
+    if (!Path.empty())
+      (void)sys::fs::remove_directories(Path);
+  }
+};
+
 /// Runs `Cmd`, from a response file written as clang writes one when the
 /// expanded command is longer than the system takes.
 static int runClang(StringRef Prog, ArrayRef<std::string> Cmd) {
@@ -628,6 +641,22 @@ int main(int argc, char **argv) {
     Cmd.push_back("-ffp-contract=on");
     // poseidon.h then keeps the device math a rewrite or a derivative calls.
     Cmd.push_back("-DPOSEIDON_DEVICE_MATH");
+  }
+  // The device half of a CUDA or HIP unit hands the launches of its sites to
+  // the host half in a manifest. When this invocation compiles both halves,
+  // the manifest lives in a directory of its own that goes with it; a compile
+  // of one half leaves it to -poseidon-cache, where the other half's
+  // invocation finds it.
+  DirectoryRemover LaunchDir;
+  if (Inv.HasInput && (Inv.CUDA || Inv.HIP) && !Inv.OneHalf &&
+      (R.ProfileGenerate || R.ProfileUse) && !R.LaunchDir) {
+    if (std::error_code EC =
+            sys::fs::createUniqueDirectory("poseidon-launches", LaunchDir.Path))
+      return userError(Prog, "cannot create a directory for the launch "
+                             "manifest: " +
+                                 EC.message());
+    Cmd.append({"-Xclang", "-mllvm", "-Xclang",
+                ("-poseidon-launch-dir=" + LaunchDir.Path).str()});
   }
   Cmd.append(R.User.begin(), R.User.end());
   if (Inv.Links) {

@@ -77,12 +77,18 @@ struct Manifest {
 
 // The source file tells apart the units one compile writes into a cache, the
 // unit name the compiles of one source into it.
-static Manifest manifestOf(const Options &O, const Module &M) {
+// The manifest of M, in the -poseidon-launch-dir directory or else the
+// -poseidon-cache one; none when neither names a directory.
+static std::optional<Manifest> manifestOf(const Options &O, const Module &M) {
+  StringRef dir =
+      O.Herbie.LaunchDir.empty() ? O.Herbie.Cache : O.Herbie.LaunchDir;
+  if (dir.empty())
+    return std::nullopt;
   Manifest m;
   StringRef source = M.getSourceFileName();
   m.key.add("source file", source);
   m.key.add("unit", unitName(O, M));
-  m.path = O.Herbie.Cache;
+  m.path = dir;
   sys::path::append(
       m.path, "launches_" + profileNameStem(sys::path::filename(source).str()) +
                   "_" + m.key.digest() + ".json");
@@ -117,8 +123,10 @@ void recordProfileTable(Session &S, unsigned functions, unsigned slots) {
 
 std::pair<unsigned, unsigned> readProfileTable(const Options &O,
                                                const Module &M) {
-  Manifest m = manifestOf(O, M);
-  CacheEntryRead read = readCacheEntry(m.path, m.key);
+  std::optional<Manifest> m = manifestOf(O, M);
+  if (!m)
+    return {0, 0};
+  CacheEntryRead read = readCacheEntry(m->path, m->key);
   const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
   const json::Object *table = value ? value->getObject(kProfileTable) : nullptr;
   if (!table)
@@ -128,7 +136,7 @@ std::pair<unsigned, unsigned> readProfileTable(const Options &O,
   if (!functions || !slots || *functions < 0 || *slots < 0 ||
       *functions > UINT32_MAX || *slots > UINT32_MAX)
     reportUserError(M.getContext(),
-                    "the launch manifest " + m.path +
+                    "the launch manifest " + m->path +
                         " holds a profile table entry that is not two counts; "
                         "remove the -poseidon-cache directory and compile the "
                         "unit again");
@@ -137,7 +145,21 @@ std::pair<unsigned, unsigned> readProfileTable(const Options &O,
 
 void writeLaunchManifest(Session &S, const Module &M) {
   const Options &O = S.Opts;
-  Manifest m = manifestOf(O, M);
+  const bool any =
+      S.ProfiledFunctions || llvm::any_of(kKinds, [&](LaunchKind kind) {
+        return !recorded(S, kind).empty();
+      });
+  std::optional<Manifest> found = manifestOf(O, M);
+  if (!found) {
+    if (any)
+      reportUserError(M.getContext(),
+                      "this device compile hands the launches of its sites to "
+                      "its host half, and -poseidon-cache= names no directory "
+                      "to keep them in; pass -poseidon-launch-dir=<dir> to "
+                      "both halves");
+    return;
+  }
+  const Manifest &m = *found;
   // The device code is already compiled for the rewritten stubs (a dispatched
   // product fissioned out of its kernel, a profiled kernel taking shadow
   // buffers), so a host half reading no manifest or an earlier one would build
@@ -146,12 +168,11 @@ void writeLaunchManifest(Session &S, const Module &M) {
     reportUserError(M.getContext(),
                     "cannot " + action + " the launch manifest " + m.path +
                         ": " + why +
-                        ". The manifest is kept in the -poseidon-cache "
-                        "directory, which has to be writable.");
+                        ". The manifest is kept in the -poseidon-launch-dir "
+                        "directory, or else the -poseidon-cache one, which "
+                        "has to be writable.");
   };
-  if (!S.ProfiledFunctions && llvm::all_of(kKinds, [&](LaunchKind kind) {
-        return recorded(S, kind).empty();
-      })) {
+  if (!any) {
     if (sys::fs::exists(m.path))
       if (std::error_code EC = sys::fs::remove(m.path))
         fail("remove", EC.message());
@@ -176,7 +197,8 @@ void writeLaunchManifest(Session &S, const Module &M) {
   if (S.ProfiledFunctions)
     value[kProfileTable] = json::Object{{"functions", S.ProfiledFunctions},
                                         {"slots", S.ProfiledSlots}};
-  if (std::error_code EC = sys::fs::create_directories(O.Herbie.Cache))
+  if (std::error_code EC =
+          sys::fs::create_directories(sys::path::parent_path(m.path)))
     fail("write", EC.message());
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
     fail("write", toString(std::move(E)));
@@ -191,7 +213,10 @@ void writeLaunchManifest(Session &S, const Module &M) {
 
 void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
                      function_ref<Error(ArrayRef<StringRef>)> parse) {
-  Manifest m = manifestOf(O, M);
+  std::optional<Manifest> found = manifestOf(O, M);
+  if (!found)
+    return;
+  const Manifest &m = *found;
   CacheEntryRead read = readCacheEntry(m.path, m.key);
   const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
   const json::Array *lines = value ? value->getArray(kindName(kind)) : nullptr;
@@ -230,8 +255,10 @@ void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
 
 void readProfileHeaders(const Options &O, const Module &M,
                         function_ref<void(StringRef, StringRef)> use) {
-  Manifest m = manifestOf(O, M);
-  CacheEntryRead read = readCacheEntry(m.path, m.key);
+  std::optional<Manifest> m = manifestOf(O, M);
+  if (!m)
+    return;
+  CacheEntryRead read = readCacheEntry(m->path, m->key);
   const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
   const json::Object *headers =
       value ? value->getObject(kProfileHeaders) : nullptr;

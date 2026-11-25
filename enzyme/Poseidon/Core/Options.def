@@ -237,6 +237,11 @@ POSEIDON_HERBIE_OPTION(Cache, String, "./.poseidon", "poseidon-cache", User,
                        "Directory Poseidon keeps its Herbie results, DP tables "
                        "and device-to-host launch descriptors in")
 POSEIDON_HERBIE_OPTION(
+    LaunchDir, String, "", "poseidon-launch-dir", Hidden, Other, "directory",
+    "Directory the device half of a CUDA or HIP compile hands the launches of "
+    "its sites to the host half in; the -poseidon-cache directory when not "
+    "given (poseidon-clang passes a temporary one to each compile it runs)")
+POSEIDON_HERBIE_OPTION(
     Unit, String, "", "poseidon-unit", Hidden, Other, "name",
     "Name of the translation unit whose device and host halves are compiled; "
     "the host half takes the launch descriptors the device half of the same "

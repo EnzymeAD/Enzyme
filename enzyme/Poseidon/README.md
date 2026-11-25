@@ -182,22 +182,23 @@ clang compiles a CUDA or HIP source in two processes, the device half first.
 Where the host half has to change a kernel launch (under profile generation, to
 launch a profiled kernel with the shadows of its pointer arguments; under
 profile use, to replace a matrix product's launch with a library call), the
-device half writes a launch manifest for the translation unit into the cache
-directory, and the host half reads it. Both halves therefore run on one
-machine and see the same cache directory.
+device half hands the launches of its sites to the host half in a small
+manifest. `poseidon-clang` keeps it in a temporary directory that lives as
+long as the compile. A build that compiles the two halves in separate
+invocations finds it in the `-poseidon-cache` directory, or in the one
+`-poseidon-launch-dir` names; both invocations then run on one machine.
 
 ### The cache directory
 
 `-poseidon-cache=<dir>`, by default `./.poseidon` in the working directory of
-the compile, holds Herbie's answers, each site's solved table, the
-matrix-accuracy estimates, and the launch manifests. Every entry but a manifest
-is filed under a digest of what it was computed from, so that a changed input
-misses it. A compile thus reads files that are not on its command line, the
-profile among them: a compiler cache such as ccache, which keys an object by
-its command line and source, can serve an object compiled against another
-profile, and a distributed build runs the compile where neither the cache
-directory nor the manifest of the device half is. Poseidon's compiles are
-therefore run without either.
+the compile, holds Herbie's answers, each site's solved table and the
+matrix-accuracy estimates, each filed under a digest of what it was computed
+from, so that a changed input misses it. A compile thus reads files that are
+not on its command line, the profile among them: a compiler cache such as
+ccache, which keys an object by its command line and source, can serve an
+object compiled against another profile, and a distributed build runs the
+compile where neither the profile nor the cache directory is. Poseidon's
+compiles are therefore run without either.
 
 ### Environment
 
