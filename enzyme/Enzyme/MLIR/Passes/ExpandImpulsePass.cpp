@@ -1699,26 +1699,37 @@ static FailureOr<SmallVector<Value>> readSiteValues(OpBuilder &builder,
   return values;
 }
 
+/// Writes each rank-0 score of `cells` into row 0 of the rank-2 `trace` at
+/// the column paired with it; `row0` is the index 0.
+static Value writeScoreCells(OpBuilder &builder, Location loc, Value trace,
+                             Value row0,
+                             ArrayRef<std::pair<int64_t, Value>> cells) {
+  auto traceType = cast<RankedTensorType>(trace.getType());
+  auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
+  for (auto [column, score] : cells) {
+    Value cell = impulse::ReshapeOp::create(builder, loc, cellType, score);
+    Value columnIndex = emitI64ScalarConstant(builder, loc, column);
+    trace = impulse::DynamicUpdateSliceOp::create(
+        builder, loc, traceType, trace, cell, ValueRange{row0, columnIndex});
+  }
+  return trace;
+}
+
 /// Returns a `1 x width` trace whose leading columns are `values` and whose
 /// following columns hold `siteScores`, one score per column.
 static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
                              ArrayRef<Value> siteScores, int64_t width) {
   auto fullType = RankedTensorType::get({1, width}, builder.getF64Type());
-  auto cellType = RankedTensorType::get({1, 1}, builder.getF64Type());
   Value zeroFull = emitSplatConstant(builder, loc, fullType, 0.0);
   Value c0 = emitI64ScalarConstant(builder, loc, 0);
   Value trace = impulse::DynamicUpdateSliceOp::create(
       builder, loc, fullType, zeroFull, values, ValueRange{c0, c0});
   int64_t firstScoreColumn =
       cast<RankedTensorType>(values.getType()).getShape()[1];
-  for (auto [i, score] : llvm::enumerate(siteScores)) {
-    Value cell = impulse::ReshapeOp::create(builder, loc, cellType, score);
-    Value column =
-        emitI64ScalarConstant(builder, loc, firstScoreColumn + (int64_t)i);
-    trace = impulse::DynamicUpdateSliceOp::create(builder, loc, fullType, trace,
-                                                  cell, ValueRange{c0, column});
-  }
-  return trace;
+  SmallVector<std::pair<int64_t, Value>> cells;
+  for (auto [i, score] : llvm::enumerate(siteScores))
+    cells.push_back({firstScoreColumn + (int64_t)i, score});
+  return writeScoreCells(builder, loc, trace, c0, cells);
 }
 
 /// Packs `weight` and the Hastings correction `correction` into the weight
@@ -2070,6 +2081,18 @@ static SmallVector<Value> cloneLogpdfBody(OpBuilder &builder, Block &lpBlock,
   return cloneBlockBody(builder, lpBlock, map);
 }
 
+/// Adds `term` to `sum`, or makes `term` the sum while `sum` is null.
+static void accumulate(OpBuilder &builder, Location loc, Value &sum,
+                       Value term) {
+  sum = sum ? arith::AddFOp::create(builder, loc, sum, term).getResult() : term;
+}
+
+/// Returns `sum`, or a zero of `type` when nothing was accumulated into it.
+static Value sumOrZero(OpBuilder &builder, Location loc, Value sum,
+                       RankedTensorType type) {
+  return sum ? sum : emitSplatConstant(builder, loc, type, 0.0);
+}
+
 /// Proposes fresh values for the selected sites of `op` from its sampler,
 /// reads the other sites from `trace` and scores the result with the logpdf
 /// region. `drawOverride` gives the values of replaced sampler draws.
@@ -2172,16 +2195,11 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
 
   if (hasScoreTail) {
     Value row0 = emitI64ScalarConstant(b, loc, 0);
-    auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
-    for (unsigned j = 1, e = newYields.size(); j < e; ++j) {
-      if (!dirty[j - 1])
-        continue;
-      Value flat = impulse::ReshapeOp::create(b, loc, cellType, newYields[j]);
-      Value col = emitI64ScalarConstant(b, loc, positionSize + (int64_t)j - 1);
-      newTrace = impulse::DynamicUpdateSliceOp::create(
-                     b, loc, traceType, newTrace, flat, ValueRange{row0, col})
-                     .getResult();
-    }
+    SmallVector<std::pair<int64_t, Value>> cells;
+    for (auto [j, isDirty] : llvm::enumerate(dirty))
+      if (isDirty)
+        cells.push_back({positionSize + (int64_t)j, newYields[1 + j]});
+    newTrace = writeScoreCells(b, loc, newTrace, row0, cells);
   }
 
   SmallVector<Value> oldYields;
@@ -2201,11 +2219,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     Value oldScore = width == positionSize
                          ? oldYields[1 + j]
                          : scalarAt(b, loc, trace, {0, positionSize + j});
-    Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
-    correction =
-        correction
-            ? arith::AddFOp::create(b, loc, correction, change).getResult()
-            : change;
+    accumulate(b, loc, correction,
+               arith::SubFOp::create(b, loc, newScore, oldScore));
   }
 
   if (delta) {
@@ -2225,24 +2240,14 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
       Value newScore = newYields[1 + j];
       Value oldScore = scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
       Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
-      sum =
-          sum ? arith::AddFOp::create(b, loc, sum, change).getResult() : change;
+      accumulate(b, loc, sum, change);
       if (splitRatio && !ownTerms.contains(j))
-        ratio = ratio ? arith::AddFOp::create(b, loc, ratio, change).getResult()
-                      : change;
+        accumulate(b, loc, ratio, change);
     }
-    if (splitRatio) {
-      if (!ratio) {
-        auto scalarType = RankedTensorType::get({}, b.getF64Type());
-        ratio = emitSplatConstant(b, loc, scalarType, 0.0);
-      }
-      logRatio = ratio;
-    }
-    if (!sum) {
-      auto scalarType = RankedTensorType::get({}, b.getF64Type());
-      sum = emitSplatConstant(b, loc, scalarType, 0.0);
-    }
-    newWeight = sum;
+    auto scalarType = RankedTensorType::get({}, b.getF64Type());
+    if (splitRatio)
+      logRatio = sumOrZero(b, loc, ratio, scalarType);
+    newWeight = sumOrZero(b, loc, sum, scalarType);
   }
 
   // Only dirty score columns can change; write back just those.
@@ -2740,9 +2745,8 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
     for (size_t s = 0; s < numSlots; ++s) {
       if (columns[0][s] < moves[0].layout.positionSize)
         continue;
-      Value d = arith::SubFOp::create(b, loc, proposedAt[s], currentAt[s]);
-      deltaVec =
-          deltaVec ? arith::AddFOp::create(b, loc, deltaVec, d).getResult() : d;
+      accumulate(b, loc, deltaVec,
+                 arith::SubFOp::create(b, loc, proposedAt[s], currentAt[s]));
     }
     Value correctionVec =
         arith::SubFOp::create(b, loc, proposedAt[ownSlot], currentAt[ownSlot]);
@@ -3730,16 +3734,12 @@ struct ExpandImpulsePass
           int k = siteOfYield[j];
           if (k < 0)
             continue;
-          Value d =
-              arith::SubFOp::create(b, loc, yieldsAt[1][j], yieldsAt[0][j]);
-          logOdds[k] =
-              logOdds[k]
-                  ? arith::AddFOp::create(b, loc, logOdds[k], d).getResult()
-                  : d;
+          accumulate(
+              b, loc, logOdds[k],
+              arith::SubFOp::create(b, loc, yieldsAt[1][j], yieldsAt[0][j]));
         }
         for (Value &l : logOdds)
-          if (!l)
-            l = emitSplatConstant(b, loc, scalarType, 0.0);
+          l = sumOrZero(b, loc, l, scalarType);
         Value lVec = packScalars(b, loc, vecType, logOdds);
 
         Value p1 = impulse::LogisticOp::create(b, loc, vecType, lVec);
@@ -3808,15 +3808,10 @@ struct ExpandImpulsePass
             for (unsigned j = 0; j < numYields; ++j) {
               Value y = yields[1 + j];
               yieldsAt[v].push_back(y);
-              if (!dirtyOf[k][j])
-                continue;
-              scoreAt[v] =
-                  scoreAt[v]
-                      ? arith::AddFOp::create(b, loc, scoreAt[v], y).getResult()
-                      : y;
+              if (dirtyOf[k][j])
+                accumulate(b, loc, scoreAt[v], y);
             }
-            if (!scoreAt[v])
-              scoreAt[v] = emitSplatConstant(b, loc, scalarType, 0.0);
+            scoreAt[v] = sumOrZero(b, loc, scoreAt[v], scalarType);
           }
           Value diff = arith::SubFOp::create(b, loc, scoreAt[1], scoreAt[0]);
           Value p1 = impulse::LogisticOp::create(b, loc, diff.getType(), diff);
