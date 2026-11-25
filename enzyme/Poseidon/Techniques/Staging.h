@@ -23,27 +23,28 @@ namespace poseidon {
 
 class Session;
 
-// Which parameter transforms narrowSharedStaging runs. Each declines a buffer
-// whose readers it does not fit, so the materializer runs Both; a pricing clone
-// runs one, because narrowing an expansion's operand buffer to one float zeroes
-// its `lo` limb and prices the expansion as free.
+/// Which parameter transforms narrowSharedStaging runs. Each declines a buffer
+/// whose readers it does not fit, so the materializer runs Both; a pricing
+/// clone runs one, because narrowing an expansion's operand buffer to one float
+/// zeroes its `lo` limb and prices the expansion as free.
 enum class ParamArm { Both, FP32, DS };
 
-// Narrows the shared staging of F after a precision change, in the order every
-// site must apply the narrowings: the buffers F reaches through the global at
-// one stride to FP32, those it reaches as parameters or through views to the
-// formats `param` selects, then the buffers it reaches through the global to
-// df64 pairs. `paramProxy` is the function the site arguments were recorded
-// against: F at materialization, the site function when pricing a clone.
-// `announce` prints what each narrowing did under -poseidon-print. True if any
-// changed F.
+/// Narrows the shared staging of F after a precision change, in the order every
+/// site must apply the narrowings: the buffers F reaches through the global at
+/// one stride to FP32, those it reaches as parameters or through views to the
+/// formats `param` selects, then the buffers it reaches through the global to
+/// df64 pairs. `paramProxy` is the function the site arguments were recorded
+/// against: F at materialization, the site function when pricing a clone.
+/// `announce` prints what each narrowing did under -poseidon-print. True if any
+/// changed F.
 bool narrowSharedStaging(Session &S, llvm::Function &F, bool announce,
                          ParamArm param, llvm::Function &paramProxy);
 
-// The df64 narrowing of the buffers that reach F as parameters or through
-// views, alone: each Dekker split of a staged load becomes a pair load and
-// each store stores the pair. It preserves values only once every load of the
-// buffer is split, so it runs after each two-component change.
+/// The df64 narrowing of the buffers that reach F as parameters or through
+/// views, alone: each Dekker split of a staged load becomes a pair load and
+/// each store stores the pair. It preserves values only once every load of the
+/// buffer is split, so it runs after each two-component change. `Proxy` is
+/// as narrowSharedStaging's `paramProxy`; true if it changed F.
 bool narrowToPairs(Session &S, llvm::Function &F, llvm::Function &Proxy,
                    bool announce);
 

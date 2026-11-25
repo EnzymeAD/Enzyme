@@ -34,51 +34,58 @@ struct Subgraph;
 class FPGraph;
 class FPNode;
 
-// Per-sample absolute accuracy error.
+/// The absolute error |goldVal - result|, in the units of the value.
 double sampleError(double goldVal, double result);
 
-// The points one subgraph is priced at and what its original expressions
-// evaluate to there. They depend on the subgraph's inputs and the seed alone,
-// so every unit that prices a rewrite of the subgraph shares one copy. Not for
-// concurrent use: each method spreads its own work over -poseidon-threads.
+/// The points one subgraph is priced at and what its original expressions
+/// evaluate to there. They depend on the subgraph's inputs and the seed alone,
+/// so every unit that prices a rewrite of the subgraph shares one copy. Not for
+/// concurrent use: each method spreads its own work over -poseidon-threads.
 class SubgraphSamples {
 public:
+  /// A sample: a value for each input of the subgraph.
   using Point = llvm::MapVector<llvm::Value *, double>;
 
-  // At each point, the expression's exact value (MPFR, converged to 53 bits),
-  // its value as written, and the error of the latter.
+  /// At each point, the expression's exact value (MPFR, converged to 53 bits),
+  /// its value as written, and the absolute error of the latter, in the units
+  /// of the value; NaN where the exact value did not settle.
   struct Reference {
+    /// One entry per point, in the order of the points.
     llvm::SmallVector<double, 4> gold, value, error;
-    // The mean of the errors that are not NaN; none when every one is.
+    /// The mean of the errors that are not NaN; none when every one is.
     std::optional<double> meanError() const;
   };
 
+  /// The samples of `subgraph` over the profiled ranges `G` records. Both
+  /// must outlive the samples.
   SubgraphSamples(const Options &O, const Subgraph &subgraph, const FPGraph &G);
   ~SubgraphSamples();
 
-  // -poseidon-num-samples points in the profiled box of the subgraph's inputs,
-  // with a share near the cancellations it divides by or takes the root of; an
-  // error saying why when the box cannot be sampled.
+  /// -poseidon-num-samples points in the profiled box of the subgraph's inputs,
+  /// with a share near the cancellations it divides by or takes the root of;
+  /// an error saying why when the box cannot be sampled. Drawn on the first
+  /// call; the points live as long as the samples.
   llvm::Expected<llvm::ArrayRef<Point>> points();
-  // `node` at every one of points(), which has succeeded. A reference that
-  // does not settle within 1024 bits counts as NaN, and is reported once, with
-  // a count, as a warning at the subgraph's first output.
+  /// `node` at every one of points(), which has succeeded. A reference that
+  /// does not settle within 1024 bits counts as NaN, and is reported once, with
+  /// a count, as a warning at the subgraph's first output. Computed on the
+  /// first call for `node`; it lives as long as the samples.
   const Reference &reference(const FPNode *node);
 
-  // As many points drawn without the cancellation share, from the seed offset
-  // by `round`, for `round` >= 1; empty when that draw keeps too few, which
-  // ends the search for more points.
+  /// As many points drawn without the cancellation share, from the seed offset
+  /// by `round`, for `round` >= 1; empty when that draw keeps too few, which
+  /// ends the search for more points.
   llvm::ArrayRef<Point> round(unsigned round);
-  // `node` at the points of `round` listed in `which`; an entry at any other
-  // point of the round is not computed.
+  /// `node` at the points of `round` listed in `which`; an entry at any other
+  /// point of the round is not computed.
   const Reference &roundReference(const FPNode *node, unsigned round,
                                   llvm::ArrayRef<size_t> which);
 
 private:
   struct RoundReference;
 
-  // A warning, when `unsettled` of the `points` references just computed did
-  // not settle.
+  /// A warning, when `unsettled` of the `points` references just computed did
+  /// not settle.
   void warnUnsettled(unsigned unsettled, size_t points) const;
 
   const Options &O;
@@ -86,19 +93,19 @@ private:
   const llvm::DenseMap<llvm::Value *, FPNode *> &valueToNodeMap;
   bool sampled = false;
   llvm::SmallVector<Point, 4> base;
-  // Why points() has none.
+  /// Why points() has none.
   std::optional<std::string> unsampled;
   std::unordered_map<const FPNode *, Reference> references;
-  // rounds[r - 1] holds round r; a deque, as a round's points are read while
-  // later rounds are drawn.
+  /// rounds[r - 1] holds round r; a deque, as a round's points are read while
+  /// later rounds are drawn.
   std::deque<llvm::SmallVector<Point, 4>> rounds;
   std::unordered_map<const FPNode *,
                      llvm::SmallVector<std::unique_ptr<RoundReference>, 0>>
       roundReferences;
 };
 
-// The samples of `subgraph`, made on first use and kept in it until its
-// `samples` is reset.
+/// The samples of `subgraph`, made on first use and kept in it until its
+/// `samples` is reset.
 SubgraphSamples &samplesOf(const Options &O, Subgraph &subgraph,
                            const FPGraph &G);
 

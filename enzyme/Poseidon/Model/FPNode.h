@@ -43,29 +43,41 @@ struct FPFormatInfo;
 class FPGraph;
 enum class PrecisionChangeType;
 
+/// A node of the expression graph: an operation, with its operands, of a
+/// parsed rewrite. Values of the program and literals are the subclasses
+/// FPLLValue and FPConst. Every node is owned by the FPGraph that created it.
 class FPNode {
 public:
+  /// The subclass: an FPNode of a parsed rewrite, an FPLLValue or an FPConst.
   enum class NodeType { Node, LLValue, Const };
 
 private:
   const NodeType ntype;
 
 public:
-  // The operator of an operation: a row of the FPCore operator table. Null for
-  // a value, a literal, and an operation of the program the table does not
-  // model.
+  /// The operator of an operation: a row of the FPCore operator table. Null
+  /// for a value, a literal, and an operation of the program the table does
+  /// not model.
   const FPCoreOperator *op;
-  // The format of the node's value; null for a value that is not a
-  // floating-point number of a format of the pass.
+  /// The format of the node's value; null for a value that is not a
+  /// floating-point number of a format of the pass.
   const FPFormatInfo *format;
+  /// The FPCore variable ("v0") a Herbie core names a subgraph input by;
+  /// empty for any other node.
   std::string symbol;
+  /// The operands, owned by the same graph.
   llvm::SmallVector<FPNode *, 2> operands;
-  // Sensitivity score, the sum of |grad * value|.
+  /// Sensitivity score: |gradient x value| summed over the profiled
+  /// executions, the gradient being that of the declared metric; NaN for a
+  /// node the profile has no record of.
   double sens = std::numeric_limits<double>::quiet_NaN();
-  // The sum of the gradients, signed.
+  /// The gradient of the declared metric with respect to the value, summed
+  /// with its sign over the profiled executions; NaN without a record.
   double grad = std::numeric_limits<double>::quiet_NaN();
+  /// How often the profiling run executed the operation.
   uint64_t executions = 0;
 
+  /// An operation of a parsed rewrite; to be created through an FPGraph.
   explicit FPNode(const FPCoreOperator &op, const FPFormatInfo *format)
       : ntype(NodeType::Node), op(&op), format(format) {}
   explicit FPNode(NodeType ntype, const FPCoreOperator *op,
@@ -74,60 +86,74 @@ public:
   virtual ~FPNode() = default;
 
   NodeType getType() const;
+  /// Whether the node's operator is the row `O`.
   bool is(const FPCoreOperator &O) const { return op == &O; }
-  // Whether the node's value has the format of precision `P`.
+  /// Whether the node's value has the format of precision `P`.
   bool hasPrecision(PrecisionChangeType P) const;
+  /// Appends `operand`, a node of the same graph.
   void addOperand(FPNode *operand);
   bool hasSymbol() const { return !symbol.empty(); }
-  // The Herbie expression of a node of the original graph, a value or a
-  // literal: a subgraph input as its symbol, anything else spelled out over
-  // its operands. An expression nested deeper than the pass spells out is an
-  // error at the instruction.
+  /// The Herbie expression of a node of the original graph, a value or a
+  /// literal: a subgraph input as its symbol, anything else spelled out over
+  /// its operands. An expression nested deeper than the pass spells out is an
+  /// error at the instruction.
   llvm::Expected<std::string>
   fullExpression(const FPGraph &G,
                  const llvm::SetVector<llvm::Value *> &subgraphInputs,
                  unsigned depth = 0);
-  // Widens the profiled range of a value to [lower, upper]; a literal's range
-  // stays its value.
+  /// Widens the profiled range of a value to [lower, upper]; a literal's range
+  /// stays its value.
   void updateBounds(double lower, double upper);
+  /// The least value the profile recorded; +inf before any was recorded.
   double getLowerBound() const { return lb; }
+  /// The greatest value the profile recorded; -inf before any was recorded.
   double getUpperBound() const { return ub; }
+  /// Emits the node at `builder`, its operands first and each cast to the
+  /// node's format, and returns its value. `VMap`, when given, maps each value
+  /// of the program a leaf names to the value to read instead.
   virtual llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
              const llvm::ValueToValueMapTy *VMap = nullptr);
 
 protected:
-  // An if: a select between its arms, both at the node's precision.
+  /// An if: a select between its arms, both at the node's precision.
   llvm::Value *lowerChoice(llvm::IRBuilder<> &builder,
                            const llvm::ValueToValueMapTy *VMap);
 
+  /// The profiled range of the value; empty (lb > ub) before any is recorded.
   double lb = std::numeric_limits<double>::infinity();
   double ub = -std::numeric_limits<double>::infinity();
 };
 
 class FPLLValue;
-// The number of operations input `V` is spelled as in a Herbie core, or 0 if
-// it stays a variable. An input whose definition is a few operations over the
-// subgraph's other inputs and constants is spelled as that definition, so
-// Herbie sees the relation (log T next to T); the count includes the inputs
-// spelled out in turn.
+/// The number of operations input `V` is spelled as in a Herbie core, or 0 if
+/// it stays a variable. An input whose definition is a few operations over the
+/// subgraph's other inputs and constants is spelled as that definition, so
+/// Herbie sees the relation (log T next to T); the count includes the inputs
+/// spelled out in turn.
 unsigned inlinedOps(const FPLLValue &V,
                     const llvm::SetVector<llvm::Value *> &inputs);
-// The existing value a parsed rewrite node recomputes, if the node is one of
-// the operations an input was spelled as: the rewrite reuses it.
+/// The node of the existing value the parsed rewrite node `N` recomputes, if
+/// `N` is one of the operations an input of `inputs` was spelled as; null
+/// otherwise. The node returned belongs to `G`.
 FPNode *existingDefinition(const FPNode &N,
                            const llvm::SetVector<llvm::Value *> &inputs,
                            const FPGraph &G);
 
+/// A value of the program: an operation of a subgraph or a value it reads.
 class FPLLValue : public FPNode {
 public:
+  /// The value; null once the value was erased by a rewrite.
   llvm::Value *value;
 
-  // `op` is the operator of the operation `value` is, null for any other value.
+  /// `op` is the operator of the operation `value` is, null for any other
+  /// value.
   explicit FPLLValue(llvm::Value *value, const FPCoreOperator *op,
                      const FPFormatInfo *format)
       : FPNode(NodeType::LLValue, op, format), value(value) {}
 
+  /// The value, or its image under `VMap`, which must map it; emits nothing.
+  /// The value must not have been erased.
   llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
              const llvm::ValueToValueMapTy *VMap = nullptr) override;
@@ -135,8 +161,8 @@ public:
   static bool classof(const FPNode *N);
 };
 
-// A literal; both its bounds are its value as a double, read once, as the
-// evaluators read it at every sample and a rational literal is parsed in MPFR.
+/// A literal; both its bounds are its value as a double, read once, as the
+/// evaluators read it at every sample and a rational literal is parsed in MPFR.
 class FPConst : public FPNode {
 private:
   std::string strValue;
@@ -144,12 +170,16 @@ private:
   static double literalValue(const std::string &strValue);
 
 public:
+  /// The literal `literal` of `format`; to be created through an FPGraph.
   explicit FPConst(std::string literal, const FPFormatInfo *format)
       : FPNode(NodeType::Const, nullptr, format), strValue(std::move(literal)) {
     lb = ub = literalValue(strValue);
   }
 
+  /// The literal as written: a decimal, an exact rational p/q or an
+  /// infinity.
   const std::string &literal() const { return strValue; }
+  /// The literal as a constant of the node's format; emits nothing.
   llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
              const llvm::ValueToValueMapTy *VMap = nullptr) override;
@@ -157,10 +187,10 @@ public:
   static bool classof(const FPNode *N);
 };
 
-// Lowers one expression per output, element k at the builder `at(k)` returns,
-// computing a subterm several elements share once wherever that copy
-// dominates the later use (every earlier copy, when DT is null). The nodes
-// that stand for a shared copy are created in `G`, which owns the elements.
+/// Lowers one expression per output, element k at the builder `at(k)` returns,
+/// computing a subterm several elements share once wherever that copy
+/// dominates the later use (every earlier copy, when DT is null). The nodes
+/// that stand for a shared copy are created in `G`, which owns the elements.
 llvm::SmallVector<llvm::Value *, 4>
 emitSharedElements(FPGraph &G, llvm::ArrayRef<FPNode *> elements,
                    llvm::function_ref<llvm::IRBuilder<> &(size_t)> at,
@@ -169,27 +199,38 @@ emitSharedElements(FPGraph &G, llvm::ArrayRef<FPNode *> elements,
 
 class SubgraphSamples;
 
+/// An FP subgraph: a connected set of a site's floating-point operations, the
+/// values it reads from outside and the operations whose values are read
+/// outside it.
 struct Subgraph {
+  /// The values other than floating-point constants that the operations read
+  /// and the subgraph does not compute.
   llvm::SetVector<llvm::Value *> inputs;
+  /// The operations whose values are read outside the subgraph.
   llvm::SetVector<llvm::Instruction *> outputs;
+  /// Every operation of the subgraph, its outputs included.
   llvm::SetVector<llvm::Instruction *> operations;
+  /// How many outputs the materialized rewrites replaced; the operations are
+  /// erased when it reaches the output count.
   size_t outputs_rewritten = 0;
-  // The points its units are priced at, while they are priced.
+  /// The points its units are priced at, while they are priced.
   std::shared_ptr<SubgraphSamples> samples;
-  // Frequency scale for synthetic output-boundary casts: they execute at the
-  // insertion point's frequency (the output's consumer), not the body's.
-  // min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.
+  /// Frequency scale for synthetic output-boundary casts: they execute at the
+  /// insertion point's frequency (the output's consumer), not the body's.
+  /// min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.
   double outBoundaryFreqScale = 1.0;
 
-  // Measured execution counts of this subgraph's instructions (`opExec`) and
-  // the same counts by loop depth (`depthExec`), which survive
-  // materialization. Empty prices exactly as an unweighted walk.
+  /// Measured execution counts of this subgraph's instructions over the
+  /// profiling run, which survive materialization. Empty prices exactly as an
+  /// unweighted walk.
   llvm::DenseMap<const llvm::Instruction *, uint64_t> opExec;
+  /// The same counts by loop depth.
   std::map<unsigned, uint64_t> depthExec;
+  /// The execution count the counts are divided by: the first output's.
   uint64_t execNormalizer = 0;
 
-  // The measured count of the deepest class at or below `d` (the shallowest
-  // class outside every recorded loop) over the normalizer; 1.0 without one.
+  /// The measured count of the deepest class at or below `d` (the shallowest
+  /// class outside every recorded loop) over the normalizer; 1.0 without one.
   double freqWeightAtDepth(unsigned d) const {
     if (depthExec.empty() || execNormalizer == 0)
       return 1.0;
@@ -206,33 +247,37 @@ struct Subgraph {
       : inputs(inputs), outputs(outputs), operations(operations) {}
 };
 
-// The expression graph of one site: the function it is built over, a node per
-// value (the subgraphs' inputs and operations), and the value each symbol of a
-// Herbie expression names. The graph owns every node created through it,
-// those of the parsed rewrites included.
+/// The expression graph of one site: the function it is built over, a node
+/// per value (the subgraphs' inputs and operations), and the value each symbol
+/// of a Herbie expression names. The graph owns every node created through it,
+/// those of the parsed rewrites included.
 class FPGraph {
 public:
+  /// The site's function.
   llvm::Function *F = nullptr;
+  /// The node of each value of the subgraphs, and of a materialized rewrite's
+  /// new output.
   llvm::DenseMap<llvm::Value *, FPNode *> valueToNodeMap;
+  /// The value each symbol of a Herbie core names.
   std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
 
   FPGraph() = default;
   FPGraph(FPGraph &&) = default;
   FPGraph &operator=(FPGraph &&) = default;
 
-  // A node of type T, built from `args`, that the graph owns.
+  /// A node of type T, built from `args`, that the graph owns.
   template <typename T, typename... Args> T *create(Args &&...args) {
     owned.push_back(std::make_unique<T>(std::forward<Args>(args)...));
     return static_cast<T *>(owned.back().get());
   }
 
-  // A graph over this one's maps that owns only the nodes created through it:
-  // what is parsed into it leaves this graph as it is. It reads this graph's
-  // nodes, so it must not outlive it.
+  /// A graph over this one's maps that owns only the nodes created through it:
+  /// what is parsed into it leaves this graph as it is. It reads this graph's
+  /// nodes, so it must not outlive it.
   FPGraph overlay() const;
 
-  // `erased` was erased and its users read `now` instead: a later rewrite
-  // whose expression names `erased` reads `now`.
+  /// `erased` was erased and its users read `now` instead: a later rewrite
+  /// whose expression names `erased` reads `now`.
   void replaceErased(llvm::Value *erased, llvm::Value *now);
 
 private:

@@ -100,13 +100,20 @@
 
 namespace poseidon {
 
+/// The FP32 expansion routines over the arithmetic `Arith`, which the file
+/// comment specifies. A pair routine takes and returns {hi, lo}; an
+/// N-component routine, N = 3 or 4, reads the N components of its operands
+/// and writes the N normalized components of its result to c.
 template <typename Arith> class ExpansionRoutines {
 public:
+  /// A component.
   using F32 = typename Arith::F32;
   using F64 = typename Arith::F64;
   using Bool = typename Arith::Bool;
+  /// A two-component expansion {hi, lo}.
   using Pair = typename Arith::Pair;
 
+  /// The routines over `A`, which they copy.
   explicit ExpansionRoutines(Arith A) : A(A) {}
 
   // Two components. The MultiFloats.jl routines at Val{2} these translate
@@ -121,6 +128,7 @@ public:
   // routine, with no library counterpart; it is checked against the accuracy
   // model only.
 
+  /// a + b exactly: the rounded sum and its rounding error.
   Pair twoSum(F32 a, F32 b) {
     F32 s = A.add(a, b, "ts.s");
     F32 ap = A.sub(s, b, "ts.ap");
@@ -131,6 +139,7 @@ public:
     return {s, e};
   }
 
+  /// a + b exactly, for |a| >= |b| or a zero: the rounded sum and its error.
   Pair dsFastTwoSum(F32 a, F32 b) {
     F32 s = A.add(a, b, "fts.s");
     F32 bp = A.sub(s, a, "fts.bp");
@@ -138,6 +147,7 @@ public:
     return {s, e};
   }
 
+  /// a * b exactly: the rounded product and its rounding error.
   Pair twoProd(F32 a, F32 b) {
     F32 p = A.mul(a, b, "tp.p");
     F32 np = A.neg(p, "tp.np");
@@ -145,6 +155,7 @@ public:
     return {p, e};
   }
 
+  /// x + y, normalized.
   Pair dsAdd(Pair x, Pair y) {
     Pair ab = twoSum(x.hi, y.hi);
     Pair cd = twoSum(x.lo, y.lo);
@@ -154,11 +165,13 @@ public:
     return dsFastTwoSum(ac.hi, b3);
   }
 
+  /// x - y, as x + (-y).
   Pair dsSub(Pair x, Pair y) {
     Pair negY = dsNeg(y);
     return dsAdd(x, negY);
   }
 
+  /// x * y, normalized; the product of the low limbs is dropped.
   Pair dsMul(Pair x, Pair y) {
     Pair pe = twoProd(x.hi, y.hi);
     F32 c1 = A.mul(x.hi, y.lo, "dsm.c1");
@@ -168,13 +181,13 @@ public:
     return dsFastTwoSum(pe.hi, e2);
   }
 
-  // x * y + z, for llvm.fma and llvm.fmuladd: 16 F32 ops against 30 for dsMul
-  // + dsAdd. The product's renormalizing fastTwoSum is dead work when the pair
-  // is consumed by an addition, the cross terms become hardware FMAs into the
-  // residual, and the addition's second twoSum over the low limbs is dropped
-  // because after the exact twoSum of the high parts every remaining term is
-  // O(eps) relative to max(|x*y|, |z|). x.lo*y.lo is dropped as in dsMul.
-  // Low-limb accumulation is ordered smallest-magnitude first.
+  /// x * y + z, for llvm.fma and llvm.fmuladd: 16 F32 ops against 30 for dsMul
+  /// + dsAdd. The product's renormalizing fastTwoSum is dead work when the pair
+  /// is consumed by an addition, the cross terms become hardware FMAs into the
+  /// residual, and the addition's second twoSum over the low limbs is dropped
+  /// because after the exact twoSum of the high parts every remaining term is
+  /// O(eps) relative to max(|x*y|, |z|). x.lo*y.lo is dropped as in dsMul.
+  /// Low-limb accumulation is ordered smallest-magnitude first.
   Pair dsFma(Pair x, Pair y, Pair z) {
     // p + e == x.hi*y.hi exactly.
     F32 p = A.mul(x.hi, y.hi, "dsf.p");
@@ -189,10 +202,10 @@ public:
     return dsFastTwoSum(s.hi, t1);
   }
 
-  // The seed is the correctly rounded square root on every target
-  // (sqrt.rn.f32 on NVPTX), so that the device computes what the host model
-  // and the reference routines compute. sqrt_r returns a zero operand itself;
-  // the correction would divide 0 by 0.
+  /// The seed is the correctly rounded square root on every target
+  /// (sqrt.rn.f32 on NVPTX), so that the device computes what the host model
+  /// and the reference routines compute. sqrt_r returns a zero operand itself;
+  /// the correction would divide 0 by 0.
   Pair dsSqrt(Pair x) {
     F32 y = A.sqrtCall(x.hi, "dssq.y");
     F32 ny = A.neg(y, "dssq.ny");
@@ -210,19 +223,21 @@ public:
     return {hi, lo};
   }
 
+  /// -x, limb by limb.
   Pair dsNeg(Pair x) {
     F32 hi = A.neg(x.hi, "dsn.hi");
     F32 lo = A.neg(x.lo, "dsn.lo");
     return {hi, lo};
   }
 
+  /// x / y, normalized.
   Pair dsDiv(Pair x, Pair y) {
     F32 c0, c1;
     expansionDivRaw22(x.hi, x.lo, y.hi, y.lo, c0, c1);
     return expansionFastTwoSum(c0, c1);
   }
 
-  // An FP64 value: its rounding to F32, and the rounding of the rest.
+  /// An FP64 value: its rounding to F32, and the rounding of the rest.
   Pair dsFromF64(F64 v) {
     F32 hi = A.truncate(v, "ds.hi");
     F64 hiBack = A.extend(hi, "ds.hib");
@@ -231,16 +246,17 @@ public:
     return {hi, lo};
   }
 
-  // An FP32 value: exact in the hi slot, lo = 0.
+  /// An FP32 value: exact in the hi slot, lo = 0.
   Pair dsFromF32(F32 v) { return {v, A.constant(0.0)}; }
 
+  /// To FP64: the sum of the halves, each widened, rounded once.
   F64 dsToF64(Pair x) {
     F64 hi = A.extend(x.hi, "ds.hi64");
     F64 lo = A.extend(x.lo, "ds.lo64");
     return A.add(hi, lo, "ds.f64");
   }
 
-  // To FP32: the sum of the halves, as accurate as FP32 allows.
+  /// To FP32: the sum of the halves, as accurate as FP32 allows.
   F32 dsToF32(Pair x) { return A.add(x.hi, x.lo, "ds.f32"); }
 
   // Three and four components. Each component sequence translates a routine
@@ -254,6 +270,7 @@ public:
   // Each takes the n components of its operands a and b and writes the n
   // components of the result to c.
 
+  /// c = a + b.
   void expansionAdd(unsigned N, const F32 *a, const F32 *b, F32 *c) {
     if (N == 3) {
       expansionAddRaw3(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
@@ -265,12 +282,14 @@ public:
     expansionNormalize4(c[0], c[1], c[2], c[3]);
   }
 
+  /// c = a - b, as a + (-b).
   void expansionSub(unsigned N, const F32 *a, const F32 *b, F32 *c) {
     F32 negB[4];
     expansionNeg(N, b, negB);
     expansionAdd(N, a, negB, c);
   }
 
+  /// c = a * b.
   void expansionMul(unsigned N, const F32 *a, const F32 *b, F32 *c) {
     if (N == 3) {
       expansionMulRaw3(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
@@ -282,6 +301,7 @@ public:
     expansionNormalize4(c[0], c[1], c[2], c[3]);
   }
 
+  /// c = a * a.
   void expansionSqr(unsigned N, const F32 *a, F32 *c) {
     if (N == 3) {
       expansionSqrRaw3(a[0], a[1], a[2], c[0], c[1], c[2]);
@@ -292,6 +312,7 @@ public:
     expansionNormalize4(c[0], c[1], c[2], c[3]);
   }
 
+  /// c = a / b.
   void expansionDiv(unsigned N, const F32 *a, const F32 *b, F32 *c) {
     if (N == 3) {
       expansionDivRaw3(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
@@ -303,9 +324,9 @@ public:
     expansionNormalize4(c[0], c[1], c[2], c[3]);
   }
 
-  // mX_real's sqrt operator returns the operand when its leading component is
-  // zero and +Inf in every component when it is +Inf; the QxW routine gives
-  // NaN for both. A negative or NaN leading component gives NaN either way.
+  /// mX_real's sqrt operator returns the operand when its leading component is
+  /// zero and +Inf in every component when it is +Inf; the QxW routine gives
+  /// NaN for both. A negative or NaN leading component gives NaN either way.
   void expansionSqrt(unsigned N, const F32 *a, F32 *c) {
     if (N == 3) {
       expansionSqrtRaw3(a[0], a[1], a[2], c[0], c[1], c[2]);
@@ -324,14 +345,15 @@ public:
     }
   }
 
+  /// c = -a, component by component; N may be any count.
   void expansionNeg(unsigned N, const F32 *a, F32 *c) {
     for (unsigned i = 0; i < N; ++i)
       c[i] = A.neg(a[i], "mfx.neg");
   }
 
-  // Greedy split into n components, which mX_real has no counterpart for (it
-  // converts a double to its leading float); an F64 source fills at most three
-  // limbs, the extra precision is created by the arithmetic.
+  /// Greedy split into n components, which mX_real has no counterpart for (it
+  /// converts a double to its leading float); an F64 source fills at most three
+  /// limbs, the extra precision is created by the arithmetic.
   void expansionFromF64(unsigned N, F64 v, F32 *c) {
     F64 rem = v;
     for (unsigned i = 0; i < N; ++i) {
@@ -343,14 +365,15 @@ public:
     }
   }
 
+  /// An FP32 value, exact in the leading component, the others 0.
   void expansionFromF32(unsigned N, F32 v, F32 *c) {
     c[0] = v;
     for (unsigned i = 1; i < N; ++i)
       c[i] = A.constant(0.0);
   }
 
-  // Sum the limbs least significant first; mX_real converts back from the
-  // leading limb alone.
+  /// Sum the limbs least significant first; mX_real converts back from the
+  /// leading limb alone.
   F64 expansionToF64(unsigned N, const F32 *x) {
     F64 s = A.extend(x[N - 1], "mfx.e");
     for (int i = (int)N - 2; i >= 0; --i) {
@@ -360,6 +383,7 @@ public:
     return s;
   }
 
+  /// To FP32: the limbs summed least significant first.
   F32 expansionToF32(unsigned N, const F32 *x) {
     F32 s = x[N - 1];
     for (int i = (int)N - 2; i >= 0; --i)
@@ -370,21 +394,21 @@ public:
 private:
   Arith A;
 
-  // The operations of the routines below, with the names they give the
-  // emitted instructions.
+  /// The operations of the routines below, with the names they give the
+  /// emitted instructions.
   F32 add(F32 a, F32 b) { return A.add(a, b, "mfx.a"); }
   F32 mul(F32 a, F32 b) { return A.mul(a, b, "mfx.m"); }
   F32 div(F32 a, F32 b) { return A.div(a, b, "mfx.d"); }
   F32 neg(F32 a) { return A.neg(a, "mfx.n"); }
   F32 fma(F32 a, F32 b, F32 c) { return A.fma(a, b, c, "mfx.f"); }
-  // Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), not the MUFU
-  // approximation: the expansion's Newton corrections only remove the seed's
-  // error to second/third order, so a 2-ulp seed would cap a triple-float at
-  // ~1e-14 instead of ~1e-21.
+  /// Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), not the MUFU
+  /// approximation: the expansion's Newton corrections only remove the seed's
+  /// error to second/third order, so a 2-ulp seed would cap a triple-float at
+  /// ~1e-14 instead of ~1e-21.
   F32 sqrt(F32 a) { return A.sqrt(a, "mfx.q"); }
 
-  // QxW's FastTwoSum, y = (a - x) + b. Not dsFastTwoSum's b - (s - a),
-  // MultiFloats.jl's form: the two differ in the sign of a zero error.
+  /// QxW's FastTwoSum, y = (a - x) + b. Not dsFastTwoSum's b - (s - a),
+  /// MultiFloats.jl's form: the two differ in the sign of a zero error.
   Pair expansionFastTwoSum(F32 a, F32 b) {
     F32 s = add(a, b);
     F32 d = A.sub(a, s, "mfx.s");
@@ -392,8 +416,8 @@ private:
     return {s, e};
   }
 
-  // mX_real Normalize<NormalizeOption::Regular> for a 3-limb expansion at a
-  // non-Quasi algorithm: three in-place fastTwoSum sweeps.
+  /// mX_real Normalize<NormalizeOption::Regular> for a 3-limb expansion at a
+  /// non-Quasi algorithm: three in-place fastTwoSum sweeps.
   void expansionNormalize3(F32 &x0, F32 &x1, F32 &x2) {
     Pair t = expansionFastTwoSum(x1, x2);
     x1 = t.hi;
@@ -406,8 +430,8 @@ private:
     x2 = t.lo;
   }
 
-  // mX_real Normalize<Regular> for a 4-limb expansion at a non-Quasi
-  // algorithm.
+  /// mX_real Normalize<Regular> for a 4-limb expansion at a non-Quasi
+  /// algorithm.
   void expansionNormalize4(F32 &x0, F32 &x1, F32 &x2, F32 &x3) {
     Pair t = expansionFastTwoSum(x2, x3);
     x2 = t.hi;
@@ -429,7 +453,7 @@ private:
     x3 = t.lo;
   }
 
-  // QxW::add_QTW_QTW_QTW  (3 + 3 -> 3, unnormalized)
+  /// QxW::add_QTW_QTW_QTW  (3 + 3 -> 3, unnormalized)
   void expansionAddRaw3(F32 a0, F32 a1, F32 a2, F32 b0, F32 b1, F32 b2, F32 &c0,
                         F32 &c1, F32 &c2) {
     Pair s = twoSum(a0, b0);
@@ -446,7 +470,7 @@ private:
     c2 = add(c2, t1);
   }
 
-  // QxW::mul_QTW_QTW_QTW  (3 * 3 -> 3, unnormalized)
+  /// QxW::mul_QTW_QTW_QTW  (3 * 3 -> 3, unnormalized)
   void expansionMulRaw3(F32 a0, F32 a1, F32 a2, F32 b0, F32 b1, F32 b2, F32 &c0,
                         F32 &c1, F32 &c2) {
     Pair p = twoProd(a0, b0);
@@ -472,7 +496,7 @@ private:
     c2 = add(c2, t1);
   }
 
-  // QxW::mul_PA_QTW_QTW  (2 * 3 -> 3, unnormalized)
+  /// QxW::mul_PA_QTW_QTW  (2 * 3 -> 3, unnormalized)
   void expansionMulRaw23(F32 a0, F32 a1, F32 b0, F32 b1, F32 b2, F32 &c0,
                          F32 &c1, F32 &c2) {
     Pair p = twoProd(a0, b0);
@@ -497,7 +521,7 @@ private:
     c2 = add(c2, t1);
   }
 
-  // QxW::div_PA_PA_PA  (2 / 2 -> 2, unnormalized)
+  /// QxW::div_PA_PA_PA  (2 / 2 -> 2, unnormalized)
   void expansionDivRaw22(F32 a0, F32 a1, F32 b0, F32 b1, F32 &c0, F32 &c1) {
     F32 bh = add(b0, b1);
     c0 = div(a0, bh);
@@ -509,7 +533,7 @@ private:
     c1 = div(c1, bh);
   }
 
-  // QxW::div_QTW_QTW_QTW  (3 / 3 -> 3, unnormalized)
+  /// QxW::div_QTW_QTW_QTW  (3 / 3 -> 3, unnormalized)
   void expansionDivRaw3(F32 a0, F32 a1, F32 a2, F32 b0, F32 b1, F32 b2, F32 &c0,
                         F32 &c1, F32 &c2) {
     F32 e40 = add(a1, a2);
@@ -529,7 +553,7 @@ private:
     c2 = div(tn, td);
   }
 
-  // QxW::sqrt_QTW_PA  (sqrt of a 3-limb value to 2 limbs, unnormalized)
+  /// QxW::sqrt_QTW_PA  (sqrt of a 3-limb value to 2 limbs, unnormalized)
   void expansionSqrtRaw32(F32 a0, F32 a1, F32 a2, F32 &c0, F32 &c1) {
     c0 = sqrt(a0);
     F32 nc0 = neg(c0);
@@ -540,7 +564,7 @@ private:
     c1 = div(num, twoC0);
   }
 
-  // QxW::sqr_PA_QTW  (square of a 2-limb value to 3 limbs, unnormalized)
+  /// QxW::sqr_PA_QTW  (square of a 2-limb value to 3 limbs, unnormalized)
   void expansionSqrRaw23(F32 a0, F32 a1, F32 &c0, F32 &c1, F32 &c2) {
     Pair p = twoProd(a0, a0);
     c0 = p.hi;
@@ -556,7 +580,7 @@ private:
     c2 = fma(a1, a1, c2);
   }
 
-  // QxW::sqr_QTW_QTW  (3 -> 3, unnormalized)
+  /// QxW::sqr_QTW_QTW  (3 -> 3, unnormalized)
   void expansionSqrRaw3(F32 a0, F32 a1, F32 a2, F32 &c0, F32 &c1, F32 &c2) {
     Pair p = twoProd(a0, a0);
     c0 = p.hi;
@@ -573,7 +597,7 @@ private:
     c2 = fma(a1, a1, c2);
   }
 
-  // QxW::sqrt_QTW_QTW  (3 -> 3, unnormalized)
+  /// QxW::sqrt_QTW_QTW  (3 -> 3, unnormalized)
   void expansionSqrtRaw3(F32 a0, F32 a1, F32 a2, F32 &c0, F32 &c1, F32 &c2) {
     expansionSqrtRaw32(a0, a1, a2, c0, c1);
     F32 t0, t1, t2;
@@ -590,7 +614,7 @@ private:
     c2 = div(tn, td);
   }
 
-  // QxW::add_QQW_QQW_QQW  (4 + 4 -> 4, unnormalized)
+  /// QxW::add_QQW_QQW_QQW  (4 + 4 -> 4, unnormalized)
   void expansionAddRaw4(F32 a0, F32 a1, F32 a2, F32 a3, F32 b0, F32 b1, F32 b2,
                         F32 b3, F32 &c0, F32 &c1, F32 &c2, F32 &c3) {
     Pair s = twoSum(a0, b0);
@@ -617,7 +641,7 @@ private:
     c3 = add(c3, t2);
   }
 
-  // QxW::mul_QQW_QQW_QQW  (4 * 4 -> 4, unnormalized)
+  /// QxW::mul_QQW_QQW_QQW  (4 * 4 -> 4, unnormalized)
   void expansionMulRaw4(F32 a0, F32 a1, F32 a2, F32 a3, F32 b0, F32 b1, F32 b2,
                         F32 b3, F32 &c0, F32 &c1, F32 &c2, F32 &c3) {
     Pair p = twoProd(a0, b0);
@@ -676,7 +700,7 @@ private:
     c3 = add(c3, t7);
   }
 
-  // QxW::mul_QTW_QQW_QQW  (3 * 4 -> 4, unnormalized)
+  /// QxW::mul_QTW_QQW_QQW  (3 * 4 -> 4, unnormalized)
   void expansionMulRaw34(F32 a0, F32 a1, F32 a2, F32 b0, F32 b1, F32 b2, F32 b3,
                          F32 &c0, F32 &c1, F32 &c2, F32 &c3) {
     Pair p = twoProd(a0, b0);
@@ -734,7 +758,7 @@ private:
     c3 = add(c3, t7);
   }
 
-  // QxW::sqr_QTW_QQW  (square of a 3-limb value to 4 limbs, unnormalized)
+  /// QxW::sqr_QTW_QQW  (square of a 3-limb value to 4 limbs, unnormalized)
   void expansionSqrRaw34(F32 a0, F32 a1, F32 a2, F32 &c0, F32 &c1, F32 &c2,
                          F32 &c3) {
     Pair p = twoProd(a0, a0);
@@ -770,7 +794,7 @@ private:
     c3 = fma(t5, a2, c3);
   }
 
-  // QxW::sqr_QQW_QQW  (4 -> 4, unnormalized)
+  /// QxW::sqr_QQW_QQW  (4 -> 4, unnormalized)
   void expansionSqrRaw4(F32 a0, F32 a1, F32 a2, F32 a3, F32 &c0, F32 &c1,
                         F32 &c2, F32 &c3) {
     Pair p = twoProd(a0, a0);
@@ -807,7 +831,7 @@ private:
     c3 = fma(t5, a2, c3);
   }
 
-  // QxW::div_QQW_QQW_QQW  (4 / 4 -> 4, unnormalized)
+  /// QxW::div_QQW_QQW_QQW  (4 / 4 -> 4, unnormalized)
   void expansionDivRaw4(F32 a0, F32 a1, F32 a2, F32 a3, F32 b0, F32 b1, F32 b2,
                         F32 b3, F32 &c0, F32 &c1, F32 &c2, F32 &c3) {
     F32 e40 = add(a2, a3);
@@ -830,8 +854,8 @@ private:
     c3 = div(tn, td);
   }
 
-  // QxW::sqrt_QQW_QQW  (4 -> 4, unnormalized). QxW::sqrt_QQW_QTW is
-  // sqrt_QTW_QTW(a0, a1, a2 + a3, ...).
+  /// QxW::sqrt_QQW_QQW  (4 -> 4, unnormalized). QxW::sqrt_QQW_QTW is
+  /// sqrt_QTW_QTW(a0, a1, a2 + a3, ...).
   void expansionSqrtRaw4(F32 a0, F32 a1, F32 a2, F32 a3, F32 &c0, F32 &c1,
                          F32 &c2, F32 &c3) {
     F32 a23 = add(a2, a3);

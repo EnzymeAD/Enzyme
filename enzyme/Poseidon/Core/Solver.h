@@ -41,8 +41,8 @@ struct SolutionStep {
       : unit(unit), candidateIndex(candidateIndex) {}
 };
 
-// An error met where it cannot be returned, kept until it can be; the first
-// of several is kept.
+/// An error met where it cannot be returned, kept until it can be; the first
+/// of several is kept.
 class DeferredError {
 public:
   DeferredError() = default;
@@ -52,12 +52,14 @@ public:
     if (E)
       llvm::consumeError(std::move(*E));
   }
+  /// Keeps `New` unless an error is kept already, and then consumes it.
   void set(llvm::Error New) {
     if (E)
       llvm::consumeError(std::move(New));
     else
       E = std::move(New);
   }
+  /// The kept error, or success when there is none; nothing is kept after.
   llvm::Error take() {
     if (!E)
       return llvm::Error::success();
