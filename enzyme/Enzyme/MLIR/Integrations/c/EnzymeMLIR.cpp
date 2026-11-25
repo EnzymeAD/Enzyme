@@ -175,9 +175,6 @@ static_assert(
     static_cast<int>(EnzymeGuideKind_AutoMultivariateNormal) ==
         static_cast<int>(mlir::impulse::GuideKind::AUTO_MULTIVARIATE_NORMAL),
     "EnzymeGuideKind out of sync with ODS GuideKind");
-static_assert(static_cast<int>(EnzymeGuideKind_Custom) ==
-                  static_cast<int>(mlir::impulse::GuideKind::CUSTOM),
-              "EnzymeGuideKind out of sync with ODS GuideKind");
 static_assert(static_cast<int>(EnzymeGuideKind_AutoDelta) ==
                   static_cast<int>(mlir::impulse::GuideKind::AUTO_DELTA),
               "EnzymeGuideKind out of sync with ODS GuideKind");
@@ -275,11 +272,6 @@ MlirAttribute enzymeVIConfigAttrGet(
   auto *mlirCtx = unwrap(ctx);
   auto f64Ty = mlir::Float64Type::get(mlirCtx);
 
-  auto guideAttr = mlir::impulse::GuideKindAttr::get(
-      mlirCtx, static_cast<mlir::impulse::GuideKind>(guideKind));
-  auto optimAttr = mlir::impulse::OptimizerKindAttr::get(
-      mlirCtx, static_cast<mlir::impulse::OptimizerKind>(optimizerKind));
-
   auto maybeAttr = [&](bool has, double val) -> mlir::FloatAttr {
     if (!has)
       return {};
@@ -287,7 +279,8 @@ MlirAttribute enzymeVIConfigAttrGet(
   };
 
   return wrap(mlir::impulse::VIConfigAttr::get(
-      mlirCtx, guideAttr, optimAttr, numParticles,
+      mlirCtx, static_cast<mlir::impulse::GuideKind>(guideKind),
+      static_cast<mlir::impulse::OptimizerKind>(optimizerKind), numParticles,
       maybeAttr(hasInitScale, initScale), maybeAttr(hasAdamB1, adamB1),
       maybeAttr(hasAdamB2, adamB2), maybeAttr(hasAdamEps, adamEps),
       maybeAttr(hasClipNorm, clipNorm), maybeAttr(hasInitRadius, initRadius),

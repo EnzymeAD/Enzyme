@@ -71,20 +71,19 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
     "Primitive base distribution of a DistAttr",
     [
       I32EnumAttrCase<"STD_NORMAL", 0>,
-      I32EnumAttrCase<"CUSTOM", 1>,
-      I32EnumAttrCase<"STD_UNIFORM", 2>,
-      I32EnumAttrCase<"EXPONENTIAL", 3>,
-      I32EnumAttrCase<"GAMMA", 4>,
-      I32EnumAttrCase<"STUDENT_T", 5>,
-      I32EnumAttrCase<"BERNOULLI", 6>,
-      I32EnumAttrCase<"POISSON", 7>,
-      I32EnumAttrCase<"DISCRETE_UNIFORM", 8>,
-      I32EnumAttrCase<"HALF_NORMAL", 9>,
-      I32EnumAttrCase<"HALF_CAUCHY", 10>,
-      I32EnumAttrCase<"DIRICHLET", 11>,
-      I32EnumAttrCase<"MVN", 12>,
-      I32EnumAttrCase<"GUMBEL", 13>,
-      I32EnumAttrCase<"HALF_STUDENT_T", 14>,
+      I32EnumAttrCase<"STD_UNIFORM", 1>,
+      I32EnumAttrCase<"EXPONENTIAL", 2>,
+      I32EnumAttrCase<"GAMMA", 3>,
+      I32EnumAttrCase<"STUDENT_T", 4>,
+      I32EnumAttrCase<"BERNOULLI", 5>,
+      I32EnumAttrCase<"POISSON", 6>,
+      I32EnumAttrCase<"DISCRETE_UNIFORM", 7>,
+      I32EnumAttrCase<"HALF_NORMAL", 8>,
+      I32EnumAttrCase<"HALF_CAUCHY", 9>,
+      I32EnumAttrCase<"DIRICHLET", 10>,
+      I32EnumAttrCase<"MVN", 11>,
+      I32EnumAttrCase<"GUMBEL", 12>,
+      I32EnumAttrCase<"HALF_STUDENT_T", 13>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";
@@ -95,8 +94,7 @@ def GuideKind : I32EnumAttr<"GuideKind",
     [
       I32EnumAttrCase<"AUTO_NORMAL", 0>,
       I32EnumAttrCase<"AUTO_MULTIVARIATE_NORMAL", 1>,
-      I32EnumAttrCase<"CUSTOM", 2>,
-      I32EnumAttrCase<"AUTO_DELTA", 3>,
+      I32EnumAttrCase<"AUTO_DELTA", 2>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";

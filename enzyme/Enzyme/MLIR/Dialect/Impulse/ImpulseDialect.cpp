@@ -133,7 +133,6 @@ static SupportKind baseSupport(DistBaseKind base) {
   case DistBaseKind::DISCRETE_UNIFORM:
   case DistBaseKind::MVN:
   case DistBaseKind::GUMBEL:
-  case DistBaseKind::CUSTOM:
     return SupportKind::REAL;
   }
   llvm_unreachable("unknown DistBaseKind");
@@ -153,7 +152,6 @@ unsigned DistAttr::getNumParameters() const {
   switch (getBase()) {
   case DistBaseKind::STD_NORMAL:
   case DistBaseKind::STD_UNIFORM:
-  case DistBaseKind::CUSTOM:
     break;
   case DistBaseKind::EXPONENTIAL:
   case DistBaseKind::BERNOULLI:

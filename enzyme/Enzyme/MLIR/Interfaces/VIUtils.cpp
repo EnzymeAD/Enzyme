@@ -802,13 +802,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
                                          VIContext ctx) {
   Location loc = op.getLoc();
 
-  if (ctx.guideKind != impulse::GuideKind::AUTO_NORMAL &&
-      ctx.guideKind != impulse::GuideKind::AUTO_MULTIVARIATE_NORMAL &&
-      ctx.guideKind != impulse::GuideKind::AUTO_DELTA) {
-    op.emitError("Impulse VI: guide_kind = ")
-        << stringifyGuideKind(ctx.guideKind) << " is not yet supported";
-    return failure();
-  }
   if (ctx.numParticles <= 0) {
     op.emitError("Impulse VI: num_particles must be > 0");
     return failure();

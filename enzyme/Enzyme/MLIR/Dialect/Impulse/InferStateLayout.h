@@ -132,7 +132,7 @@ buildStateSchema(bool adaptive, int64_t positionSize, Type elemType,
   return slots;
 }
 
-/// The VI slots of the guide `guide`, which is not CUSTOM.
+/// The VI slots of the guide `guide`.
 inline SmallVector<StateSlot>
 buildVIStateSchema(GuideKind guide, int64_t positionSize, Type elemType) {
   MLIRContext *ctx = elemType.getContext();
@@ -169,10 +169,8 @@ buildVIStateSchema(GuideKind guide, int64_t positionSize, Type elemType) {
         {state_slot::kOptVScaleTril, flatType},
         {state_slot::kOptStepCount, i64TensorType},
     };
-  case GuideKind::CUSTOM:
-    break;
   }
-  llvm_unreachable("a CUSTOM guide has no state schema");
+  llvm_unreachable("unknown GuideKind");
 }
 
 /// Only `weight`: trace and rng travel as the op's universal results.

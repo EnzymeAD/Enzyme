@@ -3400,9 +3400,8 @@ struct ExpandImpulsePass
       VI::VIContext viCtx(
           model.fn, model.fnInputs, model.fnResultTypes, model.originalTrace,
           model.allAddresses, stepSize, model.positionSize, op.getNumSamples(),
-          model.supports, viConfig.getGuideKind().getValue(),
-          viConfig.getOptimizerKind().getValue(), viConfig.getNumParticles(),
-          floatOr(viConfig.getInitScale(), 0.1),
+          model.supports, viConfig.getGuideKind(), viConfig.getOptimizerKind(),
+          viConfig.getNumParticles(), floatOr(viConfig.getInitScale(), 0.1),
           floatOr(viConfig.getAdamB1(), 0.9),
           floatOr(viConfig.getAdamB2(), 0.999),
           floatOr(viConfig.getAdamEps(), 1.0e-8));

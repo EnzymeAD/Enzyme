@@ -159,14 +159,10 @@ static FailureOr<CanonicalStateLayout> getCanonicalStateLayout(OpTy op) {
     if (!locType || locType.getRank() != 2)
       return op.emitOpError(
           "VI `loc` state slot must be a rank-2 `1xd` tensor");
-    GuideKind guideKind = op.getViConfig()->getGuideKind().getValue();
-    if (guideKind == GuideKind::CUSTOM)
-      return op.emitOpError(
-          "VI `state_schema` is unsupported for this guide kind");
-    return CanonicalStateLayout{buildVIStateSchema(guideKind,
-                                                   locType.getShape().back(),
-                                                   locType.getElementType()),
-                                "VI"};
+    return CanonicalStateLayout{
+        buildVIStateSchema(op.getViConfig()->getGuideKind(),
+                           locType.getShape().back(), locType.getElementType()),
+        "VI"};
   }
 
   std::optional<unsigned> posIdx = slotIndex(schema, state_slot::kPosition);

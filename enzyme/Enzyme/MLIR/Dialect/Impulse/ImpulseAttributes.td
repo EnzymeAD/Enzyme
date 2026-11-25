@@ -150,10 +150,6 @@ def NUTSConfigAttr : Impulse_Attr<"NUTSConfig", "nuts_config"> {
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
-def GuideKindAttr : EnumAttr<Impulse_Dialect, GuideKind, "guide_kind">;
-
-def OptimizerKindAttr : EnumAttr<Impulse_Dialect, OptimizerKind, "optimizer_kind">;
-
 def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
   let summary = "Configuration for variational inference";
   let description = [{
@@ -177,8 +173,8 @@ def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
       gradient is not finite.
   }];
   let parameters = (ins
-    EnumAttrParameter<GuideKindAttr>:$guide_kind,
-    EnumAttrParameter<OptimizerKindAttr>:$optimizer_kind,
+    "GuideKind":$guide_kind,
+    "OptimizerKind":$optimizer_kind,
     DefaultValuedParameter<"int64_t", "1">:$num_particles,
     OptionalParameter<"FloatAttr">:$init_scale,
     OptionalParameter<"FloatAttr">:$adam_b1,

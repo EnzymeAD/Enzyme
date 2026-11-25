@@ -139,8 +139,7 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
 typedef enum {
   EnzymeGuideKind_AutoNormal = 0,
   EnzymeGuideKind_AutoMultivariateNormal = 1,
-  EnzymeGuideKind_Custom = 2,
-  EnzymeGuideKind_AutoDelta = 3,
+  EnzymeGuideKind_AutoDelta = 2,
 } EnzymeGuideKind;
 
 typedef enum {
