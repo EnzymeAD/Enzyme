@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,8 +40,8 @@
   do {                                                                         \
     cudaError_t e = (x);                                                       \
     if (e != cudaSuccess) {                                                    \
-      printf("CUDA error %s:%d: %s\n", __FILE__, __LINE__,                     \
-             cudaGetErrorString(e));                                           \
+      fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,            \
+              cudaGetErrorString(e));                                          \
       exit(1);                                                                 \
     }                                                                          \
   } while (0)
@@ -70,13 +71,17 @@ int main(int argc, char **argv) {
   bool profiling = false;
   int reps = 5;
   for (int i = 1; i < argc; ++i) {
-    if (!strcmp(argv[i], "--profiling"))
+    char *end;
+    long v = strtol(argv[i], &end, 10);
+    if (!strcmp(argv[i], "--profiling")) {
       profiling = true;
-    else
-      reps = atoi(argv[i]);
+    } else if (*argv[i] && !*end && v > 0 && v <= INT_MAX) {
+      reps = (int)v;
+    } else {
+      fprintf(stderr, "usage: %s [reps] | --profiling\n", argv[0]);
+      return 1;
+    }
   }
-  if (reps < 1)
-    reps = 1;
 
   double *A, *B, *C;
   CK(cudaMalloc(&A, NN * 8));
@@ -94,28 +99,25 @@ int main(int argc, char **argv) {
   free(h);
   CK(cudaDeviceSynchronize());
 
+  // A profiling run launches the site once; a timed run warms it up so.
+  matmul_opt<<<GG, GB>>>(C, A, B);
+  CK(cudaDeviceSynchronize());
+  CK(cudaGetLastError());
   if (profiling) {
-    matmul_opt<<<GG, GB>>>(C, A, B);
-    CK(cudaDeviceSynchronize());
-    CK(cudaGetLastError());
     printf("profiling run done (N=%d)\n", N);
     return 0;
   }
 
-  matmul_opt<<<GG, GB>>>(C, A, B);
-  CK(cudaDeviceSynchronize());
-  CK(cudaGetLastError());
-
   cudaEvent_t t0, t1;
-  cudaEventCreate(&t0);
-  cudaEventCreate(&t1);
-  cudaEventRecord(t0);
+  CK(cudaEventCreate(&t0));
+  CK(cudaEventCreate(&t1));
+  CK(cudaEventRecord(t0));
   for (int r = 0; r < reps; ++r)
     matmul_opt<<<GG, GB>>>(C, A, B);
-  cudaEventRecord(t1);
+  CK(cudaEventRecord(t1));
   CK(cudaEventSynchronize(t1));
   float ms;
-  cudaEventElapsedTime(&ms, t0, t1);
+  CK(cudaEventElapsedTime(&ms, t0, t1));
   CK(cudaGetLastError());
 
   // Checksum so a silently-wrong raise is visible in the log; the rel is a

@@ -159,6 +159,7 @@ int main(void) { return 0; }
 // HELP: 1. compile with -poseidon-profile-generate
 // HELP: POSEIDON_PROFILE_DIR (default ./poseidon.profile)
 // HELP: poseidon-probe -- <program>
+// HELP: in 1 + 3 x <sites> more runs
 // HELP: 3. compile with -poseidon-profile-use
 // HELP: Profiling a host function needs glibc
 // HELP: -poseidon-profile-generate

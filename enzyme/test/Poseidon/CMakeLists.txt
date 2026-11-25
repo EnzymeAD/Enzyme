@@ -68,7 +68,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   list(APPEND POSEIDON_TEST_PROGRAM_OPTIONS -ffp-contract=on)
 endif()
 set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
-llvm_map_components_to_libnames(POSEIDON_TEST_PROGRAM_LLVM_LIBS support)
 
 function(poseidon_configure_test_program name)
   target_include_directories(
@@ -83,9 +82,9 @@ function(poseidon_configure_test_program name)
 endfunction()
 
 function(poseidon_add_test_program name)
-  add_executable(${name} ${ARGN})
+  set(LLVM_LINK_COMPONENTS Support)
+  add_llvm_executable(${name} ${ARGN})
   poseidon_configure_test_program(${name})
-  target_link_libraries(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_LLVM_LIBS})
 endfunction()
 
 function(poseidon_add_test_plugin name source)
@@ -118,29 +117,9 @@ add_custom_target(poseidon-test-programs DEPENDS ${POSEIDON_TEST_PROGRAMS})
 set(POSEIDON_ENZYME_OPT_PLUGIN
     "${ENZYME_BINARY_DIR}/Enzyme/LLVMEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}")
 
-if(CMAKE_CUDA_COMPILER)
-  set(POSEIDON_TEST_HAS_CUDA True)
-else()
-  set(POSEIDON_TEST_HAS_CUDA False)
-endif()
 # The CUDA libraries the integration tests link, from the toolkit the build
 # found.
 find_package(CUDAToolkit QUIET)
-if("AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
-  set(POSEIDON_TEST_HAS_AMDGPU True)
-else()
-  set(POSEIDON_TEST_HAS_AMDGPU False)
-endif()
-if("NVPTX" IN_LIST LLVM_TARGETS_TO_BUILD)
-  set(POSEIDON_TEST_HAS_NVPTX True)
-else()
-  set(POSEIDON_TEST_HAS_NVPTX False)
-endif()
-if(TARGET poseidon_rt_hip)
-  set(POSEIDON_TEST_HAS_HIP True)
-else()
-  set(POSEIDON_TEST_HAS_HIP False)
-endif()
 # A test that links poseidon_rt links what the runtime links, in its order.
 set(POSEIDON_TEST_RT_LINK "")
 poseidon_rt_link_files(_rt_libs TOOLKIT)
@@ -148,22 +127,36 @@ foreach(_lib ${_rt_libs})
   get_filename_component(_dir ${_lib} DIRECTORY)
   string(APPEND POSEIDON_TEST_RT_LINK " ${_lib} -Wl,-rpath,${_dir}")
 endforeach()
-if(POSEIDON_TCEC_USE_CUMPSGEMM)
-  set(POSEIDON_TEST_TCEC_CUMPSGEMM True)
-else()
-  set(POSEIDON_TEST_TCEC_CUMPSGEMM False)
+# What the build has, for the features of the lit configuration.
+set(POSEIDON_TEST_HAS_CUDA "${CMAKE_CUDA_COMPILER}")
+set(POSEIDON_TEST_TCEC_CUMPSGEMM "${POSEIDON_TCEC_USE_CUMPSGEMM}")
+foreach(_backend AMDGPU NVPTX)
+  set(POSEIDON_TEST_HAS_${_backend} OFF)
+  if(_backend IN_LIST LLVM_TARGETS_TO_BUILD)
+    set(POSEIDON_TEST_HAS_${_backend} ON)
+  endif()
+endforeach()
+# The HIP runtimes, and the device profilers the plugin carries.
+set(POSEIDON_TEST_HAS_HIP OFF)
+if(TARGET poseidon_rt_hip)
+  set(POSEIDON_TEST_HAS_HIP ON)
 endif()
-# The device profilers the plugin carries.
+set(POSEIDON_TEST_HAS_NVPTX_PROFILER OFF)
 if(TARGET poseidon_device_profiler)
-  set(POSEIDON_TEST_NVPTX_PROFILER True)
-else()
-  set(POSEIDON_TEST_NVPTX_PROFILER False)
+  set(POSEIDON_TEST_HAS_NVPTX_PROFILER ON)
 endif()
+set(POSEIDON_TEST_HAS_AMDGPU_PROFILER OFF)
 if(TARGET poseidon_device_profiler_amdgpu)
-  set(POSEIDON_TEST_AMDGPU_PROFILER True)
-else()
-  set(POSEIDON_TEST_AMDGPU_PROFILER False)
+  set(POSEIDON_TEST_HAS_AMDGPU_PROFILER ON)
 endif()
+llvm_canonicalize_cmake_booleans(
+  POSEIDON_TEST_HAS_CUDA
+  POSEIDON_TEST_TCEC_CUMPSGEMM
+  POSEIDON_TEST_HAS_AMDGPU
+  POSEIDON_TEST_HAS_NVPTX
+  POSEIDON_TEST_HAS_HIP
+  POSEIDON_TEST_HAS_NVPTX_PROFILER
+  POSEIDON_TEST_HAS_AMDGPU_PROFILER)
 
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in

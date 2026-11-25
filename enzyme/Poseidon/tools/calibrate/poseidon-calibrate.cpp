@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -120,14 +121,19 @@ static std::string shipped(StringRef Rel) {
   return std::string(S);
 }
 
-static std::string num(double V) { return formatv("{0:F6}", V).str(); }
+static std::string decimal(double V) { return formatv("{0:F6}", V).str(); }
 
-[[noreturn]] static void fail(const Twine &Msg) {
-  errs() << "poseidon-calibrate: " << Msg << '\n';
+static void printError(const Twine &Message) {
+  errs() << "poseidon-calibrate: " << Message << '\n';
+}
+
+[[noreturn]] static void fail(const Twine &Message) {
+  printError(Message);
   std::exit(1);
 }
 
-// Runs a program, optionally capturing its stdout into a file.
+// Runs a program to its exit status, with its stdout and its stderr sent to
+// the files named, if any.
 static int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
                StringRef StderrFile = "") {
   outs().flush();
@@ -167,15 +173,16 @@ static void writeFile(StringRef Path, StringRef Content) {
     fail("cannot write " + Path + ": " + EC.message());
 }
 
-static std::string capture(ArrayRef<StringRef> Argv,
-                           StringRef StderrFile = "") {
+// The stdout of a program that exits with status 0.
+static std::optional<std::string> capture(ArrayRef<StringRef> Argv,
+                                          StringRef StderrFile = "") {
   SmallString<128> Tmp;
   if (sys::fs::createTemporaryFile("poseidon-calibrate", "out", Tmp))
     fail("cannot create a temporary file");
-  int RC = run(Argv, Tmp, StderrFile);
-  std::string S = RC == 0 ? readFile(Tmp) : std::string();
-  sys::fs::remove(Tmp);
-  return S;
+  FileRemover RemoveTmp(Tmp);
+  if (run(Argv, Tmp, StderrFile))
+    return std::nullopt;
+  return readFile(Tmp);
 }
 
 static bool hasFamily(StringRef Csv, StringRef Family) {
@@ -216,14 +223,22 @@ static void mergeRows(std::string &Csv, StringRef Rows) {
 }
 
 namespace {
+// The device a cost model is measured on.
 struct Device {
+  // A GPU's id among the visible devices.
   std::string Id;
-  std::string Name; // punctuation stripped, as it appears in the file name
-  std::string Arch; // sm_<cc>, gfx<NNN> on an AMD GPU, a CPU's target-cpu
+  // Punctuation stripped, as it appears in the file name.
+  std::string Name;
+  // sm_<cc>, gfx<NNN> on an AMD GPU, a CPU's target-cpu.
+  std::string Arch;
+  // An AMD GPU, which the -hip tools measure.
   bool Hip = false;
+  // This host's CPU (--cpu).
   bool Host = false;
-  std::string Model;    // a host's model name, as the system reports it
-  std::string Features; // the host's features, when Arch is its own CPU
+  // A host's model name, as the system reports it.
+  std::string Model;
+  // The host's features, when Arch is its own CPU.
+  std::string Features;
 };
 } // namespace
 
@@ -253,10 +268,10 @@ static Device queryDevice() {
     SmallString<128> Err;
     if (sys::fs::createTemporaryFile("poseidon-calibrate", "err", Err))
       fail("cannot create a temporary file");
-    std::string O = capture({Exe, "--device"}, Err);
+    FileRemover RemoveErr(Err);
+    std::string Named = capture({Exe, "--device"}, Err).value_or("");
     std::string Why = readFile(Err);
-    sys::fs::remove(Err);
-    auto [NameRef, Arch] = StringRef(O).split('\n').first.split('\t');
+    auto [NameRef, Arch] = StringRef(Named).split('\n').first.split('\t');
     if (Arch.trim().empty()) {
       if (!StringRef(Why).trim().empty())
         Reasons +=
@@ -457,15 +472,17 @@ static void armHerbiePlatform(StringRef Csv) {
 // go to `Part`.
 static int measureHost(const Device &D, StringRef Part) {
   std::string Py = python();
-  std::string Missing =
+  std::optional<std::string> Missing =
       capture({Py, "-c",
                "import importlib.util as u, sys; print(' '.join(n for n in "
                "sys.argv[1:] if u.find_spec(n) is None))",
                "llvmlite"});
-  if (!StringRef(Missing).trim().empty())
-    fail(Py + " cannot import the Python package " + StringRef(Missing).trim() +
+  if (!Missing)
+    fail("cannot run " + Py + "; pass --python <interpreter>");
+  if (StringRef Package = StringRef(*Missing).trim(); !Package.empty())
+    fail(Py + " cannot import the Python package " + Package +
          ", which the CPU microbenchmark needs; install it (pip install " +
-         StringRef(Missing).trim() + ") or pass --python <interpreter>");
+         Package + ") or pass --python <interpreter>");
   std::string Script = shipped("tools/calibrate/microbm_cpu.py");
   if (!sys::fs::exists(Script))
     fail("the CPU microbenchmark is missing: " + Script);
@@ -509,13 +526,15 @@ static void armMicrobm(StringRef Csv, const Device &D) {
 }
 
 static void writeRows(StringRef Csv, StringRef Arm, StringRef Family,
-                      StringRef Rows) {
-  if (!hasFamily(Rows, Family))
+                      const std::optional<std::string> &Rows) {
+  if (!Rows)
+    fail("the " + Arm + " calibration failed");
+  if (!hasFamily(*Rows, Family))
     fail(Arm + " calibration produced no " + Family + " row");
   std::string Content = readFile(Csv);
-  mergeRows(Content, Rows);
+  mergeRows(Content, *Rows);
   writeFile(Csv, Content);
-  for (StringRef Line : llvm::split(Rows, '\n'))
+  for (StringRef Line : llvm::split(*Rows, '\n'))
     if (!Line.trim().empty())
       outs() << "  " << Line.trim() << '\n';
 }
@@ -558,19 +577,21 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
   for (StringRef Shape : Shapes) {
     SmallVector<StringRef, 3> Dims;
     Shape.trim().split(Dims, 'x');
-    SmallVector<std::string, 3> V;
+    SmallVector<std::string, 3> Extents;
     for (StringRef Dim : Dims) {
-      unsigned X;
-      if (Dim.getAsInteger(10, X) || !X)
+      unsigned Extent;
+      if (Dim.getAsInteger(10, Extent) || !Extent)
         break;
-      V.push_back(utostr(X));
+      Extents.push_back(utostr(Extent));
     }
-    if (V.size() != Dims.size() || (V.size() != 2 && V.size() != 3))
+    if (Extents.size() != Dims.size() ||
+        (Extents.size() != 2 && Extents.size() != 3))
       fail("--ozaki-rect: '" + Shape + "' is not a shape MxK or MxNxK");
-    std::string Arg = V[0] + "x" + V[1], Key = "_m" + V[0] + "k" + V[1] + ",";
-    if (V.size() == 3) {
-      Arg += "x" + V[2];
-      Key = "_m" + V[0] + "n" + V[1] + "k" + V[2] + ",";
+    std::string Arg = Extents[0] + "x" + Extents[1],
+                Key = "_m" + Extents[0] + "k" + Extents[1] + ",";
+    if (Extents.size() == 3) {
+      Arg += "x" + Extents[2];
+      Key = "_m" + Extents[0] + "n" + Extents[1] + "k" + Extents[2] + ",";
     }
     if (!Force && StringRef(Content).contains(Key)) {
       outs() << "  = " << Shape << " already measured\n";
@@ -602,6 +623,43 @@ static void armTcec(StringRef Csv, const Device &D) {
     return;
   }
   armDispatch(Csv, D, "tcec", "tcec_dispatch_rel");
+}
+
+// The time `Exe` reports for `Reps` runs of its kernel, if it runs.
+static std::optional<double> timeOf(StringRef Exe) {
+  std::optional<std::string> Output = capture({Exe, utostr(Reps)});
+  SmallVector<StringRef, 2> Match;
+  double Ms;
+  if (!Output || !Regex("time_ms = ([0-9.]+)").match(*Output, &Match) ||
+      Match[1].getAsDouble(Ms) || Ms <= 0)
+    return std::nullopt;
+  return Ms;
+}
+
+// The in-kernel classes of the candidate table a compile printed to `Log`,
+// each with the index of the candidate that applies it. A host-dispatch
+// family is priced by an arm of its own.
+static std::map<std::string, std::string> inKernelClasses(StringRef Log) {
+  // "[poseidon]   #8 tcec n=2 wmma m16n16k8 tf32/f32  compCost/MAC=..."
+  Regex Candidate("^\\[poseidon\\][ ]+#([0-9]+) (.*)  compCost/MAC");
+  Regex Direct("^wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
+  Regex Tcec(
+      "^tcec n=([0-9]+) wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
+  std::map<std::string, std::string> Classes;
+  for (StringRef Line : llvm::split(readFile(Log), '\n')) {
+    SmallVector<StringRef, 3> Match;
+    if (!Candidate.match(Line, &Match))
+      continue;
+    StringRef Label = Match[2].trim();
+    SmallVector<StringRef, 4> Parts;
+    if (Direct.match(Label, &Parts))
+      Classes.emplace((Parts[1] + "_" + Parts[2]).str(), Match[1].str());
+    else if (Tcec.match(Label, &Parts))
+      Classes.emplace(
+          ("tcec_n" + Parts[1] + "_" + Parts[2] + "_" + Parts[3]).str(),
+          Match[1].str());
+  }
+  return Classes;
 }
 
 // The in-kernel classes are the one family the compiler has to be asked about:
@@ -661,20 +719,10 @@ static void armInKernel(const std::string &Csv, const Device &D) {
            Src, "-o", BaseExe},
           BaseLog, BaseLog))
     fail("the scalar-FP64 baseline did not build; see " + BaseLog);
-  Regex TimeRe("time_ms = ([0-9.]+)");
-  auto timeOf = [&](StringRef Exe) -> double {
-    std::string O = capture({Exe, utostr(Reps)});
-    SmallVector<StringRef, 2> M;
-    if (!TimeRe.match(O, &M))
-      return 0.0;
-    double V = 0;
-    M[1].getAsDouble(V);
-    return V;
-  };
-  double BaseMs = timeOf(BaseExe);
-  if (BaseMs <= 0)
+  std::optional<double> BaseMs = timeOf(BaseExe);
+  if (!BaseMs)
     fail("the scalar-FP64 baseline produced no time");
-  outs() << "[calibrate] scalar-FP64 baseline " << formatv("{0:F4}", BaseMs)
+  outs() << "[calibrate] scalar-FP64 baseline " << formatv("{0:F4}", *BaseMs)
          << " ms\n";
 
   // One compile prints the candidate table; -poseidon-apply-rewrites is
@@ -698,62 +746,38 @@ static void armInKernel(const std::string &Csv, const Device &D) {
                                          "-poseidon-inkernel-calibration"};
   auto compile = [&](StringRef Apply, StringRef Exe, StringRef Log) {
     SmallVector<StringRef, 32> Argv(Common.begin(), Common.end());
-    Argv.push_back(Apply);
-    Argv.push_back(Src);
-    Argv.push_back("-o");
-    Argv.push_back(Exe);
+    Argv.append({Apply, Src, "-o", Exe});
     return run(Argv, Log, Log);
   };
   compile("-poseidon-apply-rewrites=M0_0", "/dev/null", EnumLog);
-
-  // "[poseidon]   #8 tcec n=2 wmma m16n16k8 tf32/f32  compCost/MAC=..."
-  Regex Cand("^\\[poseidon\\][ ]+#([0-9]+) (.*)  compCost/MAC");
-  Regex Direct("^wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
-  Regex Tcec(
-      "^tcec n=([0-9]+) wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
-  std::map<std::string, std::string> Classes; // class -> candidate index
-  for (StringRef Line : llvm::split(readFile(EnumLog), '\n')) {
-    SmallVector<StringRef, 3> M;
-    if (!Cand.match(Line, &M))
-      continue;
-    StringRef Idx = M[1], Label = M[2].trim();
-    SmallVector<StringRef, 4> P;
-    std::string Cls;
-    if (Direct.match(Label, &P))
-      Cls = (P[1] + "_" + P[2]).str();
-    else if (Tcec.match(Label, &P))
-      Cls = ("tcec_n" + P[1] + "_" + P[2] + "_" + P[3]).str();
-    else
-      continue; // a host-dispatch family: priced by its own arm
-    Classes.emplace(Cls, Idx.str());
-  }
+  std::map<std::string, std::string> Classes = inKernelClasses(EnumLog);
   if (Classes.empty())
     fail("no in-kernel class was proposed on this device; see " + EnumLog);
   outs() << "[calibrate] " << Classes.size()
          << " in-kernel class(es) proposed\n";
 
   std::string Rows;
-  for (const auto &[Cls, Idx] : Classes) {
+  for (const auto &[Class, Index] : Classes) {
     if (!Force &&
-        StringRef(Content).contains("wmma_inkernel_rel," + Cls + ",")) {
-      outs() << "  = " << Cls << " already calibrated\n";
+        StringRef(Content).contains("wmma_inkernel_rel," + Class + ",")) {
+      outs() << "  = " << Class << " already calibrated\n";
       continue;
     }
-    std::string Exe = Work + "/cand_" + Cls + ".exe";
-    std::string Log = Work + "/build_" + Cls + ".log";
-    if (compile("-poseidon-apply-rewrites=M0_" + Idx, Exe, Log)) {
-      outs() << "  ! " << Cls << " did not build; left uncalibrated (" << Log
+    std::string Exe = Work + "/cand_" + Class + ".exe";
+    std::string Log = Work + "/build_" + Class + ".log";
+    if (compile("-poseidon-apply-rewrites=M0_" + Index, Exe, Log)) {
+      outs() << "  ! " << Class << " did not build; left uncalibrated (" << Log
              << ")\n";
       continue;
     }
-    double Ms = timeOf(Exe);
-    if (Ms <= 0) {
-      outs() << "  ! " << Cls << " did not run; left uncalibrated\n";
+    std::optional<double> Ms = timeOf(Exe);
+    if (!Ms) {
+      outs() << "  ! " << Class << " did not run; left uncalibrated\n";
       continue;
     }
-    Rows += "wmma_inkernel_rel," + Cls + "," + num(Ms / BaseMs) + "\n";
-    outs() << "  + " << Cls << ' ' << formatv("{0:F4}", Ms) << " ms  rel "
-           << num(Ms / BaseMs) << '\n';
+    Rows += "wmma_inkernel_rel," + Class + "," + decimal(*Ms / *BaseMs) + "\n";
+    outs() << "  + " << Class << ' ' << formatv("{0:F4}", *Ms) << " ms  rel "
+           << decimal(*Ms / *BaseMs) << '\n';
   }
   if (Rows.empty()) {
     outs() << "[calibrate] in-kernel: nothing new to write\n";
@@ -769,7 +793,7 @@ static int checkModel(const Device &D) {
   CostModelState CM(Out.empty() ? std::string() : resolveCsv(D));
   Error E = requireCostModel(CM, D.Arch, "this device", !D.Host);
   if (!CM.Loaded) {
-    errs() << "poseidon-calibrate: " << toString(std::move(E)) << '\n';
+    printError(toString(std::move(E)));
     return 1;
   }
   int Bad = 0;
@@ -779,7 +803,7 @@ static int checkModel(const Device &D) {
     outs() << ", id " << D.Id;
   outs() << ")\n";
   if (E) {
-    errs() << "poseidon-calibrate: " << toString(std::move(E)) << '\n';
+    printError(toString(std::move(E)));
     ++Bad;
   } else {
     outs() << "native_arch " << D.Arch << "  ok\n";
@@ -826,8 +850,8 @@ static int checkModel(const Device &D) {
       ++Bad;
   }
   if (Bad)
-    errs() << "poseidon-calibrate: " << Bad
-           << " problem(s); re-run poseidon-calibrate --force on this device\n";
+    printError(Twine(Bad) + " problem(s); re-run poseidon-calibrate --force "
+                            "on this device");
   return Bad ? 1 : 0;
 }
 

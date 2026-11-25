@@ -148,17 +148,10 @@ if(NOT Clang_FOUND OR NOT EXISTS ${LLVM_TOOLS_BINARY_DIR}/clang++)
       "ENZYME_POSEIDON needs the clang of LLVM_DIR (${LLVM_TOOLS_BINARY_DIR}/clang++ and its CMake package); build LLVM with clang")
 endif()
 
-# The tools link LLVM, and clang's driver library, as LLVM's own tools do:
-# the shared libraries where LLVM and clang were built to link them.
-set(_poseidon_llvm_shared "")
-if(LLVM_LINK_LLVM_DYLIB)
-  set(_poseidon_llvm_shared USE_SHARED)
-endif()
-if(CLANG_LINK_CLANG_DYLIB AND TARGET clang-cpp)
-  set(_poseidon_clang_driver clang-cpp)
-else()
-  set(_poseidon_clang_driver clangDriver)
-endif()
+# The tools link LLVM and clang's driver library as LLVM's own tools do
+# (add_llvm_executable, clang_target_link_libraries): the shared libraries
+# where LLVM and clang were built to link them.
+include(${CLANG_CMAKE_DIR}/AddClang.cmake)
 
 # The cost table, which the calibrator reads as the plugin does.
 add_library(poseidon_costtable OBJECT Core/CostTable.cpp)
@@ -387,6 +380,9 @@ if(CMAKE_CUDA_COMPILER)
   target_compile_definitions(
     poseidon-dispatch-calibrate
     PRIVATE POSEIDON_TCEC=$<BOOL:${POSEIDON_TCEC_USE_CUMPSGEMM}>)
+  target_include_directories(
+    poseidon-dispatch-calibrate
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(
     poseidon-dispatch-calibrate
     PRIVATE poseidon_rt CUDA::cublas)
@@ -510,6 +506,7 @@ if(POSEIDON_ROCM_PATH)
       OUTPUT ${_exe}
       COMMAND
         ${_poseidon_hip_cxx}
+        -I${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/${src}
         ${_libs}
         -L${POSEIDON_ROCM_PATH}/lib
@@ -534,8 +531,9 @@ if(POSEIDON_ROCM_PATH)
       poseidon-dispatch-calibrate-hip)
 endif()
 
-add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp
-               $<TARGET_OBJECTS:poseidon_costtable>)
+set(LLVM_LINK_COMPONENTS Support TargetParser)
+add_llvm_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp
+                    $<TARGET_OBJECTS:poseidon_costtable>)
 target_include_directories(
   poseidon-calibrate
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -546,7 +544,6 @@ target_compile_definitions(
     POSEIDON_CALIBRATE_HERBIE="${POSEIDON_HERBIE_BINARY_PATH}"
     POSEIDON_CALIBRATE_PYTHON="${Python3_EXECUTABLE}"
     POSEIDON_CALIBRATE_SRCDIR="${CMAKE_CURRENT_SOURCE_DIR}")
-llvm_config(poseidon-calibrate ${_poseidon_llvm_shared} support targetparser)
 if(CMAKE_CUDA_COMPILER)
   add_dependencies(poseidon-calibrate poseidon-clang ${POSEIDON_TOOL_TARGETS})
 endif()
@@ -599,7 +596,8 @@ poseidon_rt_link_files(POSEIDON_DRIVER_RT_LIBS)
 string(JOIN "," POSEIDON_DRIVER_RT_LIBS ${POSEIDON_DRIVER_RT_LIBS})
 
 # One binary, two names: the C or the C++ clang, chosen from argv[0].
-add_executable(poseidon-clang tools/driver/poseidon-clang.cpp)
+set(LLVM_LINK_COMPONENTS Option Support TargetParser)
+add_llvm_executable(poseidon-clang tools/driver/poseidon-clang.cpp)
 target_include_directories(poseidon-clang PRIVATE ${ENZYME_SOURCE_DIR}/include)
 target_compile_definitions(
   poseidon-clang
@@ -620,8 +618,7 @@ target_compile_definitions(
     POSEIDON_DRIVER_RT_LIBS="${POSEIDON_DRIVER_RT_LIBS}"
     POSEIDON_DRIVER_CUDA_ROOT="${CUDAToolkit_TARGET_DIR}"
     POSEIDON_DRIVER_ROCM_ROOT="${POSEIDON_ROCM_PATH}")
-llvm_config(poseidon-clang ${_poseidon_llvm_shared} option support targetparser)
-target_link_libraries(poseidon-clang PRIVATE ${_poseidon_clang_driver})
+clang_target_link_libraries(poseidon-clang PRIVATE clangDriver)
 # Enzyme takes zlib out of LLVMSupport's interface for its table generator;
 # clang's driver library compresses offload bundles with it.
 if(LLVM_ENABLE_ZLIB AND NOT LLVM_LINK_LLVM_DYLIB)

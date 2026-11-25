@@ -14,35 +14,31 @@ read. A row the platform needs that the CSV lacks is an error.
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Dict, Tuple, List, Optional
 
 
 def read_poseidon_csv(path: Path) -> Tuple[Dict[Tuple[str, str], float], Dict[str, str]]:
+    """The rows and the `# key=value` headers of a cost model, every row of
+    which has to be `<opcode>,<type>,<cost>`, as the pass reads it."""
     costs: Dict[Tuple[str, str], float] = {}
     meta: Dict[str, str] = {}
-    for raw in path.read_text().splitlines():
+    for number, raw in enumerate(path.read_text().splitlines(), 1):
         line = raw.strip()
         if not line:
             continue
         if line.startswith("#"):
-            body = line.lstrip("#").strip()
-            if "=" in body:
-                key, val = body.split("=", 1)
+            key, eq, val = line.lstrip("#").partition("=")
+            if eq:
                 meta[key.strip()] = val.strip()
             continue
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) != 3:
-            continue
-        op, precision, raw_cost = parts
         try:
-            costs[(op, precision)] = int(raw_cost)
+            op, precision, raw_cost = (p.strip() for p in line.split(","))
+            costs[(op, precision)] = float(raw_cost)
         except ValueError:
-            try:
-                costs[(op, precision)] = float(raw_cost)
-            except ValueError:
-                sys.stderr.write(f"warn: skipping unparsable row {raw!r}\n")
+            sys.exit(f"{path}:{number}: not '<opcode>,<type>,<cost>': {raw}")
     return costs, meta
 
 
@@ -78,8 +74,8 @@ def cost(costs: Dict[Tuple[str, str], float],
     if (op, precision) in costs:
         return costs[(op, precision)]
     raise RuntimeError(
-        f"csv has no cost row for {op}@{precision}; "
-        f"add it to the CSV or remove the op from this script's emit list"
+        f"csv has no cost row {op},{precision}; measure it with "
+        f"poseidon-calibrate --force --only microbm"
     )
 
 
@@ -136,8 +132,8 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
         f"(define-representation {repr_name} #:cost {move_cost_var})",
         "",
         f"(define-operation (if.{suffix} [c <bool>] [t {repr_name}] [f {repr_name}]) {repr_name}",
-        f"  #:spec (if c t f) #:impl if-impl",
-        f"  #:cost (if-cost boolean-move-cost))",
+        "  #:spec (if c t f) #:impl if-impl",
+        "  #:cost (if-cost boolean-move-cost))",
         "",
     ]
 
@@ -291,7 +287,6 @@ def embedded_module_names(herbie_binary: Path) -> Tuple[Optional[str], Optional[
     binary: `syntax/platform-language` when built from the source tree,
     `herbie/syntax/platform-language` when Herbie was installed as a package."""
     data = herbie_binary.read_bytes()
-    import re
     lang = re.search(rb"#%embedded:([A-Za-z0-9_./-]*/)?syntax/platform-language:", data)
     flonum = re.search(rb"#%embedded:math/flonum:", data)
     return (f"'|{lang.group(0).decode()}|" if lang else None,

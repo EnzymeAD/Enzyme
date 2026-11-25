@@ -32,7 +32,9 @@ int main(int argc, char **argv) {
             "Runs a profile-generation build with POSEIDON_PROBE=1: at exit it "
             "runs itself again\nto measure each site's condition number "
             "against the metric it declares with\nposeidon_metric, and writes "
-            "them into its profiles.\n");
+            "them into its profiles. That takes 1 + <sites> x\n<steps> more "
+            "runs, at the perturbation steps POSEIDON_PROBE_LADDER lists\n"
+            "(default 1e-8,1e-6,1e-4).\n");
     return 2;
   }
   setenv("POSEIDON_PROBE", "1", 1);

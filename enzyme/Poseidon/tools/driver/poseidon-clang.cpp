@@ -42,7 +42,9 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
@@ -58,7 +60,6 @@ namespace clang_options = clang::driver::options;
 using clang::driver::getDriverOptTable;
 #endif
 
-#include <cstring>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -72,11 +73,10 @@ static int userError(StringRef Prog, const Twine &Message) {
   return 1;
 }
 
-static std::string envOr(const char *Name, StringRef Fallback) {
-  if (const char *V = ::getenv(Name))
-    if (*V)
-      return std::string(V);
-  return Fallback.str();
+// The environment variable `Name`, or `Fallback` where it is unset or empty.
+static std::string envOr(StringRef Name, StringRef Fallback) {
+  std::optional<std::string> Value = sys::Process::GetEnv(Name);
+  return Value && !Value->empty() ? *Value : Fallback.str();
 }
 
 // `Rel` under the installation prefix `Prefix`.
@@ -90,20 +90,19 @@ static std::string underPrefix(StringRef Prefix, const Twine &Rel) {
 // Poseidon was built against (none if it was built without), which has to be
 // on this machine. `GivenBy` names the environment variable that gave it; a
 // path on the command line clang checks itself where it needs one.
-static std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
-                                              StringRef Given,
-                                              StringRef GivenBy,
-                                              StringRef Built, StringRef How) {
-  if (!Given.empty() && !GivenBy.empty() && !sys::fs::is_directory(Given)) {
-    userError(Prog, GivenBy + "=" + Given + " names no directory; set it to " +
-                        "the " + Toolkit + " installation or unset it");
-    return std::nullopt;
-  }
-  if (!Given.empty() || Built.empty() || sys::fs::is_directory(Built))
-    return Given.empty() ? Built.str() : Given.str();
-  userError(Prog, "the " + Toolkit + " Poseidon was built against, " + Built +
-                      ", is not on this machine; " + How);
-  return std::nullopt;
+static Expected<std::string> toolkitRoot(StringRef Toolkit, StringRef Given,
+                                         StringRef GivenBy, StringRef Built,
+                                         StringRef How) {
+  if (!Given.empty() && !GivenBy.empty() && !sys::fs::is_directory(Given))
+    return createStringError(GivenBy + "=" + Given +
+                             " names no directory; set it to the " + Toolkit +
+                             " installation or unset it");
+  if (!Given.empty())
+    return Given.str();
+  if (Built.empty() || sys::fs::is_directory(Built))
+    return Built.str();
+  return createStringError("the " + Toolkit + " Poseidon was built against, " +
+                           Built + ", is not on this machine; " + How);
 }
 
 static void printHelp(StringRef Prog) {
@@ -116,7 +115,7 @@ static void printHelp(StringRef Prog) {
          ");\n"
          "     poseidon-probe -- <program> also measures the condition "
          "numbers\n"
-         "     the accuracy model needs (1 + 3 runs per site)\n"
+         "     the accuracy model needs, in 1 + 3 x <sites> more runs\n"
          "  3. compile with -poseidon-profile-use\n"
          "Profiling a host function needs glibc, whose __libc_malloc the\n"
          "profiler wraps to record heap extents.\n\n"
@@ -234,48 +233,35 @@ static Invocation analyze(StringRef Clang, ArrayRef<const char *> Argv) {
   return I;
 }
 
-int main(int argc, char **argv) {
-  std::string Exe = sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main);
-  // argv[0], not the resolved binary: poseidon-clang++ is a symlink to
-  // poseidon-clang and the name it was invoked under chooses the clang driver.
-  StringRef Prog = sys::path::filename(argv[0]);
-  SmallString<256> Prefix(sys::path::parent_path(sys::path::parent_path(Exe)));
-
-  // Response files are expanded first, with the quoting clang reads them with,
-  // so that a Poseidon flag in one is converted and the file is no input.
-  BumpPtrAllocator Alloc;
-  SmallVector<const char *, 64> Args(argv, argv + argc);
-  if (Error E = cl::ExpansionContext(Alloc, cl::TokenizeGNUCommandLine)
-                    .expandResponseFiles(Args)) {
-    return userError(Prog, toString(std::move(E)));
-  }
-  for (StringRef A : ArrayRef<const char *>(Args).drop_front())
-    if (A == "-poseidon-help" || A == "--poseidon-help") {
-      printHelp(Prog);
-      return 0;
-    }
-
-  // The Poseidon flags, found where clang's own option table puts each
-  // argument: bare, which clang does not know, or as the value of -mllvm. clang
-  // hands -Xclang to each of its compile jobs and to nothing else, so the flag
-  // reaches every compiler that loads the plugin and never a linker, and a
-  // line that only links is not warned about it. A flag a user already wrote
-  // as -Xclang -mllvm -Xclang -poseidon-<flag> is left as it is.
+namespace {
+// The user's arguments with every Poseidon flag in the form clang hands to the
+// pass, and the action they ask for.
+struct Request {
+  SmallVector<std::string, 0> User;
   bool ProfileGenerate = false, ProfileUse = false;
+};
+} // namespace
+
+// The Poseidon flags of `Args`, found where clang's option table puts each
+// argument (`Parsed`): bare, which clang does not know, or as the value of
+// -mllvm. clang hands -Xclang to each of its compile jobs and to nothing else,
+// so the flag reaches every compiler that loads the plugin and never a linker,
+// and a line that only links is not warned about it. A flag a user already
+// wrote as -Xclang -mllvm -Xclang -poseidon-<flag> is left as it is.
+static Request convertFlags(ArrayRef<const char *> Args,
+                            const opt::InputArgList &Parsed) {
+  Request R;
   auto Note = [&](StringRef Flag) {
     StringRef Name = Flag.split('=').first;
-    ProfileGenerate |= Name == "profile-generate";
-    ProfileUse |= Name == "profile-use";
+    R.ProfileGenerate |= Name == "profile-generate";
+    R.ProfileUse |= Name == "profile-use";
   };
-  unsigned MissingIndex, MissingCount;
-  opt::InputArgList Parsed = getDriverOptTable().ParseArgs(
-      ArrayRef<const char *>(Args).drop_front(), MissingIndex, MissingCount,
-      opt::Visibility(clang_options::ClangOption));
-  // The converted flag that replaces argv entry I + 1, or the empty string for
-  // an entry a converted flag consumes as well.
+  // The converted flag that replaces Args[I], or the empty string for an
+  // argument a converted flag consumes as well.
   SmallVector<std::optional<std::string>, 64> Converted(Args.size());
   StringRef PreviousXclang;
   for (const opt::Arg *A : Parsed) {
+    // `Parsed` is of the arguments after the program name.
     unsigned At = A->getIndex() + 1;
     std::optional<StringRef> Flag;
     if (A->getOption().matches(clang_options::OPT_UNKNOWN))
@@ -296,15 +282,245 @@ int main(int argc, char **argv) {
       PreviousXclang = A->getValue();
     }
   }
-  SmallVector<std::string, 64> User;
   for (size_t I = 1; I < Args.size(); ++I) {
     if (!Converted[I])
-      User.push_back(Args[I]);
+      R.User.push_back(Args[I]);
     else if (!Converted[I]->empty())
-      User.append({"-Xclang", "-mllvm", "-Xclang", *Converted[I]});
+      R.User.append({"-Xclang", "-mllvm", "-Xclang", *Converted[I]});
   }
+  return R;
+}
 
-  if (ProfileGenerate && ProfileUse)
+// The unit name of this invocation's translation units: the host half of a
+// compile takes the launch descriptors of the device half that compiled the
+// same source under the same unit name, so every compile job of an invocation
+// gets the same one, and no other invocation gets it.
+static std::string unitName(ArrayRef<const char *> Args) {
+  SmallString<256> Cwd;
+  (void)sys::fs::current_path(Cwd);
+  std::string Identity(Cwd);
+  for (const char *A : Args) {
+    Identity += '\0';
+    Identity += A;
+  }
+  return "-poseidon-unit=" + utohexstr(xxh3_64bits(Identity),
+                                       /*LowerCase=*/false, /*Width=*/16);
+}
+
+// The arguments that link the runtimes the request needs from `LibDir`, and
+// the GPU runtimes of the toolkit they need. A C++ link (`CXX`) has the C++
+// library already.
+static Expected<SmallVector<std::string, 0>>
+linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
+              bool CXX) {
+  SmallVector<std::string, 0> Link;
+  auto AsNeeded = [&](StringRef Lib) {
+    Link.append({"-Wl,--push-state,--as-needed", Lib.str(), "-Wl,--pop-state"});
+  };
+  // A link of objects alone names no language; its objects may hold code of
+  // the GPU this build has, so it gets that GPU's runtimes, which the program
+  // records a need for only if it uses them. It takes a toolkit only where it
+  // is.
+  bool Objects = !Inv.Source;
+  bool CUDA =
+      Inv.CUDA || (Objects && !Inv.HIP && POSEIDON_DRIVER_PROFILER_CUDA);
+  bool HIP = Inv.HIP || (Objects && !CUDA && POSEIDON_DRIVER_PROFILER_HIP);
+  std::string CudaRoot, RocmRoot;
+  if (CUDA && Objects) {
+    if (sys::fs::is_directory(POSEIDON_DRIVER_CUDA_ROOT))
+      CudaRoot = POSEIDON_DRIVER_CUDA_ROOT;
+  } else if (CUDA) {
+    Expected<std::string> Root =
+        toolkitRoot("CUDA toolkit", Inv.CudaPath, "", POSEIDON_DRIVER_CUDA_ROOT,
+                    "pass --cuda-path=<dir>");
+    if (!Root)
+      return Root.takeError();
+    CudaRoot = *Root;
+  }
+  if (HIP && Objects) {
+    if (sys::fs::is_directory(POSEIDON_DRIVER_ROCM_ROOT))
+      RocmRoot = POSEIDON_DRIVER_ROCM_ROOT;
+  } else if (HIP) {
+    // Where clang takes the HIP runtime from: --hip-path, HIP_PATH,
+    // --rocm-path, ROCM_PATH, else the ROCm Poseidon was built against.
+    std::string Given = Inv.HipPath;
+    StringRef GivenBy;
+    if (Given.empty() && !(Given = envOr("HIP_PATH", "")).empty())
+      GivenBy = "HIP_PATH";
+    if (Given.empty())
+      Given = Inv.RocmPath;
+    if (Given.empty() && !(Given = envOr("ROCM_PATH", "")).empty())
+      GivenBy = "ROCM_PATH";
+    Expected<std::string> Root =
+        toolkitRoot("ROCm", Given, GivenBy, POSEIDON_DRIVER_ROCM_ROOT,
+                    "pass --rocm-path=<dir> or set ROCM_PATH");
+    if (!Root)
+      return Root.takeError();
+    RocmRoot = *Root;
+  }
+  // clang links no CUDA runtime of its own, and every action here ends in a
+  // device launch.
+  if (!CudaRoot.empty()) {
+    Link.push_back("-L" + CudaRoot + "/lib64");
+    if (Objects)
+      AsNeeded("-lcudart");
+    else
+      Link.push_back("-lcudart");
+  }
+  if (!RocmRoot.empty()) {
+    Link.push_back("-L" + RocmRoot + "/lib");
+    if (Objects)
+      AsNeeded("-lamdhip64");
+    else
+      Link.push_back("-lamdhip64");
+  }
+  Link.push_back(("-L" + LibDir).str());
+  // The shadows of a POSEIDON_OPTIMIZE function on the host are sized from
+  // the allocations this library records.
+  if (R.ProfileGenerate)
+    Link.push_back("-lposeidon_profile_host");
+  // The host half of the GPU profiler (the pass links the device half into
+  // each device module). The two export the same names, so a link takes one
+  // of them, and never the other GPU's.
+  if (R.ProfileGenerate && HIP && POSEIDON_DRIVER_PROFILER_HIP)
+    Link.push_back("-lposeidon_profile_hip");
+  else if (R.ProfileGenerate && CUDA && POSEIDON_DRIVER_PROFILER_CUDA)
+    Link.push_back("-lposeidon_profile_cuda");
+  // poseidon_metric, and the profiler the instrumented code calls into.
+  Link.push_back("-lposeidon_profile");
+  if (R.ProfileUse && CUDA && !CudaRoot.empty()) {
+    // A rewrite may dispatch a matrix product to any of the GEMM runtimes;
+    // they export disjoint symbols and only the chosen one runs.
+    Link.push_back("-lposeidon_rt");
+    AsNeeded("-lcublas");
+    // What the runtime links besides the toolkit's libraries, each found
+    // again where it was built when the program runs, after cuBLAS: cuMpSGEMM
+    // defines cuBLAS's GEMM entry points. Handed to the linker alone: after
+    // the user's -x cuda clang would compile a file input.
+    SmallVector<StringRef, 2> RuntimeLibs;
+    StringRef(POSEIDON_DRIVER_RT_LIBS).split(RuntimeLibs, ',', -1, false);
+    for (StringRef Lib : RuntimeLibs)
+      Link.append({"-Xlinker", Lib.str(), "-Xlinker", "-rpath", "-Xlinker",
+                   sys::path::parent_path(Lib).str()});
+  }
+  if (R.ProfileUse && HIP && !RocmRoot.empty()) {
+    // Ozaki-II and the direct products on hipBLAS; TCEC has no HIP build.
+    Link.push_back("-lposeidon_rt_hip");
+    AsNeeded("-lhipblas");
+  }
+  // The archives are C++; the C driver links no C++ library of its own.
+  if (!CXX)
+    Link.append({Inv.StdLib == "libc++" ? "-lc++" : "-lstdc++", "-lm"});
+  return Link;
+}
+
+namespace {
+// The plugins, header directory and runtime directory a compile uses.
+struct Installation {
+  std::string Plugin, Enzyme, Include, LibDir;
+};
+} // namespace
+
+// Those of the build tree the driver `Exe` runs from, or of its installation,
+// never some of each; Enzyme's plugin only to generate a profile. Enzyme
+// installs its plugins to lib/.
+static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
+  StringRef BuiltEnzyme = POSEIDON_DRIVER_ENZYME;
+  Installation In = {POSEIDON_DRIVER_PLUGIN, BuiltEnzyme.str(),
+                     POSEIDON_DRIVER_INCLUDE, POSEIDON_DRIVER_LIBDIR};
+  if (!sys::fs::equivalent(sys::path::parent_path(Exe),
+                           POSEIDON_DRIVER_BINDIR)) {
+    StringRef Prefix = sys::path::parent_path(sys::path::parent_path(Exe));
+    In.Plugin = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR
+                            "/" POSEIDON_DRIVER_PLUGIN_NAME);
+    if (!BuiltEnzyme.empty())
+      In.Enzyme =
+          underPrefix(Prefix, "lib/" + sys::path::filename(BuiltEnzyme));
+    In.Include = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_INCLUDEDIR);
+    In.LibDir = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR);
+  }
+  In.Plugin = envOr("POSEIDON_PLUGIN", In.Plugin);
+  if (!sys::fs::exists(In.Plugin))
+    return createStringError("Poseidon plugin not found at " + In.Plugin +
+                             "; set POSEIDON_PLUGIN");
+  // Enzyme differentiates the probes and is loaded for nothing else, so that
+  // Enzyme changes no other compile. A program that asks Enzyme for
+  // derivatives of its own loads the plugin among its arguments, as with clang
+  // alone; they come after Poseidon's plugin, the order the two need.
+  if (!ProfileGenerate) {
+    In.Enzyme.clear();
+  } else if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
+    In.Enzyme = Given;
+  } else if (In.Enzyme.empty()) {
+    return createStringError("-poseidon-profile-generate needs Enzyme to "
+                             "differentiate the probes, and this build has no "
+                             "ClangEnzyme plugin; set ENZYME_PLUGIN to one");
+  } else if (!sys::fs::exists(In.Enzyme)) {
+    return createStringError("Enzyme plugin not found at " + In.Enzyme +
+                             "; install Enzyme to the same prefix or set "
+                             "ENZYME_PLUGIN");
+  }
+  return In;
+}
+
+// Runs `Cmd`. Expanded response files can make it longer than the system
+// takes; clang then reads it from a response file of the driver's own,
+// written as clang writes its response files.
+static int runClang(StringRef Prog, ArrayRef<std::string> Cmd) {
+  SmallVector<StringRef, 128> Argv(Cmd.begin(), Cmd.end());
+  SmallString<128> ResponseFile;
+  FileRemover RemoveResponseFile;
+  std::string ResponseArg;
+  if (!sys::commandLineFitsWithinSystemLimits(Cmd.front(), Argv)) {
+    std::string Contents;
+    raw_string_ostream OS(Contents);
+    for (StringRef A : ArrayRef<StringRef>(Argv).drop_front()) {
+      sys::printArg(OS, A, /*Quote=*/true);
+      OS << ' ';
+    }
+    if (std::error_code EC =
+            sys::fs::createTemporaryFile("poseidon-clang", "rsp", ResponseFile))
+      return userError(Prog, "cannot create a response file: " + EC.message());
+    RemoveResponseFile.setFile(ResponseFile);
+    if (std::error_code EC = sys::writeFileWithEncoding(ResponseFile, Contents))
+      return userError(Prog,
+                       "cannot write " + ResponseFile + ": " + EC.message());
+    ResponseArg = ("@" + ResponseFile).str();
+    Argv.truncate(1);
+    Argv.push_back(ResponseArg);
+  }
+  std::string Err;
+  int RC = sys::ExecuteAndWait(Cmd.front(), Argv, std::nullopt, {}, 0, 0, &Err);
+  if (!Err.empty())
+    userError(Prog, "cannot run " + Cmd.front() + ": " + Err);
+  return RC;
+}
+
+int main(int argc, char **argv) {
+  std::string Exe = sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main);
+  // argv[0], not the resolved binary: poseidon-clang++ is a symlink to
+  // poseidon-clang and the name it was invoked under chooses the clang driver.
+  StringRef Prog = sys::path::filename(argv[0]);
+
+  // Response files are expanded first, with the quoting clang reads them with,
+  // so that a Poseidon flag in one is converted and the file is no input.
+  BumpPtrAllocator Alloc;
+  SmallVector<const char *, 64> Args(argv, argv + argc);
+  if (Error E = cl::ExpansionContext(Alloc, cl::TokenizeGNUCommandLine)
+                    .expandResponseFiles(Args))
+    return userError(Prog, toString(std::move(E)));
+  for (StringRef A : ArrayRef<const char *>(Args).drop_front())
+    if (A == "-poseidon-help" || A == "--poseidon-help") {
+      printHelp(Prog);
+      return 0;
+    }
+
+  unsigned MissingIndex, MissingCount;
+  opt::InputArgList Parsed = getDriverOptTable().ParseArgs(
+      ArrayRef<const char *>(Args).drop_front(), MissingIndex, MissingCount,
+      opt::Visibility(clang_options::ClangOption));
+  Request R = convertFlags(Args, Parsed);
+  if (R.ProfileGenerate && R.ProfileUse)
     return userError(Prog, "-poseidon-profile-generate and "
                            "-poseidon-profile-use are the two halves of the "
                            "workflow; pass one");
@@ -314,7 +530,7 @@ int main(int argc, char **argv) {
   std::string ClangFor =
       Prog.contains("++") ? POSEIDON_DRIVER_CLANGXX : POSEIDON_DRIVER_CLANG;
   SmallVector<const char *, 64> Probe = {ClangFor.c_str(), "-ffp-contract=on"};
-  for (const std::string &A : User)
+  for (const std::string &A : R.User)
     Probe.push_back(A.c_str());
   Invocation Inv = analyze(ClangFor, Probe);
 
@@ -324,7 +540,7 @@ int main(int argc, char **argv) {
   // to every operation of the module, the expansions included; from 24 on
   // only to the operations that carry the flags, which the expansions do not.
 #if LLVM_VERSION_MAJOR < 24
-  if (ProfileUse && !Inv.LooseFP.empty()) {
+  if (R.ProfileUse && !Inv.LooseFP.empty()) {
     const opt::Arg *Loose = Parsed.getLastArg(
         clang_options::OPT_ffast_math, clang_options::OPT_Ofast,
         clang_options::OPT_ffp_contract, clang_options::OPT_ffp_model_EQ,
@@ -340,77 +556,19 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  // The host half of a compile takes the launch descriptors of the device half
-  // that compiled the same source under the same unit name, so every compile
-  // job of this invocation gets one, and no other invocation gets it.
   if (Inv.HasInput &&
-      llvm::none_of(ArrayRef<const char *>(Args).drop_front(), namesUnit)) {
-    SmallString<256> Cwd;
-    (void)sys::fs::current_path(Cwd);
-    std::string Invocation(Cwd);
-    for (const char *A : Args) {
-      Invocation += '\0';
-      Invocation += A;
-    }
-    User.insert(User.begin(),
-                {"-Xclang", "-mllvm", "-Xclang",
-                 "-poseidon-unit=" + utohexstr(xxh3_64bits(Invocation),
-                                               /*LowerCase=*/false,
-                                               /*Width=*/16)});
-  }
+      llvm::none_of(ArrayRef<const char *>(Args).drop_front(), namesUnit))
+    R.User.insert(R.User.begin(),
+                  {"-Xclang", "-mllvm", "-Xclang", unitName(Args)});
 
-  // The HIP runtime's libraries, from where clang takes the HIP runtime:
-  // --hip-path, HIP_PATH, --rocm-path, ROCM_PATH, else the ROCm Poseidon was
-  // built against.
-  std::string RocmPath = Inv.HipPath;
-  StringRef RocmPathBy;
-  if (RocmPath.empty() && !(RocmPath = envOr("HIP_PATH", "")).empty())
-    RocmPathBy = "HIP_PATH";
-  if (RocmPath.empty())
-    RocmPath = Inv.RocmPath;
-  if (RocmPath.empty() && !(RocmPath = envOr("ROCM_PATH", "")).empty())
-    RocmPathBy = "ROCM_PATH";
-
-  // The clang the plugin is built against, wherever the driver runs, and the
-  // plugins, header and runtimes of the build tree the driver runs from or of
-  // its installation, never some of each. Enzyme installs its plugins to lib/.
-  // A C++ input is linked by the C++ driver.
+  // The clang the plugin is built against, wherever the driver runs. A C++
+  // input is linked by the C++ driver.
   bool WantCXX = Prog.contains("++") || Inv.CXX;
   std::string Clang = WantCXX ? POSEIDON_DRIVER_CLANGXX : POSEIDON_DRIVER_CLANG;
-  StringRef BuiltEnzyme = POSEIDON_DRIVER_ENZYME;
-  std::string Plugin = POSEIDON_DRIVER_PLUGIN, Enzyme = BuiltEnzyme.str();
-  std::string Include = POSEIDON_DRIVER_INCLUDE;
-  std::string LibDir = POSEIDON_DRIVER_LIBDIR;
-  if (!sys::fs::equivalent(sys::path::parent_path(Exe),
-                           POSEIDON_DRIVER_BINDIR)) {
-    Plugin = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR
-                         "/" POSEIDON_DRIVER_PLUGIN_NAME);
-    if (!BuiltEnzyme.empty())
-      Enzyme = underPrefix(Prefix, "lib/" + sys::path::filename(BuiltEnzyme));
-    Include = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_INCLUDEDIR);
-    LibDir = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR);
-  }
-  Plugin = envOr("POSEIDON_PLUGIN", Plugin);
-  if (!sys::fs::exists(Plugin))
-    return userError(Prog, "Poseidon plugin not found at " + Plugin +
-                               "; set POSEIDON_PLUGIN");
-  // Enzyme differentiates the probes and is loaded for nothing else, so that
-  // Enzyme changes no other compile. A program that asks Enzyme for
-  // derivatives of its own loads the plugin among its arguments, as with clang
-  // alone; they come after Poseidon's plugin, the order the two need.
-  if (!ProfileGenerate) {
-    Enzyme.clear();
-  } else if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
-    Enzyme = Given;
-  } else if (Enzyme.empty()) {
-    return userError(Prog, "-poseidon-profile-generate needs Enzyme to "
-                           "differentiate the probes, and this build has no "
-                           "ClangEnzyme plugin; set ENZYME_PLUGIN to one");
-  } else if (!sys::fs::exists(Enzyme)) {
-    return userError(Prog, "Enzyme plugin not found at " + Enzyme +
-                               "; install Enzyme to the same prefix or set "
-                               "ENZYME_PLUGIN");
-  }
+  Expected<Installation> Found = locate(Exe, R.ProfileGenerate);
+  if (!Found)
+    return userError(Prog, toString(Found.takeError()));
+  const Installation &In = *Found;
 
   SmallVector<std::string, 128> Cmd;
   Cmd.push_back(Clang);
@@ -425,21 +583,21 @@ int main(int argc, char **argv) {
       Cmd.append({"-Xclang", "-load", "-Xclang", P});
 #endif
     };
-    AddPlugin(Plugin);
-    if (!Enzyme.empty())
-      AddPlugin(Enzyme);
+    AddPlugin(In.Plugin);
+    if (!In.Enzyme.empty())
+      AddPlugin(In.Enzyme);
     // Every HIP device compile is an LTO pre-link compile, in which Enzyme
     // leaves a derivative request to the post-link run unless told otherwise,
     // and the device link loads no plugin. The requests profile generation
     // emits, and a user's own request in a site, have to be lowered in the
     // compile itself. Ahead of the user's arguments, so that a later
     // -enzyme-lto-prelink wins.
-    if (Inv.HIP && !Enzyme.empty())
+    if (Inv.HIP && !In.Enzyme.empty())
       Cmd.append(
           {"-Xclang", "-mllvm", "-Xclang", POSEIDON_DRIVER_ENZYME_HIP_OPTION});
     // A system directory, as the CMake package gives it: the header's
     // diagnostics are not the user's.
-    Cmd.append({"-isystem", Include});
+    Cmd.append({"-isystem", In.Include});
     // Error-free transformations survive only if the compiler contracts within
     // a statement and never across one.
     Cmd.push_back("-ffp-contract=on");
@@ -447,148 +605,19 @@ int main(int argc, char **argv) {
     // call.
     Cmd.push_back("-DPOSEIDON_DEVICE_MATH");
   }
-  Cmd.append(User.begin(), User.end());
-
+  Cmd.append(R.User.begin(), R.User.end());
   if (Inv.Links) {
-    // A link of objects alone names no language; its objects may hold code
-    // of the GPU this build has, so it gets that GPU's runtimes, which the
-    // program records a need for only if it uses them.
-    bool Objects = !Inv.Source;
-    bool CUDA =
-        Inv.CUDA || (Objects && !Inv.HIP && POSEIDON_DRIVER_PROFILER_CUDA);
-    bool HIP = Inv.HIP || (Objects && !CUDA && POSEIDON_DRIVER_PROFILER_HIP);
-    auto AsNeeded = [&](std::initializer_list<const char *> Libs) {
-      Cmd.push_back("-Wl,--push-state,--as-needed");
-      Cmd.append(Libs.begin(), Libs.end());
-      Cmd.push_back("-Wl,--pop-state");
-    };
-    // clang links no CUDA runtime of its own, and every action here ends in a
-    // device launch. A link of objects alone takes the toolkit only where it
-    // is.
-    std::optional<std::string> CudaRoot =
-        !CUDA ? ""
-        : Objects
-            ? std::string(POSEIDON_DRIVER_CUDA_ROOT)
-            : toolkitRoot(Prog, "CUDA toolkit", Inv.CudaPath, "",
-                          POSEIDON_DRIVER_CUDA_ROOT, "pass --cuda-path=<dir>");
-    std::optional<std::string> RocmRoot =
-        !HIP      ? ""
-        : Objects ? std::string(POSEIDON_DRIVER_ROCM_ROOT)
-                  : toolkitRoot(Prog, "ROCm", RocmPath, RocmPathBy,
-                                POSEIDON_DRIVER_ROCM_ROOT,
-                                "pass --rocm-path=<dir> or set "
-                                "ROCM_PATH");
-    if (!CudaRoot || !RocmRoot)
-      return 1;
-    if (Objects && !sys::fs::is_directory(*CudaRoot))
-      CudaRoot->clear();
-    if (Objects && !sys::fs::is_directory(*RocmRoot))
-      RocmRoot->clear();
-    if (!CudaRoot->empty()) {
-      Cmd.push_back("-L" + *CudaRoot + "/lib64");
-      if (Objects)
-        AsNeeded({"-lcudart"});
-      else
-        Cmd.push_back("-lcudart");
-    }
-    if (!RocmRoot->empty()) {
-      Cmd.push_back("-L" + *RocmRoot + "/lib");
-      if (Objects)
-        AsNeeded({"-lamdhip64"});
-      else
-        Cmd.push_back("-lamdhip64");
-    }
-    Cmd.push_back("-L" + LibDir);
-    // The shadows of a POSEIDON_OPTIMIZE function on the host are sized from
-    // the allocations this library records.
-    if (ProfileGenerate)
-      Cmd.push_back("-lposeidon_profile_host");
-    // The host half of the GPU profiler (the pass links the device half into
-    // each device module). The two export the same names, so a link takes
-    // one of them, and never the other GPU's.
-    if (ProfileGenerate && HIP && POSEIDON_DRIVER_PROFILER_HIP)
-      Cmd.push_back("-lposeidon_profile_hip");
-    else if (ProfileGenerate && CUDA && POSEIDON_DRIVER_PROFILER_CUDA)
-      Cmd.push_back("-lposeidon_profile_cuda");
-    // poseidon_metric, and the profiler the instrumented code calls into.
-    Cmd.push_back("-lposeidon_profile");
-    if (ProfileUse && CUDA && !CudaRoot->empty()) {
-      // A rewrite may dispatch a matrix product to any of the GEMM
-      // runtimes; they export disjoint symbols and only the chosen one runs.
-      Cmd.push_back("-lposeidon_rt");
-      AsNeeded({"-lcublas"});
-      // What the runtime links besides the toolkit's libraries, each found
-      // again where it was built when the program runs, after cuBLAS:
-      // cuMpSGEMM defines cuBLAS's GEMM entry points. Handed to the linker
-      // alone: after the user's -x cuda clang would compile a file input.
-      SmallVector<StringRef, 2> RtLibs;
-      StringRef(POSEIDON_DRIVER_RT_LIBS).split(RtLibs, ',', -1, false);
-      for (StringRef Lib : RtLibs) {
-        Cmd.push_back("-Xlinker");
-        Cmd.push_back(Lib.str());
-        Cmd.push_back("-Xlinker");
-        Cmd.push_back("-rpath");
-        Cmd.push_back("-Xlinker");
-        Cmd.push_back(sys::path::parent_path(Lib).str());
-      }
-    }
-    if (ProfileUse && HIP && !RocmRoot->empty()) {
-      // Ozaki-II and the direct products on hipBLAS; TCEC has no HIP build.
-      Cmd.push_back("-lposeidon_rt_hip");
-      AsNeeded({"-lhipblas"});
-    }
-    // The archives are C++; the C driver links no C++ library of its own.
-    if (!WantCXX) {
-      Cmd.push_back(Inv.StdLib == "libc++" ? "-lc++" : "-lstdc++");
-      Cmd.push_back("-lm");
-    }
+    Expected<SmallVector<std::string, 0>> Link =
+        linkArguments(Inv, R, In.LibDir, WantCXX);
+    if (!Link)
+      return userError(Prog, toString(Link.takeError()));
+    Cmd.append(Link->begin(), Link->end());
   }
 
-  SmallVector<StringRef, 128> Argv(Cmd.begin(), Cmd.end());
-  if (::getenv("POSEIDON_ECHO")) {
-    for (StringRef A : Argv)
+  if (sys::Process::GetEnv("POSEIDON_ECHO")) {
+    for (const std::string &A : Cmd)
       errs() << A << ' ';
     errs() << '\n';
   }
-
-  // An expanded response file can make the command longer than the system
-  // takes: clang then reads it from one of the driver's own, written as clang
-  // writes its response files.
-  SmallString<128> ResponseFile;
-  std::string ResponseArg;
-  if (!sys::commandLineFitsWithinSystemLimits(Clang, Argv)) {
-    int FD;
-    if (std::error_code EC = sys::fs::createTemporaryFile(
-            "poseidon-clang", "rsp", FD, ResponseFile)) {
-      return userError(Prog, "cannot create a response file: " + EC.message());
-    }
-    raw_fd_ostream OS(FD, /*shouldClose=*/true);
-    for (StringRef A : ArrayRef<StringRef>(Argv).drop_front()) {
-      OS << '"';
-      for (char C : A) {
-        if (C == '"' || C == '\\')
-          OS << '\\';
-        OS << C;
-      }
-      OS << "\" ";
-    }
-    OS.close();
-    if (OS.has_error()) {
-      std::string Why = OS.error().message();
-      OS.clear_error();
-      sys::fs::remove(ResponseFile);
-      return userError(Prog, "cannot write " + ResponseFile + ": " + Why);
-    }
-    ResponseArg = ("@" + ResponseFile).str();
-    StringRef Program = Argv.front();
-    Argv.assign({Program, StringRef(ResponseArg)});
-  }
-
-  std::string Err;
-  int RC = sys::ExecuteAndWait(Clang, Argv, std::nullopt, {}, 0, 0, &Err);
-  if (!Err.empty())
-    userError(Prog, "cannot run " + Clang + ": " + Err);
-  if (!ResponseFile.empty())
-    sys::fs::remove(ResponseFile);
-  return RC;
+  return runClang(Prog, Cmd);
 }

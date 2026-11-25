@@ -23,15 +23,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../../runtime/ozaki/OzakiII.h"
+#include "runtime/ozaki/OzakiII.h"
 
 // The CUDA build defines it to whether cuMpSGEMM is linked.
 #ifndef POSEIDON_TCEC
 #define POSEIDON_TCEC 0
 #endif
 
-#include "../../runtime/GemmDispatch.h"
+#include "runtime/GemmDispatch.h"
 
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -62,7 +63,7 @@ __global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
 // The reference shape, the timed repetitions, and the modulus count or mode
 // the dispatch under test runs with. The square products are row-major with
 // leading dimensions N, as the pass dispatches a square GEMM.
-static int N = 2048, REPS = 30, ARG = 0;
+static int N, Reps, Variant;
 static double *dA, *dB, *dC;
 
 static void run_ref() {
@@ -71,14 +72,14 @@ static void run_ref() {
 }
 static void run_oz() {
   __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
-                         ARG);
+                         Variant);
 }
 static void run_native() {
   __poseidon_native_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0);
 }
 static void run_dr() {
   __poseidon_direct_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
-                          ARG);
+                          Variant);
 }
 #if POSEIDON_TCEC
 static void run_tc() {
@@ -116,16 +117,17 @@ static double *rand_dev(size_t n) {
 }
 
 // __poseidon_ozaki_dgemm at an M x K operand A. Its cost is linear in the
-// column count, so its rows are keyed by (M, K) alone and measured at a large
-// column count. The operands are laid out as the recognizer dispatches a
+// column count, so its rows are keyed by (M, K) alone and measured at
+// kRectCols columns. The operands are laid out as the recognizer dispatches a
 // reduce: A row-major M x K, B and C column-major, C accumulated.
+static const int kRectCols = 12288;
 static int RM, RN, RK;
 static double *rA, *rB, *rC;
 
 static void run_rect() {
   __poseidon_ozaki_dgemm(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
                          /*ldc=*/RM, /*aColMajor=*/0, /*bColMajor=*/1,
-                         /*cColMajor=*/1, 1.0, 1.0, 0, ARG);
+                         /*cColMajor=*/1, 1.0, 1.0, 0, Variant);
 }
 static void run_rect_native() {
   __poseidon_native_dgemm(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
@@ -139,7 +141,7 @@ static double rect_per_mac(void (*fn)(), int cols) {
   rB = rand_dev((size_t)RK * cols);
   CK(cudaMalloc(&rC, (size_t)RM * cols * 8));
   CK(cudaMemset(rC, 0, (size_t)RM * cols * 8));
-  float t = timeit(fn, REPS);
+  float t = timeit(fn, Reps);
   CK(cudaFree(rB));
   CK(cudaFree(rC));
   return (double)t / ((double)RM * cols * RK);
@@ -151,12 +153,11 @@ static void rect_rows(int M, int K, float t_ref) {
   RK = K;
   rA = rand_dev((size_t)M * K);
   for (unsigned nm : kOzIIModuliCounts) {
-    ARG = nm;
-    double rel = rect_per_mac(run_rect, 12288) / ref_per_mac;
+    Variant = nm;
+    double rel = rect_per_mac(run_rect, kRectCols) / ref_per_mac;
     fprintf(stderr,
-            "[dispatch_calibrate] rect nm=%2u M=%d Ncols=12288 K=%d  rel = "
-            "%.6f\n",
-            nm, M, K, rel);
+            "[dispatch_calibrate] rect nm=%2u M=%d Ncols=%d K=%d  rel = %.6f\n",
+            nm, M, kRectCols, K, rel);
     printf("ozaki_dispatch_rect_rel,nm%u_m%dk%d,%.6f\n", nm, M, K, rel);
   }
   CK(cudaFree(rA));
@@ -181,7 +182,7 @@ static void full_row(int M, int Ncols, int K, float t_ref) {
 // One row, rel = (time of `fn`) / t_ref.
 static void row(const char *family, const char *key, void (*fn)(),
                 float t_ref) {
-  float t = timeit(fn, REPS);
+  float t = timeit(fn, Reps);
   double rel = (double)t / (double)t_ref;
   fprintf(stderr,
           "[dispatch_calibrate] %s,%s  dispatch = %.4f ms  rel = %.6f "
@@ -214,7 +215,7 @@ static int ozaki(int argc, char **argv, float t_ref) {
   // in one session so the rows are mutually consistent.
   char key[16];
   for (unsigned nm : kOzIIModuliCounts) {
-    ARG = nm;
+    Variant = nm;
     snprintf(key, sizeof(key), "nm%u", nm);
     row("ozaki_dispatch_rel", key, run_oz, t_ref);
   }
@@ -236,10 +237,17 @@ static int direct(float t_ref) {
 #endif
                  {kDirectFp32, "f32_f32"}};
   for (const auto &C : Classes) {
-    ARG = C.Mode;
+    Variant = C.Mode;
     row("direct_dispatch_rel", C.Class, run_dr, t_ref);
   }
   return 0;
+}
+
+// The positive integer `s` spells, or 0.
+static int positive(const char *s) {
+  char *end;
+  long v = strtol(s, &end, 10);
+  return *s && !*end && v > 0 && v <= INT_MAX ? (int)v : 0;
 }
 
 int main(int argc, char **argv) {
@@ -255,18 +263,22 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: %s %s N reps [MxK|MxNxK...]\n", argv[0], families);
     return 1;
   }
-  N = atoi(argv[2]);
-  REPS = atoi(argv[3]);
+  N = positive(argv[2]);
+  Reps = positive(argv[3]);
+  if (!N || !Reps) {
+    fprintf(stderr, "%s: N and reps are positive integers\n", argv[0]);
+    return 1;
+  }
   size_t sz = (size_t)N * N;
   srand(1);
   dA = rand_dev(sz);
   dB = rand_dev(sz);
   CK(cudaMalloc(&dC, sz * 8));
 
-  float t_ref = timeit(run_ref, REPS);
+  float t_ref = timeit(run_ref, Reps);
   fprintf(stderr,
           "[dispatch_calibrate] N=%d reps=%d  scalar-FP64 ref = %.4f ms\n", N,
-          REPS, t_ref);
+          Reps, t_ref);
   if (!strcmp(family, "ozaki"))
     return ozaki(argc, argv, t_ref);
   if (!strcmp(family, "direct"))

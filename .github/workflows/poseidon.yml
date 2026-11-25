@@ -9,8 +9,27 @@ on:
   push:
     branches:
       - main
+    paths:
+      - '.github/workflows/poseidon.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/Poseidon/**'
+      - 'enzyme/include/poseidon/**'
+      - 'enzyme/test/Poseidon/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
   pull_request:
+    paths:
+      - '.github/workflows/poseidon.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/Poseidon/**'
+      - 'enzyme/include/poseidon/**'
+      - 'enzyme/test/Poseidon/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
   merge_group:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

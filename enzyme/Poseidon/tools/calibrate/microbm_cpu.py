@@ -435,8 +435,8 @@ def probe_code(T, R, steps):
 
 
 def generate_baseline_code():
-    return f"""
-define i32 @main(i32 %n) optnone noinline {{
+    return """
+define i32 @main(i32 %n) optnone noinline {
 entry:
   %i = alloca i32
   store i32 0, i32* %i
@@ -454,7 +454,7 @@ body:
 
 exit:
   ret i32 0
-}}
+}
 """
 
 

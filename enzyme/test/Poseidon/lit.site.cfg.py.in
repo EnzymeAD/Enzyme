@@ -100,18 +100,18 @@ if @POSEIDON_TEST_TCEC_CUMPSGEMM@:
     config.available_features.add('tcec-cumpsgemm')
 # The device profilers the plugin carries; profile generation for a GPU
 # without one stops at the first probe.
-if @POSEIDON_TEST_NVPTX_PROFILER@:
+if @POSEIDON_TEST_HAS_NVPTX_PROFILER@:
     config.available_features.add('nvptx-device-profiler')
-if @POSEIDON_TEST_AMDGPU_PROFILER@:
+if @POSEIDON_TEST_HAS_AMDGPU_PROFILER@:
     config.available_features.add('amdgpu-device-profiler')
 config.substitutions.append(('%cuda_lib_dir', '@CUDAToolkit_LIBRARY_DIR@'))
-# HIP device compiles against the ROCm installation the build names; a compile
-# that links the device profiler or the HIP runtimes targets their processor.
 # Tests that generate NVPTX code, or whose passes read its target information.
 if @POSEIDON_TEST_HAS_NVPTX@:
     config.available_features.add('nvptx-registered-target')
 if @POSEIDON_TEST_HAS_AMDGPU@:
     config.available_features.add('amdgpu-registered-target')
+# HIP device compiles against the ROCm installation the build names; a compile
+# that links the device profiler or the HIP runtimes targets their processor.
 rocm_path = "@POSEIDON_ROCM_PATH@"
 config.substitutions.append(('%rocm_path', rocm_path))
 config.substitutions.append(('%amdgpu_arch', '@POSEIDON_AMDGPU_ARCH@'))

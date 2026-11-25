@@ -118,3 +118,7 @@ int main(int argc, char **argv) {
 
 // USE: probe_request.cpp:[[#@LINE-68]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
 // USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {
+
+// USAGE: That takes 1 + <sites> x
+// USAGE-NEXT: <steps> more runs, at the perturbation steps
+// POSEIDON_PROBE_LADDER lists
