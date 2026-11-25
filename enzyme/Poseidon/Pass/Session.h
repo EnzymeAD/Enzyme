@@ -33,6 +33,7 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/ValueMap.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Error.h"
 
 #include <map>
 #include <memory>
@@ -91,6 +92,12 @@ public:
 
   MatmulState Matmul;
 };
+
+// The end of a pass a user error stopped: the error is reported, the module is
+// left valid for the passes after this one, and S.Stopped makes the session's
+// later passes leave it as it is. The pass may have changed the module before
+// the error, so no analysis is kept.
+llvm::PreservedAnalyses stopOnError(Session &S, llvm::Module &M, llvm::Error E);
 
 // The session of each module an analysis manager is asked about. Registered
 // with the options of the compile, it makes a session per module; registered

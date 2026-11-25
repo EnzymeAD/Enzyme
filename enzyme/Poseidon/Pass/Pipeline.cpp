@@ -83,11 +83,7 @@ static void eraseUnloweredCalls(Module &M) {
   }
 }
 
-// The end of a pass a user error stopped: the error is reported, the module is
-// left valid for the passes after this one, and the session's later passes
-// leave it as it is. The pass may have changed the module before the error,
-// so no analysis is kept.
-static PreservedAnalyses stopOnError(Session &S, Module &M, Error E) {
+PreservedAnalyses stopOnError(Session &S, Module &M, Error E) {
   reportUserErrors(M.getContext(), std::move(E));
   eraseUnloweredCalls(M);
   S.Stopped = true;
@@ -192,17 +188,27 @@ struct OptimizePass : PassParent<OptimizePass> {
     changed |= lowerDeviceCallSites(O, M);
     changed |= outlineHostSites(O, S.Sites, M);
     changed |= foldDeviceSiteCallees(O, M);
-    changed |= prepareModule(S, M);
+    Expected<bool> prepared = prepareModule(S, M);
+    if (!prepared)
+      return stopOnError(S, M, prepared.takeError());
+    changed |= *prepared;
     SmallVector<CallBase *, 4> calls;
-    if (!O.Profiling.generatesProfile())
-      changed |= optimizeSites(
+    if (!O.Profiling.generatesProfile()) {
+      Expected<bool> optimized = optimizeSites(
           S, collectSites(O, M, {Site::Form::HostBody, Site::Form::Kernel}),
           calls);
+      if (!optimized)
+        return stopOnError(S, M, optimized.takeError());
+      changed |= *optimized;
+    }
 
     // The markers profile generation left, and every marker in profile use.
     SmallVector<Site, 4> markers = collectSites(O, M, {Site::Form::Marker});
     erase_if(markers, [&](Site &site) { return deferSite(O, site.marker); });
-    changed |= optimizeSites(S, markers, calls);
+    Expected<bool> optimized = optimizeSites(S, markers, calls);
+    if (!optimized)
+      return stopOnError(S, M, optimized.takeError());
+    changed |= *optimized;
 
     if (O.Solver.JointDP)
       changed |= solveJointly(S, M);
@@ -371,7 +377,8 @@ struct LatePass : PassParent<LatePass> {
     }
 
     SmallVector<CallBase *, 4> calls;
-    optimizeSites(S, markers, calls);
+    if (Error E = optimizeSites(S, markers, calls).takeError())
+      return stopOnError(S, M, std::move(E));
     SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
     if (O.Solver.JointDP)
       solveJointly(S, M);
@@ -490,7 +497,8 @@ struct FinalizePass : PassParent<FinalizePass> {
                             "that nothing lowered. ") +
                       unloweredRequestReason(PhaseKnown, Phase, Level)));
     const Target &T = Target::of(M);
-    finalizeModule(S, M);
+    if (Error E = finalizeModule(S, M))
+      return stopOnError(S, M, std::move(E));
     // An annotation takes the address of the function it names, and a profiled
     // kernel may make an unknown call.
     if (O.Profiling.generatesProfile() && T.allocatesAddressTakenShared())

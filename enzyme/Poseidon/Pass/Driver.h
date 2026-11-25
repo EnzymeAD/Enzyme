@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Error.h"
 
 namespace llvm {
 class CallBase;
@@ -27,17 +28,18 @@ struct Site;
 // solve chose, appending the calls made to `calls`; in a compile without a
 // profile, the site as written. A marker becomes a call of its body, a kernel
 // a wrapper around its own outlined body.
-bool optimizeSites(Session &S, llvm::ArrayRef<Site> sites,
-                   llvm::SmallVectorImpl<llvm::CallBase *> &calls);
+llvm::Expected<bool>
+optimizeSites(Session &S, llvm::ArrayRef<Site> sites,
+              llvm::SmallVectorImpl<llvm::CallBase *> &calls);
 
 // Profile generation: instruments every site of M that is not deferred with
 // the profiling probes and rewrites its marker into an __enzyme_autodiff
 // request. Returns true if it instrumented a site.
-bool prepareModule(Session &S, llvm::Module &M);
+llvm::Expected<bool> prepareModule(Session &S, llvm::Module &M);
 
 // Drop the canonicalized clones nothing calls any more. Runs once per module,
 // after every site is lowered and inlined.
-void finalizeModule(Session &S, llvm::Module &M);
+llvm::Error finalizeModule(Session &S, llvm::Module &M);
 
 } // namespace poseidon
 

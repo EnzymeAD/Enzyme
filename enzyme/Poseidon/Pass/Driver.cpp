@@ -90,21 +90,21 @@ static void emitSiteCall(CallBase *CI, Function *F,
 
 // A profile-use compile pointed at a directory no profiling run wrote into
 // would otherwise leave every site as written and succeed.
-static void requireProfileDirectory(CallBase *CI, StringRef dir,
-                                    StringRef flag) {
+static Error requireProfileDirectory(CallBase *CI, StringRef dir,
+                                     StringRef flag) {
   const bool isDir = sys::fs::is_directory(dir);
   std::error_code EC;
   if (isDir)
     for (sys::fs::directory_iterator it(dir, EC), end; !EC && it != end;
          it.increment(EC))
       if (sys::path::extension(it->path()) == kProfileFileSuffix)
-        return;
-  reportUserError(*CI,
-                  Twine("the profile directory ") + dir + " (" + flag + ") " +
-                      (isDir ? "holds no .fpprofile file" : "does not exist") +
-                      "; no profiling run wrote into it. Run the "
-                      "program built with -poseidon-profile-generate "
-                      "first, or pass the directory it wrote");
+        return Error::success();
+  return userError(*CI,
+                   Twine("the profile directory ") + dir + " (" + flag + ") " +
+                       (isDir ? "holds no .fpprofile file" : "does not exist") +
+                       "; no profiling run wrote into it. Run the "
+                       "program built with -poseidon-profile-generate "
+                       "first, or pass the directory it wrote");
 }
 
 namespace {
@@ -116,36 +116,40 @@ struct Unprofiled {
 };
 } // namespace
 
-static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
-                                                Function &clone) {
+static Expected<std::optional<Unprofiled>>
+unprofiledSite(Session &S, CallBase *CI, Function &clone) {
   std::optional<Unprofiled> absent, neverExecuted;
-  auto read = [&](StringRef dir, StringRef flag) {
+  auto read = [&](StringRef dir, StringRef flag) -> Error {
     const std::string path = siteProfilePath(S, clone, dir);
     if (!sys::fs::exists(path)) {
-      requireProfileDirectory(CI, dir, flag);
+      if (Error E = requireProfileDirectory(CI, dir, flag))
+        return E;
       if (!absent)
         absent = Unprofiled{false, path};
-      return;
+      return Error::success();
     }
     ProfileMap records;
     FunctionProfileHeader header;
     parseProfileFile(path, clone, records, header);
     if (header.executed)
-      return;
+      return Error::success();
     requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
     if (!neverExecuted)
       neverExecuted = Unprofiled{true, path};
+    return Error::success();
   };
-  read(S.Opts.Profiling.ProfileUse, "-poseidon-profile-use");
+  if (Error E = read(S.Opts.Profiling.ProfileUse, "-poseidon-profile-use"))
+    return std::move(E);
   for (const std::string &dir : S.Opts.Profiling.OutputProfiles)
-    read(dir, "-poseidon-output-profiles");
+    if (Error E = read(dir, "-poseidon-output-profiles"))
+      return std::move(E);
   return absent ? absent : neverExecuted;
 }
 
 // `tau` > 0 is the site's accuracy target, its own when `siteTarget`.
-static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
-                             Function &clone, const Unprofiled &site,
-                             double tau, bool siteTarget) {
+static Error reportUnprofiled(Session &S, CallBase *CI, const Function &body,
+                              Function &clone, const Unprofiled &site,
+                              double tau, bool siteTarget) {
   if (site.neverExecuted) {
     const char *cause =
         "the profiling run instrumented this site and never executed it";
@@ -154,7 +158,7 @@ static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
                    << site.path << "); left unchanged\n";
     explainUnprofiled(S, clone, tau, siteTarget, "never_executed", cause,
                       site.path);
-    return;
+    return Error::success();
   }
   const char *cause =
       "the profiled program did not contain this site (it was annotated "
@@ -162,15 +166,15 @@ static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
       "program did not link, or was renamed)";
   // Strict mode leaves a site unchanged only for a cause that says the site
   // did not run.
-  if (S.Opts.Model.StrictMode) {
-    fail(CI, Twine("no profile of ") + body.getName() + " at " + site.path +
-                 ": " + cause +
-                 ", and -poseidon-strict-mode does not leave a site unchanged");
-    return;
-  }
+  if (S.Opts.Model.StrictMode)
+    return userError(*CI, Twine("no profile of ") + body.getName() + " at " +
+                              site.path + ": " + cause +
+                              ", and -poseidon-strict-mode does not leave a "
+                              "site unchanged");
   warn(CI, Twine("no profile at ") + site.path + ": " + cause +
                "; leaving the site unchanged");
   explainUnprofiled(S, clone, tau, siteTarget, "unprofiled", cause, site.path);
+  return Error::success();
 }
 
 static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
@@ -186,10 +190,10 @@ static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
 // body is reached through (the marker call, or the wrapper kernel's call of its
 // own outlined body), `F` the body and `primalArgs` the caller values its
 // parameters take.
-static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
-                             SmallVectorImpl<Value *> &primalArgs,
-                             double errTol,
-                             SmallVectorImpl<CallBase *> &calls) {
+static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
+                              SmallVectorImpl<Value *> &primalArgs,
+                              double errTol,
+                              SmallVectorImpl<CallBase *> &calls) {
   const Options &O = S.Opts;
   const bool profileUse = O.Profiling.usesProfile();
   if (!profileUse) {
@@ -209,7 +213,7 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
                           "its solve ("
                        << done->getName() << ")\n";
         emitSiteCall(CI, done, primalArgs, calls);
-        return;
+        return Error::success();
       }
 
     // A site the solve applies nothing to calls the original body: the
@@ -234,16 +238,21 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
                        "rewrites");
       markOutlineTransparent(sourceBody);
       emitSiteCall(CI, sourceBody, primalArgs, calls);
-      return;
+      return Error::success();
     }
 
     // A site with nothing to solve from still has to build and run, so it keeps
     // the original body rather than failing the compile.
-    if (std::optional<Unprofiled> site = unprofiledSite(S, CI, *F)) {
-      reportUnprofiled(S, CI, *sourceBody, *F, *site, tau, errTol > 0.0);
+    Expected<std::optional<Unprofiled>> site = unprofiledSite(S, CI, *F);
+    if (!site)
+      return site.takeError();
+    if (*site) {
+      if (Error E = reportUnprofiled(S, CI, *sourceBody, *F, **site, tau,
+                                     errTol > 0.0))
+        return E;
       markOutlineTransparent(sourceBody);
       emitSiteCall(CI, sourceBody, primalArgs, calls);
-      return;
+      return Error::success();
     }
 
     if (O.Diagnostics.Print)
@@ -279,10 +288,11 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
   if (profileUse)
     markOutlineTransparent(F);
   emitSiteCall(CI, F, primalArgs, calls);
+  return Error::success();
 }
 
-static bool optimizeMarker(Session &S, CallInst *CI,
-                           SmallVectorImpl<CallBase *> &calls) {
+static Expected<bool> optimizeMarker(Session &S, CallInst *CI,
+                                     SmallVectorImpl<CallBase *> &calls) {
   Function *F = markerTarget(CI);
   if (!F)
     return false;
@@ -290,7 +300,9 @@ static bool optimizeMarker(Session &S, CallInst *CI,
   std::optional<MarkerArgs> marker = parseMarker(CI, F);
   if (!marker)
     return false;
-  optimizeSiteBody(S, CI, F, marker->primalArgs, marker->errTol, calls);
+  if (Error E =
+          optimizeSiteBody(S, CI, F, marker->primalArgs, marker->errTol, calls))
+    return std::move(E);
   return true;
 }
 
@@ -298,7 +310,7 @@ static bool optimizeMarker(Session &S, CallInst *CI,
 // the wrapper's and the ones the inliner placed in F's callers, is redirected
 // to what the solve chose; a caller redirected to a rewrite is a function the
 // rewrite reached.
-static bool optimizeHostBody(Session &S, const Site &site) {
+static Expected<bool> optimizeHostBody(Session &S, const Site &site) {
   Function &B = *site.fn;
   releaseHostBody(B);
   markOutlineTransparent(&B);
@@ -313,7 +325,9 @@ static bool optimizeHostBody(Session &S, const Site &site) {
   llvm::erase(calls, rep);
   SmallVector<Value *, 8> primalArgs(rep->args());
   SmallVector<CallBase *, 1> lowered;
-  optimizeSiteBody(S, rep, &B, primalArgs, site.target.value_or(0.0), lowered);
+  if (Error E = optimizeSiteBody(S, rep, &B, primalArgs,
+                                 site.target.value_or(0.0), lowered))
+    return std::move(E);
   Function *target = lowered.back()->getCalledFunction();
   for (CallBase *CB : calls) {
     CB->setCalledFunction(target);
@@ -358,8 +372,9 @@ static double profiledSiteCost(Session &S, Function &body) {
 
 // Profile use of the kernel sites: each kernel becomes a wrapper around its
 // own body, and that body is solved and rewritten like a marked one.
-static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
-                            SmallVectorImpl<CallBase *> &calls) {
+static Expected<bool> optimizeKernels(Session &Sess,
+                                      ArrayRef<const Site *> kernels,
+                                      SmallVectorImpl<CallBase *> &calls) {
   const Options &O = Sess.Opts;
   if (kernels.empty())
     return false;
@@ -377,8 +392,8 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
   auto optimize = [&](CallInst *call, Function *body, const Site &site) {
     SmallVector<Value *, 8> primalArgs(call->args());
     noteSiteTarget(O, *site.fn, site.target);
-    optimizeSiteBody(Sess, call, body, primalArgs, site.target.value_or(0.0),
-                     calls);
+    return optimizeSiteBody(Sess, call, body, primalArgs,
+                            site.target.value_or(0.0), calls);
   };
 
   const bool filter =
@@ -390,7 +405,8 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
       Function *body = nullptr;
       if (CallInst *call = outlineKernelBody(Sess.Sites, *site->fn, body)) {
         markOutlineTransparent(body);
-        optimize(call, body, *site);
+        if (Error E = optimize(call, body, *site))
+          return std::move(E);
         changed = true;
       }
     }
@@ -440,37 +456,43 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
       inlineKernelBody(K.call, K.body);
       continue;
     }
-    optimize(K.call, K.body, *K.site);
+    if (Error E = optimize(K.call, K.body, *K.site))
+      return std::move(E);
     changed = true;
   }
   return changed;
 }
 
-bool optimizeSites(Session &S, ArrayRef<Site> sites,
-                   SmallVectorImpl<CallBase *> &calls) {
+Expected<bool> optimizeSites(Session &S, ArrayRef<Site> sites,
+                             SmallVectorImpl<CallBase *> &calls) {
   bool changed = false;
   SmallVector<const Site *, 4> kernels;
   for (const Site &site : sites)
     if (site.form == Site::Form::Kernel)
       kernels.push_back(&site);
-  for (const Site &site : sites)
+  for (const Site &site : sites) {
+    Expected<bool> optimized = false;
     switch (site.form) {
     case Site::Form::Marker:
-      changed |= optimizeMarker(S, site.marker, calls);
+      optimized = optimizeMarker(S, site.marker, calls);
       break;
     case Site::Form::HostBody:
-      changed |= optimizeHostBody(S, site);
+      optimized = optimizeHostBody(S, site);
       break;
     case Site::Form::Kernel:
       // The kernels are solved together, where the first of them stands.
       if (&site == kernels.front())
-        changed |= optimizeKernels(S, kernels, calls);
+        optimized = optimizeKernels(S, kernels, calls);
       break;
     }
+    if (!optimized)
+      return optimized.takeError();
+    changed |= *optimized;
+  }
   return changed;
 }
 
-bool prepareModule(Session &S, Module &M) {
+Expected<bool> prepareModule(Session &S, Module &M) {
   if (!S.Opts.Profiling.generatesProfile())
     return false;
   injectHostProfilerInit(M, S.Opts.Diagnostics.Print);
@@ -551,7 +573,7 @@ static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
   }
 }
 
-void finalizeModule(Session &S, Module &M) {
+Error finalizeModule(Session &S, Module &M) {
   checkPinnedSites(S, M);
   reportHerbieAnswers(S);
   // A site whose solve applied nothing calls the original body again, and an
@@ -569,6 +591,7 @@ void finalizeModule(Session &S, Module &M) {
   // downstream reads it.
   if (auto *NMD = M.getNamedMetadata(kNextSiteIdMD))
     NMD->eraseFromParent();
+  return Error::success();
 }
 
 } // namespace poseidon

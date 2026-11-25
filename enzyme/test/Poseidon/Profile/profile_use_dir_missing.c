@@ -14,4 +14,5 @@ POSEIDON_OPTIMIZE double f(double x, double y) { return (x + y) * x; }
 // CHECK: profile_use_dir_missing.c:[[@LINE-2]]:26: error: Poseidon: the profile directory {{.*}}/none (-poseidon-profile-use) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 // CHECK-NEXT: POSEIDON_OPTIMIZE double f(double x, double y) { return (x + y) * x; }
 // CHECK-NEXT: {{^ *\| *\^$}}
+// CHECK-NEXT: {{^}}1 error generated.{{$}}
 // CHECK-NEXT: exit status 1
