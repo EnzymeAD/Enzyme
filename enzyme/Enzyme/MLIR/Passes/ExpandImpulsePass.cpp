@@ -1667,15 +1667,24 @@ static Value emitSiteLogpdf(OpBuilder &builder, impulse::SampleOp site,
       .getResult(0);
 }
 
+/// Returns the slice of row 0 of the rank-2 `tensor` of type `sliceType`, a
+/// `1 x n` tensor, that takes every `stride`-th column from column `start` on.
+static Value emitColumnSlice(OpBuilder &builder, Location loc,
+                             RankedTensorType sliceType, Value tensor,
+                             int64_t start, int64_t stride = 1) {
+  int64_t end = start + (sliceType.getDimSize(1) - 1) * stride + 1;
+  return impulse::SliceOp::create(builder, loc, sliceType, tensor,
+                                  builder.getDenseI64ArrayAttr({0, start}),
+                                  builder.getDenseI64ArrayAttr({1, end}),
+                                  builder.getDenseI64ArrayAttr({1, stride}));
+}
+
 /// Reads a value of `type` from row 0 of `trace`, starting at column `column`.
 static Value sliceTraceValue(OpBuilder &builder, Location loc, Value trace,
                              int64_t column, RankedTensorType type) {
-  int64_t numElements = type.getNumElements();
-  auto rowType = RankedTensorType::get({1, numElements}, type.getElementType());
-  Value row = impulse::SliceOp::create(
-      builder, loc, rowType, trace, builder.getDenseI64ArrayAttr({0, column}),
-      builder.getDenseI64ArrayAttr({1, column + numElements}),
-      builder.getDenseI64ArrayAttr({1, 1}));
+  auto rowType =
+      RankedTensorType::get({1, type.getNumElements()}, type.getElementType());
+  Value row = emitColumnSlice(builder, loc, rowType, trace, column);
   return impulse::ReshapeOp::create(builder, loc, type, row);
 }
 
@@ -1802,13 +1811,8 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
     int64_t start = window.first, end = window.second;
     auto winType =
         RankedTensorType::get({1, end - start}, traceType.getElementType());
-    auto sliceOf = [&](Value v) -> Value {
-      return impulse::SliceOp::create(
-          b, loc, winType, v, b.getDenseI64ArrayAttr({0, start}),
-          b.getDenseI64ArrayAttr({1, end}), b.getDenseI64ArrayAttr({1, 1}));
-    };
-    Value propWin = sliceOf(proposed);
-    Value curWin = sliceOf(trace);
+    Value propWin = emitColumnSlice(b, loc, winType, proposed, start);
+    Value curWin = emitColumnSlice(b, loc, winType, trace, start);
     Value upd =
         impulse::SelectOp::create(b, loc, winType, accepted, propWin, curWin);
     out = updateColumns(b, loc, out, upd, start);
@@ -2740,9 +2744,7 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
   auto rowType = RankedTensorType::get({1, (int64_t)numMoves}, elemType);
   auto colType = RankedTensorType::get({1, 1}, elemType);
   auto unitSlice = [&](Value t, int64_t c) -> Value {
-    return impulse::SliceOp::create(
-        b, loc, colType, t, b.getDenseI64ArrayAttr({0, c}),
-        b.getDenseI64ArrayAttr({1, c + 1}), b.getDenseI64ArrayAttr({1, 1}));
+    return emitColumnSlice(b, loc, colType, t, c);
   };
   for (unsigned k = 0; k < numMoves; ++k) {
     DenseMap<Operation *, Value> drawOverride;
@@ -2792,11 +2794,7 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
       if (even) {
         currentAt[s] = impulse::ReshapeOp::create(
             b, loc, vecType,
-            impulse::SliceOp::create(
-                b, loc, rowType, trace0,
-                b.getDenseI64ArrayAttr({0, columns[0][s]}),
-                b.getDenseI64ArrayAttr({1, columns[numMoves - 1][s] + 1}),
-                b.getDenseI64ArrayAttr({1, stride})));
+            emitColumnSlice(b, loc, rowType, trace0, columns[0][s], stride));
       } else {
         SmallVector<Value> incoming;
         for (unsigned k = 0; k < numMoves; ++k)
@@ -2878,12 +2876,7 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
       for (auto &[groupStart, slots] : groups) {
         Value block = impulse::ReshapeOp::create(
             b, loc, blockType,
-            impulse::SliceOp::create(
-                b, loc, winType, trace0,
-                b.getDenseI64ArrayAttr({0, groupStart}),
-                b.getDenseI64ArrayAttr(
-                    {1, groupStart + (int64_t)numMoves * moveStride}),
-                b.getDenseI64ArrayAttr({1, 1})));
+            emitColumnSlice(b, loc, winType, trace0, groupStart));
         for (size_t s : slots) {
           Value slotCol =
               impulse::ReshapeOp::create(b, loc, blockColType, resultAt[s]);
@@ -3704,11 +3697,9 @@ struct ExpandImpulsePass
       auto writeObserved = [&](OpBuilder &b, Value trace) -> Value {
         Value constraint = op.getConstraint();
         for (auto [col, off, n] : observedBranchCols) {
-          Value obs = impulse::SliceOp::create(
+          Value obs = emitColumnSlice(
               b, loc, RankedTensorType::get({1, n}, traceType.getElementType()),
-              constraint, b.getDenseI64ArrayAttr({0, off}),
-              b.getDenseI64ArrayAttr({1, off + n}),
-              b.getDenseI64ArrayAttr({1, 1}));
+              constraint, off);
           trace = writeCols(b, trace, col, obs);
         }
         return trace;
@@ -3729,11 +3720,8 @@ struct ExpandImpulsePass
 
         Value curVec;
         if (evenlySpaced) {
-          Value row = impulse::SliceOp::create(
-              b, loc, rowType, trace,
-              b.getDenseI64ArrayAttr({0, selectedCols[0]}),
-              b.getDenseI64ArrayAttr({1, selectedCols[n - 1] + 1}),
-              b.getDenseI64ArrayAttr({1, stride}));
+          Value row =
+              emitColumnSlice(b, loc, rowType, trace, selectedCols[0], stride);
           curVec = impulse::ReshapeOp::create(b, loc, vecType, row);
         } else {
           SmallVector<Value> cur;
@@ -3790,11 +3778,7 @@ struct ExpandImpulsePass
           trace = updateColumns(b, loc, trace, newRow, selectedCols[0]);
         } else {
           for (auto [k, col] : llvm::enumerate(selectedCols)) {
-            Value colSlice = impulse::SliceOp::create(
-                b, loc, colType, newRow,
-                b.getDenseI64ArrayAttr({0, (int64_t)k}),
-                b.getDenseI64ArrayAttr({1, (int64_t)k + 1}),
-                b.getDenseI64ArrayAttr({1, 1}));
+            Value colSlice = emitColumnSlice(b, loc, colType, newRow, k);
             trace = updateColumns(b, loc, trace, colSlice, col);
           }
         }
@@ -4108,12 +4092,9 @@ struct ExpandImpulsePass
                   sampleOp, fn, op.getConstrainedAddressesAttr(),
                   sampleOp.getSymbolAttr(), symbolTable);
 
-              subConstraint = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), subConstraintType, constraint,
-                  rewriter.getDenseI64ArrayAttr({0, subConstraintOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, subConstraintOffset + subConstraintSize}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              subConstraint = emitColumnSlice(rewriter, sampleOp.getLoc(),
+                                              subConstraintType, constraint,
+                                              subConstraintOffset);
             } else {
               subConstraint = emitSplatConstant(rewriter, sampleOp.getLoc(),
                                                 subConstraintType, 0.0);
@@ -4276,16 +4257,8 @@ struct ExpandImpulsePass
         }
         tainted = computeRegenerateTaint(newFn, op.getSelectionAttr());
         // Non-regenerated values are unchanged: start from the previous trace.
-        {
-          auto valueSliceType = RankedTensorType::get(
-              {1, positionSize}, entryBuilder.getF64Type());
-          initTrace = impulse::SliceOp::create(
-                          entryBuilder, initLoc, valueSliceType, prevTrace,
-                          entryBuilder.getDenseI64ArrayAttr({0, 0}),
-                          entryBuilder.getDenseI64ArrayAttr({1, positionSize}),
-                          entryBuilder.getDenseI64ArrayAttr({1, 1}))
-                          .getResult();
-        }
+        initTrace = emitColumnSlice(entryBuilder, initLoc, traceType, prevTrace,
+                                    /*start=*/0);
       }
 
       ArrayAttr selection = op.getSelectionAttr();
@@ -4559,12 +4532,9 @@ struct ExpandImpulsePass
 
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
                                                       rewriter.getF64Type());
-            Value subPrevTrace = impulse::SliceOp::create(
-                rewriter, sampleOp.getLoc(), subTraceType, prevTrace,
-                rewriter.getDenseI64ArrayAttr({0, mergeOffset}),
-                rewriter.getDenseI64ArrayAttr(
-                    {1, mergeOffset + subPositionSize}),
-                rewriter.getDenseI64ArrayAttr({1, 1}));
+            Value subPrevTrace =
+                emitColumnSlice(rewriter, sampleOp.getLoc(), subTraceType,
+                                prevTrace, mergeOffset);
 
             Value subConstraint;
             ArrayAttr subConstrainedForOp;
@@ -4578,12 +4548,9 @@ struct ExpandImpulsePass
               if (subConstraintSize > 0 && subConstraintOffset >= 0) {
                 auto subConstraintType = RankedTensorType::get(
                     {1, subConstraintSize}, rewriter.getF64Type());
-                subConstraint = impulse::SliceOp::create(
-                    rewriter, sampleOp.getLoc(), subConstraintType, constraint,
-                    rewriter.getDenseI64ArrayAttr({0, subConstraintOffset}),
-                    rewriter.getDenseI64ArrayAttr(
-                        {1, subConstraintOffset + subConstraintSize}),
-                    rewriter.getDenseI64ArrayAttr({1, 1}));
+                subConstraint = emitColumnSlice(rewriter, sampleOp.getLoc(),
+                                                subConstraintType, constraint,
+                                                subConstraintOffset);
                 subConstrainedForOp = subConstrainedAddrs;
               }
             }
