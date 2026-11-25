@@ -81,6 +81,8 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     /// The type of a sample when the parameter types `paramTypes` fix it,
     /// else null.
     RankedTensorType getSampleType(TypeRange paramTypes) const;
+    /// The number of parameters that `base` and `transforms` read.
+    unsigned getNumParameters() const;
   }];
 }
 

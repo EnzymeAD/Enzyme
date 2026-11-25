@@ -16,15 +16,23 @@
 using namespace mlir;
 using namespace mlir::impulse;
 
+/// Checks the `dist` and `support` of a site whose operands are `inputs`.
 static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
-                                       SupportAttr support) {
+                                       SupportAttr support, ValueRange inputs) {
+  if (!dist)
+    return success();
   // Only parameterless bases: the site's dist operands belong to the chain.
-  if (dist && dist.getTransforms() && !dist.getTransforms().empty() &&
+  if (dist.getTransforms() && !dist.getTransforms().empty() &&
       dist.getBase() != DistBaseKind::STD_NORMAL &&
       dist.getBase() != DistBaseKind::STD_UNIFORM)
     return op->emitOpError("a transform chain is only supported on the "
                            "STD_NORMAL and STD_UNIFORM bases");
-  if (!dist || !support)
+  int64_t numParams = static_cast<int64_t>(inputs.size()) - 1;
+  if (numParams < dist.getNumParameters())
+    return op->emitOpError("`dist` reads ")
+           << dist.getNumParameters() << " parameters, but `inputs` holds "
+           << std::max<int64_t>(numParams, 0) << " after the RNG state";
+  if (!support)
     return success();
   if (dist.getSupport().getKind() != support.getKind())
     return op->emitOpError(
@@ -110,11 +118,11 @@ LogicalResult SampleOp::verify() {
              << " disagrees with the type derived from the dist attribute "
              << derived;
   }
-  return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
+  return verifyDistSupport(*this, getDistAttr(), getSupportAttr(), getInputs());
 }
 
 LogicalResult SampleRegionOp::verify() {
-  return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
+  return verifyDistSupport(*this, getDistAttr(), getSupportAttr(), getInputs());
 }
 
 //===----------------------------------------------------------------------===//
@@ -235,6 +243,9 @@ template <typename OpTy> static LogicalResult verifyInferSignature(OpTy op) {
   }
 
   unsigned numStateOut = op.getStateOut().size();
+  if (hasVI && numStateOut == 0)
+    return op.emitOpError("vi_config requires the VI state in `state_out` and "
+                          "`state_schema`");
   ArrayAttr schema = op.getStateSchemaAttr();
   if (numStateOut != 0) {
     if (!schema)

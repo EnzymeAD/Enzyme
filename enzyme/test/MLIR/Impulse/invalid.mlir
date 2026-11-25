@@ -81,3 +81,21 @@ func.func @select_type_mismatch(%cond : tensor<i1>, %a : tensor<2xf64>, %b : ten
   %r = impulse.select %cond, %a, %b : (tensor<i1>, tensor<2xf64>, tensor<3xf64>) -> tensor<2xf64>
   return %r : tensor<2xf64>
 }
+
+// -----
+
+func.func @dist_missing_parameter(%rng : tensor<2xui64>, %loc : tensor<f64>) -> tensor<f64> {
+  // expected-error @below {{'impulse.sample' op `dist` reads 2 parameters, but `inputs` holds 1 after the RNG state}}
+  %x:2 = impulse.sample(%rng, %loc) <{dist = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>]>, symbol = #impulse.symbol<1>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+  return %x#1 : tensor<f64>
+}
+
+// -----
+
+func.func private @model(tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+
+func.func @vi_without_state(%rng : tensor<2xui64>, %mean : tensor<f64>, %trace : tensor<1x1xf64>, %lr : tensor<f64>) {
+  // expected-error @below {{'impulse.infer' op vi_config requires the VI state in `state_out` and `state_schema`}}
+  %res:4 = impulse.infer @model(%rng, %mean) given %trace init_step_size = %lr <{vi_config = #impulse.vi_config<guide_kind = AUTO_DELTA, optimizer_kind = SGD>, selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]]}> : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1xf64>, tensor<1xf64>, tensor<2xui64>)
+  return
+}

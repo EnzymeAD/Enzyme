@@ -148,6 +148,39 @@ SupportAttr DistAttr::getSupport() const {
                           /*upper=*/FloatAttr(), /*event_size=*/IntegerAttr());
 }
 
+unsigned DistAttr::getNumParameters() const {
+  unsigned numParams = 0;
+  switch (getBase()) {
+  case DistBaseKind::STD_NORMAL:
+  case DistBaseKind::STD_UNIFORM:
+  case DistBaseKind::CUSTOM:
+    break;
+  case DistBaseKind::EXPONENTIAL:
+  case DistBaseKind::BERNOULLI:
+  case DistBaseKind::POISSON:
+  case DistBaseKind::HALF_NORMAL:
+  case DistBaseKind::HALF_CAUCHY:
+  case DistBaseKind::DIRICHLET:
+    numParams = 1;
+    break;
+  case DistBaseKind::GAMMA:
+  case DistBaseKind::DISCRETE_UNIFORM:
+  case DistBaseKind::MVN:
+  case DistBaseKind::GUMBEL:
+  case DistBaseKind::HALF_STUDENT_T:
+    numParams = 2;
+    break;
+  case DistBaseKind::STUDENT_T:
+    numParams = 3;
+    break;
+  }
+  if (ArrayAttr transforms = getTransforms())
+    for (Attribute a : transforms)
+      if (cast<XformAttr>(a).getKind() == XformKind::AFFINE)
+        numParams = std::max(numParams, 2u);
+  return numParams;
+}
+
 RankedTensorType DistAttr::getSampleType(TypeRange paramTypes) const {
   // An MVN sample has the type of its mean; no other base fixes the type.
   if (getBase() != DistBaseKind::MVN || paramTypes.empty())

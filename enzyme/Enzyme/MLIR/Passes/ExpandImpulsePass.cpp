@@ -193,6 +193,66 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
+/// Fails after emitting on `op` when `support`, the support of the site at
+/// `address`, lacks a bound or the event size that unconstraining reads.
+static LogicalResult verifyUnconstrainable(Operation *op, Attribute address,
+                                           impulse::SupportAttr support) {
+  if (!support)
+    return success();
+  impulse::SupportKind kind = support.getKind();
+  SmallVector<StringRef> missing;
+  if ((kind == impulse::SupportKind::INTERVAL ||
+       kind == impulse::SupportKind::GREATER_THAN) &&
+      !support.getLowerBound())
+    missing.push_back("`lower_bound`");
+  if ((kind == impulse::SupportKind::INTERVAL ||
+       kind == impulse::SupportKind::LESS_THAN) &&
+      !support.getUpperBound())
+    missing.push_back("`upper_bound`");
+  if (kind == impulse::SupportKind::SIMPLEX && !support.getEventSize())
+    missing.push_back("`event_size`");
+  if (missing.empty())
+    return success();
+  return op->emitError("Impulse: the ")
+         << impulse::stringifySupportKind(kind) << " support of the site at "
+         << address << " has no " << llvm::join(missing, " and ")
+         << ", which unconstraining the site needs";
+}
+
+/// Checks the supports of the sites of `fn` at the top-level addresses in
+/// `selection`.
+static LogicalResult verifySelectedSupports(Operation *op,
+                                            FunctionOpInterface fn,
+                                            ArrayAttr selection) {
+  SampleOpMap sampleMap = buildSampleOpMap(fn);
+  for (Attribute addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.size() != 1)
+      continue;
+    impulse::SampleOp site = findSampleBySymbol(sampleMap, address[0]);
+    if (site && failed(verifyUnconstrainable(op, addr, site.getSupportAttr())))
+      return failure();
+  }
+  return success();
+}
+
+/// Checks the supports of the sites of `regionOp` at the addresses in its
+/// `selection`.
+static LogicalResult verifySelectedSupports(impulse::InferRegionOp regionOp) {
+  ArrayAttr selection = regionOp.getSelectionAttr();
+  DenseSet<Attribute> selected(selection.begin(), selection.end());
+  WalkResult result =
+      regionOp.getSampling().walk([&](impulse::SampleRegionOp site) {
+        Attribute address = site.getAddressAttr();
+        if (address && selected.contains(address) &&
+            failed(verifyUnconstrainable(regionOp, address,
+                                         site.getSupportAttr())))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      });
+  return failure(result.wasInterrupted());
+}
+
 /// Support info for the top-level addresses in `selection`. Positions follow
 /// `all_addresses` order when `positionDeclarationOrder` is set, else
 /// `selection` order.
@@ -3192,6 +3252,8 @@ struct ExpandImpulsePass
             initPosType.getNumElements() / mcmcOp.getNumChains();
         model.constrainedPositionSize = model.positionSize;
       } else if constexpr (isRegionForm) {
+        if (failed(verifySelectedSupports(mcmcOp)))
+          return failure();
         model.supports = collectSupportInfoForRegion(mcmcOp);
         if (model.supports.empty()) {
           mcmcOp.emitError("Impulse: failed to collect per-site support info "
@@ -3202,22 +3264,26 @@ struct ExpandImpulsePass
         if (model.positionSize <= 0)
           return failure();
       } else {
+        for (Attribute address : model.selection) {
+          if (cast<ArrayAttr>(address).size() > 1) {
+            mcmcOp.emitError("Impulse: HMC and NUTS on a model take only "
+                             "top-level addresses in `selection`, not ")
+                << address;
+            return failure();
+          }
+        }
         auto fn = cast<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
-        int64_t constrainedFallback = computePositionSizeForSelection(
-            mcmcOp, fn, model.selection, symbolTable);
-        if (constrainedFallback <= 0)
+        if (computePositionSizeForSelection(mcmcOp, fn, model.selection,
+                                            symbolTable) <= 0)
+          return failure();
+        if (failed(verifySelectedSupports(mcmcOp, fn, model.selection)))
           return failure();
 
         model.supports = collectSupportInfoForSelection(
             mcmcOp, fn, model.selection, model.allAddresses, symbolTable,
             /*positionDeclarationOrder=*/false);
         sizesFromSupports();
-        // Nested addresses get no support info; use the constrained width.
-        if (model.constrainedPositionSize != constrainedFallback) {
-          model.constrainedPositionSize = constrainedFallback;
-          model.positionSize = constrainedFallback;
-        }
 
         auto fnType = cast<FunctionType>(fn.getFunctionType());
         model.fnResultTypes.assign(fnType.getResults().begin(),
@@ -3292,6 +3358,8 @@ struct ExpandImpulsePass
                        "region (run sicm first)");
           return failure();
         }
+        if (failed(verifySelectedSupports(op)))
+          return failure();
         if (!collectRegionVILayout(op, regionLayout)) {
           op.emitError("Impulse VI: failed to derive position layout from the "
                        "infer_region sampler");
@@ -3311,6 +3379,8 @@ struct ExpandImpulsePass
         model.positionSize = computePositionSizeForSelection(
             op, fn, model.selection, symbolTable);
         if (model.positionSize <= 0)
+          return failure();
+        if (failed(verifySelectedSupports(op, fn, model.selection)))
           return failure();
 
         model.supports = collectSupportInfoForSelection(
