@@ -48,8 +48,8 @@ class AMDGPUTarget final : public Target {
 public:
   bool isDevice() const override { return true; }
   StringRef name() const override { return "AMDGPU"; }
-  // The triple names the processor (amdgpu9.42-amd-amdhsa), and a function
-  // carries target-cpu only where it differs.
+  /// The triple names the processor (amdgpu9.42-amd-amdhsa), and a function
+  /// carries target-cpu only where it differs.
   StringRef processor(const Function &F) const override {
     StringRef cpu = Target::processor(F);
 #if LLVM_VERSION_MAJOR >= 24
@@ -66,18 +66,18 @@ public:
   bool isKernel(const Function &F) const override {
     return F.getCallingConv() == CallingConv::AMDGPU_KERNEL;
   }
-  // No boundProfiledLaunch: a profiled kernel has its bound as the
-  // amdgpu-flat-work-group-size it shares with the original.
+  /// No boundProfiledLaunch: a profiled kernel has its bound as the
+  /// amdgpu-flat-work-group-size it shares with the original.
   unsigned globalAddressSpace() const override { return 1; }
   std::optional<unsigned> sharedAddressSpace() const override { return 3; }
-  // The local data share a workgroup addresses (64 KiB on gfx942, AMDGPU.td
-  // FeatureISAVersion9_4_2).
+  /// The local data share a workgroup addresses (64 KiB on gfx942, AMDGPU.td
+  /// FeatureISAVersion9_4_2).
   uint64_t maxStaticSharedBytes() const override { return 64 * 1024; }
   bool allocatesAddressTakenShared() const override { return true; }
 
-  // AMDGPU has no block-size register: HIP's blockDim reads the work-group
-  // size out of the implicit kernel arguments, three i16 from byte 12 (code
-  // object v5 and later).
+  /// AMDGPU has no block-size register: HIP's blockDim reads the work-group
+  /// size out of the implicit kernel arguments, three i16 from byte 12 (code
+  /// object v5 and later).
   LaunchGeometry decodeLaunchValue(const Value *V) const override {
     if (const auto *L = dyn_cast<LoadInst>(V)) {
       if (!L->getType()->isIntegerTy(16))
@@ -162,8 +162,8 @@ public:
       return false;
     }
   }
-  // ocml's functions are not always-inline, and a build without the plugin
-  // inlines them all the same.
+  /// ocml's functions are not always-inline, and a build without the plugin
+  /// inlines them all the same.
   bool inlinesMathCall(const Function &) const override { return true; }
 
   StringRef profilerBitcode() const override {
@@ -174,8 +174,8 @@ public:
     return "";
 #endif
   }
-  // The library carries the ROCm device libraries of one processor, so a
-  // probe compiled for another cannot call into it.
+  /// The library carries the ROCm device libraries of one processor, so a
+  /// probe compiled for another cannot call into it.
   std::string profilerMismatch(const Function &F) const override {
 #ifdef POSEIDON_DEVICE_PROFILER_AMDGPU
     if (processor(F) != POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH)

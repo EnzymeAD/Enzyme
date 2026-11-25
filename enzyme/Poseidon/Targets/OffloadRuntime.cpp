@@ -42,8 +42,8 @@ static bool isLaunchStub(const Function &F) {
   return F.getName().contains(launchStubPrefix());
 }
 
-// Whether `M` launches kernels: a module constructor registers them, or a
-// stub launches one.
+/// Whether `M` launches kernels: a module constructor registers them, or a
+/// stub launches one.
 static bool launchesKernels(const Module &M) {
   return M.getFunction("__cuda_module_ctor") ||
          M.getFunction("__hip_module_ctor") || llvm::any_of(M, isLaunchStub);
@@ -77,8 +77,8 @@ StringRef withoutExternalizedPostfix(StringRef name) {
   return name;
 }
 
-// The part of a kernel's mangled name shared with its launch stub: kernel
-// `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.
+/// The part of a kernel's mangled name shared with its launch stub: kernel
+/// `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.
 static StringRef mangledSuffix(StringRef mangled) {
   if (mangled.starts_with("_Z")) {
     mangled = mangled.drop_front(2);

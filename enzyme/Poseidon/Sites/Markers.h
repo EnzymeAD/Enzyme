@@ -34,34 +34,34 @@ namespace poseidon {
 
 struct Options;
 
-// Whether a called function is the Poseidon annotation, under either of its
-// names, __poseidon_fp_optimize and __enzyme_fp_optimize.
+/// Whether a called function is the Poseidon annotation, under either of its
+/// names, __poseidon_fp_optimize and __enzyme_fp_optimize.
 bool isMarkerCall(llvm::StringRef calleeName);
 
-// The reverse-mode request profile generation makes of a site, which Enzyme
-// lowers; LLVM uniques a second declaration's name with a suffix.
+/// The reverse-mode request profile generation makes of a site, which Enzyme
+/// lowers; LLVM uniques a second declaration's name with a suffix.
 constexpr llvm::StringLiteral kAutodiffRequest = "__enzyme_autodiff_poseidon";
 
 void warn(llvm::CallBase *CI, const llvm::Twine &message);
 void fail(llvm::CallBase *CI, const llvm::Twine &message);
 llvm::Function *markerTargetOrNull(llvm::CallInst *CI);
 llvm::Function *markerTarget(llvm::CallInst *CI);
-// The argument of a marker call or an Enzyme request that says what the
-// argument after it is, as enzyme_dup does.
+/// The argument of a marker call or an Enzyme request that says what the
+/// argument after it is, as enzyme_dup does.
 llvm::Value *activityArg(llvm::LLVMContext &C, llvm::StringRef name);
 
-// Whether `V`, an argument of a marker call or of a call through an identity,
-// is the activity marker `name`.
+/// Whether `V`, an argument of a marker call or of a call through an identity,
+/// is the activity marker `name`.
 bool isActivityMarker(llvm::Value *V, llvm::StringRef name);
 
-// The identity of poseidon.h a call of __poseidon_optimize goes through: the
-// plain one when fn takes the arguments as written, the explicit one when it
-// does not. A marker call goes through none.
+/// The identity of poseidon.h a call of __poseidon_optimize goes through: the
+/// plain one when fn takes the arguments as written, the explicit one when it
+/// does not. A marker call goes through none.
 enum class Identity { Plain, Explicit, None };
 
-// The names of the identities, without and with an accuracy target. The
-// explicit ones are declared and never defined, so that a build without the
-// plugin does not link a call fn does not take.
+/// The names of the identities, without and with an accuracy target. The
+/// explicit ones are declared and never defined, so that a build without the
+/// plugin does not link a call fn does not take.
 constexpr llvm::StringLiteral kPlainIdentity = "__poseidon_site";
 constexpr llvm::StringLiteral kPlainIdentityTau = "__poseidon_site_tau";
 constexpr llvm::StringLiteral kExplicitIdentity = "__poseidon_site_explicit";
@@ -70,35 +70,35 @@ constexpr llvm::StringLiteral kExplicitIdentityTau =
 
 constexpr llvm::StringLiteral kMarkerName = "__poseidon_fp_optimize";
 
-// How the arguments of a call of `fn` are read: as fn's own (automatic), or
-// with activity markers and shadows, as the marker reads them (explicit).
+/// How the arguments of a call of `fn` are read: as fn's own (automatic), or
+/// with activity markers and shadows, as the marker reads them (explicit).
 enum class ArgumentList { Automatic, Explicit };
 
-// What a call's list is, and of an automatic list, fn's own arguments and the
-// accuracy target its poseidon_tau gives, if it has one.
+/// What a call's list is, and of an automatic list, fn's own arguments and the
+/// accuracy target its poseidon_tau gives, if it has one.
 struct CallArguments {
   ArgumentList kind;
   llvm::SmallVector<llvm::Value *, 8> own;
   std::optional<double> tau;
 };
 
-// The arguments `call` passes for the parameters of `fn` (all of a call
-// through an identity, those after the function of a marker call) are an
-// explicit list when one of them is an activity marker (an enzyme_* name, or a
-// poseidon_* name other than poseidon_tau), and an automatic list otherwise.
-// poseidon_tau and the constant after it give the accuracy target of a marker
-// call; the rest of an automatic list are fn's own arguments. An explicit list
-// is read by parseMarker. None, with an error at `call`, when the list cannot
-// be read as either.
+/// The arguments `call` passes for the parameters of `fn` (all of a call
+/// through an identity, those after the function of a marker call) are an
+/// explicit list when one of them is an activity marker (an enzyme_* name, or a
+/// poseidon_* name other than poseidon_tau), and an automatic list otherwise.
+/// poseidon_tau and the constant after it give the accuracy target of a marker
+/// call; the rest of an automatic list are fn's own arguments. An explicit list
+/// is read by parseMarker. None, with an error at `call`, when the list cannot
+/// be read as either.
 std::optional<CallArguments> readArgumentList(llvm::CallBase *call,
                                               const llvm::Function &fn,
                                               Identity identity);
 
-// Whether `tau` is an accuracy target: positive and finite.
+/// Whether `tau` is an accuracy target: positive and finite.
 bool isAccuracyTarget(double tau);
 
-// The accuracy target `value` gives a call of `fn`; none, with an error at
-// `call`, unless it is a floating-point constant that isAccuracyTarget.
+/// The accuracy target `value` gives a call of `fn`; none, with an error at
+/// `call`, unless it is a floating-point constant that isAccuracyTarget.
 std::optional<double> readTarget(llvm::CallBase *call, llvm::Value *value,
                                  const llvm::Function &fn);
 
@@ -108,29 +108,29 @@ asLeftByPipeline(llvm::Function &body,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &copies);
 bool callsEnzymeRequest(llvm::Function &F);
 bool deferSite(const Options &O, llvm::CallInst *CI);
-// The marker calls of the module, in module order.
+/// The marker calls of the module, in module order.
 void collectMarkerCalls(llvm::Module &M,
                         llvm::SmallVectorImpl<llvm::CallInst *> &out);
-// Whether deferSite left the marked body `F` to the late run.
+/// Whether deferSite left the marked body `F` to the late run.
 bool isDeferredBody(const llvm::Function &F);
 
-// Site ids number the profiled clones of one module and arm the
-// condition-number perturbation one site at a time, so the late run has to
-// continue the early run's numbering rather than restart it. Carried on the
-// module because the two runs are different pass instances.
+/// Site ids number the profiled clones of one module and arm the
+/// condition-number perturbation one site at a time, so the late run has to
+/// continue the early run's numbering rather than restart it. Carried on the
+/// module because the two runs are different pass instances.
 constexpr llvm::StringLiteral kNextSiteIdMD = "poseidon.next.site.id";
 
 unsigned getNextSiteId(llvm::Module &M);
 void setNextSiteId(llvm::Module &M, unsigned next);
 
-// What the marker call says about one site: the caller value behind each of the
-// site's parameters, the accuracy target, and which marker arguments are
-// Poseidon's own and must not be forwarded to the derivative request.
+/// What the marker call says about one site: the caller value behind each of the
+/// site's parameters, the accuracy target, and which marker arguments are
+/// Poseidon's own and must not be forwarded to the derivative request.
 struct MarkerArgs {
   llvm::SmallVector<llvm::Value *, 8> primalArgs;
   llvm::SmallVector<bool, 16> forward;
-  // The pointers marked poseidon_shadow, whose shadows profileSite makes: the
-  // marker argument naming the activity, the pointer's, and its parameter.
+  /// The pointers marked poseidon_shadow, whose shadows profileSite makes: the
+  /// marker argument naming the activity, the pointer's, and its parameter.
   struct MadeShadow {
     unsigned activity, arg, param;
   };
@@ -138,8 +138,8 @@ struct MarkerArgs {
   double errTol = 0.0;
 };
 
-// What the marker call `CI` of body `F` says; none, with an error at `CI`, if
-// the marker cannot be read.
+/// What the marker call `CI` of body `F` says; none, with an error at `CI`, if
+/// the marker cannot be read.
 std::optional<MarkerArgs> parseMarker(llvm::CallInst *CI, llvm::Function *F);
 
 } // namespace poseidon

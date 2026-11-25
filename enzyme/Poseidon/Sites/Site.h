@@ -35,27 +35,27 @@ struct Options;
 struct Site {
   enum class Form { Marker, Kernel, HostBody };
   Form form;
-  // The marker's target (null when the marker names none), the kernel, or
-  // the host function's outlined body.
+  /// The marker's target (null when the marker names none), the kernel, or
+  /// the host function's outlined body.
   llvm::Function *fn;
-  // The marker call of a Form::Marker site.
+  /// The marker call of a Form::Marker site.
   llvm::CallInst *marker = nullptr;
-  // The site's own accuracy target, of a kernel's annotation or a host
-  // function's. A marker's is part of its argument list, read with it.
+  /// The site's own accuracy target, of a kernel's annotation or a host
+  /// function's. A marker's is part of its argument list, read with it.
   std::optional<double> target;
-  // A kernel only -poseidon-kernels names.
+  /// A kernel only -poseidon-kernels names.
   bool byRegex = false;
 
-  // Whether the site is a marker whose body is left to the late run.
+  /// Whether the site is a marker whose body is left to the late run.
   bool deferred() const;
 };
 
-// The sites of M of the given forms: the forms in the order given, the sites
-// of one form in module order.
+/// The sites of M of the given forms: the forms in the order given, the sites
+/// of one form in module order.
 llvm::SmallVector<Site, 4> collectSites(const Options &O, llvm::Module &M,
                                         llvm::ArrayRef<Site::Form> forms);
 
-// The sites of M left to the late run: markers whose body deferSite deferred.
+/// The sites of M left to the late run: markers whose body deferSite deferred.
 llvm::SmallVector<Site, 4> collectDeferredSites(llvm::Module &M);
 
 } // namespace poseidon

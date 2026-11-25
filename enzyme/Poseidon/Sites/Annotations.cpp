@@ -57,8 +57,8 @@ void diagnoseSite(Function &F, const Twine &message,
 
 namespace {
 
-// What the argument global of a Poseidon annotation says: POSEIDON_OPTIMIZE's
-// int 0, POSEIDON_OPTIMIZE_TAU's one double, or neither.
+/// What the argument global of a Poseidon annotation says: POSEIDON_OPTIMIZE's
+/// int 0, POSEIDON_OPTIMIZE_TAU's one double, or neither.
 struct AnnotationArgument {
   enum { NoTarget, Target, Malformed } Kind;
   double Tau = 0.0;
@@ -87,12 +87,12 @@ static AnnotationArgument readAnnotationArgument(Constant *args) {
   return {AnnotationArgument::Target, value->getValueAPF().convertToDouble()};
 }
 
-// Replaces the module's llvm.global.annotations, `GA`, by an array of
-// `entries`.
+/// Replaces the module's llvm.global.annotations, `GA`, by an array of
+/// `entries`.
 static void replaceAnnotations(Module &M, GlobalVariable *GA,
                                ArrayRef<Constant *> entries) {
   auto *arr = cast<ConstantArray>(GA->getInitializer());
-  auto *init = ConstantArray::get(
+  Constant *init = ConstantArray::get(
       ArrayType::get(arr->getType()->getElementType(), entries.size()),
       entries);
   auto *NG = new GlobalVariable(
@@ -103,15 +103,15 @@ static void replaceAnnotations(Module &M, GlobalVariable *GA,
   GA->eraseFromParent();
 }
 
-// The entries of the module's llvm.global.annotations, `GA`; null when the
-// module has none.
+/// The entries of the module's llvm.global.annotations, `GA`; null when the
+/// module has none.
 static ConstantArray *globalAnnotations(Module &M, GlobalVariable *&GA) {
   GA = M.getGlobalVariable("llvm.global.annotations");
   return GA ? dyn_cast_or_null<ConstantArray>(GA->getInitializer()) : nullptr;
 }
 
-// The annotation string of an llvm.global.annotations entry: none unless the
-// entry is a struct of at least two fields whose second names a C string.
+/// The annotation string of an llvm.global.annotations entry: none unless the
+/// entry is a struct of at least two fields whose second names a C string.
 static std::optional<StringRef> entryAnnotation(Value *op) {
   auto *entry = dyn_cast<ConstantStruct>(op);
   if (!entry || entry->getNumOperands() < 2)
@@ -126,11 +126,11 @@ static std::optional<StringRef> entryAnnotation(Value *op) {
   return str->getAsCString();
 }
 
-// The annotated functions of this module with the accuracy target each
-// annotation carries, in module order so that the site numbering does not
-// depend on the order a container happened to hash them in. A Poseidon
-// annotation that cannot be read as written is a compile error on its function
-// rather than a site without the target its source asked for.
+/// The annotated functions of this module with the accuracy target each
+/// annotation carries, in module order so that the site numbering does not
+/// depend on the order a container happened to hash them in. A Poseidon
+/// annotation that cannot be read as written is a compile error on its function
+/// rather than a site without the target its source asked for.
 MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
   GlobalVariable *GA;
   ConstantArray *arr = globalAnnotations(M, GA);
@@ -198,9 +198,9 @@ void noteSiteTarget(const Options &O, const Function &F,
 // Device-function sites: POSEIDON_OPTIMIZE on a function a kernel calls (a
 // lambda a generic launch helper runs, say) makes that kernel a site.
 
-// What `K` reaches through direct calls of defined functions, not looking
-// inside annotated ones: `wrappers` is K and everything reached that way,
-// `reached` the annotated device functions it calls.
+/// What `K` reaches through direct calls of defined functions, not looking
+/// inside annotated ones: `wrappers` is K and everything reached that way,
+/// `reached` the annotated device functions it calls.
 static void
 kernelCallees(Function &K,
               const MapVector<Function *, std::optional<double>> &annotated,
@@ -219,12 +219,12 @@ kernelCallees(Function &K,
         }
 }
 
-// Why `K` cannot be the site of the annotated functions it calls, empty if it
-// can. A kernel is the site of an annotated device function only when the rest
-// of what it runs is a wrapper around the call (index arithmetic, a bounds
-// check, a loop over the call, further such wrappers); the whole kernel is what
-// gets profiled and rewritten, so floating-point work outside the annotated
-// function would be rewritten without having been marked.
+/// Why `K` cannot be the site of the annotated functions it calls, empty if it
+/// can. A kernel is the site of an annotated device function only when the rest
+/// of what it runs is a wrapper around the call (index arithmetic, a bounds
+/// check, a loop over the call, further such wrappers); the whole kernel is
+/// what gets profiled and rewritten, so floating-point work outside the
+/// annotated function would be rewritten without having been marked.
 static std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
   for (Function *W : wrappers)
     for (Instruction &I : instructions(*W)) {
@@ -238,8 +238,8 @@ static std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
   return "";
 }
 
-// Gives `K` the annotation `fn` carries, target included, so that every later
-// phase sees an annotated kernel.
+/// Gives `K` the annotation `fn` carries, target included, so that every later
+/// phase sees an annotated kernel.
 static void annotateLike(Function &K, Function &fn) {
   Module &M = *K.getParent();
   GlobalVariable *GA;
@@ -268,16 +268,17 @@ static void annotateLike(Function &K, Function &fn) {
   replaceAnnotations(M, GA, entries);
 }
 
-// Before inlining, on the device: every kernel that calls an annotated device
-// function becomes a site with that function's target. A kernel that cannot be
-// the site is an error in a compile that generates or uses a profile, and is
-// left as written with a warning in any other; an annotated kernel keeps its
-// own annotation.
+/// Before inlining, on the device: every kernel that calls an annotated device
+/// function becomes a site with that function's target. A kernel that cannot be
+/// the site is an error in a compile that generates or uses a profile, and is
+/// left as written with a warning in any other; an annotated kernel keeps its
+/// own annotation.
 bool propagateDeviceSites(const Options &O, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
     return false;
-  auto annotated = annotatedFunctions(M);
+  MapVector<Function *, std::optional<double>> annotated =
+      annotatedFunctions(M);
   if (llvm::none_of(annotated,
                     [&](auto &kv) { return !T.isKernel(*kv.first); }))
     return false;
@@ -345,20 +346,20 @@ bool propagateDeviceSites(const Options &O, Module &M) {
   return !called.empty();
 }
 
-// Whether `CB` calls code a device site folds in: a site's computation is
-// everything its kernel runs on the device, whatever the inliner decided, but
-// the math library, whose calls the solve prices as operations.
+/// Whether `CB` calls code a device site folds in: a site's computation is
+/// everything its kernel runs on the device, whatever the inliner decided, but
+/// the math library, whose calls the solve prices as operations.
 static bool foldsIntoSite(const Target &T, CallBase &CB) {
   Function *callee = CB.getCalledFunction();
   return callee && !callee->isDeclaration() && !T.isKernel(*callee) &&
          deviceMathName(callee->getName()).empty();
 }
 
-// At OptimizerEarly: the kernel is the site, so what the inliner left of the
-// calls it makes (to the annotated function, the wrappers on the way to it, and
-// what those call) is folded into it here. Inlining is not forced earlier: a
-// site the solve leaves alone has to compile exactly as the kernel would
-// without the annotation.
+/// At OptimizerEarly: the kernel is the site, so what the inliner left of the
+/// calls it makes (to the annotated function, the wrappers on the way to it,
+/// and what those call) is folded into it here. Inlining is not forced earlier:
+/// a site the solve leaves alone has to compile exactly as the kernel would
+/// without the annotation.
 bool foldDeviceSiteCallees(const Options &O, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
@@ -399,8 +400,8 @@ void warnSitesWithoutProfile(Session &S, Module &M) {
              DS_Warning);
 }
 
-// The module's POSEIDON_OPTIMIZE annotations removed, with what only they
-// referred to.
+/// The module's POSEIDON_OPTIMIZE annotations removed, with what only they
+/// referred to.
 bool dropSiteAnnotations(Module &M) {
   GlobalVariable *GA;
   ConstantArray *arr = globalAnnotations(M, GA);
@@ -433,11 +434,11 @@ bool dropSiteAnnotations(Module &M) {
   return true;
 }
 
-// At PipelineStart without a profile action, once the sites are known: they
-// are reported and their annotations dropped. An annotation is a use of the
-// function it names, which the inliner counts as a second caller (no last-call
-// bonus, no deletion once inlined), so the module then compiles as its source
-// does without them.
+/// At PipelineStart without a profile action, once the sites are known: they
+/// are reported and their annotations dropped. An annotation is a use of the
+/// function it names, which the inliner counts as a second caller (no last-call
+/// bonus, no deletion once inlined), so the module then compiles as its source
+/// does without them.
 bool leaveSitesAsWritten(Session &S, Module &M) {
   warnSitesWithoutProfile(S, M);
 
@@ -454,9 +455,9 @@ bool leaveSitesAsWritten(Session &S, Module &M) {
 // Outlined sites: a site's computation moved into a body of its own that the
 // function or kernel carrying the annotation calls.
 
-// Whether `F` is the call operator of a lambda. A closure type demangles as
-// 'lambda'(...), or as $_<n> where clang needs no mangling number for it (a
-// lambda in a function of a host-only compile).
+/// Whether `F` is the call operator of a lambda. A closure type demangles as
+/// 'lambda'(...), or as $_<n> where clang needs no mangling number for it (a
+/// lambda in a function of a host-only compile).
 static bool isLambdaCallOperator(const Function &F) {
   std::optional<DemangledFunction> D = demangleFunction(F.getName());
   return D && D->BaseName == "operator()" &&
@@ -471,10 +472,10 @@ static bool isHostScalar(Type *T) {
          T->isFloatTy() || T->isDoubleTy();
 }
 
-// Why `F` cannot be a host site, empty if it can. The profiled clone is
-// differentiated with one activity per parameter, which a pointer, a
-// floating-point scalar and an integer have, and its value comes back only as
-// one of the latter two.
+/// Why `F` cannot be a host site, empty if it can. The profiled clone is
+/// differentiated with one activity per parameter, which a pointer, a
+/// floating-point scalar and an integer have, and its value comes back only as
+/// one of the latter two.
 std::string hostSiteRefusal(Function &F) {
   if (F.isVarArg())
     return "is variadic";
@@ -499,20 +500,20 @@ std::string hostSiteRefusal(Function &F) {
   return "";
 }
 
-// The body a site's call targets must not reach codegen as a call: under
-// -fcuda-rdc a call that is not folded back is a real ABI call, and the kernel
-// entry then pays its register and frame budget, which lowers occupancy or
-// makes a large block's launch fail. Marked on the solve path for both
-// annotation forms, so that a site the solve leaves unchanged is inlined
-// exactly like one it rewrote.
+/// The body a site's call targets must not reach codegen as a call: under
+/// -fcuda-rdc a call that is not folded back is a real ABI call, and the kernel
+/// entry then pays its register and frame budget, which lowers occupancy or
+/// makes a large block's launch fail. Marked on the solve path for both
+/// annotation forms, so that a site the solve leaves unchanged is inlined
+/// exactly like one it rewrote.
 void markOutlineTransparent(Function *body) {
   body->removeFnAttr(Attribute::NoInline);
   body->removeFnAttr(Attribute::OptimizeNone);
   body->addFnAttr(Attribute::AlwaysInline);
 }
 
-// Whether every use of `P`, a pointer to an aggregate, is one reroot can
-// rebuild over a pointer in another address space.
+/// Whether every use of `P`, a pointer to an aggregate, is one reroot can
+/// rebuild over a pointer in another address space.
 static bool reroots(const Value *P) {
   for (const Use &U : P->uses()) {
     const User *I = U.getUser();
@@ -529,8 +530,8 @@ static bool reroots(const Value *P) {
   return true;
 }
 
-// The uses of `from` rebuilt over `to`, which points to the same aggregate
-// through the generic address space.
+/// The uses of `from` rebuilt over `to`, which points to the same aggregate
+/// through the generic address space.
 static void reroot(Value *from, Value *to) {
   for (Use &U : make_early_inc_range(from->uses())) {
     auto *I = cast<Instruction>(U.getUser());
@@ -561,10 +562,10 @@ static void reroot(Value *from, Value *to) {
   }
 }
 
-// Moves the code of `F` into `B`, a new function of as many parameters, with
-// `rewire` making each use of a parameter of F one of B's, and makes F a
-// wrapper that calls B with what `passArg` makes of each of its parameters.
-// Returns that call.
+/// Moves the code of `F` into `B`, a new function of as many parameters, with
+/// `rewire` making each use of a parameter of F one of B's, and makes F a
+/// wrapper that calls B with what `passArg` makes of each of its parameters.
+/// Returns that call.
 static CallInst *
 outlineInto(Function &F, Function &B,
             function_ref<void(Argument &From, Argument &To)> rewire,
@@ -594,10 +595,10 @@ outlineInto(Function &F, Function &B,
   return call;
 }
 
-// Make the kernel a wrapper around its own body so that both phases see the
-// structure they already handle: a function holding the annotated computation,
-// reached through one call whose arguments are the site's inputs. Returns that
-// call, or null if the kernel cannot be a site.
+/// Make the kernel a wrapper around its own body so that both phases see the
+/// structure they already handle: a function holding the annotated computation,
+/// reached through one call whose arguments are the site's inputs. Returns that
+/// call, or null if the kernel cannot be a site.
 CallInst *outlineKernelBody(Session &S, Function &K, Function *&bodyOut) {
   if (K.isVarArg() || !K.getReturnType()->isVoidTy()) {
     diagnoseSite(K, "an annotated kernel must be a void, non-variadic function",
@@ -658,12 +659,12 @@ CallInst *outlineKernelBody(Session &S, Function &K, Function *&bodyOut) {
   return call;
 }
 
-// Make `F` a wrapper around its own body, as outlineKernelBody does for a
-// kernel, but before the inliner runs: every call of F, direct, indirect or
-// from another translation unit, reaches the body through F, and a caller the
-// inliner puts F into calls the body itself. Until the site is lowered the
-// body is kept from being inlined and from interprocedural rewriting, so that
-// it keeps the signature and the code F was written with.
+/// Make `F` a wrapper around its own body, as outlineKernelBody does for a
+/// kernel, but before the inliner runs: every call of F, direct, indirect or
+/// from another translation unit, reaches the body through F, and a caller the
+/// inliner puts F into calls the body itself. Until the site is lowered the
+/// body is kept from being inlined and from interprocedural rewriting, so that
+/// it keeps the signature and the code F was written with.
 static void outlineHostFunction(Session &S, Function &F,
                                 std::optional<double> tau) {
   Module &M = *F.getParent();
@@ -690,13 +691,14 @@ static void outlineHostFunction(Session &S, Function &F,
   appendToCompilerUsed(M, {B});
 }
 
-// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
-// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
+/// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
+/// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
 bool outlineHostSites(Session &S, Module &M) {
   const Options &O = S.Opts;
   if (Target::of(M).isDevice() || isOffloadHostHalf(M))
     return false;
-  auto annotated = annotatedFunctions(M);
+  MapVector<Function *, std::optional<double>> annotated =
+      annotatedFunctions(M);
   if (annotated.empty())
     return false;
   const bool active = O.Profiling.profileAction();
@@ -762,8 +764,8 @@ void releaseHostBody(Function &B) {
   });
 }
 
-// Undo outlineKernelBody: a filtered site has to leave the kernel exactly as it
-// was found.
+/// Undo outlineKernelBody: a filtered site has to leave the kernel exactly as
+/// it was found.
 void inlineKernelBody(CallInst *call, Function *body) {
   InlineFunctionInfo IFI;
   (void)InlineFunction(*call, IFI);

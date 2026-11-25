@@ -139,8 +139,8 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
 
 namespace {
 
-// One profile file read line by line; every error names the file and the line
-// and stops the compile at the site.
+/// One profile file read line by line; every error names the file and the line
+/// and stops the compile at the site.
 class ProfileParser {
 public:
   ProfileParser(const MemoryBuffer &Buffer, StringRef Path, const Function &F)
@@ -160,7 +160,7 @@ private:
                         "; re-run profile generation.");
   }
 
-  // The next line, trimmed; none at the end of the file.
+  /// The next line, trimmed; none at the end of the file.
   std::optional<StringRef> next() {
     if (Lines.is_at_end())
       return std::nullopt;
@@ -196,8 +196,8 @@ private:
       To = integer<T>(Part, Field);
   }
 
-  // The value of the next line, which is the `Key` line of the record of
-  // `Slot`.
+  /// The value of the next line, which is the `Key` line of the record of
+  /// `Slot`.
   StringRef field(size_t Slot, StringRef Key) {
     std::optional<StringRef> Line = next();
     if (!Line)

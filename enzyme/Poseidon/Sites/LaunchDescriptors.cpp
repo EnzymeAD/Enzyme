@@ -23,6 +23,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -51,10 +52,10 @@ static StringRef kindName(LaunchKind kind) {
                                           : "profile generation";
 }
 
-// The name both halves of one compile know their translation unit by: the one
-// -poseidon-unit gives, the id clang gives both halves of a HIP compile, or
-// else the values of every Poseidon flag, which a compile hands both halves
-// alike.
+/// The name both halves of one compile know their translation unit by: the one
+/// -poseidon-unit gives, the id clang gives both halves of a HIP compile, or
+/// else the values of every Poseidon flag, which a compile hands both halves
+/// alike.
 static std::string unitName(const Options &O, const Module &M) {
   if (!O.Herbie.Unit.empty())
     return O.Herbie.Unit;
@@ -75,10 +76,10 @@ struct Manifest {
 
 } // namespace
 
-// The source file tells apart the units one compile writes into a cache, the
-// unit name the compiles of one source into it.
-// The manifest of M, in the -poseidon-launch-dir directory or else the
-// -poseidon-cache one; none when neither names a directory.
+/// The source file tells apart the units one compile writes into a cache, the
+/// unit name the compiles of one source into it.
+/// The manifest of M, in the -poseidon-launch-dir directory or else the
+/// -poseidon-cache one; none when neither names a directory.
 static std::optional<Manifest> manifestOf(const Options &O, const Module &M) {
   StringRef dir =
       O.Herbie.LaunchDir.empty() ? O.Herbie.Cache : O.Herbie.LaunchDir;
@@ -222,13 +223,14 @@ void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
   const json::Array *lines = value ? value->getArray(kindName(kind)) : nullptr;
   if (read.value && !lines)
     read.unreadable = ("it holds no " + kindName(kind) + " list").str();
-  if (!read.unreadable.empty())
-    errs() << "[poseidon] launch manifest " << m.path << " is unreadable ("
-           << read.unreadable << "); no launch stub is rewritten from it\n";
-  else if (!read.differs.empty())
-    errs() << "[poseidon] launch manifest " << m.path
-           << " was written for a different " << read.differs
-           << "; no launch stub is rewritten from it\n";
+  if (!read.unreadable.empty() || !read.differs.empty())
+    M.getContext().diagnose(DiagnosticInfoGeneric(
+        Twine("Poseidon: the launch manifest ") + m.path +
+            (read.unreadable.empty()
+                 ? " was written for a different " + read.differs
+                 : " is unreadable (" + read.unreadable + ")") +
+            "; no launch stub is rewritten from it",
+        DS_Warning));
   if (!lines)
     return;
   for (const json::Value &entry : *lines) {
@@ -286,9 +288,9 @@ static bool isByValueParam(const Argument &A) {
                                  A.getArgNo(), kByValueParam);
 }
 
-// Whether nothing the body does writes the memory `A` points to. The readonly
-// attribute is not enough: under -fgpu-rdc, which profile generation adds, a
-// kernel is weak_odr and nothing infers it.
+/// Whether nothing the body does writes the memory `A` points to. The readonly
+/// attribute is not enough: under -fgpu-rdc, which profile generation adds, a
+/// kernel is weak_odr and nothing infers it.
 static bool onlyRead(const Argument &A) {
   if (isReadOnly(A.getParent(), A.getArgNo()))
     return true;

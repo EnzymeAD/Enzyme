@@ -34,8 +34,8 @@ using namespace llvm;
 
 namespace poseidon {
 
-// A substring match, because a C++ frontend mangles the marker's template
-// instantiation.
+/// A substring match, because a C++ frontend mangles the marker's template
+/// instantiation.
 bool isMarkerCall(StringRef calleeName) {
   return calleeName.contains(kMarkerName) ||
          calleeName.contains("__enzyme_fp_optimize");
@@ -49,9 +49,9 @@ void fail(CallBase *CI, const Twine &message) {
   diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Error);
 }
 
-// The body a marker names, or null, without diagnostics: a malformed marker
-// is reported once, by the handler that lowers it. An empty body is returned
-// as found; only markerTarget refuses it.
+/// The body a marker names, or null, without diagnostics: a malformed marker
+/// is reported once, by the handler that lowers it. An empty body is returned
+/// as found; only markerTarget refuses it.
 Function *markerTargetOrNull(CallInst *CI) {
   Value *fn = CI->getArgOperand(CI->hasStructRetAttr() ? 1 : 0);
   while (!isa<Function>(fn)) {
@@ -95,15 +95,15 @@ Function *markerTarget(CallInst *CI) {
 
 // Deferred sites: a marked body that is still an __enzyme_* request.
 
-// A marked body whose content is a derivative request holds no arithmetic
-// until Enzyme has lowered it, so at OptimizerEarly there is nothing to
-// profile and nothing to rewrite. Such a site is deferred: its marker call is
-// left in place and the body is marked for the late run, after Enzyme.
+/// A marked body whose content is a derivative request holds no arithmetic
+/// until Enzyme has lowered it, so at OptimizerEarly there is nothing to
+/// profile and nothing to rewrite. Such a site is deferred: its marker call is
+/// left in place and the body is marked for the late run, after Enzyme.
 static constexpr StringLiteral kSiteDeferred = "poseidon-deferred";
 
-// The Enzyme requests whose result is the body's content. Matched as
-// substrings, as Enzyme matches them, because a C++ frontend mangles the
-// request's template instantiation.
+/// The Enzyme requests whose result is the body's content. Matched as
+/// substrings, as Enzyme matches them, because a C++ frontend mangles the
+/// request's template instantiation.
 static bool isEnzymeRequestName(StringRef name) {
   static constexpr StringLiteral kRequests[] = {
       "__enzyme_autodiff",   "__enzyme_fwddiff",  "__enzyme_fwdsplit",
@@ -116,20 +116,20 @@ static bool isEnzymeRequestName(StringRef name) {
   return false;
 }
 
-// Enzyme names what it generates after the function it differentiated, with
-// one of these prefixes.
+/// Enzyme names what it generates after the function it differentiated, with
+/// one of these prefixes.
 static bool isEnzymeGeneratedName(StringRef name) {
   return name.starts_with("fwddiffe") || name.starts_with("diffe") ||
          name.starts_with("augmented_") || name.starts_with("fwdsplit") ||
          name.starts_with("batch_");
 }
 
-// Fold the code Enzyme generated for the request into the deferred body. What
-// Enzyme leaves behind is a body holding one call to the generated function,
-// and nothing in the -O2/-O3 pipeline inlines after OptimizerEarly, so without
-// this the site is still a call and still has no arithmetic. Only the generated
-// functions are folded; a libdevice call the body makes stays a call, so the
-// solve prices it exactly as it prices one in a primal site.
+/// Fold the code Enzyme generated for the request into the deferred body. What
+/// Enzyme leaves behind is a body holding one call to the generated function,
+/// and nothing in the -O2/-O3 pipeline inlines after OptimizerEarly, so without
+/// this the site is still a call and still has no arithmetic. Only the
+/// generated functions are folded; a libdevice call the body makes stays a
+/// call, so the solve prices it exactly as it prices one in a primal site.
 unsigned foldEnzymeGenerated(Function &body) {
   return inlineCallsWhile(body, [&](CallBase &CB) {
     auto *CI = dyn_cast<CallInst>(&CB);
@@ -139,13 +139,13 @@ unsigned foldEnzymeGenerated(Function &body) {
   });
 }
 
-// A copy of a deferred body as the pipeline left it, with the functions Enzyme
-// generated for it, for a site the solve leaves alone. Nothing inlines after
-// Enzyme in a plugin-off build, so the always-inline functions Enzyme's code
-// calls (libdevice's __nv_*) stay calls there; in the copy those calls are
-// noinline, so that the late run's always-inliners leave them too and a
-// refused site is not optimized further than the code as written (a primal
-// and a tangent sqrt would merge into one).
+/// A copy of a deferred body as the pipeline left it, with the functions Enzyme
+/// generated for it, for a site the solve leaves alone. Nothing inlines after
+/// Enzyme in a plugin-off build, so the always-inline functions Enzyme's code
+/// calls (libdevice's __nv_*) stay calls there; in the copy those calls are
+/// noinline, so that the late run's always-inliners leave them too and a
+/// refused site is not optimized further than the code as written (a primal
+/// and a tangent sqrt would merge into one).
 Function *asLeftByPipeline(Function &body,
                            DenseMap<Function *, Function *> &copies) {
   if (Function *copy = copies.lookup(&body))
@@ -170,9 +170,9 @@ Function *asLeftByPipeline(Function &body,
   return copy;
 }
 
-// Whether `F`, or anything it reaches through a direct call, still asks for a
-// derivative. The walk goes through the always-inline wrappers a frontend puts
-// between the marked body and the request.
+/// Whether `F`, or anything it reaches through a direct call, still asks for a
+/// derivative. The walk goes through the always-inline wrappers a frontend puts
+/// between the marked body and the request.
 bool callsEnzymeRequest(Function &F) {
   SmallPtrSet<Function *, 8> seen;
   SmallVector<Function *, 8> work;
@@ -198,8 +198,8 @@ bool callsEnzymeRequest(Function &F) {
   return false;
 }
 
-// True when this site belongs to the late run. Marks the body the first time,
-// so that both phases and both passes agree without re-deciding.
+/// True when this site belongs to the late run. Marks the body the first time,
+/// so that both phases and both passes agree without re-deciding.
 bool deferSite(const Options &O, CallInst *CI) {
   Function *F = markerTargetOrNull(CI);
   if (!F || F->empty())
@@ -233,7 +233,7 @@ bool isDeferredBody(const Function &F) {
 }
 
 unsigned getNextSiteId(Module &M) {
-  auto *NMD = M.getNamedMetadata(kNextSiteIdMD);
+  NamedMDNode *NMD = M.getNamedMetadata(kNextSiteIdMD);
   if (!NMD || NMD->getNumOperands() == 0)
     return 0;
   auto *C = mdconst::extract<ConstantInt>(NMD->getOperand(0)->getOperand(0));
@@ -241,16 +241,16 @@ unsigned getNextSiteId(Module &M) {
 }
 
 void setNextSiteId(Module &M, unsigned next) {
-  auto *NMD = M.getOrInsertNamedMetadata(kNextSiteIdMD);
+  NamedMDNode *NMD = M.getOrInsertNamedMetadata(kNextSiteIdMD);
   NMD->clearOperands();
   NMD->addOperand(MDNode::get(M.getContext(),
                               ConstantAsMetadata::get(ConstantInt::get(
                                   Type::getInt32Ty(M.getContext()), next))));
 }
 
-// The name an Enzyme activity marker carries, however the frontend spelled it:
-// a metadata string in hand-written IR, a load of the __device__ int global in
-// CUDA sources.
+/// The name an Enzyme activity marker carries, however the frontend spelled it:
+/// a metadata string in hand-written IR, a load of the __device__ int global in
+/// CUDA sources.
 static std::optional<StringRef> activityMarkerName(Value *res) {
   if (auto *av = dyn_cast<MetadataAsValue>(res))
     if (auto *ms = dyn_cast<MDString>(av->getMetadata()))
@@ -265,8 +265,8 @@ static std::optional<StringRef> activityMarkerName(Value *res) {
   return std::nullopt;
 }
 
-// Everything forwarded to the derivative request is spelled enzyme_*, as Enzyme
-// reads its own requests; poseidon_* is Poseidon's own.
+/// Everything forwarded to the derivative request is spelled enzyme_*, as
+/// Enzyme reads its own requests; poseidon_* is Poseidon's own.
 static bool isMarkerName(StringRef name) {
   return name.starts_with("enzyme_") || name.starts_with("poseidon_");
 }
@@ -275,7 +275,8 @@ bool isActivityMarker(Value *V, StringRef name) {
   return activityMarkerName(V) == name;
 }
 
-// What a mistaken argument list is to become, said after what is wrong with it.
+/// What a mistaken argument list is to become, said after what is wrong with
+/// it.
 static std::string listRemedy(StringRef name) {
   return ("; pass " + name +
           "'s own arguments, or an explicit list that puts enzyme_dup "
@@ -395,7 +396,7 @@ std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
     std::optional<unsigned> madeShadow;
     bool skipArg = false;
 
-    while (auto name = activityMarkerName(res)) {
+    while (std::optional<StringRef> name = activityMarkerName(res)) {
       if (!isMarkerName(*name))
         break;
       unsigned skip = 0;

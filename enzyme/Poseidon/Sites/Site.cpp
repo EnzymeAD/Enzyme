@@ -35,8 +35,8 @@ static void collectMarkers(Module &M, SmallVectorImpl<Site> &out) {
     out.push_back({Site::Form::Marker, markerTargetOrNull(CI), CI});
 }
 
-// The annotated kernels, then the kernels only -poseidon-kernels names, in
-// module order.
+/// The annotated kernels, then the kernels only -poseidon-kernels names, in
+/// module order.
 static void collectKernels(const Options &O, Module &M,
                            SmallVectorImpl<Site> &out) {
   const Target &T = Target::of(M);

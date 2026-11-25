@@ -37,8 +37,8 @@ using namespace llvm;
 
 namespace poseidon {
 
-// The special registers of the thread index, the block index and the block
-// dimension, by LaunchValue and axis.
+/// The special registers of the thread index, the block index and the block
+/// dimension, by LaunchValue and axis.
 static constexpr Intrinsic::ID kSreg[3][3] = {
     {Intrinsic::nvvm_read_ptx_sreg_tid_x, Intrinsic::nvvm_read_ptx_sreg_tid_y,
      Intrinsic::nvvm_read_ptx_sreg_tid_z},
@@ -71,17 +71,17 @@ public:
   bool isKernel(const Function &F) const override {
     return F.getCallingConv() == CallingConv::PTX_Kernel;
   }
-  // Nothing at compile time bounds the block shape of a profiled kernel's
-  // launch below the device's limit; unbounded, ptxas sizes the reverse pass's
-  // registers for small blocks, and a larger launch the original makes runs out
-  // of registers.
+  /// Nothing at compile time bounds the block shape of a profiled kernel's
+  /// launch below the device's limit; unbounded, ptxas sizes the reverse pass's
+  /// registers for small blocks, and a larger launch the original makes runs
+  /// out of registers.
   void boundProfiledLaunch(Function &K) const override {
     if (!K.hasFnAttribute("nvvm.maxntid"))
       K.addFnAttr("nvvm.maxntid", "1024");
   }
   unsigned globalAddressSpace() const override { return 1; }
   std::optional<unsigned> sharedAddressSpace() const override { return 3; }
-  // ptxas rejects the whole module above it.
+  /// ptxas rejects the whole module above it.
   uint64_t maxStaticSharedBytes() const override { return 48 * 1024; }
 
   LaunchGeometry decodeLaunchValue(const Value *V) const override {
@@ -140,16 +140,16 @@ public:
       return false;
     }
   }
-  // One instruction where sqrt.rn.f32 is a sequence; the backend selects one
-  // divided by it as rsqrt.approx.f32.
+  /// One instruction where sqrt.rn.f32 is a sequence; the backend selects one
+  /// divided by it as rsqrt.approx.f32.
   Intrinsic::ID approxSqrtF32() const override {
     return Intrinsic::nvvm_sqrt_approx_f;
   }
-  // PTX ISA 8.8, sections 9.7.3.15 and 9.7.3.16: over the positive finite
-  // range, sqrt.approx.f32 is within 2^-23 and rsqrt.approx.f32 within
-  // 2^-22.9 of the exact result. The model divides one by its root and rounds
-  // where rsqrt.approx.f32 does not, which can take up to 2^-24 off the error
-  // it carries.
+  /// PTX ISA 8.8, sections 9.7.3.15 and 9.7.3.16: over the positive finite
+  /// range, sqrt.approx.f32 is within 2^-23 and rsqrt.approx.f32 within
+  /// 2^-22.9 of the exact result. The model divides one by its root and rounds
+  /// where rsqrt.approx.f32 does not, which can take up to 2^-24 off the error
+  /// it carries.
   double approxSqrtF32Error() const override {
     return std::exp2(-22.9) + 0x1p-24;
   }

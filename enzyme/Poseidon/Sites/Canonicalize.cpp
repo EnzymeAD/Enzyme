@@ -121,8 +121,8 @@ static bool isOptimizableOperation(const Instruction *I) {
   }
 }
 
-// An undef or poison operand has no value to sample and may take a different
-// one at each use; a constant expression has no literal.
+/// An undef or poison operand has no value to sample and may take a different
+/// one at each use; a constant expression has no literal.
 static bool isModelledOperand(const Value *V) {
   Type *T = V->getType();
   if (isa<Argument, ConstantFP>(V))
@@ -245,7 +245,7 @@ struct CanonicalizeAnalyses {
     FAM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
 
     FAM.registerPass([] {
-      auto AM = AAManager();
+      AAManager AM;
       AM.registerFunctionAnalysis<BasicAA>();
       AM.registerFunctionAnalysis<TypeBasedAA>();
       AM.registerModuleAnalysis<GlobalsAA>();
@@ -262,8 +262,8 @@ struct CanonicalizeAnalyses {
 
 } // namespace
 
-// A noreturn call marked willreturn is UB, which turns the guard in front of an
-// exit() into an assume in the clone that ships.
+/// A noreturn call marked willreturn is UB, which turns the guard in front of
+/// an exit() into an assume in the clone that ships.
 static void setFullWillReturn(Function *NewF) {
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
@@ -298,7 +298,7 @@ insertNewCanonicalIV(Loop *L, Type *Ty, const Twine &Name) {
 
 static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
                                Instruction *Increment, ScalarEvolution &SE) {
-  auto *CanonicalSCEV = SE.getSCEV(CanonicalIV);
+  const SCEV *CanonicalSCEV = SE.getSCEV(CanonicalIV);
 
   for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II);) {
     PHINode *PN = cast<PHINode>(II);
@@ -320,7 +320,7 @@ static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     }
 
     IRBuilder<> B(PN);
-    auto *Tmp = B.CreatePHI(PN->getType(), 0);
+    PHINode *Tmp = B.CreatePHI(PN->getType(), 0);
     for (auto *Pred : predecessors(Header))
       Tmp->addIncoming(UndefValue::get(Tmp->getType()), Pred);
     PN->replaceAllUsesWith(Tmp);
@@ -372,9 +372,9 @@ static void canonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   TargetLibraryInfo &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
   ScalarEvolution SE(*F, TLI, AC, DT, LI);
   for (Loop *L : LI.getLoopsInPreorder()) {
-    auto pair =
+    auto [iv, increment] =
         insertNewCanonicalIV(L, Type::getInt64Ty(F->getContext()), "iv");
-    removeRedundantIVs(L->getHeader(), pair.first, pair.second, SE);
+    removeRedundantIVs(L->getHeader(), iv, increment, SE);
   }
   PreservedAnalyses PA;
   PA.preserve<AssumptionAnalysis>();
@@ -435,13 +435,13 @@ static void removeRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
 
 namespace {
 
-// The operand of a fused multiply-add that is negated before the fusion.
+/// The operand of a fused multiply-add that is negated before the fusion.
 enum class Negate { None, X, Z };
 
 } // namespace
 
-// Replaces `I` by fmuladd(X, Y, Z), with the operand `N` names negated first;
-// the negation and the fmuladd carry the fast-math flags of `I`.
+/// Replaces `I` by fmuladd(X, Y, Z), with the operand `N` names negated first;
+/// the negation and the fmuladd carry the fast-math flags of `I`.
 static void fuseMulAdd(BinaryOperator *I, Value *X, Value *Y, Value *Z,
                        Negate N) {
   IRBuilder<> B(I);
@@ -456,9 +456,9 @@ static void fuseMulAdd(BinaryOperator *I, Value *X, Value *Y, Value *Z,
   I->eraseFromParent();
 }
 
-// fmul+fadd and fmul+fsub where contraction is allowed become fmuladd, and an
-// fcmp+select that picks the larger or the smaller operand becomes
-// maxnum/minnum.
+/// fmul+fadd and fmul+fsub where contraction is allowed become fmuladd, and an
+/// fcmp+select that picks the larger or the smaller operand becomes
+/// maxnum/minnum.
 static void preprocess(Function *F) {
   using namespace llvm::PatternMatch;
 

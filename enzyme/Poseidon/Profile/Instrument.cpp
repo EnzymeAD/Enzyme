@@ -57,7 +57,7 @@ Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
   Type *PtrTy = getInt8PtrTy(Ctx);
   GlobalVariable *gv = gvName.empty() ? nullptr : M.getNamedGlobal(gvName);
   if (!gv) {
-    auto *strConst = ConstantDataArray::getString(Ctx, contents, true);
+    Constant *strConst = ConstantDataArray::getString(Ctx, contents, true);
     gv = new GlobalVariable(
         M, strConst->getType(), true, GlobalValue::PrivateLinkage, strConst,
         gvName.empty() ? "poseidon.str" : gvName, nullptr,
@@ -71,9 +71,9 @@ Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
   return ptr;
 }
 
-// The profile record of the function `key` is keyed by this string, which
-// both FP profiler runtimes use as the registry key and as the .fpprofile
-// stem.
+/// The profile record of the function `key` is keyed by this string, which
+/// both FP profiler runtimes use as the registry key and as the .fpprofile
+/// stem.
 static Constant *getProfileNamePointer(Module &M, StringRef key,
                                        StringRef profileName) {
   return getStringPointer(M, ("poseidon_site_" + key).str(), profileName);
@@ -88,9 +88,9 @@ FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
   return fc;
 }
 
-// The types of the profiler's hooks: (site name, slot, value, operand count,
-// operands), (site name, slot, value, adjoint), and (site id, value) of the
-// perturbation at `FpTy`.
+/// The types of the profiler's hooks: (site name, slot, value, operand count,
+/// operands), (site name, slot, value, adjoint), and (site id, value) of the
+/// perturbation at `FpTy`.
 static FunctionType *logValueType(LLVMContext &C) {
   Type *Ptr = getInt8PtrTy(C), *I64 = Type::getInt64Ty(C),
        *Double = Type::getDoubleTy(C);
@@ -124,11 +124,11 @@ struct ProbeBuilder {
   Type *i64Ty() const { return Type::getInt64Ty(Ctx); }
   Type *i32Ty() const { return Type::getInt32Ty(Ctx); }
 
-  // The identity probe for one profiled value. Its Enzyme custom derivative is
-  // what carries the gradient record out of the reverse pass, and its augmented
-  // forward is where the condition-number perturbation is applied, so that the
-  // value flowing downstream and the value logged in the primal are both the
-  // perturbed one while the adjoint chain stays untouched.
+  /// The identity probe for one profiled value. Its Enzyme custom derivative is
+  /// what carries the gradient record out of the reverse pass, and its
+  /// augmented forward is where the condition-number perturbation is applied,
+  /// so that the value flowing downstream and the value logged in the primal
+  /// are both the perturbed one while the adjoint chain stays untouched.
   Function *probeFor(Type *FpTy, size_t idx) {
     bool isFloat = FpTy->isFloatTy();
     std::string base =
@@ -301,8 +301,8 @@ void emitProfileStaticData(Function &clone, StringRef profileName,
   B.CreateCall(probe, {namePtr, textPtr})->setDoesNotThrow();
 }
 
-// Registered before main, so a site whose body never runs still carries its
-// static data into the dump.
+/// Registered before main, so a site whose body never runs still carries its
+/// static data into the dump.
 bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
   LLVMContext &Ctx = M.getContext();
   Type *VoidTy = Type::getVoidTy(Ctx);
@@ -366,8 +366,8 @@ bool registerDeviceProfileTable(const Options &O, Module &M) {
   return true;
 }
 
-// Appends to `out` every shared global `V` refers to, through constant
-// expressions.
+/// Appends to `out` every shared global `V` refers to, through constant
+/// expressions.
 static void collectShared(const Target &T, const Value *V,
                           SetVector<const GlobalVariable *> &out) {
   if (const auto *G = dyn_cast<GlobalVariable>(V)) {
@@ -490,10 +490,10 @@ void recordProfileTableSize(Session &S, Module &M) {
     recordProfileTable(S, functions.size(), slots);
 }
 
-// The user's function a probe call serves. Profile generation calls the
-// probes from functions it and Enzyme synthesize, all of local linkage; the
-// nearest caller of other linkage is the kernel or device function the user
-// wrote.
+/// The user's function a probe call serves. Profile generation calls the
+/// probes from functions it and Enzyme synthesize, all of local linkage; the
+/// nearest caller of other linkage is the kernel or device function the user
+/// wrote.
 static const Function &userFunctionOf(const Function &F) {
   SmallVector<const Function *, 8> work{&F};
   SmallPtrSet<const Function *, 8> seen{&F};
@@ -509,8 +509,8 @@ static const Function &userFunctionOf(const Function &F) {
   return F;
 }
 
-// A probe compiled for a processor the device profiler cannot serve: an error
-// at the user's function.
+/// A probe compiled for a processor the device profiler cannot serve: an error
+/// at the user's function.
 [[noreturn]] static void refuseProbe(const Target &target,
                                      const Function &caller) {
   const Function &F = userFunctionOf(caller);
@@ -616,12 +616,12 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
   return true;
 }
 
-// The generated logging code declares the probes on first use without
-// enzyme_inactive, and with only a declaration in the TU Enzyme demands a
-// derivative ("No augmented forward pass found"); so they are declared first,
-// with the signatures the generated ones take. The runtime's own
-// definitions cannot carry the attribute: __has_attribute(enzyme_inactive) is
-// false unless the clang plugin is loaded, so under -fpass-plugin it is lost.
+/// The generated logging code declares the probes on first use without
+/// enzyme_inactive, and with only a declaration in the TU Enzyme demands a
+/// derivative ("No augmented forward pass found"); so they are declared first,
+/// with the signatures the generated ones take. The runtime's own
+/// definitions cannot carry the attribute: __has_attribute(enzyme_inactive) is
+/// false unless the clang plugin is loaded, so under -fpass-plugin it is lost.
 void predeclareInactiveProfilerProbes(Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
@@ -637,14 +637,14 @@ void predeclareInactiveProfilerProbes(Module &M) {
   getProfilerHook(M, P.PerturbF32, perturbType(Type::getFloatTy(Ctx)));
 }
 
-// A static constructor cannot make the call: the runtime publishes its device
-// tables with cudaMemcpyToSymbol, and a dynamic initializer can run before
-// __cudaRegisterFatBinary has registered the device module in a multi-TU
-// binary ("invalid device symbol"). main runs after every static constructor.
-//
-// Only the host half of an offload unit, kernels or not, links the device
-// profiler. Erring towards injection is deliberate: a wrongly skipped
-// injection loses the profile silently, a wrongly kept one fails at link.
+/// A static constructor cannot make the call: the runtime publishes its device
+/// tables with cudaMemcpyToSymbol, and a dynamic initializer can run before
+/// __cudaRegisterFatBinary has registered the device module in a multi-TU
+/// binary ("invalid device symbol"). main runs after every static constructor.
+///
+/// Only the host half of an offload unit, kernels or not, links the device
+/// profiler. Erring towards injection is deliberate: a wrongly skipped
+/// injection loses the profile silently, a wrongly kept one fails at link.
 bool injectHostProfilerInit(Module &M, bool print) {
   if (Target::of(M).isDevice())
     return false;
@@ -682,8 +682,8 @@ bool defineProfileDirectory(const Options &O, Module &M) {
   return true;
 }
 
-// The probe is keyed by the poseidon_site_<name> global the value probes use,
-// which exists only after AD.
+/// The probe is keyed by the poseidon_site_<name> global the value probes use,
+/// which exists only after AD.
 void injectBlockDimProbes(Module &M, bool print) {
   const Target &T = Target::of(M);
   if (!T.isDevice())

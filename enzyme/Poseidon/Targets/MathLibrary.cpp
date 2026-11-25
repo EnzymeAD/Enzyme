@@ -30,20 +30,17 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
+/// Defined by poseidon.h in device code under POSEIDON_DEVICE_MATH: the keeper
+/// of the math functions, and the mark of the macro.
+static constexpr StringLiteral kKeepalive = "__poseidon_device_math";
+static constexpr StringLiteral kMacroMark = "__poseidon_device_math_defined";
 
-// Defined by poseidon.h in device code under POSEIDON_DEVICE_MATH: the keeper
-// of the math functions, and the mark of the macro.
-constexpr StringLiteral kKeepalive = "__poseidon_device_math";
-constexpr StringLiteral kMacroMark = "__poseidon_device_math_defined";
+/// What keepDeviceMath changed, for releaseDeviceMath to undo.
+static constexpr StringLiteral kKeptCall = "poseidon-kept-call";
+static constexpr StringLiteral kKeptAlwaysInline =
+    "poseidon-kept-always-inline";
 
-// What keepDeviceMath changed, for releaseDeviceMath to undo.
-constexpr StringLiteral kKeptCall = "poseidon-kept-call";
-constexpr StringLiteral kKeptAlwaysInline = "poseidon-kept-always-inline";
-
-constexpr StringLiteral kUndefinedCallee = "poseidon.undefined.callee";
-
-} // namespace
+static constexpr StringLiteral kUndefinedCallee = "poseidon.undefined.callee";
 
 static std::string includeAdvice(const Target &T) {
   return (" poseidon/poseidon.h links the " + T.mathLibrary() +

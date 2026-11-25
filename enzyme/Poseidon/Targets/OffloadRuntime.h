@@ -36,45 +36,45 @@ namespace poseidon {
 
 enum class OffloadRuntime { None, CUDA, HIP };
 
-// The runtime whose host half `M` is, from what clang records on every such
-// module, kernels or not: the CUDA SDK version or __cudaRegisterFatBinary for
-// CUDA, the compilation-unit id for HIP. The host half of a .cu and a plain
-// .cpp share the triple.
+/// The runtime whose host half `M` is, from what clang records on every such
+/// module, kernels or not: the CUDA SDK version or __cudaRegisterFatBinary for
+/// CUDA, the compilation-unit id for HIP. The host half of a .cu and a plain
+/// .cpp share the triple.
 OffloadRuntime offloadRuntimeOf(const llvm::Module &M);
 
-// Whether `M` is the host half of a CUDA or HIP compilation.
+/// Whether `M` is the host half of a CUDA or HIP compilation.
 bool isOffloadHostHalf(const llvm::Module &M);
 
-// The id clang gives both halves of a HIP compilation.
+/// The id clang gives both halves of a HIP compilation.
 std::optional<llvm::StringRef> compilationUnitId(const llvm::Module &M);
 
-// The launch stub of a kernel: `_Z<L+15>__device_stub__<id><params>` for the
-// kernel `_Z<L><id><params>`.
+/// The launch stub of a kernel: `_Z<L+15>__device_stub__<id><params>` for the
+/// kernel `_Z<L><id><params>`.
 llvm::StringRef launchStubPrefix();
 
-// Whether F is the kernel named `kernelName` or that kernel's launch stub.
+/// Whether F is the kernel named `kernelName` or that kernel's launch stub.
 bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
 
-// `name` without the postfix clang appends under -fgpu-rdc to the device-side
-// name of a kernel with internal linkage ("__intern__<hash>", in HIP
-// ".intern.<hash>"). The host stub's name has none, and the hash follows the
-// compile's macros, so neither the stub nor a later compile without -fgpu-rdc
-// can be matched on it.
+/// `name` without the postfix clang appends under -fgpu-rdc to the device-side
+/// name of a kernel with internal linkage ("__intern__<hash>", in HIP
+/// ".intern.<hash>"). The host stub's name has none, and the hash follows the
+/// compile's macros, so neither the stub nor a later compile without -fgpu-rdc
+/// can be matched on it.
 llvm::StringRef withoutExternalizedPostfix(llvm::StringRef name);
 
-// A stub pops the configuration its <<<grid, block, shared, stream>>> site
-// pushed into four out-parameters, in that order, and ends in a launch
-// (cudaLaunchKernel, hipLaunchKernel or their per-thread-stream forms) whose
-// first operand is the kernel's handle and, whatever the host ABI made of the
-// two dim3 operands, whose last three are the argument array, the dynamic
-// shared memory size and the stream.
+/// A stub pops the configuration its <<<grid, block, shared, stream>>> site
+/// pushed into four out-parameters, in that order, and ends in a launch
+/// (cudaLaunchKernel, hipLaunchKernel or their per-thread-stream forms) whose
+/// first operand is the kernel's handle and, whatever the host ABI made of the
+/// two dim3 operands, whose last three are the argument array, the dynamic
+/// shared memory size and the stream.
 bool isPopCallConfiguration(llvm::StringRef name);
 bool isLaunchKernel(llvm::StringRef name);
-// The configuration pop of a CUDA or HIP stub, or null.
+/// The configuration pop of a CUDA or HIP stub, or null.
 llvm::CallInst *findPopConfig(llvm::Function &F);
-// The launch a CUDA or HIP stub ends in, or null.
+/// The launch a CUDA or HIP stub ends in, or null.
 llvm::CallInst *findLaunchCall(llvm::Function &F);
-// The pop of the runtime `M` declares one of, CUDA's otherwise.
+/// The pop of the runtime `M` declares one of, CUDA's otherwise.
 llvm::FunctionCallee popCallConfiguration(llvm::Module &M);
 llvm::Value *poppedGrid(llvm::CallBase &pop);
 llvm::Value *poppedBlock(llvm::CallBase &pop);
@@ -82,28 +82,28 @@ llvm::Value *launchedKernel(llvm::CallBase &launch);
 llvm::Value *launchArguments(llvm::CallBase &launch);
 llvm::Value *launchSharedBytes(llvm::CallBase &launch);
 llvm::Value *launchStream(llvm::CallBase &launch);
-// The stream the launch's work is ordered on, as a handle a library takes in
-// any compilation: a per-thread-stream launch's null stream is its thread's
-// default stream, which both runtimes name (cudaStream_t)2.
+/// The stream the launch's work is ordered on, as a handle a library takes in
+/// any compilation: a per-thread-stream launch's null stream is its thread's
+/// default stream, which both runtimes name (cudaStream_t)2.
 llvm::Value *launchStreamHandle(llvm::IRBuilderBase &B, llvm::CallBase &launch);
 
-// How the host half registers a device variable with its runtime: without
-// relocatable device code the unit registers its kernels and device variables
-// itself (`RegisterGlobals`); with it, the linker wrapper registers the
-// offloading entries the unit leaves against the linked image, and the runtime
-// is the one of the unit's own entries. None if `M` does neither.
+/// How the host half registers a device variable with its runtime: without
+/// relocatable device code the unit registers its kernels and device variables
+/// itself (`RegisterGlobals`); with it, the linker wrapper registers the
+/// offloading entries the unit leaves against the linked image, and the runtime
+/// is the one of the unit's own entries. None if `M` does neither.
 struct VariableRegistration {
   OffloadRuntime Runtime;
   llvm::Function *RegisterGlobals;
 };
 std::optional<VariableRegistration> variableRegistration(llvm::Module &M);
-// What clang emits for a __constant__ variable `V` of the unit.
+/// What clang emits for a __constant__ variable `V` of the unit.
 void registerDeviceVariable(llvm::Module &M, const VariableRegistration &R,
                             llvm::GlobalVariable *V, llvm::StringRef name,
                             uint64_t size);
 
-// The device profiler's host library initialization a profile-generation build
-// calls from the top of main.
+/// The device profiler's host library initialization a profile-generation build
+/// calls from the top of main.
 llvm::StringRef deviceProfilerInit();
 
 } // namespace poseidon

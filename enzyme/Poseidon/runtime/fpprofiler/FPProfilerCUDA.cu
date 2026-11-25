@@ -444,10 +444,10 @@ struct DeviceShadowOps {
                            (cudaStream_t)stream>>>(p, n);
   }
 };
+} // namespace
 
 // Profiled launches from several host threads share one shadow table.
 static std::mutex g_shadowLock;
-} // namespace
 
 // The allocation a device pointer points into. Taken through the driver entry
 // point rather than by linking libcuda, so a profile-generation build needs no

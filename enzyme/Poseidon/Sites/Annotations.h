@@ -39,28 +39,28 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// The attribute stays on the kernel after its site has been lowered, and the
-// pass reaches a module more than once, so a lowered kernel has to say so or
-// its wrapper body is outlined again as a second site.
+/// The attribute stays on the kernel after its site has been lowered, and the
+/// pass reaches a module more than once, so a lowered kernel has to say so or
+/// its wrapper body is outlined again as a second site.
 constexpr llvm::StringLiteral kSiteLowered = "poseidon-site-lowered";
 
-// An annotated function that is not a site, diagnosed once.
+/// An annotated function that is not a site, diagnosed once.
 constexpr llvm::StringLiteral kNotASite = "poseidon-not-a-site";
 
-// The function a site's body was cut from (a host site's function, an
-// annotated kernel), until finalizeModule has given it its debug info back.
+/// The function a site's body was cut from (a host site's function, an
+/// annotated kernel), until finalizeModule has given it its debug info back.
 constexpr llvm::StringLiteral kHostWrapper = "poseidon-site-wrapper";
 
-// The annotated device functions whose kernels are sites, and the wrappers on
-// the way to them.
+/// The annotated device functions whose kernels are sites, and the wrappers on
+/// the way to them.
 constexpr llvm::StringLiteral kSiteCallee = "poseidon-site-callee";
 
-// The outlined body of a host site. Its value is the site's accuracy target,
-// empty when the annotation carried none.
+/// The outlined body of a host site. Its value is the site's accuracy target,
+/// empty when the annotation carried none.
 constexpr llvm::StringLiteral kHostBody = "poseidon-site-body";
 
-// What a site compiled without a profile action is warned with, before what
-// becomes of it.
+/// What a site compiled without a profile action is warned with, before what
+/// becomes of it.
 constexpr llvm::StringLiteral kNoProfileAction =
     "a Poseidon site was compiled without -poseidon-profile-generate or "
     "-poseidon-profile-use=<dir>.";
@@ -73,22 +73,22 @@ void noteSiteTarget(const Options &O, const llvm::Function &F,
                     std::optional<double> tau);
 bool propagateDeviceSites(const Options &O, llvm::Module &M);
 bool foldDeviceSiteCallees(const Options &O, llvm::Module &M);
-// An error at `call`, a __poseidon_optimize of the annotated function `name`.
+/// An error at `call`, a __poseidon_optimize of the annotated function `name`.
 void reportAnnotatedCall(llvm::CallBase *call, llvm::StringRef name);
 
-// Warns once per module about every annotated kernel of a compile without a
-// profile action.
+/// Warns once per module about every annotated kernel of a compile without a
+/// profile action.
 void warnSitesWithoutProfile(Session &S, llvm::Module &M);
 bool dropSiteAnnotations(llvm::Module &M);
 bool leaveSitesAsWritten(Session &S, llvm::Module &M);
 
-// Why `F` cannot be a host site, empty if it can.
+/// Why `F` cannot be a host site, empty if it can.
 std::string hostSiteRefusal(llvm::Function &F);
 bool outlineHostSites(Session &S, llvm::Module &M);
-// The calls whose callee is `F` itself.
+/// The calls whose callee is `F` itself.
 llvm::SmallVector<llvm::CallBase *, 4> callsOf(llvm::Value &F);
-// The host body `B` handed back to the optimizer: out of llvm.compiler.used
-// and without the mark its clones would inherit.
+/// The host body `B` handed back to the optimizer: out of llvm.compiler.used
+/// and without the mark its clones would inherit.
 void releaseHostBody(llvm::Function &B);
 
 void markOutlineTransparent(llvm::Function *body);

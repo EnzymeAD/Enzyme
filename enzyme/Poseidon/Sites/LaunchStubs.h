@@ -27,14 +27,14 @@ namespace poseidon {
 
 struct Options;
 
-// Rewrite the launch in each launch stub that a profile generation descriptor
-// in M's manifest matches into a call of __poseidon_launch_profiled, which
-// allocates, zeroes and seeds the shadow buffers the profiling kernel takes and
-// launches it. Host module only.
+/// Rewrite the launch in each launch stub that a profile generation descriptor
+/// in M's manifest matches into a call of __poseidon_launch_profiled, which
+/// allocates, zeroes and seeds the shadow buffers the profiling kernel takes and
+/// launches it. Host module only.
 bool rewriteProfileStubBodies(const Options &O, llvm::Module &M);
 
-// Rewrites, on the host module and before inlining, each __device_stub__
-// launch stub that a descriptor in the module's manifest matches.
+/// Rewrites, on the host module and before inlining, each __device_stub__
+/// launch stub that a descriptor in the module's manifest matches.
 class HostStubPass : public PassParent<HostStubPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Module &M,

@@ -42,8 +42,8 @@ struct ProfDesc {
   unsigned nargs = 0;
   SmallVector<int, 8> ptrIdx;
   SmallVector<int, 8> seedWidth;
-  // Byte offset of each pointer inside its argument (0 for a pointer
-  // argument).
+  /// Byte offset of each pointer inside its argument (0 for a pointer
+  /// argument).
   SmallVector<int, 8> ptrOff;
 };
 } // namespace
@@ -168,10 +168,10 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
   return changed;
 }
 
-// The header of every kernel the device half profiled, registered with the
-// host profiler as a host site's is: the device profiler writes a kernel's
-// profile only once the kernel has run, and the host profiler writes one with
-// no records for a registered site that nothing wrote.
+/// The header of every kernel the device half profiled, registered with the
+/// host profiler as a host site's is: the device profiler writes a kernel's
+/// profile only once the kernel has run, and the host profiler writes one with
+/// no records for a registered site that nothing wrote.
 static bool registerProfiledKernels(const Options &O, Module &M) {
   bool changed = false;
   readProfileHeaders(O, M, [&](StringRef profileName, StringRef header) {

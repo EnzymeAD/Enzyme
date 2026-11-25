@@ -36,78 +36,78 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// The profiler runtime function `name` of type `FT`, declared in `M` if absent,
-// marked enzyme_inactive and nofree so that AD never differentiates it.
+/// The profiler runtime function `name` of type `FT`, declared in `M` if absent,
+/// marked enzyme_inactive and nofree so that AD never differentiates it.
 llvm::FunctionCallee getProfilerHook(llvm::Module &M, llvm::StringRef name,
                                      llvm::FunctionType *FT);
 
-// A generic pointer to a private constant C string `contents` in the global
-// address space of `M`: the global `gvName`, made if absent, or a new
-// poseidon.str global when `gvName` is empty.
+/// A generic pointer to a private constant C string `contents` in the global
+/// address space of `M`: the global `gvName`, made if absent, or a new
+/// poseidon.str global when `gvName` is empty.
 llvm::Constant *getStringPointer(llvm::Module &M, llvm::StringRef gvName,
                                  llvm::StringRef contents);
 
-// Place the profiling probes on a canonicalized, slot-numbered site clone.
-// Every optimizable instruction gets its value logged in the primal and its
-// result routed through an identity probe whose Enzyme custom derivative logs
-// the accumulated adjoint. That probe's augmented forward also carries the
-// condition-number perturbation, armed at run time by `siteId`, so an armed run
-// computes the whole site at the probed relative precision. The profile is
-// written as `profileName`. Returns the number of instrumented instructions.
+/// Place the profiling probes on a canonicalized, slot-numbered site clone.
+/// Every optimizable instruction gets its value logged in the primal and its
+/// result routed through an identity probe whose Enzyme custom derivative logs
+/// the accumulated adjoint. That probe's augmented forward also carries the
+/// condition-number perturbation, armed at run time by `siteId`, so an armed run
+/// computes the whole site at the probed relative precision. The profile is
+/// written as `profileName`. Returns the number of instrumented instructions.
 size_t instrumentForProfiling(llvm::Function &clone, unsigned siteId,
                               llvm::StringRef profileName);
 
-// Embed the site's compile-time static data (header lines the profile-use
-// compile cannot recompute) in the instrumented module and register it with the
-// profiler runtime, which copies it verbatim into the site's .fpprofile header.
-// `text` is a sequence of newline-terminated "Key = value" lines.
+/// Embed the site's compile-time static data (header lines the profile-use
+/// compile cannot recompute) in the instrumented module and register it with the
+/// profiler runtime, which copies it verbatim into the site's .fpprofile header.
+/// `text` is a sequence of newline-terminated "Key = value" lines.
 void emitProfileStaticData(llvm::Function &clone, llvm::StringRef profileName,
                            llvm::StringRef text);
 
-// Register `text` before main with the host profiler runtime as the header of
-// the site whose profile is written under `name`. False if host module M
-// already does.
+/// Register `text` before main with the host profiler runtime as the header of
+/// the site whose profile is written under `name`. False if host module M
+/// already does.
 bool registerProfileStatic(llvm::Module &M, llvm::StringRef name,
                            llvm::StringRef text);
 
-// Host module of a CUDA or HIP translation unit, before its registration is
-// inlined: register the host shadow of the device module's profiler table
-// with the CUDA or HIP runtime and with the profiler runtime, with the counts
-// the device half recorded with recordProfileTableSize.
+/// Host module of a CUDA or HIP translation unit, before its registration is
+/// inlined: register the host shadow of the device module's profiler table
+/// with the CUDA or HIP runtime and with the profiler runtime, with the counts
+/// the device half recorded with recordProfileTableSize.
 bool registerDeviceProfileTable(const Options &O, llvm::Module &M);
 
-// Device module, once its probes are placed: records for the host half how
-// many functions it profiles and how many probes the largest holds, which the
-// device profiler's tables are sized by.
+/// Device module, once its probes are placed: records for the host half how
+/// many functions it profiles and how many probes the largest holds, which the
+/// device profiler's tables are sized by.
 void recordProfileTableSize(Session &S, llvm::Module &M);
 
-// Device module, after the last probe is placed: link the device half of the
-// profiler.
+/// Device module, after the last probe is placed: link the device half of the
+/// profiler.
 bool linkDeviceProfiler(llvm::Module &M, bool profileGenerate);
 
-// Device module of a profile-generate compile, once its derivatives are in
-// place: an error at every kernel whose static shared memory (what it and the
-// functions it calls use, the shadows Enzyme made among them) exceeds what a
-// kernel can declare, naming its buffers, their shadows and the shadows of
-// other kernels' buffers it reaches.
+/// Device module of a profile-generate compile, once its derivatives are in
+/// place: an error at every kernel whose static shared memory (what it and the
+/// functions it calls use, the shadows Enzyme made among them) exceeds what a
+/// kernel can declare, naming its buffers, their shadows and the shadows of
+/// other kernels' buffers it reaches.
 void requireSharedMemoryLimit(llvm::Module &M);
 
-// One block-geometry probe at the entry of every function carrying value
-// probes, so launch geometry is recorded per function.
+/// One block-geometry probe at the entry of every function carrying value
+/// probes, so launch geometry is recorded per function.
 void injectBlockDimProbes(llvm::Module &M, bool print);
 
-// Host module: call the device profiler's initialization from the top of main;
-// whether it placed the call.
+/// Host module: call the device profiler's initialization from the top of main;
+/// whether it placed the call.
 bool injectHostProfilerInit(llvm::Module &M, bool print);
 
-// Host module of a -poseidon-profile-generate=<dir> compile: defines the
-// directory the program's profiling runs write to, as clang's
-// -fprofile-generate=<dir> does; POSEIDON_PROFILE_DIR overrides it at run
-// time. Every unit defines it, weakly, so the linker keeps one.
+/// Host module of a -poseidon-profile-generate=<dir> compile: defines the
+/// directory the program's profiling runs write to, as clang's
+/// -fprofile-generate=<dir> does; POSEIDON_PROFILE_DIR overrides it at run
+/// time. Every unit defines it, weakly, so the linker keeps one.
 bool defineProfileDirectory(const Options &O, llvm::Module &M);
 
-// Device module: declare the probes enzyme_inactive before anything calls them,
-// so that AD never differentiates them.
+/// Device module: declare the probes enzyme_inactive before anything calls them,
+/// so that AD never differentiates them.
 void predeclareInactiveProfilerProbes(llvm::Module &M);
 
 } // namespace poseidon

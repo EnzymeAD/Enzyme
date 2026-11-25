@@ -28,9 +28,9 @@ class Session;
 
 struct Site;
 
-// Instruments the site and makes the call that reaches it a derivative
-// request; whether it did. Markers of one body share `clones`' instrumented
-// clone, and the clones made take their ids from `nextSiteId`.
+/// Instruments the site and makes the call that reaches it a derivative
+/// request; whether it did. Markers of one body share `clones`' instrumented
+/// clone, and the clones made take their ids from `nextSiteId`.
 bool profileSite(Session &S, const Site &site,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
                  unsigned &nextSiteId);

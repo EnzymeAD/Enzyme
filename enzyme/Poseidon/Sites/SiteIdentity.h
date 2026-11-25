@@ -32,83 +32,83 @@ namespace poseidon {
 
 class Session;
 
-// The body outlined from a site's function or kernel is named after it with
-// this suffix.
+/// The body outlined from a site's function or kernel is named after it with
+/// this suffix.
 constexpr llvm::StringLiteral kBodySuffix = "_poseidon_body";
-// The copy made for one call of __poseidon_optimize is named
-// <function><infix><caller>.<ordinal>.
+/// The copy made for one call of __poseidon_optimize is named
+/// <function><infix><caller>.<ordinal>.
 constexpr llvm::StringLiteral kPerCallInfix = ".poseidon.";
-// A site's canonical clone is named <body> after this prefix.
+/// A site's canonical clone is named <body> after this prefix.
 constexpr llvm::StringLiteral kCanonicalPrefix = "preprocess_";
 
-// The name LLVM's PGO knows `F` by (GlobalValue::getGlobalIdentifier):
-// its symbol, after the name of its source file and ';' when it has local
-// linkage as written. A static or anonymous kernel, which a device compile
-// gives external linkage (and with -fgpu-rdc a renamed symbol), is local.
+/// The name LLVM's PGO knows `F` by (GlobalValue::getGlobalIdentifier):
+/// its symbol, after the name of its source file and ';' when it has local
+/// linkage as written. A static or anonymous kernel, which a device compile
+/// gives external linkage (and with -fgpu-rdc a renamed symbol), is local.
 std::string functionIdentity(const llvm::Function &F);
-// The same for the name `name` of `F`'s linkage.
+/// The same for the name `name` of `F`'s linkage.
 std::string functionIdentity(const llvm::Function &F, llvm::StringRef name);
-// Records `identity` as that of the site whose body is `body`.
+/// Records `identity` as that of the site whose body is `body`.
 void noteSiteIdentity(Session &S, llvm::Function &body, std::string identity);
-// The identity of the site whose body is `body`: what noteSiteIdentity
-// recorded, or else the body's own, a marker's target being a function as
-// written.
+/// The identity of the site whose body is `body`: what noteSiteIdentity
+/// recorded, or else the body's own, a marker's target being a function as
+/// written.
 std::string siteIdentity(const Session &S, const llvm::Function &body);
-// Records the identity of each marker's target as written, before the
-// optimizer can change its linkage.
+/// Records the identity of each marker's target as written, before the
+/// optimizer can change its linkage.
 void recordMarkerIdentities(Session &S, llvm::Module &M);
 
-// The stem of a file named after `name`: `name` itself, unless it is longer
-// than a file name can hold or `identity`, the function the file stands for,
-// has local linkage; then its first 160 characters, '~' and the GUID (the
-// 64-bit MD5 hash PGO keys a function by) of `name` as PGO would name a
-// function of that name and linkage in that function's source file.
+/// The stem of a file named after `name`: `name` itself, unless it is longer
+/// than a file name can hold or `identity`, the function the file stands for,
+/// has local linkage; then its first 160 characters, '~' and the GUID (the
+/// 64-bit MD5 hash PGO keys a function by) of `name` as PGO would name a
+/// function of that name and linkage in that function's source file.
 std::string fileStem(llvm::StringRef name, llvm::StringRef identity);
 inline std::string profileNameStem(llvm::StringRef name) {
   return fileStem(name, name);
 }
 
-// A site's name for a diagnostic: the demangled function, and for a per-call
-// copy the call and caller it was made for.
+/// A site's name for a diagnostic: the demangled function, and for a per-call
+/// copy the call and caller it was made for.
 std::string perCallSiteName(llvm::StringRef symbol);
 
-// The base name and the context of the function an Itanium name demangles to.
+/// The base name and the context of the function an Itanium name demangles to.
 struct DemangledFunction {
   std::string BaseName, Context;
 };
 std::optional<DemangledFunction> demangleFunction(llvm::StringRef mangled);
 
-// Records that `clone` was cut from `origin` for a call that passes it
-// `primalArgs`.
+/// Records that `clone` was cut from `origin` for a call that passes it
+/// `primalArgs`.
 void noteSiteClone(Session &S, llvm::Function *clone, llvm::Function *origin,
                    llvm::ArrayRef<llvm::Value *> primalArgs);
 const llvm::Function *siteOriginOf(const Session &S,
                                    const llvm::Function &clone);
-// The profile stem and file name of the site cut from `body`.
+/// The profile stem and file name of the site cut from `body`.
 std::string bodyProfileStem(const Session &S, const llvm::Function &body);
 std::string bodyProfileFile(const Session &S, const llvm::Function &body);
-// The stem of a file named after the site clone or body `F`, which is told
-// apart from a same-named function of another source file as its profile is.
+/// The stem of a file named after the site clone or body `F`, which is told
+/// apart from a same-named function of another source file as its profile is.
 std::string siteFileStem(const Session &S, const llvm::Function &F);
-// The ".fpprofile" file name of a site clone. The profiling run writes one
-// record per marked body, so every clone of one body reads the same file.
+/// The ".fpprofile" file name of a site clone. The profiling run writes one
+/// record per marked body, so every clone of one body reads the same file.
 std::string siteProfileFile(const Session &S, const llvm::Function &clone);
-// The name -poseidon-apply-rewrites gives a site by: the symbol its body was
-// cut from (an annotated kernel or host function, a marker's target, the copy
-// made for one __poseidon_optimize call), the one its profile is named after.
+/// The name -poseidon-apply-rewrites gives a site by: the symbol its body was
+/// cut from (an annotated kernel or host function, a marker's target, the copy
+/// made for one __poseidon_optimize call), the one its profile is named after.
 std::string siteKeyOfBody(const llvm::Function &body);
 std::string siteKey(const Session &S, const llvm::Function &clone);
-// The other names a site answers to when no other site of the module does:
-// the function a per-call copy was made of, and the unqualified name the
-// symbol demangles to.
+/// The other names a site answers to when no other site of the module does:
+/// the function a per-call copy was made of, and the unqualified name the
+/// symbol demangles to.
 llvm::SmallVector<std::string, 2> siteAliases(llvm::StringRef key);
-// The symbol of the function a site was cut from: its key without the
-// suffixes of a per-call copy.
+/// The symbol of the function a site was cut from: its key without the
+/// suffixes of a per-call copy.
 llvm::StringRef siteSymbol(llvm::StringRef key);
-// Caller value of parameter i of a site clone, as recorded by
-// noteSiteClone; null when unknown.
+/// Caller value of parameter i of a site clone, as recorded by
+/// noteSiteClone; null when unknown.
 llvm::Value *siteArg(const Session &S, const llvm::Function *clone, unsigned i);
-// Whether noteSiteClone recorded F: a site clone, not a pricing clone.
+/// Whether noteSiteClone recorded F: a site clone, not a pricing clone.
 bool isSiteClone(const Session &S, const llvm::Function *F);
 bool redirectNoopSite(Session &S, llvm::Function *clone);
 

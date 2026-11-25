@@ -58,10 +58,10 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Canonicalize, slot-number and instrument a clone of the site body `F`
-// exactly as profile use canonicalizes and slot-numbers it. Null if the body
-// holds nothing profilable. `staticOut`, if given, receives the header the
-// profile will carry.
+/// Canonicalize, slot-number and instrument a clone of the site body `F`
+/// exactly as profile use canonicalizes and slot-numbers it. Null if the body
+/// holds nothing profilable. `staticOut`, if given, receives the header the
+/// profile will carry.
 static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
                                    std::string *staticOut = nullptr) {
   Function *clone = canonicalize(F);
@@ -94,8 +94,8 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
 static CallInst *withShadows(CallInst *CI, Function &clone,
                              const MarkerArgs &marker, bool print);
 
-// The reverse-mode request over `args`, whose first is the instrumented clone,
-// of type `FT`, or taking exactly `args` and returning `ret` when FT is null.
+/// The reverse-mode request over `args`, whose first is the instrumented clone,
+/// of type `FT`, or taking exactly `args` and returning `ret` when FT is null.
 static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
                                      ArrayRef<Value *> args,
                                      FunctionType *FT = nullptr) {
@@ -111,10 +111,10 @@ static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
   return B.CreateCall(FT, autodiff, args);
 }
 
-// Profile generation. The marker becomes an ordinary reverse-mode derivative
-// request over the instrumented clone: the custom derivative on each probe is
-// what puts the gradient record inside the reverse pass, so the host's AD needs
-// no profiling mode of its own.
+/// Profile generation. The marker becomes an ordinary reverse-mode derivative
+/// request over the instrumented clone: the custom derivative on each probe is
+/// what puts the gradient record inside the reverse pass, so the host's AD
+/// needs no profiling mode of its own.
 static bool profileMarker(Session &S, CallInst *CI,
                           DenseMap<Function *, Function *> &clones,
                           unsigned &nextSiteId) {
@@ -190,8 +190,8 @@ static bool profileMarker(Session &S, CallInst *CI,
   return true;
 }
 
-// The first type `isLeaf` accepts among `T` and, through struct fields in
-// order and array elements, the types `T` is made of; null if there is none.
+/// The first type `isLeaf` accepts among `T` and, through struct fields in
+/// order and array elements, the types `T` is made of; null if there is none.
 static Type *findLeafType(Type *T, function_ref<bool(Type *)> isLeaf) {
   if (isLeaf(T))
     return T;
@@ -208,17 +208,17 @@ static bool isFPLeaf(Type *T) { return T->isFPOrFPVectorTy(); }
 
 static bool isPointerLeaf(Type *T) { return T->isPointerTy(); }
 
-// The width of the floating-point scalar a store writes, 0 if it writes none.
+/// The width of the floating-point scalar a store writes, 0 if it writes none.
 static unsigned fpStoreWidth(Type *T) {
   Type *L = findLeafType(T, isFPLeaf);
   return L ? L->getScalarSizeInBits() / 8 : 0;
 }
 
-// Every store and atomicrmw of `clone`: each object the pointer it writes
-// through may point into and the width of the floating-point scalar it writes
-// (fpStoreWidth). The pointer may choose between objects, or between an object
-// and null: a view that holds null when it is empty (MFEM's DeviceTensor)
-// writes into the object it was made from.
+/// Every store and atomicrmw of `clone`: each object the pointer it writes
+/// through may point into and the width of the floating-point scalar it writes
+/// (fpStoreWidth). The pointer may choose between objects, or between an object
+/// and null: a view that holds null when it is empty (MFEM's DeviceTensor)
+/// writes into the object it was made from.
 static void
 forEachWrite(Function &clone,
              function_ref<void(const Value *obj, unsigned width)> mark) {
@@ -237,9 +237,9 @@ forEachWrite(Function &clone,
   }
 }
 
-// Which parameters the site writes through, and in what element width. An
-// application does not say which of its buffers are outputs, and reverse mode
-// needs to know: the output shadows are the ones the seed goes into.
+/// Which parameters the site writes through, and in what element width. An
+/// application does not say which of its buffers are outputs, and reverse mode
+/// needs to know: the output shadows are the ones the seed goes into.
 static void collectOutputParams(Function &clone,
                                 SmallVectorImpl<unsigned> &seedWidth) {
   seedWidth.assign(clone.arg_size(), 0);
@@ -254,9 +254,9 @@ static bool holdsPointer(Type *T) { return findLeafType(T, isPointerLeaf); }
 
 namespace {
 
-// Where an aggregate of type `T` holds pointers: the byte offset of each from
-// the aggregate's start and the insertvalue path that reaches it, in layout
-// order.
+/// Where an aggregate of type `T` holds pointers: the byte offset of each from
+/// the aggregate's start and the insertvalue path that reaches it, in layout
+/// order.
 struct PointerField {
   uint64_t offset;
   SmallVector<unsigned, 4> path;
@@ -291,9 +291,9 @@ static void pointerFields(const DataLayout &DL, Type *T, uint64_t offset,
   }
 }
 
-// The pointer fields of by-value aggregate parameters the site writes through,
-// in the element width it writes: collectOutputParams for the pointers a
-// kernel's lambda captured.
+/// The pointer fields of by-value aggregate parameters the site writes through,
+/// in the element width it writes: collectOutputParams for the pointers a
+/// kernel's lambda captured.
 static void collectOutputFields(Function &clone,
                                 std::map<LaunchRef, unsigned> &seedWidth) {
   auto mark = [&](const Value *obj, unsigned w) {
@@ -304,43 +304,27 @@ static void collectOutputFields(Function &clone,
   forEachWrite(clone, mark);
 }
 
-// Profile generation for an attribute site. The kernel keeps its name, its
-// launch handle and its original parameters and gains one shadow parameter per
-// pointer the launch passes: a pointer parameter, or a pointer field of an
-// aggregate it takes by value (the captures of a lambda). Its body becomes the
-// derivative request over the instrumented clone. The host half of the same
-// compilation reads the descriptor recorded here and fills those shadows in at
-// every launch.
-static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
-  Module &M = *K.getParent();
-  LLVMContext &C = M.getContext();
-  const DataLayout &DL = M.getDataLayout();
+namespace {
+/// A pointer the profiled kernel takes a shadow of: parameter `param` itself
+/// (offset -1), or the pointer field at byte `offset` and member `path` of
+/// the aggregate it takes; `seed` is the width the shadow is seeded at, 0 for
+/// an input.
+struct Shadowed {
+  unsigned param;
+  int64_t offset;
+  SmallVector<unsigned, 4> path;
+  unsigned seed;
+};
+} // namespace
 
-  Function *body = nullptr;
-  CallInst *call = outlineKernelBody(S, K, body);
-  if (!call)
-    return false;
-  const unsigned nOrigArgs = K.arg_size();
-
-  std::string header;
-  Function *clone = instrumentedClone(S, *body, nextSiteId, &header);
-  if (!clone) {
-    diagnose(K, body->getSubprogram(),
-             displayName(K) +
-                 " holds no floating-point operation the pass profiles; the "
-                 "kernel is not profiled and stays as written",
-             DS_Warning);
-    inlineKernelBody(call, body);
-    // Outlined and folded back, the kernel is new code to the analyses.
-    return true;
-  }
-  unsigned siteId = nextSiteId++;
-  const std::string profileName = bodyProfileStem(S, *body);
-
+/// The pointers of kernel `K` whose shadows its profiled form takes, in
+/// parameter order, seeded as the outputs of the instrumented `clone`.
+static SmallVector<Shadowed, 8> shadowedPointers(Function &K, Function &clone) {
+  const DataLayout &DL = K.getParent()->getDataLayout();
   SmallVector<unsigned, 8> seedWidth;
-  collectOutputParams(*clone, seedWidth);
+  collectOutputParams(clone, seedWidth);
   std::map<LaunchRef, unsigned> fieldSeedWidth;
-  collectOutputFields(*clone, fieldSeedWidth);
+  collectOutputFields(clone, fieldSeedWidth);
 
   // The aggregate a parameter passes by value or as a value, if it holds a
   // pointer.
@@ -349,12 +333,6 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
               : K.getArg(i)->hasByRefAttr() ? K.getParamByRefType(i)
                                             : K.getArg(i)->getType();
     return T->isAggregateType() && holdsPointer(T) ? T : nullptr;
-  };
-  struct Shadowed {
-    unsigned param;
-    int64_t offset; // -1: the parameter is the pointer
-    SmallVector<unsigned, 4> path;
-    unsigned seed;
   };
   SmallVector<Shadowed, 8> shadowed;
   for (unsigned i = 0; i < K.arg_size(); ++i) {
@@ -373,15 +351,22 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
       shadowed.push_back({i, -1, {}, seedWidth[i]});
     }
   }
+  return shadowed;
+}
 
+/// A kernel with the parameters of `K` and one pointer parameter per entry of
+/// `shadowed`, launched as `K` is.
+static Function *createProfiledKernel(Function &K,
+                                      ArrayRef<Shadowed> shadowed) {
+  LLVMContext &C = K.getContext();
   SmallVector<Type *, 16> params(K.getFunctionType()->params());
   Type *PtrTy = getInt8PtrTy(C);
   for (size_t k = 0; k < shadowed.size(); ++k)
     params.push_back(PtrTy);
 
-  Function *P =
-      Function::Create(FunctionType::get(Type::getVoidTy(C), params, false),
-                       K.getLinkage(), K.getName() + ".poseidon.profile", &M);
+  Function *P = Function::Create(
+      FunctionType::get(Type::getVoidTy(C), params, false), K.getLinkage(),
+      K.getName() + ".poseidon.profile", K.getParent());
   P->setCallingConv(K.getCallingConv());
   // Function attributes only: the parameter attributes describe the primal
   // kernel's accesses, which say nothing about the shadows or about what the
@@ -402,16 +387,25 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   // The profiled kernel is launched with the original's block shape. The
   // probes it calls are linked into this module and compiled under the same
   // bound.
-  Target::of(M).boundProfiledLaunch(*P);
+  Target::of(*K.getParent()).boundProfiledLaunch(*P);
+  return P;
+}
 
-  IRBuilder<> B(BasicBlock::Create(C, "entry", P));
-  SmallVector<Value *, 32> args{clone};
+/// The body of the profiled kernel `P` of `K`: a reverse-mode request over the
+/// instrumented `clone` that passes each pointer of `shadowed` with the shadow
+/// P takes for it.
+static void emitProfiledBody(Function &P, Function &K, Function &clone,
+                             ArrayRef<Shadowed> shadowed) {
+  LLVMContext &C = K.getContext();
+  const DataLayout &DL = K.getParent()->getDataLayout();
+  IRBuilder<> B(BasicBlock::Create(C, "entry", &P));
+  SmallVector<Value *, 32> args{&clone};
   unsigned shadow = K.arg_size();
   const Shadowed *next = shadowed.begin();
   for (unsigned i = 0; i < K.arg_size(); ++i) {
-    Value *a = P->getArg(i);
-    if (a->getType() != clone->getArg(i)->getType())
-      a = B.CreateAddrSpaceCast(a, clone->getArg(i)->getType());
+    Value *a = P.getArg(i);
+    if (a->getType() != clone.getArg(i)->getType())
+      a = B.CreateAddrSpaceCast(a, clone.getArg(i)->getType());
     const Shadowed *first = next;
     while (next != shadowed.end() && next->param == i)
       ++next;
@@ -426,7 +420,7 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
     // aggregate with each pointer replaced by its shadow.
     Value *sh = nullptr;
     if (first->offset < 0) {
-      sh = P->getArg(shadow++);
+      sh = P.getArg(shadow++);
     } else if (Type *T = K.getArg(i)->hasByValAttr()
                              ? K.getParamByValType(i)
                              : K.getArg(i)->getParamByRefType()) {
@@ -435,14 +429,14 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
       copy->setAlignment(std::max(align, copy->getAlign()));
       B.CreateMemCpy(copy, copy->getAlign(), a, align, DL.getTypeAllocSize(T));
       for (const Shadowed *f = first; f != next; ++f)
-        B.CreateStore(P->getArg(shadow++),
+        B.CreateStore(P.getArg(shadow++),
                       B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), copy,
                                                    (uint64_t)f->offset));
       sh = B.CreatePointerBitCastOrAddrSpaceCast(copy, a->getType());
     } else {
       sh = a;
       for (const Shadowed *f = first; f != next; ++f)
-        sh = B.CreateInsertValue(sh, P->getArg(shadow++), f->path);
+        sh = B.CreateInsertValue(sh, P.getArg(shadow++), f->path);
     }
     args.push_back(activityArg(C, "enzyme_dup"));
     args.push_back(a);
@@ -451,15 +445,15 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
 
   emitAutodiffRequest(B, Type::getVoidTy(C), args);
   B.CreateRetVoid();
+}
 
-  std::string kernelName = K.getName().str();
-  P->addFnAttr(kSiteLowered);
-  K.replaceAllUsesWith(P);
-  K.eraseFromParent();
-  if (body->use_empty())
-    body->eraseFromParent();
-  P->setName(kernelName);
-
+/// Records for the host half how a launch of the profiled kernel
+/// `kernelName`, of `numArgs` original arguments, fills in `shadowed`, and the
+/// header of its profile `profileName`.
+static void recordProfiledLaunch(Session &S, StringRef kernelName,
+                                 unsigned siteId, unsigned numArgs,
+                                 ArrayRef<Shadowed> shadowed,
+                                 StringRef profileName, StringRef header) {
   bool anyField =
       llvm::any_of(shadowed, [](const Shadowed &s) { return s.offset >= 0; });
   std::string message;
@@ -478,7 +472,7 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   recordDescriptor(
       S, LaunchKind::Profiling, kernelName,
       [&](raw_ostream &os) {
-        os << ' ' << siteId << ' ' << nOrigArgs << ' ' << shadowed.size();
+        os << ' ' << siteId << ' ' << numArgs << ' ' << shadowed.size();
         for (const Shadowed &s : shadowed)
           os << ' ' << s.param;
         for (const Shadowed &s : shadowed)
@@ -493,11 +487,55 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   // The host half registers it with the profiling runtime, so that a kernel
   // that never launches still gets a profile, one saying so.
   recordProfileHeader(S, kernelName, profileName, header);
+}
+
+/// Profile generation for an attribute site. The kernel keeps its name, its
+/// launch handle and its original parameters and gains one shadow parameter per
+/// pointer the launch passes: a pointer parameter, or a pointer field of an
+/// aggregate it takes by value (the captures of a lambda). Its body becomes the
+/// derivative request over the instrumented clone. The host half of the same
+/// compilation reads the descriptor recorded here and fills those shadows in at
+/// every launch.
+static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
+  Function *body = nullptr;
+  CallInst *call = outlineKernelBody(S, K, body);
+  if (!call)
+    return false;
+
+  std::string header;
+  Function *clone = instrumentedClone(S, *body, nextSiteId, &header);
+  if (!clone) {
+    diagnose(K, body->getSubprogram(),
+             displayName(K) +
+                 " holds no floating-point operation the pass profiles; the "
+                 "kernel is not profiled and stays as written",
+             DS_Warning);
+    inlineKernelBody(call, body);
+    // Outlined and folded back, the kernel is new code to the analyses.
+    return true;
+  }
+  const unsigned siteId = nextSiteId++;
+  const std::string profileName = bodyProfileStem(S, *body);
+
+  SmallVector<Shadowed, 8> shadowed = shadowedPointers(K, *clone);
+  Function *P = createProfiledKernel(K, shadowed);
+  emitProfiledBody(*P, K, *clone, shadowed);
+
+  const std::string kernelName = K.getName().str();
+  const unsigned numArgs = K.arg_size();
+  P->addFnAttr(kSiteLowered);
+  K.replaceAllUsesWith(P);
+  K.eraseFromParent();
+  if (body->use_empty())
+    body->eraseFromParent();
+  P->setName(kernelName);
+  recordProfiledLaunch(S, kernelName, siteId, numArgs, shadowed, profileName,
+                       header);
   return true;
 }
 
 static Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
-  auto *init = ConstantArray::get(ArrayType::get(T, elts.size()), elts);
+  Constant *init = ConstantArray::get(ArrayType::get(T, elts.size()), elts);
   auto *GV =
       new GlobalVariable(M, init->getType(), true, GlobalValue::PrivateLinkage,
                          init, "poseidon.site");
@@ -505,7 +543,7 @@ static Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
   return GV;
 }
 
-// The source name of a parameter, for the runtime's diagnostics.
+/// The source name of a parameter, for the runtime's diagnostics.
 static std::string paramName(Function &B, Argument &A) {
   if (A.hasName())
     return A.getName().str();
@@ -517,9 +555,9 @@ static std::string paramName(Function &B, Argument &A) {
   return "";
 }
 
-// Registers, for the duration of `CB`, the extent of every stack object a
-// pointer argument points into: the runtime has no other way to size one.
-// Returns how many it pushed.
+/// Registers, for the duration of `CB`, the extent of every stack object a
+/// pointer argument points into: the runtime has no other way to size one.
+/// Returns how many it pushed.
 static unsigned pushStackArrays(CallBase &CB, IRBuilder<> &B) {
   Module &M = *CB.getModule();
   const DataLayout &DL = M.getDataLayout();
@@ -563,8 +601,8 @@ static void popStackArrays(CallBase &CB, unsigned n) {
   B.CreateCall(pop, {B.getInt32(n)});
 }
 
-// Every call in this module that passes a stack object to someone else; a
-// site may be reached through any of them.
+/// Every call in this module that passes a stack object to someone else; a
+/// site may be reached through any of them.
 void registerStackArrays(Session &S, Module &M) {
   SmallPtrSet<Function *, 8> clones;
   for (WeakVH &handle : S.SiteClones)
@@ -594,7 +632,7 @@ void registerStackArrays(Session &S, Module &M) {
   }
 }
 
-// The extent of every global this module defines, registered before main.
+/// The extent of every global this module defines, registered before main.
 void registerGlobals(Module &M) {
   LLVMContext &C = M.getContext();
   const DataLayout &DL = M.getDataLayout();
@@ -641,10 +679,10 @@ struct HostSiteData {
 
 } // namespace
 
-// One call of a host site's body becomes the reverse-mode request over the
-// instrumented clone: the runtime finds the allocation each pointer argument
-// points into and hands back its shadow, and a floating-point return is seeded
-// by the request itself.
+/// One call of a host site's body becomes the reverse-mode request over the
+/// instrumented clone: the runtime finds the allocation each pointer argument
+/// points into and hands back its shadow, and a floating-point return is seeded
+/// by the request itself.
 static void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
   auto *CI = dyn_cast<CallInst>(CB);
   if (!CI)
@@ -748,7 +786,7 @@ static bool profileHostBody(Session &S, Function &B, unsigned &nextSiteId) {
   return true;
 }
 
-// `p` with the object it points into replaced by `shadow`.
+/// `p` with the object it points into replaced by `shadow`.
 static Value *intoShadow(Value *p, Value *obj, AllocaInst *shadow,
                          IRBuilder<> &B) {
   if (p == obj)
@@ -760,9 +798,9 @@ static Value *intoShadow(Value *p, Value *obj, AllocaInst *shadow,
   return B.Insert(copy, p->getName() + ".shadow");
 }
 
-// A local object like `obj` (localObject), for its shadow: next to an alloca,
-// in the entry block for an aggregate the function takes by value, which is
-// in the stack's address space as the parameter is.
+/// A local object like `obj` (localObject), for its shadow: next to an alloca,
+/// in the entry block for an aggregate the function takes by value, which is
+/// in the stack's address space as the parameter is.
 static AllocaInst *shadowObject(Value *obj) {
   if (auto *AI = dyn_cast<AllocaInst>(obj))
     return new AllocaInst(AI->getAllocatedType(), AI->getAddressSpace(),
@@ -787,9 +825,9 @@ static uint64_t objectBytes(Value *obj, const DataLayout &DL) {
       cast<Argument>(obj)->getPointeeInMemoryValueType());
 }
 
-// The parameters the site reads a pointer through. A shadow of such an object
-// would have to hold shadows of those pointers, and one of zeros hands the
-// reverse pass null ones, so the object is passed as a constant instead.
+/// The parameters the site reads a pointer through. A shadow of such an object
+/// would have to hold shadows of those pointers, and one of zeros hands the
+/// reverse pass null ones, so the object is passed as a constant instead.
 static void collectPointerHolders(Function &clone,
                                   SmallVectorImpl<bool> &holds) {
   holds.assign(clone.arg_size(), false);
@@ -800,13 +838,13 @@ static void collectPointerHolders(Function &clone,
           holds[idx] = true;
 }
 
-// Whether the program may read what `call` leaves in `obj`, a local object
-// (localObject): an instruction the call reaches before the object's lifetime
-// ends, the call itself when it runs again, or whatever the object's address
-// escapes to. A by-value parameter's lifetime ends with the function. What the
-// site writes and nothing reads reaches no result of the program (a JVP that
-// writes the primal outputs next to the tangents it is called for), so it is
-// no output to seed.
+/// Whether the program may read what `call` leaves in `obj`, a local object
+/// (localObject): an instruction the call reaches before the object's lifetime
+/// ends, the call itself when it runs again, or whatever the object's address
+/// escapes to. A by-value parameter's lifetime ends with the function. What the
+/// site writes and nothing reads reaches no result of the program (a JVP that
+/// writes the primal outputs next to the tangents it is called for), so it is
+/// no output to seed.
 static bool readAfterCall(Value *obj, CallInst *call) {
   SmallPtrSet<const Instruction *, 16> readers{call}, ends;
   SmallPtrSet<const Value *, 16> seen{obj};
@@ -863,10 +901,10 @@ static bool readAfterCall(Value *obj, CallInst *call) {
 
 namespace {
 
-// `p` as a root pointer, the variable index terms of its address arithmetic
-// (value and scale, in value order) and a constant byte offset, through every
-// GEP and pointer cast. Two pointers with the same root and terms lie a
-// constant distance apart, however the frontend ordered the casts and GEPs.
+/// `p` as a root pointer, the variable index terms of its address arithmetic
+/// (value and scale, in value order) and a constant byte offset, through every
+/// GEP and pointer cast. Two pointers with the same root and terms lie a
+/// constant distance apart, however the frontend ordered the casts and GEPs.
 struct Address {
   const Value *root = nullptr;
   SmallVector<std::pair<const Value *, int64_t>, 2> terms;
@@ -907,12 +945,12 @@ static Address addressOf(const Value *p, const DataLayout &DL) {
 
 namespace {
 
-// The memory a call reaches through pointers of no object the pass knows
-// (accessedExtent) that lie at constant distances from one another
-// (addressOf), in bytes from their common root and terms: one shadow covers
-// it, so that their shadows lie as far apart as they do and overlap where they
-// do. Its byte `start` mirrors the byte `lo`, chosen so that the shadow keeps
-// the strictest alignment an access claims.
+/// The memory a call reaches through pointers of no object the pass knows
+/// (accessedExtent) that lie at constant distances from one another
+/// (addressOf), in bytes from their common root and terms: one shadow covers
+/// it, so that their shadows lie as far apart as they do and overlap where they
+/// do. Its byte `start` mirrors the byte `lo`, chosen so that the shadow keeps
+/// the strictest alignment an access claims.
 struct Region {
   const Value *root = nullptr;
   SmallVector<std::pair<const Value *, int64_t>, 2> terms;
@@ -927,15 +965,15 @@ struct Region {
 
 } // namespace
 
-// The marker in the explicit form, with a shadow for every pointer marked
-// poseidon_shadow: a local object like the one the pointer points into, zero,
-// and seeded by the kernel path's rule when the site writes into it and the
-// program reads it afterwards (readAfterCall). A pointer into no object the
-// pass knows has a local object as its shadow that covers what the call
-// reaches through it, zero and seeded wherever the call writes, since what it
-// writes outlives the caller. Either is made at every execution of the call,
-// because the object the call sees is a new one each time: its storage is
-// reused, its value is not.
+/// The marker in the explicit form, with a shadow for every pointer marked
+/// poseidon_shadow: a local object like the one the pointer points into, zero,
+/// and seeded by the kernel path's rule when the site writes into it and the
+/// program reads it afterwards (readAfterCall). A pointer into no object the
+/// pass knows has a local object as its shadow that covers what the call
+/// reaches through it, zero and seeded wherever the call writes, since what it
+/// writes outlives the caller. Either is made at every execution of the call,
+/// because the object the call sees is a new one each time: its storage is
+/// reused, its value is not.
 static CallInst *withShadows(CallInst *CI, Function &clone,
                              const MarkerArgs &marker, bool print) {
   SmallVector<unsigned, 8> seedWidth;

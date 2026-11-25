@@ -45,11 +45,15 @@ const Function *siteOriginOf(const Session &S, const Function &clone) {
   return it == S.SiteCloneOf.end() ? nullptr : it->second.Origin;
 }
 
-// Whether the Itanium mangling of `symbol` names an entity of internal linkage
-// or one local to such an entity: an 'L' before a namespace-scope or local
-// name, or an anonymous namespace. Clang gives a static or anonymous kernel
-// external linkage in a device compile without -fgpu-rdc, since the host
-// runtime looks it up by name, so its linkage no longer says so.
+/// Whether the Itanium mangling of `symbol` says it names an entity of internal
+/// linkage, or one local to such an entity, by either of the two forms the ABI
+/// gives it: an 'L' before an unscoped or local name (`_ZL4stepPdi`, and
+/// `Z...L` inside a mangled template argument), or the anonymous namespace
+/// `_GLOBAL__N_`. The linkage cannot be read instead: a device compile without
+/// -fgpu-rdc gives a static or anonymous-namespace kernel external linkage
+/// under its own name, since the host runtime looks a kernel up by name. Nor
+/// can the demangler: ItaniumPartialDemangler consumes the 'L' and keeps no
+/// node for it.
 static bool mangledAsInternal(StringRef symbol) {
   static const Regex internal("(^_Z|Z)L[0-9]|_GLOBAL__N_");
   return symbol.starts_with("_Z") && internal.match(symbol);
@@ -141,10 +145,10 @@ std::optional<DemangledFunction> demangleFunction(StringRef mangled) {
   return out;
 }
 
-// Keyed on the source body, not on the per-call clone: profiling shares one
-// instrumented clone between a body's markers, so the run writes one record
-// per body, while here a body reached from several marker calls is cloned once
-// per call and LLVM uniques the second and later clone names.
+/// Keyed on the source body, not on the per-call clone: profiling shares one
+/// instrumented clone between a body's markers, so the run writes one record
+/// per body, while here a body reached from several marker calls is cloned once
+/// per call and LLVM uniques the second and later clone names.
 static std::string siteProfileStem(const Session &S, const Function &clone) {
   if (const Function *origin = siteOriginOf(S, clone))
     return bodyProfileStem(S, *origin);

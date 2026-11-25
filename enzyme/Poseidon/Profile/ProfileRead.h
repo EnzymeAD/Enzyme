@@ -30,93 +30,93 @@ class Function;
 
 namespace poseidon {
 
-// The record of one profiled instruction.
+/// The record of one profiled instruction.
 struct ProfileInfo {
   double minRes = std::numeric_limits<double>::max();
   double maxRes = std::numeric_limits<double>::lowest();
-  // Sum of the sensitivities |gradient x value|.
+  /// Sum of the sensitivities |gradient x value|.
   double sumSens = 0.0;
   double sumGrad = 0.0;
-  // Sum of |gradient|, the accuracy weight: the signed sum understates a value
-  // whose adjoint alternates in sign.
+  /// Sum of |gradient|, the accuracy weight: the signed sum understates a value
+  /// whose adjoint alternates in sign.
   double sumAbsGrad = 0.0;
   uint64_t exec = 0;
-  // Per operand; minMagOperands is the smallest nonzero |operand|, 0 if the
-  // operand was never nonzero.
+  /// Per operand; minMagOperands is the smallest nonzero |operand|, 0 if the
+  /// operand was never nonzero.
   llvm::SmallVector<double, 2> minOperands, maxOperands, minMagOperands;
 
   double weight() const { return sumAbsGrad; }
 };
 
-// A site's profile records by slot index, iterated in slot order: what is
-// summed over them and reported about them does not depend on hashing.
+/// A site's profile records by slot index, iterated in slot order: what is
+/// summed over them and reported about them does not depend on hashing.
 using ProfileMap = std::map<size_t, ProfileInfo>;
 
-// The header of a site's profile.
+/// The header of a site's profile.
 struct FunctionProfileHeader {
-  // Launch geometry over the launches of a kernel (largest block and grid,
-  // number of launches), 0 where unknown; a device profile records it.
+  /// Launch geometry over the launches of a kernel (largest block and grid,
+  /// number of launches), 0 where unknown; a device profile records it.
   uint32_t maxBlockDim[3] = {0, 0, 0};
   uint32_t maxGridDim[3] = {0, 0, 0};
   uint64_t launchCount = 0;
-  // Slot -> reduction trip count at profile scale, which the profile-use
-  // compile cannot recompute.
+  /// Slot -> reduction trip count at profile scale, which the profile-use
+  /// compile cannot recompute.
   std::map<size_t, unsigned> redTrip;
-  // Digest of the canonical form the slots were numbered against; empty when
-  // the profile carries none.
+  /// Digest of the canonical form the slots were numbered against; empty when
+  /// the profile carries none.
   std::string canonicalHash;
-  // Measured relative condition number of the declared quantity of interest
-  // with respect to this site's outputs; 1.0 when the profile carries no
-  // Kappa line.
+  /// Measured relative condition number of the declared quantity of interest
+  /// with respect to this site's outputs; 1.0 when the profile carries no
+  /// Kappa line.
   double kappa = 1.0;
   bool hasKappa = false;
-  // "ok", "below-noise", "nonlinear" or "diverged" with a Kappa line;
-  // kKappaUnmeasured without one when the run declared a quantity of interest
-  // and did not measure the condition number; empty otherwise.
+  /// "ok", "below-noise", "nonlinear" or "diverged" with a Kappa line;
+  /// kKappaUnmeasured without one when the run declared a quantity of interest
+  /// and did not measure the condition number; empty otherwise.
   std::string kappaMark;
-  // False for a site the profiling run instrumented and never executed.
+  /// False for a site the profiling run instrumented and never executed.
   bool executed = true;
 };
 
 inline constexpr llvm::StringLiteral kKappaUnmeasured = kProfileKappaUnmeasured;
 
-// The records and the header of the profile at `profilePath`. A profile that
-// cannot be read, or does not parse, is an error at the site `F`.
+/// The records and the header of the profile at `profilePath`. A profile that
+/// cannot be read, or does not parse, is an error at the site `F`.
 void parseProfileFile(const std::string &profilePath, const llvm::Function &F,
                       ProfileMap &profileMap, FunctionProfileHeader &header);
 
-// An error at the site `F` unless the profile's slot indices were numbered
-// against the canonical form `canonicalHash` names.
+/// An error at the site `F` unless the profile's slot indices were numbered
+/// against the canonical form `canonicalHash` names.
 void requireCanonicalHash(const FunctionProfileHeader &header,
                           llvm::StringRef canonicalHash,
                           llvm::StringRef profilePath, const llvm::Function &F);
 
-// An error at the site `F` when the profiling run declared a quantity of
-// interest and did not measure the site's condition number against it.
+/// An error at the site `F` when the profiling run declared a quantity of
+/// interest and did not measure the site's condition number against it.
 void requireMeasuredKappa(const FunctionProfileHeader &header,
                           llvm::StringRef profilePath, const llvm::Function &F);
 
-// Floors the accuracy weight (summed |gradient|) of every instruction, so that
-// a value whose profiled gradient is ~0 is not priced free; that happens both
-// when the value has no influence and when the adjoint seed lies in the left
-// null space of the site (an all-ones seed on any partition-of-unity operator
-// with a derivative). The floor is on the sensitivity |gradient x value|, as
-// the gradients of values of very different magnitude are not comparable:
-//   ref      = max over profiled instructions of sumSens / exec
-//   floor(v) = 1e-6 * ref * exec_v / max |v|
-// A raised weight is written back into sumGrad and sumAbsGrad. A
-// per-execution sensitivity below 1e-9 of ref is reported. A value that is
-// always zero is left as it is. Returns the number of instructions whose
-// weight was raised.
+/// Floors the accuracy weight (summed |gradient|) of every instruction, so that
+/// a value whose profiled gradient is ~0 is not priced free; that happens both
+/// when the value has no influence and when the adjoint seed lies in the left
+/// null space of the site (an all-ones seed on any partition-of-unity operator
+/// with a derivative). The floor is on the sensitivity |gradient x value|, as
+/// the gradients of values of very different magnitude are not comparable:
+///   ref      = max over profiled instructions of sumSens / exec
+///   floor(v) = 1e-6 * ref * exec_v / max |v|
+/// A raised weight is written back into sumGrad and sumAbsGrad. A
+/// per-execution sensitivity below 1e-9 of ref is reported. A value that is
+/// always zero is left as it is. Returns the number of instructions whose
+/// weight was raised.
 unsigned applySensitivityFloor(ProfileMap &profileMap,
                                llvm::StringRef functionName, bool print);
 
-// Per-output accounting (-poseidon-output-profiles). Each directory holds this
-// site's profile recorded with one output seeded alone. An output's modelled
-// error is its first-order error over its own total sensitivity, so every
-// instruction is weighted by the largest of its per-output gradients, each
-// divided by that output's total; summed over a site this bounds the worst
-// output's error, and the site's accuracy scale is 1.
+/// Per-output accounting (-poseidon-output-profiles). Each directory holds this
+/// site's profile recorded with one output seeded alone. An output's modelled
+/// error is its first-order error over its own total sensitivity, so every
+/// instruction is weighted by the largest of its per-output gradients, each
+/// divided by that output's total; summed over a site this bounds the worst
+/// output's error, and the site's accuracy scale is 1.
 void mergeOutputProfiles(ProfileMap &profileMap,
                          llvm::ArrayRef<std::string> dirs,
                          llvm::StringRef fileName,

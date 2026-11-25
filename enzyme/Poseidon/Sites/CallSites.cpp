@@ -44,14 +44,15 @@ using namespace llvm;
 
 namespace poseidon {
 
-// The name of a caller with the accuracy targets of its per-call sites left
-// out. A target the caller takes as a template argument gives it one
-// instantiation, and one name, per target, while the profile of a call does
-// not depend on its target. In an Itanium name a target is a literal, L, the
-// type, the value, E: a floating-point literal spells the hex of its bits, and
-// a 64-bit unsigned integer that carries the bits of the double, the form a
-// C++17 program uses, spells them in decimal. A spelling runs from its L to its
-// E, so it matches whole literals only; it becomes the external name `tau`.
+/// The name of a caller with the accuracy targets of its per-call sites left
+/// out. A target the caller takes as a template argument gives it one
+/// instantiation, and one name, per target, while the profile of a call does
+/// not depend on its target. In an Itanium name a target is a literal, L, the
+/// type, the value, E: a floating-point literal spells the hex of its bits, and
+/// a 64-bit unsigned integer that carries the bits of the double, the form a
+/// C++17 program uses, spells them in decimal. A spelling runs from its L to
+/// its E, so it matches whole literals only; it becomes the external name
+/// `tau`.
 static std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
   std::string out = name.str();
   for (double t : targets) {
@@ -69,8 +70,8 @@ static std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
   return out;
 }
 
-// The accuracy target the identity call `H` carries for its call, 0 when it
-// carries none; none, with an error, when it is no accuracy target.
+/// The accuracy target the identity call `H` carries for its call, 0 when it
+/// carries none; none, with an error, when it is no accuracy target.
 static std::optional<double> identityTarget(CallInst *H, CallBase *call,
                                             const Function &fn) {
   if (H->arg_size() < 2)
@@ -78,10 +79,10 @@ static std::optional<double> identityTarget(CallInst *H, CallBase *call,
   return readTarget(call, H->getArgOperand(1), fn);
 }
 
-// `call` made the marker call over `fn` with `tau`, unless 0, as its
-// poseidon_tau, then enzyme_primal_return for a value, then `list` with the
-// parameter attributes `listAttrs`. The call's value is fn's, in the profiling
-// run as well.
+/// `call` made the marker call over `fn` with `tau`, unless 0, as its
+/// poseidon_tau, then enzyme_primal_return for a value, then `list` with the
+/// parameter attributes `listAttrs`. The call's value is fn's, in the profiling
+/// run as well.
 static CallInst *emitMarkerCall(CallBase *call, Function *fn, double tau,
                                 ArrayRef<Value *> list,
                                 ArrayRef<AttributeSet> listAttrs) {
@@ -111,8 +112,8 @@ static CallInst *emitMarkerCall(CallBase *call, Function *fn, double tau,
   return CI;
 }
 
-// `marker`, a marker call of `fn`, made the call of fn with the primal values
-// of its arguments, or erased when its list cannot be read.
+/// `marker`, a marker call of `fn`, made the call of fn with the primal values
+/// of its arguments, or erased when its list cannot be read.
 static void callAsWritten(CallInst *marker, Function *fn) {
   if (std::optional<MarkerArgs> parsed = parseMarker(marker, fn)) {
     IRBuilder<> Builder(marker);
@@ -127,14 +128,14 @@ static void callAsWritten(CallInst *marker, Function *fn) {
   marker->eraseFromParent();
 }
 
-// `call`, a marker call of `fn` whose list `list` reads as automatic, made the
-// call __poseidon_optimize or,
-// with the list's target, __poseidon_optimize_tau writes: fn's own arguments,
-// as given, through the plain identity, whose target is added to the caller's
-// `targets`. The host half of a CUDA or HIP compilation holds no site, so there
-// it is the call of fn. Erased, with an error at `call`, when the arguments are
-// not of fn's parameter types or the call's value is used as another type than
-// fn returns.
+/// `call`, a marker call of `fn` whose list `list` reads as automatic, made the
+/// call __poseidon_optimize or,
+/// with the list's target, __poseidon_optimize_tau writes: fn's own arguments,
+/// as given, through the plain identity, whose target is added to the caller's
+/// `targets`. The host half of a CUDA or HIP compilation holds no site, so
+/// there it is the call of fn. Erased, with an error at `call`, when the
+/// arguments are not of fn's parameter types or the call's value is used as
+/// another type than fn returns.
 static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
                         bool hostHalf,
                         DenseMap<Function *, SmallVector<double, 2>> &targets) {
@@ -188,7 +189,7 @@ static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
   call->eraseFromParent();
 }
 
-// The calls of the module's functions named `names`, in module order.
+/// The calls of the module's functions named `names`, in module order.
 static SmallVector<CallInst *, 4> callsOfAny(Module &M,
                                              ArrayRef<StringRef> names) {
   SmallVector<Function *, 2> callees;
@@ -206,17 +207,18 @@ static SmallVector<CallInst *, 4> callsOfAny(Module &M,
   return out;
 }
 
-// __poseidon_optimize with an explicit list: the call through the explicit
-// identity is the marker call over fn, and the marker's lowering makes it the
-// site. The host half of a CUDA or HIP compilation holds no site, so there the
-// call runs fn with the primal values of its arguments.
+/// __poseidon_optimize with an explicit list: the call through the explicit
+/// identity is the marker call over fn, and the marker's lowering makes it the
+/// site. The host half of a CUDA or HIP compilation holds no site, so there the
+/// call runs fn with the primal values of its arguments.
 static bool lowerExplicitCalls(Module &M) {
   SmallVector<CallInst *, 4> identities =
       callsOfAny(M, {kExplicitIdentity, kExplicitIdentityTau});
   if (identities.empty())
     return false;
   const bool hostHalf = isOffloadHostHalf(M);
-  auto annotated = annotatedFunctions(M);
+  MapVector<Function *, std::optional<double>> annotated =
+      annotatedFunctions(M);
   for (CallInst *H : identities) {
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
     SmallVector<CallBase *, 4> calls = callsOf(*H);
@@ -252,13 +254,13 @@ static bool lowerExplicitCalls(Module &M) {
   return true;
 }
 
-// A marker call whose list is automatic and passes a pointer among fn's own
-// arguments is the call form of __poseidon_optimize, through the plain
-// identity, so that the pass makes its shadows as it makes that form's. One
-// whose own arguments hold no pointer needs no shadow and stays the marker call
-// it is, as does one with an explicit list. In the host half of a CUDA or HIP
-// compilation, which holds no site, every marker call runs fn with the primal
-// values of its arguments.
+/// A marker call whose list is automatic and passes a pointer among fn's own
+/// arguments is the call form of __poseidon_optimize, through the plain
+/// identity, so that the pass makes its shadows as it makes that form's. One
+/// whose own arguments hold no pointer needs no shadow and stays the marker
+/// call it is, as does one with an explicit list. In the host half of a CUDA or
+/// HIP compilation, which holds no site, every marker call runs fn with the
+/// primal values of its arguments.
 static bool
 routeAutomaticMarkers(Module &M,
                       DenseMap<Function *, SmallVector<double, 2>> &targets) {
@@ -295,17 +297,17 @@ routeAutomaticMarkers(Module &M,
   return changed;
 }
 
-// __poseidon_optimize: the call through the plain identity becomes a call of
-// a copy of the function made for that call alone, which is then a host site
-// like an outlined body. The copy is named after the caller, without the
-// targets (targetFreeName), and the call's position among the caller's per-call
-// sites, taken before inlining, so that the generate and use compiles name it
-// alike at any -O level and for any target. The host half of a CUDA or HIP
-// compilation holds no site: the compilation has one device and one cost
-// model, and the call of a host-device function is the device half's site.
-// There the call through the identity is left for the inliner to fold. The
-// calls through the explicit identity and the marker calls are read first
-// (lowerExplicitCalls, routeAutomaticMarkers).
+/// __poseidon_optimize: the call through the plain identity becomes a call of
+/// a copy of the function made for that call alone, which is then a host site
+/// like an outlined body. The copy is named after the caller, without the
+/// targets (targetFreeName), and the call's position among the caller's
+/// per-call sites, taken before inlining, so that the generate and use compiles
+/// name it alike at any -O level and for any target. The host half of a CUDA or
+/// HIP compilation holds no site: the compilation has one device and one cost
+/// model, and the call of a host-device function is the device half's site.
+/// There the call through the identity is left for the inliner to fold. The
+/// calls through the explicit identity and the marker calls are read first
+/// (lowerExplicitCalls, routeAutomaticMarkers).
 bool lowerPerCallSites(Session &S, Module &M) {
   const Options &O = S.Opts;
   // The targets of the explicit calls are left out of their callers' names
@@ -326,7 +328,8 @@ bool lowerPerCallSites(Session &S, Module &M) {
   if (helpers.empty())
     return changed;
   const bool active = O.Profiling.profileAction();
-  auto annotated = annotatedFunctions(M);
+  MapVector<Function *, std::optional<double>> annotated =
+      annotatedFunctions(M);
   // Two callers whose names differ in targets alone number their calls on
   // from each other, so that they stay two sites.
   StringMap<unsigned> ordinal;
@@ -424,15 +427,15 @@ bool pointsNowhere(Value *p) {
 
 namespace {
 
-// accessedExtent: every use of the pointer, through constant address
-// arithmetic and into the functions it is passed to.
+/// accessedExtent: every use of the pointer, through constant address
+/// arithmetic and into the functions it is passed to.
 struct ExtentWalk {
   const DataLayout &DL;
   PointerExtent ext;
   bool anyAccess = false, anyWrite = false;
   std::string why;
   SmallSet<std::pair<const Argument *, int64_t>, 4> entered;
-  // The parameters the pointer is in on the way down.
+  /// The parameters the pointer is in on the way down.
   SmallPtrSet<const Argument *, 4> active;
 
   bool fail(const Twine &reason) {
@@ -470,10 +473,10 @@ struct ExtentWalk {
     return true;
   }
 
-  // An optimizer may load anywhere a parameter's attributes call
-  // dereferenceable, also after the extent is taken, so the extent covers it.
-  // A function that receives the pointer again at another offset while it is
-  // being walked reaches no constant range through it.
+  /// An optimizer may load anywhere a parameter's attributes call
+  /// dereferenceable, also after the extent is taken, so the extent covers it.
+  /// A function that receives the pointer again at another offset while it is
+  /// being walked reaches no constant range through it.
   bool enter(Argument &A, int64_t off) {
     if (!entered.insert({&A, off}).second)
       return true;
@@ -585,13 +588,13 @@ std::optional<PointerExtent> accessedExtent(Argument &A, std::string &why) {
   return W.ext;
 }
 
-// __poseidon_optimize in device code: every call of the copy lowerPerCallSites
-// made becomes a marker over that copy, so that profiling, deferral and the
-// solve are the marker's. Its pointers are marked poseidon_shadow for
-// profileSite, which makes the shadow of a pointer into an object of the
-// caller whose extent it knows (localObject; inlining has put the objects a
-// call passes there by now) or else of the constant range the call reaches
-// through it (accessedExtent).
+/// __poseidon_optimize in device code: every call of the copy lowerPerCallSites
+/// made becomes a marker over that copy, so that profiling, deferral and the
+/// solve are the marker's. Its pointers are marked poseidon_shadow for
+/// profileSite, which makes the shadow of a pointer into an object of the
+/// caller whose extent it knows (localObject; inlining has put the objects a
+/// call passes there by now) or else of the constant range the call reaches
+/// through it (accessedExtent).
 bool lowerDeviceCallSites(const Options &O, Module &M) {
   if (!Target::of(M).isDevice())
     return false;
