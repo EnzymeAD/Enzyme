@@ -12,10 +12,15 @@
 //
 // At FIROptLast, while FIR still has the Fortran types, it runs
 // enzyme-fir-type-annotations (off with -enzyme-fir-type-annotations=false).
+// With a flang that has plugin directives, it also handles the !DIR$ ENZYME
+// directives.
 //
 //===----------------------------------------------------------------------===//
 
 #include "Flang/FIRTypeAnnotations.h"
+#ifdef ENZYME_FLANG_PLUGIN_DIRECTIVES
+#include "Flang/FortranDirectives.h"
+#endif
 
 #include "flang/Optimizer/Passes/Pipelines.h"
 #include "flang/Tools/CrossToolHelpers.h"
@@ -34,6 +39,9 @@ llvm::cl::opt<bool> typeAnnotations(
 
 struct EnzymeFlangPipelineRegistration {
   EnzymeFlangPipelineRegistration() {
+#ifdef ENZYME_FLANG_PLUGIN_DIRECTIVES
+    mlir::enzyme::registerFlangEnzymeDirectives();
+#endif
     fir::registerPassPipelineConfigCallback(
         [](MLIRToLLVMPassPipelineConfig &config) {
           config.registerFIROptLastEPCallbacks(

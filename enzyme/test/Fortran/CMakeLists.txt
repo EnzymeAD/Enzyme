@@ -1,6 +1,7 @@
 message("Building Fortran tests")
 
 add_subdirectory(BatchMode)
+add_subdirectory(Directives)
 add_subdirectory(ForwardMode)
 add_subdirectory(mpi)
 add_subdirectory(OpenMP)
