@@ -445,14 +445,13 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // add the shadow as operand.
   auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
   if (!regionBranchOp) {
-    return op->emitError() << " RegionBranchOpInterface not implemented for "
-                           << *op << "\n";
+    return op->emitError()
+           << " RegionBranchOpInterface not implemented for this op";
   }
   auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
   if (!iface) {
     return op->emitError()
-           << " ControlFlowAutoDiffOpInterface not implemented for " << *op
-           << "\n";
+           << " ControlFlowAutoDiffOpInterface not implemented for this op ";
   }
 
   // TODO: we may need to record, for every successor, which of its inputs
@@ -544,7 +543,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
     if (!typeIface) {
       return op->emitError() << " AutoDiffTypeInterface not implemented for "
-                             << result.getType() << "\n";
+                             << result.getType();
     }
     newOpResultTypes.push_back(typeIface.getShadowType(gutils->width));
   }
@@ -555,8 +554,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
   if (!iface) {
     return op->emitError()
-           << " ControlFlowAutoDiffOpInterface not implemented for " << *op
-           << "\n";
+           << " ControlFlowAutoDiffOpInterface not implemented for this op";
   }
 
   // Not all users of ControlFlowHandler(...) implement the
@@ -578,7 +576,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
         shadowValue = gutils->invertPointerM(operand.get(), builder);
       } else if (regionBranchOp) {
         Type type = operand.get().getType();
-        auto shadowType =
+        Type shadowType =
             cast<AutoDiffTypeInterface>(type).getShadowType(gutils->width);
         shadowValue = cast<AutoDiffTypeInterface>(shadowType)
                           .createNullValue(builder, operand.get().getLoc());
@@ -590,7 +588,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
         for (const RegionSuccessor &successor : entrySuccessors) {
           if (!successor.isRegion())
             continue;
-          auto &newOpRegion =
+          Region &newOpRegion =
               newOp->getRegion(successor.getSuccessor()->getRegionNumber());
           OperandRange succOperands =
               iface.getSuccessorOperands(regionBranchOp, successor);
@@ -599,25 +597,27 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
           if (succOperands.empty())
             continue;
 
-          auto succInputPos =
+          unsigned int succInputPos =
               operand.getOperandNumber() - succOperands.getBeginOperandIndex();
 
-          if (succInputPos >= 0 && succInputPos < succInputs.size()) {
-            auto oldRegionInput =
-                dyn_cast<BlockArgument>(succInputs[succInputPos]);
-            if (!oldRegionInput)
-              continue;
-            if (gutils->invertedPointers.contains(oldRegionInput))
-              continue;
-            auto newOpBlockVal =
-                cast<BlockArgument>(gutils->getNewFromOriginal(oldRegionInput));
-            auto i = newOpBlockVal.getArgNumber();
-            if (i == newOpRegion.getNumArguments() - 1) {
-              newOpRegion.addArgument(shadowType, newOpBlockVal.getLoc());
-            } else {
-              newOpRegion.insertArgument(newOpRegion.args_begin() + i + 1,
-                                         shadowType, newOpBlockVal.getLoc());
-            }
+          // check if there is a corresponding successorInput for the given
+          // successor operand index
+          if (succInputPos >= succInputs.size())
+            continue;
+          auto oldRegionInput =
+              dyn_cast<BlockArgument>(succInputs[succInputPos]);
+          if (!oldRegionInput)
+            continue;
+          if (gutils->invertedPointers.contains(oldRegionInput))
+            continue;
+          auto newOpBlockVal =
+              cast<BlockArgument>(gutils->getNewFromOriginal(oldRegionInput));
+          auto i = newOpBlockVal.getArgNumber();
+          if (i == newOpRegion.getNumArguments() - 1) {
+            newOpRegion.addArgument(shadowType, newOpBlockVal.getLoc());
+          } else {
+            newOpRegion.insertArgument(newOpRegion.args_begin() + i + 1,
+                                       shadowType, newOpBlockVal.getLoc());
           }
         }
       } else {
