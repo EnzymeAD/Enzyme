@@ -16,8 +16,9 @@
 // same truncation, residue representatives and CRT constants, each computed
 // here from its defining formula, so that the same operands give the same
 // result bit for bit. Residues are computed by GEMMul8's byte-weight method
-// (OzakiII.h). The pipeline layout (one strided-batched INT8 GEMM,
-// layout-aware rectangular arm) is original to this implementation.
+// (OzakiII.h). The pipeline layout (one strided-batched INT8 GEMM per chunk
+// of columns, operands read in their own layouts) is original to this
+// implementation.
 //
 // GEMMul8 (https://github.com/RIKEN-RCCS/GEMMul8): Copyright (c) 2025- RIKEN
 // R-CCS, MIT License. Its numerical conventions are followed with
@@ -227,13 +228,13 @@ __device__ __forceinline__ void poz_storeResidues(int8_t *dst, size_t plane,
   });
 }
 
-// Both arms quantize each operand, per modulus, into a row-major (R x Kp) int8
+// Each operand is quantized, per modulus, into a row-major (R x Kp) int8
 // plane whose row is the operand's outer index (A: the output row, B: the
 // output column) and whose column is the contraction index k. Read
 // column-major with leading dimension Kp these are A^T and B, so the batched
 // TN INT8 GEMM yields the row-major C. Per operand only the source layout
 // differs: contiguous in k ("direct") or in the outer index ("transposed":
-// aColMajor for A, !bColMajor for B, and the square arm's row-major B).
+// aColMajor for A, !bColMajor for B).
 //
 // Residue fill into the NM (Rp x Kp) planes. `transposed` selects the source
 // addressing:
@@ -397,19 +398,6 @@ __global__ void poz_crt(const int32_t *Cr, const short *sftA, const short *sftB,
   }
 }
 
-struct PozScratch {
-  int Np = 0;
-  int8_t *Ar = nullptr, *Br = nullptr;
-  int32_t *Cr = nullptr;
-  short *sA = nullptr, *sB = nullptr;
-  // Strided-vector partial sums of squares: Np*ceil(Np/256) doubles.
-  double *part = nullptr;
-  // Padded square F64 operand/result buffers for the square-padded pipeline:
-  // an M x Ncols x K source is repacked into As/Bs (S x S, S = pad of
-  // max(M,Ncols,K)) and the result cropped back out of Cs.
-  double *As = nullptr, *Bs = nullptr, *Cs = nullptr;
-};
-PozScratch g_scratch;
 OzakiIIConstants g_consts;
 int g_uploadedNm = 0;
 
@@ -431,34 +419,6 @@ static void poz_checkK(int K) {
   abort();
 }
 
-void poz_ensure(int N) {
-  int Np = pozPad(N);
-  if (g_scratch.Np == Np)
-    return;
-  if (g_scratch.Ar) {
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.Ar));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.Br));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.Cr));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.sA));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.sB));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.part));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.As));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.Bs));
-    POSEIDON_GEMM_CK(cudaFree(g_scratch.Cs));
-  }
-  size_t plane = (size_t)Np * Np;
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.Ar, POZ_MAXNM * plane));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.Br, POZ_MAXNM * plane));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.Cr, POZ_MAXNM * plane * 4));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.sA, Np * 2));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.sB, Np * 2));
-  POSEIDON_GEMM_CK(
-      cudaMalloc(&g_scratch.part, (size_t)Np * pozChunks(Np) * sizeof(double)));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.As, plane * sizeof(double)));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.Bs, plane * sizeof(double)));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_scratch.Cs, plane * sizeof(double)));
-  g_scratch.Np = Np;
-}
 void poz_uploadConsts(int nm) {
   if (g_uploadedNm == nm)
     return;
@@ -476,161 +436,117 @@ void poz_uploadConsts(int nm) {
   g_uploadedNm = nm;
 }
 
-// Repack a rows x cols (layout-aware) source into the top-left of an S x S
-// row-major buffer: dst[r*S+c] = src[r,c]. The padded region (r>=rows ||
-// c>=cols) is left as the caller's prior memset (0). colMajor selects the
-// source stride convention (transposed vs row-major).
-__global__ void poz_pack(double *dst, const double *src, int rows, int cols,
-                         int ld, int colMajor, int S) {
-  int r = blockIdx.y * blockDim.y + threadIdx.y;
-  int c = blockIdx.x * blockDim.x + threadIdx.x;
-  if (r >= rows || c >= cols)
-    return;
-  dst[(size_t)r * S + c] =
-      colMajor ? src[(size_t)c * ld + r] : src[(size_t)r * ld + c];
-}
-
-// Crop the M x Ncols top-left of an S x S row-major result back into a
-// layout-aware destination, applying C = alpha*Cs + beta*C only over the
-// useful region.
-__global__ void poz_crop(double *C, const double *Cs, int M, int Ncols, int ldc,
-                         int cColMajor, int S, double alpha, double beta) {
-  int i = blockIdx.y * blockDim.y + threadIdx.y;
-  int j = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= M || j >= Ncols)
-    return;
-  size_t dst = cColMajor ? (size_t)j * ldc + i : (size_t)i * ldc + j;
-  C[dst] = poz_axpby(alpha, Cs[(size_t)i * S + j], beta, C[dst]);
-}
-
-// NM moduli (kOzakiIIMinModuli..14) select the Ozaki-II precision; the per-nm
-// constants are computed and uploaded here (cached). Square N x N x N, NN,
-// row-major pipeline: C = alpha*(A@B)+beta*C.
-template <int NM>
-static void poz_run_square(double *C, const double *A, const double *B, int N,
-                           double alpha, double beta, cudaStream_t stream) {
-  poz_checkK(N);
-  poz_ensure(N);
-  poz_uploadConsts(NM);
-  int Np = g_scratch.Np;
-  size_t plane = (size_t)Np * Np;
-  dim3 tile(32, 8), gTile((Np + 31) / 32, (Np + 31) / 32);
-  // Rows of A are contiguous, columns of B strided (row-major operands).
-  poz_shifts(A, N, N, N, /*contiguous=*/true, g_scratch.sA, g_scratch.part,
-             stream);
-  poz_shifts(B, N, N, N, /*contiguous=*/false, g_scratch.sB, g_scratch.part,
-             stream);
-  poz_fill<NM><<<gTile, tile, 0, stream>>>(A, g_scratch.sA, g_scratch.Ar, N, N,
-                                           N, /*transposed=*/0, Np, Np);
-  poz_fill<NM><<<gTile, tile, 0, stream>>>(B, g_scratch.sB, g_scratch.Br, N, N,
-                                           N, /*transposed=*/1, Np, Np);
-  // One strided-batched INT8 tensor-core GEMM over all NM residue planes.
-  // Column-major C^T(Np x Np) = op(Br)^T * op(Ar) = B^T*A^T, so the int32
-  // result read row-major is the row-major product.
-  cublasHandle_t h = poseidonCublas();
-  POSEIDON_GEMM_CB(cublasSetStream(h, stream));
-  const int32_t i_one = 1, i_zero = 0;
-  POSEIDON_GEMM_CB(cublasGemmStridedBatchedEx(
-      h, CUBLAS_OP_T, CUBLAS_OP_N, Np, Np, Np, &i_one, g_scratch.Br, CUDA_R_8I,
-      Np, (long long)plane, g_scratch.Ar, CUDA_R_8I, Np, (long long)plane,
-      &i_zero, g_scratch.Cr, CUDA_R_32I, Np, (long long)plane, NM,
-      CUBLAS_COMPUTE_32I, CUBLAS_GEMM_DEFAULT));
-  poz_crt<NM><<<dim3((N + 31) / 32, (N + 31) / 32), dim3(8, 32), 0, stream>>>(
-      g_scratch.Cr, g_scratch.sA, g_scratch.sB, C, N, N, Np, Np, N,
-      /*cColMajor=*/0, alpha, beta);
-}
-
-// Rectangular arm. The square pipeline pads every operand to
-// S = roundup(max(M,Ncols,K),16), so a skinny product pays
-// padWaste = S^3/(M*Ncols*K) times the useful work. This arm sizes every
-// buffer to the real extents (rounded up to 16 for the INT8 leading dimension)
-// and repacks no operand. Shifts depend only on the vector and its layout, so
-// this arm gives the square arm's bits on an exactly square dispatch.
-
-// 0 by shape, 1 rectangular, 2 square-padded (__poseidon_ozaki_set_path).
-int g_pathMode = 0;
-
-// Column chunking bounds the residue scratch, POZ_MAXNM*(Kp + 4*Mp) bytes per
-// column plus the shift and its partial sums, to this. It is numerically
-// inert: A's shift is a per-row property of the whole operand and B's a
-// per-column property of one column, so every chunking returns the same bits.
-constexpr double kPozRectScratchBytes = 512.0 * 1024 * 1024;
-
-static int poz_rectChunk(int Mp, int Kp, int Ncols) {
-  double perCol = (double)POZ_MAXNM * ((double)Kp + 4.0 * (double)Mp) +
-                  8.0 * (double)pozChunks(Kp) + 2.0;
-  long c = (long)(kPozRectScratchBytes / perCol);
-  c &= ~127L; // keep every chunk but the last a multiple of 128 columns
-  if (c < 128)
-    c = 128;
-  if (c > Ncols)
-    c = Ncols;
-  return (int)c;
-}
-
-struct PozRectScratch {
+// The device scratch of a dispatch, one allocation: the residue planes of A
+// (Mp x Kp) and of a chunk of up to Ncp columns of B, their INT32 products,
+// the shifts, and the partial sums of squares of strided vectors.
+struct PozScratch {
   int Mp = 0, Kp = 0, Ncp = 0;
+  // The device held no more than Ncp columns for this Mp and Kp.
+  bool columnsCapped = false;
+  void *block = nullptr;
   int8_t *Ar = nullptr, *Br = nullptr;
   int32_t *Cr = nullptr;
   short *sA = nullptr, *sB = nullptr;
-  double *part = nullptr; // max(Mp, Ncp)*ceil(Kp/256) partial sums of squares
+  double *part = nullptr;
 };
-PozRectScratch g_rect;
+PozScratch g_scratch;
 
-// Grow-only: an alternating shape sequence (the last chunk of a dispatch is
-// short) must not free and re-allocate on every call.
-static void poz_ensureRect(int Mp, int Kp, int Ncp) {
-  if (g_rect.Mp >= Mp && g_rect.Kp >= Kp && g_rect.Ncp >= Ncp)
-    return;
-  Mp = std::max(Mp, g_rect.Mp);
-  Kp = std::max(Kp, g_rect.Kp);
-  Ncp = std::max(Ncp, g_rect.Ncp);
-  if (g_rect.Ar) {
-    POSEIDON_GEMM_CK(cudaFree(g_rect.Ar));
-    POSEIDON_GEMM_CK(cudaFree(g_rect.Br));
-    POSEIDON_GEMM_CK(cudaFree(g_rect.Cr));
-    POSEIDON_GEMM_CK(cudaFree(g_rect.sA));
-    POSEIDON_GEMM_CK(cudaFree(g_rect.sB));
-    POSEIDON_GEMM_CK(cudaFree(g_rect.part));
-    g_rect = PozRectScratch();
-  }
-  POSEIDON_GEMM_CK(cudaMalloc(&g_rect.Ar, (size_t)POZ_MAXNM * Mp * Kp));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_rect.Br, (size_t)POZ_MAXNM * Ncp * Kp));
-  POSEIDON_GEMM_CK(
-      cudaMalloc(&g_rect.Cr, (size_t)POZ_MAXNM * Ncp * Mp * sizeof(int32_t)));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_rect.sA, (size_t)Mp * sizeof(short)));
-  POSEIDON_GEMM_CK(cudaMalloc(&g_rect.sB, (size_t)Ncp * sizeof(short)));
-  POSEIDON_GEMM_CK(
-      cudaMalloc(&g_rect.part,
-                 (size_t)std::max(Mp, Ncp) * pozChunks(Kp) * sizeof(double)));
-  g_rect.Mp = Mp;
-  g_rect.Kp = Kp;
-  g_rect.Ncp = Ncp;
+// Points the buffers of s into base (null: sizes them only) and returns the
+// bytes they take, each 256-byte aligned.
+static size_t pozLayout(PozScratch &s, char *base) {
+  size_t at = 0;
+  auto take = [&](auto *&p, size_t bytes) {
+    p = base ? reinterpret_cast<std::remove_reference_t<decltype(p)>>(base + at)
+             : nullptr;
+    at += (bytes + 255) & ~(size_t)255;
+  };
+  take(s.Cr, (size_t)POZ_MAXNM * s.Ncp * s.Mp * sizeof(int32_t));
+  take(s.Ar, (size_t)POZ_MAXNM * s.Mp * s.Kp);
+  take(s.Br, (size_t)POZ_MAXNM * s.Ncp * s.Kp);
+  take(s.part,
+       (size_t)std::max(s.Mp, s.Ncp) * pozChunks(s.Kp) * sizeof(double));
+  take(s.sA, (size_t)s.Mp * sizeof(short));
+  take(s.sB, (size_t)s.Ncp * sizeof(short));
+  return at;
 }
 
-// Rectangular Ozaki-II: C(M x Ncols) = alpha*(A@B) + beta*C, A(M x K),
-// B(K x Ncols), each operand row- or column-major per the {a,b,c}ColMajor
-// flags. Columns are chunked internally; A is scaled and quantized once for
-// the whole dispatch because its residues are a property of A alone.
+// Makes g_scratch hold an Mp x Kp operand A and the columns of B, and returns
+// how many columns a chunk takes. Scratch that holds them already is reused.
+// It asks for all Ncols columns; when the device cannot hold them, it asks
+// again for half as many, down to one tile of kOzakiIIPadTile columns. The
+// chunking is numerically inert: A's shift is a property of a whole row and
+// B's of one whole column, so every chunk count returns the same bits. Only an
+// out-of-memory status is retried. CUDA documents which errors leave the
+// context unusable (cudaErrorIllegalAddress and its kind), and
+// cudaErrorMemoryAllocation is not one of them; HIP's documentation says
+// nothing either way, so there the retry relies on each call's own status:
+// any other failure, including a later call's on a damaged context, is fatal.
+static int poz_ensure(int Mp, int Kp, int Ncols) {
+  PozScratch &s = g_scratch;
+  const int want = pozPad(Ncols);
+  if (s.block && s.Mp >= Mp && s.Kp >= Kp && (s.Ncp >= want || s.columnsCapped))
+    return std::min(Ncols, s.Ncp);
+  PozScratch next;
+  next.Mp = std::max(Mp, s.Mp);
+  next.Kp = std::max(Kp, s.Kp);
+  next.Ncp = s.columnsCapped ? want : std::max(want, s.Ncp);
+  if (s.block)
+    POSEIDON_GEMM_CK(cudaFree(s.block));
+  s = PozScratch();
+  for (;;) {
+    const size_t bytes = pozLayout(next, nullptr);
+    const cudaError_t e = cudaMalloc(&next.block, bytes);
+    if (e == cudaSuccess)
+      break;
+    if (e != cudaErrorMemoryAllocation)
+      poseidonGemmFatal("cudaMalloc", __FILE__, __LINE__,
+                        cudaGetErrorString(e));
+    // The failure is the last error of this thread; the entry checks that.
+    (void)cudaGetLastError();
+    if (next.Ncp == kOzakiIIPadTile) {
+      size_t freeBytes = 0, totalBytes = 0;
+      POSEIDON_GEMM_CK(cudaMemGetInfo(&freeBytes, &totalBytes));
+      fflush(stdout);
+      fprintf(stderr,
+              "Poseidon GEMM runtime: __poseidon_ozaki_dgemm needs %zu bytes "
+              "of device memory for a %d x %d operand and %d columns of the "
+              "other, and the device has %zu bytes free\n",
+              bytes, next.Mp, next.Kp, next.Ncp, freeBytes);
+      abort();
+    }
+    next.Ncp = std::max(kOzakiIIPadTile,
+                        next.Ncp / 2 / kOzakiIIPadTile * kOzakiIIPadTile);
+    next.columnsCapped = true;
+  }
+  pozLayout(next, static_cast<char *>(next.block));
+  s = next;
+  return std::min(Ncols, s.Ncp);
+}
+
+// C(M x Ncols) = alpha*(A@B) + beta*C, A(M x K), B(K x Ncols), each operand
+// row- or column-major per the {a,b,c}ColMajor flags and read in place: every
+// buffer is sized to the real extents, rounded up to kOzakiIIPadTile for the
+// INT8 leading dimension. A is scaled and quantized once for the whole
+// dispatch because its residues are a property of A alone; B and C go by
+// chunks of columns (poz_ensure).
 template <int NM>
-static void poz_run_rect(double *C, const double *A, const double *B, int M,
-                         int Ncols, int K, int lda, int ldb, int ldc,
-                         int aColMajor, int bColMajor, int cColMajor,
-                         double alpha, double beta, cudaStream_t stream) {
+static void poz_run(double *C, const double *A, const double *B, int M,
+                    int Ncols, int K, int lda, int ldb, int ldc, int aColMajor,
+                    int bColMajor, int cColMajor, double alpha, double beta,
+                    cudaStream_t stream) {
   poz_checkK(K);
   poz_uploadConsts(NM);
   const int Kp = pozPad(K), Mp = pozPad(M);
-  const int chunk = poz_rectChunk(Mp, Kp, Ncols);
-  poz_ensureRect(Mp, Kp, pozPad(chunk));
+  const int chunk = poz_ensure(Mp, Kp, Ncols);
+  const PozScratch &sc = g_scratch;
   const dim3 tile(32, 8);
 
   // A, once for the whole dispatch.
   const int tr = aColMajor ? 1 : 0; // col-major A is contiguous in m, not k
-  poz_shifts(A, lda, M, K, /*contiguous=*/!tr, g_rect.sA, g_rect.part, stream);
+  poz_shifts(A, lda, M, K, /*contiguous=*/!tr, sc.sA, sc.part, stream);
   const dim3 g = tr ? dim3((Mp + 31) / 32, (Kp + 31) / 32)
                     : dim3((Kp + 31) / 32, (Mp + 31) / 32);
-  poz_fill<NM>
-      <<<g, tile, 0, stream>>>(A, g_rect.sA, g_rect.Ar, M, K, lda, tr, Mp, Kp);
+  poz_fill<NM><<<g, tile, 0, stream>>>(A, sc.sA, sc.Ar, M, K, lda, tr, Mp, Kp);
 
   cublasHandle_t h = poseidonCublas();
   POSEIDON_GEMM_CB(cublasSetStream(h, stream));
@@ -644,23 +560,22 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
     double *Cc = cColMajor ? C + (size_t)j0 * ldc : C + j0;
     const int trB = bColMajor ? 0 : 1; // row-major B is contiguous in c, not k
 
-    poz_shifts(Bc, ldb, nc, K, /*contiguous=*/!trB, g_rect.sB, g_rect.part,
-               stream);
+    poz_shifts(Bc, ldb, nc, K, /*contiguous=*/!trB, sc.sB, sc.part, stream);
     const dim3 gB = trB ? dim3((ncp + 31) / 32, (Kp + 31) / 32)
                         : dim3((Kp + 31) / 32, (ncp + 31) / 32);
-    poz_fill<NM><<<gB, tile, 0, stream>>>(Bc, g_rect.sB, g_rect.Br, nc, K, ldb,
-                                          trB, ncp, Kp);
+    poz_fill<NM>
+        <<<gB, tile, 0, stream>>>(Bc, sc.sB, sc.Br, nc, K, ldb, trB, ncp, Kp);
     // Column-major C^T(ncp x Mp) = op_T(Br) * op_N(Ar) = B^T*A^T, so the int32
     // result read row-major with row stride ncp is the row-major product.
     POSEIDON_GEMM_CB(cublasGemmStridedBatchedEx(
-        h, CUBLAS_OP_T, CUBLAS_OP_N, ncp, Mp, Kp, &i_one, g_rect.Br, CUDA_R_8I,
-        Kp, (long long)ncp * Kp, g_rect.Ar, CUDA_R_8I, Kp, (long long)Mp * Kp,
-        &i_zero, g_rect.Cr, CUDA_R_32I, ncp, (long long)ncp * Mp, NM,
-        CUBLAS_COMPUTE_32I, CUBLAS_GEMM_DEFAULT));
+        h, CUBLAS_OP_T, CUBLAS_OP_N, ncp, Mp, Kp, &i_one, sc.Br, CUDA_R_8I, Kp,
+        (long long)ncp * Kp, sc.Ar, CUDA_R_8I, Kp, (long long)Mp * Kp, &i_zero,
+        sc.Cr, CUDA_R_32I, ncp, (long long)ncp * Mp, NM, CUBLAS_COMPUTE_32I,
+        CUBLAS_GEMM_DEFAULT));
     poz_crt<NM>
         <<<dim3((nc + 31) / 32, (M + 31) / 32), dim3(8, 32), 0, stream>>>(
-            g_rect.Cr, g_rect.sA, g_rect.sB, Cc, M, nc, Mp, ncp, ldc, cColMajor,
-            alpha, beta);
+            sc.Cr, sc.sA, sc.sB, Cc, M, nc, Mp, ncp, ldc, cColMajor, alpha,
+            beta);
   }
 }
 
@@ -690,23 +605,6 @@ template <class F> void poz_withModuli(int nm, F &&f) {
 }
 } // namespace
 
-extern "C" void __poseidon_ozaki_set_path(int mode) {
-  if (mode < 0 || mode > 2) {
-    fflush(stdout);
-    fprintf(stderr,
-            "Poseidon GEMM runtime: __poseidon_ozaki_set_path(%d): expected 0 "
-            "(by shape), 1 (rectangular) or 2 (square-padded)\n",
-            mode);
-    abort();
-  }
-  g_pathMode = mode;
-}
-
-// The pipeline is chosen by shape: an N x N x N row-major product with leading
-// dimensions N runs the square pipeline in place; any other runs the
-// rectangular one (poz_run_rect) when padWaste reaches kOzakiIIRectMinWaste,
-// else it is zero-padded to S = roundup(max(M,Ncols,K),16), repacked into
-// square row-major scratch, run square and cropped back.
 extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
                                        const double *B, int M, int Ncols, int K,
                                        int lda, int ldb, int ldc, int aColMajor,
@@ -715,44 +613,9 @@ extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
                                        cudaStream_t stream, int num_moduli) {
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
-  int mx = M > Ncols ? M : Ncols;
-  if (K > mx)
-    mx = K;
-  int S = pozPad(mx);
-  const double padWaste = (double)S * (double)S * (double)S /
-                          ((double)M * (double)Ncols * (double)K);
-  const bool squareInPlace = M == Ncols && Ncols == K && lda == K &&
-                             ldb == Ncols && ldc == Ncols && !aColMajor &&
-                             !bColMajor && !cColMajor;
-  if (g_pathMode != 1 && squareInPlace)
-    poz_withModuli(num_moduli, [&](auto nm) {
-      poz_run_square<decltype(nm)::value>(C, A, B, M, alpha, beta, stream);
-    });
-  else if (g_pathMode == 1 ||
-           (g_pathMode == 0 && padWaste >= kOzakiIIRectMinWaste))
-    poz_withModuli(num_moduli, [&](auto nm) {
-      poz_run_rect<decltype(nm)::value>(C, A, B, M, Ncols, K, lda, ldb, ldc,
-                                        aColMajor, bColMajor, cColMajor, alpha,
-                                        beta, stream);
-    });
-  else {
-    poz_ensure(S);
-    size_t plane = (size_t)S * S;
-    POSEIDON_GEMM_CK(
-        cudaMemsetAsync(g_scratch.As, 0, plane * sizeof(double), stream));
-    POSEIDON_GEMM_CK(
-        cudaMemsetAsync(g_scratch.Bs, 0, plane * sizeof(double), stream));
-    dim3 b(16, 16);
-    poz_pack<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-        g_scratch.As, A, M, K, lda, aColMajor, S);
-    poz_pack<<<dim3((Ncols + 15) / 16, (K + 15) / 16), b, 0, stream>>>(
-        g_scratch.Bs, B, K, Ncols, ldb, bColMajor, S);
-    poz_withModuli(num_moduli, [&](auto nm) {
-      poz_run_square<decltype(nm)::value>(g_scratch.Cs, g_scratch.As,
-                                          g_scratch.Bs, S, 1.0, 0.0, stream);
-    });
-    poz_crop<<<dim3((Ncols + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-        C, g_scratch.Cs, M, Ncols, ldc, cColMajor, S, alpha, beta);
-  }
+  poz_withModuli(num_moduli, [&](auto nm) {
+    poz_run<decltype(nm)::value>(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor,
+                                 bColMajor, cColMajor, alpha, beta, stream);
+  });
   POSEIDON_GEMM_CK(cudaGetLastError());
 }

@@ -11,11 +11,11 @@
 
 // The accuracy model's Ozaki-II product (simulateOzakiIIDgemm), run on the
 // host, returns the digests Inputs/dispatch_rt.cpp records for the runtime
-// (operands generated the same way): the in-place square pipeline at N = 256,
-// the rectangular arm (A row-major, B and C column-major, beta = 1), and the
-// padded square arm, at 8, 10, 13 and 14 moduli. Each operand is laid out as
-// the runtime's arm reads it, since that fixes the order of its sum of
-// squares.
+// (operands generated the same way): a row-major square at N = 256, a skinny
+// product with A row-major and B and C column-major (beta = 1), and a nearly
+// square one with the opposite layouts, at 8, 10, 13 and 14 moduli. Each
+// operand is laid out as the runtime reads it, since that fixes the order of
+// its sum of squares.
 //
 // CASES-COUNT-8: // MODEL
 
@@ -34,15 +34,14 @@ namespace {
 
 struct Shape {
   const char *name;
-  bool square;
   int M, Ncols, K, aColMajor, bColMajor, cColMajor;
   double beta;
 };
 
 const Shape kShapes[] = {
-    {"square256", true, 256, 256, 256, 0, 0, 0, 0.0},
-    {"rect343x192x1536", false, 343, 192, 1536, 0, 1, 1, 1.0},
-    {"pad300", false, 300, 300, 300, 1, 0, 0, 0.0},
+    {"square256", 256, 256, 256, 0, 0, 0, 0.0},
+    {"rect343x192x1536", 343, 192, 1536, 0, 1, 1, 1.0},
+    {"pad300", 300, 300, 300, 1, 0, 0, 0.0},
 };
 
 struct Case {
@@ -86,53 +85,24 @@ double axpby(double beta, double ab, double c) {
   return beta == 0.0 ? ab : std::fma(beta, c, ab);
 }
 
-// C = A B + beta C0 as __poseidon_ozaki_dgemm(_ex) computes it for `s`.
+// C = A B + beta C0 as __poseidon_ozaki_dgemm computes it for `s`: a vector is
+// contiguous when its storage runs along k.
 std::vector<double> product(const Shape &s, int nm,
                             const std::vector<double> &A,
                             const std::vector<double> &B,
                             const std::vector<double> &C0) {
-  std::vector<double> C(C0);
-  auto store = [&](int r, int c, double ab) {
-    size_t o = s.cColMajor ? (size_t)c * s.M + r : (size_t)r * s.Ncols + c;
-    C[o] = axpby(s.beta, ab, C0[o]);
-  };
-  int S = (std::max({s.M, s.Ncols, s.K}) + 15) / 16 * 16;
-  double padWaste = (double)S * S * S / ((double)s.M * s.Ncols * s.K);
-  std::vector<double> P;
-  if (!s.square && padWaste >= 1.05) {
-    // poz_run_rect: a vector is contiguous when its storage runs along k.
-    P.resize((size_t)s.M * s.Ncols);
-    simulateOzakiIIDgemm(nm,
-                         {A.data(), (unsigned)(s.aColMajor ? s.M : s.K),
-                          (unsigned)s.M, !s.aColMajor},
-                         {B.data(), (unsigned)(s.bColMajor ? s.K : s.Ncols),
-                          (unsigned)s.Ncols, (bool)s.bColMajor},
-                         s.K, P.data());
-    for (int r = 0; r < s.M; ++r)
-      for (int c = 0; c < s.Ncols; ++c)
-        store(r, c, P[(size_t)r * s.Ncols + c]);
-    return C;
-  }
-  // The square pipeline on row-major operands, repacked and zero-padded to
-  // S x S by __poseidon_ozaki_dgemm (poz_pack, poz_crop): rows of A contiguous,
-  // columns of B strided.
-  int N = s.square ? s.M : S;
-  std::vector<double> As((size_t)N * N, 0.0), Bs((size_t)N * N, 0.0);
+  std::vector<double> C(C0), P((size_t)s.M * s.Ncols);
+  simulateOzakiIIDgemm(nm,
+                       {A.data(), (unsigned)(s.aColMajor ? s.M : s.K),
+                        (unsigned)s.M, !s.aColMajor},
+                       {B.data(), (unsigned)(s.bColMajor ? s.K : s.Ncols),
+                        (unsigned)s.Ncols, (bool)s.bColMajor},
+                       s.K, P.data());
   for (int r = 0; r < s.M; ++r)
-    for (int k = 0; k < s.K; ++k)
-      As[(size_t)r * N + k] =
-          A[s.aColMajor ? (size_t)k * s.M + r : (size_t)r * s.K + k];
-  for (int k = 0; k < s.K; ++k)
-    for (int c = 0; c < s.Ncols; ++c)
-      Bs[(size_t)k * N + c] =
-          B[s.bColMajor ? (size_t)c * s.K + k : (size_t)k * s.Ncols + c];
-  P.resize((size_t)N * N);
-  simulateOzakiIIDgemm(nm, {As.data(), (unsigned)N, (unsigned)N, true},
-                       {Bs.data(), (unsigned)N, (unsigned)N, false},
-                       (unsigned)N, P.data());
-  for (int r = 0; r < s.M; ++r)
-    for (int c = 0; c < s.Ncols; ++c)
-      store(r, c, P[(size_t)r * N + c]);
+    for (int c = 0; c < s.Ncols; ++c) {
+      size_t o = s.cColMajor ? (size_t)c * s.M + r : (size_t)r * s.Ncols + c;
+      C[o] = axpby(s.beta, P[(size_t)r * s.Ncols + c], C0[o]);
+    }
   return C;
 }
 

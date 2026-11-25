@@ -40,10 +40,6 @@ void __poseidon_ozaki_dgemm(double *C, const double *A, const double *B, int M,
                             double alpha, double beta, cudaStream_t stream,
                             int num_moduli);
 
-// Selects the pipeline of __poseidon_ozaki_dgemm: 0 by shape, 1 the
-// rectangular one, 2 the square-padded one.
-void __poseidon_ozaki_set_path(int mode);
-
 // Tensor-core error correction on cuMpSGEMM in a PoseidonTcecMode (OzakiII.h).
 // Only a build with cuMpSGEMM defines it.
 void __poseidon_tcec_dgemm(double *C, const double *A, const double *B, int M,

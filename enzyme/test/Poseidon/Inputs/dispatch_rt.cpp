@@ -52,11 +52,9 @@ struct Shape {
   double beta;
 };
 
-// Square N = 256, row-major, which runs the square pipeline in place; the
-// elasticity reduce's layout (A row-major, B and C
-// column-major, accumulating into C) at a skinny shape, which takes the
-// rectangular arm; a nearly square shape with the opposite layouts, which takes
-// the square arm with padding (S = 304).
+// Square N = 256, row-major; the elasticity reduce's layout (A row-major, B
+// and C column-major, accumulating into C) at a skinny shape; a nearly square
+// shape with the opposite layouts.
 const Shape kShapes[] = {
     {"square256", 256, 256, 256, 0, 0, 0, 0.0},
     {"rect343x192x1536", 343, 192, 1536, 0, 1, 1, 1.0},

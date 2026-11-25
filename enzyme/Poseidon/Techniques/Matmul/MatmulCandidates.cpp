@@ -518,11 +518,10 @@ static void proposeInKernelSplit(const Product &P, const InKernelSite &K,
 namespace {
 struct LibrarySite {
   bool dispatchable = false;
-  // S^3 / (M*N*K), the zero padding __poseidon_ozaki_dgemm pays to reach a
-  // square of side S.
-  double padWaste = 1.0;
-  // Keys the rectangular modular row "ozaki_dispatch_rect_rel,nmNN_m<M>k<K>".
-  unsigned rectM = 0, rectK = 0;
+  // The product's extents at profile scale. A square product is priced from
+  // the modular row "ozaki_dispatch_rel,nmNN", measured on a square; any other
+  // from "ozaki_dispatch_rect_rel,nmNN_m<M>k<K>".
+  unsigned shapeM = 0, shapeN = 0, shapeK = 0;
   // The extents the dispatch is compiled with, when all three are constants of
   // this compile (a scalar-loop product's descriptor); 0 when one is a
   // run-time value.
@@ -530,25 +529,8 @@ struct LibrarySite {
 };
 } // namespace
 
-// S^3 / (M*N*K) for the square side S = max(M, N, K); >= 1.
-static double cubePaddingRatio(double M, double N, double K) {
-  double S = std::max({M, N, K});
-  return (S * S * S) / (M * N * K);
-}
-
-// At profile scale, 1 when the global extents are unknown. All three extents
-// are profile-scale: mixing in the deploy-time m.K gives a spurious r^2 waste
-// under surrogate profiling.
-static double squarePaddingRatio(const AbstractMatmul &m) {
-  double redK = m.globalK ? (double)m.globalK : (double)m.K;
-  if (m.globalM && m.globalN && redK > 0.0)
-    return cubePaddingRatio(m.globalM, m.globalN, redK);
-  return 1.0;
-}
-
 static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   LibrarySite L;
-  L.padWaste = squarePaddingRatio(m);
   switch (m.origin) {
   case AbstractMatmul::Origin::ScalarLoopReduction: {
     Function *F = m.scalarLoop.fma->getFunction();
@@ -564,17 +546,16 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
       L.staticN = (unsigned)probe.dims[DimNcols].add;
       L.staticK = (unsigned)probe.dims[DimK].add;
     }
-    L.rectM = m.globalM ? m.globalM : m.M;
-    L.rectK = m.globalK ? m.globalK : m.K;
-    return L;
+    break;
   }
   case AbstractMatmul::Origin::HostGemmLoopNest:
     L.dispatchable = true;
-    L.rectM = m.globalM;
-    L.rectK = m.globalK;
-    return L;
+    break;
   }
-  llvm_unreachable("unknown AbstractMatmul origin");
+  L.shapeM = m.globalM ? m.globalM : m.M;
+  L.shapeN = m.globalN ? m.globalN : m.N;
+  L.shapeK = m.globalK ? m.globalK : m.K;
+  return L;
 }
 
 static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
@@ -588,56 +569,58 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
   return opt;
 }
 
-// The rectangular row supersedes the square one when present: from padWaste
-// kOzakiIIRectMinWaste on the runtime takes its rectangular path, whose cost is
-// linear in the column count, so no padding ratio is applied on top of that
-// row. It is keyed by (M, K) only, since its per-MAC cost does not depend on
-// the column count.
+// A square product is priced from the row measured on a square; any other only
+// from the row measured at its own (M, K), since the runtime's per-MAC cost
+// depends on M and K but not on the column count. A modulus count without its
+// row is not proposed.
 static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
   const AbstractMatmul &m = P.m;
+  const bool square = L.shapeM == L.shapeN && L.shapeN == L.shapeK;
+  const std::string shapeKey =
+      "m" + std::to_string(L.shapeM) + "k" + std::to_string(L.shapeK);
+  std::string missing;
   for (unsigned nm : kOzIIModuliCounts) {
     const SchemeVariant v = SchemeVariant::modular(nm);
-    const std::string rectKey = "nm" + std::to_string(nm) + "_m" +
-                                std::to_string(L.rectM) + "k" +
-                                std::to_string(L.rectK);
-    double relRect =
-        lookupCost(P.S.CostModel, "ozaki_dispatch_rect_rel", rectKey)
-            .value_or(-1.0);
-    double rel = relRect > 0.0 ? relRect
-                               : lookupCost(P.S.CostModel, "ozaki_dispatch_rel",
-                                            "nm" + std::to_string(nm))
-                                     .value_or(-1.0);
+    const std::string family =
+        square ? "ozaki_dispatch_rel" : "ozaki_dispatch_rect_rel";
+    const std::string key =
+        "nm" + std::to_string(nm) + (square ? std::string() : "_" + shapeKey);
+    const double rel = lookupCost(P.S.CostModel, family, key).value_or(-1.0);
     if (rel <= 0.0) {
       if (P.S.Opts.Diagnostics.Print)
         llvm::errs() << "  Matmul[" << m.id << "] " << schemeTag(v) << ' '
-                     << schemeParameter(v)
-                     << " NOT PROPOSED -- neither 'ozaki_dispatch_rect_rel,"
-                     << rectKey << "' nor 'ozaki_dispatch_rel,nm" << nm
-                     << "' is in the cost model.\n";
+                     << schemeParameter(v) << " NOT PROPOSED -- '" << family
+                     << ',' << key << "' is not in the cost model.\n";
+      missing += (missing.empty() ? "" : ", ") + std::to_string(nm);
       continue;
-    }
-    double shapeRatio = L.padWaste;
-    if (relRect > 0.0) {
-      shapeRatio = 1.0; // the measurement already is this shape
-    } else if (L.padWaste >= kOzakiIIRectMinWaste) {
-      if (P.S.Matmul.WarnedRectangularRows.insert((const void *)&m).second)
-        llvm::errs()
-            << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x'
-            << m.N << 'x' << m.K << ": padWaste=" << L.padWaste
-            << " takes the rectangular pipeline, with no measured "
-               "'ozaki_dispatch_rect_rel,"
-            << rectKey
-            << "' row, so this candidate is priced from the square row times "
-               "the padding ratio.\n";
     }
     MatmulUnit::Option opt =
         libraryOption(v, kOzakiIIPadTile, kOzakiIIPadTile, kOzakiIIPadTile);
-    opt.compCost = P.baselinePerMac * rel * shapeRatio;
+    opt.compCost = P.baselinePerMac * rel;
     cm.candidates.push_back(opt);
   }
+  // One warning per shape whose rows are missing.
+  if (square || missing.empty() ||
+      !P.S.Matmul.ReportedOzakiRectRows.insert(shapeKey).second)
+    return;
+  llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x'
+               << m.N << 'x' << m.K
+               << ": ozaki-ii host dispatch NOT PROPOSED at nm=" << missing
+               << " -- this device's cost model carries no measured "
+                  "'ozaki_dispatch_rect_rel,nm<nm>_"
+               << shapeKey
+               << "' row; poseidon-calibrate --gpu <id> --ozaki-rect "
+               << L.shapeM << 'x' << L.shapeK << " measures them.\n";
+  if (P.S.Opts.Model.StrictMode)
+    reportUserError(anchorOf(m),
+                    "strict mode: the Ozaki-II host dispatch at " +
+                        Twine(L.shapeM) + "x" + Twine(L.shapeK) +
+                        " has no measured ozaki_dispatch_rect_rel row in " +
+                        Twine(costModelPath(P.S.CostModel)) +
+                        "; measure it with poseidon-calibrate.");
 }
 
 // The split scheme as __poseidon_tcec_dgemm, which realizes a different rate
@@ -723,13 +706,12 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
   }
 }
 
-// The native product through the modular entry with num_moduli = 0, which the
-// runtime maps onto one cublasDgemm on the real M x Ncols x K for every layout
-// combination. It takes no padding ratio: only the emulated paths pad to a
-// square. Its per-MAC rate still depends on the shape, so a call whose extents
-// are constants of this compile is priced from the row measured at those
-// extents when the model has one. A run-time extent leaves only the square
-// row: the surrogate's shape is not the one the call runs at.
+// The native product (__poseidon_native_dgemm), one cublasDgemm on the real
+// M x Ncols x K for every layout combination. Its per-MAC rate depends on the
+// shape, so a call whose extents are constants of this compile is priced from
+// the row measured at those extents when the model has one. A run-time extent
+// leaves only the square row: the surrogate's shape is not the one the call
+// runs at.
 static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                                  MatmulUnit &cm) {
   if (!L.dispatchable)
@@ -755,14 +737,13 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                           " has no 'ozaki_dispatch_rel,dgemm' row for the "
                           "native DGEMM candidate; measure it with "
                           "poseidon-calibrate.");
-    const double padWaste =
-        isStatic ? cubePaddingRatio(L.staticM, L.staticN, L.staticK) : 1.0;
-    if (padWaste >= kOzakiIIRectMinWaste &&
+    const bool square = L.staticM == L.staticN && L.staticN == L.staticK;
+    if (isStatic && !square &&
         P.S.Matmul.WarnedSquareNativeRows.insert((const void *)&m).second)
       llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M
                    << 'x' << m.N << 'x' << m.K << ": the native DGEMM runs at "
-                   << shape << " (padWaste=" << padWaste
-                   << ") with no measured 'ozaki_dispatch_rect_rel," << key
+                   << shape << " with no measured 'ozaki_dispatch_rect_rel,"
+                   << key
                    << "' row, so it is priced from the square "
                       "'ozaki_dispatch_rel,dgemm' row (poseidon-calibrate "
                       "--ozaki-rect "
@@ -854,11 +835,7 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest &&
         S.Opts.Diagnostics.Print)
       llvm::errs() << "[hostgemm] matmul[" << m.id
-                   << "] NOTE: the column count is a runtime value, so "
-                      "padWaste below holds at profile scale only.\n"
-                   << "[hostgemm] matmul[" << m.id
-                   << "] baseline: composed/MAC=" << baselinePerMac
-                   << "; padWaste(S^3/MNK)=" << squarePaddingRatio(m) << '\n';
+                   << "] baseline: composed/MAC=" << baselinePerMac << '\n';
 
     // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
     // per-MAC baseline, the unit the measured *_dispatch_rel rows use.

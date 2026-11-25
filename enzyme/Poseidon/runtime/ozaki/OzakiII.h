@@ -69,11 +69,6 @@ constexpr int kOzakiIIMaxK = 131072;
 // aligned.
 constexpr int kOzakiIIPadTile = 16;
 
-// A product whose square padding S^3 / (M * Ncols * K), S the padded largest
-// extent, reaches this takes the rectangular pipeline. A square shape pads to
-// at most (S/N)^3 <= 1.05 for N >= 320, so those stay square.
-constexpr double kOzakiIIRectMinWaste = 1.05;
-
 // Block shapes of the sum-of-squares reduction that sets the shifts; they
 // decide which partial sums are rounded, so the shifts' bits depend on them.
 // A contiguous vector is folded by kOzakiIINormThreads threads; a strided one

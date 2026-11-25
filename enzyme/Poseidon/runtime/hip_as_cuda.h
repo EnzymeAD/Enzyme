@@ -26,6 +26,7 @@
 #define cudaDeviceSetLimit hipDeviceSetLimit
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaError_t hipError_t
+#define cudaErrorMemoryAllocation hipErrorOutOfMemory
 #define cudaEventCreate hipEventCreate
 #define cudaEventDestroy hipEventDestroy
 #define cudaEventElapsedTime hipEventElapsedTime
@@ -42,6 +43,7 @@
 #define cudaMemcpy hipMemcpy
 #define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define cudaMemcpyHostToDevice hipMemcpyHostToDevice
+#define cudaMemGetInfo hipMemGetInfo
 #define cudaMemcpyToSymbol hipMemcpyToSymbol
 #define cudaMemset hipMemset
 #define cudaMemsetAsync hipMemsetAsync

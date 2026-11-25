@@ -297,9 +297,9 @@ struct MatmulState {
   // The tensor-core shapes the cost model prices, and the warnings already
   // given.
   std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
-  std::set<const void *> WarnedRectangularRows;
   std::set<const void *> WarnedSquareNativeRows;
   std::set<std::string> ReportedDirectRows;
+  std::set<std::string> ReportedOzakiRectRows;
   std::set<std::string> ReportedInKernelRows;
 };
 

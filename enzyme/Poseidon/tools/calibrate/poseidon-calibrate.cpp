@@ -88,10 +88,9 @@ static cl::opt<std::string>
                     "(default: the one this build was configured with)"));
 static cl::opt<std::string> OzakiRect(
     "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
-    cl::desc(
-        "(M, K) of the M x Ncols x K host GEMMs whose rectangular "
-        "Ozaki-II rows the ozaki-rect arm measures; MxNxK instead measures "
-        "the native DGEMM row of a call with exactly those extents"));
+    cl::desc("(M, K) of the M x Ncols x K host GEMMs whose Ozaki-II rows the "
+             "ozaki-rect arm measures; MxNxK instead measures "
+             "the native DGEMM row of a call with exactly those extents"));
 static cl::opt<unsigned>
     RefN("n", cl::init(2048), cl::value_desc("N"),
          cl::desc("Square reference shape the dispatch arms and "
@@ -519,7 +518,7 @@ static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
                      utostr(Reps)}));
 }
 
-// The rectangular rows are keyed by the shape of the product they price, so
+// The ozaki-rect rows are keyed by the shape of the product they price, so
 // the shapes come from the caller: MxK measures the Ozaki-II rows of (M, K)
 // at the calibrator's large column count, MxNxK the native DGEMM row of a call
 // with exactly those extents. Rows of shapes this run does not measure are

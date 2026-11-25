@@ -8,9 +8,11 @@
 // The native DGEMM candidate of a product whose column count is a run-time
 // value: the stage-3 reduce of annotated_lambda_host_gemm_amdgpu.hip with its
 // profile (Inputs/host_gemm_hip) spread over 1536 CTAs, so the profiled
-// product is 24 x 1536 x 192 (padWaste 512). The surrogate's extents are not
-// the ones the call runs at, so the row measured at them is not read and the
-// square row prices the candidate, with no warning naming a row to measure.
+// product is 24 x 1536 x 192. The surrogate's extents are not the ones the
+// call runs at, so the row measured at them is not read and the square row
+// prices the candidate, with no warning naming a row to measure. The Ozaki-II
+// candidates of this non-square product have no row measured at its (M, K)
+// and are not proposed, with one warning naming the rows.
 
 #include "poseidon/poseidon.h"
 
@@ -66,7 +68,8 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
 }
 
 // CHECK: [hostgemm]   profile shape M=24 Ncols=1536 K=192 (per-CTA tile 24x1, launches=1 CTAs/launch=1536 MACs=7077888)
+// CHECK: [poseidon] WARNING: matmul[0] 24x1x192: ozaki-ii host dispatch NOT PROPOSED at nm=8, 9, 10, 11, 12, 13, 14 -- this device's cost model carries no measured 'ozaki_dispatch_rect_rel,nm<nm>_m24k192' row; poseidon-calibrate --gpu <id> --ozaki-rect 24x192 measures them.{{$}}
 // CHECK: [poseidon] matmul[0] pricing: baseline/MAC=5.146667e+02 executions=7077888
-// CHECK: [poseidon]   #10 native-dgemm cublas f64/f64  compCost/MAC=2.573333e+02  rel=5.000000e-01  domainError=5.102214e-16
+// CHECK: [poseidon]   #3 native-dgemm cublas f64/f64  compCost/MAC=2.573333e+02  rel=5.000000e-01  domainError=5.102214e-16
 // CHECK: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err 5.102214e-16 <= 1.000000e-12 at confidence 9.500000e-01)
-// CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)
+// CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#3)

@@ -115,8 +115,7 @@ static double *rand_dev(size_t n) {
   return d;
 }
 
-// The rectangular arm of __poseidon_ozaki_dgemm, which a host GEMM takes
-// when padding it to a square would waste work. Its cost is linear in the
+// __poseidon_ozaki_dgemm at an M x K operand A. Its cost is linear in the
 // column count, so its rows are keyed by (M, K) alone and measured at a large
 // column count. The operands are laid out as the recognizer dispatches a
 // reduce: A row-major M x K, B and C column-major, C accumulated.
