@@ -25,10 +25,10 @@
 ; SITES-BOTH-NEXT: DP table contains 4 entries.
 ; SITES-BOTH: Minimum accuracy cost within budget: 1.154131e-04
 ; SITES-BOTH-NEXT: Computation cost budget used: -4.500000e-01
-; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; SITES-BOTH: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; SITES-BOTH: [poseidon] pin: tester_a:PT0=All FP64(0%) + FP32(100%)
 ; SITES-BOTH: [poseidon] Finished optimizing preprocess_tester_a
-; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; SITES-BOTH: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; SITES-BOTH: [poseidon] pin: tester_b:PT0=All FP64(0%) + FP32(100%)
 ; SITES-BOTH: [poseidon] Finished optimizing preprocess_tester_b
 ; SITES-BOTH-LABEL: define double @site_a(
@@ -53,7 +53,7 @@
 ; SITES-ONE-NEXT: [poseidon] pin: {{$}}
 ; SITES-ONE: [poseidon] Finished optimizing preprocess_tester_a
 ; SITES-ONE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
-; SITES-ONE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; SITES-ONE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; SITES-ONE: [poseidon] pin: tester_b:PT0=All FP64(0%) + FP32(100%)
 ; SITES-ONE: [poseidon] Finished optimizing preprocess_tester_b
 ; SITES-ONE-LABEL: define double @site_a(

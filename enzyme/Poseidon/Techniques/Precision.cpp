@@ -499,9 +499,11 @@ static void priceAccuracy(
 
   auto unpriceable = [&](StringRef why) {
     CS.unpricedReason = why.str();
-    llvm::errs() << "[poseidon] subgraph cannot be priced (" << why
-                 << "); discarding its " << CS.candidates.size()
-                 << " precision candidate(s) and keeping the original body.\n";
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] subgraph cannot be priced (" << why
+                   << "); discarding its " << CS.candidates.size()
+                   << " precision candidate(s) and keeping the original "
+                      "body.\n";
     CS.candidates.clear();
     CS.initialAccCost = 0.0;
   };
@@ -718,8 +720,8 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
         "no live root for the cost walk, which would price it as free. "
         "Refusing to fabricate a cost.");
   if (O.Diagnostics.Print && ptHasExpansion && !expansionMaterialized)
-    llvm::errs() << "  (expansion change converted no instruction; pricing "
-                    "the unchanged cone)\n";
+    llvm::errs() << "[poseidon] the expansion change converted no "
+                    "instruction; pricing the unchanged cone\n";
 
   // Runs after the value handles are seeded: the demote RAUWs each PHI with
   // fpext(new PHI) before erasing it, so a tracked output migrates to the
@@ -1133,8 +1135,8 @@ private:
 std::string TierSweep::describe(StringRef label, StringRef kind,
                                 const std::string &tiers, size_t N) const {
   if (O.Diagnostics.Print)
-    llvm::errs() << "Created " << label << " " << kind
-                 << " PT candidate: " << tiers << " (N=" << N << ")\n";
+    llvm::errs() << "[poseidon] Created " << label << " " << kind
+                 << " precision candidate: " << tiers << " (N=" << N << ")\n";
   std::string desc = label.str();
   if (!desc.empty())
     desc += " ";
@@ -1239,7 +1241,8 @@ void proposePrecisionCandidates(
     if (PTFuncs.count(operationName(*node)) != 0) {
       funcsSet.insert(node);
       if (O.Diagnostics.Print)
-        llvm::errs() << "[poseidon] PT Function identified: " << *I << '\n';
+        llvm::errs() << "[poseidon] library call with a precision variant: "
+                     << *I << '\n';
     }
   }
   SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
@@ -1271,19 +1274,16 @@ void proposePrecisionCandidates(
   // Zero candidates for a nonempty subgraph means every tier was filtered
   // out (a configuration problem), which must not pass as a no-op frontier.
   if (CS.candidates.empty() && !subgraph.operations.empty()) {
-    llvm::errs() << "[poseidon] WARNING: subgraph with "
-                 << subgraph.operations.size() << " FP operations in "
-                 << F.getName()
-                 << " synthesized ZERO precision-tuning candidates (all "
-                    "tier combinations filtered); the solve cannot "
-                    "propose any rewrite here. Check the cost model's "
-                    "scalar_types header.\n";
+    std::string msg =
+        ("a floating-point subgraph of " + Twine(subgraph.operations.size()) +
+         " operations has no precision candidate, since the "
+         "cost model allows no tier combination; check its "
+         "scalar_types header")
+            .str();
     if (O.Model.StrictMode)
-      reportUserError(F, F.getSubprogram(),
-                      "strict mode: an FP subgraph of " + F.getName() +
-                          " has no precision candidate with precision tuning "
-                          "enabled; check the scalar_types header of the cost "
-                          "model.");
+      reportUserError(F, F.getSubprogram(), "strict mode: " + msg);
+    else
+      diagnose(F, F.getSubprogram(), msg, DS_Warning);
   }
 
   CSs.push_back(std::move(CS));
@@ -1412,11 +1412,12 @@ void PrecisionUnit::priceRequests(
           (candidateCompCost - initialCompCost) * (double)executions;
       // With a one-point frontier these lines record why each candidate lost.
       if (S.Opts.Diagnostics.Print)
-        llvm::errs() << "CS candidate '" << candidates[G.candidateIndex].desc
+        llvm::errs() << "[poseidon] precision candidate '"
+                     << candidates[G.candidateIndex].desc
                      << "': initial=" << initialCompCost
                      << " cand=" << candidateCompCost << " exec=" << executions
-                     << " Δcost=" << adjustedCostDelta
-                     << " Δacc=" << getAccCostDelta(G.candidateIndex) << '\n';
+                     << " dcost=" << adjustedCostDelta
+                     << " dacc=" << getAccCostDelta(G.candidateIndex) << '\n';
       compCostDeltaCache[R.key] = adjustedCostDelta;
     }
   }
@@ -1476,7 +1477,8 @@ bool PrecisionUnit::pricedAgainst(const OptimizationUnit &earlier) const {
 
 std::string PrecisionUnit::choiceText(size_t i) const {
   const PTCandidate &cand = candidates[i];
-  return "CS: " + cand.desc + " (#" + std::to_string(cand.ordinal) + ")";
+  return "precision change " + cand.desc + " (#" +
+         std::to_string(cand.ordinal) + ")";
 }
 
 void PrecisionUnit::materialize(size_t i) {
@@ -1503,7 +1505,7 @@ void PrecisionUnit::price() {
       firstWhy = why;
     dropped.push_back({c.desc, std::move(why)});
   }
-  if (!firstWhy.empty())
+  if (!firstWhy.empty() && session().Opts.Diagnostics.Print)
     llvm::errs() << "[poseidon] "
                  << subgraph->outputs[0]->getFunction()->getName() << ": "
                  << (candidates.size() - priced.size()) << " of "
@@ -1526,11 +1528,11 @@ void PrecisionUnit::scaleErrors(double factor) {
 }
 
 void PrecisionUnit::printPriced(raw_ostream &OS) {
-  OS << "\n################################\n";
+  OS << "[poseidon] priced precision candidates\n";
   OS << "Initial AccuracyCost: " << initialAccCost << '\n';
   OS << "Initial ComputationCost: " << initialCompCost << '\n';
   OS << "Candidates:\n";
-  OS << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
+  OS << "accuracy delta\t\tcost delta\t\tdescription\n"
      << "---------------------------\n";
   for (size_t i = 0; i < candidates.size(); ++i) {
     PTCandidate &candidate = candidates[i];
@@ -1541,7 +1543,6 @@ void PrecisionUnit::printPriced(raw_ostream &OS) {
       OS << getCompCostDelta(i);
     OS << "\t\t" << candidate.desc << '\n';
   }
-  OS << "################################\n\n";
 }
 
 } // namespace poseidon

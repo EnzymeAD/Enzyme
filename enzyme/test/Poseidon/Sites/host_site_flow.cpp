@@ -100,19 +100,19 @@ int main(int argc, char **argv) {
 // GEN-NOT: {{.}}
 
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z6energyPKdi_poseidon_body: the site's own accuracy target 1.000000e-06 overrides -poseidon-tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] pin: _Z6energyPKdi:PT0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__ZN10Integrator4stepEPdPKdi_poseidon_body: tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:PT0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z4clipPKdPdi_poseidon_body: tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] pin: _Z4clipPKdPdi:PT0=All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z4polyIdET_S0__poseidon_body: tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64(0%) + FP32(100%)
 // USE-NOT: Applying solution
 
@@ -128,14 +128,14 @@ int main(int argc, char **argv) {
 
 // At every level each site is rewritten; which mix of FP32 and FP64 a site
 // gets depends on the profile of that level's program.
-// LEVEL: Applying solution for CS:
+// LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
-// LEVEL: Applying solution for CS:
+// LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _Z6energyPKdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
-// LEVEL: Applying solution for CS:
+// LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
-// LEVEL: Applying solution for CS:
+// LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _Z4clipPKdPdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
-// LEVEL: Applying solution for CS:
+// LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL-NOT: Applying solution

@@ -25,8 +25,8 @@ namespace poseidon {
 
 static constexpr UnitKindInfo kUnitKinds[] = {
     {UnitKind::R, "CO", "R", "a rewrite", true},
-    {UnitKind::PT, "CS", "PT", "a PT", true},
-    {UnitKind::M, "CM", "M", "a rewrite", false},
+    {UnitKind::PT, "CS", "PT", "a precision change", true},
+    {UnitKind::M, "CM", "M", "a candidate", false},
 };
 
 ArrayRef<UnitKindInfo> unitKinds() { return kUnitKinds; }

@@ -33,8 +33,8 @@ int main(void) {
 // CHECK: Initial ComputationCost: 1.200000e+01
 // CHECK-NEXT: Initial HerbieAccuracy:
 // CHECK-NEXT: Initial Expression: (+ v0 (erf v0))
-// CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.200000e+01 cand=5.000000e+00
-// CHECK: Applying solution for CS: All FP64(0%) + FP32(100%)
+// CHECK: [poseidon] precision candidate 'All FP64(0%) + FP32(100%)': initial=1.200000e+01 cand=5.000000e+00
+// CHECK: Applying solution for precision change All FP64(0%) + FP32(100%)
 
 // IR-LABEL: define {{.*}} @kernel(
 // IR: call float @erff(float

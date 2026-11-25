@@ -335,7 +335,7 @@ static bool addGlobalStagedUser(User *U, Value *P, bool ds, bool trace,
   if (auto *L = dyn_cast<LoadInst>(U)) {
     if (!L->getType()->isDoubleTy() || L->getPointerOperand() != P) {
       if (trace)
-        llvm::errs() << "[narrow] bail: load " << *L << '\n';
+        llvm::errs() << "[poseidon] narrowing: bail: load " << *L << '\n';
       return false;
     }
     if (ds) {
@@ -345,8 +345,9 @@ static bool addGlobalStagedUser(User *U, Value *P, bool ds, bool trace,
         return false;
     } else if (User *wider = firstWiderReader(*L)) {
       if (trace)
-        llvm::errs() << "[narrow] bail: FP64 consumer of staged load: "
-                     << *wider << '\n';
+        llvm::errs()
+            << "[poseidon] narrowing: bail: FP64 consumer of staged load: "
+            << *wider << '\n';
       return false;
     }
     acc.loads.push_back(L);
@@ -363,7 +364,7 @@ static bool addGlobalStagedUser(User *U, Value *P, bool ds, bool trace,
     if (!CG->getSourceElementType()->isIntegerTy(8) ||
         CG->getNumIndices() != 1 || !isa<ConstantInt>(CG->getOperand(1))) {
       if (trace)
-        llvm::errs() << "[narrow] bail: comp GEP " << *CG << '\n';
+        llvm::errs() << "[poseidon] narrowing: bail: comp GEP " << *CG << '\n';
       return false;
     }
     acc.compGEPs.push_back(CG);
@@ -379,15 +380,16 @@ static bool addGlobalStagedUser(User *U, Value *P, bool ds, bool trace,
         Len->getZExtValue() != (uint64_t)acc.strideK ||
         (acc.strideK % 8) != 0) {
       if (trace)
-        llvm::errs() << "[narrow] bail: memcpy " << *MC << '\n';
+        llvm::errs() << "[poseidon] narrowing: bail: memcpy " << *MC << '\n';
       return false;
     }
     acc.memcpys.push_back(MC);
     return true;
   }
   if (trace)
-    llvm::errs() << "[narrow] bail: unexpected user of staging ptr: " << *U
-                 << '\n';
+    llvm::errs()
+        << "[poseidon] narrowing: bail: unexpected user of staging ptr: " << *U
+        << '\n';
   return false;
 }
 
@@ -401,7 +403,8 @@ collectGlobalStaged(GlobalVariable &G, Function &F, bool ds, bool trace) {
   GlobalStagedAccess acc;
   bool fits = collectElementGEPs(F, casts, ds, acc);
   if (trace)
-    llvm::errs() << "[narrow] G=@" << G.getName() << " casts=" << casts.size()
+    llvm::errs() << "[poseidon] narrowing: G=@" << G.getName()
+                 << " casts=" << casts.size()
                  << " elemGEPs=" << acc.elemGEPs.size()
                  << " strideK=" << acc.strideK << " bail=" << !fits << '\n';
   if (!fits || acc.elemGEPs.empty())
@@ -418,7 +421,7 @@ collectGlobalStaged(GlobalVariable &G, Function &F, bool ds, bool trace) {
       }
   }
   if (trace)
-    llvm::errs() << "[narrow]   loads=" << acc.loads.size()
+    llvm::errs() << "[poseidon] narrowing:   loads=" << acc.loads.size()
                  << " stores=" << acc.stores.size()
                  << " compGEPs=" << acc.compGEPs.size() << " bail=" << !fits
                  << '\n';
@@ -504,7 +507,7 @@ static bool narrowGlobalStaging(const Session &S, const SiteLaunch &launch,
       continue;
     if (!launch.onlySiteAccesses(G)) {
       if (trace)
-        llvm::errs() << "[narrow] bail: @" << G.getName()
+        llvm::errs() << "[poseidon] narrowing: bail: @" << G.getName()
                      << " is read or written beside the site in its launch\n";
       continue;
     }
@@ -620,7 +623,8 @@ static bool viewFits(const Options &O, const DataLayout &DL,
         (AT->getNumElements() % 2) == 0 && GEP->getNumIndices() == 1)
       return true;
     if (O.Diagnostics.Print)
-      llvm::errs() << "[narrow-param] bail: array GEP " << *GEP << '\n';
+      llvm::errs() << "[poseidon] narrowing parameters: bail: array GEP "
+                   << *GEP << '\n';
     return false;
   }
   if (Source->isIntegerTy(8)) {
@@ -636,13 +640,15 @@ static bool viewFits(const Options &O, const DataLayout &DL,
             3;
     }
     if (!whole && O.Diagnostics.Print)
-      llvm::errs() << "[narrow-param] bail: byte GEP " << *GEP << '\n';
+      llvm::errs() << "[poseidon] narrowing parameters: bail: byte GEP " << *GEP
+                   << '\n';
     return whole;
   }
   if (Source->isDoubleTy())
     return GEP->getNumIndices() == 1;
   if (O.Diagnostics.Print)
-    llvm::errs() << "[narrow-param] bail: GEP " << *GEP << '\n';
+    llvm::errs() << "[poseidon] narrowing parameters: bail: GEP " << *GEP
+                 << '\n';
   return false;
 }
 
@@ -657,20 +663,23 @@ static bool loadFits(const Options &O, LoadInst *L, bool dsMode) {
   const bool split = matchDekkerSplits(L, /*allowFCmp=*/true, splits);
   if (dsMode) {
     if (!split && O.Diagnostics.Print)
-      llvm::errs() << "[narrow-param] bail: non-split reader of staged load: "
+      llvm::errs() << "[poseidon] narrowing parameters: bail: non-split reader "
+                      "of staged load: "
                    << *L << '\n';
     return split;
   }
   if (split && splits.size() == 1) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[narrow-param] bail: Dekker-split reader (DS arm's "
+      llvm::errs() << "[poseidon] narrowing parameters: bail: Dekker-split "
+                      "reader (DS arm's "
                       "buffer): "
                    << *L << '\n';
     return false;
   }
   if (User *wider = firstWiderReader(*L)) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[narrow-param] bail: FP64 consumer of staged load: "
+      llvm::errs() << "[poseidon] narrowing parameters: bail: FP64 consumer of "
+                      "staged load: "
                    << *wider << '\n';
     return false;
   }
@@ -700,7 +709,8 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
       } else if (auto *L = dyn_cast<LoadInst>(U)) {
         if (!L->getType()->isDoubleTy() || L->getPointerOperand() != P) {
           if (O.Diagnostics.Print)
-            llvm::errs() << "[narrow-param] bail: load " << *L << '\n';
+            llvm::errs() << "[poseidon] narrowing parameters: bail: load " << *L
+                         << '\n';
           return false;
         }
         if (!loadFits(O, L, dsMode))
@@ -710,13 +720,16 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
         if (!S->getValueOperand()->getType()->isDoubleTy() ||
             S->getPointerOperand() != P) {
           if (O.Diagnostics.Print)
-            llvm::errs() << "[narrow-param] bail: store " << *S << '\n';
+            llvm::errs() << "[poseidon] narrowing parameters: bail: store "
+                         << *S << '\n';
           return false;
         }
         out.stores.push_back(S);
       } else {
         if (O.Diagnostics.Print)
-          llvm::errs() << "[narrow-param] bail: unexpected user " << *U << '\n';
+          llvm::errs()
+              << "[poseidon] narrowing parameters: bail: unexpected user " << *U
+              << '\n';
         return false;
       }
     }
@@ -737,7 +750,7 @@ collectStaged(Session &S, const SiteLaunch &launch, Function &F,
     return std::nullopt;
   if (!launch.onlySiteAccesses(G)) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[narrow-param] bail: @" << G.getName()
+      llvm::errs() << "[poseidon] narrowing parameters: bail: @" << G.getName()
                    << " is read or written beside the site in its launch\n";
     return std::nullopt;
   }
@@ -750,8 +763,9 @@ collectStaged(Session &S, const SiteLaunch &launch, Function &F,
   if (roots.empty() || !walkStaged(O, F, roots, dsMode, acc))
     return std::nullopt;
   if (O.Diagnostics.Print) {
-    llvm::errs() << "[narrow-param " << (dsMode ? "df64" : "fp32") << "] G=@"
-                 << G.getName() << " args=";
+    llvm::errs() << "[poseidon] narrowing parameters to "
+                 << (dsMode ? "df64" : "fp32") << ": G=@" << G.getName()
+                 << " args=";
     for (unsigned i : acc.argIdx)
       llvm::errs() << i << ' ';
     llvm::errs() << " geps=" << acc.views.size()

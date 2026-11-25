@@ -25,7 +25,7 @@
 ; THREE: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
 ; THREE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
 ; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.628472e-01 accCost=-6.201441e-09 rel=1.869795e-23
-; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
+; THREE: Applying solution for precision change All FP64(0%) + Expansion3(100%) (#3)
 ; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; THREE: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
 ; THREE-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
@@ -58,7 +58,7 @@
 
 ; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
 ; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.361979e-01 accCost=2.013455e-07 rel=4.224080e-16
-; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
+; LOOSE: Applying solution for precision change All FP64(0%) + Expansion2(100%) (#1)
 ; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; LOOSE: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
 ; LOOSE-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]

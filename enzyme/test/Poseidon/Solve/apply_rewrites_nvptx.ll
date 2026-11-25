@@ -50,7 +50,7 @@
 ; KINDS-ORD-NEXT: [poseidon] Selecting M0_2: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; KINDS-ORD: Applying solution for (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)-> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
 ; KINDS-ORD-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
-; KINDS-ORD-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-ORD-NEXT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; KINDS-ORD: [poseidon] pin: matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))),matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32,matmul_body:PT0=All FP64(0%) + FP32(100%){{$}}
 ; KINDS-EXPLAIN: "result": {
 ; KINDS-EXPLAIN-NEXT: "applied": [
@@ -62,23 +62,23 @@
 ; KINDS-NAME: [poseidon] Selecting matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))): (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
 ; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:PT0=All FP64(0%) + FP32(100%): All FP64(0%) + FP32(100%)
-; KINDS-SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; KINDS-SOLVE-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 ; KINDS-SOLVE: [poseidon] pin: matmul_body:PT0=All FP64(0%) + FP32(100%),matmul_body:M0=wmma m16n16k16 f16/f32{{$}}
 ; KINDS-REPIN: [poseidon] Selecting matmul_body:M0=wmma m16n16k16 f16/f32:
 ; KINDS-REPIN-NEXT: [poseidon] Selecting matmul_body:PT0=All FP64(0%) + FP32(100%):
-; KINDS-REPIN: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-REPIN: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; KINDS-REPIN-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
-; KINDS-RANGE-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R9_0': CO index 9 out of range (4 COs)
-; KINDS-RANGE-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT9_0': CS index 9 out of range (2 CSs)
-; KINDS-RANGE-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M9_0': CM index 9 out of range (1 CMs)
-; KINDS-ORDINAL-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R0_999': CO 0 has no candidate 999 that pricing kept
-; KINDS-ORDINAL-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_999': CS 0 has no candidate 999 that pricing kept
-; KINDS-ORDINAL-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_999': candidate index 999 out of range for CM 0 (3 candidates)
-; KINDS-DUP-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R0_1': CO 0 already has a rewrite applied; give one item per unit
-; KINDS-DUP-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_1': CS 0 already has a PT applied; give one item per unit
-; KINDS-DUP-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_1': CM 0 already has a rewrite applied; give one item per unit
-; KINDS-OVERLAP: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_2': CM 0 and CS 1 change the same instructions, and one of them replaces them; give one of the two
+; KINDS-RANGE-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R9_0': there is no R9; the site has R0 to R3{{$}}
+; KINDS-RANGE-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT9_0': there is no PT9; the site has PT0 to PT1{{$}}
+; KINDS-RANGE-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M9_0': there is no M9; the site has M0{{$}}
+; KINDS-ORDINAL-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R0_999': R0 has no candidate 999 that pricing kept
+; KINDS-ORDINAL-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_999': PT0 has no candidate 999 that pricing kept
+; KINDS-ORDINAL-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_999': M0 has no candidate 999; it has 3
+; KINDS-DUP-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R0_1': R0 already has a rewrite applied; give one item per unit
+; KINDS-DUP-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_1': PT0 already has a precision change applied; give one item per unit
+; KINDS-DUP-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_1': M0 already has a candidate applied; give one item per unit
+; KINDS-OVERLAP: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_2': M0 and PT1 change the same instructions, and one of them replaces them; give one of the two
 ; KINDS-NAME-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites: matmul_body: M0 has no candidate named 'nothing'. Its candidates are:
 ; KINDS-NAME-M-NEXT: {{^}}  wmma m16n16k16 f16/f32{{$}}
 ; KINDS-NAME-M-NEXT: {{^}}  tcec n=2 wmma m16n16k16 f16/f32{{$}}

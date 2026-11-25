@@ -65,7 +65,7 @@ int main() {
 // LEFT: [poseidon] every site of {{.*}}host_left_alone.cpp was left alone; emitting the module as written
 
 // USE-DAG: no rewrite applied for preprocess__Z3volPKdPd.poseidon._Z6qpointPKd.0
-// USE-DAG: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE-DAG: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] {{.*}}host_left_alone.cpp: {{[0-9]+}} function(s) a rewrite reached; every other function as written
 
 // The two callers of the rewritten sq differ from plain clang's program; the

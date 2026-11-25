@@ -22,7 +22,7 @@
 ; KAPPA: [poseidon] preprocess_fms_body: measured condition number 1.000000e-03 (ok), profiled sensitivity 1.187943e+04, error scale 8.417909e-08
 ; KAPPA: Initial AccuracyCost: 2.164332e-20
 ; KAPPA-NEXT: Initial ComputationCost: 2.564000e+03
-; KAPPA: {{[^ -~]+}} AccCost
+; KAPPA: accuracy delta
 ; KAPPA-NEXT: ---
 ; KAPPA-NEXT: {{^}}1.428768e-11 -1.816320e+06 All FP64(0%) + FP32(100%){{$}}
 ; KAPPA: {{^}}6.795448e-19 -3.333120e+05 All FP64(0%) + Expansion2(100%){{$}}
@@ -37,7 +37,7 @@
 ; PLAIN-NOT: measured condition number
 ; PLAIN: Initial AccuracyCost: 2.571104e-13
 ; PLAIN-NEXT: Initial ComputationCost: 2.564000e+03
-; PLAIN: {{[^ -~]+}} AccCost
+; PLAIN: accuracy delta
 ; PLAIN-NEXT: ---
 ; PLAIN-NEXT: {{^}}1.697296e-04 -1.816320e+06 All FP64(0%) + FP32(100%){{$}}
 ; PLAIN: {{^}}8.072609e-12 -3.333120e+05 All FP64(0%) + Expansion2(100%){{$}}

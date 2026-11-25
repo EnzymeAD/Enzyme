@@ -46,7 +46,7 @@ __attribute__((global)) void fms_kernel(const double *x, const double *y,
                                y, enzyme_dup, out, dout);
 }
 
-// CHECK-NOT: NOT PROPOSED
-// CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+// CHECK-NOT: are not proposed
+// CHECK: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 
 // FMA-COUNT-15: fma.rn.f32

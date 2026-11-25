@@ -96,7 +96,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: Candidates:
 ; CHECK: All FP64(0%) + FP32(100%)
 ; CHECK: All FP64(0%) + Expansion2(100%)
-; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; CHECK: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 ; Each input is split into a float pair, the chain runs on float pairs only
 ; (Expansion/expansion_model_identity.cpp and expansion_reference_identity.cpp
 ; hold each routine to its reference bit for bit), and the last pair is joined

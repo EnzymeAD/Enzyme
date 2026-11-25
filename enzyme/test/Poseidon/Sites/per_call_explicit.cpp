@@ -3,7 +3,7 @@
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=SAME %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -poseidon-print -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -poseidon-print -Rpass-missed=poseidon -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
 //
 // Without the plugin a call with an explicit list does not link; with it and
@@ -132,16 +132,16 @@ int main() {
 // USE-DAG: [poseidon] preprocess__Z6energyPKdi: the site's own accuracy target 1.000000e-03 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z6energyPKdi:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z4dampPKdd: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: per_call_explicit.cpp:[[@LINE-72]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z4dampPKdd
+// USE-DAG: per_call_explicit.cpp:[[@LINE-61]]:14: remark: Poseidon left site damp as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5scalePKdPdi.poseidon.main.0: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z5scalePKdPdi.poseidon.main.0:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z2sqdd: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z2sqdd:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.1: the site's own accuracy target 1.000000e-09 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: per_call_explicit.cpp:[[@LINE-78]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z5shiftPKdPdi.poseidon.main.1
+// USE-DAG: per_call_explicit.cpp:[[@LINE-61]]:3: remark: Poseidon left site shift as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-08 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z5shiftPKdPdi.poseidon.main.2:PT0=Funcs FP64(50%) + FP32(50%)
-// USE: 2 warnings generated.
+// USE-NOT: warning
 
 // The rewritten calls differ from the functions run as written, the calls left
 // unchanged do not.

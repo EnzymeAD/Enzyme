@@ -34,7 +34,7 @@
 ; -poseidon-profile-generate, launched once as cast_depth<<<1, 64>>>(8, 16, a,
 ; b, o) with a[i] = 0.5 + 0.001 * (i % 17) and b[i] = 1.0 + 0.01 * (i % 7).
 
-; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.024000e+03 cand=1.305000e+02
+; CHECK: [poseidon] precision candidate 'All FP64(0%) + FP32(100%)': initial=1.024000e+03 cand=1.305000e+02
 
 source_filename = "cast_depth.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

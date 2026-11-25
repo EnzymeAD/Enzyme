@@ -43,19 +43,19 @@
 
 ; FRESH: Saved Herbie output to cache file
 
-; NO-ALTERNATIVES: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"). No algebraic candidates for this subgraph from it.
-; NO-ALTERNATIVES: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
-; NO-ALTERNATIVES-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"). Without -poseidon-strict-mode the subgraph is left as written.
+; NO-ALTERNATIVES: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"), so the subgraph has no algebraic candidate from it{{$}}
+; NO-ALTERNATIVES: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
+; NO-ALTERNATIVES-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"); without -poseidon-strict-mode the subgraph is left as written{{$}}
 
-; NO-BITS: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (missing value at tests[0].bits, core "0"). No algebraic candidates for this subgraph from it.
-; NO-BITS: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
-; NO-BITS-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (missing value at tests[0].bits, core "0").
+; NO-BITS: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (missing value at tests[0].bits, core "0"), so the subgraph has no algebraic candidate from it{{$}}
+; NO-BITS: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
+; NO-BITS-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (missing value at tests[0].bits, core "0"); without -poseidon-strict-mode the subgraph is left as written{{$}}
 
-; NOT-OBJECT: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (expected an object with a "tests" array at the top level). No algebraic candidates for this subgraph from it.
-; NOT-OBJECT: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
-; NOT-OBJECT-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected an object with a "tests" array at the top level).
+; NOT-OBJECT: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected an object with a "tests" array at the top level), so the subgraph has no algebraic candidate from it{{$}}
+; NOT-OBJECT: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
+; NOT-OBJECT-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected an object with a "tests" array at the top level); without -poseidon-strict-mode the subgraph is left as written{{$}}
 
-; UNKNOWN-CORE: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (tests[0] names core "2", and the cores asked about are 0 to 1). No algebraic candidates for this subgraph from it.
+; UNKNOWN-CORE: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (tests[0] names core "2", and the cores asked about are 0 to 1), so the subgraph has no algebraic candidate from it{{$}}
 
 ; ZERO-ALTERNATIVES: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1)
 

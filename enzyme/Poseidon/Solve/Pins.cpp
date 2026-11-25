@@ -204,38 +204,39 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
         unit = u;
       ++ofKind;
     }
-    if (!unit)
+    const std::string name = (kind.idPrefix + Twine(item.unit)).str();
+    if (!unit) {
+      std::string has = "none";
+      if (ofKind == 1)
+        has = (kind.idPrefix + "0").str();
+      else if (ofKind > 1)
+        has =
+            (kind.idPrefix + "0 to " + kind.idPrefix + Twine(ofKind - 1)).str();
       reportUserError(F, F.getSubprogram(),
                       "-poseidon-apply-rewrites item '" + Twine(id) +
-                          "': " + kind.tag + " index " + Twine(item.unit) +
-                          " out of range (" + Twine(ofKind) + " " + kind.tag +
-                          "s)");
+                          "': there is no " + name + "; the site has " + has);
+    }
     size_t pos;
     if (item.ordinal) {
       std::optional<size_t> found = unit->positionOfOrdinal(*item.ordinal);
       if (!found && kind.pricingDrops)
         reportUserError(F, F.getSubprogram(),
                         "-poseidon-apply-rewrites item '" + Twine(id) +
-                            "': " + kind.tag + " " + Twine(item.unit) +
-                            " has no candidate " + Twine(*item.ordinal) +
-                            " that pricing kept");
+                            "': " + name + " has no candidate " +
+                            Twine(*item.ordinal) + " that pricing kept");
       if (!found)
         reportUserError(F, F.getSubprogram(),
-                        "-poseidon-apply-rewrites item '" + Twine(id) +
-                            "': candidate index " + Twine(*item.ordinal) +
-                            " out of range for " + kind.tag + " " +
-                            Twine(item.unit) + " (" +
-                            Twine(unit->numCandidates()) + " candidates)");
+                        "-poseidon-apply-rewrites item '" + Twine(id) + "': " +
+                            name + " has no candidate " + Twine(*item.ordinal) +
+                            "; it has " + Twine(unit->numCandidates()));
       pos = *found;
     } else {
-      pos = findNamed(item, F, key, (kind.idPrefix + Twine(item.unit)).str(),
-                      *unit);
+      pos = findNamed(item, F, key, name, *unit);
     }
     if (!appliedUnits.insert(unit).second)
       reportUserError(F, F.getSubprogram(),
                       "-poseidon-apply-rewrites item '" + Twine(id) +
-                          "': " + kind.tag + " " + Twine(item.unit) +
-                          " already has " + kind.appliedNoun +
+                          "': " + name + " already has " + kind.appliedNoun +
                           " applied; give one item per unit");
     // The rule the solvers keep: a raise replaces the loop it reads, so no
     // other step may edit an instruction of that loop.
@@ -245,8 +246,7 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
           unit->footprintOverlaps(other))
         reportUserError(F, F.getSubprogram(),
                         "-poseidon-apply-rewrites item '" + Twine(id) +
-                            "': " + kind.tag + " " + Twine(item.unit) +
-                            " and " + other.info().tag + " " +
+                            "': " + name + " and " + other.info().idPrefix +
                             Twine(other.indexInKind()) +
                             " change the same instructions, and one of "
                             "them replaces them; give one of the two");

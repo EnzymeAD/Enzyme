@@ -61,9 +61,9 @@
 ; KEY-OLD: DP table for preprocess_tester cached to
 ; KEY-BAD: DP table for preprocess_tester cached to
 ; KEY-HIT-NOT: cached to
-; KEY-A: Applying solution for CS: All FP64(70%) + FP32(30%)
-; KEY-PICK-A: Applying solution for CS: All FP64(70%) + FP32(30%)
-; KEY-PICK-B: Applying solution for CS: Funcs FP64(70%) + FP32(30%)
+; KEY-A: Applying solution for precision change All FP64(70%) + FP32(30%)
+; KEY-PICK-A: Applying solution for precision change All FP64(70%) + FP32(30%)
+; KEY-PICK-B: Applying solution for precision change Funcs FP64(70%) + FP32(30%)
 
 ; Each compile starts from the first one's cache and changes one input of the
 ; table (a profile byte, a cost-model row, a solve flag, a constant of the
@@ -129,7 +129,7 @@
 ; COMPILER-SOLVE: Solving the DP for preprocess_tester.
 ; COMPILER-SOLVE: DP table for preprocess_tester cached to
 
-; COMPILER-PICK: Applying solution for CS: Funcs FP64(70%) + FP32(30%) (#10)
+; COMPILER-PICK: Applying solution for precision change Funcs FP64(70%) + FP32(30%) (#10)
 
 ; An entry cut off in the middle (an interrupted write) is reported, solved
 ; again and overwritten; the compile after that reads it back.
@@ -145,7 +145,7 @@
 ; TRUNC-HIT-NOT: DP cache entry
 ; TRUNC-HIT: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 ; TRUNC-HIT-NOT: cached to
-; TRUNC-PICK: Applying solution for CS: Funcs FP64(70%) + FP32(30%) (#10)
+; TRUNC-PICK: Applying solution for precision change Funcs FP64(70%) + FP32(30%) (#10)
 
 ; Two compiles of different units into one cache directory at once, here the
 ; site with and without the call of scale_a, keep both tables: each is an

@@ -20,7 +20,7 @@
 ; IN16: 3.358604e-01		-4.753920e+05		All FP64(0%) + FP16(100%)
 ; IN16: Minimum accuracy cost within budget: 3.358604e-01
 ; IN16-NEXT: Computation cost budget used: -9.049708e-01
-; IN16: Applying solution for CS: All FP64(0%) + FP16(100%) (#2)
+; IN16: Applying solution for precision change All FP64(0%) + FP16(100%) (#2)
 ; IN16-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(
 ; IN16: fptrunc double %{{.+}} to half
 ; IN16: call half @llvm.fmuladd.f16(
@@ -36,13 +36,13 @@
 ; OUT16-NOT: half
 ; OUT16: ret void
 
-; IN32: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; IN32: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; IN32-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(
 ; IN32-NOT: half
 ; IN32: fptrunc double %{{.+}} to float
 
 ; OUT32: Minimum accuracy cost within budget: 2.254356e+07
-; OUT32: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; OUT32: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; OUT32-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(
 ; OUT32-NOT: half
 ; OUT32: fptrunc double %{{.+}} to float

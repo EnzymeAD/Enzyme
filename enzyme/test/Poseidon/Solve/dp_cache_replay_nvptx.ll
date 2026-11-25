@@ -53,12 +53,12 @@
 
 ; KINDS-SOLVE: Solving the DP for preprocess_matmul_body.
 ; KINDS-SOLVE: DP table for preprocess_matmul_body cached to {{.*}}dp_{{[0-9A-F]+}}.json
-; KINDS-SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; KINDS-SOLVE-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 
 ; KINDS-REPLAY-NOT: Solving the DP
 ; KINDS-REPLAY: Cache entry for preprocess_matmul_body found. Loaded DP tables from cache.
-; KINDS-REPLAY: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-REPLAY: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; KINDS-REPLAY-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 ; KINDS-REPLAY: [poseidon] pin: matmul_body:PT0=All FP64(0%) + FP32(100%),matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32
 

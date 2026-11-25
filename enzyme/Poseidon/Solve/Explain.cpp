@@ -602,6 +602,8 @@ class Explainer {
   std::optional<int64_t> appliedDelta() const;
   std::optional<int64_t> costBefore() const;
   std::optional<double> selectedAcc() const;
+  // Why the solve left the site as written, when it applied no step.
+  std::string siteLeftReason() const;
 
 public:
   Explainer(Session &Sess, Function &F, FunctionFPState &st,
@@ -1380,28 +1382,16 @@ json::Object Explainer::toJSON() {
     result["status"] = "rewritten";
   } else if (!rec.table.empty() && !rec.selected) {
     result["status"] = "no_solution";
+    result["reason"] = siteLeftReason();
     if (tau > 0.0) {
-      result["reason"] =
-          "no frontier point meets the accuracy target " + num(tau);
       double best = std::numeric_limits<double>::infinity();
       for (const auto &[cost, acc] : rec.table)
         best = std::min(best, acc);
       putNum(result, "best_achievable_rel_error", relErr(best));
-    } else {
-      result["reason"] = "no frontier point is within the cost budget " +
-                         costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
     }
   } else {
     result["status"] = "as_written";
-    if (rec.selector == "manual")
-      result["reason"] = "no -poseidon-apply-rewrites item names a candidate "
-                         "of this site";
-    else if (rec.selected)
-      result["reason"] = "the selected frontier point leaves the site as "
-                         "written";
-    else
-      result["reason"] = "no product candidate meets the target and is "
-                         "cheaper than as written";
+    result["reason"] = siteLeftReason();
   }
   root["result"] = std::move(result);
 
@@ -1533,6 +1523,21 @@ json::Object Explainer::toJSON() {
   return root;
 }
 
+std::string Explainer::siteLeftReason() const {
+  if (!rec.table.empty() && !rec.selected) {
+    if (tau > 0.0)
+      return "no frontier point meets the accuracy target " + num(tau);
+    return "no frontier point is within the cost budget " +
+           costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
+  }
+  if (rec.selector == "manual")
+    return "no -poseidon-apply-rewrites item names a candidate of this site";
+  if (rec.selected)
+    return "the selected frontier point leaves the site as written";
+  return "no product candidate meets the target and is cheaper than as "
+         "written";
+}
+
 void Explainer::emitRemarks() {
   OptimizationRemarkEmitter ORE(&F);
   DiagnosticLocation siteLoc = siteLocation(Sess, F);
@@ -1580,6 +1585,14 @@ void Explainer::emitRemarks() {
         << (rec.table.size() == 1 ? " Pareto point" : " Pareto points");
     return R;
   });
+  if (nApplied == 0)
+    ORE.emit([&]() {
+      OptimizationRemarkMissed R(kPass, "SiteLeftAsWritten", siteLoc,
+                                 &F.getEntryBlock());
+      R << "Poseidon left site " << ore::NV("Site", siteName)
+        << " as written: " << ore::NV("Reason", siteLeftReason());
+      return R;
+    });
 
   for (const Unit &U : units) {
     if (!U.root)

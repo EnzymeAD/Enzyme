@@ -19,7 +19,7 @@
 ; OFF: [poseidon] Found 1 initial subgraphs in preprocess_staged_body
 ; OFF-NOT: merged {{[0-9]+}} FP subgraphs
 ; OFF-NOT: frequency-heterogeneous subgraph
-; OFF: Applying solution for CS: Funcs FP64(0%) + FP32(100%)
+; OFF: Applying solution for precision change Funcs FP64(0%) + FP32(100%)
 ; OFF: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
 ; DS: Keeping 1-op reduction subgraph: {{.*}}@llvm.fmuladd.f64
@@ -27,7 +27,7 @@
 ; DS: [poseidon] merged 2 FP subgraphs sharing 4 staging buffer(s) into one optimization unit (3 operations, 7 inputs, 3 outputs) in preprocess_staged_body
 ; DS: [poseidon] frequency-heterogeneous subgraph (normalizer 512, measured depth:exec 0:512 1:8192)
 ; DS: [poseidon] Selecting PT0_2: All FP64(0%) + Expansion2(100%)
-; DS: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; DS: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 ; DS: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to df64 (1 loads, 1 stores)
 
 ; IR-LABEL: define {{.*}} @preprocess_staged_body(
@@ -40,7 +40,7 @@
 ; IR-NEXT: load float, ptr %[[Q]], align 4
 
 ; F32: [poseidon] Selecting PT0_0: All FP64(0%) + FP32(100%)
-; F32: Applying solution for CS: All FP64(0%) + FP32(100%)
+; F32: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; F32: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
 ; HINT: warning: {{.*}}preprocess_staged_body{{.*}}: Poseidon: more than one optimization unit reads or writes the shared buffer(s) @_ZZ13staged_kernelPKdS0_PdS1_E1s (2 units), which a precision change narrows only when all its units pick one tier; -poseidon-merge-shared-staging makes them one unit{{$}}

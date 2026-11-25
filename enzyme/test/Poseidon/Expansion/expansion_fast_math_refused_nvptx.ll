@@ -22,10 +22,9 @@
 ; LLVM 21 for unsafe-fp-math and approx-func-fp-math, LLVM 22 for
 ; no-nans-fp-math and no-infs-fp-math.)
 
-; REFUSED: [poseidon] WARNING: preprocess_fms_body: floating-point expansion candidates NOT PROPOSED -- its floating-point operations carry 'contract' (the first llvm.fmuladd.f64), as under -ffp-contract=fast or -ffast-math, with which this LLVM's code generator also fuses multiply-add pairs that carry no flag.
-; REFUSED-SAME: it needs -ffp-contract=on or -ffp-contract=off, without -ffast-math.
-; REFUSED-NOT: NOT PROPOSED
+; REFUSED: warning: {{.*}}preprocess_fms_body{{.*}}: Poseidon: floating-point expansions are not proposed: its floating-point operations carry 'contract' (the first llvm.fmuladd.f64), as under -ffp-contract=fast or -ffast-math, with which this LLVM's code generator also fuses multiply-add pairs that carry no flag; compile with -ffp-contract=on or -ffp-contract=off, without -ffast-math{{$}}
+; REFUSED-NOT: are not proposed
 ; REFUSED-NOT: Expansion{{[0-9]}}
-; REFUSED: Applying solution for CS: All FP64(0%) + FP32(100%)
+; REFUSED: Applying solution for precision change All FP64(0%) + FP32(100%)
 
 ; STRICT: error: {{.*}}Poseidon: strict mode: site 'preprocess_fms_body': its floating-point operations carry 'contract' (the first llvm.fmuladd.f64), as under -ffp-contract=fast or -ffast-math, with which this LLVM's code generator also fuses multiply-add pairs that carry no flag; floating-point expansions need -ffp-contract=on or -ffp-contract=off

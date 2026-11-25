@@ -22,7 +22,7 @@
 ; RUN: %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/write/c -poseidon-unit=u 2>&1 | FileCheck --check-prefix=WRITE-WROTE %s
 ; RUN: ls %t/write/c | FileCheck --check-prefix=WRITE-FILES --implicit-check-not=launches_ %s
 ; RUN: cat %t/write/c/launches_*.json | FileCheck --check-prefix=WRITE-FULL %s
-; RUN: %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/write/c -poseidon-unit=u 2>&1 | FileCheck --check-prefix=WRITE-NONE %s
+; RUN: %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/write/c -poseidon-unit=u -poseidon-print 2>&1 | FileCheck --check-prefix=WRITE-NONE %s
 ; RUN: ls %t/write/c | FileCheck --allow-empty --check-prefix=WRITE-AFTER %s
 ; RUN: %clang -O0 -Wno-override-module -x ir %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/write/c -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: grep -v __poseidon_fp_optimize %{dev} > %t/write/siteless.ll
@@ -54,7 +54,7 @@
 ; WRITE-FULL-NEXT: "profile generation": []
 
 ; WRITE-NONE-NOT: wrote descriptor
-; WRITE-NONE: warning: {{.*}}Poseidon returned false (no change) for preprocess_matmul_body{{$}}
+; WRITE-NONE: [poseidon] no rewrite applied for preprocess_matmul_body; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
 ; WRITE-NONE-NOT: wrote descriptor
 
 ; WRITE-AFTER-NOT: launches_
@@ -179,7 +179,7 @@
 ; RUN: %if enzyme && nvptx-device-profiler %{ mkdir %t/unwritable && echo > %t/unwritable/file %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-DISPATCH -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/unwritable/file/c -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=UNWRITABLE-PROFILE -DCACHE=%t/unwritable/file/c %s %}
-; RUN: %if enzyme && nvptx-device-profiler %{ %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/unwritable/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE-NONE %s %}
+; RUN: %if enzyme && nvptx-device-profiler %{ %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-NONE %s %}
 
 ; UNWRITABLE-DISPATCH: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7){{$}}
 ; UNWRITABLE-DISPATCH-NOT: wrote descriptor
@@ -190,7 +190,7 @@
 ; UNWRITABLE-PROFILE: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory. The manifest is kept in the -poseidon-launch-dir directory, or else the -poseidon-cache one, which has to be writable.{{$}}
 ; UNWRITABLE-PROFILE-NOT: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site
 
-; UNWRITABLE-NONE: warning: {{.*}}Poseidon returned false (no change) for preprocess_matmul_body{{$}}
+; UNWRITABLE-NONE: [poseidon] no rewrite applied for preprocess_matmul_body; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
 ; UNWRITABLE-NONE-NOT: launch manifest
 
 source_filename = "tcec_matmul.cu"

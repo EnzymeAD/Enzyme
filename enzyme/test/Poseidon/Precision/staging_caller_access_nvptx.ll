@@ -44,9 +44,9 @@
 ; y zero.
 
 ; LOG: [poseidon] Selecting direct_body:PT0_{{[02]}}
-; LOG: Applying solution for CS:
+; LOG: Applying solution for precision change
 ; LOG: [poseidon] Selecting views_body:PT0_{{[02]}}
-; LOG: Applying solution for CS:
+; LOG: Applying solution for precision change
 ; LOG-NOT: narrowed
 
 ; IR-LABEL: define dso_local ptx_kernel void @_Z6directPKdS0_PdS1_(

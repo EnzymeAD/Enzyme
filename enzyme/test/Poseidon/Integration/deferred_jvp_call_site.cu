@@ -176,11 +176,11 @@ int main() {
 // SOLVE-NEXT: [poseidon] jvp_body: folded 1 Enzyme-generated call(s) into the deferred body
 // SOLVE-NEXT: [poseidon] Optimizing preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0 with relative error tolerance: 1.000000e-06
 // SOLVE: [poseidon] preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
-// SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // SOLVE: [poseidon] pin: jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0:PT0=All FP64(0%) + FP32(100%){{$}}
 // SOLVE: [poseidon] Optimizing preprocess_jvp_body with relative error tolerance: 1.000000e-06
 // SOLVE: [poseidon] preprocess_jvp_body: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
-// SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // SOLVE: [poseidon] pin: jvp_body:PT0=All FP64(0%) + FP32(100%){{$}}
 // SOLVE: [poseidon] {{.*}}deferred_jvp_call_site.cu: 2 function(s) a rewrite reached; every other function as written
 

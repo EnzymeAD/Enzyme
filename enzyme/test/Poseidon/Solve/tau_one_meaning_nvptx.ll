@@ -22,7 +22,7 @@
 
 ; FLAG-NOT: overrides -poseidon-tau
 ; SOLVE: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
-; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; BOTH: the site's own accuracy target 1.000000e-04 overrides -poseidon-tau=1.000000e-06
 ; FROMSITE: "tau_from": "site"
 ; FROMFLAG: "tau_from": "flag"

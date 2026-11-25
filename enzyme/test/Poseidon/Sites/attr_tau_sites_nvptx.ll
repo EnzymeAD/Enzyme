@@ -122,10 +122,10 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; function with the arithmetic inline and no _poseidon_body symbol survives.
 
 ; ERR: [poseidon] preprocess_fms_loose_poseidon_body: tau=1.000000e-07 {{.*}} rel=1.428768e-08
-; ERR: Applying solution for CS: All FP64(0%) + FP32(100%)
+; ERR: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; ERR: [poseidon] pin: fms_loose:PT0=All FP64(0%) + FP32(100%)
 ; ERR: [poseidon] preprocess_fms_tight_poseidon_body: tau=1.000000e-12 {{.*}} rel=7.011882e-16
-; ERR: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; ERR: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 ; ERR: [poseidon] pin: fms_tight:PT0=All FP64(0%) + Expansion2(100%)
 ; ERR: warning: {{.*}}in function fms_bare {{.*}}Poseidon: no profile at {{.*}}/fms_bare.fpprofile:
 ; ERR-NOT: Applying solution

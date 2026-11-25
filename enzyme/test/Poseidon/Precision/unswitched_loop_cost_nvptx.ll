@@ -14,8 +14,8 @@
 ; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
 ; RUN:   -unswitch-threshold=0 -S -o /dev/null 2> %t/kept.log
-; RUN: grep '^CS candidate' %t/log | sed 's/ [^ ]*acc=.*//' > %t/priced
-; RUN: grep '^CS candidate' %t/kept.log | sed 's/ [^ ]*acc=.*//' > %t/priced-kept
+; RUN: grep '^\[poseidon\] precision candidate' %t/log | sed 's/ [^ ]*acc=.*//' > %t/priced
+; RUN: grep '^\[poseidon\] precision candidate' %t/kept.log | sed 's/ [^ ]*acc=.*//' > %t/priced-kept
 ; RUN: diff %t/priced %t/priced-kept
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; RUN:   -poseidon-profile-use=%S/../Inputs/unswitched_loop -poseidon-cache=%t/f \
@@ -23,17 +23,17 @@
 ; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
 ; RUN:   -enable-nontrivial-unswitch -S -o /dev/null 2> %t/forced.log
-; RUN: grep '^CS candidate' %t/forced.log | sed 's/ [^ ]*acc=.*//' > %t/priced-forced
+; RUN: grep '^\[poseidon\] precision candidate' %t/forced.log | sed 's/ [^ ]*acc=.*//' > %t/priced-forced
 ; RUN: diff %t/priced %t/priced-forced
 ; RUN: %opt %s -passes='default<O3>' -S \
 ; RUN:   | FileCheck --check-prefix=KEPT --implicit-check-not=.us %s
 
 ; CHECK-NOT: cand=0.000000e+00
-; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02 exec=1024
+; CHECK: [poseidon] precision candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02 exec=1024
 ; CHECK-NOT: cand=0.000000e+00
-; CHECK: CS candidate 'All FP64(0%) + Expansion2(100%)': initial=6.658000e+03 cand={{[1-9]}}
+; CHECK: [poseidon] precision candidate 'All FP64(0%) + Expansion2(100%)': initial=6.658000e+03 cand={{[1-9]}}
 ; CHECK-NOT: cand=0.000000e+00
-; CHECK: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; CHECK: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; IR-LABEL: define {{.*}} @_Z12setup_kerneliPKdS0_Pd(
 ; IR: call void @preprocess__Z12setup_kerneliPKdS0_Pd_poseidon_body(i32 %0, ptr %1, ptr %2, ptr %3)
 ; IR-LABEL: define internal void @preprocess__Z12setup_kerneliPKdS0_Pd_poseidon_body(

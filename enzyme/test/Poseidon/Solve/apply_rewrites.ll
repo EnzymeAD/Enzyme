@@ -77,9 +77,9 @@
 ; RUN: not %opt %t/sites.ll %{pass} %{joint} %{pt} %{cm} -poseidon-cache=%t/sites/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),PT0_0" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-TWICE %s
 
 ; SITES: [poseidon] Selecting tester_a:PT0=All FP64(50%) + FP32(50%): All FP64(50%) + FP32(50%)
-; SITES: Applying solution for CS: All FP64(50%) + FP32(50%) (#1)
+; SITES: Applying solution for precision change All FP64(50%) + FP32(50%) (#1)
 ; SITES: [poseidon] pin: tester_a:PT0=All FP64(50%) + FP32(50%){{$}}
-; SITES: Applying solution for CS: All FP64(70%) + FP32(30%) (#2)
+; SITES: Applying solution for precision change All FP64(70%) + FP32(30%) (#2)
 ; SITES: [poseidon] pin: tester_b:PT0=All FP64(70%) + FP32(30%){{$}}
 
 ; SITES-EVERY: [poseidon] pin: tester_a:PT0=All FP64(0%) + FP32(100%){{$}}
@@ -95,7 +95,7 @@
 ; SITES-NONAME-NEXT: {{^}}  All FP64(0%) + FP32(100%){{$}}
 ; SITES-NONAME-NEXT: {{^}}  All FP64(50%) + FP32(50%){{$}}
 
-; SITES-TWICE: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_0': CS 0 already has a PT applied; give one item per unit
+; SITES-TWICE: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_0': PT0 already has a precision change applied; give one item per unit
 
 ; Two sites whose symbols demangle to one name, tester(double, double) and
 ; tester(double, int): the name is ambiguous and each symbol names its own
@@ -115,10 +115,10 @@
 ; SITES-AMBIGUOUS-NEXT: {{^}}  _Z6testerdi (tester(double, int)){{$}}
 
 ; SITES-SYMBOL: [poseidon] pin: {{$}}
-; SITES-SYMBOL: Applying solution for CS: All FP64(70%) + FP32(30%) (#2)
+; SITES-SYMBOL: Applying solution for precision change All FP64(70%) + FP32(30%) (#2)
 ; SITES-SYMBOL: [poseidon] pin: _Z6testerdi:PT0=All FP64(70%) + FP32(30%){{$}}
 
-; SITES-BASENAME: Applying solution for CS: All FP64(50%) + FP32(50%) (#1)
+; SITES-BASENAME: Applying solution for precision change All FP64(50%) + FP32(50%) (#1)
 ; SITES-BASENAME: [poseidon] pin: _Z6testerdd:PT0=All FP64(50%) + FP32(50%){{$}}
 ; SITES-BASENAME: [poseidon] pin: {{$}}
 

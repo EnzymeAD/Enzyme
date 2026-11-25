@@ -47,7 +47,7 @@
 ; -poseidon-profile-generate, launched as multiview<<<8, dim3(4, 4)>>> on
 ; x[i] = 1.0 + 0.01 * i and b[i] = 0.5 + 0.03 * i.
 
-; F32: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; F32: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; F32: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to fp32 (12 loads, 3 stores)
 ; F32-NEXT: [poseidon] applied param-staged shared narrowing in preprocess__Z9multiviewPKdS0_Pd_poseidon_body
 ; F32-LABEL: ; ModuleID =
@@ -65,7 +65,7 @@
 ; F32: [[R1:%[0-9]+]] = getelementptr {{.*}}ptr getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 32), i64 [[TID]]
 ; F32-NEXT: load float, ptr [[R1]], align 4
 
-; DS: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#2)
+; DS: Applying solution for precision change All FP64(0%) + Expansion2(100%) (#2)
 ; DS: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to df64 (12 loads, 3 stores)
 ; DS-NEXT: [poseidon] folded df64 join/split roundtrips at the staging boundary in preprocess__Z9multiviewPKdS0_Pd_poseidon_body
 

@@ -67,7 +67,7 @@ int main() {
 // The rewritten body narrows x once and calls the module's __nv_expf on
 // its negation.
 // SOLVE: [poseidon] Optimizing [[BODY:preprocess__Z5wavedPdPKdi_poseidon_body]] with relative error tolerance: 1.000000e-03
-// SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // SOLVE: [poseidon] pin: _Z5wavedPdPKdi:PT0=All FP64(0%) + FP32(100%){{$}}
 // SOLVE: define internal void @[[BODY]](
 // SOLVE: [[XF:%[0-9]+]] = fptrunc double %{{[0-9]+}} to float

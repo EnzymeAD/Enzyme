@@ -19,7 +19,7 @@
 ; NOSPLIT: Total candidate compositions: 1.000000e+01
 ; NOSPLIT: Minimum accuracy cost within budget: 2.672498e-03
 ; NOSPLIT-NEXT: Computation cost budget used: -5.555556e-02
-; NOSPLIT: Applying solution for CS: All FP64(80%) + FP32(20%) (#7)
+; NOSPLIT: Applying solution for precision change All FP64(80%) + FP32(20%) (#7)
 
 ; SPLIT: Found a subgraph with 9 operations and 2 inputs and 2 outputs
 ; SPLIT: Bottleneck:   %t = fsub double %c, %y
@@ -38,7 +38,7 @@
 ; SPLIT: Total candidate compositions: 3.000000e+01
 ; SPLIT: Minimum accuracy cost within budget: 2.672498e-03
 ; SPLIT-NEXT: Computation cost budget used: -5.555556e-02
-; SPLIT: Applying solution for CS: All FP64(60%) + FP32(40%) (#3)
+; SPLIT: Applying solution for precision change All FP64(60%) + FP32(40%) (#3)
 
 ; Chain splitting (-poseidon-min-uses-split, -poseidon-min-ops-split;
 ; isExpansionBottleneck in Solve/Subgraphs.cpp): %t has three users inside the

@@ -72,7 +72,7 @@ int main(int argc, char **) {
 // SOLVE: [poseidon] site site(double const*, double*, int): accuracy target 1e-06
 // SOLVE-NEXT: [poseidon] Optimizing [[BODY:preprocess__Z4sitePKdPdi_poseidon_body]] with relative error tolerance: 1.000000e-06
 // SOLVE: [poseidon] [[BODY]]: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
-// SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // SOLVE: [poseidon] pin: _Z4sitePKdPdi:PT0=All FP64(0%) + FP32(100%){{$}}
 // SOLVE: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/_Z10unprofiledPKdPdi.fpprofile); left unchanged
 // SOLVE-NEXT: [poseidon] {{.*}}rewritten_module_as_written.cu: 1 function(s) a rewrite reached; every other function as written

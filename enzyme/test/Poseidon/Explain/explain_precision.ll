@@ -5,7 +5,7 @@
 ; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=FLOAT %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/a/tester.explain.json
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=KEPT %s
 ; RUN: %python -c "print('tester' + 'x' * 250)" > %t/long.name
 ; RUN: sed "s/@tester\b/@$(cat %t/long.name)/" %s > %t/long.ll
@@ -24,7 +24,7 @@
 ; FLOAT: remark: wave.c:4:3: Poseidon site tester: target 1e-06; modelled error as written 7.1e-18, after 1.2e-08; 1 rewrite, cost 1 -> 0.3125 (-69%); 6 Pareto points{{$}}
 ; FLOAT-NEXT: remark: wave.c:4:41: Poseidon profile of exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0): x[i] in [-2, 2]; 1024 executions, sensitivity 3.9e+02{{$}}
 ; FLOAT-NEXT: remark: wave.c:4:26: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error 7.1e-18 -> 1.2e-08, cost 1 -> 0.3125 (-69%) [PT0_0]{{$}}
-; FLOAT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; FLOAT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; FLOAT: [poseidon] pin: tester:PT0=All FP64(0%) + FP32(100%){{$}}
 
 ; JSON: "pareto": [
@@ -66,7 +66,7 @@
 
 ; KEPT: remark: wave.c:4:41: Poseidon left exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0) as written: every alternative's modelled error is above the target 1e-12 (best: PT0_5, 1.1e-09){{$}}
 ; KEPT-NEXT: remark: wave.c:4:26: Poseidon rejected the precision change PT0_5 to exp(x[i] * (double)((float)x[i] * -0.5f)) * cos(x[i] * 4.0): modelled error 1.1e-09 is above the target 1e-12 (cost change -0.03125){{$}}
-; KEPT: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
+; KEPT: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
 
 ; LONG: [poseidon] explanation written to {{.*}}/long/tester{{x{154}~}}851579e7fddbfcd5.explain.json{{$}}
 

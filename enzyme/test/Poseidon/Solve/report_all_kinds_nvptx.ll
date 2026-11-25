@@ -13,12 +13,12 @@
 
 ; TABLE: [poseidon] DP table:
 ; TABLE-NEXT: computation cost -9.537642e-01, accuracy cost 5.593938e+09, steps:
-; TABLE-NEXT: CS: All FP64(0%) + FP32(100%) (#0)
+; TABLE-NEXT: precision change All FP64(0%) + FP32(100%) (#0)
 ; TABLE-NEXT: matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 ; TABLE: computation cost -3.657315e-01, accuracy cost 7.434626e+03, steps:
 ; TABLE-NEXT: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)-> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
-; TABLE-NEXT: CS: All FP64(0%) + FP32(100%) (#0)
-; TABLE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; TABLE-NEXT: precision change All FP64(0%) + FP32(100%) (#0)
+; TABLE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; TABLE-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 
 ; SUMMARY: 21 points; S0:56 S1:9 M0:3
@@ -41,5 +41,5 @@
 ; TAU: Poseidon error-budget: matmul -> tcec n=2 wmma m16n16k16 f16/f32 (domain err 1.576106e-07 <= 1.000000e-06 at confidence 9.500000e-01)
 ; TAU: warning: {{.*}}preprocess_matmul_body{{.*}}: Poseidon: a selected rewrite edits instructions a selected matrix product consumes; the rewrite is dropped{{$}}
 ; TAU: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
-; TAU-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; TAU-NEXT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; TAU: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:PT0=All FP64(0%) + FP32(100%){{$}}

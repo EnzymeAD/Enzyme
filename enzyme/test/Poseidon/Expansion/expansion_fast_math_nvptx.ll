@@ -29,8 +29,8 @@
 ; attribute (strict mode included) gets its expansion, and the emitted function
 ; is the one emitted for the site without them.
 
-; APPLIED-NOT: NOT PROPOSED
-; APPLIED: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; APPLIED-NOT: are not proposed
+; APPLIED: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 
 ; BODY-LABEL: define {{.*}} @preprocess_fms_body(
 ; BODY-NOT: {{ (fast|contract|reassoc|nnan|ninf|nsz|arcp|afn) }}

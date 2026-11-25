@@ -661,12 +661,11 @@ bool expansionsRoundedAsWritten(const Options &O, Function &F,
     const std::optional<std::string> reason = fastFPReason(F);
     expansionSafe = !reason;
     if (reason) {
-      llvm::errs() << "[poseidon] WARNING: " << F.getName()
-                   << ": floating-point expansion candidates NOT PROPOSED -- "
-                   << *reason
-                   << ". An expansion is exact only if each of its operations "
-                      "is rounded as written; it needs -ffp-contract=on or "
-                      "-ffp-contract=off, without -ffast-math.\n";
+      diagnose(F, F.getSubprogram(),
+               "floating-point expansions are not proposed: " + *reason +
+                   "; compile with -ffp-contract=on or -ffp-contract=off, "
+                   "without -ffast-math",
+               DS_Warning);
       if (O.Model.StrictMode)
         reportUserError(F, F.getSubprogram(),
                         "strict mode: site '" + F.getName() + "': " + *reason +

@@ -261,10 +261,6 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       if (optimized)
         noteRewritten(S, *CI->getFunction());
 
-      if (!optimized)
-        warn(CI,
-             Twine("Poseidon returned false (no change) for ") + F->getName());
-
       writeGemmDescriptorOf(S, CI, F, primalArgs);
 
       // The canonical clone's lowering may differ from the original body's at

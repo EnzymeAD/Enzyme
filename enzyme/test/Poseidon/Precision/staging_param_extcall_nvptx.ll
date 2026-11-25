@@ -17,7 +17,7 @@
 ; s to a function that reads it as doubles in the same launch: s keeps its FP64
 ; layout under every tier.
 
-; LOG: Applying solution for CS:
+; LOG: Applying solution for precision change
 ; LOG-NOT: narrowed param-staged shared buffer
 
 ; IR-LABEL: define {{.*}} @_Z13staged_kernelPKdS0_PdS1_(

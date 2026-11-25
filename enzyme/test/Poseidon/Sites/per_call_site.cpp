@@ -86,11 +86,11 @@ int main(int argc, char **argv) {
 // PROFILES-NEXT: _Z4wavePKdPdi.poseidon.main.3.fpprofile
 
 // USE: [poseidon] preprocess__Z2sqdd.poseidon.main.0: tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] preprocess__Z2sqdd.poseidon.main.1: tau=1.000000e-06
 // USE: no rewrite applied for preprocess__Z2sqdd.poseidon.main.1
 // USE: preprocess__Z4wavePKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-03 overrides -poseidon-tau=1.000000e-06
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: preprocess__Z4wavePKdPdi.poseidon.main.3: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
 // USE: no rewrite applied for preprocess__Z4wavePKdPdi.poseidon.main.3
 
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
 // SAME: 0 1 1
 // SAME-NEXT: 0 1 1
 
-// LEVEL-COUNT-2: Applying solution for CS: All FP64(0%) + FP32(100%)
+// LEVEL-COUNT-2: Applying solution for precision change All FP64(0%) + FP32(100%)
 // LEVEL-NOT: Applying solution
 
 // NONCONST: error: {{.*}}Poseidon: the accuracy target of wave(double const*, double*, int) must be a compile-time floating-point constant

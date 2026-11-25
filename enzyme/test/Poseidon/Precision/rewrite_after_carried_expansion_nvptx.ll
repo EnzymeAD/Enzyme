@@ -5,7 +5,7 @@
 ; RUN: diff %t/expansion-first.ll %t/rewrite-first.ll
 
 ; APPLY: Applying solution for (* (- v1 v2) (+ v2 v1)) --(0)-> (-.f64 (*.f64 v1 v1) (*.f64 v2 v2))
-; APPLY-NEXT: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#3)
+; APPLY-NEXT: Applying solution for precision change All FP64(0%) + Expansion2(100%) (#3)
 
 ; IR-LABEL: define dso_local void @preprocess_carried_body(
 ; IR-SAME: ptr {{.*}}%0, double noundef %[[V2:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])

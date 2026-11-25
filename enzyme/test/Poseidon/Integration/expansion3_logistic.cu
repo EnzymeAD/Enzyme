@@ -88,6 +88,6 @@ int main(int argc, char **argv) {
 // TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body
 // TWO-NOT: Applying solution
 
-// THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%)
+// THREE: Applying solution for precision change All FP64(0%) + Expansion3(100%)
 
-// LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+// LOOSE: Applying solution for precision change All FP64(0%) + Expansion2(100%)

@@ -52,7 +52,7 @@
 
 // USE: clang++ {{.*}}-Xclang -mllvm -Xclang -poseidon-profile-use={{[^ ]+}}/prof -Xclang -mllvm -Xclang -poseidon-tau=1e-6 -Xclang -mllvm -Xclang -poseidon-cost-model={{[^ ]+}}/cm_cpu_native.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-print -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on {{.*}}-c {{[^ ]+}}/host.cpp{{$}}
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06 S=
-// USE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// USE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // USE: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64(0%) + FP32(100%)
 // USE: clang++ {{.*}}CMakeFiles/host.dir/host.cpp.o -o host {{.*}}libposeidon_profile.a && :{{$}}
 

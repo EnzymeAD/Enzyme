@@ -40,7 +40,7 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; APPLY: Applying solution for (+ (* v2 v1) (+ v2 v0)) --(0)-> (fma.f64 v2 v1 (+.f64 v2 v0))
-; APPLY-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%)
+; APPLY-NEXT: Applying solution for precision change All FP64(0%) + FP32(100%)
 
 ; IR-LABEL: define void @preprocess_tester(
 ; IR: %[[T:[0-9]+]] = fsub float

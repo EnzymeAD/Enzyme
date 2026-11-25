@@ -274,7 +274,7 @@ static HerbieAnswers askHerbie(Session &S,
                                StringRef label, const Function &F) {
   const Options &O = S.Opts;
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
-    llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
+    llvm::errs() << "[poseidon] using Herbie binary '" << O.Herbie.HerbieBinary
                  << "'\n";
   HerbieRunOptions Opts = herbieRunOptions(S, F);
 
@@ -330,11 +330,13 @@ static HerbieAnswers askHerbie(Session &S,
         reportUserError(F, F.getSubprogram(),
                         "strict mode: " + Origin + " for " + RunLabel +
                             " is not a Herbie results file (" + Why +
-                            "). Without -poseidon-strict-mode the subgraph is "
-                            "left as written.");
-      llvm::errs() << "[poseidon] Herbie " << RunLabel << ": " << Origin
-                   << " is not a Herbie results file (" << Why
-                   << "). No algebraic candidates for this subgraph from it.\n";
+                            "); without -poseidon-strict-mode the subgraph is "
+                            "left as written");
+      diagnose(F, F.getSubprogram(),
+               Origin + " for " + RunLabel + " is not a Herbie results file (" +
+                   Why +
+                   "), so the subgraph has no algebraic candidate from it",
+               DS_Warning);
       continue;
     }
     H.answers.push_back(std::move(*Read));
@@ -439,7 +441,7 @@ static void collectHerbieRewrites(
         if (!answer.Rewrites)
           llvm::errs() << "[poseidon] Herbie core \"" << answer.Name
                        << "\": no output expression (status " << status
-                       << ") -- no algebraic candidate from this core.\n";
+                       << "); no algebraic candidate from this core\n";
       }
       if (answer.Rewrites)
         checkAnswer(answer, source, COs[answer.Core], F, valueToNodeMap,
@@ -463,8 +465,9 @@ void reportHerbieAnswers(Session &S) {
   HerbieRunState &H = S.Herbie;
   if (!H.Cached && !H.Fresh)
     return;
-  llvm::errs() << "[poseidon] Herbie answers: " << H.Fresh << " fresh, "
-               << H.Cached << " from the cache\n";
+  if (S.Opts.Diagnostics.Print)
+    llvm::errs() << "[poseidon] Herbie answers: " << H.Fresh << " fresh, "
+                 << H.Cached << " from the cache\n";
   H.Cached = H.Fresh = 0;
 }
 
@@ -689,8 +692,8 @@ void SubgraphCores::nameInputs(int &symbolCounter) {
       node.symbol = "v" + std::to_string(symbolCounter++);
     symbolToValueMap[node.symbol] = input;
     if (O.Diagnostics.Print)
-      llvm::errs() << "assigning symbol: " << node.symbol << " to " << *input
-                   << '\n';
+      llvm::errs() << "[poseidon] assigning symbol: " << node.symbol << " to "
+                   << *input << '\n';
   }
 }
 
@@ -699,15 +702,19 @@ SubgraphCores::eligible(Instruction *output) const {
   FPNode &node = *valueToNodeMap[output];
   if (node.grad == 0.) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "Skipping zero gradient instruction: " << *output << '\n';
+      llvm::errs() << "[poseidon] Skipping zero gradient instruction: "
+                   << *output << '\n';
     return std::nullopt;
   }
 
   std::string expr = node.toFullExpression(valueToNodeMap, subgraph.inputs);
   if (expr.length() > O.Candidates.MaxExprLength) {
-    llvm::errs() << "WARNING: Skipping Herbie optimization for " << *output
-                 << " since expression length " << expr.length()
-                 << " exceeds limit of " << O.Candidates.MaxExprLength << '\n';
+    diagnose(*output->getFunction(), output->getDebugLoc(),
+             "an output expression of " + Twine(expr.length()) +
+                 " characters is over -poseidon-max-expr-length=" +
+                 Twine(O.Candidates.MaxExprLength) +
+                 " and is not sent to Herbie",
+             DS_Warning);
     return std::nullopt;
   }
 
@@ -715,7 +722,8 @@ SubgraphCores::eligible(Instruction *output) const {
   assert(parenCount > 0 && "an output expression is an FPCore operation");
   if (parenCount == 1) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "Skipping Herbie for simple expression: " << expr << '\n';
+      llvm::errs() << "[poseidon] Skipping Herbie for simple expression: "
+                   << expr << '\n';
     return std::nullopt;
   }
   return EligibleOutput{output, std::move(expr), node.grad, node.executions};
@@ -735,7 +743,7 @@ void SubgraphCores::addPerOutputCores(const EligibleOutput &E,
     std::string herbieInput =
         fpcoreText(args, prec, precondition, "", batch.units.size(), E.expr);
     if (O.Diagnostics.Print)
-      llvm::errs() << "Herbie input:\n" << herbieInput << '\n';
+      llvm::errs() << "[poseidon] Herbie input:\n" << herbieInput << '\n';
     batch.inputs.push_back(herbieInput);
     batch.units.push_back(CO);
   }
@@ -788,9 +796,10 @@ std::string SubgraphCores::arrayWeights(ArrayRef<Instruction *> outputs) const {
     total += v;
   if (!(total > 0.0 && std::isfinite(total) &&
         all_of(sens, [](double v) { return v >= 0.0; }))) {
-    llvm::errs() << "[poseidon] an array core of subgraph " << subgraphIdx
-                 << " is sent unweighted: its outputs' profiled "
-                    "sensitivities do not sum to a positive value\n";
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] an array core of subgraph " << subgraphIdx
+                   << " is sent unweighted: its outputs' profiled "
+                      "sensitivities do not sum to a positive value\n";
     return "";
   }
   std::string weights = " :herbie-weights (";
@@ -822,7 +831,7 @@ void SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
     std::string herbieInput =
         fpcoreText(args, prec, precondition, weights, batch.units.size(), body);
     if (O.Diagnostics.Print)
-      llvm::errs() << "Herbie array input:\n" << herbieInput << '\n';
+      llvm::errs() << "[poseidon] Herbie array input:\n" << herbieInput << '\n';
     batch.inputs.push_back(herbieInput);
     batch.units.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
                              grads, body, group.front()->executions);
@@ -884,9 +893,10 @@ void proposeHerbieCandidates(
         sendAt.push_back(kHerbiePrecisions[k % std::size(kHerbiePrecisions)]);
     if (sendAt.empty())
       continue;
-    llvm::errs() << "[poseidon] Herbie subgraph " << subgraphCounter
-                 << ": array core returned nothing for " << *E.output
-                 << "; sending it separately\n";
+    if (S.Opts.Diagnostics.Print)
+      llvm::errs() << "[poseidon] Herbie subgraph " << subgraphCounter
+                   << ": array core returned nothing for " << *E.output
+                   << "; sending it separately\n";
     cores.addPerOutputCores(E, sendAt, perOutput);
   }
   COs.append(std::make_move_iterator(arrays.units.begin()),
@@ -1321,11 +1331,10 @@ private:
 
 void RewriteAccuracy::unpriceable(StringRef why) {
   CO.unpricedReason = why.str();
-  llvm::errs() << "[poseidon] subgraph output cannot be priced (" << why
-               << "); discarding its " << CO.candidates.size()
-               << " Herbie candidate(s) and keeping the original body. "
-                  "A rewrite may still exist here: this is an un-priced "
-                  "site, not a rejected one.\n";
+  if (O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] subgraph output cannot be priced (" << why
+                 << "); discarding its " << CO.candidates.size()
+                 << " rewrite candidate(s) and keeping the original body\n";
   CO.candidates.clear();
   CO.initialAccCost = 0.0;
 }
@@ -1349,8 +1358,8 @@ bool RewriteAccuracy::priceBaseline() {
     // silently fall back to the no-op; drop the candidates and say so instead.
     if (O.Diagnostics.Print)
       for (const RootSamples &R : rootSamples)
-        llvm::errs() << "  origCost = " << R.origCost << ", grad = " << R.grad
-                     << '\n';
+        llvm::errs() << "[poseidon] output baseline accuracy cost "
+                     << R.origCost << ", gradient " << R.grad << '\n';
     unpriceable("the baseline accuracy cost is not finite; the site's profile "
                 "is degenerate (a zero or null-space output shadow gives a "
                 "gradient that cannot weight anything)");
@@ -1933,15 +1942,15 @@ void RewriteUnit::price() {
 }
 
 void RewriteUnit::printPriced(raw_ostream &OS) {
-  OS << "\n################################\n";
+  OS << "[poseidon] priced rewrite candidates\n";
   OS << "Initial AccuracyCost: " << initialAccCost << '\n';
   OS << "Initial ComputationCost: " << initialCompCost << '\n';
   OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << '\n';
   OS << "Initial Expression: " << expr << '\n';
   OS << "Grad: " << grad << "\n\n";
   OS << "Candidates:\n";
-  OS << "Δ AccCost\t\tΔ "
-        "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
+  OS << "accuracy delta\t\tcost delta\t\tHerbie cost\t\taccuracy\t\t"
+        "expression\n";
   OS << "--------------------------------\n";
   for (size_t i = 0; i < candidates.size(); ++i) {
     RewriteCandidate &candidate = candidates[i];
@@ -1954,7 +1963,6 @@ void RewriteUnit::printPriced(raw_ostream &OS) {
     OS << "\t\t" << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy
        << "\t\t" << candidate.expr << '\n';
   }
-  OS << "################################\n\n";
 }
 
 } // namespace poseidon

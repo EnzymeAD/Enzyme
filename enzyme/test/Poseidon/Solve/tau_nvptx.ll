@@ -30,7 +30,7 @@
 ; LADDER-LOOSE-NEXT: Solving the DP for preprocess_fms_kernel_poseidon_body.
 ; LADDER-LOOSE: DP table for preprocess_fms_kernel_poseidon_body cached to
 ; LADDER-LOOSE: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-07 S=1.187943e+04 A0=2.571104e-13 selected cost=-9.223869e-01 accCost=1.697296e-04 rel=1.428768e-08
-; LADDER-LOOSE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; LADDER-LOOSE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; LADDER-LOOSE: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + FP32(100%)
 ; LADDER-LOOSE-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; LADDER-LOOSE: call float @llvm.fmuladd.f32(
@@ -39,7 +39,7 @@
 ; LADDER-MID: Per-operation relative error tolerance: 1.000000e-12
 ; LADDER-MID-NEXT: Cache entry for preprocess_fms_kernel_poseidon_body found. Loaded DP tables from cache.
 ; LADDER-MID: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost=-1.692668e-01 accCost=8.072609e-12 rel=7.011882e-16
-; LADDER-MID: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#2)
+; LADDER-MID: Applying solution for precision change All FP64(0%) + Expansion2(100%) (#2)
 ; LADDER-MID: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
 
 ; The explanation of each compile says what its decision lines say.
@@ -51,7 +51,6 @@
 ; LADDER-TIGHT-NEXT: Cache entry for preprocess_fms_kernel_poseidon_body found. Loaded DP tables from cache.
 ; LADDER-TIGHT: [poseidon] No solution found that meets accuracy tolerance 1.000000e-18; the best relative accuracy in the DP table is 2.164332e-17{{$}}
 ; LADDER-TIGHT: [poseidon] pin: {{$}}
-; LADDER-TIGHT: warning: {{.*}}Poseidon: Poseidon returned false (no change) for preprocess_fms_kernel_poseidon_body
 ; LADDER-TIGHT: [poseidon] no rewrite applied for preprocess_fms_kernel_poseidon_body; calling original body fms_kernel_poseidon_body (bit-transparent no-op)
 ; LADDER-TIGHT-LABEL: define {{.*}} @fms_kernel(
 ; LADDER-TIGHT-SAME: ptr {{.*}}[[KA:%[0-9]+]], ptr {{.*}}[[KB:%[0-9]+]], ptr {{.*}}[[KC:%[0-9]+]])

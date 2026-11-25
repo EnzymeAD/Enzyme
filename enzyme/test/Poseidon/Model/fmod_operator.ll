@@ -60,8 +60,8 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; fmul 4 + fmod 8 + fadd 4 in double; 1 + 2 + 1 and three casts in float.
 ; PT: [poseidon] Optimizing preprocess_tester_frem
 ; PT: Initial ComputationCost: 1.600000e+01
-; PT: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.600000e+01 cand=7.000000e+00 exec=64 {{[^ -~]+}}cost=-5.760000e+02 {{[^ -~]+}}acc=3.098434e-05{{$}}
-; PT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; PT: [poseidon] precision candidate 'All FP64(0%) + FP32(100%)': initial=1.600000e+01 cand=7.000000e+00 exec=64 dcost=-5.760000e+02 dacc=3.098434e-05{{$}}
+; PT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; PT: [poseidon] pin: tester_frem:PT0=All FP64(0%) + FP32(100%)
 ; PT-IR-LABEL: define void @preprocess_tester_frem(
 ; PT-IR-NEXT: entry:

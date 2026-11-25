@@ -77,7 +77,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: Candidates:
 ; CHECK: All FP64(0%) + FP32(100%)
 ; CHECK: All FP64(0%) + Expansion2(100%)
-; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; CHECK: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 ; CHECK: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
 
 ; Without inlining the kernel calls the rewritten body with its own arguments.
@@ -104,7 +104,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CLEAN-NOT: fneg double
 ; CLEAN: ret void
 
-; REGEX: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; REGEX: Applying solution for precision change All FP64(0%) + Expansion2(100%)
 ; REGEX: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
 ; REGEX-LABEL: define {{.*}} @fms_kernel(
 ; REGEX: call void @preprocess_fms_kernel_poseidon_body(

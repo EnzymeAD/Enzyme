@@ -81,13 +81,13 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; SOLVE: [poseidon] Optimizing preprocess_tester_undef
 ; SOLVE: Found a subgraph with 4 operations and 2 inputs and 2 outputs
-; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; SOLVE: [poseidon] Optimizing preprocess_tester_ce
 ; SOLVE: Found a subgraph with 2 operations and 3 inputs and 1 outputs
-; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; SOLVE: [poseidon] Optimizing preprocess_tester_powi
 ; SOLVE: Found a subgraph with 2 operations and 3 inputs and 1 outputs
-; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SOLVE: Applying solution for precision change All FP64(0%) + FP32(100%)
 
 ; IR-LABEL: define void @preprocess_tester_undef(
 ; IR: [[B:%.+]] = fpext float %{{.+}} to double
