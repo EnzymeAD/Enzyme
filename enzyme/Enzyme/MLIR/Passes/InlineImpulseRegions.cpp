@@ -249,8 +249,8 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
       sampleOp.getLogpdfFnAttr(), ArrayAttr::get(ctx, address), support, dist);
 
   auto inlineCallee = [&](SymbolRefAttr callee, Region &region) {
-    auto calleeFn = dyn_cast_or_null<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(sampleOp, callee));
+    auto calleeFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        sampleOp, callee);
     if (calleeFn && !calleeFn.getFunctionBody().empty())
       inlineFunctionIntoRegion(builder, calleeFn, region);
   };

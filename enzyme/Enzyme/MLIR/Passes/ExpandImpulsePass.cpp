@@ -2610,7 +2610,7 @@ static std::optional<MHMove> analyzeMHMove(impulse::InferRegionOp op) {
       !draw.getOutputRngState().hasOneUse() ||
       sub.getTerminator()->getOperand(0) != draw.getOutputRngState())
     return std::nullopt;
-  auto dist = draw.getRngDistribution();
+  impulse::RngDistribution dist = draw.getRngDistribution();
   if (dist != impulse::RngDistribution::UNIFORM &&
       dist != impulse::RngDistribution::NORMAL)
     return std::nullopt;
@@ -2879,6 +2879,14 @@ struct SlotLayout {
   SmallVector<Value> proposedAt;
   SmallVector<Value> currentAt;
 };
+
+/// The slots of a `SlotLayout` grouped into windows of one row per move, where
+/// each move's columns are the previous move's shifted by `moveStride`.
+struct StrideGroups {
+  int64_t moveStride;
+  /// The first column of each window in move 0 and the slots in the window.
+  SmallVector<std::pair<int64_t, SmallVector<size_t>>> groups;
+};
 } // namespace
 
 /// Emits one draw of the proposals of all `moves` from key `rng0`, the
@@ -2998,14 +3006,11 @@ static std::pair<Value, Value> emitLogAlpha(OpBuilder &b, Location loc,
   return {deltaVec, arith::SubFOp::create(b, loc, deltaVec, correctionVec)};
 }
 
-/// Returns the column every slot of `slots` starts at in move 0 grouped into
-/// windows of `numMoves` rows of `moveStride` columns, one row per move, when
-/// each move's columns are the previous move's shifted by `moveStride` and the
-/// windows fit in a `width`-wide trace without overlapping. Each group is its
-/// first column and its slots.
-static std::optional<
-    std::pair<int64_t, SmallVector<std::pair<int64_t, SmallVector<size_t>>>>>
-findStrideGroups(const SlotLayout &slots, int64_t width) {
+/// Groups the slots of `slots` into windows of one row per move, when each
+/// move's columns are the previous move's shifted by one stride and the
+/// windows fit in a `width`-wide trace without overlapping.
+static std::optional<StrideGroups> findStrideGroups(const SlotLayout &slots,
+                                                    int64_t width) {
   ArrayRef<SmallVector<int64_t>> columns = slots.columns;
   int64_t numMoves = columns.size();
   size_t numSlots = columns.front().size();
@@ -3033,7 +3038,7 @@ findStrideGroups(const SlotLayout &slots, int64_t width) {
     if (end > width || (i + 1 != groups.size() && end > groups[i + 1].first))
       return std::nullopt;
   }
-  return std::make_pair(moveStride, std::move(groups));
+  return StrideGroups{moveStride, std::move(groups)};
 }
 
 /// Writes the values of the accepted proposals into `trace0`: window by
@@ -3059,7 +3064,8 @@ static Value writeBackAccepted(OpBuilder &b, Location loc, Value trace0,
     resultAt.push_back(
         arith::SelectOp::create(b, loc, accepted, proposed, current));
   ArrayRef<SmallVector<int64_t>> columns = slots->columns;
-  auto strided = findStrideGroups(*slots, traceType.getShape()[1]);
+  std::optional<StrideGroups> strided =
+      findStrideGroups(*slots, traceType.getShape()[1]);
   if (!strided) {
     auto rowType = RankedTensorType::get({1, numMoves}, elemType);
     for (auto [s, result] : llvm::enumerate(resultAt)) {
@@ -3072,11 +3078,11 @@ static Value writeBackAccepted(OpBuilder &b, Location loc, Value trace0,
     }
     return trace;
   }
-  auto &[moveStride, groups] = *strided;
+  int64_t moveStride = strided->moveStride;
   auto blockType = RankedTensorType::get({numMoves, moveStride}, elemType);
   auto blockColType = RankedTensorType::get({numMoves, 1}, elemType);
   auto winType = RankedTensorType::get({1, numMoves * moveStride}, elemType);
-  for (auto &[groupStart, groupSlots] : groups) {
+  for (auto &[groupStart, groupSlots] : strided->groups) {
     Value block = impulse::ReshapeOp::create(
         b, loc, blockType,
         emitColumnSlice(b, loc, winType, trace0, groupStart));
@@ -3827,6 +3833,7 @@ private:
   void accumulateSiteWeight(const DistSite &site, FunctionOpInterface logpdfFn,
                             ArrayRef<Value> values, bool termDirty,
                             SiteCarry &carry);
+  /// The `impulse.if` ops around `site` in the clone, innermost first.
   SmallVector<impulse::IfOp> enclosingIfs(Operation *site);
   /// Whether `site` sits in a branch whose predicate the move can change.
   bool inFlippableBranch(Operation *site);
