@@ -138,6 +138,56 @@ struct LogPResult {
   Value logP;
   Value rng;
 };
+
+struct SingleParticleELBOResult {
+  Value elbo;
+  Value gradLoc;
+  Value gradScale;
+  Value rng;
+};
+
+struct MultiParticleELBOResult {
+  Value elbo;
+  Value gradLoc;
+  Value gradScale;
+};
+
+/// A parameter and its two optimizer state slots after one step. A rule that
+/// keeps fewer slots returns the unused ones unchanged.
+struct OptimizerUpdate {
+  Value param;
+  Value m;
+  Value v;
+};
+
+struct SVILoopResult {
+  Value traceBuf;
+  Value elboBuf;
+  Value rngFinal;
+  Value locFinal; // unconstrained
+  // Unconstrained; flat scale_tril for AutoMVN, null for AutoDelta.
+  Value scaleFinal;
+  Value elboFinal;
+  // Final optimizer state; the scale moments are null for AutoDelta.
+  Value mLocFinal;
+  Value vLocFinal;
+  Value mScaleFinal;
+  Value vScaleFinal;
+  Value stepCountFinal;
+};
+
+struct SingleParticleMVNResult {
+  Value elbo;
+  Value gradLoc;
+  Value gradScaleTril;
+  Value rng;
+};
+
+struct SingleParticleAutoDeltaResult {
+  Value elbo;
+  Value gradLoc;
+  Value rng;
+};
 } // namespace
 
 /// Values captured from above the region are referenced as-is.
@@ -197,10 +247,10 @@ static LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
   return {genOp.getWeight(), rngAfter};
 }
 
-mlir::impulse::VI::SingleParticleELBOResult
-mlir::impulse::VI::emitSingleParticleELBO(OpBuilder &builder, Location loc,
-                                          Value locParam, Value scaleParam,
-                                          Value pkey, const VIContext &ctx) {
+/// One particle of NumPyro's Trace_ELBO with an AutoNormal guide.
+static SingleParticleELBOResult
+emitSingleParticleELBO(OpBuilder &builder, Location loc, Value locParam,
+                       Value scaleParam, Value pkey, const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -334,10 +384,10 @@ mlir::impulse::VI::emitSingleParticleELBO(OpBuilder &builder, Location loc,
   return {elbo, gradLoc, gradScale, modelRngAfter};
 }
 
-mlir::impulse::VI::SingleParticleAutoDeltaResult
-mlir::impulse::VI::emitSingleParticleAutoDelta(OpBuilder &builder, Location loc,
-                                               Value locParam, Value pkey,
-                                               const VIContext &ctx) {
+/// log q = 0, but guide_seed is still split per site as NumPyro does.
+static SingleParticleAutoDeltaResult
+emitSingleParticleAutoDelta(OpBuilder &builder, Location loc, Value locParam,
+                            Value pkey, const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -394,10 +444,10 @@ mlir::impulse::VI::emitSingleParticleAutoDelta(OpBuilder &builder, Location loc,
   return {adOp.getResult(0), adOp.getResult(2), adOp.getResult(1)};
 }
 
-mlir::impulse::VI::SingleParticleMVNResult
-mlir::impulse::VI::emitSingleParticleMVNELBO(OpBuilder &builder, Location loc,
-                                             Value locParam, Value xScaleTril,
-                                             Value pkey, const VIContext &ctx) {
+/// AutoMultivariateNormal variant; `xScaleTril` is unconstrained and flat.
+static SingleParticleMVNResult
+emitSingleParticleMVNELBO(OpBuilder &builder, Location loc, Value locParam,
+                          Value xScaleTril, Value pkey, const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -497,10 +547,11 @@ mlir::impulse::VI::emitSingleParticleMVNELBO(OpBuilder &builder, Location loc,
           adOp.getResult(1)};
 }
 
-mlir::impulse::VI::MultiParticleELBOResult
-mlir::impulse::VI::emitELBOStep(OpBuilder &builder, Location loc,
-                                Value locParam, Value scaleParam, Value rngStep,
-                                const VIContext &ctx) {
+/// NumPyro Trace_ELBO: K == 1 uses `rngStep` directly; K > 1 splits it K ways.
+static MultiParticleELBOResult emitELBOStep(OpBuilder &builder, Location loc,
+                                            Value locParam, Value scaleParam,
+                                            Value rngStep,
+                                            const VIContext &ctx) {
   int64_t numParticles = ctx.numParticles;
   if (numParticles == 1) {
     auto r = emitSingleParticleELBO(builder, loc, locParam, scaleParam, rngStep,
@@ -544,9 +595,10 @@ mlir::impulse::VI::emitELBOStep(OpBuilder &builder, Location loc,
   return {elboMean, gradLocMean, gradScaleMean};
 }
 
-mlir::impulse::VI::OptimizerUpdate
-mlir::impulse::VI::applySGDUpdate(OpBuilder &builder, Location loc, Value param,
-                                  Value gradElbo, Value m, Value v, Value lr) {
+/// `gradElbo` is d(elbo)/dp; the minimized loss is -elbo.
+static OptimizerUpdate applySGDUpdate(OpBuilder &builder, Location loc,
+                                      Value param, Value gradElbo, Value m,
+                                      Value v, Value lr) {
   auto ty = cast<RankedTensorType>(param.getType());
   Value lrBcast = broadcastScalar(builder, loc, lr, ty);
   Value scaledGrad = arith::MulFOp::create(builder, loc, lrBcast, gradElbo);
@@ -554,11 +606,13 @@ mlir::impulse::VI::applySGDUpdate(OpBuilder &builder, Location loc, Value param,
   return {paramNew, m, v};
 }
 
-mlir::impulse::VI::OptimizerUpdate
-mlir::impulse::VI::applyAdamUpdate(OpBuilder &builder, Location loc,
-                                   Value param, Value gradElbo, Value m,
-                                   Value v, Value stepIdx, Value lr, double b1,
-                                   double b2, double eps, double clipNorm) {
+/// jax.example_libraries.optimizers.adam; `stepIdx` counts from 0. A positive
+/// `clipNorm` clips each gradient element, as ClippedAdam does.
+static OptimizerUpdate applyAdamUpdate(OpBuilder &builder, Location loc,
+                                       Value param, Value gradElbo, Value m,
+                                       Value v, Value stepIdx, Value lr,
+                                       double b1, double b2, double eps,
+                                       double clipNorm) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -627,10 +681,10 @@ mlir::impulse::VI::applyAdamUpdate(OpBuilder &builder, Location loc,
   return {paramNew, mNew, vNew};
 }
 
-mlir::impulse::VI::OptimizerUpdate
-mlir::impulse::VI::applyMomentumUpdate(OpBuilder &builder, Location loc,
-                                       Value param, Value gradElbo, Value m,
-                                       Value v, Value lr, double mass) {
+/// jax.example_libraries.optimizers.momentum; `m` is the velocity.
+static OptimizerUpdate applyMomentumUpdate(OpBuilder &builder, Location loc,
+                                           Value param, Value gradElbo, Value m,
+                                           Value v, Value lr, double mass) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -646,9 +700,12 @@ mlir::impulse::VI::applyMomentumUpdate(OpBuilder &builder, Location loc,
   return {paramNew, mNew, v};
 }
 
-mlir::impulse::VI::OptimizerUpdate mlir::impulse::VI::applyRMSPropUpdate(
-    OpBuilder &builder, Location loc, Value param, Value gradElbo, Value m,
-    Value v, Value lr, double gamma, double eps) {
+/// jax.example_libraries.optimizers.rmsprop; `m` is the squared-gradient
+/// average.
+static OptimizerUpdate applyRMSPropUpdate(OpBuilder &builder, Location loc,
+                                          Value param, Value gradElbo, Value m,
+                                          Value v, Value lr, double gamma,
+                                          double eps) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -679,10 +736,10 @@ mlir::impulse::VI::OptimizerUpdate mlir::impulse::VI::applyRMSPropUpdate(
   return {paramNew, avgNew, v};
 }
 
-mlir::impulse::VI::OptimizerUpdate
-mlir::impulse::VI::applyAdagradUpdate(OpBuilder &builder, Location loc,
-                                      Value param, Value gradElbo, Value m,
-                                      Value v, Value lr, double momentum) {
+/// jax.example_libraries.optimizers.adagrad; `m` is g_sq, `v` the momentum.
+static OptimizerUpdate applyAdagradUpdate(OpBuilder &builder, Location loc,
+                                          Value param, Value gradElbo, Value m,
+                                          Value v, Value lr, double momentum) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -721,12 +778,12 @@ mlir::impulse::VI::applyAdagradUpdate(OpBuilder &builder, Location loc,
   return {paramNew, gSqNew, vNew};
 }
 
-mlir::impulse::VI::OptimizerUpdate
-mlir::impulse::VI::applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
-                                              Value param, Value gradElbo,
-                                              Value m, Value v, Value lr,
-                                              double gamma, double eps,
-                                              double momentumMass) {
+/// jax.example_libraries.optimizers.rmsprop_momentum; `m` is the
+/// squared-gradient average, `v` the momentum.
+static OptimizerUpdate
+applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc, Value param,
+                           Value gradElbo, Value m, Value v, Value lr,
+                           double gamma, double eps, double momentumMass) {
   auto paramType = cast<RankedTensorType>(param.getType());
   auto elemType = paramType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -763,9 +820,10 @@ mlir::impulse::VI::applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
   return {paramNew, avgNew, momNew};
 }
 
-mlir::impulse::VI::SVILoopResult
-mlir::impulse::VI::emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
-                               Value scale0, Value rng0, const VIContext &ctx) {
+/// `ctx.numSamples` iterations of NumPyro's SVI.update.
+static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
+                                 Value scale0, Value rng0,
+                                 const VIContext &ctx) {
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -926,10 +984,10 @@ mlir::impulse::VI::emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
   return r;
 }
 
-mlir::impulse::VI::SVILoopResult
-mlir::impulse::VI::emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
-                                        Value loc0, Value rng0,
-                                        const VIContext &ctx) {
+/// AutoDelta variant of emitSVILoop; the trace records the constrained loc.
+static SVILoopResult emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
+                                          Value loc0, Value rng0,
+                                          const VIContext &ctx) {
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -1102,10 +1160,10 @@ mlir::impulse::VI::emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
   return r;
 }
 
-mlir::impulse::VI::SVILoopResult
-mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
-                                  Value xScaleTril0, Value rng0,
-                                  const VIContext &ctx) {
+/// `xScaleTril0` is the unconstrained flat vector of length d*(d+1)/2.
+static SVILoopResult emitSVILoopMVN(OpBuilder &builder, Location loc,
+                                    Value loc0, Value xScaleTril0, Value rng0,
+                                    const VIContext &ctx) {
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
