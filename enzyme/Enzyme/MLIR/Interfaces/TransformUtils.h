@@ -27,10 +27,6 @@ namespace transforms {
 int64_t getUnconstrainedSize(int64_t constrainedSize,
                              impulse::SupportAttr support);
 
-/// Inverse of `getUnconstrainedSize`.
-int64_t getConstrainedSize(int64_t unconstrainedSize,
-                           impulse::SupportAttr support);
-
 /// Transform from constrained to unconstrained space.
 Value unconstrain(OpBuilder &builder, Location loc, Value constrained,
                   impulse::SupportAttr support);
@@ -42,9 +38,6 @@ Value constrain(OpBuilder &builder, Location loc, Value unconstrained,
 /// Compute log |det J| of the transform from unconstrained to constrained.
 Value logAbsDetJacobian(OpBuilder &builder, Location loc, Value unconstrained,
                         impulse::SupportAttr support);
-
-Value createLogit(OpBuilder &builder, Location loc, Value x);
-Value createLogSigmoid(OpBuilder &builder, Location loc, Value x);
 } // namespace transforms
 } // namespace enzyme
 } // namespace mlir
