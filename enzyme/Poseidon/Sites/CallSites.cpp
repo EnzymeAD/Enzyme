@@ -296,6 +296,50 @@ routeAutomaticMarkers(Module &M,
   return changed;
 }
 
+/// The accuracy targets each function's calls through the identities with a
+/// target give, which its per-call copies leave out of their names.
+static DenseMap<Function *, SmallVector<double, 2>> identityTargets(Module &M) {
+  DenseMap<Function *, SmallVector<double, 2>> targets;
+  for (CallInst *H : callsOfAny(M, {kPlainIdentityTau, kExplicitIdentityTau}))
+    if (H->arg_size() > 1)
+      if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
+        targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
+  return targets;
+}
+
+/// Why `call` of `fn` cannot be a per-call site; none if it can.
+static std::optional<std::string> perCallRefusal(CallBase &call, Function &fn) {
+  if (call.getFunctionType() != fn.getFunctionType())
+    return "is called with another signature";
+  if (fn.isDeclaration())
+    return "has no body in this translation unit";
+  return hostSiteRefusal(fn);
+}
+
+/// The copy of `fn` made for its `k`-th call in `caller`, whose name without
+/// accuracy targets is `callerKey`: a host body with the call's accuracy
+/// target `tau`, recorded in `T` with the identity of that call.
+static Function *makePerCallCopy(SiteRecords &T, Function &fn, Function &caller,
+                                 StringRef callerKey, unsigned k, double tau) {
+  ValueToValueMapTy VMap;
+  Function *B = CloneFunction(&fn, VMap);
+  B->setName(fn.getName() + kPerCallInfix + callerKey + "." + Twine(k));
+  B->setLinkage(GlobalValue::InternalLinkage);
+  B->setVisibility(GlobalValue::DefaultVisibility);
+  B->setComdat(nullptr);
+  B->removeFnAttr(Attribute::AlwaysInline);
+  B->removeFnAttr(Attribute::InlineHint);
+  B->addFnAttr(Attribute::NoInline);
+  B->addFnAttr(kHostBody, tau > 0.0 ? exactDouble(tau) : "");
+  resetClonedGUID(B);
+  noteSiteIdentity(T, *B,
+                   (functionIdentity(fn) + kPerCallInfix +
+                    functionIdentity(caller, callerKey) + "." + Twine(k))
+                       .str());
+  appendToCompilerUsed(*fn.getParent(), {B});
+  return B;
+}
+
 /// __poseidon_optimize: the call through the plain identity becomes a call of
 /// a copy of the function made for that call alone, which is then a host site
 /// like an outlined body. The copy is named after the caller, without the
@@ -312,11 +356,7 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
   // too, so they are read before those calls become marker calls; the
   // targets poseidon_tau gives in marker calls are added as those calls
   // are routed through the plain identity.
-  DenseMap<Function *, SmallVector<double, 2>> targets;
-  for (CallInst *H : callsOfAny(M, {kPlainIdentityTau, kExplicitIdentityTau}))
-    if (H->arg_size() > 1)
-      if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
-        targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
+  DenseMap<Function *, SmallVector<double, 2>> targets = identityTargets(M);
   bool changed = lowerExplicitCalls(M);
   changed |= routeAutomaticMarkers(M, targets);
   if (isOffloadHostHalf(M))
@@ -366,11 +406,7 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
       asWritten();
       continue;
     }
-    std::optional<std::string> why =
-        fn->isDeclaration() ? "has no body in this translation unit"
-                            : hostSiteRefusal(*fn);
-    if (call->getFunctionType() != fn->getFunctionType())
-      why = "is called with another signature";
+    std::optional<std::string> why = perCallRefusal(*call, *fn);
     if (why && active)
       fail(call,
            name + " " + *why + ", so this call cannot be a Poseidon site");
@@ -385,23 +421,8 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
       continue;
     }
 
-    ValueToValueMapTy VMap;
-    Function *B = CloneFunction(fn, VMap);
-    B->setName(fn->getName() + kPerCallInfix + callerKey + "." + Twine(k));
-    B->setLinkage(GlobalValue::InternalLinkage);
-    B->setVisibility(GlobalValue::DefaultVisibility);
-    B->setComdat(nullptr);
-    B->removeFnAttr(Attribute::AlwaysInline);
-    B->removeFnAttr(Attribute::InlineHint);
-    B->addFnAttr(Attribute::NoInline);
-    B->addFnAttr(kHostBody, *tau > 0.0 ? exactDouble(*tau) : "");
-    resetClonedGUID(B);
-    noteSiteIdentity(T, *B,
-                     (functionIdentity(*fn) + kPerCallInfix +
-                      functionIdentity(*caller, callerKey) + "." + Twine(k))
-                         .str());
-    appendToCompilerUsed(M, {B});
-    call->setCalledOperand(B);
+    call->setCalledOperand(
+        makePerCallCopy(T, *fn, *caller, callerKey, k, *tau));
     H->eraseFromParent();
     if (O.Diagnostics.Print && *tau > 0.0)
       llvm::errs() << "[poseidon] site " << name << " at its call in "
