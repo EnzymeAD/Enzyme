@@ -7,7 +7,6 @@
 #include "Interfaces/DistBuilder.h"
 #include "Passes/InferStateLayout.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/IRMapping.h"
 
@@ -196,21 +195,6 @@ static LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
   // Result 2 is the model's first output, the rng by convention.
   Value rngAfter = genOp.getNumResults() >= 3 ? genOp.getResult(2) : modelRng;
   return {genOp.getWeight(), rngAfter};
-}
-
-namespace {
-struct CholeskyTransformResult {
-  Value scaleTril;
-  Value sumLogDiag;
-};
-} // namespace
-
-static CholeskyTransformResult
-applyScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
-                             int64_t d, Type elemType) {
-  auto r =
-      impulse::emitScaledUnitLowerCholesky(builder, loc, xFlat, d, elemType);
-  return {r.scaleTril, r.sumLogDiag};
 }
 
 mlir::impulse::VI::SingleParticleELBOResult
@@ -439,7 +423,6 @@ mlir::impulse::VI::emitSingleParticleMVNELBO(OpBuilder &builder, Location loc,
       impulse::RngDistributionAttr::get(builder.getContext(),
                                         impulse::RngDistribution::NORMAL));
   Value eps = randOp.getResult();
-  (void)randOp.getOutputRngState();
 
   Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
   SmallVector<Value> adInputs{locParam, xScaleTril, gradSeed};
@@ -479,7 +462,8 @@ mlir::impulse::VI::emitSingleParticleMVNELBO(OpBuilder &builder, Location loc,
     OpBuilder::InsertionGuard g(builder);
     builder.setInsertionPointToStart(adBlock);
 
-    auto chol = applyScaledUnitLowerCholesky(builder, loc, xArg, d, elemType);
+    impulse::ScaledUnitLowerCholeskyResult chol =
+        impulse::emitScaledUnitLowerCholesky(builder, loc, xArg, d, elemType);
     Value scaleTril = chol.scaleTril;
     Value sumLogDiag = chol.sumLogDiag;
 
@@ -1408,7 +1392,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   Value guideInitSeed;
   if (isResume) {
     rng0 = rngInput;
-    guideInitSeed = Value();
   } else {
     auto rngInitSplit = impulse::RandomSplitOp::create(
         rewriter, loc, TypeRange{rngType, rngType, rngType}, rngInput);
@@ -1503,11 +1486,10 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   } else {
     // scale_tril = init_scale * I: zero off-diagonals, softplus_inv diagonal.
     guide = impulse::VIGuide::AutoMVN;
-    auto elemTy = ctx.getElementType();
     int64_t d = ctx.positionSize;
     int64_t flatSize = d * (d + 1) / 2;
     int64_t nOff = d * (d - 1) / 2;
-    auto flatTy = RankedTensorType::get({flatSize}, elemTy);
+    auto flatTy = RankedTensorType::get({flatSize}, elemType);
     Value xScaleTril0;
     if (isResume) {
       xScaleTril0 = slotIn("scale_tril_unconstrained");
@@ -1516,9 +1498,9 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       SmallVector<Attribute> vals;
       vals.reserve(flatSize);
       for (int64_t i = 0; i < nOff; ++i)
-        vals.push_back(rewriter.getFloatAttr(elemTy, 0.0));
+        vals.push_back(rewriter.getFloatAttr(elemType, 0.0));
       for (int64_t i = 0; i < d; ++i)
-        vals.push_back(rewriter.getFloatAttr(elemTy, initU));
+        vals.push_back(rewriter.getFloatAttr(elemType, initU));
       xScaleTril0 = arith::ConstantOp::create(
           rewriter, loc, flatTy, DenseElementsAttr::get(flatTy, vals));
     }
