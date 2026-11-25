@@ -151,6 +151,13 @@ void reportUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
 // Reports the errors `E` holds and ends the compile as reportUserError does;
 // returns when it holds none.
 void exitOnUserError(llvm::LLVMContext &Ctx, llvm::Error E);
+// The value `V` holds, or its error reported as exitOnUserError reports it.
+template <typename T>
+T exitOnUserError(llvm::LLVMContext &Ctx, llvm::Expected<T> V) {
+  if (!V)
+    exitOnUserError(Ctx, V.takeError());
+  return std::move(*V);
+}
 
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1

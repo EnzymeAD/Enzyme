@@ -34,33 +34,27 @@ using namespace llvm;
 
 namespace poseidon {
 
-void requireCostModel(CostModelState &CM, const Function &F) {
+Error requireCostModel(CostModelState &CM, const Function &F) {
   const Target &T = Target::of(F);
   if (Error E = requireCostModel(CM, T.processor(F), F.getName(), T.isDevice()))
-    reportUserError(F, F.getSubprogram(), toString(std::move(E)));
-}
-
-// A price the compile needs and the model does not have.
-[[noreturn]] static void missingRow(CostModelState &CM, const Function &F,
-                                    const DiagnosticLocation &Loc,
-                                    StringRef Opcode, StringRef Type) {
-  reportUserError(F, Loc,
-                  "cost model " + Twine(costModelPath(CM)) + " has no row '" +
-                      Opcode + "," + Type +
-                      "'; measure it with poseidon-calibrate");
+    return userError(F, F.getSubprogram(), toString(std::move(E)));
+  return Error::success();
 }
 
 // The row `Opcode,Type`; a model without it is an error at `Loc` in `F`.
-static double rowCost(CostModelState &CM, const Function &F,
-                      const DiagnosticLocation &Loc, StringRef Opcode,
-                      StringRef Type) {
+static Expected<double> rowCost(CostModelState &CM, const Function &F,
+                                const DiagnosticLocation &Loc, StringRef Opcode,
+                                StringRef Type) {
   if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
     return *cost;
-  missingRow(CM, F, Loc, Opcode, Type);
+  return userError(F, Loc,
+                   "cost model " + Twine(costModelPath(CM)) + " has no row '" +
+                       Opcode + "," + Type +
+                       "'; measure it with poseidon-calibrate");
 }
 
-static double rowCost(CostModelState &CM, const Instruction &At,
-                      StringRef Opcode, StringRef Type) {
+static Expected<double> rowCost(CostModelState &CM, const Instruction &At,
+                                StringRef Opcode, StringRef Type) {
   return rowCost(CM, *At.getFunction(), At.getDebugLoc(), Opcode, Type);
 }
 
@@ -70,30 +64,35 @@ static StringRef costType(Type *T) {
   return F ? StringRef(F->CostType) : StringRef();
 }
 
+Expected<const std::unordered_set<std::string> *>
+scalarTypes(CostModelState &CM, const Function &F) {
+  if (CM.ScalarTypes.empty())
+    return userError(F, F.getSubprogram(),
+                     "cost model " + Twine(costModelPath(CM)) +
+                         " carries no '# scalar_types=' header, so the formats "
+                         "the device has hardware for are unknown");
+  return &CM.ScalarTypes;
+}
+
 const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
                                                       const Function &F) {
-  if (CM.ScalarTypes.empty())
-    reportUserError(F, F.getSubprogram(),
-                    "cost model " + Twine(costModelPath(CM)) +
-                        " carries no '# scalar_types=' header, so the formats "
-                        "the device has hardware for are unknown");
-  return CM.ScalarTypes;
+  return *exitOnUserError(F.getContext(), scalarTypes(CM, F));
 }
 
 // An instruction of the program no row family prices.
-[[noreturn]] static void unpriced(const Instruction *I) {
+static Error unpriced(const Instruction *I) {
   std::string Text;
   raw_string_ostream(Text) << *I;
-  reportUserError(*I, "no cost-model row family prices the instruction" +
-                          Twine(Text));
+  return userError(*I, "no cost-model row family prices the instruction" +
+                           Twine(Text));
 }
 
 // The row family pricing `Call`: the math function it computes, a device fmax
 // or fmin priced as the intrinsic it lowers to.
-static std::string callRowName(const CallInst &Call) {
+static Expected<std::string> callRowName(const CallInst &Call) {
   const Function *Callee = Call.getCalledFunction();
   if (!Callee)
-    unpriced(&Call);
+    return unpriced(&Call);
   if (Callee->isIntrinsic()) {
     // The approximate F32 square root is priced as sqrt.
     std::string Name = isApproxSqrtF32(Callee->getIntrinsicID())
@@ -101,7 +100,7 @@ static std::string callRowName(const CallInst &Call) {
                            : intrinsicBaseName(*Callee).str();
     if (!isLibmFunction(Name) &&
         !is_contained({"fmuladd", "maxnum", "minnum"}, Name))
-      unpriced(&Call);
+      return unpriced(&Call);
     return Name;
   }
   if (std::optional<StringRef> DeviceMath = deviceMathName(Callee->getName()))
@@ -111,12 +110,12 @@ static std::string callRowName(const CallInst &Call) {
         .Default(DeviceMath->str());
   StringRef Name = mathFunctionOf(Callee->getName());
   if (!isLibmFunction(Name))
-    unpriced(&Call);
+    return unpriced(&Call);
   return Name.str();
 }
 
 // The row family pricing `I`; none for an instruction that costs nothing.
-static std::optional<std::string> rowName(const Instruction &I) {
+static Expected<std::optional<std::string>> rowName(const Instruction &I) {
   switch (I.getOpcode()) {
   case Instruction::FNeg:
     return "fneg";
@@ -142,15 +141,19 @@ static std::optional<std::string> rowName(const Instruction &I) {
   case Instruction::Load:
   case Instruction::ExtractValue:
     return std::nullopt;
-  case Instruction::Call:
-    return callRowName(cast<CallInst>(I));
+  case Instruction::Call: {
+    Expected<std::string> Name = callRowName(cast<CallInst>(I));
+    if (!Name)
+      return Name.takeError();
+    return std::optional<std::string>(std::move(*Name));
+  }
   default:
-    unpriced(&I);
+    return unpriced(&I);
   }
 }
 
-double getInstructionCompCost(CostModelState &CM, const Instruction *I,
-                              const Instruction *At) {
+Expected<double> instructionCost(CostModelState &CM, const Instruction *I,
+                                 const Instruction *At) {
   const Instruction &RowAt = At ? *At : *I;
   // O3 fuses sin(x) and cos(x) into llvm.sincos, whose struct result would
   // otherwise be priced as free.
@@ -158,91 +161,123 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
     if (II->getIntrinsicID() == Intrinsic::sincos) {
       StringRef P = costType(cast<StructType>(I->getType())->getElementType(0));
       if (P.empty())
-        unpriced(I);
-      return rowCost(CM, RowAt, "sin", P) + rowCost(CM, RowAt, "cos", P);
+        return unpriced(I);
+      Expected<double> Sin = rowCost(CM, RowAt, "sin", P);
+      if (!Sin)
+        return Sin.takeError();
+      Expected<double> Cos = rowCost(CM, RowAt, "cos", P);
+      if (!Cos)
+        return Cos.takeError();
+      return *Sin + *Cos;
     }
   // A regime split's condition is an fcmp, whose i1 result is not an FP type
   // but runs on the FP pipe of its operands.
   if (!I->getType()->isFPOrFPVectorTy() && !isa<FCmpInst>(I))
     return 0.0;
-  std::optional<std::string> OpcodeName = rowName(*I);
+  Expected<std::optional<std::string>> OpcodeName = rowName(*I);
   if (!OpcodeName)
-    return 0;
+    return OpcodeName.takeError();
+  if (!*OpcodeName)
+    return 0.0;
 
   Type *Ty = isa<FCmpInst>(I) ? I->getOperand(0)->getType() : I->getType();
   StringRef PrecisionName = costType(Ty);
   if (PrecisionName.empty())
-    unpriced(I);
+    return unpriced(I);
   // A conversion's row is named for both formats and typed by its source.
   if (isa<FPExtInst, FPTruncInst>(I)) {
     StringRef SrcPrecisionName = costType(I->getOperand(0)->getType());
     if (SrcPrecisionName.empty())
-      unpriced(I);
-    *OpcodeName += ("_" + SrcPrecisionName + "_to_" + PrecisionName).str();
+      return unpriced(I);
+    **OpcodeName += ("_" + SrcPrecisionName + "_to_" + PrecisionName).str();
     PrecisionName = SrcPrecisionName;
   }
-  return rowCost(CM, RowAt, *OpcodeName, PrecisionName);
+  return rowCost(CM, RowAt, **OpcodeName, PrecisionName);
 }
 
-double profiledCost(CostModelState &CM, const Function &F,
-                    const ProfileMap &profile,
-                    function_ref<bool(const Instruction &, size_t &)> slotOf) {
+double getInstructionCompCost(CostModelState &CM, const Instruction *I,
+                              const Instruction *At) {
+  return exitOnUserError(I->getContext(), instructionCost(CM, I, At));
+}
+
+Expected<double>
+profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
+             function_ref<bool(const Instruction &, size_t &)> slotOf) {
   double cost = 0.0;
   for (const Instruction &I : instructions(F)) {
     size_t slot;
     if (!slotOf(I, slot))
       continue;
     auto it = profile.find(slot);
-    if (it != profile.end())
-      cost += (double)it->second.exec * getInstructionCompCost(CM, &I);
+    if (it == profile.end())
+      continue;
+    Expected<double> price = instructionCost(CM, &I);
+    if (!price)
+      return price.takeError();
+    cost += (double)it->second.exec * *price;
   }
   return cost;
 }
 
-const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
-                                                  const Function &F) {
+Expected<const std::unordered_set<std::string> *> ptFuncs(CostModelState &CM,
+                                                          const Function &F) {
   if (!CM.PTFuncs) {
-    auto row = [&](StringRef Opcode, StringRef Type) {
-      return rowCost(CM, F, F.getSubprogram(), Opcode, Type);
-    };
     std::unordered_set<std::string> funcs;
     for (const MathFunction &libm : mathFunctions()) {
       if (!libm.Libm)
         continue;
       StringRef func = libm.Name;
-      double costFP32 = row(func, "float");
-      double costFP64 = row(func, "double");
-      double costFPTrunc = row("fptrunc_double_to_float", "double");
-      double costFPExt = row("fpext_float_to_double", "float");
+      const std::pair<StringRef, StringRef> rows[] = {
+          {func, "float"},
+          {func, "double"},
+          {"fptrunc_double_to_float", "double"},
+          {"fpext_float_to_double", "float"}};
+      double costs[4];
+      for (auto [cost, row] : zip(costs, rows)) {
+        Expected<double> price =
+            rowCost(CM, F, F.getSubprogram(), row.first, row.second);
+        if (!price)
+          return price.takeError();
+        cost = *price;
+      }
+      auto [costFP32, costFP64, costFPTrunc, costFPExt] = costs;
       double costFPCast = costFPTrunc + costFPExt;
       if (costFP32 + costFPCast < costFP64)
         funcs.insert(func.str());
     }
     CM.PTFuncs = std::move(funcs);
   }
-  return *CM.PTFuncs;
+  return &*CM.PTFuncs;
 }
 
-static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
-                             DenseMap<BasicBlock *, double> &MaxCost,
-                             SmallPtrSetImpl<BasicBlock *> &Visited,
-                             InstWeight Weight, const Instruction *At) {
+const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
+                                                  const Function &F) {
+  return *exitOnUserError(F.getContext(), ptFuncs(CM, F));
+}
+
+static Expected<double> computeMaxCost(CostModelState &CM, BasicBlock *BB,
+                                       DenseMap<BasicBlock *, double> &MaxCost,
+                                       SmallPtrSetImpl<BasicBlock *> &Visited,
+                                       InstWeight Weight,
+                                       const Instruction *At) {
   if (auto It = MaxCost.find(BB); It != MaxCost.end())
     return It->second;
 
   if (!Visited.insert(BB).second)
-    return 0;
+    return 0.0;
 
   double BBCost = 0;
   for (const Instruction &I : *BB) {
     if (I.isTerminator())
       continue;
 
-    double instCost = getInstructionCompCost(CM, &I, At);
+    Expected<double> instCost = instructionCost(CM, &I, At);
+    if (!instCost)
+      return instCost.takeError();
     if (Weight)
-      instCost *= Weight(I);
+      *instCost *= Weight(I);
 
-    BBCost += instCost;
+    BBCost += *instCost;
   }
 
   double succCost = 0;
@@ -250,10 +285,12 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
   if (!succ_empty(BB)) {
     double maxSuccCost = 0;
     for (BasicBlock *Succ : successors(BB)) {
-      double succBBCost =
+      Expected<double> succBBCost =
           computeMaxCost(CM, Succ, MaxCost, Visited, Weight, At);
-      if (succBBCost > maxSuccCost)
-        maxSuccCost = succBBCost;
+      if (!succBBCost)
+        return succBBCost.takeError();
+      if (*succBBCost > maxSuccCost)
+        maxSuccCost = *succBBCost;
     }
     succCost = maxSuccCost;
   }
@@ -264,20 +301,22 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
   return totalCost;
 }
 
-double getCompCost(CostModelState &CM, Function *F, InstWeight Weight,
-                   const Instruction *At) {
+Expected<double> compCost(CostModelState &CM, Function *F, InstWeight Weight,
+                          const Instruction *At) {
   DenseMap<BasicBlock *, double> MaxCost;
   SmallPtrSet<BasicBlock *, 16> Visited;
-
-  BasicBlock *EntryBB = &F->getEntryBlock();
-  double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited, Weight, At);
-  return TotalCost;
+  return computeMaxCost(CM, &F->getEntryBlock(), MaxCost, Visited, Weight, At);
 }
 
-double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
-                   const SetVector<Value *> &inputs,
-                   const DenseMap<const Instruction *, uint64_t> *opExec,
-                   uint64_t normalizer) {
+double getCompCost(CostModelState &CM, Function *F, InstWeight Weight,
+                   const Instruction *At) {
+  return exitOnUserError(F->getContext(), compCost(CM, F, Weight, At));
+}
+
+Expected<double> compCost(CostModelState &CM, ArrayRef<Value *> outputs,
+                          const SetVector<Value *> &inputs,
+                          const DenseMap<const Instruction *, uint64_t> *opExec,
+                          uint64_t normalizer) {
   assert(!outputs.empty() && "a cost walk needs at least one output");
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
@@ -293,13 +332,15 @@ double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      double instCost = getInstructionCompCost(CM, I);
+      Expected<double> instCost = instructionCost(CM, I);
+      if (!instCost)
+        return instCost.takeError();
       if (opExec && normalizer) {
         auto it = opExec->find(I);
         if (it != opExec->end())
-          instCost *= (double)it->second / (double)normalizer;
+          *instCost *= (double)it->second / (double)normalizer;
       }
-      cost += instCost;
+      cost += *instCost;
 
       for (Value *operand : fpOperands(*I))
         todo.push_back(operand);
@@ -307,6 +348,14 @@ double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
   }
 
   return cost;
+}
+
+double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
+                   const SetVector<Value *> &inputs,
+                   const DenseMap<const Instruction *, uint64_t> *opExec,
+                   uint64_t normalizer) {
+  return exitOnUserError(outputs.front()->getContext(),
+                         compCost(CM, outputs, inputs, opExec, normalizer));
 }
 
 } // namespace poseidon

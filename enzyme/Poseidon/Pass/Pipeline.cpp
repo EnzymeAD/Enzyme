@@ -433,7 +433,8 @@ struct HostSitePass : PassParent<HostSitePass> {
     if (Target::of(M).isDevice()) {
       const bool active = O.Profiling.profileAction() && hasSite(O, M);
       if (active)
-        requireDeviceMathMacro(M);
+        if (Error E = requireDeviceMathMacro(M))
+          return stopOnError(S, M, std::move(E));
       changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
     }
     changed |= lowerPerCallSites(O, S.Sites, M);
@@ -506,7 +507,8 @@ struct FinalizePass : PassParent<FinalizePass> {
     linkDeviceProfiler(M, O.Profiling.generatesProfile());
     if (O.Profiling.generatesProfile())
       requireSharedMemoryLimit(M);
-    requireDeviceCallees(M, O.Profiling.generatesProfile());
+    if (Error E = requireDeviceCallees(M, O.Profiling.generatesProfile()))
+      return stopOnError(S, M, std::move(E));
     // Written after every site is processed and every check that can stop the
     // compile has passed, so a host half never reads the manifest of a device
     // half that failed.

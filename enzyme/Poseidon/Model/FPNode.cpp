@@ -261,9 +261,10 @@ FPNode *existingDefinition(const FPNode &N, const SetVector<Value *> &inputs,
   return nullptr;
 }
 
-std::string FPNode::toFullExpression(const FPGraph &G,
-                                     const SetVector<Value *> &subgraphInputs,
-                                     unsigned depth) {
+Expected<std::string>
+FPNode::fullExpression(const FPGraph &G,
+                       const SetVector<Value *> &subgraphInputs,
+                       unsigned depth) {
   if (auto *C = dyn_cast<FPConst>(this))
     return C->literal();
   auto *V = dyn_cast<FPLLValue>(this);
@@ -278,17 +279,31 @@ std::string FPNode::toFullExpression(const FPGraph &G,
   assert(!operands.empty() && "FPNode has no operands!");
 
   if (depth > kMaxExprDepth)
-    reportUserError(*cast<Instruction>(value),
-                    "Expression depth exceeded maximum allowed depth of " +
-                        Twine(kMaxExprDepth) + " for " + operationName(*this) +
-                        "; consider disabling loop unrolling");
+    return userError(*cast<Instruction>(value),
+                     "Expression depth exceeded maximum allowed depth of " +
+                         Twine(kMaxExprDepth) + " for " + operationName(*this) +
+                         "; consider disabling loop unrolling");
 
   std::string expr = "(" + (is(fpcore::Neg) ? "-" : operationName(*this));
   for (auto operand : operands) {
-    expr += " " + operand->toFullExpression(G, subgraphInputs, depth + 1);
+    Expected<std::string> sub =
+        operand->fullExpression(G, subgraphInputs, depth + 1);
+    if (!sub)
+      return sub.takeError();
+    expr += " " + *sub;
   }
   expr += ")";
   return expr;
+}
+
+std::string FPNode::toFullExpression(const FPGraph &G,
+                                     const SetVector<Value *> &subgraphInputs) {
+  Expected<std::string> expr = fullExpression(G, subgraphInputs);
+  // Only a node of the program spells out operations, and so can fail.
+  if (!expr)
+    exitOnUserError(cast<FPLLValue>(this)->value->getContext(),
+                    expr.takeError());
+  return std::move(*expr);
 }
 
 Value *FPLLValue::getLLValue(IRBuilder<> &builder,

@@ -367,7 +367,8 @@ static Expected<double> profiledSiteCost(Session &S, Function &body) {
     if (Error E = requireCanonicalHash(header, canonicalFormHash(*clone),
                                        profilePath, *clone))
       return std::move(E);
-    requireCostModel(S.CostModel, *clone);
+    if (Error E = requireCostModel(S.CostModel, *clone))
+      return std::move(E);
     return profiledCost(S.CostModel, *clone, profileMap,
                         [](const Instruction &I, size_t &slot) {
                           std::optional<size_t> found = slotOf(&I);

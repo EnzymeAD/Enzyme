@@ -23,6 +23,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <cstdint>
@@ -80,11 +81,17 @@ public:
   bool hasSymbol() const { return !symbol.empty(); }
   // The Herbie expression of a node of the original graph, a value or a
   // literal: a subgraph input as its symbol, anything else spelled out over
-  // its operands.
+  // its operands. An expression nested deeper than the pass spells out is an
+  // error at the instruction.
+  llvm::Expected<std::string>
+  fullExpression(const FPGraph &G,
+                 const llvm::SetVector<llvm::Value *> &subgraphInputs,
+                 unsigned depth = 0);
+  // fullExpression for a caller that does not unwind: a user error ends the
+  // compile, as reportUserError does.
   std::string
   toFullExpression(const FPGraph &G,
-                   const llvm::SetVector<llvm::Value *> &subgraphInputs,
-                   unsigned depth = 0);
+                   const llvm::SetVector<llvm::Value *> &subgraphInputs);
   // Widens the profiled range of a value to [lower, upper]; a literal's range
   // stays its value.
   void updateBounds(double lower, double upper);

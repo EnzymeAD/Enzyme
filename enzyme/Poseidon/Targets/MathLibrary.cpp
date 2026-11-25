@@ -148,19 +148,19 @@ bool keepDeviceMath(Module &M) {
   return changed;
 }
 
-void requireDeviceMathMacro(Module &M) {
+Error requireDeviceMathMacro(Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice() || M.getFunction(kMacroMark))
-    return;
-  reportUserError(M.getContext(),
-                  "this device compilation has Poseidon sites and does "
-                  "not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, "
-                  "under which the header keeps the " +
-                      T.mathLibrary() +
-                      " functions a rewrite or a site's derivative calls; "
-                      "include the header and define the macro "
-                      "(-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the "
-                      "Poseidon CMake targets do");
+    return Error::success();
+  return userError(
+      "this device compilation has Poseidon sites and does "
+      "not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, "
+      "under which the header keeps the " +
+      T.mathLibrary() +
+      " functions a rewrite or a site's derivative calls; "
+      "include the header and define the macro "
+      "(-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the "
+      "Poseidon CMake targets do");
 }
 
 bool releaseDeviceMath(Module &M) {
@@ -236,10 +236,10 @@ CallInst *createMathCall(IRBuilderBase &B, FunctionCallee F,
   return CI;
 }
 
-void requireDeviceCallees(Module &M, bool profileGenerate) {
+Error requireDeviceCallees(Module &M, bool profileGenerate) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
-    return;
+    return Error::success();
   for (Function &F : M)
     for (Instruction &I : instructions(F)) {
       auto *CI = dyn_cast<CallInst>(&I);
@@ -262,8 +262,9 @@ void requireDeviceCallees(Module &M, bool profileGenerate) {
                   .str();
       }
       if (!msg.empty())
-        reportUserError(*CI, msg);
+        return userError(*CI, msg);
     }
+  return Error::success();
 }
 
 } // namespace poseidon

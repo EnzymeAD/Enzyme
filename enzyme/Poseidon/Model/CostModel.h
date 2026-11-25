@@ -25,6 +25,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Error.h"
 
 #include <cstdint>
 #include <optional>
@@ -33,31 +34,32 @@
 
 namespace poseidon {
 
-// Stops the compile with an error at `F` unless the cost model is present and
-// its native_arch header names this function's target-cpu.
-void requireCostModel(CostModelState &CM, const llvm::Function &F);
+// An error at `F` unless the cost model is present and its native_arch header
+// names this function's target-cpu.
+llvm::Error requireCostModel(CostModelState &CM, const llvm::Function &F);
 
 // The row that prices `I`; a model without that row is an error at `At`, by
-// default `I`, and an instruction no row family prices aborts.
-double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I,
-                              const llvm::Instruction *At = nullptr);
+// default `I`, as is an instruction no row family prices.
+llvm::Expected<double> instructionCost(CostModelState &CM,
+                                       const llvm::Instruction *I,
+                                       const llvm::Instruction *At = nullptr);
 
 // The scalar formats the device of `F` has hardware for, from the CSV header;
 // a model without the "# scalar_types=" header is an error at `F`.
-const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
-                                                      const llvm::Function &F);
+llvm::Expected<const std::unordered_set<std::string> *>
+scalarTypes(CostModelState &CM, const llvm::Function &F);
 
 // What the profiled run spent in `F`: every operation the profile records, its
 // execution count times its price. `slotOf` gives an instruction's profile
 // slot, or false for an instruction without one.
-double profiledCost(
+llvm::Expected<double> profiledCost(
     CostModelState &CM, const llvm::Function &F, const ProfileMap &profile,
     llvm::function_ref<bool(const llvm::Instruction &, size_t &)> slotOf);
 
 // The libm calls that are cheaper computed at FP32 and converted back than at
 // FP64 on this device. A model without a row this needs is an error at `F`.
-const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
-                                                  const llvm::Function &F);
+llvm::Expected<const std::unordered_set<std::string> *>
+ptFuncs(CostModelState &CM, const llvm::Function &F);
 
 // `Weight`, when given, is how often an instruction executes per execution of
 // the function it is priced in.
@@ -65,12 +67,28 @@ using InstWeight = llvm::function_ref<double(const llvm::Instruction &)>;
 
 // The most expensive path through `F`, a scratch function priced for the
 // instruction `At`, where a missing row is reported.
-double getCompCost(CostModelState &CM, llvm::Function *F, InstWeight Weight,
-                   const llvm::Instruction *At);
+llvm::Expected<double> compCost(CostModelState &CM, llvm::Function *F,
+                                InstWeight Weight, const llvm::Instruction *At);
 
 // With `opExec`, each priced instruction is weighted by its measured
 // execution count over `normalizer`; an instruction with no count, or no map,
 // weighs 1.
+llvm::Expected<double> compCost(
+    CostModelState &CM, llvm::ArrayRef<llvm::Value *> outputs,
+    const llvm::SetVector<llvm::Value *> &inputs,
+    const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
+    uint64_t normalizer = 0);
+
+// instructionCost, scalarTypes, ptFuncs and compCost for a caller that does
+// not unwind: a user error ends the compile, as reportUserError does.
+double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I,
+                              const llvm::Instruction *At = nullptr);
+const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
+                                                      const llvm::Function &F);
+const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
+                                                  const llvm::Function &F);
+double getCompCost(CostModelState &CM, llvm::Function *F, InstWeight Weight,
+                   const llvm::Instruction *At);
 double getCompCost(
     CostModelState &CM, llvm::ArrayRef<llvm::Value *> outputs,
     const llvm::SetVector<llvm::Value *> &inputs,

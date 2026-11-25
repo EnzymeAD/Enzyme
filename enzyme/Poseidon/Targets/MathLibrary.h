@@ -29,6 +29,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/Support/Error.h"
 
 #include <optional>
 #include <string>
@@ -157,7 +158,7 @@ bool keepDeviceMath(llvm::Module &M);
 
 /// A device module with a site under a profile action is an error unless it
 /// includes poseidon/poseidon.h under POSEIDON_DEVICE_MATH.
-void requireDeviceMathMacro(llvm::Module &M);
+llvm::Error requireDeviceMathMacro(llvm::Module &M);
 
 /// In any other device module before the inliner, and in a kept one once its
 /// sites are done: the math functions inline again where an inliner still runs,
@@ -180,8 +181,8 @@ llvm::CallInst *createMathCall(llvm::IRBuilderBase &B, llvm::FunctionCallee F,
 /// module later: a marked call to a function the module still does not define,
 /// or under profile generation a transcendental intrinsic the target cannot
 /// select (what Enzyme writes a derivative with when the library's function is
-/// missing), stops the compile with an error saying what to include.
-void requireDeviceCallees(llvm::Module &M, bool profileGenerate);
+/// missing), is an error saying what to include.
+llvm::Error requireDeviceCallees(llvm::Module &M, bool profileGenerate);
 
 } // namespace poseidon
 
