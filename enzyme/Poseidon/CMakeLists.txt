@@ -118,6 +118,7 @@ set(POSEIDON_SRC
     Sites/LaunchDescriptors.cpp
     Sites/LaunchStubs.cpp
     Solve/Optimize.cpp
+    Sites/Site.cpp
     Sites/SiteIdentity.cpp
     Techniques/Precision.cpp
     Model/FPFormat.cpp

@@ -233,15 +233,8 @@ void collectMarkerCalls(Module &M, SmallVectorImpl<CallInst *> &out) {
   }
 }
 
-// The marker calls this module still owes the late run.
-void collectDeferredMarkers(Module &M, SmallVectorImpl<CallInst *> &out) {
-  SmallVector<CallInst *, 4> markers;
-  collectMarkerCalls(M, markers);
-  for (CallInst *CI : markers) {
-    Function *target = markerTargetOrNull(CI);
-    if (target && target->hasFnAttribute(kSiteDeferred))
-      out.push_back(CI);
-  }
+bool isDeferredBody(const Function &F) {
+  return F.hasFnAttribute(kSiteDeferred);
 }
 
 unsigned getNextSiteId(Module &M) {

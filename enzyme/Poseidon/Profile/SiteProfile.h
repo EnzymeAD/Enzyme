@@ -26,14 +26,16 @@ namespace poseidon {
 
 class Session;
 
-bool profileSite(Session &S, llvm::CallInst *CI,
+struct Site;
+
+// Instruments the site and makes the call that reaches it a derivative
+// request; whether it did. Markers of one body share `clones`' instrumented
+// clone, and the clones made take their ids from `nextSiteId`.
+bool profileSite(Session &S, const Site &site,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
                  unsigned &nextSiteId);
-bool profileAnnotatedKernel(Session &S, llvm::Function &K,
-                            unsigned &nextSiteId);
 void registerStackArrays(Session &S, llvm::Module &M);
 void registerGlobals(llvm::Module &M);
-bool profileHostSite(Session &S, llvm::Function &B, unsigned &nextSiteId);
 
 } // namespace poseidon
 

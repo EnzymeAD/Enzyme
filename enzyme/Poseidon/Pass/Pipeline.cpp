@@ -17,6 +17,7 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/LaunchStubs.h"
 #include "Sites/Markers.h"
+#include "Sites/Site.h"
 #include "Solve/Optimize.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
@@ -143,17 +144,20 @@ struct OptimizePass : PassParent<OptimizePass> {
     requirePluginOrder(O, M);
 
     bool changed = lowerPerCallSites(O, M);
-    changed |= lowerDeviceCallSites(M);
+    changed |= lowerDeviceCallSites(O, M);
     changed |= outlineHostSites(O, M);
     changed |= foldDeviceSiteCallees(O, M);
     changed |= prepareModule(S, M);
-    changed |= optimizeAnnotatedSites(S, M);
-
-    SmallVector<CallInst *, 4> markers;
-    collectMarkerCalls(M, markers);
-    erase_if(markers, [&](CallInst *CI) { return deferSite(O, CI); });
     SmallVector<CallBase *, 4> calls;
-    changed |= lowerMarkers(S, markers, calls);
+    if (!O.Profiling.ProfileGenerate)
+      changed |= optimizeSites(
+          S, collectSites(O, M, {Site::Form::HostBody, Site::Form::Kernel}),
+          calls);
+
+    // The markers profile generation left, and every marker in profile use.
+    SmallVector<Site, 4> markers = collectSites(O, M, {Site::Form::Marker});
+    erase_if(markers, [&](Site &site) { return deferSite(O, site.marker); });
+    changed |= optimizeSites(S, markers, calls);
 
     if (O.Solver.JointDP)
       changed |= solveJointly(S, M);
@@ -270,8 +274,7 @@ struct LatePass : PassParent<LatePass> {
   }
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    SmallVector<CallInst *, 4> markers;
-    collectDeferredMarkers(M, markers);
+    SmallVector<Site, 4> markers = collectDeferredSites(M);
     if (markers.empty())
       return PreservedAnalyses::all();
 
@@ -283,12 +286,12 @@ struct LatePass : PassParent<LatePass> {
     SmallPtrSet<Function *, 4> bodySet;
     SmallVector<WeakVH, 4> kernels;
     SmallPtrSet<Function *, 4> kernelSet;
-    for (CallInst *CI : markers) {
-      Function *B = markerTargetOrNull(CI);
-      if (B && !B->empty() && bodySet.insert(B).second)
+    for (const Site &site : markers) {
+      Function *B = site.fn;
+      if (!B->empty() && bodySet.insert(B).second)
         bodies.push_back(B);
-      if (kernelSet.insert(CI->getFunction()).second)
-        kernels.push_back(CI->getFunction());
+      if (kernelSet.insert(site.marker->getFunction()).second)
+        kernels.push_back(site.marker->getFunction());
     }
     // Unlowered here, the request would surface only at the link, as an
     // undefined __enzyme_* symbol.
@@ -306,25 +309,22 @@ struct LatePass : PassParent<LatePass> {
     canonicalizeBodies(O, M, bodies, AMs,
                        O.Profiling.ProfileGenerate ? nullptr : &asLeft);
 
-    markers.clear();
-    collectDeferredMarkers(M, markers);
+    markers = collectDeferredSites(M);
 
     bool instrumented = false;
     if (O.Profiling.ProfileGenerate) {
       DenseMap<Function *, Function *> clones;
       unsigned nextSiteId = getNextSiteId(M);
-      for (CallInst *CI : markers)
-        instrumented |= profileSite(S, CI, clones, nextSiteId);
+      for (const Site &site : markers)
+        instrumented |= profileSite(S, site, clones, nextSiteId);
       setNextSiteId(M, nextSiteId);
       if (instrumented)
         injectBlockDimProbes(M, O.Diagnostics.Print);
-      markers.clear();
-      collectDeferredMarkers(M, markers);
+      markers = collectDeferredSites(M);
     }
 
     SmallVector<CallBase *, 4> calls;
-    if (!markers.empty())
-      lowerMarkers(S, markers, calls);
+    optimizeSites(S, markers, calls);
     SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
     if (O.Solver.JointDP)
       solveJointly(S, M);

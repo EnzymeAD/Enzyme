@@ -12,6 +12,7 @@
 #include "Core/Options.h"
 #include "IR/Utils.h"
 #include "Markers.h"
+#include "Site.h"
 #include "SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
@@ -583,15 +584,17 @@ std::optional<PointerExtent> accessedExtent(Argument &A, std::string &why) {
 // caller whose extent it knows (localObject; inlining has put the objects a
 // call passes there by now) or else of the constant range the call reaches
 // through it (accessedExtent).
-bool lowerDeviceCallSites(Module &M) {
+bool lowerDeviceCallSites(const Options &O, Module &M) {
   if (!Target::of(M).isDevice())
     return false;
-  SmallVector<Function *, 4> bodies = hostSiteBodies(M);
+  SmallVector<Site, 4> bodies = collectSites(O, M, {Site::Form::HostBody});
   if (bodies.empty())
     return false;
   LLVMContext &C = M.getContext();
-  for (Function *B : bodies) {
-    double tau = takeHostBody(*B);
+  for (Site &site : bodies) {
+    Function *B = site.fn;
+    double tau = site.target.value_or(0.0);
+    releaseHostBody(*B);
     for (CallBase *CB : callsOf(*B)) {
       if (!isa<CallInst>(CB)) {
         fail(CB, perCallSiteName(B->getName()) +

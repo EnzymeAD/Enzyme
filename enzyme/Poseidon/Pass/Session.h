@@ -68,13 +68,15 @@ public:
   // written.
   std::unique_ptr<llvm::Module> AsWrittenTwin;
 
-  // The body each site clone was cut from.
-  std::map<const llvm::Function *, llvm::Function *> SiteOrigins;
-  // The site clone has no callers while it is optimized, so the caller values
-  // of its parameters are kept here for the parameter-staging arm to resolve a
-  // pointer parameter to its addrspace(3) global.
-  std::map<const llvm::Function *, llvm::SmallVector<llvm::WeakTrackingVH, 12>>
-      SiteArgs;
+  // Per site clone, the body it was cut from and the caller values of its
+  // parameters: the clone has no callers while it is optimized, and the
+  // parameter-staging arm resolves a pointer parameter to its addrspace(3)
+  // global through them.
+  struct SiteClone {
+    llvm::Function *Origin;
+    llvm::SmallVector<llvm::WeakTrackingVH, 12> Args;
+  };
+  std::map<const llvm::Function *, SiteClone> SiteCloneOf;
 
   // Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;

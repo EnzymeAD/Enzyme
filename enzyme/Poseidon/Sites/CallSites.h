@@ -31,7 +31,7 @@ namespace poseidon {
 struct Options;
 
 bool lowerPerCallSites(const Options &O, llvm::Module &M);
-bool lowerDeviceCallSites(llvm::Module &M);
+bool lowerDeviceCallSites(const Options &O, llvm::Module &M);
 
 // The object of `caller` that `p` points into, through the address arithmetic
 // its shadow can repeat, when the pass knows the object's whole extent: a

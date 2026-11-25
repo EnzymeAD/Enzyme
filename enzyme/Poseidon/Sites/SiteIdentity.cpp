@@ -26,12 +26,16 @@ using namespace llvm;
 
 namespace poseidon {
 
-void noteSiteOrigin(Session &S, Function *clone, Function *orig) {
-  S.SiteOrigins[clone] = orig;
+void noteSiteClone(Session &S, Function *clone, Function *origin,
+                   ArrayRef<Value *> primalArgs) {
+  Session::SiteClone &info = S.SiteCloneOf[clone];
+  info.Origin = origin;
+  info.Args.assign(primalArgs.begin(), primalArgs.end());
 }
+
 const Function *siteOriginOf(const Session &S, const Function &clone) {
-  auto it = S.SiteOrigins.find(&clone);
-  return it == S.SiteOrigins.end() ? nullptr : it->second;
+  auto it = S.SiteCloneOf.find(&clone);
+  return it == S.SiteCloneOf.end() ? nullptr : it->second.Origin;
 }
 
 std::string bodyProfileStem(const Function &body) {
@@ -73,9 +77,8 @@ std::optional<DemangledFunction> demangleFunction(StringRef mangled) {
 // per body, while here a body reached from several marker calls is cloned once
 // per call and LLVM uniques the second and later clone names.
 static std::string siteProfileStem(const Session &S, const Function &clone) {
-  auto it = S.SiteOrigins.find(&clone);
-  if (it != S.SiteOrigins.end() && it->second)
-    return bodyProfileStem(*it->second);
+  if (const Function *origin = siteOriginOf(S, clone))
+    return bodyProfileStem(*origin);
   return profileNameStem(clone.getName().str());
 }
 
@@ -107,27 +110,23 @@ SmallVector<std::string, 2> siteAliases(StringRef key) {
   return aliases;
 }
 
-void noteSiteArgs(Session &S, Function *clone, ArrayRef<Value *> primalArgs) {
-  auto &v = S.SiteArgs[clone];
-  v.clear();
-  for (Value *A : primalArgs)
-    v.emplace_back(A);
-}
 bool isSiteClone(const Session &S, const Function *F) {
-  return S.SiteArgs.count(F);
+  return S.SiteCloneOf.count(F);
 }
+
 Value *siteArg(const Session &S, const Function *clone, unsigned i) {
-  auto it = S.SiteArgs.find(clone);
-  if (it == S.SiteArgs.end() || i >= it->second.size())
+  auto it = S.SiteCloneOf.find(clone);
+  if (it == S.SiteCloneOf.end() || i >= it->second.Args.size())
     return nullptr;
-  return it->second[i].pointsToAliveValue() ? (Value *)it->second[i] : nullptr;
+  const WeakTrackingVH &arg = it->second.Args[i];
+  return arg.pointsToAliveValue() ? (Value *)arg : nullptr;
 }
 
 bool redirectNoopSite(Session &S, Function *clone) {
-  auto it = S.SiteOrigins.find(clone);
-  if (it == S.SiteOrigins.end() || !it->second)
+  auto it = S.SiteCloneOf.find(clone);
+  if (it == S.SiteCloneOf.end() || !it->second.Origin)
     return false;
-  Function *orig = it->second;
+  Function *orig = it->second.Origin;
   if (orig == clone)
     return false;
   SmallVector<CallBase *, 4> callers = callsOf(*clone);

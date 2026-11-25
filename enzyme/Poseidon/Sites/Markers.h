@@ -112,8 +112,8 @@ bool deferSite(const Options &O, llvm::CallInst *CI);
 // The marker calls of the module, in module order.
 void collectMarkerCalls(llvm::Module &M,
                         llvm::SmallVectorImpl<llvm::CallInst *> &out);
-void collectDeferredMarkers(llvm::Module &M,
-                            llvm::SmallVectorImpl<llvm::CallInst *> &out);
+// Whether deferSite left the marked body `F` to the late run.
+bool isDeferredBody(const llvm::Function &F);
 
 // Site ids number the profiled clones of one module and arm the
 // condition-number perturbation one site at a time, so the late run has to

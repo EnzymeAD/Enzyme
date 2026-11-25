@@ -21,21 +21,19 @@ class Module;
 namespace poseidon {
 
 class Session;
+struct Site;
 
-// Profile use: lower each of `markers` into a call of the optimized body,
-// appending the calls made to `calls`.
-bool lowerMarkers(Session &S, llvm::ArrayRef<llvm::CallInst *> markers,
-                  llvm::SmallVectorImpl<llvm::CallBase *> &calls);
+// Profile use: each of `sites` solved and its call made a call of what the
+// solve chose, appending the calls made to `calls`; in a compile without a
+// profile, the site as written. A marker becomes a call of its body, a kernel
+// a wrapper around its own outlined body.
+bool optimizeSites(Session &S, llvm::ArrayRef<Site> sites,
+                   llvm::SmallVectorImpl<llvm::CallBase *> &calls);
 
 // Profile generation: instruments every site of M that is not deferred with
 // the profiling probes and rewrites its marker into an __enzyme_autodiff
 // request. Returns true if it instrumented a site.
 bool prepareModule(Session &S, llvm::Module &M);
-
-// Profile use for the sites this module declares with POSEIDON_OPTIMIZE (or
-// names with -poseidon-kernels): each such kernel becomes a wrapper around its
-// own body, and that body is solved and rewritten like a marked one.
-bool optimizeAnnotatedSites(Session &S, llvm::Module &M);
 
 // Drop the canonicalized clones nothing calls any more. Runs once per module,
 // after every site is lowered and inlined.

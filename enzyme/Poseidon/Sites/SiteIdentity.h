@@ -50,7 +50,10 @@ struct DemangledFunction {
 };
 std::optional<DemangledFunction> demangleFunction(llvm::StringRef mangled);
 
-void noteSiteOrigin(Session &S, llvm::Function *clone, llvm::Function *orig);
+// Records that `clone` was cut from `origin` for a call that passes it
+// `primalArgs`.
+void noteSiteClone(Session &S, llvm::Function *clone, llvm::Function *origin,
+                   llvm::ArrayRef<llvm::Value *> primalArgs);
 const llvm::Function *siteOriginOf(const Session &S,
                                    const llvm::Function &clone);
 // The profile stem and file name of the site cut from `body`.
@@ -72,12 +75,10 @@ llvm::SmallVector<std::string, 2> siteAliases(llvm::StringRef key);
 // suffixes of a per-call copy.
 llvm::StringRef siteSymbol(llvm::StringRef key);
 // Caller value of parameter i of a site clone, as recorded by
-// noteSiteArgs; null when unknown.
+// noteSiteClone; null when unknown.
 llvm::Value *siteArg(const Session &S, const llvm::Function *clone, unsigned i);
-// Whether noteSiteArgs recorded F: a site clone, not a pricing clone.
+// Whether noteSiteClone recorded F: a site clone, not a pricing clone.
 bool isSiteClone(const Session &S, const llvm::Function *F);
-void noteSiteArgs(Session &S, llvm::Function *clone,
-                  llvm::ArrayRef<llvm::Value *> primalArgs);
 bool redirectNoopSite(Session &S, llvm::Function *clone);
 
 } // namespace poseidon

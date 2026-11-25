@@ -17,6 +17,7 @@
 #include "Sites/Annotations.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/Markers.h"
+#include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Explain.h"
 #include "Solve/Optimize.h"
@@ -215,8 +216,7 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     F = canonicalize(*F);
     S.SiteClones.push_back(F);
     setSlotMetadata(*F);
-    noteSiteOrigin(S, F, sourceBody);
-    noteSiteArgs(S, F, primalArgs);
+    noteSiteClone(S, F, sourceBody, primalArgs);
     S.SiteCalls[F] = CI->getDebugLoc();
 
     // Profile generation recorded nothing for a site without an operation to
@@ -283,8 +283,8 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
   emitSiteCall(CI, F, primalArgs, calls);
 }
 
-static bool optimizeSite(Session &S, CallInst *CI,
-                         SmallVectorImpl<CallBase *> &calls) {
+static bool optimizeMarker(Session &S, CallInst *CI,
+                           SmallVectorImpl<CallBase *> &calls) {
   Function *F = markerTarget(CI);
   if (!F)
     return false;
@@ -300,8 +300,9 @@ static bool optimizeSite(Session &S, CallInst *CI,
 // the wrapper's and the ones the inliner placed in F's callers, is redirected
 // to what the solve chose; a caller redirected to a rewrite is a function the
 // rewrite reached.
-static bool optimizeHostSite(Session &S, Function &B) {
-  double errTol = takeHostBody(B);
+static bool optimizeHostBody(Session &S, const Site &site) {
+  Function &B = *site.fn;
+  releaseHostBody(B);
   markOutlineTransparent(&B);
   SmallVector<CallBase *, 4> calls = callsOf(B);
   CallBase *rep = calls.empty() ? nullptr : calls.front();
@@ -314,7 +315,7 @@ static bool optimizeHostSite(Session &S, Function &B) {
   llvm::erase(calls, rep);
   SmallVector<Value *, 8> primalArgs(rep->args());
   SmallVector<CallBase *, 1> lowered;
-  optimizeSiteBody(S, rep, &B, primalArgs, errTol, lowered);
+  optimizeSiteBody(S, rep, &B, primalArgs, site.target.value_or(0.0), lowered);
   Function *target = lowered.back()->getCalledFunction();
   for (CallBase *CB : calls) {
     CB->setCalledFunction(target);
@@ -322,14 +323,6 @@ static bool optimizeHostSite(Session &S, Function &B) {
       noteRewritten(S, *CB->getFunction());
   }
   return true;
-}
-
-bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
-                  SmallVectorImpl<CallBase *> &calls) {
-  bool changed = false;
-  for (CallInst *CI : markers)
-    changed |= optimizeSite(S, CI, calls);
-  return changed;
 }
 
 // What the profiled run spent inside this site: over the slots the profile
@@ -363,48 +356,41 @@ static double profiledSiteCost(Session &S, Function &body) {
   return cost;
 }
 
-bool optimizeAnnotatedSites(Session &Sess, Module &M) {
+// Profile use of the kernel sites: each kernel becomes a wrapper around its
+// own body, and that body is solved and rewritten like a marked one.
+static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
+                            SmallVectorImpl<CallBase *> &calls) {
   const Options &O = Sess.Opts;
-  if (O.Profiling.ProfileGenerate)
+  if (kernels.empty())
     return false;
-  bool changed = false;
-  for (Function *B : hostSiteBodies(M))
-    changed |= optimizeHostSite(Sess, *B);
-
-  SmallVector<Function *, 4> sites;
-  SmallPtrSet<Function *, 4> byRegex;
-  DenseMap<Function *, double> siteTau;
-  collectAnnotatedSites(O, M, sites, &byRegex, &siteTau);
-  if (sites.empty())
-    return changed;
 
   // Without a profile nothing can be applied, so the kernels are left exactly
   // as written rather than outlined and never folded back.
   if (!O.Profiling.usesProfile()) {
-    warnSitesWithoutProfile(Sess, M);
-    return changed;
+    warnSitesWithoutProfile(Sess, *kernels.front()->fn->getParent());
+    return false;
   }
 
-  SmallVector<CallBase *, 4> calls;
   // Only a target the annotation carried is the site's own; the others are
   // solved for -poseidon-tau.
-  auto optimize = [&](CallInst *call, Function *body, Function *kernel) {
+  auto optimize = [&](CallInst *call, Function *body, const Site &site) {
     SmallVector<Value *, 8> primalArgs(call->args());
-    auto it = siteTau.find(kernel);
-    double errTol = it != siteTau.end() ? it->second : 0.0;
-    noteSiteTarget(O, *kernel,
-                   it != siteTau.end() ? std::optional<double>(errTol)
-                                       : std::nullopt);
-    optimizeSiteBody(Sess, call, body, primalArgs, errTol, calls);
-    changed = true;
+    noteSiteTarget(O, *site.fn, site.target);
+    optimizeSiteBody(Sess, call, body, primalArgs, site.target.value_or(0.0),
+                     calls);
   };
 
-  if (byRegex.empty() || O.Profiling.MinCostShare <= 0.0) {
-    for (Function *K : sites) {
+  const bool filter =
+      O.Profiling.MinCostShare > 0.0 &&
+      any_of(kernels, [](const Site *site) { return site->byRegex; });
+  bool changed = false;
+  if (!filter) {
+    for (const Site *site : kernels) {
       Function *body = nullptr;
-      if (CallInst *call = outlineKernelBody(*K, body)) {
+      if (CallInst *call = outlineKernelBody(*site->fn, body)) {
         markOutlineTransparent(body);
-        optimize(call, body, K);
+        optimize(call, body, *site);
+        changed = true;
       }
     }
     return changed;
@@ -413,48 +399,72 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
   // A site's share is only known once every regex-named site has been priced,
   // so with the filter on they are all outlined and priced before any of them
   // is optimized.
-  struct Site {
-    Function *kernel;
+  struct Outlined {
+    const Site *site;
     Function *body;
     CallInst *call;
     double cost;
   };
-  SmallVector<Site, 4> outlined;
+  SmallVector<Outlined, 4> outlined;
   double regexTotal = 0.0;
-  for (Function *K : sites) {
+  for (const Site *site : kernels) {
     Function *body = nullptr;
-    CallInst *call = outlineKernelBody(*K, body);
+    CallInst *call = outlineKernelBody(*site->fn, body);
     if (!call)
       continue;
     markOutlineTransparent(body);
-    double cost = byRegex.count(K) ? profiledSiteCost(Sess, *body) : 0.0;
+    double cost = site->byRegex ? profiledSiteCost(Sess, *body) : 0.0;
     regexTotal += cost;
-    outlined.push_back({K, body, call, cost});
+    outlined.push_back({site, body, call, cost});
   }
 
-  for (Site &S : outlined) {
-    double share = regexTotal > 0.0 ? S.cost / regexTotal : 1.0;
-    if (byRegex.count(S.kernel) && share < O.Profiling.MinCostShare) {
+  for (Outlined &K : outlined) {
+    double share = regexTotal > 0.0 ? K.cost / regexTotal : 1.0;
+    if (K.site->byRegex && share < O.Profiling.MinCostShare) {
       const std::string below =
           formatv("{0}% of the profiled FP cost of the kernels "
                   "-poseidon-kernels named, below -poseidon-min-cost-share={1}",
                   format("%.4g", share * 100),
                   format("%g", (double)O.Profiling.MinCostShare))
               .str();
-      llvm::errs() << "[poseidon] " << S.kernel->getName() << " is " << below
+      llvm::errs() << "[poseidon] " << K.site->fn->getName() << " is " << below
                    << "; left unoptimized\n";
-      auto target = siteTau.find(S.kernel);
-      const bool siteTarget = target != siteTau.end();
-      explainLeftAlone(Sess, *S.body,
-                       siteTarget ? target->second : O.Solver.Tau, siteTarget,
-                       "below_cost_share", "the site is " + below,
+      explainLeftAlone(Sess, *K.body,
+                       K.site->target.value_or((double)O.Solver.Tau),
+                       K.site->target.has_value(), "below_cost_share",
+                       "the site is " + below,
                        /*profile=*/"",
                        /*body=*/true);
-      inlineKernelBody(S.call, S.body);
+      inlineKernelBody(K.call, K.body);
       continue;
     }
-    optimize(S.call, S.body, S.kernel);
+    optimize(K.call, K.body, *K.site);
+    changed = true;
   }
+  return changed;
+}
+
+bool optimizeSites(Session &S, ArrayRef<Site> sites,
+                   SmallVectorImpl<CallBase *> &calls) {
+  bool changed = false;
+  SmallVector<const Site *, 4> kernels;
+  for (const Site &site : sites)
+    if (site.form == Site::Form::Kernel)
+      kernels.push_back(&site);
+  for (const Site &site : sites)
+    switch (site.form) {
+    case Site::Form::Marker:
+      changed |= optimizeMarker(S, site.marker, calls);
+      break;
+    case Site::Form::HostBody:
+      changed |= optimizeHostBody(S, site);
+      break;
+    case Site::Form::Kernel:
+      // The kernels are solved together, where the first of them stands.
+      if (&site == kernels.front())
+        changed |= optimizeKernels(S, kernels, calls);
+      break;
+    }
   return changed;
 }
 
@@ -464,28 +474,30 @@ bool prepareModule(Session &S, Module &M) {
   injectHostProfilerInit(M, S.Opts.Diagnostics.Print);
   predeclareInactiveProfilerProbes(M);
 
-  SmallVector<CallInst *, 4> markers;
-  collectMarkerCalls(M, markers);
   DenseMap<Function *, Function *> clones;
   unsigned nextSiteId = getNextSiteId(M);
-  bool anySite = false;
-  for (CallInst *CI : markers) {
-    // A site whose body is still a derivative request is the late run's; its
-    // marker stays where it is.
-    if (deferSite(S.Opts, CI))
-      continue;
-    profileSite(S, CI, clones, nextSiteId);
-    anySite = true;
+  bool anySite = false, anyHostBody = false;
+  for (const Site &site : collectSites(
+           S.Opts, M,
+           {Site::Form::Marker, Site::Form::Kernel, Site::Form::HostBody})) {
+    switch (site.form) {
+    case Site::Form::Marker:
+      // A site whose body is still a derivative request is the late run's;
+      // its marker stays where it is.
+      if (deferSite(S.Opts, site.marker))
+        continue;
+      profileSite(S, site, clones, nextSiteId);
+      anySite = true;
+      break;
+    case Site::Form::HostBody:
+      anyHostBody = true;
+      [[fallthrough]];
+    case Site::Form::Kernel:
+      anySite |= profileSite(S, site, clones, nextSiteId);
+      break;
+    }
   }
-
-  SmallVector<Function *, 4> annotated;
-  collectAnnotatedSites(S.Opts, M, annotated);
-  for (Function *K : annotated)
-    anySite |= profileAnnotatedKernel(S, *K, nextSiteId);
-  SmallVector<Function *, 4> hostBodies = hostSiteBodies(M);
-  for (Function *B : hostBodies)
-    anySite |= profileHostSite(S, *B, nextSiteId);
-  if (!hostBodies.empty()) {
+  if (anyHostBody) {
     registerStackArrays(S, M);
     registerGlobals(M);
     // The profiling runtime records allocations only in a program that links

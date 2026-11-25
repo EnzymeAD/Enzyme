@@ -14,6 +14,7 @@
 #include "LaunchDescriptors.h"
 #include "Markers.h"
 #include "Pass/Session.h"
+#include "Site.h"
 #include "SiteIdentity.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
@@ -193,61 +194,6 @@ void noteSiteTarget(const Options &O, const Function &F,
                  << shortDouble(*tau) << '\n';
 }
 
-// The kernels of this module that are sites, in module order. `byRegex`, when
-// given, receives the sites -poseidon-kernels named and the attribute did not.
-// `tauOut`, when given, receives the accuracy target of each site whose
-// annotation carried one.
-void collectAnnotatedSites(const Options &O, Module &M,
-                           SmallVectorImpl<Function *> &out,
-                           SmallPtrSetImpl<Function *> *byRegex,
-                           DenseMap<Function *, double> *tauOut) {
-  const Target &T = Target::of(M);
-  SmallPtrSet<Function *, 8> found;
-
-  for (auto &[fn, tau] : annotatedFunctions(M)) {
-    if (fn->hasFnAttribute(kSiteLowered))
-      continue;
-    // A host function is a site of its own (outlineHostSites); a device
-    // function makes the kernels that call it sites (propagateDeviceSites),
-    // and what is left here no kernel of this translation unit calls.
-    if (!T.isKernel(*fn)) {
-      if (T.isDevice())
-        diagnoseSite(*fn,
-                     displayName(*fn) +
-                         " is a device function no kernel of this translation "
-                         "unit calls; on the device, POSEIDON_OPTIMIZE marks a "
-                         "kernel or a function a kernel calls. Emitting the "
-                         "original computation.",
-                     DS_Warning);
-      continue;
-    }
-    found.insert(fn);
-    if (tau && tauOut)
-      (*tauOut)[fn] = *tau;
-  }
-
-  if (!O.Profiling.Kernels.empty()) {
-    bool all = O.Profiling.Kernels == "all";
-    Regex re(O.Profiling.Kernels);
-    std::string err;
-    if (!all && !re.isValid(err))
-      reportUserError(M.getContext(),
-                      Twine("-poseidon-kernels=") + O.Profiling.Kernels +
-                          " is not a valid regular expression: " + err +
-                          ". Give a regular expression of kernel names, or "
-                          "'all'.");
-    for (Function &F : M)
-      if (!F.isDeclaration() && !F.hasFnAttribute(kSiteLowered) &&
-          T.isKernel(F) && (all || re.match(F.getName())))
-        if (found.insert(&F).second && byRegex)
-          byRegex->insert(&F);
-  }
-
-  for (Function &F : M)
-    if (found.count(&F))
-      out.push_back(&F);
-}
-
 // Device-function sites: POSEIDON_OPTIMIZE on a function a kernel calls (a
 // lambda a generic launch helper runs, say) makes that kernel a site.
 
@@ -416,10 +362,9 @@ bool foldDeviceSiteCallees(const Options &O, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
     return false;
-  SmallVector<Function *, 4> sites;
-  collectAnnotatedSites(O, M, sites);
   bool changed = false;
-  for (Function *K : sites) {
+  for (Site &site : collectSites(O, M, {Site::Form::Kernel})) {
+    Function *K = site.fn;
     changed |= inlineCallsWhile(
                    *K, [&](CallBase &CB) { return foldsIntoSite(T, CB); }) != 0;
     // A recursive callee is still called after the bounded rounds; what it
@@ -447,10 +392,8 @@ void warnSitesWithoutProfile(Session &S, Module &M) {
   if (S.WarnedWithoutProfile)
     return;
   S.WarnedWithoutProfile = true;
-  SmallVector<Function *, 4> sites;
-  collectAnnotatedSites(S.Opts, M, sites);
-  for (Function *K : sites)
-    diagnose(*K, K->getSubprogram(),
+  for (Site &site : collectSites(S.Opts, M, {Site::Form::Kernel}))
+    diagnose(*site.fn, site.fn->getSubprogram(),
              Twine(kNoProfileAction) + " Emitting the original computation.",
              DS_Warning);
 }
@@ -799,14 +742,6 @@ bool outlineHostSites(const Options &O, Module &M) {
   return changed;
 }
 
-SmallVector<Function *, 4> hostSiteBodies(Module &M) {
-  SmallVector<Function *, 4> out;
-  for (Function &F : M)
-    if (!F.empty() && F.hasFnAttribute(kHostBody))
-      out.push_back(&F);
-  return out;
-}
-
 SmallVector<CallBase *, 4> callsOf(Value &F) {
   SmallVector<CallBase *, 4> out;
   for (User *U : F.users())
@@ -815,20 +750,11 @@ SmallVector<CallBase *, 4> callsOf(Value &F) {
   return out;
 }
 
-// The site's accuracy target, and the body handed back to the optimizer: out
-// of llvm.compiler.used and without the mark its clones would inherit.
-double takeHostBody(Function &B) {
-  double tau = 0.0;
-  StringRef value = B.getFnAttribute(kHostBody).getValueAsString();
-  if (!value.empty() && value.getAsDouble(tau))
-    report_fatal_error("Poseidon: the body " + B.getName() +
-                       " carries the accuracy target '" + value +
-                       "', which is not a number");
+void releaseHostBody(Function &B) {
   B.removeFnAttr(kHostBody);
   removeFromUsedLists(*B.getParent(), [&](Constant *C) {
     return C->stripPointerCasts() == &B;
   });
-  return tau;
 }
 
 // Undo outlineKernelBody: a filtered site has to leave the kernel exactly as it

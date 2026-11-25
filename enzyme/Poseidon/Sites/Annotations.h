@@ -71,11 +71,6 @@ llvm::MapVector<llvm::Function *, std::optional<double>>
 annotatedFunctions(llvm::Module &M);
 void noteSiteTarget(const Options &O, const llvm::Function &F,
                     std::optional<double> tau);
-void collectAnnotatedSites(
-    const Options &O, llvm::Module &M,
-    llvm::SmallVectorImpl<llvm::Function *> &out,
-    llvm::SmallPtrSetImpl<llvm::Function *> *byRegex = nullptr,
-    llvm::DenseMap<llvm::Function *, double> *tauOut = nullptr);
 bool propagateDeviceSites(const Options &O, llvm::Module &M);
 bool foldDeviceSiteCallees(const Options &O, llvm::Module &M);
 // An error at `call`, a __poseidon_optimize of the annotated function `name`.
@@ -90,10 +85,11 @@ bool leaveSitesAsWritten(Session &S, llvm::Module &M);
 // Why `F` cannot be a host site, empty if it can.
 std::string hostSiteRefusal(llvm::Function &F);
 bool outlineHostSites(const Options &O, llvm::Module &M);
-llvm::SmallVector<llvm::Function *, 4> hostSiteBodies(llvm::Module &M);
 // The calls whose callee is `F` itself.
 llvm::SmallVector<llvm::CallBase *, 4> callsOf(llvm::Value &F);
-double takeHostBody(llvm::Function &B);
+// The host body `B` handed back to the optimizer: out of llvm.compiler.used
+// and without the mark its clones would inherit.
+void releaseHostBody(llvm::Function &B);
 
 void markOutlineTransparent(llvm::Function *body);
 llvm::CallInst *outlineKernelBody(llvm::Function &K, llvm::Function *&bodyOut);

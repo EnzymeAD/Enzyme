@@ -17,6 +17,7 @@
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/Markers.h"
+#include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -112,9 +113,9 @@ static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
 // request over the instrumented clone: the custom derivative on each probe is
 // what puts the gradient record inside the reverse pass, so the host's AD needs
 // no profiling mode of its own.
-bool profileSite(Session &S, CallInst *CI,
-                 DenseMap<Function *, Function *> &clones,
-                 unsigned &nextSiteId) {
+static bool profileMarker(Session &S, CallInst *CI,
+                          DenseMap<Function *, Function *> &clones,
+                          unsigned &nextSiteId) {
   Function *F = markerTarget(CI);
   if (!F)
     return false;
@@ -308,7 +309,7 @@ static void collectOutputFields(Function &clone,
 // derivative request over the instrumented clone. The host half of the same
 // compilation reads the descriptor recorded here and fills those shadows in at
 // every launch.
-bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
+static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   Module &M = *K.getParent();
   LLVMContext &C = M.getContext();
   const DataLayout &DL = M.getDataLayout();
@@ -697,10 +698,10 @@ static void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
   CI->eraseFromParent();
 }
 
-bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
+static bool profileHostBody(Session &S, Function &B, unsigned &nextSiteId) {
   Module &M = *B.getParent();
   LLVMContext &C = M.getContext();
-  takeHostBody(B);
+  releaseHostBody(B);
   SmallVector<CallBase *, 4> calls = callsOf(B);
   Function *clone = instrumentedClone(S, B, nextSiteId);
   if (!clone) {
@@ -1172,6 +1173,20 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
   }
   errs() << '\n';
   return NC;
+}
+
+bool profileSite(Session &S, const Site &site,
+                 DenseMap<Function *, Function *> &clones,
+                 unsigned &nextSiteId) {
+  switch (site.form) {
+  case Site::Form::Marker:
+    return profileMarker(S, site.marker, clones, nextSiteId);
+  case Site::Form::Kernel:
+    return profileKernel(S, *site.fn, nextSiteId);
+  case Site::Form::HostBody:
+    return profileHostBody(S, *site.fn, nextSiteId);
+  }
+  llvm_unreachable("every site form is profiled");
 }
 
 } // namespace poseidon
