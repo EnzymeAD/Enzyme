@@ -185,7 +185,7 @@ static size_t findNamed(const ApplyItem &item, const Function &F,
 }
 
 SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
-  const std::string key = siteKey(S, *st.F);
+  const std::string key = siteKey(S.Sites, *st.F);
   const SmallVector<std::string, 2> aliases = siteAliases(key);
   SmallVector<SolutionStep> steps;
   SmallPtrSet<const SiteUnit *, 8> appliedUnits;
@@ -268,7 +268,7 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
 
 std::string pinValue(const Session &S, const FunctionFPState &st,
                      ArrayRef<SolutionStep> applied) {
-  const std::string key = siteKey(S, *st.F);
+  const std::string key = siteKey(S.Sites, *st.F);
   std::string value;
   for (const SolutionStep &step : applied) {
     const SiteUnit &unit = unitOf(step);

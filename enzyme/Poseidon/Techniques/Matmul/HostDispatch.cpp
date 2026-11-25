@@ -453,7 +453,7 @@ const CallBase *siteCallOf(const Session &S, const Function &F) {
   SmallVector<Value *, 8> callerArgs;
   const Function *kernel = nullptr;
   for (unsigned i = 0, e = F.arg_size(); i < e; ++i) {
-    Value *v = siteArg(S, &F, i);
+    Value *v = siteArg(S.Sites, &F, i);
     callerArgs.push_back(v);
     if (auto *A = dyn_cast_or_null<Argument>(v))
       kernel = A->getParent();
@@ -504,7 +504,7 @@ std::optional<GemmBodyNote> libraryCallNote(const Session &S,
                   "the place of the whole launch");
   SmallVector<Value *, 8> callerArgs;
   for (unsigned i = 0, e = F->arg_size(); i < e; ++i)
-    callerArgs.push_back(siteArg(S, F, i));
+    callerArgs.push_back(siteArg(S.Sites, F, i));
   const std::vector<int> paramToArg = launchArgsOf(callerArgs);
   auto mapped = [&](int param) {
     return param >= 0 && (size_t)param < paramToArg.size() &&
@@ -562,7 +562,7 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
         << " == " << launchRefString(y, "arg");
   msg << '\n';
   recordDescriptor(
-      S, LaunchKind::HostDispatch, wrapperName,
+      S.Launches, LaunchKind::HostDispatch, wrapperName,
       [&](raw_ostream &os) {
         os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' '
            << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' '

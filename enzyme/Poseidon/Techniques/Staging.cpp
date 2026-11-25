@@ -89,7 +89,7 @@ SiteLaunch::SiteLaunch(const Session &S, const Function &F,
     : F(F) {
   site.insert(&F);
   site.insert(&Proxy);
-  if (const Function *source = siteOriginOf(S, Proxy))
+  if (const Function *source = siteOriginOf(S.Sites, Proxy))
     site.insert(source);
 
   SmallVector<const Function *> callers;
@@ -559,7 +559,7 @@ static SmallVector<unsigned, 2> stagedParams(const Session &S, Function &F,
   for (unsigned i = 0; i < F.arg_size(); ++i) {
     if (!F.getArg(i)->getType()->isPointerTy())
       continue;
-    if (Value *SA = siteArg(S, Proxy, i))
+    if (Value *SA = siteArg(S.Sites, Proxy, i))
       if (is_contained(casts, SA))
         argIdx.push_back(i);
   }
@@ -733,7 +733,7 @@ collectStaged(Session &S, const SiteLaunch &launch, Function &F,
               Function *Proxy, GlobalVariable &G, bool dsMode) {
   const Options &O = S.Opts;
   // The site's caller values are known for a registered site alone.
-  if (!isSiteClone(S, Proxy))
+  if (!isSiteClone(S.Sites, Proxy))
     return std::nullopt;
   if (!launch.onlySiteAccesses(G)) {
     if (O.Diagnostics.Print)

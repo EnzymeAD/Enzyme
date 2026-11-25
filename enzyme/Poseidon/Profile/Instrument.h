@@ -34,7 +34,7 @@ class Module;
 namespace poseidon {
 
 struct Options;
-class Session;
+struct LaunchManifest;
 
 /// The profiler runtime function `name` of type `FT`, declared in `M` if
 /// absent, marked enzyme_inactive and nofree so that AD never differentiates
@@ -80,7 +80,7 @@ bool registerDeviceProfileTable(const Options &O, llvm::Module &M);
 /// Device module, once its probes are placed: records for the host half how
 /// many functions it profiles and how many probes the largest holds, which the
 /// device profiler's tables are sized by.
-void recordProfileTableSize(Session &S, llvm::Module &M);
+void recordProfileTableSize(LaunchManifest &L, llvm::Module &M);
 
 /// Device module, after the last probe is placed: link the device half of the
 /// profiler.

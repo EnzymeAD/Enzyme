@@ -218,7 +218,7 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     F = canonicalize(*F);
     S.SiteClones.push_back(F);
     setSlotMetadata(*F);
-    noteSiteClone(S, F, sourceBody, primalArgs);
+    noteSiteClone(S.Sites, F, sourceBody, primalArgs);
     S.SiteCalls[F] = CI->getDebugLoc();
 
     // Profile generation recorded nothing for a site without an operation to
@@ -333,7 +333,7 @@ static bool optimizeHostBody(Session &S, const Site &site) {
 // profile recorded against another canonical form is an error at the site.
 static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
-  llvm::sys::path::append(profilePath, bodyProfileFile(S, body));
+  llvm::sys::path::append(profilePath, bodyProfileFile(S.Sites, body));
   if (!llvm::sys::fs::exists(profilePath.str()))
     return 0.0;
 
@@ -369,7 +369,8 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
   // Without a profile nothing can be applied, so the kernels are left exactly
   // as written rather than outlined and never folded back.
   if (!O.Profiling.usesProfile()) {
-    warnSitesWithoutProfile(Sess, *kernels.front()->fn->getParent());
+    warnSitesWithoutProfile(Sess.Opts, Sess.Sites,
+                            *kernels.front()->fn->getParent());
     return false;
   }
 
@@ -389,7 +390,7 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
   if (!filter) {
     for (const Site *site : kernels) {
       Function *body = nullptr;
-      if (CallInst *call = outlineKernelBody(Sess, *site->fn, body)) {
+      if (CallInst *call = outlineKernelBody(Sess.Sites, *site->fn, body)) {
         markOutlineTransparent(body);
         optimize(call, body, *site);
         changed = true;
@@ -411,7 +412,7 @@ static bool optimizeKernels(Session &Sess, ArrayRef<const Site *> kernels,
   double regexTotal = 0.0;
   for (const Site *site : kernels) {
     Function *body = nullptr;
-    CallInst *call = outlineKernelBody(Sess, *site->fn, body);
+    CallInst *call = outlineKernelBody(Sess.Sites, *site->fn, body);
     if (!call)
       continue;
     markOutlineTransparent(body);

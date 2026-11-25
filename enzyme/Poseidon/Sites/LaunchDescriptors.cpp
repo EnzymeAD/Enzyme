@@ -8,9 +8,9 @@
 
 #include "LaunchDescriptors.h"
 #include "Core/CacheKey.h"
+#include "Core/Options.h"
 #include "Enzyme/Utils.h"
 #include "IR/Utils.h"
-#include "Pass/Session.h"
 #include "SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
 
@@ -37,8 +37,9 @@ using namespace llvm;
 
 namespace poseidon {
 
-static std::map<std::string, Recorded> &recorded(Session &S, LaunchKind kind) {
-  return S.RecordedLaunches[static_cast<unsigned>(kind)];
+static std::map<std::string, Recorded> &recorded(LaunchManifest &L,
+                                                 LaunchKind kind) {
+  return kind == LaunchKind::HostDispatch ? L.HostDispatch : L.Profiling;
 }
 
 static constexpr LaunchKind kKinds[] = {LaunchKind::HostDispatch,
@@ -101,7 +102,7 @@ bool handsOverLaunches(const Options &O) {
          (O.Matmul.OzakiHostDispatch && O.Profiling.usesProfile());
 }
 
-void recordDescriptor(Session &S, LaunchKind kind, StringRef wrapperName,
+void recordDescriptor(LaunchManifest &L, LaunchKind kind, StringRef wrapperName,
                       function_ref<void(raw_ostream &)> emitPayload,
                       std::string message) {
   Recorded r;
@@ -109,17 +110,17 @@ void recordDescriptor(Session &S, LaunchKind kind, StringRef wrapperName,
   os << wrapperName;
   emitPayload(os);
   r.message = std::move(message);
-  recorded(S, kind)[wrapperName.str()] = std::move(r);
+  recorded(L, kind)[wrapperName.str()] = std::move(r);
 }
 
-void recordProfileHeader(Session &S, StringRef wrapperName,
+void recordProfileHeader(LaunchManifest &L, StringRef wrapperName,
                          StringRef profileName, StringRef header) {
-  S.ProfileHeaders[wrapperName.str()] = {profileName.str(), header.str()};
+  L.ProfileHeaders[wrapperName.str()] = {profileName.str(), header.str()};
 }
 
-void recordProfileTable(Session &S, unsigned functions, unsigned slots) {
-  S.ProfiledFunctions = functions;
-  S.ProfiledSlots = slots;
+void recordProfileTable(LaunchManifest &L, unsigned functions, unsigned slots) {
+  L.ProfiledFunctions = functions;
+  L.ProfiledSlots = slots;
 }
 
 std::pair<unsigned, unsigned> readProfileTable(const Options &O,
@@ -144,11 +145,10 @@ std::pair<unsigned, unsigned> readProfileTable(const Options &O,
   return {(unsigned)*functions, (unsigned)*slots};
 }
 
-void writeLaunchManifest(Session &S, const Module &M) {
-  const Options &O = S.Opts;
+void writeLaunchManifest(const Options &O, LaunchManifest &L, const Module &M) {
   const bool any =
-      S.ProfiledFunctions || llvm::any_of(kKinds, [&](LaunchKind kind) {
-        return !recorded(S, kind).empty();
+      L.ProfiledFunctions || llvm::any_of(kKinds, [&](LaunchKind kind) {
+        return !recorded(L, kind).empty();
       });
   std::optional<Manifest> found = manifestOf(O, M);
   if (!found) {
@@ -182,34 +182,34 @@ void writeLaunchManifest(Session &S, const Module &M) {
   json::Object value;
   for (LaunchKind kind : kKinds) {
     json::Array lines;
-    for (const auto &[kernel, r] : recorded(S, kind))
+    for (const auto &[kernel, r] : recorded(L, kind))
       lines.push_back(r.line);
     value[kindName(kind)] = std::move(lines);
   }
   // Only a profile-generate compile has any, and every other manifest stays
   // as it was.
-  if (!S.ProfileHeaders.empty()) {
+  if (!L.ProfileHeaders.empty()) {
     json::Object headers;
-    for (const auto &[kernel, h] : S.ProfileHeaders)
+    for (const auto &[kernel, h] : L.ProfileHeaders)
       headers[kernel] =
           json::Object{{"profile", h.profileName}, {"header", h.header}};
     value[kProfileHeaders] = std::move(headers);
   }
-  if (S.ProfiledFunctions)
-    value[kProfileTable] = json::Object{{"functions", S.ProfiledFunctions},
-                                        {"slots", S.ProfiledSlots}};
+  if (L.ProfiledFunctions)
+    value[kProfileTable] = json::Object{{"functions", L.ProfiledFunctions},
+                                        {"slots", L.ProfiledSlots}};
   if (std::error_code EC =
           sys::fs::create_directories(sys::path::parent_path(m.path)))
     fail("write", EC.message());
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
     fail("write", toString(std::move(E)));
   for (LaunchKind kind : kKinds) {
-    for (const auto &[kernel, r] : recorded(S, kind))
+    for (const auto &[kernel, r] : recorded(L, kind))
       errs() << r.message;
-    recorded(S, kind).clear();
+    recorded(L, kind).clear();
   }
-  S.ProfileHeaders.clear();
-  S.ProfiledFunctions = S.ProfiledSlots = 0;
+  L.ProfileHeaders.clear();
+  L.ProfiledFunctions = L.ProfiledSlots = 0;
 }
 
 void readDescriptors(const Options &O, const Module &M, LaunchKind kind,

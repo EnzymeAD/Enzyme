@@ -11,7 +11,6 @@
 #include "Core/Options.h"
 #include "Enzyme/Utils.h"
 #include "IR/Utils.h"
-#include "Pass/Session.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Targets/OffloadRuntime.h"
@@ -458,7 +457,7 @@ void requireSharedMemoryLimit(Module &M) {
                   refused.back().second);
 }
 
-void recordProfileTableSize(Session &S, Module &M) {
+void recordProfileTableSize(LaunchManifest &L, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
     return;
@@ -488,7 +487,7 @@ void recordProfileTableSize(Session &S, Module &M) {
       slots = std::max(slots, idx->getZExtValue() + 1);
     }
   if (!functions.empty())
-    recordProfileTable(S, functions.size(), slots);
+    recordProfileTable(L, functions.size(), slots);
 }
 
 /// The user's function a probe call serves. Profile generation calls the

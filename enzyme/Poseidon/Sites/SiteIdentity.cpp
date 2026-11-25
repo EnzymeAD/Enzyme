@@ -10,7 +10,6 @@
 
 #include "Annotations.h"
 #include "Markers.h"
-#include "Pass/Session.h"
 #include "Targets/OffloadRuntime.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -33,16 +32,16 @@ using namespace llvm;
 
 namespace poseidon {
 
-void noteSiteClone(Session &S, Function *clone, Function *origin,
+void noteSiteClone(SiteRecords &T, Function *clone, Function *origin,
                    ArrayRef<Value *> primalArgs) {
-  Session::SiteClone &info = S.SiteCloneOf[clone];
+  SiteClone &info = T.Clones[clone];
   info.Origin = origin;
   info.Args.assign(primalArgs.begin(), primalArgs.end());
 }
 
-const Function *siteOriginOf(const Session &S, const Function &clone) {
-  auto it = S.SiteCloneOf.find(&clone);
-  return it == S.SiteCloneOf.end() ? nullptr : it->second.Origin;
+const Function *siteOriginOf(const SiteRecords &T, const Function &clone) {
+  auto it = T.Clones.find(&clone);
+  return it == T.Clones.end() ? nullptr : it->second.Origin;
 }
 
 /// Whether the Itanium mangling of `symbol` says it names an entity of internal
@@ -76,21 +75,21 @@ std::string functionIdentity(const Function &F) {
   return functionIdentity(F, F.getName());
 }
 
-void noteSiteIdentity(Session &S, Function &body, std::string identity) {
-  S.SiteIdentities[&body] = std::move(identity);
+void noteSiteIdentity(SiteRecords &T, Function &body, std::string identity) {
+  T.Identities[&body] = std::move(identity);
 }
 
-std::string siteIdentity(const Session &S, const Function &body) {
-  auto it = S.SiteIdentities.find(const_cast<Function *>(&body));
-  return it != S.SiteIdentities.end() ? it->second : functionIdentity(body);
+std::string siteIdentity(const SiteRecords &T, const Function &body) {
+  auto it = T.Identities.find(const_cast<Function *>(&body));
+  return it != T.Identities.end() ? it->second : functionIdentity(body);
 }
 
-void recordMarkerIdentities(Session &S, Module &M) {
+void recordMarkerIdentities(SiteRecords &T, Module &M) {
   SmallVector<CallInst *, 4> markers;
   collectMarkerCalls(M, markers);
   for (CallInst *CI : markers)
     if (Function *target = markerTargetOrNull(CI))
-      S.SiteIdentities.insert({target, functionIdentity(*target)});
+      T.Identities.insert({target, functionIdentity(*target)});
 }
 
 std::string fileStem(StringRef name, StringRef identity) {
@@ -110,12 +109,12 @@ std::string fileStem(StringRef name, StringRef identity) {
       .str();
 }
 
-std::string bodyProfileStem(const Session &S, const Function &body) {
-  return fileStem(siteKeyOfBody(body), siteIdentity(S, body));
+std::string bodyProfileStem(const SiteRecords &T, const Function &body) {
+  return fileStem(siteKeyOfBody(body), siteIdentity(T, body));
 }
 
-std::string bodyProfileFile(const Session &S, const Function &body) {
-  return bodyProfileStem(S, body) + kProfileFileSuffix;
+std::string bodyProfileFile(const SiteRecords &T, const Function &body) {
+  return bodyProfileStem(T, body) + kProfileFileSuffix;
 }
 
 std::string perCallSiteName(StringRef symbol) {
@@ -148,30 +147,31 @@ std::optional<DemangledFunction> demangleFunction(StringRef mangled) {
 /// instrumented clone between a body's markers, so the run writes one record
 /// per body, while here a body reached from several marker calls is cloned once
 /// per call and LLVM uniques the second and later clone names.
-static std::string siteProfileStem(const Session &S, const Function &clone) {
-  if (const Function *origin = siteOriginOf(S, clone))
-    return bodyProfileStem(S, *origin);
+static std::string siteProfileStem(const SiteRecords &T,
+                                   const Function &clone) {
+  if (const Function *origin = siteOriginOf(T, clone))
+    return bodyProfileStem(T, *origin);
   StringRef key = clone.getName();
   key.consume_front(kCanonicalPrefix);
   key.consume_back(kBodySuffix);
   return profileNameStem(key);
 }
 
-std::string siteFileStem(const Session &S, const Function &F) {
-  const Function *origin = siteOriginOf(S, F);
+std::string siteFileStem(const SiteRecords &T, const Function &F) {
+  const Function *origin = siteOriginOf(T, F);
   if (!origin)
-    return fileStem(siteKeyOfBody(F), siteIdentity(S, F));
+    return fileStem(siteKeyOfBody(F), siteIdentity(T, F));
   // A second clone of one body (another marker of it) is told apart by the
   // suffix LLVM gave its name.
   StringRef unique = F.getName();
   unique.consume_front(kCanonicalPrefix);
   unique.consume_front(origin->getName());
   return fileStem(siteKeyOfBody(*origin) + unique.str(),
-                  siteIdentity(S, *origin));
+                  siteIdentity(T, *origin));
 }
 
-std::string siteProfileFile(const Session &S, const Function &clone) {
-  return siteProfileStem(S, clone) + kProfileFileSuffix;
+std::string siteProfileFile(const SiteRecords &T, const Function &clone) {
+  return siteProfileStem(T, clone) + kProfileFileSuffix;
 }
 
 std::string siteKeyOfBody(const Function &body) {
@@ -180,8 +180,8 @@ std::string siteKeyOfBody(const Function &body) {
   return symbol.str();
 }
 
-std::string siteKey(const Session &S, const Function &clone) {
-  const Function *origin = siteOriginOf(S, clone);
+std::string siteKey(const SiteRecords &T, const Function &clone) {
+  const Function *origin = siteOriginOf(T, clone);
   return siteKeyOfBody(origin ? *origin : clone);
 }
 
@@ -198,21 +198,21 @@ SmallVector<std::string, 2> siteAliases(StringRef key) {
   return aliases;
 }
 
-bool isSiteClone(const Session &S, const Function *F) {
-  return S.SiteCloneOf.count(F);
+bool isSiteClone(const SiteRecords &T, const Function *F) {
+  return T.Clones.count(F);
 }
 
-Value *siteArg(const Session &S, const Function *clone, unsigned i) {
-  auto it = S.SiteCloneOf.find(clone);
-  if (it == S.SiteCloneOf.end() || i >= it->second.Args.size())
+Value *siteArg(const SiteRecords &T, const Function *clone, unsigned i) {
+  auto it = T.Clones.find(clone);
+  if (it == T.Clones.end() || i >= it->second.Args.size())
     return nullptr;
   const WeakTrackingVH &arg = it->second.Args[i];
   return arg.pointsToAliveValue() ? (Value *)arg : nullptr;
 }
 
-bool redirectNoopSite(Session &S, Function *clone) {
-  auto it = S.SiteCloneOf.find(clone);
-  if (it == S.SiteCloneOf.end() || !it->second.Origin)
+bool redirectNoopSite(SiteRecords &T, Function *clone, bool print) {
+  auto it = T.Clones.find(clone);
+  if (it == T.Clones.end() || !it->second.Origin)
     return false;
   Function *orig = it->second.Origin;
   if (orig == clone)
@@ -220,7 +220,7 @@ bool redirectNoopSite(Session &S, Function *clone) {
   SmallVector<CallBase *, 4> callers = callsOf(*clone);
   for (CallBase *CB : callers)
     CB->setCalledFunction(orig);
-  if (!callers.empty() && S.Opts.Diagnostics.Print)
+  if (!callers.empty() && print)
     llvm::errs() << "[poseidon] no rewrite applied for " << clone->getName()
                  << "; wrapper call restored to original body "
                  << orig->getName() << " (bit-transparent no-op)\n";

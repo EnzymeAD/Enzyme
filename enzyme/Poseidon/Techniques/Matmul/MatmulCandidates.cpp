@@ -256,7 +256,7 @@ static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
   SmallPtrSet<const GlobalVariable *, 16> own;
   sharedBytesUsedBy(&F, own);
   // The kernels call the body the site clone was cut from.
-  const Function *origFn = siteOriginOf(S, F);
+  const Function *origFn = siteOriginOf(S.Sites, F);
   if (!origFn)
     origFn = &F;
   bool sawKernel = false;

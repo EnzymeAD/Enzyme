@@ -37,7 +37,7 @@ class Value;
 namespace poseidon {
 
 struct Options;
-class Session;
+struct SiteRecords;
 
 /// The attribute stays on the kernel after its site has been lowered, and the
 /// pass reaches a module more than once, so a lowered kernel has to say so or
@@ -78,13 +78,13 @@ void reportAnnotatedCall(llvm::CallBase *call, llvm::StringRef name);
 
 /// Warns once per module about every annotated kernel of a compile without a
 /// profile action.
-void warnSitesWithoutProfile(Session &S, llvm::Module &M);
+void warnSitesWithoutProfile(const Options &O, SiteRecords &T, llvm::Module &M);
 bool dropSiteAnnotations(llvm::Module &M);
-bool leaveSitesAsWritten(Session &S, llvm::Module &M);
+bool leaveSitesAsWritten(const Options &O, SiteRecords &T, llvm::Module &M);
 
 /// Why `F` cannot be a host site, empty if it can.
 std::string hostSiteRefusal(llvm::Function &F);
-bool outlineHostSites(Session &S, llvm::Module &M);
+bool outlineHostSites(const Options &O, SiteRecords &T, llvm::Module &M);
 /// The calls whose callee is `F` itself.
 llvm::SmallVector<llvm::CallBase *, 4> callsOf(llvm::Value &F);
 /// The host body `B` handed back to the optimizer: out of llvm.compiler.used
@@ -92,7 +92,7 @@ llvm::SmallVector<llvm::CallBase *, 4> callsOf(llvm::Value &F);
 void releaseHostBody(llvm::Function &B);
 
 void markOutlineTransparent(llvm::Function *body);
-llvm::CallInst *outlineKernelBody(Session &S, llvm::Function &K,
+llvm::CallInst *outlineKernelBody(SiteRecords &T, llvm::Function &K,
                                   llvm::Function *&bodyOut);
 void inlineKernelBody(llvm::CallInst *call, llvm::Function *body);
 

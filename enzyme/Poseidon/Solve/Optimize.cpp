@@ -59,7 +59,7 @@ namespace poseidon {
 std::string siteProfilePath(const Session &S, const Function &clone,
                             StringRef dir) {
   SmallString<128> path(dir);
-  sys::path::append(path, siteProfileFile(S, clone));
+  sys::path::append(path, siteProfileFile(S.Sites, clone));
   return path.str().str();
 }
 
@@ -91,7 +91,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
              DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
     mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
-                        siteProfileFile(S, F), canonicalHash, F,
+                        siteProfileFile(S.Sites, F), canonicalHash, F,
                         O.Diagnostics.Print);
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
@@ -571,7 +571,7 @@ static bool solveAndApply(Session &S, Module &M, const StringSet<> &declared,
     // An unrewritten site calls the original body again: the preprocessed
     // clone need not lower bit-identically.
     if (joint && !siteChanged)
-      redirectNoopSite(S, st->F);
+      redirectNoopSite(S.Sites, st->F, S.Opts.Diagnostics.Print);
     changed |= siteChanged;
   }
   // The host-dispatch descriptors of a joint solve are known only once every
@@ -644,7 +644,7 @@ bool solveJointly(Session &S, Module &M) {
     os << "Poseidon: the sites of one -poseidon-joint-dp solve have different "
           "accuracy targets:";
     for (auto &[F, t] : targets) {
-      const Function *origin = siteOriginOf(S, *F);
+      const Function *origin = siteOriginOf(S.Sites, *F);
       os << ' '
          << llvm::demangle((origin ? origin->getName() : F->getName()).str())
          << " (";
@@ -658,7 +658,7 @@ bool solveJointly(Session &S, Module &M) {
     M.getContext().diagnose(DiagnosticInfoUnsupported(
         *targets.front().first, os.str(), DiagnosticLocation(), DS_Error));
     for (auto &[F, t] : targets)
-      redirectNoopSite(S, F);
+      redirectNoopSite(S.Sites, F, S.Opts.Diagnostics.Print);
     return false;
   }
 
@@ -673,7 +673,7 @@ bool solveJointly(Session &S, Module &M) {
         llvm::errs() << "[poseidon] joint solve: nothing to optimize in "
                      << F->getName() << '\n';
       explainNothingToOptimize(S, *F, errTol, allFromSite);
-      redirectNoopSite(S, F);
+      redirectNoopSite(S.Sites, F, S.Opts.Diagnostics.Print);
     }
   }
   if (states.empty())

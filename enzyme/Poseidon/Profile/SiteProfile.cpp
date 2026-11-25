@@ -71,7 +71,7 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   // from.
   SmallVector<std::pair<size_t, unsigned>, 4> trips;
   collectScalarLoopReductionTrips(S.Opts, *clone, trips);
-  const std::string profileName = bodyProfileStem(S, F);
+  const std::string profileName = bodyProfileStem(S.Sites, F);
   if (!instrumentForProfiling(*clone, siteId, profileName)) {
     clone->eraseFromParent();
     return nullptr;
@@ -470,7 +470,7 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
     msg << '\n';
   }
   recordDescriptor(
-      S, LaunchKind::Profiling, kernelName,
+      S.Launches, LaunchKind::Profiling, kernelName,
       [&](raw_ostream &os) {
         os << ' ' << siteId << ' ' << numArgs << ' ' << shadowed.size();
         for (const Shadowed &s : shadowed)
@@ -486,7 +486,7 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
       std::move(message));
   // The host half registers it with the profiling runtime, so that a kernel
   // that never launches still gets a profile, one saying so.
-  recordProfileHeader(S, kernelName, profileName, header);
+  recordProfileHeader(S.Launches, kernelName, profileName, header);
 }
 
 /// Profile generation for an attribute site. The kernel keeps its name, its
@@ -498,7 +498,7 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
 /// every launch.
 static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   Function *body = nullptr;
-  CallInst *call = outlineKernelBody(S, K, body);
+  CallInst *call = outlineKernelBody(S.Sites, K, body);
   if (!call)
     return false;
 
@@ -515,7 +515,7 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
     return true;
   }
   const unsigned siteId = nextSiteId++;
-  const std::string profileName = bodyProfileStem(S, *body);
+  const std::string profileName = bodyProfileStem(S.Sites, *body);
 
   SmallVector<Shadowed, 8> shadowed = shadowedPointers(K, *clone);
   Function *P = createProfiledKernel(K, shadowed);

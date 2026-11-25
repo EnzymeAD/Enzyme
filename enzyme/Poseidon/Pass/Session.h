@@ -20,6 +20,7 @@
 #include "Core/HerbieRun.h"
 #include "Core/Options.h"
 #include "Sites/LaunchDescriptors.h"
+#include "Sites/SiteIdentity.h"
 #include "Solve/Pins.h"
 #include "Techniques/Matmul/Matmul.h"
 
@@ -69,26 +70,11 @@ public:
   // written.
   std::unique_ptr<llvm::Module> AsWrittenTwin;
 
-  // Per site clone, the body it was cut from and the caller values of its
-  // parameters: the clone has no callers while it is optimized, and the
-  // parameter-staging arm resolves a pointer parameter to its addrspace(3)
-  // global through them.
-  struct SiteClone {
-    llvm::Function *Origin;
-    llvm::SmallVector<llvm::WeakTrackingVH, 12> Args;
-  };
-  std::map<const llvm::Function *, SiteClone> SiteCloneOf;
-  // The identity (SiteIdentity.h) of each body the pass made for a site and
-  // of each marker's target, taken before the optimizer could change its
-  // linkage.
-  llvm::ValueMap<llvm::Function *, std::string> SiteIdentities;
+  // The module's site clones and site identities (Sites/SiteIdentity.h).
+  SiteRecords Sites;
 
   // Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;
-
-  // Whether the module's sites were warned about as compiled without a
-  // profile action.
-  bool WarnedWithoutProfile = false;
 
   // The items of -poseidon-apply-rewrites and the sites they name.
   PinState Pins;
@@ -97,14 +83,8 @@ public:
 
   HerbieRunState Herbie;
 
-  // By kernel name, so that the manifest and its messages come out in one
-  // order whatever order the sites were solved in; host dispatch first, then
-  // profile generation.
-  std::map<std::string, Recorded> RecordedLaunches[2];
-  std::map<std::string, ProfileHeader> ProfileHeaders;
-  // What the device profiler's tables must hold for this device module: the
-  // functions it profiles and the probes of the largest.
-  unsigned ProfiledFunctions = 0, ProfiledSlots = 0;
+  // What this device module hands its host half (Sites/LaunchDescriptors.h).
+  LaunchManifest Launches;
 
   MatmulState Matmul;
 };

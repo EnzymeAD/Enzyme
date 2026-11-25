@@ -432,7 +432,7 @@ static std::string exprWords(const Unit &U) {
 }
 
 static std::string siteSymbolOf(const Session &S, const Function &F) {
-  return siteSymbol(siteKey(S, F)).str();
+  return siteSymbol(siteKey(S.Sites, F)).str();
 }
 
 // The schema identifier of every explanation; see Explainer::toJSON.
@@ -442,7 +442,7 @@ static constexpr StringLiteral kSchema = "poseidon-explain/1";
 // made, where it is called and where it is written.
 static json::Object functionJSON(const Session &S, const Function &F) {
   json::Object fn;
-  const Function *origin = siteOriginOf(S, F);
+  const Function *origin = siteOriginOf(S.Sites, F);
   std::string symbol = siteSymbolOf(S, F);
   fn["name"] = llvm::demangle(symbol);
   fn["symbol"] = symbol;
@@ -1743,11 +1743,12 @@ void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
   json::Object result{{"status", status}, {"reason", reason}};
   if (!profile.empty())
     result["profile"] = profile;
-  writeExplanation(S, F, body ? bodyProfileStem(S, F) : siteFileStem(S, F),
-                   json::Object{{"schema", kSchema},
-                                {"function", functionJSON(S, F)},
-                                {"target", targetJSON(S.Opts, tau, siteTarget)},
-                                {"result", std::move(result)}});
+  writeExplanation(
+      S, F, body ? bodyProfileStem(S.Sites, F) : siteFileStem(S.Sites, F),
+      json::Object{{"schema", kSchema},
+                   {"function", functionJSON(S, F)},
+                   {"target", targetJSON(S.Opts, tau, siteTarget)},
+                   {"result", std::move(result)}});
 }
 
 void explainNothingToOptimize(Session &S, Function &F, double tau,
@@ -1789,7 +1790,7 @@ void explainSolve(Session &S, Function &F, FunctionFPState &st,
   if (remarks)
     E.emitRemarks();
   if (write)
-    writeExplanation(S, F, siteFileStem(S, F), E.toJSON());
+    writeExplanation(S, F, siteFileStem(S.Sites, F), E.toJSON());
 }
 
 } // namespace poseidon

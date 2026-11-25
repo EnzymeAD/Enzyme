@@ -35,7 +35,6 @@
 namespace poseidon {
 
 struct Options;
-class Session;
 
 struct Recorded {
   std::string line;
@@ -45,6 +44,18 @@ struct Recorded {
 struct ProfileHeader {
   std::string profileName;
   std::string header;
+};
+
+/// What a device module hands its host half, gathered while its sites are
+/// solved and written once by writeLaunchManifest.
+struct LaunchManifest {
+  /// By kernel name, so that the manifest and its messages come out in one
+  /// order whatever order the sites were solved in.
+  std::map<std::string, Recorded> HostDispatch, Profiling;
+  std::map<std::string, ProfileHeader> ProfileHeaders;
+  /// What the device profiler's tables must hold for this module: the
+  /// functions it profiles and the probes of the largest.
+  unsigned ProfiledFunctions = 0, ProfiledSlots = 0;
 };
 
 enum class LaunchKind {
@@ -67,19 +78,20 @@ bool handsOverLaunches(const Options &O);
 /// Records "<wrapperName><payload>" as the `kind` descriptor of that kernel in
 /// place of one recorded before; `emitPayload` appends everything after the
 /// name. `message` is printed when the manifest is written.
-void recordDescriptor(Session &S, LaunchKind kind, llvm::StringRef wrapperName,
+void recordDescriptor(LaunchManifest &L, LaunchKind kind,
+                      llvm::StringRef wrapperName,
                       llvm::function_ref<void(llvm::raw_ostream &)> emitPayload,
                       std::string message);
 
 /// Records, beside the profile generation descriptor of `wrapperName`, the name
 /// its site's profile is written under and the header the device compile
 /// computed for it, which the device profiler writes only once the kernel runs.
-void recordProfileHeader(Session &S, llvm::StringRef wrapperName,
+void recordProfileHeader(LaunchManifest &L, llvm::StringRef wrapperName,
                          llvm::StringRef profileName, llvm::StringRef header);
 
 /// Records, for the host half, the functions device module M profiles and the
 /// probes the largest of them holds.
-void recordProfileTable(Session &S, unsigned functions, unsigned slots);
+void recordProfileTable(LaunchManifest &L, unsigned functions, unsigned slots);
 
 /// What the device half of host module M recorded with recordProfileTable;
 /// none when it profiles nothing.
@@ -90,7 +102,8 @@ std::pair<unsigned, unsigned> readProfileTable(const Options &O,
 /// the last write and prints their messages, all in order of kernel name; with
 /// none recorded, removes it, since no manifest means nothing to rewrite. A
 /// manifest that cannot be written or removed stops the compile.
-void writeLaunchManifest(Session &S, const llvm::Module &M);
+void writeLaunchManifest(const Options &O, LaunchManifest &L,
+                         const llvm::Module &M);
 
 /// Hands `parse` the space-separated tokens of every `kind` descriptor in the
 /// manifest of host module M; token 0 is always the wrapper kernel name. A unit

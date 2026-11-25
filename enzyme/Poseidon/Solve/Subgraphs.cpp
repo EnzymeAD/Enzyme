@@ -10,6 +10,7 @@
 #include "IR/Utils.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
+#include "Pass/Session.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
@@ -568,7 +569,7 @@ void hintSharedStaging(const Session &S, Function &F,
   auto sharedBufferOf = [&](const Value *Ptr) -> const Value * {
     const Value *Obj = getUnderlyingObject(Ptr);
     if (auto *A = dyn_cast_or_null<Argument>(Obj))
-      if (Value *SA = siteArg(S, &F, A->getArgNo()))
+      if (Value *SA = siteArg(S.Sites, &F, A->getArgNo()))
         Obj = getUnderlyingObject(SA->stripPointerCasts());
     auto *GV = dyn_cast_or_null<GlobalVariable>(Obj);
     return GV && Target::of(*GV->getParent()).isShared(*GV) ? GV : nullptr;

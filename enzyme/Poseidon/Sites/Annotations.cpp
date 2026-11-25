@@ -14,7 +14,6 @@
 #include "IR/Utils.h"
 #include "LaunchDescriptors.h"
 #include "Markers.h"
-#include "Pass/Session.h"
 #include "Site.h"
 #include "SiteIdentity.h"
 #include "Targets/MathLibrary.h"
@@ -390,11 +389,11 @@ void reportAnnotatedCall(CallBase *call, StringRef name) {
                     "annotation");
 }
 
-void warnSitesWithoutProfile(Session &S, Module &M) {
-  if (S.WarnedWithoutProfile)
+void warnSitesWithoutProfile(const Options &O, SiteRecords &T, Module &M) {
+  if (T.WarnedWithoutProfile)
     return;
-  S.WarnedWithoutProfile = true;
-  for (Site &site : collectSites(S.Opts, M, {Site::Form::Kernel}))
+  T.WarnedWithoutProfile = true;
+  for (Site &site : collectSites(O, M, {Site::Form::Kernel}))
     diagnose(*site.fn, site.fn->getSubprogram(),
              Twine(kNoProfileAction) + " Emitting the original computation.",
              DS_Warning);
@@ -439,8 +438,8 @@ bool dropSiteAnnotations(Module &M) {
 /// function it names, which the inliner counts as a second caller (no last-call
 /// bonus, no deletion once inlined), so the module then compiles as its source
 /// does without them.
-bool leaveSitesAsWritten(Session &S, Module &M) {
-  warnSitesWithoutProfile(S, M);
+bool leaveSitesAsWritten(const Options &O, SiteRecords &T, Module &M) {
+  warnSitesWithoutProfile(O, T, M);
 
   bool changed = false;
   for (Function &F : M)
@@ -599,7 +598,7 @@ outlineInto(Function &F, Function &B,
 /// structure they already handle: a function holding the annotated computation,
 /// reached through one call whose arguments are the site's inputs. Returns that
 /// call, or null if the kernel cannot be a site.
-CallInst *outlineKernelBody(Session &S, Function &K, Function *&bodyOut) {
+CallInst *outlineKernelBody(SiteRecords &T, Function &K, Function *&bodyOut) {
   if (K.isVarArg() || !K.getReturnType()->isVoidTy()) {
     diagnoseSite(K, "an annotated kernel must be a void, non-variadic function",
                  DS_Error);
@@ -631,7 +630,7 @@ CallInst *outlineKernelBody(Session &S, Function &K, Function *&bodyOut) {
       GlobalValue::InternalLinkage,
       withoutExternalizedPostfix(K.getName()) + kBodySuffix, &M);
   B->setAttributes(K.getAttributes());
-  noteSiteIdentity(S, *B, functionIdentity(K));
+  noteSiteIdentity(T, *B, functionIdentity(K));
   // The body reads the kernel's own copy of a by-value aggregate. Left byval,
   // folding the body back would copy the aggregate a second time.
   for (Argument &A : B->args())
@@ -665,7 +664,7 @@ CallInst *outlineKernelBody(Session &S, Function &K, Function *&bodyOut) {
 /// inliner puts F into calls the body itself. Until the site is lowered the
 /// body is kept from being inlined and from interprocedural rewriting, so that
 /// it keeps the signature and the code F was written with.
-static void outlineHostFunction(Session &S, Function &F,
+static void outlineHostFunction(SiteRecords &T, Function &F,
                                 std::optional<double> tau) {
   Module &M = *F.getParent();
   Function *B =
@@ -679,7 +678,7 @@ static void outlineHostFunction(Session &S, Function &F,
   B->removeFnAttr(Attribute::InlineHint);
   B->addFnAttr(Attribute::NoInline);
   B->addFnAttr(kHostBody, tau ? exactDouble(*tau) : "");
-  noteSiteIdentity(S, *B, functionIdentity(F));
+  noteSiteIdentity(T, *B, functionIdentity(F));
   CallInst *call = outlineInto(
       F, *B, [](Argument &From, Argument &To) { From.replaceAllUsesWith(&To); },
       [](IRBuilder<> &, Argument &A) -> Value * { return &A; });
@@ -693,8 +692,7 @@ static void outlineHostFunction(Session &S, Function &F,
 
 /// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
 /// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
-bool outlineHostSites(Session &S, Module &M) {
-  const Options &O = S.Opts;
+bool outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
   if (Target::of(M).isDevice() || isOffloadHostHalf(M))
     return false;
   MapVector<Function *, std::optional<double>> annotated =
@@ -743,7 +741,7 @@ bool outlineHostSites(Session &S, Module &M) {
       continue;
     }
     noteSiteTarget(O, *F, tau);
-    outlineHostFunction(S, *F, tau);
+    outlineHostFunction(T, *F, tau);
     changed = true;
   }
   return changed;

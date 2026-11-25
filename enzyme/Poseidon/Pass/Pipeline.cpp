@@ -144,11 +144,11 @@ struct OptimizePass : PassParent<OptimizePass> {
     const Options &O = S.Opts;
     requirePluginOrder(O, M);
 
-    bool changed = lowerPerCallSites(S, M);
+    bool changed = lowerPerCallSites(O, S.Sites, M);
     if (O.Profiling.profileAction())
-      recordMarkerIdentities(S, M);
+      recordMarkerIdentities(S.Sites, M);
     changed |= lowerDeviceCallSites(O, M);
-    changed |= outlineHostSites(S, M);
+    changed |= outlineHostSites(O, S.Sites, M);
     changed |= foldDeviceSiteCallees(O, M);
     changed |= prepareModule(S, M);
     SmallVector<CallBase *, 4> calls;
@@ -382,15 +382,15 @@ struct HostSitePass : PassParent<HostSitePass> {
         requireDeviceMathMacro(M);
       changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
     }
-    changed |= lowerPerCallSites(S, M);
+    changed |= lowerPerCallSites(O, S.Sites, M);
     if (O.Profiling.profileAction())
-      recordMarkerIdentities(S, M);
+      recordMarkerIdentities(S.Sites, M);
     changed |= propagateDeviceSites(O, M);
-    changed |= outlineHostSites(S, M);
+    changed |= outlineHostSites(O, S.Sites, M);
     changed |= registerDeviceProfileTable(O, M);
     changed |= defineProfileDirectory(O, M);
     if (!O.Profiling.profileAction())
-      changed |= leaveSitesAsWritten(S, M);
+      changed |= leaveSitesAsWritten(O, S.Sites, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -453,9 +453,9 @@ struct FinalizePass : PassParent<FinalizePass> {
     // compile has passed, so a host half never reads the manifest of a device
     // half that failed.
     if (O.Profiling.generatesProfile())
-      recordProfileTableSize(S, M);
+      recordProfileTableSize(S.Launches, M);
     if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
-      writeLaunchManifest(S, M);
+      writeLaunchManifest(S.Opts, S.Launches, M);
     releaseDeviceMath(M);
     SmallSetVector<Function *, 4> rewritten;
     for (WeakVH &handle : S.RewrittenFunctions)
