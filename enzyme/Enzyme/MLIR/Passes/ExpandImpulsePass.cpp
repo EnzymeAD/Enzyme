@@ -1462,51 +1462,64 @@ struct ExpandImpulsePass
       }
 
       auto autodiffAttrs = mcmcOp.getAutodiffAttrsAttr();
+      Region *logpdfRegion = nullptr;
+      if constexpr (isRegionForm)
+        logpdfRegion = &mcmcOp.getLogpdf();
 
       auto makeHMCContext = [&](Value currentInvMass,
                                 Value currentMassMatrixSqrt,
-                                Value currentStepSize) -> HMCContext {
-        if (hasLogpdfFn) {
-          HMCContext ctx(logpdfFnAttr, fnInputs, currentInvMass,
-                         currentMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, autodiffAttrs);
-          ctx.numSteps = fixedNumSteps;
-          if constexpr (isRegionForm)
-            ctx.logpdfRegion = &mcmcOp.getLogpdf();
-          return ctx;
-        } else {
-          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
-                         originalTrace, selection, allAddresses, currentInvMass,
-                         currentMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, supports,
-                         autodiffAttrs);
-          ctx.numSteps = fixedNumSteps;
-          if constexpr (isRegionForm)
-            ctx.logpdfRegion = &mcmcOp.getLogpdf();
-          return ctx;
-        }
+                                Value currentStepSize) {
+        HMCContext ctx =
+            hasLogpdfFn
+                ? HMCContext(logpdfFnAttr, fnInputs, currentInvMass,
+                             currentMassMatrixSqrt, currentStepSize,
+                             trajectoryLength, positionSize, autodiffAttrs)
+                : HMCContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                             originalTrace, selection, allAddresses,
+                             currentInvMass, currentMassMatrixSqrt,
+                             currentStepSize, trajectoryLength, positionSize,
+                             supports, autodiffAttrs);
+        ctx.numSteps = fixedNumSteps;
+        ctx.logpdfRegion = logpdfRegion;
+        return ctx;
       };
 
-      auto makeNUTSContext =
-          [&](Value currentInvMass, Value currentMassMatrixSqrt,
-              Value currentStepSize, Value U) -> NUTSContext {
-        if (hasLogpdfFn) {
-          NUTSContext ctx(logpdfFnAttr, fnInputs, currentInvMass,
-                          currentMassMatrixSqrt, currentStepSize, positionSize,
-                          U, maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
-          if constexpr (isRegionForm)
-            ctx.logpdfRegion = &mcmcOp.getLogpdf();
-          return ctx;
-        } else {
-          NUTSContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
-                          originalTrace, selection, allAddresses,
-                          currentInvMass, currentMassMatrixSqrt,
-                          currentStepSize, positionSize, supports, U,
-                          maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
-          if constexpr (isRegionForm)
-            ctx.logpdfRegion = &mcmcOp.getLogpdf();
-          return ctx;
-        }
+      auto makeNUTSContext = [&](Value currentInvMass,
+                                 Value currentMassMatrixSqrt,
+                                 Value currentStepSize,
+                                 Value potentialEnergy) {
+        NUTSContext ctx =
+            hasLogpdfFn
+                ? NUTSContext(logpdfFnAttr, fnInputs, currentInvMass,
+                              currentMassMatrixSqrt, currentStepSize,
+                              positionSize, potentialEnergy, maxDeltaEnergy,
+                              maxTreeDepth, autodiffAttrs)
+                : NUTSContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                              originalTrace, selection, allAddresses,
+                              currentInvMass, currentMassMatrixSqrt,
+                              currentStepSize, positionSize, supports,
+                              potentialEnergy, maxDeltaEnergy, maxTreeDepth,
+                              autodiffAttrs);
+        ctx.logpdfRegion = logpdfRegion;
+        return ctx;
+      };
+
+      auto runKernel = [&](const ChainState &state, Value currentStepSize,
+                           Value currentInvMass,
+                           Value currentMassMatrixSqrt) -> MCMCKernelResult {
+        if (isHMC)
+          return SampleHMC(
+              rewriter, loc, state.q, state.grad, state.potentialEnergy,
+              state.rng,
+              makeHMCContext(currentInvMass, currentMassMatrixSqrt,
+                             currentStepSize),
+              debugDump);
+        return SampleNUTS(rewriter, loc, state.q, state.grad,
+                          state.potentialEnergy, state.rng,
+                          makeNUTSContext(currentInvMass, currentMassMatrixSqrt,
+                                          currentStepSize,
+                                          state.potentialEnergy),
+                          debugDump);
       };
 
       auto sliceChainDim = [&](Value v, int64_t c) -> Value {
@@ -1601,40 +1614,7 @@ struct ExpandImpulsePass
           currentRng = initState.rng;
         }
 
-        auto runSampleStepWithStepSize =
-            [&](OpBuilder &builder, Location loc, Value q, Value grad,
-                Value potentialEnergy, Value rng,
-                Value currentStepSize) -> MCMCKernelResult {
-          if (isHMC) {
-            auto ctx = makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt,
-                                      currentStepSize);
-            return SampleHMC(builder, loc, q, grad, potentialEnergy, rng, ctx,
-                             debugDump);
-          }
-          auto nutsCtx = makeNUTSContext(adaptedInvMass, adaptedMassMatrixSqrt,
-                                         currentStepSize, potentialEnergy);
-          return SampleNUTS(builder, loc, q, grad, potentialEnergy, rng,
-                            nutsCtx, debugDump);
-        };
-
         Value adaptedStepSize = chainStepSize;
-
-        auto runSampleStepWithInvMass =
-            [&](OpBuilder &builder, Location loc, Value q, Value grad,
-                Value potentialEnergy, Value rng, Value currentStepSize,
-                Value currentInvMass,
-                Value currentMassMatrixSqrt) -> MCMCKernelResult {
-          if (isHMC) {
-            auto ctx = makeHMCContext(currentInvMass, currentMassMatrixSqrt,
-                                      currentStepSize);
-            return SampleHMC(builder, loc, q, grad, potentialEnergy, rng, ctx,
-                             debugDump);
-          }
-          auto nutsCtx = makeNUTSContext(currentInvMass, currentMassMatrixSqrt,
-                                         currentStepSize, potentialEnergy);
-          return SampleNUTS(builder, loc, q, grad, potentialEnergy, rng,
-                            nutsCtx, debugDump);
-        };
 
         if (!adaptedInvMass) {
           adaptedInvMass = arith::ConstantOp::create(
@@ -1723,10 +1703,8 @@ struct ExpandImpulsePass
           WarmupCarry carry = WarmupCarry::fromValues(
               warmupBody->getArguments().drop_front(), adaptMassMatrix);
 
-          auto sample = runSampleStepWithInvMass(
-              rewriter, loc, carry.chain.q, carry.chain.grad,
-              carry.chain.potentialEnergy, carry.chain.rng, carry.stepSize,
-              carry.invMass, carry.massMatrixSqrt);
+          auto sample = runKernel(carry.chain, carry.stepSize, carry.invMass,
+                                  carry.massMatrixSqrt);
 
           DualAveragingConfig daConfig;
           DualAveragingState updatedDaState;
@@ -1998,16 +1976,15 @@ struct ExpandImpulsePass
 
           rewriter.setInsertionPointToStart(loopBody);
           Value iterIdx = loopBody->getArgument(0);
-          Value qLoop = loopBody->getArgument(1);
-          Value gradLoop = loopBody->getArgument(2);
-          Value uLoop = loopBody->getArgument(3);
-          Value rngLoop = loopBody->getArgument(4);
+          ChainState chainLoop = {
+              loopBody->getArgument(1), loopBody->getArgument(2),
+              loopBody->getArgument(3), loopBody->getArgument(4)};
           Value samplesBufferLoop = loopBody->getArgument(5);
           Value diagnosticsBufferLoop = loopBody->getArgument(6);
           Value logDensityBufferLoop = loopBody->getArgument(7);
 
-          auto sample = runSampleStepWithStepSize(
-              rewriter, loc, qLoop, gradLoop, uLoop, rngLoop, adaptedStepSize);
+          auto sample = runKernel(chainLoop, adaptedStepSize, adaptedInvMass,
+                                  adaptedMassMatrixSqrt);
           auto qConstrained =
               impulse::constrainPosition(rewriter, loc, sample.q, supports);
 
