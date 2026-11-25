@@ -267,7 +267,6 @@ poseidonLogValueCUDA(const char *funcName, size_t idx, double res,
 
   atomicMinDouble(&slot->minRes, res);
   atomicMaxDouble(&slot->maxRes, res);
-  atomicAddFinite(&slot->sumValue, res);
   atomicAdd((unsigned long long *)&slot->exec, 1ULL);
 
   slot->numOperands = (uint32_t)numOperands;

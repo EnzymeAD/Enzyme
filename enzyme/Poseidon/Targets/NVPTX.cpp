@@ -10,14 +10,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Peers.h"
+#include "MathLibrary.h"
+#include "NVPTXTensorCore.h"
+#include "Target.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/CallingConv.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cmath>
 #include <optional>
@@ -26,6 +35,19 @@
 using namespace llvm;
 
 namespace poseidon {
+
+// The special registers of the thread index, the block index and the block
+// dimension, by LaunchValue and axis.
+static constexpr Intrinsic::ID kSreg[3][3] = {
+    {Intrinsic::nvvm_read_ptx_sreg_tid_x, Intrinsic::nvvm_read_ptx_sreg_tid_y,
+     Intrinsic::nvvm_read_ptx_sreg_tid_z},
+    {Intrinsic::nvvm_read_ptx_sreg_ctaid_x,
+     Intrinsic::nvvm_read_ptx_sreg_ctaid_y,
+     Intrinsic::nvvm_read_ptx_sreg_ctaid_z},
+    {Intrinsic::nvvm_read_ptx_sreg_ntid_x, Intrinsic::nvvm_read_ptx_sreg_ntid_y,
+     Intrinsic::nvvm_read_ptx_sreg_ntid_z}};
+static constexpr LaunchValue kSregValue[3] = {
+    LaunchValue::ThreadIndex, LaunchValue::BlockIndex, LaunchValue::BlockDim};
 
 namespace {
 
@@ -65,28 +87,11 @@ public:
     const auto *II = dyn_cast<IntrinsicInst>(V);
     if (!II)
       return {};
-    switch (II->getIntrinsicID()) {
-    case Intrinsic::nvvm_read_ptx_sreg_tid_x:
-      return {LaunchValue::ThreadIndex, 0};
-    case Intrinsic::nvvm_read_ptx_sreg_tid_y:
-      return {LaunchValue::ThreadIndex, 1};
-    case Intrinsic::nvvm_read_ptx_sreg_tid_z:
-      return {LaunchValue::ThreadIndex, 2};
-    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
-      return {LaunchValue::BlockIndex, 0};
-    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
-      return {LaunchValue::BlockIndex, 1};
-    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
-      return {LaunchValue::BlockIndex, 2};
-    case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
-      return {LaunchValue::BlockDim, 0};
-    case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
-      return {LaunchValue::BlockDim, 1};
-    case Intrinsic::nvvm_read_ptx_sreg_ntid_z:
-      return {LaunchValue::BlockDim, 2};
-    default:
-      return {};
-    }
+    for (unsigned kind = 0; kind < 3; ++kind)
+      for (unsigned axis = 0; axis < 3; ++axis)
+        if (II->getIntrinsicID() == kSreg[kind][axis])
+          return {kSregValue[kind], (int)axis};
+    return {};
   }
 
   StringRef mathLibrary() const override { return "libdevice"; }
@@ -97,9 +102,9 @@ public:
     StringRef base = name;
     if (!base.consume_front("__nv_"))
       return std::nullopt;
-    if (mathBases().count(base.str()))
+    if (isDeviceMathBase(base))
       return base;
-    if (base.ends_with("f") && mathBases().count(base.drop_back(1).str()))
+    if (base.ends_with("f") && isDeviceMathBase(base.drop_back(1)))
       return base.drop_back(1);
     return StringRef();
   }
@@ -109,9 +114,6 @@ public:
       return std::nullopt;
     std::string libm = retypeLibmFunction(name.drop_front(5), Ty);
     return libm.empty() ? libm : "__nv_" + libm;
-  }
-  bool callsMathLibrary(StringRef op, Type *Ty) const override {
-    return deviceCallsMathLibrary(op, Ty);
   }
   bool needsMathLibrary(Intrinsic::ID ID, Type *Ty) const override {
     switch (ID) {
@@ -153,7 +155,6 @@ public:
 
   bool hasInKernelMatrixRaise() const override { return true; }
 
-  const ProbeABI &probes() const override { return deviceProbes(); }
   StringRef profilerBitcode() const override {
 #ifdef POSEIDON_DEVICE_PROFILER
     return StringRef(reinterpret_cast<const char *>(kDeviceProfiler),
@@ -180,4 +181,59 @@ const Target &nvptxTarget() {
   return T;
 }
 
+namespace nvptx {
+
+static Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
+  Intrinsic::ID id = Intrinsic::lookupIntrinsicID(name.str());
+  if (id == Intrinsic::not_intrinsic)
+    report_fatal_error("resolveWmmaIntrinsic: intrinsic not found: " + name);
+  return id;
+}
+
+Value *emitThreadIndex(IRBuilderBase &B, Module *M, unsigned axis) {
+  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[0][axis]));
+}
+
+Value *emitBlockDim(IRBuilderBase &B, Module *M, unsigned axis) {
+  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[2][axis]));
+}
+
+Barrier declareBarrier(Module *M) {
+  return {Intrinsic::getOrInsertDeclaration(
+              M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
+          {ConstantInt::get(Type::getInt32Ty(M->getContext()), 0)}};
+}
+
+Value *emitRoundToTF32(IRBuilderBase &B, Module *M, Value *x) {
+  // f2tf32.rna gives the i32 bit pattern.
+  Function *f2tf32 =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_f2tf32_rna);
+  return B.CreateBitCast(B.CreateCall(f2tf32, {x}), x->getType());
+}
+
+Wmma declareWmma(Module *M, unsigned m, unsigned n, unsigned k,
+                 StringRef operand, StringRef accumulator, bool bRowMajor) {
+  const std::string shape =
+      ("m" + Twine(m) + "n" + Twine(n) + "k" + Twine(k)).str();
+  const std::string a = operand.str(), d = accumulator.str();
+  const std::string layoutB = bRowMajor ? "row" : "col";
+  // An F16 product names its C/D precision pair; the other operand types
+  // imply theirs and name only themselves.
+  const std::string mmaSuffix = a == "f16" ? d + "." + d : a;
+  Intrinsic::ID loadA = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
+                                             ".load.a.row.stride." + a);
+  Intrinsic::ID loadB = resolveWmmaIntrinsic(
+      "llvm.nvvm.wmma." + shape + ".load.b." + layoutB + ".stride." + a);
+  Intrinsic::ID mma = resolveWmmaIntrinsic(
+      "llvm.nvvm.wmma." + shape + ".mma.row." + layoutB + "." + mmaSuffix);
+  Intrinsic::ID storeD = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
+                                              ".store.d.row.stride." + d);
+  PointerType *genPtrTy = PointerType::get(M->getContext(), /*addrspace=*/0);
+  return {Intrinsic::getOrInsertDeclaration(M, loadA, {genPtrTy}),
+          Intrinsic::getOrInsertDeclaration(M, loadB, {genPtrTy}),
+          Intrinsic::getOrInsertDeclaration(M, mma),
+          Intrinsic::getOrInsertDeclaration(M, storeD, {genPtrTy})};
+}
+
+} // namespace nvptx
 } // namespace poseidon

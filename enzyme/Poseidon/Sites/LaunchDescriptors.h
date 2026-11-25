@@ -37,22 +37,6 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// Payloads of one module compile keyed by the optimized body clone. `Note`
-// must have a `valid` member; an invalid note is not found.
-template <class Note> class NoteMap {
-public:
-  void note(const llvm::Function *body, const Note &n) { notes[body] = n; }
-  std::optional<Note> get(const llvm::Function *body) const {
-    auto it = notes.find(body);
-    if (it == notes.end() || !it->second.valid)
-      return std::nullopt;
-    return it->second;
-  }
-
-private:
-  std::map<const llvm::Function *, Note> notes;
-};
-
 struct Recorded {
   std::string line;
   std::string message;
@@ -167,13 +151,6 @@ void readProfileHeaders(const Options &O, const llvm::Module &M,
                                                 llvm::StringRef header)>
                             use);
 
-// The part of a kernel's mangled name shared with its launch stub: kernel
-// `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.
-llvm::StringRef mangledSuffix(llvm::StringRef mangled);
-
-// Whether F is the kernel named `kernelName` or that kernel's launch stub.
-bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
-
 // A value the host knows at the launch: a parameter of the optimized body, or a
 // field of an aggregate a parameter passes by value (the captures of a lambda a
 // kernel takes by value).
@@ -204,12 +181,11 @@ constexpr llvm::StringLiteral kByValueParam = "poseidon-by-value";
 // aggregate parameter); an invalid ref otherwise.
 LaunchRef launchFieldOf(const llvm::Value *v);
 
-// The launch value a pointer is derived from through GEP/cast chains: a
+// The launch value a pointer is derived from (its underlying object): a
 // parameter, or a pointer field of a by-value aggregate parameter.
 LaunchRef tracePointerRoot(const llvm::Value *v);
 
-// Walk GEP/bitcast/addrspacecast chains back to a Function Argument (-1 if
-// none).
+// The parameter a pointer is derived from (its underlying object), -1 if none.
 int traceToArgIndex(const llvm::Value *v);
 
 } // namespace poseidon

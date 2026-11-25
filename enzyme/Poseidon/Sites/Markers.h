@@ -15,7 +15,6 @@
 #define POSEIDON_MARKERS_H
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -80,28 +79,26 @@ struct CallArguments {
   std::optional<double> tau;
 };
 
-// The one rule for every call form: the arguments `call` passes for the
-// parameters of `fn` (all of a call through an identity, those after the
-// function of a marker call) are an explicit list when one of them is an
-// activity marker (an enzyme_* name, or a poseidon_* name other than
-// poseidon_tau), and an automatic list otherwise. poseidon_tau and the
-// constant after it give the call's accuracy target in either list; the rest
-// of an automatic list are fn's own arguments. An explicit list is read by
-// parseMarker. None, with an error at `call`, when the list is both or
-// neither: a list `identity` says fn takes as written that carries a marker
-// name, a list it says fn does not take that carries neither an activity
-// marker nor poseidon_tau, an automatic list of a marker call or of a call fn
-// does not take whose own arguments are not as many as fn's parameters, or an
-// automatic list whose poseidon_tau has no constant after it or comes twice.
+// The arguments `call` passes for the parameters of `fn` (all of a call
+// through an identity, those after the function of a marker call) are an
+// explicit list when one of them is an activity marker (an enzyme_* name, or a
+// poseidon_* name other than poseidon_tau), and an automatic list otherwise.
+// poseidon_tau and the constant after it give the accuracy target of a marker
+// call; the rest of an automatic list are fn's own arguments. An explicit list
+// is read by parseMarker. None, with an error at `call`, when the list cannot
+// be read as either.
 std::optional<CallArguments> readArgumentList(llvm::CallBase *call,
                                               const llvm::Function &fn,
                                               Identity identity);
 
-// Inlines the calls of `F` that `pick` selects, in instruction order, and again
-// in what that inlined, for a bounded number of rounds; returns how many calls
-// it inlined.
-unsigned inlineCallsWhile(llvm::Function &F,
-                          llvm::function_ref<bool(llvm::CallBase &)> pick);
+// Whether `tau` is an accuracy target: positive and finite.
+bool isAccuracyTarget(double tau);
+
+// The accuracy target `value` gives a call of `fn`; none, with an error at
+// `call`, unless it is a floating-point constant that isAccuracyTarget.
+std::optional<double> readTarget(llvm::CallBase *call, llvm::Value *value,
+                                 const llvm::Function &fn);
+
 unsigned foldEnzymeGenerated(llvm::Function &body);
 llvm::Function *
 asLeftByPipeline(llvm::Function &body,

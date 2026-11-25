@@ -220,6 +220,14 @@ __poseidon_device_math(void) {
 #undef POSEIDON_KEEP
 #endif
 
+// Tells the plugin that this device compile defines POSEIDON_DEVICE_MATH,
+// which it requires of a device module with a site under a profile action.
+#if defined(POSEIDON_DEVICE_MATH) &&                                           \
+    (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
+extern "C" inline __attribute__((device, used)) void
+__poseidon_device_math_defined(void) {}
+#endif
+
 #undef POSEIDON_SITE_HELPER
 #undef POSEIDON_SITE_TARGETS
 

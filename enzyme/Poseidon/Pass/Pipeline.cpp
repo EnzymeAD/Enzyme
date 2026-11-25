@@ -11,18 +11,17 @@
 #include "Driver.h"
 #include "Flags.h"
 #include "IR/Utils.h"
-#include "Profile/DeviceProfile.h"
+#include "Profile/Instrument.h"
 #include "Profile/ProfileRead.h"
 #include "Profile/SiteProfile.h"
 #include "Session.h"
 #include "Sites/Annotations.h"
+#include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/HostSites.h"
-#include "Sites/KernelSites.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/LaunchStubs.h"
 #include "Sites/Markers.h"
-#include "Targets/DeviceMath.h"
+#include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 #include "Twin.h"
@@ -308,7 +307,7 @@ struct LatePass : PassParent<LatePass> {
         instrumented |= profileSite(S, CI, clones, nextSiteId);
       setNextSiteId(M, nextSiteId);
       if (instrumented)
-        injectBlockDimProbes(M);
+        injectBlockDimProbes(M, O.Diagnostics.Print);
       markers.clear();
       collectDeferredMarkers(M, markers);
     }
@@ -360,18 +359,21 @@ struct LatePass : PassParent<LatePass> {
 // is handed to the kernels that call it while those calls still exist.
 struct HostSitePass : PassParent<HostSitePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    const Options &O = sessionOf(M, MAM).Opts;
+    Session &S = sessionOf(M, MAM);
+    const Options &O = S.Opts;
     bool changed = false;
-    if (Target::of(M).isDevice())
-      changed = O.Profiling.profileAction() && hasSite(O, M)
-                    ? keepDeviceMath(M)
-                    : releaseDeviceMath(M);
+    if (Target::of(M).isDevice()) {
+      const bool active = O.Profiling.profileAction() && hasSite(O, M);
+      if (active && hasHeaderSite(M))
+        requireDeviceMathMacro(M);
+      changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
+    }
     changed |= lowerPerCallSites(O, M);
     changed |= propagateDeviceSites(O, M);
     changed |= outlineHostSites(O, M);
     changed |= registerDeviceProfileTable(M, O.Profiling.ProfileGenerate);
     if (!O.Profiling.profileAction())
-      changed |= leaveSitesAsWritten(O, M);
+      changed |= leaveSitesAsWritten(S, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -427,6 +429,8 @@ struct FinalizePass : PassParent<FinalizePass> {
     if (O.Profiling.ProfileGenerate && T.allocatesAddressTakenShared())
       dropSiteAnnotations(M);
     linkDeviceProfiler(M, O.Profiling.ProfileGenerate);
+    if (O.Profiling.ProfileGenerate)
+      requireSharedMemoryLimit(M);
     requireDeviceCallees(M, O.Profiling.ProfileGenerate);
     // Written after every site is processed and every check that can stop the
     // compile has passed, so a host half never reads the manifest of a device
@@ -483,7 +487,8 @@ struct IfSitePass : PassParent<IfSitePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     const Options &O = sessionOf(M, MAM).Opts;
     if (!hasSite(O, M))
-      return O.Profiling.ProfileGenerate && injectHostProfilerInit(M)
+      return O.Profiling.ProfileGenerate &&
+                     injectHostProfilerInit(M, O.Diagnostics.Print)
                  ? PreservedAnalyses::none()
                  : PreservedAnalyses::all();
     PreservedAnalyses PA = PreservedAnalyses::all();

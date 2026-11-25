@@ -19,7 +19,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -36,16 +35,18 @@
 
 extern char **environ;
 
-class ProfileInfo {
+class ProfileInfo : public poseidon::ProfileRecord {
 public:
-  double minRes = std::numeric_limits<double>::max();
-  double maxRes = std::numeric_limits<double>::lowest();
-  std::vector<double> minOperands;
-  std::vector<double> maxOperands;
-  double sumValue = 0.0;
-  double sumSens = 0.0;
-  double sumGrad = 0.0;
-  unsigned exec = 0;
+  ProfileInfo()
+      : ProfileRecord{std::numeric_limits<double>::max(),
+                      std::numeric_limits<double>::lowest(),
+                      0.0,
+                      0.0,
+                      0.0,
+                      0,
+                      {},
+                      {},
+                      {}} {}
 
   void updateValue(double value, const double *operands, size_t numOperands) {
     ++exec;
@@ -53,18 +54,23 @@ public:
     if (minOperands.empty()) {
       minOperands.resize(numOperands, std::numeric_limits<double>::max());
       maxOperands.resize(numOperands, std::numeric_limits<double>::lowest());
+      minMagOperands.resize(numOperands, 0.0);
     }
     for (size_t i = 0; i < numOperands; ++i) {
-      if (!std::isnan(operands[i])) {
-        minOperands[i] = std::min(minOperands[i], operands[i]);
-        maxOperands[i] = std::max(maxOperands[i], operands[i]);
-      }
+      double op = operands[i];
+      if (std::isnan(op))
+        continue;
+      minOperands[i] = std::min(minOperands[i], op);
+      maxOperands[i] = std::max(maxOperands[i], op);
+      if (op != 0.0)
+        minMagOperands[i] = minMagOperands[i] == 0.0
+                                ? std::fabs(op)
+                                : std::min(minMagOperands[i], std::fabs(op));
     }
 
     if (!std::isnan(value)) {
       minRes = std::min(minRes, value);
       maxRes = std::max(maxRes, value);
-      sumValue += value;
     }
   }
 
@@ -72,6 +78,7 @@ public:
     if (!std::isnan(grad) && !std::isnan(value) && !std::isinf(grad) &&
         !std::isinf(value)) {
       sumGrad += grad;
+      sumAbsGrad += std::fabs(grad);
       sumSens += std::fabs(grad * value);
     }
   }
@@ -150,9 +157,6 @@ public:
     if (!out.is_open())
       profileOpenFatal(outputPath, functionName.c_str());
 
-    out << std::scientific
-        << std::setprecision(std::numeric_limits<double>::max_digits10);
-
     auto hdr = staticHeaders().find(functionName);
     if (hdr != staticHeaders().end())
       out << hdr->second;
@@ -161,22 +165,8 @@ public:
     if (profileInfo.empty())
       out << kProfileNeverExecuted << "\n";
 
-    for (const auto &pair : profileInfo) {
-      const auto i = pair.first;
-      const auto &info = pair.second;
-      out << i << "\n";
-      out << "\tMinRes = " << info.minRes << "\n";
-      out << "\tMaxRes = " << info.maxRes << "\n";
-      out << "\tSumValue = " << info.sumValue << "\n";
-      out << "\tSumSens = " << info.sumSens << "\n";
-      out << "\tSumGrad = " << info.sumGrad << "\n";
-      out << "\tExec = " << info.exec << "\n";
-      out << "\tNumOperands = " << info.minOperands.size() << "\n";
-      for (size_t i = 0; i < info.minOperands.size(); ++i) {
-        out << "\tOperand[" << i << "] = [" << info.minOperands[i] << ", "
-            << info.maxOperands[i] << "]\n";
-      }
-    }
+    for (const auto &[slot, info] : profileInfo)
+      writeProfileRecord(out, slot, info);
 
     out << "\n";
     out.close();

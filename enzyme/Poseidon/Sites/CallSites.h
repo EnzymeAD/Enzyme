@@ -1,4 +1,4 @@
-//===- KernelSites.h - site kernels and device call sites -----------------===//
+//===- CallSites.h - calls of __poseidon_optimize -------------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,15 +6,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// A site kernel made a wrapper around its own body, and a __poseidon_optimize
-// call in device code made a marker over the copy of the function it calls.
+// __poseidon_optimize on a call, in host and device code: the call made a call
+// of a copy of the function made for it alone, which is a site, and in device
+// code a marker over that copy.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_KERNEL_SITES_H
-#define POSEIDON_KERNEL_SITES_H
-
-#include "llvm/ADT/StringRef.h"
+#ifndef POSEIDON_CALL_SITES_H
+#define POSEIDON_CALL_SITES_H
 
 #include <cstdint>
 #include <optional>
@@ -22,7 +21,6 @@
 
 namespace llvm {
 class Argument;
-class CallInst;
 class Function;
 class Module;
 class Value;
@@ -30,9 +28,22 @@ class Value;
 
 namespace poseidon {
 
-void markOutlineTransparent(llvm::Function *body);
-llvm::CallInst *outlineKernelBody(llvm::Function &K, llvm::Function *&bodyOut);
+struct Options;
+
+bool lowerPerCallSites(const Options &O, llvm::Module &M);
+bool lowerDeviceCallSites(llvm::Module &M);
+
+// The object of `caller` that `p` points into, through the address arithmetic
+// its shadow can repeat, when the pass knows the object's whole extent: a
+// static alloca, or an aggregate `caller` takes by value (byval). Null if there
+// is none. (An AMDGPU kernel takes an aggregate by reference into its constant
+// argument segment, and the frontend copies it into an alloca once its address
+// is taken.)
 llvm::Value *localObject(llvm::Value *p, const llvm::Function *caller);
+
+// A pointer argument that points into no object: null, or undefined because the
+// call's copy never reads it and the optimizer stopped passing the object (the
+// address of an empty functor).
 bool pointsNowhere(llvm::Value *p);
 
 // What a function reaches through one of its pointer parameters, in bytes from
@@ -51,10 +62,6 @@ struct PointerExtent {
 std::optional<PointerExtent> accessedExtent(llvm::Argument &A,
                                             std::string &why);
 
-std::string perCallSiteName(llvm::StringRef symbol);
-bool lowerDeviceCallSites(llvm::Module &M);
-void inlineKernelBody(llvm::CallInst *call, llvm::Function *body);
-
 } // namespace poseidon
 
-#endif // POSEIDON_KERNEL_SITES_H
+#endif // POSEIDON_CALL_SITES_H

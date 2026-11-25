@@ -11,7 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Peers.h"
+#include "MathLibrary.h"
+#include "Target.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Type.h"
@@ -48,19 +49,6 @@ public:
                                                 Type *Ty) const override {
     return retypeLibmFunction(name, Ty);
   }
-
-  const ProbeABI &probes() const override {
-    static const ProbeABI P{"poseidonLogValue",
-                            "poseidonLogGrad",
-                            /*PerturbF64=*/"",
-                            /*PerturbF32=*/"",
-                            /*BlockDims=*/"",
-                            /*PublishStatic=*/"",
-                            "poseidonRegisterProfileStatic",
-                            "POSEIDON_PROFILE_RUNTIME_VAR",
-                            /*OperandCountBits=*/32};
-    return P;
-  }
 };
 
 } // namespace
@@ -68,6 +56,18 @@ public:
 const Target &hostTarget() {
   static const HostTarget T{};
   return T;
+}
+
+const ProbeABI &hostProbes() {
+  static const ProbeABI P{"poseidonLogValue",
+                          "poseidonLogGrad",
+                          /*PerturbF64=*/"",
+                          /*PerturbF32=*/"",
+                          /*BlockDims=*/"",
+                          /*PublishStatic=*/"",
+                          "poseidonRegisterProfileStatic",
+                          "POSEIDON_PROFILE_RUNTIME_VAR"};
+  return P;
 }
 
 } // namespace poseidon

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare two Poseidon profile directories.
 
-Every field except the four atomic sums must match exactly (header lines,
+Every field except the three atomic sums must match exactly (header lines,
 MinRes, MaxRes, Exec, NumOperands, Operand ranges); the sums are compared by
 relative difference, whose maximum is printed. Exit status 1 on any exact
 mismatch or a missing/extra file, and with --sum-tol T on a sum whose relative
@@ -12,7 +12,7 @@ a program built as one unit and the same program built as several).
 import os
 import sys
 
-SUMS = ("SumValue", "SumSens", "SumGrad", "SumAbsGrad")
+SUMS = ("SumSens", "SumGrad", "SumAbsGrad")
 
 
 def parse(path, ignore=()):

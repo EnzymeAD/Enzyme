@@ -304,58 +304,56 @@ void attachProfile(
     ArrayRef<Subgraph> subgraphs) {
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
-      if (auto MD = op->getMetadata("poseidon.prof.idx")) {
-        if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
-          size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
-          auto it = profileMap.find(idx);
+      size_t idx;
+      if (tryReadProfIdxMetadata(op, idx)) {
+        auto it = profileMap.find(idx);
 
-          if (it != profileMap.end()) {
-            const auto &profileInfo = it->second;
+        if (it != profileMap.end()) {
+          const auto &profileInfo = it->second;
 
-            auto node = valueToNodeMap[op];
-            node->sens = profileInfo.sumSens;
-            node->grad = profileInfo.sumGrad;
-            node->executions = profileInfo.exec;
-            node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
+          auto node = valueToNodeMap[op];
+          node->sens = profileInfo.sumSens;
+          node->grad = profileInfo.sumGrad;
+          node->executions = profileInfo.exec;
+          node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
 
-            if (O.Diagnostics.Print) {
-              llvm::errs() << "Range of " << *op << " is ["
-                           << node->getLowerBound() << ", "
-                           << node->getUpperBound() << "]\n";
-              llvm::errs() << "Sensitivity score of " << *op
-                           << " is: " << node->sens << '\n'
-                           << "Gradient sum of " << *op << " is: " << node->grad
-                           << '\n'
-                           << "Execution count of " << *op
-                           << " is: " << node->executions << '\n';
-            }
+          if (O.Diagnostics.Print) {
+            llvm::errs() << "Range of " << *op << " is ["
+                         << node->getLowerBound() << ", "
+                         << node->getUpperBound() << "]\n";
+            llvm::errs() << "Sensitivity score of " << *op
+                         << " is: " << node->sens << '\n'
+                         << "Gradient sum of " << *op << " is: " << node->grad
+                         << '\n'
+                         << "Execution count of " << *op
+                         << " is: " << node->executions << '\n';
+          }
 
-            auto operands =
-                isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
+          auto operands =
+              isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
 
-            for (const auto &operand_ : enumerate(operands)) {
-              auto &operand = operand_.value();
-              auto i = operand_.index();
+          for (const auto &operand_ : enumerate(operands)) {
+            auto &operand = operand_.value();
+            auto i = operand_.index();
 
-              if (i < profileInfo.minOperands.size()) {
-                auto operandNode = valueToNodeMap[operand];
-                operandNode->updateBounds(profileInfo.minOperands[i],
-                                          profileInfo.maxOperands[i]);
-                if (O.Diagnostics.Print) {
-                  llvm::errs() << "Range of " << *operand << " is ["
-                               << operandNode->getLowerBound() << ", "
-                               << operandNode->getUpperBound() << "]\n";
-                }
+            if (i < profileInfo.minOperands.size()) {
+              auto operandNode = valueToNodeMap[operand];
+              operandNode->updateBounds(profileInfo.minOperands[i],
+                                        profileInfo.maxOperands[i]);
+              if (O.Diagnostics.Print) {
+                llvm::errs() << "Range of " << *operand << " is ["
+                             << operandNode->getLowerBound() << ", "
+                             << operandNode->getUpperBound() << "]\n";
               }
             }
-          } else {
-            // Under loose coverage buildSubgraphs left the operation out.
-            reportUserError(*op, "the profile does not cover this operation: "
-                                 "the profiling run never executed it. "
-                                 "Profile an input that runs it, or pass "
-                                 "-poseidon-loose-coverage to leave it as "
-                                 "written.");
           }
+        } else {
+          // Under loose coverage buildSubgraphs left the operation out.
+          reportUserError(*op, "the profile does not cover this operation: "
+                               "the profiling run never executed it. "
+                               "Profile an input that runs it, or pass "
+                               "-poseidon-loose-coverage to leave it as "
+                               "written.");
         }
       }
     }

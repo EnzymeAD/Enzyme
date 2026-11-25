@@ -64,7 +64,7 @@
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/joint/cm_sm_120_fma.herbie.rkt
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
 ; RUN: cp %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt %t/joint/exact/
-; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
+; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-print -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
 ; RUN: FileCheck --check-prefix=JOINT-PRUNE-BUDGETS %s < %t/joint/prune/budgets.txt
 ; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-EXACT %s
 ; RUN: FileCheck --check-prefix=JOINT-EXACT-BUDGETS %s < %t/joint/exact/budgets.txt

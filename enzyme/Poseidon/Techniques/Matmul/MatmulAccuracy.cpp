@@ -19,7 +19,7 @@
 #include "MatmulInternal.h"
 #include "MatmulSimulation.h"
 #include "Pass/Session.h"
-#include "Sites/Annotations.h"
+#include "Sites/Canonicalize.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"

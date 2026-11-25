@@ -10,7 +10,7 @@
 #include "Core/ExpansionRoutines.h"
 #include "Core/Options.h"
 #include "IR/Utils.h"
-#include "Targets/DeviceMath.h"
+#include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/ArrayRef.h"

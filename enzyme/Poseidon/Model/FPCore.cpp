@@ -8,8 +8,7 @@
 
 #include "FPCore.h"
 #include "FPFormat.h"
-#include "Targets/DeviceMath.h"
-#include "Targets/MathFunctions.h"
+#include "Targets/MathLibrary.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"

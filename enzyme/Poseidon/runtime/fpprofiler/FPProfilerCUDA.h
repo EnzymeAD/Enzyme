@@ -93,7 +93,6 @@ struct GPUProfileSlot {
   uint64_t minOperands[POSEIDON_MAX_OPERANDS];
   uint64_t maxOperands[POSEIDON_MAX_OPERANDS];
   uint64_t minMagOperands[POSEIDON_MAX_OPERANDS]; // smallest nonzero |operand|
-  double sumValue;
   double sumGrad;
   // Sum of |gradient|: the signed sum cancels for a value whose adjoint
   // alternates in sign across executions, the magnitude sum cannot.

@@ -61,6 +61,11 @@ define dso_local ptx_kernel void @fms_kernel(ptr noundef readonly captures(none)
   ret void
 }
 
+; What poseidon.h defines in device code under POSEIDON_DEVICE_MATH.
+define linkonce_odr void @__poseidon_device_math_defined() {
+  ret void
+}
+
 declare double @llvm.fmuladd.f64(double, double, double) #1
 declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #1
 declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #1

@@ -17,7 +17,6 @@
 #include "Pass/Session.h"
 #include "Report.h"
 #include "SiteTable.h"
-#include "Sites/Annotations.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"

@@ -16,7 +16,8 @@ with open(profile_path, "w") as profile:
     profile.write(f"CanonicalHash = {CANONICAL_HASH}\n")
     for i in range(LENGTH):
         profile.write(
-            f"{i}\n\tMinRes = 1.0\n\tMaxRes = 4.0\n\tSumValue = 233.0\n"
-            "\tSumSens = 100.0\n\tSumGrad = 100.0\n\tExec = 100\n"
-            "\tNumOperands = 2\n\tOperand[0] = [1.0, 2.0]\n"
-            "\tOperand[1] = [1.0, 2.0]\n")
+            f"{i}\n\tMinRes = 1.0\n\tMaxRes = 4.0\n"
+            "\tSumSens = 100.0\n\tSumGrad = 100.0\n\tSumAbsGrad = 100.0\n"
+            "\tExec = 100\n\tNumOperands = 2\n"
+            "\tOperand[0] = [1.0, 2.0, 0.0]\n"
+            "\tOperand[1] = [1.0, 2.0, 0.0]\n")

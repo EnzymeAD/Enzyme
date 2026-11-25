@@ -58,7 +58,6 @@ struct ProbeABI {
   llvm::StringRef PublishStatic, RegisterStatic;
   // The variable that links the host runtime's writer into the program.
   llvm::StringRef RuntimeAnchor;
-  unsigned OperandCountBits;
   // (site name, argument, argument): stops the profiling run at a device call
   // site whose arguments reach overlapping memory the pass gave separate
   // shadows.
@@ -115,9 +114,7 @@ public:
   retypeMathFunction(llvm::StringRef name, llvm::Type *Ty) const = 0;
   // Whether a rewrite writes Herbie's operator `op` at `Ty` as a call of the
   // library rather than as LLVM's intrinsic or libm call.
-  virtual bool callsMathLibrary(llvm::StringRef op, llvm::Type *Ty) const {
-    return false;
-  }
+  virtual bool callsMathLibrary(llvm::StringRef op, llvm::Type *Ty) const;
   // Whether the target selects the intrinsic `ID` at `Ty` only as a call of
   // the library's function.
   virtual bool needsMathLibrary(llvm::Intrinsic::ID ID, llvm::Type *Ty) const {
@@ -139,8 +136,9 @@ public:
   // its kernel.
   virtual bool hasInKernelMatrixRaise() const { return false; }
 
-  // The profiler runtime.
-  virtual const ProbeABI &probes() const = 0;
+  // The profiler runtime: the host profiler, or the device profiler both GPU
+  // targets share.
+  const ProbeABI &probes() const;
   // The device profiler, as bitcode this build carries; empty if it carries
   // none for this target.
   virtual llvm::StringRef profilerBitcode() const { return ""; }
@@ -169,6 +167,13 @@ llvm::Intrinsic::ID approxSqrtF32Of(const llvm::CallInst &CI);
 
 // The launch geometry `V` reads, in the target of its module.
 LaunchGeometry launchGeometryOf(const llvm::Value *V);
+
+// For the definitions in Targets/ only.
+const Target &hostTarget();
+const Target &nvptxTarget();
+const Target &amdgpuTarget();
+const ProbeABI &hostProbes();
+const ProbeABI &deviceProbes();
 
 } // namespace poseidon
 

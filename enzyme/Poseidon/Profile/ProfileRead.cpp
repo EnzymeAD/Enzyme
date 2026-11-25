@@ -1,73 +1,38 @@
-//===- ProfileRead.cpp - Profiling utilities for Poseidon -----------------===//
+//===- ProfileRead.cpp - reading the profile of a site --------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-//
-// This file implements profiling-related utilities for the Poseidon
-// optimization pass.
-//
-//===----------------------------------------------------------------------===//
 
 #include "ProfileRead.h"
 #include "IR/Utils.h"
-#include "Instrument.h"
-#include "Targets/OffloadRuntime.h"
-#include "Targets/Target.h"
 
 #include "llvm/ADT/SmallString.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstIterator.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/Metadata.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Support/ErrorHandling.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/IR/Function.h"
+#include "llvm/Support/LineIterator.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
-#include <cerrno>
+#include <array>
 #include <cmath>
-#include <cstdlib>
-#include <fstream>
-#include <regex>
+#include <memory>
 #include <unordered_map>
 
 using namespace llvm;
 
 namespace poseidon {
 
-bool tryReadProfIdxMetadata(const Instruction *I, size_t &out) {
-  if (!I)
-    return false;
-  MDNode *md = I->getMetadata("poseidon.prof.idx");
-  if (!md)
-    return false;
-  out = cast<ConstantInt>(
-            cast<ConstantAsMetadata>(md->getOperand(0).get())->getValue())
-            ->getZExtValue();
-  return true;
-}
-
-size_t readProfIdxMetadata(const Instruction *I) {
-  if (!I)
-    report_fatal_error("readProfIdxMetadata: null instruction");
-  size_t out;
-  if (!tryReadProfIdxMetadata(I, out))
-    report_fatal_error("instruction missing !poseidon.prof.idx metadata "
-                       "(forgot to run profgen?)");
-  return out;
-}
-
 static constexpr double kSensFloorRatio = 1e-6;
 static constexpr double kSensNullRatio = 1e-9;
 
 unsigned applySensitivityFloor(ProfileMap &profileMap,
-                               llvm::StringRef functionName) {
+                               llvm::StringRef functionName, bool print) {
   if (profileMap.empty())
     return 0;
 
@@ -91,7 +56,7 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
       continue;
     const double perExec = p.sumSens / (double)p.exec;
     const double ratio = perExec / ref;
-    if (ratio < kSensNullRatio) {
+    if (print && ratio < kSensNullRatio) {
       llvm::errs()
           << "Poseidon: profiled instruction " << kv.first << " of "
           << functionName << " has per-execution sensitivity " << perExec
@@ -108,12 +73,11 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
     if (p.weight() < floorW) {
       p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
-      if (p.sumAbsGrad >= 0.0)
-        p.sumAbsGrad = floorW;
+      p.sumAbsGrad = floorW;
       ++floored;
     }
   }
-  if (floored)
+  if (print && floored)
     llvm::errs() << "Poseidon: sensitivity floor raised the accuracy weight of "
                  << floored << " of " << profileMap.size()
                  << " profiled instruction(s) in " << functionName << " to "
@@ -123,7 +87,7 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
 
 void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                          StringRef fileName, StringRef canonicalHash,
-                         const Function &F) {
+                         const Function &F, bool print) {
   const StringRef functionName = F.getName();
   auto refuse = [&](const Twine &why) {
     reportUserError(F, F.getSubprogram(), why);
@@ -134,13 +98,13 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     sys::path::append(path, fileName);
     ProfileMap out;
     FunctionProfileHeader header;
-    parseProfileFile(path.str().str(), F, out, &header);
+    parseProfileFile(path.str().str(), F, out, header);
     double total = 0.0;
     for (const auto &kv : out)
       total += kv.second.sumSens;
     if (!(total > 0.0) || !std::isfinite(total))
       refuse(Twine("output profile ") + path + " of " + functionName +
-             " is missing or carries no sensitivity; re-run profile "
+             " carries no sensitivity; re-run profile "
              "generation with that output seeded.");
     if (!canonicalHash.empty() && header.canonicalHash != canonicalHash)
       refuse(Twine("output profile ") + path +
@@ -164,212 +128,198 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
   for (auto &kv : profileMap) {
     ProfileInfo &p = kv.second;
     p.sumGrad = grad[kv.first];
-    if (p.sumAbsGrad >= 0.0)
-      p.sumAbsGrad = p.sumGrad;
+    p.sumAbsGrad = p.sumGrad;
     p.sumSens = sens[kv.first];
   }
-  errs() << "[poseidon] " << functionName << ": accuracy weighted per output ("
-         << dirs.size() << " output profiles)\n";
+  if (print)
+    errs() << "[poseidon] " << functionName
+           << ": accuracy weighted per output (" << dirs.size()
+           << " output profiles)\n";
+}
+
+namespace {
+
+// One profile file read line by line; every error names the file and the line
+// and stops the compile at the site.
+class ProfileParser {
+public:
+  ProfileParser(const MemoryBuffer &Buffer, StringRef Path, const Function &F)
+      : Lines(Buffer, /*SkipBlanks=*/true), Path(Path), F(F) {}
+
+  void parse(ProfileMap &Records, FunctionProfileHeader &Header);
+
+private:
+  line_iterator Lines;
+  StringRef Path;
+  const Function &F;
+  int64_t LineNo = 0;
+
+  [[noreturn]] void refuse(const Twine &What) {
+    reportUserError(F, F.getSubprogram(),
+                    Path + ":" + Twine(LineNo) + ": " + What +
+                        "; re-run profile generation.");
+  }
+
+  // The next line, trimmed; none at the end of the file.
+  std::optional<StringRef> next() {
+    if (Lines.is_at_end())
+      return std::nullopt;
+    LineNo = Lines.line_number();
+    StringRef Line = (*Lines).trim();
+    ++Lines;
+    return Line;
+  }
+
+  template <typename T> T integer(StringRef Text, const Twine &Field) {
+    T Out;
+    if (Text.getAsInteger(10, Out))
+      refuse(Field + " " + Text +
+             (all_of(Text, isDigit) && !Text.empty() ? " is out of range"
+                                                     : " is not a number"));
+    return Out;
+  }
+
+  double real(StringRef Text, const Twine &Field) {
+    double Out;
+    if (Text.getAsDouble(Out))
+      refuse(Field + " " + Text + " is not a number");
+    return Out;
+  }
+
+  template <typename T>
+  void integers(StringRef Text, const Twine &Field, MutableArrayRef<T> Out) {
+    SmallVector<StringRef, 3> Parts;
+    Text.split(Parts, ' ', -1, /*KeepEmpty=*/false);
+    if (Parts.size() != Out.size())
+      refuse(Field + " " + Text + " is not " + Twine(Out.size()) + " numbers");
+    for (auto [Part, To] : zip(Parts, Out))
+      To = integer<T>(Part, Field);
+  }
+
+  // The value of the next line, which is the `Key` line of the record of
+  // `Slot`.
+  StringRef field(size_t Slot, StringRef Key) {
+    std::optional<StringRef> Line = next();
+    if (!Line)
+      refuse("the record of slot " + Twine(Slot) + " ends before its " + Key +
+             " line");
+    auto [K, V] = Line->split(" = ");
+    if (K != Key)
+      refuse("expected the " + Key + " line of slot " + Twine(Slot));
+    return V;
+  }
+
+  void header(StringRef Key, StringRef Value, FunctionProfileHeader &Header);
+  void record(size_t Slot, ProfileInfo &Info);
+};
+
+} // namespace
+
+void ProfileParser::header(StringRef Key, StringRef Value,
+                           FunctionProfileHeader &Header) {
+  if (Key == "MaxBlockDims") {
+    integers<uint32_t>(Value, Key, Header.maxBlockDim);
+  } else if (Key == "MaxGridDims") {
+    integers<uint32_t>(Value, Key, Header.maxGridDim);
+  } else if (Key == "LaunchCount") {
+    Header.launchCount = integer<uint64_t>(Value, Key);
+  } else if (Key == "RedTrip") {
+    size_t Trip[2];
+    integers<size_t>(Value, Key, Trip);
+    if (Trip[1] > std::numeric_limits<unsigned>::max())
+      refuse("RedTrip trip count " + Twine(Trip[1]) + " is out of range");
+    Header.redTrip[Trip[0]] = Trip[1];
+  } else if (Key == kProfileKeyCanonicalHash) {
+    if (Value.empty() || !all_of(Value, isHexDigit))
+      refuse(Twine(Key) + " " + Value + " is not a hexadecimal digest");
+    Header.canonicalHash = Value.str();
+  } else if (Key == kProfileKeySiteId) {
+    // The probe driver's; checked so that the driver reads it back.
+    (void)integer<int>(Value, Key);
+  } else if (Key == kProfileKeyKappa) {
+    Header.kappa = real(Value, Key);
+    Header.hasKappa = true;
+  } else if (Key == kProfileKeyKappaMark) {
+    if (Value.empty() || Value.contains(' '))
+      refuse(Twine(Key) + " " + Value + " is not one word");
+    Header.kappaMark = Value.str();
+  } else if (Key == kProfileKeyExecuted) {
+    if (Value != "0")
+      refuse(Twine(Key) + " " + Value + " is not 0");
+    Header.executed = false;
+  } else {
+    refuse("'" + Key + "' is not a header key of a profile");
+  }
+}
+
+void ProfileParser::record(size_t Slot, ProfileInfo &Info) {
+  Info.minRes = real(field(Slot, "MinRes"), "MinRes");
+  Info.maxRes = real(field(Slot, "MaxRes"), "MaxRes");
+  Info.sumSens = real(field(Slot, "SumSens"), "SumSens");
+  Info.sumGrad = real(field(Slot, "SumGrad"), "SumGrad");
+  Info.sumAbsGrad = real(field(Slot, "SumAbsGrad"), "SumAbsGrad");
+  Info.exec = integer<uint64_t>(field(Slot, "Exec"), "Exec");
+  unsigned NumOperands =
+      integer<unsigned>(field(Slot, "NumOperands"), "NumOperands");
+  // Read before the vectors are sized, so that a count the file does not hold
+  // is refused rather than allocated.
+  SmallVector<std::array<double, 3>, 2> Operands;
+  for (unsigned I = 0; I < NumOperands; ++I) {
+    SmallString<16> Key;
+    (Twine("Operand[") + Twine(I) + "]").toVector(Key);
+    StringRef Value = field(Slot, Key);
+    SmallVector<StringRef, 3> Parts;
+    if (!Value.consume_front("[") || !Value.consume_back("]") ||
+        (Value.split(Parts, ", "), Parts.size() != 3))
+      refuse(Key + " of slot " + Twine(Slot) +
+             " is not [minimum, maximum, smallest nonzero magnitude]");
+    std::array<double, 3> &Range = Operands.emplace_back();
+    for (unsigned J = 0; J < 3; ++J)
+      Range[J] = real(Parts[J], Key);
+  }
+  for (const std::array<double, 3> &Range : Operands) {
+    Info.minOperands.push_back(Range[0]);
+    Info.maxOperands.push_back(Range[1]);
+    Info.minMagOperands.push_back(Range[2]);
+  }
+}
+
+void ProfileParser::parse(ProfileMap &Records, FunctionProfileHeader &Header) {
+  while (std::optional<StringRef> Line = next()) {
+    if (all_of(*Line, isDigit)) {
+      if (!Header.executed)
+        refuse("the profile says its site was never executed and records "
+               "executions of it");
+      size_t Slot = integer<size_t>(*Line, "slot");
+      if (!Records.emplace(Slot, ProfileInfo()).second)
+        refuse("slot " + Twine(Slot) + " is recorded twice");
+      record(Slot, Records[Slot]);
+      continue;
+    }
+    if (!Records.empty())
+      refuse("'" + *Line + "' follows the records");
+    auto [Key, Value] = Line->split(" = ");
+    if (Key == *Line)
+      refuse("'" + *Line + "' is neither a slot index nor 'key = value'");
+    header(Key, Value, Header);
+  }
 }
 
 void parseProfileFile(const std::string &profilePath, const Function &F,
-                      ProfileMap &profileMap, FunctionProfileHeader *header) {
+                      ProfileMap &profileMap, FunctionProfileHeader &header) {
   profileMap.clear();
-  if (header)
-    *header = FunctionProfileHeader{};
-  std::ifstream file(profilePath);
-  if (!file.is_open()) {
-    llvm::errs() << "Warning: Could not open profile file: " << profilePath
-                 << '\n';
-    return;
-  }
-
-  std::regex indexPattern(R"(^(\d+)$)");
-  std::regex blockDimsPattern(
-      R"(^\s*MaxBlockDims\s*=\s*(\d+)\s+(\d+)\s+(\d+))");
-  std::regex gridDimsPattern(R"(^\s*MaxGridDims\s*=\s*(\d+)\s+(\d+)\s+(\d+))");
-  std::regex launchCountPattern(R"(^\s*LaunchCount\s*=\s*(\d+))");
-  std::regex redTripPattern(R"(^\s*RedTrip\s*=\s*(\d+)\s+(\d+))");
-  std::regex canonicalHashPattern(R"(^\s*CanonicalHash\s*=\s*([0-9a-fA-F]+))");
-  std::regex siteIdPattern(R"(^\s*SiteId\s*=\s*(\d+))");
-  static const std::string kReal =
-      R"(([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))";
-  std::regex kappaPattern(R"(^\s*Kappa\s*=\s*)" + kReal);
-  std::regex kappaMarkPattern(R"(^\s*KappaMark\s*=\s*(\S+))");
-
-  std::regex minResPattern(R"(^\s*MinRes\s*=\s*)" + kReal);
-  std::regex maxResPattern(R"(^\s*MaxRes\s*=\s*)" + kReal);
-  std::regex sumValuePattern(R"(^\s*SumValue\s*=\s*)" + kReal);
-  std::regex sumSensPattern(R"(^\s*SumSens\s*=\s*)" + kReal);
-  std::regex sumGradPattern(R"(^\s*SumGrad\s*=\s*)" + kReal);
-  // Optional line.
-  std::regex sumAbsGradPattern(R"(^\s*SumAbsGrad\s*=\s*)" + kReal);
-  std::regex execPattern(R"(^\s*Exec\s*=\s*(\d+))");
-  std::regex numOperandsPattern(R"(^\s*NumOperands\s*=\s*(\d+))");
-  std::regex operandPattern(R"(^\s*Operand\[(\d+)\]\s*=\s*\[)" + kReal +
-                            R"(,\s*)" + kReal + R"((?:,\s*)" + kReal +
-                            R"()?\])");
-
-  unsigned lineNo = 0;
-  auto nextLine = [&](std::string &text) {
-    if (!std::getline(file, text))
-      return false;
-    ++lineNo;
-    if (!text.empty() && text.back() == '\r')
-      text.pop_back();
-    return true;
-  };
-  auto refuse = [&](const Twine &what) {
+  header = FunctionProfileHeader{};
+  ErrorOr<std::unique_ptr<MemoryBuffer>> Buffer =
+      MemoryBuffer::getFile(profilePath, /*IsText=*/true);
+  if (!Buffer)
     reportUserError(F, F.getSubprogram(),
-                    Twine(profilePath) + ":" + Twine(lineNo) + ": " + what +
-                        "; re-run profile generation.");
-  };
-  // A decimal number of the profile, which must fit the field it is read into.
-  auto integer = [&](auto &out, const std::string &digits, StringRef field) {
-    if (StringRef(digits).getAsInteger(10, out))
-      refuse(Twine(field) + " " + digits + " is out of range");
-  };
-
-  std::string line;
-  while (nextLine(line)) {
-    std::smatch match;
-    if (header && std::regex_search(line, match, blockDimsPattern)) {
-      for (unsigned i = 0; i < 3; ++i)
-        integer(header->maxBlockDim[i], match[i + 1], "MaxBlockDims");
-      continue;
-    }
-    if (header && std::regex_search(line, match, gridDimsPattern)) {
-      for (unsigned i = 0; i < 3; ++i)
-        integer(header->maxGridDim[i], match[i + 1], "MaxGridDims");
-      continue;
-    }
-    if (header && std::regex_search(line, match, launchCountPattern)) {
-      integer(header->launchCount, match[1], "LaunchCount");
-      continue;
-    }
-    if (header && std::regex_search(line, match, redTripPattern)) {
-      size_t slot;
-      integer(slot, match[1], "RedTrip slot");
-      integer(header->redTrip[slot], match[2], "RedTrip trip count");
-      continue;
-    }
-    if (header && std::regex_search(line, match, canonicalHashPattern)) {
-      header->canonicalHash = match[1];
-      continue;
-    }
-    // The site id is the probe driver's; parsing it still refuses one out of
-    // int range.
-    if (header && std::regex_search(line, match, siteIdPattern)) {
-      int siteId;
-      integer(siteId, match[1], "SiteId");
-      continue;
-    }
-    if (header && std::regex_search(line, match, kappaPattern)) {
-      errno = 0;
-      header->kappa = std::strtod(match[1].str().c_str(), nullptr);
-      if (errno == ERANGE)
-        refuse("Kappa " + match[1].str() + " is out of range");
-      header->hasKappa = true;
-      continue;
-    }
-    if (header && std::regex_search(line, match, kappaMarkPattern)) {
-      header->kappaMark = match[1];
-      continue;
-    }
-    if (!std::regex_match(line, match, indexPattern))
-      continue;
-
-    size_t idx;
-    integer(idx, match[1], "slot");
-    // The next line of the record of slot idx, which `pattern` must match.
-    auto field = [&](std::string &text, std::smatch &fieldMatch,
-                     const std::regex &pattern, StringRef name) {
-      if (!nextLine(text))
-        refuse("the record of slot " + Twine(idx) + " ends before its " + name +
-               " line");
-      if (!std::regex_search(text, fieldMatch, pattern))
-        refuse("expected the " + name + " line of slot " + Twine(idx));
-    };
-    auto real = [&](const std::regex &pattern, StringRef name) {
-      std::string text;
-      std::smatch fieldMatch;
-      field(text, fieldMatch, pattern, name);
-      return stringToDouble(fieldMatch[1]);
-    };
-    ProfileInfo info;
-    info.minRes = real(minResPattern, "MinRes");
-    info.maxRes = real(maxResPattern, "MaxRes");
-    info.sumValue = real(sumValuePattern, "SumValue");
-    info.sumSens = real(sumSensPattern, "SumSens");
-    info.sumGrad = real(sumGradPattern, "SumGrad");
-    // SumAbsGrad comes before Exec when the profile records it.
-    std::string text;
-    std::smatch fieldMatch;
-    if (!nextLine(text))
-      refuse("the record of slot " + Twine(idx) + " ends before its Exec line");
-    if (text.find("SumAbsGrad") != std::string::npos) {
-      if (!std::regex_search(text, fieldMatch, sumAbsGradPattern))
-        refuse("expected the SumAbsGrad line of slot " + Twine(idx));
-      info.sumAbsGrad = stringToDouble(fieldMatch[1]);
-      field(text, fieldMatch, execPattern, "Exec");
-    } else if (!std::regex_search(text, fieldMatch, execPattern)) {
-      refuse("expected the Exec line of slot " + Twine(idx));
-    }
-    integer(info.exec, fieldMatch[1], "Exec");
-    unsigned numOperands;
-    field(text, fieldMatch, numOperandsPattern, "NumOperands");
-    integer(numOperands, fieldMatch[1], "NumOperands");
-
-    // The operands are read before the profile's vectors are sized, so that a
-    // count the file does not hold is refused rather than allocated.
-    struct OperandRange {
-      unsigned index;
-      double min, max, minMag;
-    };
-    SmallVector<OperandRange, 2> operands;
-    for (unsigned i = 0; i < numOperands; ++i) {
-      field(text, fieldMatch, operandPattern, "Operand");
-      OperandRange &R = operands.emplace_back();
-      integer(R.index, fieldMatch[1], "Operand index");
-      if (R.index >= numOperands)
-        refuse("Operand[" + Twine(R.index) + "] of slot " + Twine(idx) +
-               " is beyond its NumOperands " + Twine(numOperands));
-      R.min = stringToDouble(fieldMatch[2]);
-      R.max = stringToDouble(fieldMatch[3]);
-      R.minMag = fieldMatch[4].matched ? stringToDouble(fieldMatch[4]) : 0.0;
-    }
-    info.minOperands.resize(numOperands, 0.0);
-    info.maxOperands.resize(numOperands, 0.0);
-    info.minMagOperands.resize(numOperands, 0.0);
-    for (const OperandRange &R : operands) {
-      info.minOperands[R.index] = R.min;
-      info.maxOperands[R.index] = R.max;
-      info.minMagOperands[R.index] = R.minMag;
-    }
-
-    profileMap[idx] = info;
-  }
-}
-
-bool isNeverExecutedProfile(const std::string &profilePath, const Function &F) {
-  std::ifstream file(profilePath);
-  std::string line;
-  bool marked = false;
-  while (std::getline(file, line)) {
-    if (!line.empty() && line.back() == '\r')
-      line.pop_back();
-    if (!line.empty() &&
-        line.find_first_not_of("0123456789") == std::string::npos) {
-      if (marked)
-        reportUserError(F, F.getSubprogram(),
-                        Twine(profilePath) +
-                            " says its site was never executed and records "
-                            "executions of it; re-run profile generation.");
-      return false;
-    }
-    marked |= line == "Executed = 0";
-  }
-  return marked;
+                    "cannot read the profile " + profilePath + " (" +
+                        Buffer.getError().message() +
+                        "); run the program built with "
+                        "-poseidon-profile-generate, which writes it into "
+                        "POSEIDON_PROFILE_DIR (default " +
+                        POSEIDON_DEFAULT_PROFILE_DIR + ")");
+  ProfileParser(**Buffer, profilePath, F).parse(profileMap, header);
 }
 
 void requireCanonicalHash(const FunctionProfileHeader &header,
@@ -400,141 +350,6 @@ void requireMeasuredKappa(const FunctionProfileHeader &header,
           "[args...]', the command the profiling run printed, to measure it, "
           "or with POSEIDON_PROBE=0 in its environment to solve each site "
           "against its own target.");
-}
-
-// The generated logging code declares the probes on first use without
-// enzyme_inactive, and with only a declaration in the TU Enzyme demands a
-// derivative ("No augmented forward pass found"); so they are declared first,
-// with signatures that match the generated ones exactly. The runtime's own
-// definitions cannot carry the attribute: __has_attribute(enzyme_inactive) is
-// false unless the clang plugin is loaded, so under -fpass-plugin it is lost.
-void predeclareInactiveProfilerProbes(llvm::Module &M) {
-  using namespace llvm;
-  const Target &T = Target::of(M);
-  if (!T.isDevice())
-    return;
-  const ProbeABI &P = T.probes();
-  LLVMContext &Ctx = M.getContext();
-  Type *VoidTy = Type::getVoidTy(Ctx);
-  Type *PtrTy = PointerType::getUnqual(Ctx);
-  Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *SizeTy = Type::getInt64Ty(Ctx);
-  getProfilerHook(
-      M, P.LogValue,
-      FunctionType::get(VoidTy,
-                        {PtrTy, SizeTy, DoubleTy,
-                         IntegerType::get(Ctx, P.OperandCountBits), PtrTy},
-                        false));
-  getProfilerHook(
-      M, P.LogGradient,
-      FunctionType::get(VoidTy, {PtrTy, SizeTy, DoubleTy, DoubleTy}, false));
-  // The perturbation hooks are inactive too: nothing reads a derivative of the
-  // perturbation, and a second run of the pass would otherwise differentiate
-  // the calls the first run injected.
-  Type *FloatTy = Type::getFloatTy(Ctx);
-  Type *Int32Ty = Type::getInt32Ty(Ctx);
-  getProfilerHook(M, P.PerturbF64,
-                  FunctionType::get(DoubleTy, {Int32Ty, DoubleTy}, false));
-  getProfilerHook(M, P.PerturbF32,
-                  FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
-}
-
-// A static constructor cannot make the call: the runtime publishes its device
-// tables with cudaMemcpyToSymbol, and a dynamic initializer can run before
-// __cudaRegisterFatBinary has registered the device module in a multi-TU
-// binary ("invalid device symbol"). main runs after every static constructor.
-//
-// Only the host half of an offload unit, kernels or not, links the device
-// profiler. Erring towards injection is deliberate: a wrongly skipped
-// injection loses the profile silently, a wrongly kept one fails at link.
-bool injectHostProfilerInit(llvm::Module &M) {
-  using namespace llvm;
-  if (Target::of(M).isDevice())
-    return false;
-  // A host-only build links no CUDA profiler runtime, so the call injected
-  // below would be an undefined reference to __poseidon_profile_init_cuda.
-  OffloadRuntime R = offloadRuntimeOf(M);
-  if (R == OffloadRuntime::None)
-    return false;
-  Function *mainF = M.getFunction("main");
-  if (!mainF || mainF->isDeclaration())
-    return false;
-  LLVMContext &Ctx = M.getContext();
-  FunctionCallee initFn =
-      getProfilerHook(M, deviceProfilerInit(),
-                      FunctionType::get(Type::getVoidTy(Ctx), {}, false));
-  // Idempotence: never place a second call.
-  for (Instruction &I : instructions(*mainF))
-    if (auto *CI = dyn_cast<CallInst>(&I))
-      if (auto *CF = CI->getCalledFunction())
-        if (CF->getName() == deviceProfilerInit())
-          return false;
-  IRBuilder<> B(&*mainF->getEntryBlock().getFirstInsertionPt());
-  B.CreateCall(initFn, {})->setDoesNotThrow();
-  llvm::errs() << "[poseidon] FP profiler CUDA registration injected at main\n";
-  return true;
-}
-
-// The probe is keyed by the poseidon_site_<name> global the value probes use,
-// which exists only after AD.
-void injectBlockDimProbes(llvm::Module &M) {
-  using namespace llvm;
-  const Target &T = Target::of(M);
-  if (!T.isDevice())
-    return;
-  const ProbeABI &P = T.probes();
-  Function *logFn = M.getFunction(P.LogValue);
-  if (!logFn)
-    return;
-  LLVMContext &Ctx = M.getContext();
-  Type *PtrTy = PointerType::getUnqual(Ctx);
-  FunctionCallee probeFn = getProfilerHook(
-      M, P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
-
-  unsigned placed = 0;
-  for (Function &F : M) {
-    if (F.isDeclaration())
-      continue;
-    Value *nameArg = nullptr;
-    bool already = false;
-    for (Instruction &I : instructions(F)) {
-      auto *CI = dyn_cast<CallInst>(&I);
-      if (!CI)
-        continue;
-      if (CI->getCalledOperand()->stripPointerCasts() == logFn) {
-        if (!nameArg)
-          nameArg = CI->getArgOperand(0);
-        continue;
-      }
-      if (auto *CF = CI->getCalledFunction())
-        if (CF->getName() == P.BlockDims)
-          already = true; // idempotence
-    }
-    if (!nameArg || already)
-      continue;
-    // Rebuild the name pointer at the entry block from the global (the log
-    // call's operand may not dominate the entry); same construction as the log
-    // probes, so the runtime sees the same registry slot.
-    auto *gv = dyn_cast<GlobalVariable>(nameArg->stripPointerCasts());
-    if (!gv) {
-      llvm::errs() << "[poseidon] block-geometry probe: value probe in "
-                   << F.getName()
-                   << " has a non-global name operand; cannot key the launch "
-                      "geometry to this function\n";
-      report_fatal_error("Poseidon: unkeyable poseidon_site_ name operand");
-    }
-    IRBuilder<> B(&*F.getEntryBlock().getFirstInsertionPt());
-    Value *nameAtEntry = B.CreateInBoundsGEP(gv->getValueType(), gv,
-                                             {B.getInt32(0), B.getInt32(0)});
-    if (nameAtEntry->getType() != PtrTy)
-      nameAtEntry = B.CreateAddrSpaceCast(nameAtEntry, PtrTy);
-    CallInst *call = B.CreateCall(probeFn, {nameAtEntry});
-    call->setDoesNotThrow();
-    ++placed;
-  }
-  if (placed)
-    llvm::errs() << "[poseidon] block-geometry probe placed in " << placed
-                 << " profiled function(s)\n";
 }
 
 } // namespace poseidon

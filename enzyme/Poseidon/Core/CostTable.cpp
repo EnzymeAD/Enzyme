@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostTable.h"
-#include "Targets/MathFunctions.h"
+#include "Targets/MathLibrary.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

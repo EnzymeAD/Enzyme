@@ -13,7 +13,7 @@
 // Single precision is cheapest at 1e-3, and the kernel calls no libdevice
 // float function. poseidon.h links __nv_expf for the rewrite only under
 // POSEIDON_DEVICE_MATH: with it the rewrite compiles, and without it the
-// compile stops with an error that names the macro. The profile is the static
+// compile stops at its start with an error that names the macro. The profile is the static
 // header of the generating compile followed by hand-written records.
 
 #include "poseidon/poseidon.h"
@@ -28,4 +28,4 @@ POSEIDON_OPTIMIZE __global__ void waved(double *o, const double *a, int n) {
 
 // DEFINED: {{^}}[poseidon] pin: _Z5wavedPdPKdi:PT0=All FP64(0%) + FP32(100%){{$}}
 
-// UNDEFINED: device_math_macro.cu:[[@LINE-10]]:{{[0-9]+}}: error: Poseidon: a rewrite in waved(double*, double const*, int) calls __nv_expf, which this device module does not define. poseidon/poseidon.h links the libdevice functions a rewrite or a site's derivative may call when POSEIDON_DEVICE_MATH is defined: include it in this translation unit (with -poseidon-kernels, pass -include poseidon/poseidon.h) and define the macro, as poseidon-clang and the Poseidon CMake targets do.{{$}}
+// UNDEFINED: error: Poseidon: this device compilation has Poseidon sites from poseidon/poseidon.h and was compiled without POSEIDON_DEVICE_MATH, under which the header keeps the libdevice functions a rewrite or a site's derivative calls; define it (-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the Poseidon CMake targets do{{$}}

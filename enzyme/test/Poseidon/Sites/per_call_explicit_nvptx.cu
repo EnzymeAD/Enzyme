@@ -14,9 +14,9 @@
 // In device code an explicit list through __poseidon_optimize makes the call
 // a site over the function itself, with the shadows the caller gives: here
 // sum reaches no constant range of memory through x, which the pass could not
-// make the shadow of. poseidon_tau followed by the function's own arguments
-// is no explicit list: that call is a per-call site, as the call
-// __poseidon_optimize_tau writes. Without the plugin the call goes through an
+// make the shadow of. __poseidon_optimize_tau with the function's own
+// arguments is no explicit list: that call is a per-call site. Without the
+// plugin the call goes through an
 // identity nothing defines. The host half of a host-device function holds no
 // site: there the call runs the function with the primal values, silently.
 
@@ -63,7 +63,7 @@ HD __attribute__((noinline)) double spread(const double *x) {
 }
 
 HD double third(const double *x) {
-  return __poseidon_optimize(spread, poseidon_tau, 1e-7, x);
+  return __poseidon_optimize_tau(1e-7, spread, x);
 }
 
 __attribute__((global)) void k(const double *x, double *dx, double *y,
@@ -72,7 +72,7 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
   y[3] = twice(x, dx);
   __poseidon_optimize_tau(1e-6, scale, enzyme_const, x, enzyme_dup, y + 1, dy,
                           n);
-  y[2] = __poseidon_optimize(sum, poseidon_tau, 1e-9, enzyme_const, x, n);
+  y[2] = __poseidon_optimize_tau(1e-9, sum, enzyme_const, x, n);
   y[4] = third(x);
 }
 
@@ -129,7 +129,7 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // IR-NEXT: [[TT:%[0-9]+]] = fmul {{.*}}double [[TR]], 2.000000e+00
 // IR-NEXT: ret double [[TT]]
 // IR: define {{.*}} @_Z5thirdPKd(ptr {{.*}}[[HX:%[0-9]+]])
-// IR-NEXT: [[HR:%[0-9]+]] = {{.*}}call double @_Z6spreadPKd(ptr [[HX]])
+// IR-NEXT: [[HR:%[0-9]+]] = {{.*}}call {{.*}}double @_Z6spreadPKd(ptr {{.*}}[[HX]])
 // IR-NEXT: ret double [[HR]]
 // IR: define {{.*}}ptx_kernel void @_Z1kPKdPdS1_S1_i(ptr {{.*}}[[X:%[0-9]+]], ptr {{.*}}%{{[0-9]+}}, ptr {{.*}}[[Y:%[0-9]+]], ptr {{.*}}%{{[0-9]+}}, i32 {{.*}}[[N:%[0-9]+]])
 // IR-NEXT: [[S0:%[0-9]+]] = {{.*}}call double @_Z3sumPKdi(ptr [[X]], i32 [[N]])
@@ -157,9 +157,7 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // PLAIN-NEXT: [[TT:%[0-9]+]] = fmul {{.*}}double [[TR]], 2.000000e+00
 // PLAIN-NEXT: ret double [[TT]]
 // PLAIN: define {{.*}} @_Z5thirdPKd(ptr {{.*}}[[HX:%[0-9]+]])
-// PLAIN-NEXT: [[HF:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z6spreadPKd)
-// PLAIN-NEXT: [[HTAU:%[0-9]+]] = load i32, ptr addrspacecast (ptr addrspace(1) @poseidon_tau to ptr)
-// PLAIN-NEXT: [[HR:%[0-9]+]] = {{.*}}call {{.*}}double [[HF]](i32 {{.*}}[[HTAU]], double {{.*}}{{f?}}0x3E7AD7F29ABCAF48, ptr {{.*}}[[HX]])
+// PLAIN-NEXT: [[HR:%[0-9]+]] = {{.*}}call {{.*}}double @_Z6spreadPKd(ptr {{.*}}[[HX]])
 // PLAIN-NEXT: ret double [[HR]]
 // PLAIN: define {{.*}}ptx_kernel void @_Z1kPKdPdS1_S1_i(ptr {{.*}}[[X:%[0-9]+]], ptr {{.*}}[[DX:%[0-9]+]], ptr {{.*}}[[Y:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // PLAIN-NEXT: [[F0:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z3sumPKdi)
@@ -177,15 +175,12 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // PLAIN-NEXT: [[DUP2:%[0-9]+]] = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr)
 // PLAIN-NEXT: [[Y1:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[Y]], i64 8
 // PLAIN-NEXT: {{.*}}call void [[F2]](i32 {{.*}}[[CONST2]], ptr {{.*}}[[X]], i32 {{.*}}[[DUP2]], ptr {{.*}}[[Y1]], ptr {{.*}}[[DY]], i32 {{.*}}[[N]])
-// PLAIN-NEXT: [[F3:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z3sumPKdi)
-// PLAIN-NEXT: [[TAU3:%[0-9]+]] = load i32, ptr addrspacecast (ptr addrspace(1) @poseidon_tau to ptr)
+// PLAIN-NEXT: [[F3:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit_tau(ptr {{.*}}@_Z3sumPKdi, double {{.*}}1.000000e-09)
 // PLAIN-NEXT: [[CONST3:%[0-9]+]] = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_const to ptr)
-// PLAIN-NEXT: [[R3:%[0-9]+]] = {{.*}}call {{.*}}double [[F3]](i32 {{.*}}[[TAU3]], double {{.*}}1.000000e-09, i32 {{.*}}[[CONST3]], ptr {{.*}}[[X]], i32 {{.*}}[[N]])
+// PLAIN-NEXT: [[R3:%[0-9]+]] = {{.*}}call {{.*}}double [[F3]](i32 {{.*}}[[CONST3]], ptr {{.*}}[[X]], i32 {{.*}}[[N]])
 // PLAIN-NEXT: [[Y2:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[Y]], i64 16
 // PLAIN-NEXT: store double [[R3]], ptr [[Y2]]
-// PLAIN-NEXT: [[F4:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z6spreadPKd)
-// PLAIN-NEXT: [[TAU4:%[0-9]+]] = load i32, ptr addrspacecast (ptr addrspace(1) @poseidon_tau to ptr)
-// PLAIN-NEXT: [[R4:%[0-9]+]] = {{.*}}call {{.*}}double [[F4]](i32 {{.*}}[[TAU4]], double {{.*}}{{f?}}0x3E7AD7F29ABCAF48, ptr {{.*}}[[X]])
+// PLAIN-NEXT: [[R4:%[0-9]+]] = {{.*}}call {{.*}}double @_Z6spreadPKd(ptr {{.*}}[[X]])
 // PLAIN-NEXT: [[Y4:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[Y]], i64 32
 // PLAIN-NEXT: store double [[R4]], ptr [[Y4]]
 // PLAIN-NEXT: ret void
@@ -201,5 +196,5 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // HOST-NEXT: ret double [[TT]]
 // HOST-LABEL: define {{.*}} @_Z5thirdPKd(
 // HOST-SAME: ptr {{.*}}[[HX:%[0-9]+]])
-// HOST-NEXT: [[HR:%[0-9]+]] = {{.*}}call {{.*}}double @_Z6spreadPKd(ptr [[HX]])
+// HOST-NEXT: [[HR:%[0-9]+]] = {{.*}}call {{.*}}double @_Z6spreadPKd(ptr {{.*}}[[HX]])
 // HOST-NEXT: ret double [[HR]]

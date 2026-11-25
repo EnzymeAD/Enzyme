@@ -16,6 +16,7 @@
 
 namespace llvm {
 class Function;
+class Instruction;
 class Value;
 } // namespace llvm
 
@@ -39,7 +40,16 @@ std::string canonicalFormHash(const llvm::Function &F);
 // instructions.
 bool isOptimizable(const llvm::Value &V);
 
+// The metadata a canonical clone's optimizable instruction carries its slot
+// in: the rank among optimizable instructions, which the profile-generate and
+// profile-use compiles share.
+constexpr llvm::StringLiteral kSlotMD = "poseidon.prof.idx";
+
 void setSlotMetadata(llvm::Function &F);
+// The slot of `I`; false if it is null or has none.
+bool tryReadProfIdxMetadata(const llvm::Instruction *I, size_t &out);
+// The slot of `I`, which has one.
+size_t readProfIdxMetadata(const llvm::Instruction *I);
 
 // The passes of the canonical prefix before and after its always-inliner (none
 // before it at O0).

@@ -11,7 +11,7 @@
 
 // per_call_explicit_nvptx.cu for HIP: in AMDGPU device code an explicit list
 // through __poseidon_optimize makes the call a site over the function itself,
-// with the shadows the caller gives, and poseidon_tau followed by the
+// with the shadows the caller gives, and __poseidon_optimize_tau with the
 // function's own arguments makes it a per-call site. Without the plugin the
 // call goes through an identity nothing defines.
 
@@ -48,7 +48,7 @@ HD __attribute__((noinline)) double spread(const double *x) {
 }
 
 HD double third(const double *x) {
-  return __poseidon_optimize(spread, poseidon_tau, 1e-7, x);
+  return __poseidon_optimize_tau(1e-7, spread, x);
 }
 
 __global__ void k(const double *x, double *dx, double *y, double *dy, int n) {
@@ -56,7 +56,7 @@ __global__ void k(const double *x, double *dx, double *y, double *dy, int n) {
   y[3] = twice(x, dx);
   __poseidon_optimize_tau(1e-6, scale, enzyme_const, x, enzyme_dup, y + 1, dy,
                           n);
-  y[2] = __poseidon_optimize(sum, poseidon_tau, 1e-9, enzyme_const, x, n);
+  y[2] = __poseidon_optimize_tau(1e-9, sum, enzyme_const, x, n);
   y[4] = third(x);
 }
 
@@ -147,15 +147,12 @@ __global__ void k(const double *x, double *dx, double *y, double *dy, int n) {
 // PLAIN-NEXT: [[DUP2:%[0-9]+]] = load i32, ptr addrspace(1) @enzyme_dup
 // PLAIN-NEXT: [[Y1:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[YG]], i64 8
 // PLAIN-NEXT: {{.*}}call void [[F2]](i32 {{.*}}[[CONST2]], ptr {{.*}}[[XP]], i32 {{.*}}[[DUP2]], ptr {{.*}}[[Y1]], ptr {{.*}}[[DYP]], i32 {{.*}}[[N]])
-// PLAIN-NEXT: [[F3:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z3sumPKdi)
-// PLAIN-NEXT: [[TAU3:%[0-9]+]] = load i32, ptr addrspace(1) @poseidon_tau
+// PLAIN-NEXT: [[F3:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit_tau(ptr {{.*}}@_Z3sumPKdi, double {{.*}}1.000000e-09)
 // PLAIN-NEXT: [[CONST3:%[0-9]+]] = load i32, ptr addrspace(1) @enzyme_const
-// PLAIN-NEXT: [[R3:%[0-9]+]] = {{.*}}call {{.*}}double [[F3]](i32 {{.*}}[[TAU3]], double {{.*}}1.000000e-09, i32 {{.*}}[[CONST3]], ptr {{.*}}[[XP]], i32 {{.*}}[[N]])
+// PLAIN-NEXT: [[R3:%[0-9]+]] = {{.*}}call {{.*}}double [[F3]](i32 {{.*}}[[CONST3]], ptr {{.*}}[[XP]], i32 {{.*}}[[N]])
 // PLAIN-NEXT: [[Y2:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[Y]], i64 16
 // PLAIN-NEXT: store double [[R3]], ptr addrspace(1) [[Y2]]
-// PLAIN-NEXT: [[F4:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z6spreadPKd)
-// PLAIN-NEXT: [[TAU4:%[0-9]+]] = load i32, ptr addrspace(1) @poseidon_tau
-// PLAIN-NEXT: [[R4:%[0-9]+]] = {{.*}}call {{.*}}double [[F4]](i32 {{.*}}[[TAU4]], double {{.*}}{{f?}}0x3E7AD7F29ABCAF48, ptr {{.*}}[[XP]])
+// PLAIN-NEXT: [[R4:%[0-9]+]] = {{.*}}call {{.*}}double @_Z6spreadPKd(ptr {{.*}}[[XP]])
 // PLAIN-NEXT: [[Y4:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[Y]], i64 32
 // PLAIN-NEXT: store double [[R4]], ptr addrspace(1) [[Y4]]
 // PLAIN-NEXT: ret void

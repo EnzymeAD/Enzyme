@@ -455,7 +455,7 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m,
   }
   note.scheme = descriptorScheme(v);
   note.numModuli = descriptorModulusField(v);
-  S.Matmul.GemmBodies.note(F, note);
+  S.Matmul.GemmBodies[F] = note;
   if (!note.standalone)
     fissionGemmForDispatch(*F, m);
 }
@@ -576,8 +576,9 @@ void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
 void flushPendingGemmDispatches(Session &S) {
   for (auto &[body, pg] : S.Matmul.PendingGemms)
     // A site not materialized as a host dispatch has no note.
-    if (std::optional<GemmBodyNote> n = S.Matmul.GemmBodies.get(body))
-      emitMappedDescriptor(S, pg.wrapperName, *n, pg.paramToArg);
+    if (auto n = S.Matmul.GemmBodies.find(body);
+        n != S.Matmul.GemmBodies.end() && n->second.valid)
+      emitMappedDescriptor(S, pg.wrapperName, n->second, pg.paramToArg);
   S.Matmul.PendingGemms.clear();
 }
 

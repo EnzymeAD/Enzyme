@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -288,7 +289,7 @@ struct WmmaTarget {
 // What the matrix-product pipeline records over a compile.
 struct MatmulState {
   // The GEMM note of each optimized body clone, keyed by the clone.
-  NoteMap<GemmBodyNote> GemmBodies;
+  std::map<const llvm::Function *, GemmBodyNote> GemmBodies;
   // In the order the sites were split, so that of two sites of one wrapper the
   // same one is recorded last in every compile.
   llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;

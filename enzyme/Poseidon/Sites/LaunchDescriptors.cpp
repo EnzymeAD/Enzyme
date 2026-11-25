@@ -17,16 +17,13 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Demangle/Demangle.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Operator.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Path.h"
@@ -220,62 +217,9 @@ void readProfileHeaders(const Options &O, const Module &M,
   }
 }
 
-StringRef mangledSuffix(StringRef mangled) {
-  if (mangled.starts_with("_Z")) {
-    mangled = mangled.drop_front(2);
-    // An internal-linkage name (a static kernel template).
-    mangled.consume_front("L");
-    while (!mangled.empty() && mangled[0] >= '0' && mangled[0] <= '9')
-      mangled = mangled.drop_front(1);
-  }
-  return mangled;
-}
-
-bool isLaunchStubFor(const Function &F, StringRef kernelName) {
-  StringRef n = F.getName();
-  if (n == kernelName)
-    return true;
-  const StringRef stubPrefix = launchStubPrefix();
-  if (!n.contains(stubPrefix))
-    return false;
-  StringRef kernel = withoutExternalizedPostfix(kernelName);
-  if (n.ends_with(mangledSuffix(kernel)))
-    return true;
-  // A kernel in a namespace or a class: its identifier, and with it the
-  // stub's prefix, sits inside the nested name rather than at its front.
-  std::string stub = demangle(n);
-  size_t at = stub.find(stubPrefix);
-  if (at == std::string::npos || stub == n)
-    return false;
-  stub.erase(at, stubPrefix.size());
-  return stub == demangle(kernel);
-}
-
 int traceToArgIndex(const Value *v) {
-  while (v) {
-    if (auto *A = dyn_cast<Argument>(v))
-      return (int)A->getArgNo();
-    if (auto *GEP = dyn_cast<GetElementPtrInst>(v)) {
-      v = GEP->getPointerOperand();
-      continue;
-    }
-    if (auto *BC = dyn_cast<BitCastInst>(v)) {
-      v = BC->getOperand(0);
-      continue;
-    }
-    if (auto *AC = dyn_cast<AddrSpaceCastInst>(v)) {
-      v = AC->getOperand(0);
-      continue;
-    }
-    if (auto *CE = dyn_cast<ConstantExpr>(v)) {
-      if (CE->getOpcode() == Instruction::GetElementPtr || CE->isCast()) {
-        v = CE->getOperand(0);
-        continue;
-      }
-    }
-    break;
-  }
-  return -1;
+  const auto *A = dyn_cast<Argument>(getUnderlyingObject(v, /*MaxLookup=*/0));
+  return A ? (int)A->getArgNo() : -1;
 }
 
 static bool isByValueParam(const Argument &A) {
@@ -361,27 +305,10 @@ LaunchRef launchFieldOf(const Value *v) {
 }
 
 LaunchRef tracePointerRoot(const Value *v) {
-  while (v) {
-    if (auto *A = dyn_cast<Argument>(v)) {
-      if (isByValueParam(*A))
-        return {};
-      return {(int)A->getArgNo(), -1};
-    }
-    if (auto *GEP = dyn_cast<GEPOperator>(v)) {
-      v = GEP->getPointerOperand();
-      continue;
-    }
-    if (auto *O = dyn_cast<Operator>(v);
-        O && (O->getOpcode() == Instruction::BitCast ||
-              O->getOpcode() == Instruction::AddrSpaceCast)) {
-      v = O->getOperand(0);
-      continue;
-    }
-    if (v->getType()->isPointerTy())
-      return launchFieldOf(v);
-    break;
-  }
-  return {};
+  const Value *root = getUnderlyingObject(v, /*MaxLookup=*/0);
+  if (const auto *A = dyn_cast<Argument>(root))
+    return isByValueParam(*A) ? LaunchRef{} : LaunchRef{(int)A->getArgNo(), -1};
+  return root->getType()->isPointerTy() ? launchFieldOf(root) : LaunchRef{};
 }
 
 } // namespace poseidon

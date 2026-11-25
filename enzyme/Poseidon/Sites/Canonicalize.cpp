@@ -9,8 +9,8 @@
 #include "Canonicalize.h"
 
 #include "IR/Utils.h"
-#include "Targets/DeviceMath.h"
-#include "Targets/MathFunctions.h"
+#include "SiteIdentity.h"
+#include "Targets/MathLibrary.h"
 #include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -70,58 +70,50 @@ static bool isOptimizableOperation(const Instruction *I) {
   case Instruction::FRem:
     return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
   case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(I);
-    if (!CI)
-      return false;
-
-    const Function *Callee = CI->getCalledFunction();
+    const Function *Callee = cast<CallInst>(I)->getCalledFunction();
     if (!Callee)
       return false;
-
-    // GPU: the CUDA libdevice entry points Poseidon handles.
+    // The libdevice and ocml entry points Poseidon handles.
     if (!deviceMathName(Callee->getName()).empty())
       return true;
-
-    if (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy()) {
-      StringRef funcName = Callee->getName();
-      return
-          // LLVM intrinsics
-          funcName.starts_with("llvm.sin.") ||
-          funcName.starts_with("llvm.cos.") ||
-          funcName.starts_with("llvm.tan.") ||
-          funcName.starts_with("llvm.asin.") ||
-          funcName.starts_with("llvm.acos.") ||
-          funcName.starts_with("llvm.atan.") ||
-          funcName.starts_with("llvm.atan2.") ||
-          funcName.starts_with("llvm.sinh.") ||
-          funcName.starts_with("llvm.cosh.") ||
-          funcName.starts_with("llvm.tanh.") ||
-          funcName.starts_with("llvm.exp.") ||
-          funcName.starts_with("llvm.log.") ||
-          funcName.starts_with("llvm.sqrt.") ||
-          funcName.starts_with("llvm.pow.") ||
-          funcName.starts_with("llvm.powi.") ||
-          funcName.starts_with("llvm.fabs.") ||
-          funcName.starts_with("llvm.fma.") ||
-          funcName.starts_with("llvm.fmuladd.") ||
-          funcName.starts_with("llvm.maxnum.") ||
-          funcName.starts_with("llvm.minnum.") ||
-          funcName.starts_with("llvm.ceil.") ||
-          funcName.starts_with("llvm.floor.") ||
-          funcName.starts_with("llvm.exp2.") ||
-          funcName.starts_with("llvm.log10.") ||
-          funcName.starts_with("llvm.log2.") ||
-          funcName.starts_with("llvm.rint.") ||
-          funcName.starts_with("llvm.round.") ||
-          funcName.starts_with("llvm.trunc.") ||
-          funcName.starts_with("llvm.copysign.") ||
-          funcName.starts_with("llvm.fdim.") ||
-          funcName.starts_with("llvm.fmod.") ||
-
-          // libm functions
-          isOptimizableLibmCall(funcName);
+    if (!I->getType()->isFloatTy() && !I->getType()->isDoubleTy())
+      return false;
+    switch (Callee->getIntrinsicID()) {
+    case Intrinsic::sin:
+    case Intrinsic::cos:
+    case Intrinsic::tan:
+    case Intrinsic::asin:
+    case Intrinsic::acos:
+    case Intrinsic::atan:
+    case Intrinsic::atan2:
+    case Intrinsic::sinh:
+    case Intrinsic::cosh:
+    case Intrinsic::tanh:
+    case Intrinsic::exp:
+    case Intrinsic::log:
+    case Intrinsic::sqrt:
+    case Intrinsic::pow:
+    case Intrinsic::powi:
+    case Intrinsic::fabs:
+    case Intrinsic::fma:
+    case Intrinsic::fmuladd:
+    case Intrinsic::maxnum:
+    case Intrinsic::minnum:
+    case Intrinsic::ceil:
+    case Intrinsic::floor:
+    case Intrinsic::exp2:
+    case Intrinsic::log10:
+    case Intrinsic::log2:
+    case Intrinsic::rint:
+    case Intrinsic::round:
+    case Intrinsic::trunc:
+    case Intrinsic::copysign:
+      return true;
+    case Intrinsic::not_intrinsic:
+      return isOptimizableLibmCall(Callee->getName());
+    default:
+      return false;
     }
-    return false;
   }
   default:
     return false;
@@ -148,6 +140,22 @@ bool isOptimizable(const llvm::Value &V) {
                 [](const Use &U) { return isModelledOperand(U.get()); });
 }
 
+bool tryReadProfIdxMetadata(const Instruction *I, size_t &out) {
+  MDNode *md = I ? I->getMetadata(kSlotMD) : nullptr;
+  if (!md)
+    return false;
+  out = mdconst::extract<ConstantInt>(md->getOperand(0))->getZExtValue();
+  return true;
+}
+
+size_t readProfIdxMetadata(const Instruction *I) {
+  size_t out;
+  if (!tryReadProfIdxMetadata(I, out))
+    report_fatal_error("Poseidon: an instruction of a canonical clone has no "
+                       "slot");
+  return out;
+}
+
 void setSlotMetadata(Function &F) {
   // A slot is the rank among optimizable instructions, which the
   // profile-generate and profile-use compiles share; the instrumentation shifts
@@ -157,7 +165,7 @@ void setSlotMetadata(Function &F) {
     if (isOptimizable(I)) {
       I.setMetadata("enzyme_active", MDNode::get(I.getContext(), {}));
       I.setMetadata(
-          "poseidon.prof.idx",
+          kSlotMD,
           MDNode::get(I.getContext(),
                       {ConstantAsMetadata::get(ConstantInt::get(
                           Type::getInt64Ty(I.getContext()), slotIdx))}));
@@ -238,11 +246,7 @@ struct CanonicalizeAnalyses {
       return AM;
     });
 
-#if LLVM_VERSION_MAJOR >= 24
-    PassBuilder PB(Ctx);
-#else
-    PassBuilder PB;
-#endif
+    PassBuilder PB = makePassBuilder(Ctx);
     PB.registerModuleAnalyses(MAM);
     PB.registerFunctionAnalyses(FAM);
     PB.registerLoopAnalyses(LAM);
@@ -319,11 +323,7 @@ static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     PN->replaceAllUsesWith(Tmp);
     PN->eraseFromParent();
 
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
-    SCEVExpander Exp(SE, "poseidon");
-#else
-    SCEVExpander Exp(SE, SE.getDataLayout(), "poseidon");
-#endif
+    SCEVExpander Exp = makeSCEVExpander(SE, "poseidon");
     Value *NewIV =
         Exp.expandCodeFor(S, Tmp->getType(), Header->getFirstNonPHIIt());
 
@@ -452,115 +452,80 @@ static void fuseMulAdd(BinaryOperator *I, Value *X, Value *Y, Value *Z,
   I->eraseFromParent();
 }
 
+// fmul+fadd and fmul+fsub where contraction is allowed become fmuladd, and an
+// fcmp+select that picks the larger or the smaller operand becomes
+// maxnum/minnum.
 static void preprocess(Function *F) {
   using namespace llvm::PatternMatch;
 
-  // fmul + fadd -> fmuladd
   for (auto &BB : *F) {
     for (auto &I : make_early_inc_range(BB)) {
       Value *X, *Y, *Z;
-
-      if (auto *FAdd = dyn_cast<BinaryOperator>(&I)) {
+      if (auto *BO = dyn_cast<BinaryOperator>(&I)) {
         // `contract` alone licenses fusing a*b+c into one rounded fmuladd;
         // `reassoc` is about regrouping across additions and is not needed.
         // CUDA-default -ffp-contract=fast sets contract but not reassoc.
-        if (!isa<FPMathOperator>(FAdd) || !FAdd->hasAllowContract())
+        if (!isa<FPMathOperator>(BO) || !BO->hasAllowContract())
           continue;
-
-        // fadd (fmul X, Y), Z or fadd Z, (fmul X, Y)
-        if (match(FAdd, m_FAdd(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
-                               m_Value(Z))) ||
-            match(FAdd,
+        if (match(BO, m_FAdd(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
+                             m_Value(Z))) ||
+            match(BO,
                   m_FAdd(m_Value(Z), m_OneUse(m_FMul(m_Value(X), m_Value(Y))))))
-          fuseMulAdd(FAdd, X, Y, Z, Negate::None);
+          fuseMulAdd(BO, X, Y, Z, Negate::None);
+        else if (match(BO, m_FSub(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
+                                  m_Value(Z))))
+          fuseMulAdd(BO, X, Y, Z, Negate::Z);
+        else if (match(BO, m_FSub(m_Value(Z),
+                                  m_OneUse(m_FMul(m_Value(X), m_Value(Y))))))
+          fuseMulAdd(BO, X, Y, Z, Negate::X);
+        continue;
       }
-    }
-  }
 
-  for (auto &BB : *F) {
-    for (auto &I : make_early_inc_range(BB)) {
-      Value *X, *Y, *Z;
-
-      if (auto *FSub = dyn_cast<BinaryOperator>(&I)) {
-        if (!isa<FPMathOperator>(FSub) || !FSub->hasAllowContract())
-          continue;
-
-        // Pattern: fsub (fmul X, Y), Z -> fmuladd(X, Y, -Z)
-        if (match(FSub,
-                  m_FSub(m_OneUse(m_FMul(m_Value(X), m_Value(Y))), m_Value(Z))))
-          fuseMulAdd(FSub, X, Y, Z, Negate::Z);
-        // Pattern: fsub Z, (fmul X, Y) -> fmuladd(-X, Y, Z)
-        else if (match(FSub, m_FSub(m_Value(Z),
-                                    m_OneUse(m_FMul(m_Value(X), m_Value(Y))))))
-          fuseMulAdd(FSub, X, Y, Z, Negate::X);
+      auto *Select = dyn_cast<SelectInst>(&I);
+      if (!Select || !Select->getType()->isFloatingPointTy())
+        continue;
+      Value *Cond = Select->getCondition();
+      Value *TrueVal = Select->getTrueValue();
+      Value *FalseVal = Select->getFalseValue();
+      CmpPredicate Pred;
+      Value *CmpLHS, *CmpRHS;
+      if (!match(Cond, m_FCmp(Pred, m_Value(CmpLHS), m_Value(CmpRHS))))
+        continue;
+      IRBuilder<> B(Select);
+      Value *Result = nullptr;
+      if (Pred == FCmpInst::FCMP_OGT && match(CmpRHS, m_AnyZeroFP()) &&
+          CmpLHS == TrueVal && match(FalseVal, m_AnyZeroFP())) {
+        Result = B.CreateIntrinsic(
+            Intrinsic::maxnum, CmpLHS->getType(),
+            {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
+      } else if (Pred == FCmpInst::FCMP_OLT && match(CmpRHS, m_AnyZeroFP()) &&
+                 CmpLHS == FalseVal && match(TrueVal, m_AnyZeroFP())) {
+        Result = B.CreateIntrinsic(
+            Intrinsic::maxnum, CmpLHS->getType(),
+            {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
+      } else if (Pred == FCmpInst::FCMP_OGT && CmpLHS == TrueVal &&
+                 CmpRHS == FalseVal) {
+        Result = B.CreateIntrinsic(Intrinsic::maxnum, CmpLHS->getType(),
+                                   {CmpLHS, CmpRHS});
+      } else if (Pred == FCmpInst::FCMP_OLT && CmpLHS == TrueVal &&
+                 CmpRHS == FalseVal) {
+        Result = B.CreateIntrinsic(Intrinsic::minnum, CmpLHS->getType(),
+                                   {CmpLHS, CmpRHS});
       }
-    }
-  }
-
-  // fcmp + select -> fmax/fmin
-  for (auto &BB : *F) {
-    for (auto &I : make_early_inc_range(BB)) {
-      if (auto *Select = dyn_cast<SelectInst>(&I)) {
-        Value *Cond = Select->getCondition();
-        Value *TrueVal = Select->getTrueValue();
-        Value *FalseVal = Select->getFalseValue();
-
-        if (!Select->getType()->isFloatingPointTy())
-          continue;
-
-        CmpPredicate Pred;
-        Value *CmpLHS, *CmpRHS;
-
-        if (match(Cond, m_FCmp(Pred, m_Value(CmpLHS), m_Value(CmpRHS)))) {
-          IRBuilder<> B(Select);
-          Value *Result = nullptr;
-
-          // select (fcmp ogt X, 0.0), X, 0.0 -> maxnum(X, 0.0)
-          if (Pred == FCmpInst::FCMP_OGT && match(CmpRHS, m_AnyZeroFP()) &&
-              CmpLHS == TrueVal && match(FalseVal, m_AnyZeroFP())) {
-            Result = B.CreateIntrinsic(
-                Intrinsic::maxnum, CmpLHS->getType(),
-                {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
-          }
-          // select (fcmp olt X, 0.0), 0.0, X -> maxnum(X, 0.0)
-          else if (Pred == FCmpInst::FCMP_OLT && match(CmpRHS, m_AnyZeroFP()) &&
-                   CmpLHS == FalseVal && match(TrueVal, m_AnyZeroFP())) {
-            Result = B.CreateIntrinsic(
-                Intrinsic::maxnum, CmpLHS->getType(),
-                {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
-          }
-          // select (fcmp ogt X, Y), X, Y -> maxnum(X, Y)
-          else if (Pred == FCmpInst::FCMP_OGT && CmpLHS == TrueVal &&
-                   CmpRHS == FalseVal) {
-            Result = B.CreateIntrinsic(Intrinsic::maxnum, CmpLHS->getType(),
-                                       {CmpLHS, CmpRHS});
-          }
-          // select (fcmp olt X, Y), X, Y -> minnum(X, Y)
-          else if (Pred == FCmpInst::FCMP_OLT && CmpLHS == TrueVal &&
-                   CmpRHS == FalseVal) {
-            Result = B.CreateIntrinsic(Intrinsic::minnum, CmpLHS->getType(),
-                                       {CmpLHS, CmpRHS});
-          }
-
-          if (Result) {
-            Select->replaceAllUsesWith(Result);
-            Select->eraseFromParent();
-
-            if (auto *FCmp = dyn_cast<FCmpInst>(Cond)) {
-              if (FCmp->use_empty()) {
-                FCmp->eraseFromParent();
-              }
-            }
-          }
-        }
-      }
+      if (!Result)
+        continue;
+      Select->replaceAllUsesWith(Result);
+      Select->eraseFromParent();
+      if (auto *FCmp = dyn_cast<FCmpInst>(Cond); FCmp && FCmp->use_empty())
+        FCmp->eraseFromParent();
     }
   }
 }
 
 Function *canonicalize(Function &F) {
-  Function *NewF = Function::Create(F.getFunctionType(), F.getLinkage(),
-                                    "preprocess_" + F.getName(), F.getParent());
+  Function *NewF =
+      Function::Create(F.getFunctionType(), F.getLinkage(),
+                       kCanonicalPrefix + F.getName(), F.getParent());
 
   ValueToValueMapTy VMap;
   for (auto i = F.arg_begin(), j = NewF->arg_begin(); i != F.arg_end();) {
@@ -583,53 +548,23 @@ Function *canonicalize(Function &F) {
   CanonicalizeAnalyses A(NewF->getContext());
   FunctionAnalysisManager &FAM = A.FAM;
 
-  {
-    auto PA = PromotePass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
-  {
-    auto PA = LowerInvokePass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
-  {
-    auto PA = UnreachableBlockElimPass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
-  {
-    auto PA = PromotePass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
-  {
-    auto PA = SROAPass(SROAOptions::ModifyCFG).run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
-  {
-    auto PA = SROAPass(SROAOptions::PreserveCFG).run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
-  {
-    SimplifyCFGOptions scfgo;
-    auto PA = SimplifyCFGPass(scfgo).run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
+  auto run = [&](auto &&Pass) { FAM.invalidate(*NewF, Pass.run(*NewF, FAM)); };
+  run(PromotePass());
+  run(LowerInvokePass());
+  run(UnreachableBlockElimPass());
+  run(PromotePass());
+  run(SROAPass(SROAOptions::ModifyCFG));
+  run(SROAPass(SROAOptions::PreserveCFG));
+  run(SimplifyCFGPass(SimplifyCFGOptions()));
 
   preprocess(NewF);
-  {
-    auto PA = InstCombinePass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-    PA = EarlyCSEPass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-    PA = GVNPass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
+  run(InstCombinePass());
+  run(EarlyCSEPass());
+  run(GVNPass());
 
   canonicalizeLoops(NewF, FAM);
   removeRedundantPHI(NewF, FAM);
-
-  {
-    auto PA = LoopSimplifyPass().run(*NewF, FAM);
-    FAM.invalidate(*NewF, PA);
-  }
+  run(LoopSimplifyPass());
 
   for (auto &BB : *NewF) {
     for (auto &I : make_early_inc_range(BB)) {

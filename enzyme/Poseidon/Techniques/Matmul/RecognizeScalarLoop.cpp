@@ -10,6 +10,7 @@
 #include "MatmulInternal.h"
 #include "Model/FPFormat.h"
 #include "Profile/ProfileRead.h"
+#include "Sites/Canonicalize.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"

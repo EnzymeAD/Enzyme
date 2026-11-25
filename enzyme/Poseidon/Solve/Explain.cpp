@@ -459,7 +459,7 @@ static std::string exprWords(const Unit &U) {
 // site's clones carry.
 static std::string siteSymbol(const Session &S, const Function &F) {
   const std::string key = siteKey(S, F);
-  return StringRef(key).split(".poseidon.").first.str();
+  return StringRef(key).split(kPerCallInfix).first.str();
 }
 
 // Where a remark about a site points: its call, else the site's function.

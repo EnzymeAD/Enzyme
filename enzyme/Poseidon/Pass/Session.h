@@ -78,6 +78,10 @@ public:
   // Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;
 
+  // Whether the module's sites were warned about as compiled without a
+  // profile action.
+  bool WarnedWithoutProfile = false;
+
   // The items of -poseidon-apply-rewrites and the sites they name.
   PinState Pins;
 

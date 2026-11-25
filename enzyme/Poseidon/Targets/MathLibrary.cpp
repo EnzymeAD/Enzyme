@@ -1,4 +1,4 @@
-//===- DeviceMath.cpp - libdevice math of device modules with a site ------===//
+//===- MathLibrary.cpp - the math functions the pass knows by name --------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,9 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DeviceMath.h"
-#include "MathFunctions.h"
-#include "Peers.h"
+#include "MathLibrary.h"
+#include "Target.h"
 
 #include "IR/Utils.h"
 
@@ -23,11 +22,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <optional>
-#include <unordered_set>
 
 using namespace llvm;
 
@@ -35,8 +32,10 @@ namespace poseidon {
 
 namespace {
 
-// Defined by poseidon.h in device code under POSEIDON_DEVICE_MATH.
+// Defined by poseidon.h in device code under POSEIDON_DEVICE_MATH: the keeper
+// of the math functions, and the mark of the macro.
 constexpr StringLiteral kKeepalive = "__poseidon_device_math";
+constexpr StringLiteral kMacroMark = "__poseidon_device_math_defined";
 
 // What keepDeviceMath changed, for releaseDeviceMath to undo.
 constexpr StringLiteral kKeptCall = "poseidon-kept-call";
@@ -66,37 +65,47 @@ static void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
       collectGlobals(op, out);
 }
 
-const std::unordered_set<std::string> &mathBases() {
-  static const std::unordered_set<std::string> Bases = [] {
-    std::unordered_set<std::string> bases;
-    for (const MathFunction &F : mathFunctions())
-      if (F.Device)
-        bases.insert(F.Name.str());
-    return bases;
-  }();
-  return Bases;
+static bool hasRow(StringRef Name, bool MathFunction::*Column) {
+  return any_of(mathFunctions(), [&](const MathFunction &F) {
+    return F.*Column && F.Name == Name;
+  });
+}
+
+bool isLibmFunction(StringRef Name) {
+  return hasRow(Name, &MathFunction::Libm);
+}
+
+bool isOptimizableLibmCall(StringRef Name) {
+  return hasRow(Name, &MathFunction::Optimizable) ||
+         (Name.ends_with("f") &&
+          hasRow(Name.drop_back(), &MathFunction::Optimizable));
+}
+
+bool hasFloatSuffixInC(StringRef Name) {
+  return hasRow(Name, &MathFunction::FloatSuffixInC);
+}
+
+bool isDeviceMathBase(StringRef Name) {
+  return hasRow(Name, &MathFunction::Device);
 }
 
 std::string retypeLibmFunction(StringRef name, Type *newType) {
-  std::string baseName = name.str();
-  if (!baseName.empty() && (baseName.back() == 'f' || baseName.back() == 'l'))
-    baseName.pop_back();
-  if (libmFuncs().count(baseName)) {
-    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())
-      return baseName + "f";
-    if (newType->isDoubleTy())
-      return baseName;
-    if (newType->isFP128Ty() || newType->isX86_FP80Ty())
-      return baseName + "l";
-  }
+  StringRef baseName = name;
+  if (baseName.ends_with("f") || baseName.ends_with("l"))
+    baseName = baseName.drop_back();
+  if (!isLibmFunction(baseName))
+    return "";
+  if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())
+    return (baseName + "f").str();
+  if (newType->isDoubleTy())
+    return baseName.str();
+  if (newType->isFP128Ty() || newType->isX86_FP80Ty())
+    return (baseName + "l").str();
   return "";
 }
 
 bool deviceCallsMathLibrary(StringRef op, Type *Ty) {
-  return any_of(mathFunctions(),
-                [&](const MathFunction &F) {
-                  return F.DeviceCall && F.Name == op;
-                }) &&
+  return hasRow(op, &MathFunction::DeviceCall) &&
          (Ty->isFloatTy() || Ty->isDoubleTy());
 }
 
@@ -132,8 +141,30 @@ bool keepDeviceMath(Module &M) {
   return changed;
 }
 
+void requireDeviceMathMacro(Module &M) {
+  const Target &T = Target::of(M);
+  if (!T.isDevice() || M.getFunction(kMacroMark))
+    return;
+  reportUserError(M.getContext(),
+                  "this device compilation has Poseidon sites from "
+                  "poseidon/poseidon.h and was compiled without "
+                  "POSEIDON_DEVICE_MATH, under which the header keeps the " +
+                      T.mathLibrary() +
+                      " functions a rewrite or a site's derivative calls; "
+                      "define it (-DPOSEIDON_DEVICE_MATH), as poseidon-clang "
+                      "and the Poseidon CMake targets do");
+}
+
 bool releaseDeviceMath(Module &M) {
   bool changed = false;
+  if (Function *mark = M.getFunction(kMacroMark)) {
+    removeFromUsedLists(M, [&](Constant *C) { return C == mark; });
+    mark->removeDeadConstantUsers();
+    if (mark->use_empty()) {
+      mark->eraseFromParent();
+      changed = true;
+    }
+  }
   for (Function &F : M) {
     if (!F.hasFnAttribute(kKeptCall))
       continue;
@@ -178,21 +209,12 @@ bool releaseDeviceMath(Module &M) {
 
 void inlineDeviceMath(Function &F) {
   const Target &T = Target::of(F);
-  for (bool inlined = true; inlined;) {
-    inlined = false;
-    SmallVector<CallBase *, 8> calls;
-    for (Instruction &I : instructions(F))
-      if (auto *CB = dyn_cast<CallBase>(&I))
-        if (Function *callee = CB->getCalledFunction();
-            callee && !callee->isDeclaration() &&
-            !deviceMathName(callee->getName()).empty() &&
-            T.inlinesMathCall(*callee))
-          calls.push_back(CB);
-    for (CallBase *CB : calls) {
-      InlineFunctionInfo IFI;
-      inlined |= InlineFunction(*CB, IFI).isSuccess();
-    }
-  }
+  inlineCallsWhile(F, [&](CallBase &CB) {
+    Function *callee = CB.getCalledFunction();
+    return callee && !callee->isDeclaration() &&
+           !deviceMathName(callee->getName()).empty() &&
+           T.inlinesMathCall(*callee);
+  });
 }
 
 CallInst *createMathCall(IRBuilderBase &B, FunctionCallee F,

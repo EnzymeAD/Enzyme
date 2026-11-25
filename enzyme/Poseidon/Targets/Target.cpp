@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Target.h"
-#include "Peers.h"
+#include "MathLibrary.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
@@ -54,13 +54,21 @@ bool Target::inlinesMathCall(const Function &callee) const {
   return callee.hasFnAttribute(Attribute::AlwaysInline);
 }
 
+bool Target::callsMathLibrary(StringRef op, Type *Ty) const {
+  return isDevice() && deviceCallsMathLibrary(op, Ty);
+}
+
+const ProbeABI &Target::probes() const {
+  return isDevice() ? deviceProbes() : hostProbes();
+}
+
 const ProbeABI &deviceProbes() {
   static const ProbeABI P{
       "poseidonLogValueCUDA",         "poseidonLogGradCUDA",
       "poseidonProbePerturbCUDA",     "poseidonProbePerturbCUDAf",
       "poseidonProfileBlockDimsCUDA", "poseidonProfileStaticCUDA",
-      /*RegisterStatic=*/"",          /*RuntimeAnchor=*/"",
-      /*OperandCountBits=*/64,        "poseidonOverlappingArgumentsCUDA"};
+      /*RegisterStatic=*/"",
+      /*RuntimeAnchor=*/"",           "poseidonOverlappingArgumentsCUDA"};
   return P;
 }
 

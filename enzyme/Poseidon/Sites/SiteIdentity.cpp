@@ -8,6 +8,7 @@
 
 #include "SiteIdentity.h"
 
+#include "Annotations.h"
 #include "Pass/Session.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -34,7 +35,37 @@ const Function *siteOriginOf(const Session &S, const Function &clone) {
 }
 
 std::string bodyProfileStem(const Function &body) {
-  return profileNameStem(("preprocess_" + body.getName()).str());
+  return profileNameStem((kCanonicalPrefix + body.getName()).str());
+}
+
+std::string bodyProfileFile(const Function &body) {
+  return bodyProfileStem(body) + kProfileFileSuffix;
+}
+
+std::string perCallSiteName(StringRef symbol) {
+  auto [fnSymbol, where] = symbol.split(kPerCallInfix);
+  std::string name = demangle(fnSymbol.str());
+  if (!where.empty()) {
+    auto [callerSymbol, k] = where.rsplit('.');
+    name += " at call " + k.str() + " in " + demangle(callerSymbol.str());
+  }
+  return name;
+}
+
+std::optional<DemangledFunction> demangleFunction(StringRef mangled) {
+  // The demangler's nodes point into the name it was given.
+  std::string name = mangled.str();
+  ItaniumPartialDemangler D;
+  if (D.partialDemangle(name.c_str()) || !D.isFunction())
+    return std::nullopt;
+  char *base = D.getFunctionBaseName(nullptr, nullptr);
+  char *context = D.getFunctionDeclContextName(nullptr, nullptr);
+  std::optional<DemangledFunction> out;
+  if (base)
+    out = DemangledFunction{base, context ? context : ""};
+  std::free(base);
+  std::free(context);
+  return out;
 }
 
 // Keyed on the source body, not on the per-call clone: profiling shares one
@@ -54,7 +85,7 @@ std::string siteProfileFile(const Session &S, const Function &clone) {
 
 std::string siteKeyOfBody(const Function &body) {
   StringRef symbol = body.getName();
-  symbol.consume_back("_poseidon_body");
+  symbol.consume_back(kBodySuffix);
   return symbol.str();
 }
 
@@ -65,18 +96,12 @@ std::string siteKey(const Session &S, const Function &clone) {
 
 SmallVector<std::string, 2> siteAliases(StringRef key) {
   SmallVector<std::string, 2> aliases;
-  StringRef fn = key.split(".poseidon.").first;
+  StringRef fn = key.split(kPerCallInfix).first;
   if (fn != key)
     aliases.push_back(fn.str());
-  // The demangler's nodes point into the name it was given.
-  std::string mangled = fn.str();
-  ItaniumPartialDemangler D;
-  if (!D.partialDemangle(mangled.c_str()) && D.isFunction())
-    if (char *base = D.getFunctionBaseName(nullptr, nullptr)) {
-      if (key != base && !is_contained(aliases, base))
-        aliases.push_back(base);
-      std::free(base);
-    }
+  if (std::optional<DemangledFunction> D = demangleFunction(fn))
+    if (key != D->BaseName && !is_contained(aliases, D->BaseName))
+      aliases.push_back(D->BaseName);
   return aliases;
 }
 
@@ -103,14 +128,10 @@ bool redirectNoopSite(Session &S, Function *clone) {
   Function *orig = it->second;
   if (orig == clone)
     return false;
-  SmallVector<CallBase *, 4> callers;
-  for (User *U : clone->users())
-    if (auto *CB = dyn_cast<CallBase>(U))
-      if (CB->getCalledFunction() == clone)
-        callers.push_back(CB);
+  SmallVector<CallBase *, 4> callers = callsOf(*clone);
   for (CallBase *CB : callers)
     CB->setCalledFunction(orig);
-  if (!callers.empty())
+  if (!callers.empty() && S.Opts.Diagnostics.Print)
     llvm::errs() << "[poseidon] no rewrite applied for " << clone->getName()
                  << "; wrapper call restored to original body "
                  << orig->getName() << " (bit-transparent no-op)\n";

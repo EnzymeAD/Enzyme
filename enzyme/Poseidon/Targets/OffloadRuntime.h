@@ -42,10 +42,6 @@ enum class OffloadRuntime { None, CUDA, HIP };
 // .cpp share the triple.
 OffloadRuntime offloadRuntimeOf(const llvm::Module &M);
 
-// Whether `M` launches kernels: a module constructor registers them, or a
-// stub launches one.
-bool launchesKernels(const llvm::Module &M);
-
 // Whether `M` is the host half of a CUDA or HIP compilation.
 bool isOffloadHostHalf(const llvm::Module &M);
 
@@ -55,7 +51,9 @@ std::optional<llvm::StringRef> compilationUnitId(const llvm::Module &M);
 // The launch stub of a kernel: `_Z<L+15>__device_stub__<id><params>` for the
 // kernel `_Z<L><id><params>`.
 llvm::StringRef launchStubPrefix();
-bool isLaunchStub(const llvm::Function &F);
+
+// Whether F is the kernel named `kernelName` or that kernel's launch stub.
+bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
 
 // `name` without the postfix clang appends under -fgpu-rdc to the device-side
 // name of a kernel with internal linkage ("__intern__<hash>", in HIP

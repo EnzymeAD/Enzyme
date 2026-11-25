@@ -10,6 +10,8 @@
 
 #include "Annotations.h"
 #include "Core/Options.h"
+#include "Enzyme/EnzymeCallMarkers.h"
+#include "IR/Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
@@ -23,6 +25,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -38,15 +41,11 @@ bool isMarkerCall(StringRef calleeName) {
 }
 
 void warn(CallBase *CI, const Twine &message) {
-  CI->getContext().diagnose(DiagnosticInfoUnsupported(
-      *CI->getFunction(), "Poseidon: " + message.str(), CI->getDebugLoc(),
-      DS_Warning));
+  diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Warning);
 }
 
 void fail(CallBase *CI, const Twine &message) {
-  CI->getContext().diagnose(DiagnosticInfoUnsupported(
-      *CI->getFunction(), "Poseidon: " + message.str(), CI->getDebugLoc(),
-      DS_Error));
+  diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Error);
 }
 
 // The call's function type may disagree with the declaration's when the
@@ -129,29 +128,6 @@ static bool isEnzymeGeneratedName(StringRef name) {
   return name.starts_with("fwddiffe") || name.starts_with("diffe") ||
          name.starts_with("augmented_") || name.starts_with("fwdsplit") ||
          name.starts_with("batch_");
-}
-
-// Inlining a call can expose further calls to inline; the rounds are bounded
-// so that a recursive callee cannot keep the loop going.
-static constexpr unsigned kMaxInlineRounds = 8;
-
-unsigned inlineCallsWhile(Function &F, function_ref<bool(CallBase &)> pick) {
-  unsigned inlined = 0;
-  for (unsigned round = 0; round < kMaxInlineRounds; ++round) {
-    SmallVector<CallBase *, 4> todo;
-    for (Instruction &I : instructions(F))
-      if (auto *CB = dyn_cast<CallBase>(&I))
-        if (pick(*CB))
-          todo.push_back(CB);
-    if (todo.empty())
-      break;
-    for (CallBase *CB : todo) {
-      InlineFunctionInfo IFI;
-      if (InlineFunction(*CB, IFI).isSuccess())
-        ++inlined;
-    }
-  }
-  return inlined;
 }
 
 // Fold the code Enzyme generated for the request into the deferred body. What
@@ -320,21 +296,28 @@ static std::string listRemedy(StringRef name) {
       .str();
 }
 
-// The accuracy target `value`, the argument after a poseidon_tau of `call`
-// (null when there is none), gives; none, with an error at `call`, when it is
-// not a floating-point constant.
-static std::optional<double> tauValue(CallBase *call, Value *value) {
+bool isAccuracyTarget(double tau) { return tau > 0.0 && std::isfinite(tau); }
+
+std::optional<double> readTarget(CallBase *call, Value *value,
+                                 const Function &fn) {
   if (!value) {
     fail(call, "poseidon_tau without a value");
     return std::nullopt;
   }
   auto *CFP = dyn_cast<ConstantFP>(value);
   if (!CFP) {
-    fail(call, "the relative error tolerance must be a floating-point "
-               "constant");
+    fail(call, "the accuracy target of " + displayName(fn) +
+                   " must be a compile-time floating-point constant (a "
+                   "literal, a macro or a constant expression)");
     return std::nullopt;
   }
-  return CFP->getValueAPF().convertToDouble();
+  double tau = CFP->getValueAPF().convertToDouble();
+  if (!isAccuracyTarget(tau)) {
+    fail(call, "the accuracy target " + shortDouble(tau) + " of " +
+                   displayName(fn) + " is not a positive finite number");
+    return std::nullopt;
+  }
+  return tau;
 }
 
 std::optional<CallArguments>
@@ -348,30 +331,28 @@ readArgumentList(CallBase *call, const Function &fn, Identity identity) {
   for (Value *A : args)
     if (std::optional<StringRef> name = activityMarkerName(A);
         name && isMarkerName(*name)) {
-      if (*name == "poseidon_tau") {
+      if (*name == "poseidon_tau")
         hasTau = true;
-        continue;
-      }
-      activity = name;
-      break;
+      else if (!activity)
+        activity = name;
     }
   const std::string name = displayName(fn);
+  if (hasTau && identity != Identity::None) {
+    fail(call, "poseidon_tau among the arguments of this call of " + name +
+                   " gives the accuracy target only of a marker call; give "
+                   "the target as the first argument of "
+                   "__poseidon_optimize_tau");
+    return std::nullopt;
+  }
   if (activity && identity == Identity::Plain) {
     fail(call, name + " takes the arguments of this call as written, but " +
                    *activity + " among them is an activity marker, which " +
                    "makes them an explicit list" + listRemedy(name));
     return std::nullopt;
   }
-  if (hasTau && identity == Identity::Plain) {
-    fail(call, name + " takes the arguments of this call as written, but " +
-                   "poseidon_tau among them gives the call's accuracy "
-                   "target; give the target as the first argument of "
-                   "__poseidon_optimize_tau");
-    return std::nullopt;
-  }
   if (activity)
     return CallArguments{ArgumentList::Explicit, {}, std::nullopt};
-  if (identity == Identity::Explicit && !hasTau) {
+  if (identity == Identity::Explicit) {
     fail(call, name +
                    " does not take the arguments of this call as written, "
                    "and none of them is an activity marker" +
@@ -396,7 +377,7 @@ readArgumentList(CallBase *call, const Function &fn, Identity identity) {
       return std::nullopt;
     }
     ++i;
-    out.tau = tauValue(call, i < args.size() ? args[i] : nullptr);
+    out.tau = readTarget(call, i < args.size() ? args[i] : nullptr, fn);
     if (!out.tau)
       return std::nullopt;
   }
@@ -429,42 +410,44 @@ std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
     while (auto name = activityMarkerName(res)) {
       if (!isMarkerName(*name))
         break;
-      if (*name == "enzyme_dup" || *name == "enzyme_dupnoneed") {
-        dup = true;
-      } else if (*name == "enzyme_out" || *name == "enzyme_const") {
-        dup = false;
-      } else if (*name == "poseidon_shadow") {
+      unsigned skip = 0;
+      if (*name == "poseidon_shadow") {
         madeShadow = i;
         dup = false;
       } else if (*name == "poseidon_tau") {
         out.forward[i] = false;
         ++i;
-        std::optional<double> tau =
-            tauValue(CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr);
+        std::optional<double> tau = readTarget(
+            CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr, *F);
         if (!tau)
           return std::nullopt;
         out.errTol = *tau;
         out.forward[i] = false;
         skipArg = true;
         break;
-      } else if (*name == "enzyme_not_overwritten") {
-        // A modifier of the marker that follows, not a marker of its own; the
-        // decoding has to match Enzyme's handleArguments or the activity of the
-        // argument it prefixes is lost.
-      } else if (*name == "enzyme_noret" || *name == "enzyme_primal_return" ||
-                 *name == "enzyme_const_return" ||
-                 *name == "enzyme_active_return" ||
-                 *name == "enzyme_dup_return" ||
-                 *name == "enzyme_runtime_activity" ||
-                 *name == "enzyme_strong_zero" || *name == "enzyme_nofree") {
-        skipArg = true;
-        break;
+      } else if (std::optional<enzyme_markers::MarkerInfo> info =
+                     enzyme_markers::lookupEnzymeMarker(*name);
+                 info && info->role != enzyme_markers::MarkerRole::Interleave) {
+        // A modifier is read with the marker that follows it, as Enzyme's
+        // handleArguments reads it, or the activity it prefixes is lost.
+        if (info->role == enzyme_markers::MarkerRole::Activity)
+          dup = enzyme_markers::markerActivityTakesShadow(*info->activity);
+        skip = info->extraOperands;
+        if (info->role == enzyme_markers::MarkerRole::CallFlag) {
+          i += skip;
+          if (i >= CI->arg_size()) {
+            fail(CI, *name + " without its operand");
+            return std::nullopt;
+          }
+          skipArg = true;
+          break;
+        }
       } else {
         fail(CI, "unsupported Poseidon annotation argument " + *name);
         return std::nullopt;
       }
-      ++i;
-      if (i == CI->arg_size()) {
+      i += 1 + skip;
+      if (i >= CI->arg_size()) {
         fail(CI, "activity marker without an argument");
         return std::nullopt;
       }

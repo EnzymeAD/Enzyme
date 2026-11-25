@@ -18,8 +18,14 @@
 // The hash is over the full name so instantiations sharing a 160-character
 // prefix stay apart.
 //
-// Also the header keys both sides spell, and the file handling both runtime
-// halves share. Free of LLVM: included by the pass and the runtimes.
+// Also the format both sides spell, and the file handling both runtime halves
+// share. Free of LLVM: included by the pass and the runtimes.
+//
+// A profile is a header, lines "<key> = <value>", then one record per profiled
+// instruction executed: its slot index alone on a line, then, each on a line
+// of its own and in this order, MinRes, MaxRes, SumSens, SumGrad, SumAbsGrad,
+// Exec, NumOperands and Operand[i] = [minimum, maximum, smallest nonzero
+// magnitude or 0] for each operand.
 //
 //===----------------------------------------------------------------------===//
 
@@ -34,9 +40,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
+#include <limits>
+#include <ostream>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace poseidon {
 
@@ -82,15 +92,41 @@ inline std::string profileFileName(const std::string &name) {
   return profileNameStem(name) + kProfileFileSuffix;
 }
 
-// Header lines: "<key> = <value>".
+// Header keys.
 inline constexpr char kProfileKeySiteId[] = "SiteId";
 inline constexpr char kProfileKeyCanonicalHash[] = "CanonicalHash";
 inline constexpr char kProfileKeyKappa[] = "Kappa";
 inline constexpr char kProfileKeyKappaMark[] = "KappaMark";
+inline constexpr char kProfileKeyExecuted[] = "Executed";
 // The KappaMark of a run that declared a metric and did not measure it.
 inline constexpr char kProfileKappaUnmeasured[] = "unmeasured";
 // The whole header of a site the run instrumented and never executed.
 inline constexpr char kProfileNeverExecuted[] = "Executed = 0";
+
+// What a profile records about one instruction.
+struct ProfileRecord {
+  double minRes, maxRes, sumSens, sumGrad, sumAbsGrad;
+  uint64_t exec;
+  std::vector<double> minOperands, maxOperands, minMagOperands;
+};
+
+// Writes the record of the instruction at `slot`.
+inline void writeProfileRecord(std::ostream &out, size_t slot,
+                               const ProfileRecord &r) {
+  out << std::scientific
+      << std::setprecision(std::numeric_limits<double>::max_digits10);
+  out << slot << "\n";
+  out << "\tMinRes = " << r.minRes << "\n";
+  out << "\tMaxRes = " << r.maxRes << "\n";
+  out << "\tSumSens = " << r.sumSens << "\n";
+  out << "\tSumGrad = " << r.sumGrad << "\n";
+  out << "\tSumAbsGrad = " << r.sumAbsGrad << "\n";
+  out << "\tExec = " << r.exec << "\n";
+  out << "\tNumOperands = " << r.minOperands.size() << "\n";
+  for (size_t i = 0; i < r.minOperands.size(); ++i)
+    out << "\tOperand[" << i << "] = [" << r.minOperands[i] << ", "
+        << r.maxOperands[i] << ", " << r.minMagOperands[i] << "]\n";
+}
 
 // The directory a profiling run writes to.
 inline std::string profileDirectory() {

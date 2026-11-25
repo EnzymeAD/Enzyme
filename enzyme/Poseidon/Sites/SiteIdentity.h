@@ -15,11 +15,12 @@
 #ifndef POSEIDON_SITE_IDENTITY_H
 #define POSEIDON_SITE_IDENTITY_H
 
-#include <string>
-
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+
+#include <optional>
+#include <string>
 
 namespace llvm {
 class Function;
@@ -30,11 +31,31 @@ namespace poseidon {
 
 class Session;
 
+// The body outlined from a site's function or kernel is named after it with
+// this suffix.
+constexpr llvm::StringLiteral kBodySuffix = "_poseidon_body";
+// The copy made for one call of __poseidon_optimize is named
+// <function><infix><caller>.<ordinal>.
+constexpr llvm::StringLiteral kPerCallInfix = ".poseidon.";
+// A site's canonical clone is named <body> after this prefix.
+constexpr llvm::StringLiteral kCanonicalPrefix = "preprocess_";
+
+// A site's name for a diagnostic: the demangled function, and for a per-call
+// copy the call and caller it was made for.
+std::string perCallSiteName(llvm::StringRef symbol);
+
+// The base name and the context of the function an Itanium name demangles to.
+struct DemangledFunction {
+  std::string BaseName, Context;
+};
+std::optional<DemangledFunction> demangleFunction(llvm::StringRef mangled);
+
 void noteSiteOrigin(Session &S, llvm::Function *clone, llvm::Function *orig);
 const llvm::Function *siteOriginOf(const Session &S,
                                    const llvm::Function &clone);
-// The ".fpprofile" stem of the site cut from `body`.
+// The profile stem and file name of the site cut from `body`.
 std::string bodyProfileStem(const llvm::Function &body);
+std::string bodyProfileFile(const llvm::Function &body);
 // The ".fpprofile" file name of a site clone. The profiling run writes one
 // record per marked body, so every clone of one body reads the same file.
 std::string siteProfileFile(const Session &S, const llvm::Function &clone);

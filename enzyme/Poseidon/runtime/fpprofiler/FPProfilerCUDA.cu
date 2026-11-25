@@ -28,8 +28,6 @@
 #include <cuda_runtime.h>
 #endif
 #include <fstream>
-#include <iomanip>
-#include <limits>
 #include <map>
 #include <string>
 #include <unistd.h>
@@ -182,7 +180,6 @@ static void writeAllCUDAProfiles() {
         a.minMagOperands[j] =
             std::max(a.minMagOperands[j], b.minMagOperands[j]);
       }
-      a.sumValue += b.sumValue;
       a.sumGrad += b.sumGrad;
       a.sumAbsGrad += b.sumAbsGrad;
       a.sumSens += b.sumSens;
@@ -216,9 +213,6 @@ static void writeAllCUDAProfiles() {
     std::ofstream out(path);
     if (!out.is_open())
       profileOpenFatal(path, h_funcName);
-    out << std::scientific
-        << std::setprecision(std::numeric_limits<double>::max_digits10);
-
     out << "MaxBlockDims = " << h_blockByFunc[fi * 3 + 0] << " "
         << h_blockByFunc[fi * 3 + 1] << " " << h_blockByFunc[fi * 3 + 2]
         << "\n";
@@ -229,29 +223,38 @@ static void writeAllCUDAProfiles() {
     out << (h_static + (size_t)fi * POSEIDON_PROFILE_STATIC_MAXLEN);
 
     for (size_t i = 0; i < g_slotCount; i++) {
-      GPUProfileSlot &slot = base[i];
+      const GPUProfileSlot &slot = base[i];
       if (slot.exec == 0)
         continue;
-      out << i << "\n";
-      out << "\tMinRes = " << orderedUint64ToDoubleMin(slot.minRes) << "\n";
-      out << "\tMaxRes = " << orderedUint64ToDouble(slot.maxRes) << "\n";
-      out << "\tSumValue = " << slot.sumValue << "\n";
-      out << "\tSumSens = " << slot.sumSens << "\n";
-      out << "\tSumGrad = " << slot.sumGrad << "\n";
-      out << "\tSumAbsGrad = " << slot.sumAbsGrad << "\n";
-      out << "\tExec = " << slot.exec << "\n";
-      out << "\tNumOperands = " << slot.numOperands << "\n";
-      for (uint32_t j = 0; j < slot.numOperands && j < POSEIDON_MAX_OPERANDS;
-           j++) {
-        // stored 0 == never written (see doubleToOrderedUint64Min)
-        double mmag = (slot.minMagOperands[j] == 0)
-                          ? 0.0
-                          : orderedUint64ToDoubleMin(slot.minMagOperands[j]);
-        out << "\tOperand[" << j << "] = ["
-            << orderedUint64ToDoubleMin(slot.minOperands[j]) << ", "
-            << orderedUint64ToDouble(slot.maxOperands[j]) << ", " << mmag
-            << "]\n";
+      ProfileRecord r{orderedUint64ToDoubleMin(slot.minRes),
+                      orderedUint64ToDouble(slot.maxRes),
+                      slot.sumSens,
+                      slot.sumGrad,
+                      slot.sumAbsGrad,
+                      slot.exec,
+                      {},
+                      {},
+                      {}};
+      if (slot.numOperands > POSEIDON_MAX_OPERANDS) {
+        fflush(stdout);
+        fprintf(stderr,
+                "Poseidon FPProfiler: slot %zu of %s records %u operands, "
+                "more than the %d a device profile holds "
+                "(POSEIDON_MAX_OPERANDS). The profile is NOT written.\n",
+                i, h_funcName, slot.numOperands, POSEIDON_MAX_OPERANDS);
+        fflush(stderr);
+        _exit(1);
       }
+      for (uint32_t j = 0; j < slot.numOperands; j++) {
+        r.minOperands.push_back(orderedUint64ToDoubleMin(slot.minOperands[j]));
+        r.maxOperands.push_back(orderedUint64ToDouble(slot.maxOperands[j]));
+        // Stored 0 is never written (doubleToOrderedUint64Min).
+        r.minMagOperands.push_back(
+            slot.minMagOperands[j] == 0
+                ? 0.0
+                : orderedUint64ToDoubleMin(slot.minMagOperands[j]));
+      }
+      writeProfileRecord(out, i, r);
     }
     out.close();
     if (poseidonProfileWritten)

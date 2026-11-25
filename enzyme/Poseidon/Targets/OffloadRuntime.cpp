@@ -13,6 +13,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/Frontend/Offloading/Utility.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -35,10 +36,15 @@ OffloadRuntime offloadRuntimeOf(const Module &M) {
   return OffloadRuntime::None;
 }
 
-bool launchesKernels(const Module &M) {
+static bool isLaunchStub(const Function &F) {
+  return F.getName().contains(launchStubPrefix());
+}
+
+// Whether `M` launches kernels: a module constructor registers them, or a
+// stub launches one.
+static bool launchesKernels(const Module &M) {
   return M.getFunction("__cuda_module_ctor") ||
-         M.getFunction("__hip_module_ctor") ||
-         llvm::any_of(M, [](const Function &F) { return isLaunchStub(F); });
+         M.getFunction("__hip_module_ctor") || llvm::any_of(M, isLaunchStub);
 }
 
 bool isOffloadHostHalf(const Module &M) {
@@ -56,10 +62,6 @@ std::optional<StringRef> compilationUnitId(const Module &M) {
 
 StringRef launchStubPrefix() { return "__device_stub__"; }
 
-bool isLaunchStub(const Function &F) {
-  return F.getName().contains(launchStubPrefix());
-}
-
 StringRef withoutExternalizedPostfix(StringRef name) {
   for (StringRef postfix : {"__intern__", ".intern."}) {
     size_t at = name.rfind(postfix);
@@ -71,6 +73,39 @@ StringRef withoutExternalizedPostfix(StringRef name) {
     return name.take_front(at);
   }
   return name;
+}
+
+// The part of a kernel's mangled name shared with its launch stub: kernel
+// `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.
+static StringRef mangledSuffix(StringRef mangled) {
+  if (mangled.starts_with("_Z")) {
+    mangled = mangled.drop_front(2);
+    // An internal-linkage name (a static kernel template).
+    mangled.consume_front("L");
+    while (!mangled.empty() && mangled[0] >= '0' && mangled[0] <= '9')
+      mangled = mangled.drop_front(1);
+  }
+  return mangled;
+}
+
+bool isLaunchStubFor(const Function &F, StringRef kernelName) {
+  StringRef n = F.getName();
+  if (n == kernelName)
+    return true;
+  const StringRef stubPrefix = launchStubPrefix();
+  if (!n.contains(stubPrefix))
+    return false;
+  StringRef kernel = withoutExternalizedPostfix(kernelName);
+  if (n.ends_with(mangledSuffix(kernel)))
+    return true;
+  // A kernel in a namespace or a class: its identifier, and with it the
+  // stub's prefix, sits inside the nested name rather than at its front.
+  std::string stub = demangle(n);
+  size_t at = stub.find(stubPrefix);
+  if (at == std::string::npos || stub == n)
+    return false;
+  stub.erase(at, stubPrefix.size());
+  return stub == demangle(kernel);
 }
 
 bool isPopCallConfiguration(StringRef name) {

@@ -7,7 +7,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c2 -poseidon-explain=%t/x -Rpass-analysis=poseidon %s -o %t/use 2> %t/use.err
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-print -poseidon-cache=%t/c2 -poseidon-explain=%t/x -Rpass-analysis=poseidon %s -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 // RUN: FileCheck --check-prefix=REMARK %s < %t/use.err
 // RUN: %poseidon_explain %t/x --format report | FileCheck --check-prefix=REPORT %s
@@ -102,5 +102,5 @@ int main(int argc, char **argv) {
 // LEVEL-COUNT-2: Applying solution for CS: All FP64(0%) + FP32(100%)
 // LEVEL-NOT: Applying solution
 
-// NONCONST: error: {{.*}}Poseidon: the accuracy target of __poseidon_optimize_tau for wave(double const*, double*, int) must be a compile-time constant
+// NONCONST: error: {{.*}}Poseidon: the accuracy target of wave(double const*, double*, int) must be a compile-time floating-point constant
 // MARKED: error: {{.*}}Poseidon: wave(double const*, double*, int) carries POSEIDON_OPTIMIZE, so every call of it is already a site; remove this __poseidon_optimize or the annotation

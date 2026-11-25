@@ -46,6 +46,9 @@ using PassParent = llvm::RequiredPassInfoMixin<DerivedT>;
 template <typename DerivedT> using PassParent = llvm::PassInfoMixin<DerivedT>;
 #endif
 
+// A PassBuilder without a target machine; LLVM 24 gives it the context.
+llvm::PassBuilder makePassBuilder(llvm::LLVMContext &C);
+
 // A SCEVExpander that names the values it emits `name`; LLVM 22 dropped the
 // DataLayout argument of its constructor.
 llvm::SCEVExpander makeSCEVExpander(llvm::ScalarEvolution &SE,
@@ -72,6 +75,12 @@ inline void setInsertPoint(llvm::IRBuilderBase &B, llvm::BasicBlock *BB,
 }
 
 double stringToDouble(const std::string &str);
+// A double as %g prints it.
+std::string shortDouble(double v);
+// A double as text that reads back to the same bits, infinity included.
+std::string exactDouble(double v);
+// The demangled name of `F`.
+std::string displayName(const llvm::Function &F);
 double literalToDouble(const std::string &str);
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,
               llvm::SmallVectorImpl<llvm::Instruction *> &instsSorted);
@@ -82,6 +91,12 @@ void collectExprInsts(llvm::Value *V,
                       const llvm::SetVector<llvm::Value *> &inputs,
                       llvm::SmallPtrSetImpl<llvm::Instruction *> &exprInsts,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
+
+// Inlines the calls of `F` that `pick` selects, in instruction order, and again
+// in what that inlined, for a bounded number of rounds so that a recursive
+// callee cannot keep it going; returns how many calls it inlined.
+unsigned inlineCallsWhile(llvm::Function &F,
+                          llvm::function_ref<bool(llvm::CallBase &)> pick);
 
 // Runs the function simplification pipeline of `Level` that `PB` builds on F,
 // calling `afterPass`, when given, after each pass: the compile's own
@@ -95,6 +110,11 @@ void simplifyFunction(llvm::Function &F, llvm::PassBuilder &PB,
 // F. Without a target no branch diverges, so a loop may be versioned on a
 // loop-invariant condition.
 void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
+
+// A diagnostic of `Severity` at `Loc` in `F`, its message prefixed with
+// "Poseidon: ".
+void diagnose(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
+              const llvm::Twine &Message, llvm::DiagnosticSeverity Severity);
 
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1

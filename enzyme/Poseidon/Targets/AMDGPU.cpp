@@ -10,10 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MathFunctions.h"
-#include "Peers.h"
-
-#include "IR/Utils.h"
+#include "MathLibrary.h"
+#include "Target.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/Twine.h"
@@ -126,7 +124,7 @@ public:
     if (!base.consume_front("__ocml_"))
       return std::nullopt;
     return (base.consume_back("_f64") || base.consume_back("_f32")) &&
-                   mathBases().count(base.str())
+                   isDeviceMathBase(base)
                ? base
                : StringRef();
   }
@@ -136,16 +134,11 @@ public:
     if (!ocml.consume_front("__ocml_"))
       return std::nullopt;
     if (!(ocml.consume_back("_f64") || ocml.consume_back("_f32")) ||
-        !libmFuncs().count(ocml.str()))
+        !isLibmFunction(ocml) ||
+        !(Ty->isDoubleTy() || Ty->isHalfTy() || Ty->isBFloatTy() ||
+          Ty->isFloatTy()))
       return std::string();
-    if (Ty->isDoubleTy())
-      return ("__ocml_" + ocml + "_f64").str();
-    if (Ty->isHalfTy() || Ty->isBFloatTy() || Ty->isFloatTy())
-      return ("__ocml_" + ocml + "_f32").str();
-    return std::string();
-  }
-  bool callsMathLibrary(StringRef op, Type *Ty) const override {
-    return deviceCallsMathLibrary(op, Ty);
+    return mathFunction(ocml, Ty);
   }
   bool needsMathLibrary(Intrinsic::ID ID, Type *Ty) const override {
     switch (ID) {
@@ -173,7 +166,6 @@ public:
   // inlines them all the same.
   bool inlinesMathCall(const Function &) const override { return true; }
 
-  const ProbeABI &probes() const override { return deviceProbes(); }
   StringRef profilerBitcode() const override {
 #ifdef POSEIDON_DEVICE_PROFILER_AMDGPU
     return StringRef(reinterpret_cast<const char *>(kDeviceProfilerAMDGPU),

@@ -84,14 +84,14 @@ int main() {
 // of 56; each element's gradient is 1.
 // PROF: MinRes = 1.00999999999999996e-02
 // PROF-NEXT: MaxRes = 1.04960000000000009e+00
-// PROF-NEXT: SumValue = [[SUM:3\.86301[0-9]+e\+02]]
-// PROF-NEXT: SumSens = [[SUM]]
+// PROF-NEXT: SumSens = 3.86301{{[0-9]+}}e+02
 // PROF-NEXT: SumGrad = 8.25000000000000000e+02
+// PROF-NEXT: SumAbsGrad = 8.25000000000000000e+02
 // PROF-NEXT: Exec = 825
 // PROF-NEXT: NumOperands = 3
-// PROF-NEXT: Operand[0] = [1.00000000000000002e-02, 6.40000000000000013e-01]
-// PROF-NEXT: Operand[1] = [1.00000000000000002e-02, 6.40000000000000013e-01]
-// PROF-NEXT: Operand[2] = [1.00000000000000002e-02, 6.40000000000000013e-01]
+// PROF-NEXT: Operand[0] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
+// PROF-NEXT: Operand[1] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
+// PROF-NEXT: Operand[2] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
 
 // UNKNOWN: Poseidon FPProfiler: argument 2 ('y') of scale(double const*, double*, int) points to 0x{{[0-9a-f]+}}, which the profiler did not see allocated.
 // UNKNOWN-SAME: Allocate this array on the heap, or give its shadow in an explicit list of __poseidon_optimize: enzyme_dup before the pointer and the shadow after it.

@@ -8,13 +8,13 @@
 
 #include "SiteProfile.h"
 
+#include "IR/Utils.h"
 #include "Instrument.h"
 #include "Pass/Session.h"
 #include "ProfileRead.h"
 #include "Sites/Annotations.h"
+#include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/HostSites.h"
-#include "Sites/KernelSites.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
@@ -91,6 +91,23 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
 static CallInst *withShadows(CallInst *CI, Function &clone,
                              const MarkerArgs &marker, bool print);
 
+// The reverse-mode request over `args`, whose first is the instrumented clone,
+// of type `FT`, or taking exactly `args` and returning `ret` when FT is null.
+static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
+                                     ArrayRef<Value *> args,
+                                     FunctionType *FT = nullptr) {
+  if (!FT) {
+    SmallVector<Type *, 32> argTys;
+    for (Value *a : args)
+      argTys.push_back(a->getType());
+    FT = FunctionType::get(ret, argTys, false);
+  }
+  Function *autodiff = Function::Create(FT, GlobalValue::ExternalLinkage,
+                                        "__enzyme_autodiff_poseidon",
+                                        B.GetInsertBlock()->getModule());
+  return B.CreateCall(FT, autodiff, args);
+}
+
 // Profile generation. The marker becomes an ordinary reverse-mode derivative
 // request over the instrumented clone: the custom derivative on each probe is
 // what puts the gradient record inside the reverse pass, so the host's AD needs
@@ -157,12 +174,9 @@ bool profileSite(Session &S, CallInst *CI,
   if (!FT->isVarArg() && args.size() != FT->getNumParams())
     FT = FunctionType::get(CI->getType(), {clone->getType()},
                            /*isVarArg=*/true);
-  Function *autodiff = Function::Create(FT, GlobalValue::ExternalLinkage,
-                                        "__enzyme_autodiff_poseidon", &M);
-  autodiff->setCallingConv(CI->getCallingConv());
-
   IRBuilder<> Builder(CI);
-  CallInst *adCall = Builder.CreateCall(FT, autodiff, args);
+  CallInst *adCall = emitAutodiffRequest(Builder, CI->getType(), args, FT);
+  adCall->getCalledFunction()->setCallingConv(CI->getCallingConv());
   adCall->setCallingConv(CI->getCallingConv());
   adCall->setDebugLoc(CI->getDebugLoc());
   adCall->setAttributes(
@@ -227,9 +241,8 @@ static void collectOutputParams(Function &clone,
                                 SmallVectorImpl<unsigned> &seedWidth) {
   seedWidth.assign(clone.arg_size(), 0);
   auto mark = [&](const Value *obj, unsigned w) {
-    int idx = traceToArgIndex(obj);
-    if (w && idx >= 0 && (size_t)idx < seedWidth.size())
-      seedWidth[idx] = std::max(seedWidth[idx], w);
+    if (const auto *A = dyn_cast<Argument>(obj); w && A)
+      seedWidth[A->getArgNo()] = std::max(seedWidth[A->getArgNo()], w);
   };
   forEachWrite(clone, mark);
 }
@@ -288,41 +301,6 @@ static void collectOutputFields(Function &clone,
   forEachWrite(clone, mark);
 }
 
-static bool holdsFP(Type *T) { return findLeafType(T, isFPLeaf); }
-
-// The static shared memory of `K` once profiled: the derivative it runs keeps
-// a shadow next to every shared buffer that holds floating-point data.
-static uint64_t profiledSharedBytes(Function &K) {
-  const Target &T = Target::of(K);
-  const DataLayout &DL = K.getParent()->getDataLayout();
-  SetVector<Function *> funcs;
-  SetVector<GlobalVariable *> shared;
-  funcs.insert(&K);
-  for (size_t f = 0; f < funcs.size(); ++f)
-    for (Instruction &I : instructions(*funcs[f])) {
-      if (auto *CB = dyn_cast<CallBase>(&I))
-        if (Function *callee = CB->getCalledFunction();
-            callee && !callee->isDeclaration())
-          funcs.insert(callee);
-      SmallVector<Value *, 4> ops(I.operands());
-      while (!ops.empty()) {
-        Value *V = ops.pop_back_val();
-        if (auto *GV = dyn_cast<GlobalVariable>(V)) {
-          if (T.isShared(*GV))
-            shared.insert(GV);
-        } else if (auto *CE = dyn_cast<ConstantExpr>(V)) {
-          ops.append(CE->op_begin(), CE->op_end());
-        }
-      }
-    }
-  uint64_t bytes = 0;
-  for (GlobalVariable *GV : shared) {
-    uint64_t size = DL.getTypeAllocSize(GV->getValueType());
-    bytes += holdsFP(GV->getValueType()) ? 2 * size : size;
-  }
-  return bytes;
-}
-
 // Profile generation for an attribute site. The kernel keeps its name, its
 // launch handle and its original parameters and gains one shadow parameter per
 // pointer the launch passes: a pointer parameter, or a pointer field of an
@@ -335,19 +313,6 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   LLVMContext &C = M.getContext();
   const DataLayout &DL = M.getDataLayout();
 
-  const uint64_t maxShared = Target::of(M).maxStaticSharedBytes();
-  if (uint64_t bytes = profiledSharedBytes(K); bytes > maxShared) {
-    diagnoseSite(K,
-                 displayName(K) + " would declare " + std::to_string(bytes) +
-                     " bytes of static shared memory once profiled (a shadow "
-                     "next to each floating-point shared buffer), above the " +
-                     std::to_string(maxShared) +
-                     " a kernel can declare. The kernel is not profiled and "
-                     "stays as written.",
-                 DS_Warning);
-    return false;
-  }
-
   Function *body = nullptr;
   CallInst *call = outlineKernelBody(K, body);
   if (!call)
@@ -357,15 +322,12 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   std::string header;
   Function *clone = instrumentedClone(S, *body, nextSiteId, &header);
   if (!clone) {
-    K.getContext().diagnose(DiagnosticInfoUnsupported(
-        K,
-        "Poseidon: " + displayName(K) +
-            " holds no floating-point operation the pass profiles; the kernel "
-            "is not profiled and stays as written",
-        body->getSubprogram(), DS_Warning));
-    InlineFunctionInfo IFI;
-    (void)InlineFunction(*call, IFI);
-    body->eraseFromParent();
+    diagnose(K, body->getSubprogram(),
+             displayName(K) +
+                 " holds no floating-point operation the pass profiles; the "
+                 "kernel is not profiled and stays as written",
+             DS_Warning);
+    inlineKernelBody(call, body);
     // Outlined and folded back, the kernel is new code to the analyses.
     return true;
   }
@@ -484,14 +446,7 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
     args.push_back(sh);
   }
 
-  SmallVector<Type *, 32> argTys;
-  for (Value *a : args)
-    argTys.push_back(a->getType());
-  Function *autodiff = Function::Create(
-      FunctionType::get(Type::getVoidTy(C), argTys, false),
-      GlobalValue::ExternalLinkage, "__enzyme_autodiff_poseidon", &M);
-
-  B.CreateCall(autodiff, args);
+  emitAutodiffRequest(B, Type::getVoidTy(C), args);
   B.CreateRetVoid();
 
   std::string kernelName = K.getName().str();
@@ -536,17 +491,6 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   // that never launches still gets a profile, one saying so.
   recordProfileHeader(S, kernelName, profileName, header);
   return true;
-}
-
-static Constant *cString(Module &M, StringRef text) {
-  auto *init = ConstantDataArray::getString(M.getContext(), text);
-  auto *GV = new GlobalVariable(
-      M, init->getType(), true, GlobalValue::PrivateLinkage, init,
-      "poseidon.str", nullptr, GlobalValue::NotThreadLocal,
-      Target::of(M).globalAddressSpace());
-  GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-  return ConstantExpr::getPointerBitCastOrAddrSpaceCast(
-      GV, PointerType::getUnqual(M.getContext()));
 }
 
 static Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
@@ -746,13 +690,7 @@ static void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
       args.push_back(a);
     }
   }
-  SmallVector<Type *, 32> argTys;
-  for (Value *a : args)
-    argTys.push_back(a->getType());
-  Function *autodiff = Function::Create(
-      FunctionType::get(CI->getType(), argTys, false),
-      GlobalValue::ExternalLinkage, "__enzyme_autodiff_poseidon", &M);
-  CallInst *adCall = B.CreateCall(autodiff, args);
+  CallInst *adCall = emitAutodiffRequest(B, CI->getType(), args);
   adCall->setDebugLoc(CI->getDebugLoc());
   popStackArrays(*adCall, pushed);
   CI->replaceAllUsesWith(adCall);
@@ -781,11 +719,11 @@ bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
     D.ptrParams.push_back(A.getArgNo());
     param.push_back(ConstantInt::get(I32, A.getArgNo() + 1));
     seed.push_back(ConstantInt::get(I32, seedWidth[A.getArgNo()]));
-    names.push_back(cString(M, paramName(B, A)));
+    names.push_back(getStringPointer(M, "", paramName(B, A)));
   }
   std::string name = perCallSiteName(siteKeyOfBody(B));
   if (!D.ptrParams.empty()) {
-    D.name = cString(M, name);
+    D.name = getStringPointer(M, "", name);
     D.param = constantArray(M, I32, param);
     D.seed = constantArray(M, I32, seed);
     D.paramNames = constantArray(M, PointerType::getUnqual(C), names);
@@ -1184,7 +1122,7 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
           FunctionType::get(S.getVoidTy(),
                             {S.getPtrTy(), S.getInt32Ty(), S.getInt32Ty()},
                             false));
-      S.CreateCall(report, {cString(M, site),
+      S.CreateCall(report, {getStringPointer(M, "", site),
                             S.getInt32(std::min(g->param, h->param) + 1),
                             S.getInt32(std::max(g->param, h->param) + 1)});
     }

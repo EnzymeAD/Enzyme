@@ -11,41 +11,32 @@
 #include "Canonicalize.h"
 #include "Core/Options.h"
 #include "IR/Utils.h"
+#include "LaunchDescriptors.h"
 #include "Markers.h"
-#include "Targets/DeviceMath.h"
+#include "Pass/Session.h"
+#include "SiteIdentity.h"
+#include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/Format.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include <cmath>
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
 
 namespace poseidon {
-
-std::string shortDouble(double v) {
-  std::string s;
-  raw_string_ostream(s) << format("%g", v);
-  return s;
-}
-
-std::string exactDouble(double v) {
-  std::string s;
-  raw_string_ostream(s) << format("%.17g", v);
-  return s;
-}
 
 // Attribute sites: a function or kernel carrying POSEIDON_OPTIMIZE
 // (__attribute__((annotate("poseidon", 0)))) is a site whose annotated
@@ -54,56 +45,44 @@ std::string exactDouble(double v) {
 
 static constexpr StringLiteral kAnnotation = "poseidon";
 
-std::string displayName(const Function &F) {
-  return llvm::demangle(F.getName().str());
-}
-
 void diagnoseSite(Function &F, const Twine &message,
                   DiagnosticSeverity severity) {
   if (F.hasFnAttribute(kNotASite))
     return;
   F.addFnAttr(kNotASite);
-  F.getContext().diagnose(DiagnosticInfoUnsupported(
-      F, "Poseidon: " + message.str(), F.getSubprogram(), severity));
+  diagnose(F, F.getSubprogram(), message, severity);
 }
 
-// Whether an annotation's argument global is POSEIDON_OPTIMIZE's int 0.
-static bool carriesNoTarget(Constant *args) {
-  auto *GV = dyn_cast<GlobalVariable>(args->stripPointerCasts());
-  if (!GV || !GV->hasInitializer())
-    return false;
-  auto *ST = dyn_cast<StructType>(GV->getValueType());
-  return ST && ST->getNumElements() == 1 &&
-         ST->getElementType(0)->isIntegerTy() &&
-         GV->getInitializer()->isNullValue();
-}
+namespace {
 
-// The value of an annotation's argument global when it is one double.
-static std::optional<double> annotationTarget(Constant *args) {
+// What the argument global of a Poseidon annotation says: POSEIDON_OPTIMIZE's
+// int 0, POSEIDON_OPTIMIZE_TAU's one double, or neither.
+struct AnnotationArgument {
+  enum { NoTarget, Target, Malformed } Kind;
+  double Tau = 0.0;
+};
+
+} // namespace
+
+static AnnotationArgument readAnnotationArgument(Constant *args) {
+  if (!args || args->isNullValue())
+    return {AnnotationArgument::NoTarget};
   auto *GV = dyn_cast<GlobalVariable>(args->stripPointerCasts());
-  if (!GV || !GV->hasInitializer())
-    return std::nullopt;
-  auto *ST = dyn_cast<StructType>(GV->getValueType());
-  if (!ST || ST->getNumElements() != 1 || !ST->getElementType(0)->isDoubleTy())
-    return std::nullopt;
-  auto *value = dyn_cast_or_null<ConstantFP>(
-      GV->getInitializer()->getAggregateElement(0u));
+  auto *ST = GV && GV->hasInitializer()
+                 ? dyn_cast<StructType>(GV->getValueType())
+                 : nullptr;
+  if (!ST || ST->getNumElements() != 1)
+    return {AnnotationArgument::Malformed};
+  if (ST->getElementType(0)->isIntegerTy() &&
+      GV->getInitializer()->isNullValue())
+    return {AnnotationArgument::NoTarget};
+  auto *value = ST->getElementType(0)->isDoubleTy()
+                    ? dyn_cast_or_null<ConstantFP>(
+                          GV->getInitializer()->getAggregateElement(0u))
+                    : nullptr;
   if (!value)
-    return std::nullopt;
-  return value->getValueAPF().convertToDouble();
-}
-
-// The C string an annotation entry's second field names; none when that is not
-// a global with a C-string initializer.
-static std::optional<StringRef> annotationString(ConstantStruct &entry) {
-  auto *text =
-      dyn_cast<GlobalVariable>(entry.getOperand(1)->stripPointerCasts());
-  auto *str = text && text->hasInitializer()
-                  ? dyn_cast<ConstantDataArray>(text->getInitializer())
-                  : nullptr;
-  if (!str || !str->isCString())
-    return std::nullopt;
-  return str->getAsCString();
+    return {AnnotationArgument::Malformed};
+  return {AnnotationArgument::Target, value->getValueAPF().convertToDouble()};
 }
 
 // Replaces the module's llvm.global.annotations, `GA`, by an array of
@@ -135,7 +114,14 @@ static std::optional<StringRef> entryAnnotation(Value *op) {
   auto *entry = dyn_cast<ConstantStruct>(op);
   if (!entry || entry->getNumOperands() < 2)
     return std::nullopt;
-  return annotationString(*entry);
+  auto *text =
+      dyn_cast<GlobalVariable>(entry->getOperand(1)->stripPointerCasts());
+  auto *str = text && text->hasInitializer()
+                  ? dyn_cast<ConstantDataArray>(text->getInitializer())
+                  : nullptr;
+  if (!str || !str->isCString())
+    return std::nullopt;
+  return str->getAsCString();
 }
 
 // The annotated functions of this module with the accuracy target each
@@ -160,26 +146,26 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
     if (*text != kAnnotation)
       continue;
     std::optional<double> tau;
-    Constant *args =
-        entry->getNumOperands() > 4 ? entry->getOperand(4) : nullptr;
-    if (args && !args->isNullValue() && !carriesNoTarget(args)) {
-      tau = annotationTarget(args);
-      if (!tau) {
-        diagnoseSite(*fn,
-                     displayName(*fn) +
-                         " carries a Poseidon annotation whose arguments are "
-                         "not one accuracy target",
-                     DS_Error);
-        continue;
-      }
-      if (!(*tau > 0.0) || !std::isfinite(*tau)) {
+    AnnotationArgument arg = readAnnotationArgument(
+        entry->getNumOperands() > 4 ? entry->getOperand(4) : nullptr);
+    if (arg.Kind == AnnotationArgument::Malformed) {
+      diagnoseSite(*fn,
+                   displayName(*fn) +
+                       " carries a Poseidon annotation whose arguments are "
+                       "not one accuracy target",
+                   DS_Error);
+      continue;
+    }
+    if (arg.Kind == AnnotationArgument::Target) {
+      if (!isAccuracyTarget(arg.Tau)) {
         diagnoseSite(*fn,
                      displayName(*fn) + " carries the accuracy target " +
-                         shortDouble(*tau) +
+                         shortDouble(arg.Tau) +
                          ", which is not a positive finite number",
                      DS_Error);
         continue;
       }
+      tau = arg.Tau;
     }
     auto [it, inserted] = found.try_emplace(fn, tau);
     if (inserted || !tau)
@@ -219,9 +205,7 @@ void collectAnnotatedSites(const Options &O, Module &M,
   SmallPtrSet<Function *, 8> found;
 
   for (auto &[fn, tau] : annotatedFunctions(M)) {
-    // In a CUDA host compilation the same annotation lands on the launch
-    // stub; the site itself lives in the device module.
-    if (isLaunchStub(*fn) || fn->hasFnAttribute(kSiteLowered))
+    if (fn->hasFnAttribute(kSiteLowered))
       continue;
     // A host function is a site of its own (outlineHostSites); a device
     // function makes the kernels that call it sites (propagateDeviceSites),
@@ -378,13 +362,12 @@ bool propagateDeviceSites(const Options &O, Module &M) {
     if (annotated.count(&K)) {
       std::optional<double> own = annotated.lookup(&K);
       if (tau && (!own || *own != *tau))
-        K.getContext().diagnose(DiagnosticInfoUnsupported(
-            K,
-            "Poseidon: " + displayName(K) +
-                " carries POSEIDON_OPTIMIZE and calls " + names +
-                ", which carry it too; the kernel's own annotation and target "
-                "apply",
-            K.getSubprogram(), DS_Warning));
+        diagnose(K, K.getSubprogram(),
+                 displayName(K) + " carries POSEIDON_OPTIMIZE and calls " +
+                     names +
+                     ", which carry it too; the kernel's own annotation and "
+                     "target apply",
+                 DS_Warning);
       continue;
     }
     if (!why.empty()) {
@@ -443,25 +426,42 @@ bool foldDeviceSiteCallees(const Options &O, Module &M) {
     // computes is outside the site.
     for (Instruction &I : instructions(*K))
       if (auto *CB = dyn_cast<CallBase>(&I); CB && foldsIntoSite(T, *CB))
-        K->getContext().diagnose(DiagnosticInfoUnsupported(
-            *K,
-            "Poseidon: " + displayName(*K) + " calls " +
-                displayName(*CB->getCalledFunction()) +
-                ", which the pass cannot fold into the site; the "
-                "floating-point work it does is neither profiled nor "
-                "rewritten",
-            CB->getDebugLoc(), DS_Warning));
+        diagnose(*K, CB->getDebugLoc(),
+                 displayName(*K) + " calls " +
+                     displayName(*CB->getCalledFunction()) +
+                     ", which the pass cannot fold into the site; the "
+                     "floating-point work it does is neither profiled nor "
+                     "rewritten",
+                 DS_Warning);
   }
   return changed;
 }
 
-void warnWithoutProfile(Function &K) {
-  K.getContext().diagnose(DiagnosticInfoUnsupported(
-      K,
-      "Poseidon: a Poseidon site was compiled without "
-      "-poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting "
-      "the original computation.",
-      K.getSubprogram(), DS_Warning));
+bool hasHeaderSite(Module &M) {
+  return !annotatedFunctions(M).empty() ||
+         any_of(std::initializer_list<StringRef>{kPlainIdentity,
+                                                 kPlainIdentityTau,
+                                                 kExplicitIdentity,
+                                                 kExplicitIdentityTau},
+                [&](StringRef name) { return M.getFunction(name); });
+}
+
+void reportAnnotatedCall(CallBase *call, StringRef name) {
+  fail(call, name + " carries POSEIDON_OPTIMIZE, so every call of it is "
+                    "already a site; remove this __poseidon_optimize or the "
+                    "annotation");
+}
+
+void warnSitesWithoutProfile(Session &S, Module &M) {
+  if (S.WarnedWithoutProfile)
+    return;
+  S.WarnedWithoutProfile = true;
+  SmallVector<Function *, 4> sites;
+  collectAnnotatedSites(S.Opts, M, sites);
+  for (Function *K : sites)
+    diagnose(*K, K->getSubprogram(),
+             Twine(kNoProfileAction) + " Emitting the original computation.",
+             DS_Warning);
 }
 
 // The module's POSEIDON_OPTIMIZE annotations removed, with what only they
@@ -503,13 +503,8 @@ bool dropSiteAnnotations(Module &M) {
 // function it names, which the inliner counts as a second caller (no last-call
 // bonus, no deletion once inlined), so the module then compiles as its source
 // does without them.
-bool leaveSitesAsWritten(const Options &O, Module &M) {
-  SmallVector<Function *, 4> sites;
-  SmallPtrSet<Function *, 4> byRegex;
-  collectAnnotatedSites(O, M, sites, &byRegex);
-  for (Function *K : sites)
-    if (!byRegex.count(K))
-      warnWithoutProfile(*K);
+bool leaveSitesAsWritten(Session &S, Module &M) {
+  warnSitesWithoutProfile(S, M);
 
   bool changed = false;
   for (Function &F : M)
@@ -519,6 +514,339 @@ bool leaveSitesAsWritten(const Options &O, Module &M) {
         changed = true;
       }
   return dropSiteAnnotations(M) || changed;
+}
+
+// Outlined sites: a site's computation moved into a body of its own that the
+// function or kernel carrying the annotation calls.
+
+// Whether `F` is the call operator of a lambda. A closure type demangles as
+// 'lambda'(...), or as $_<n> where clang needs no mangling number for it (a
+// lambda in a function of a host-only compile).
+static bool isLambdaCallOperator(const Function &F) {
+  std::optional<DemangledFunction> D = demangleFunction(F.getName());
+  return D && D->BaseName == "operator()" &&
+         (StringRef(D->Context).contains("'lambda") ||
+          StringRef(D->Context).rsplit("::").second.starts_with("$_"));
+}
+
+// Host sites: a host function carrying POSEIDON_OPTIMIZE.
+
+static bool isHostScalar(Type *T) {
+  return T->isIntegerTy() || T->isHalfTy() || T->isBFloatTy() ||
+         T->isFloatTy() || T->isDoubleTy();
+}
+
+// Why `F` cannot be a host site, empty if it can. The profiled clone is
+// differentiated with one activity per parameter, which a pointer, a
+// floating-point scalar and an integer have, and its value comes back only as
+// one of the latter two.
+std::string hostSiteRefusal(Function &F) {
+  if (F.isVarArg())
+    return "is variadic";
+  Type *R = F.getReturnType();
+  if (!R->isVoidTy() && !isHostScalar(R))
+    return "returns a value that is not a floating-point or integer scalar";
+  for (Argument &A : F.args()) {
+    if (A.hasStructRetAttr())
+      return "returns its value through memory (sret)";
+    bool ok = A.getType()->isPointerTy()
+                  ? !A.hasPassPointeeByValueCopyAttr() && !A.hasByRefAttr()
+                  : isHostScalar(A.getType());
+    if (!ok)
+      return ("takes parameter " + Twine(A.getArgNo() + 1) +
+              " as an aggregate or vector value")
+          .str();
+  }
+  for (Instruction &I : instructions(F))
+    if (auto *CB = dyn_cast<CallBase>(&I))
+      if (CB->getCalledOperand()->stripPointerCasts() == &F)
+        return "calls itself";
+  return "";
+}
+
+// The body a site's call targets must not reach codegen as a call: under
+// -fcuda-rdc a call that is not folded back is a real ABI call, and the kernel
+// entry then pays its register and frame budget, which lowers occupancy or
+// makes a large block's launch fail. Marked on the solve path for both
+// annotation forms, so that a site the solve leaves unchanged is inlined
+// exactly like one it rewrote.
+void markOutlineTransparent(Function *body) {
+  body->removeFnAttr(Attribute::NoInline);
+  body->removeFnAttr(Attribute::OptimizeNone);
+  body->addFnAttr(Attribute::AlwaysInline);
+}
+
+// Whether every use of `P`, a pointer to an aggregate, is one reroot can
+// rebuild over a pointer in another address space.
+static bool reroots(const Value *P) {
+  for (const Use &U : P->uses()) {
+    const User *I = U.getUser();
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+      if (U.getOperandNo() != GEP->getPointerOperandIndex() || !reroots(GEP))
+        return false;
+    } else if (isa<MemTransferInst>(I)) {
+      if (U.getOperandNo() != 1)
+        return false;
+    } else if (!isa<LoadInst>(I) && !isa<AddrSpaceCastInst>(I)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The uses of `from` rebuilt over `to`, which points to the same aggregate
+// through the generic address space.
+static void reroot(Value *from, Value *to) {
+  for (Use &U : make_early_inc_range(from->uses())) {
+    auto *I = cast<Instruction>(U.getUser());
+    IRBuilder<> B(I);
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+      SmallVector<Value *, 4> idx(GEP->indices());
+      Value *N = B.CreateGEP(GEP->getSourceElementType(), to, idx, "",
+                             GEP->getNoWrapFlags());
+      N->takeName(GEP);
+      reroot(GEP, N);
+      GEP->eraseFromParent();
+    } else if (auto *MT = dyn_cast<MemTransferInst>(I)) {
+      CallInst *N = isa<MemMoveInst>(MT)
+                        ? B.CreateMemMove(MT->getRawDest(), MT->getDestAlign(),
+                                          to, MT->getSourceAlign(),
+                                          MT->getLength(), MT->isVolatile())
+                        : B.CreateMemCpy(MT->getRawDest(), MT->getDestAlign(),
+                                         to, MT->getSourceAlign(),
+                                         MT->getLength(), MT->isVolatile());
+      N->copyMetadata(*MT);
+      MT->eraseFromParent();
+    } else if (isa<AddrSpaceCastInst>(I) && I->getType() == to->getType()) {
+      I->replaceAllUsesWith(to);
+      I->eraseFromParent();
+    } else {
+      U.set(to);
+    }
+  }
+}
+
+// Moves the code of `F` into `B`, a new function of as many parameters, with
+// `rewire` making each use of a parameter of F one of B's, and makes F a
+// wrapper that calls B with what `passArg` makes of each of its parameters.
+// Returns that call.
+static CallInst *
+outlineInto(Function &F, Function &B,
+            function_ref<void(Argument &From, Argument &To)> rewire,
+            function_ref<Value *(IRBuilder<> &, Argument &)> passArg) {
+  B.setSubprogram(F.getSubprogram());
+  F.setSubprogram(nullptr);
+  B.splice(B.begin(), &F);
+  for (auto [From, To] : zip(F.args(), B.args())) {
+    To.setName(From.getName());
+    rewire(From, To);
+  }
+  IRBuilder<> Builder(BasicBlock::Create(F.getContext(), "entry", &F));
+  SmallVector<Value *, 8> args;
+  for (Argument &A : F.args())
+    args.push_back(passArg(Builder, A));
+  CallInst *call = Builder.CreateCall(&B, args);
+  call->setCallingConv(B.getCallingConv());
+  if (F.getReturnType()->isVoidTy())
+    Builder.CreateRetVoid();
+  else
+    Builder.CreateRet(call);
+  F.addFnAttr(kSiteLowered);
+  // Folded back, the body's code still names the subprogram it took along;
+  // without it again the wrapper compiles with no line table, and ptxas then
+  // allocates a kernel differently.
+  F.addFnAttr(kHostWrapper);
+  return call;
+}
+
+// Make the kernel a wrapper around its own body so that both phases see the
+// structure they already handle: a function holding the annotated computation,
+// reached through one call whose arguments are the site's inputs. Returns that
+// call, or null if the kernel cannot be a site.
+CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
+  if (K.isVarArg() || !K.getReturnType()->isVoidTy()) {
+    diagnoseSite(K, "an annotated kernel must be a void, non-variadic function",
+                 DS_Error);
+    return nullptr;
+  }
+  Module &M = *K.getParent();
+  // An AMDGPU kernel takes an aggregate by reference into its constant
+  // argument segment; the body takes it through a generic pointer, which the
+  // profiled kernel can point at a copy that holds the shadows.
+  SmallVector<Type *, 8> params(K.getFunctionType()->params());
+  for (Argument &A : K.args())
+    if (A.hasByRefAttr()) {
+      if (!reroots(&A)) {
+        diagnoseSite(K,
+                     displayName(K) + " uses its aggregate parameter " +
+                         Twine(A.getArgNo() + 1) +
+                         " otherwise than by loading or copying from it, so "
+                         "it cannot be a Poseidon site; copy the parameter "
+                         "into a local object first",
+                     DS_Error);
+        return nullptr;
+      }
+      params[A.getArgNo()] = PointerType::getUnqual(M.getContext());
+    }
+  // Named alike with and without -fgpu-rdc, which profile generation adds and
+  // a solve need not: the profile is found by this name.
+  Function *B = Function::Create(
+      FunctionType::get(K.getReturnType(), params, false),
+      GlobalValue::InternalLinkage,
+      withoutExternalizedPostfix(K.getName()) + kBodySuffix, &M);
+  B->setAttributes(K.getAttributes());
+  // The body reads the kernel's own copy of a by-value aggregate. Left byval,
+  // folding the body back would copy the aggregate a second time.
+  for (Argument &A : B->args())
+    if (A.hasByValAttr() || A.hasByRefAttr()) {
+      A.removeAttr(Attribute::ByVal);
+      A.removeAttr(Attribute::ByRef);
+      A.addAttr(Attribute::get(M.getContext(), kByValueParam));
+    }
+  // The body is an ordinary device function; only the kernel stays an entry.
+  B->setCallingConv(CallingConv::C);
+  CallInst *call = outlineInto(
+      K, *B,
+      [](Argument &From, Argument &To) {
+        if (From.getType() != To.getType())
+          reroot(&From, &To);
+        else
+          From.replaceAllUsesWith(&To);
+      },
+      [&](IRBuilder<> &Builder, Argument &A) -> Value * {
+        return A.hasByRefAttr() ? Builder.CreateAddrSpaceCast(
+                                      &A, B->getArg(A.getArgNo())->getType())
+                                : &A;
+      });
+  bodyOut = B;
+  return call;
+}
+
+// Make `F` a wrapper around its own body, as outlineKernelBody does for a
+// kernel, but before the inliner runs: every call of F, direct, indirect or
+// from another translation unit, reaches the body through F, and a caller the
+// inliner puts F into calls the body itself. Until the site is lowered the
+// body is kept from being inlined and from interprocedural rewriting, so that
+// it keeps the signature and the code F was written with.
+static void outlineHostFunction(Function &F, std::optional<double> tau) {
+  Module &M = *F.getParent();
+  Function *B =
+      Function::Create(F.getFunctionType(), GlobalValue::InternalLinkage,
+                       F.getName() + kBodySuffix, &M);
+  B->setAttributes(F.getAttributes());
+  B->setCallingConv(F.getCallingConv());
+  if (F.hasPersonalityFn())
+    B->setPersonalityFn(F.getPersonalityFn());
+  B->removeFnAttr(Attribute::AlwaysInline);
+  B->removeFnAttr(Attribute::InlineHint);
+  B->addFnAttr(Attribute::NoInline);
+  B->addFnAttr(kHostBody, tau ? exactDouble(*tau) : "");
+  CallInst *call = outlineInto(
+      F, *B, [](Argument &From, Argument &To) { From.replaceAllUsesWith(&To); },
+      [](IRBuilder<> &, Argument &A) -> Value * { return &A; });
+  for (BasicBlock &BB : *B)
+    if (auto *R = dyn_cast<ReturnInst>(BB.getTerminator())) {
+      call->getNextNode()->setDebugLoc(R->getDebugLoc());
+      break;
+    }
+  appendToCompilerUsed(M, {B});
+}
+
+// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
+// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
+bool outlineHostSites(const Options &O, Module &M) {
+  if (Target::of(M).isDevice() || isOffloadHostHalf(M))
+    return false;
+  auto annotated = annotatedFunctions(M);
+  if (annotated.empty())
+    return false;
+  const bool active = O.Profiling.profileAction();
+
+  SmallVector<CallInst *, 4> markers;
+  collectMarkerCalls(M, markers);
+
+  bool changed = false;
+  for (auto &[F, tau] : annotated) {
+    if (F->hasFnAttribute(kSiteLowered))
+      continue;
+    // An annotated lambda marks the kernels that call it, which only a CUDA
+    // or HIP compilation has. Its closure is no pointer the profiler can
+    // shadow, so a host-only build leaves it alone.
+    if (isLambdaCallOperator(*F)) {
+      diagnoseSite(*F,
+                   displayName(*F) +
+                       " is a lambda; POSEIDON_OPTIMIZE on a lambda marks the "
+                       "GPU kernels that call it, and this compilation has "
+                       "none. Emitting the original computation.",
+                   DS_Warning);
+      continue;
+    }
+    if (!active) {
+      diagnoseSite(
+          *F, Twine(kNoProfileAction) + " Emitting the original computation.",
+          DS_Warning);
+      continue;
+    }
+    auto both = llvm::find_if(
+        markers, [F = F](CallInst *CI) { return markerTargetOrNull(CI) == F; });
+    if (both != markers.end()) {
+      reportAnnotatedCall(*both, displayName(*F));
+      F->addFnAttr(kNotASite);
+      continue;
+    }
+    std::string why = hostSiteRefusal(*F);
+    if (!why.empty()) {
+      diagnoseSite(
+          *F, displayName(*F) + " " + why + ", so it cannot be a Poseidon site",
+          DS_Error);
+      continue;
+    }
+    noteSiteTarget(O, *F, tau);
+    outlineHostFunction(*F, tau);
+    changed = true;
+  }
+  return changed;
+}
+
+SmallVector<Function *, 4> hostSiteBodies(Module &M) {
+  SmallVector<Function *, 4> out;
+  for (Function &F : M)
+    if (!F.empty() && F.hasFnAttribute(kHostBody))
+      out.push_back(&F);
+  return out;
+}
+
+SmallVector<CallBase *, 4> callsOf(Value &F) {
+  SmallVector<CallBase *, 4> out;
+  for (User *U : F.users())
+    if (auto *CB = dyn_cast<CallBase>(U); CB && CB->getCalledOperand() == &F)
+      out.push_back(CB);
+  return out;
+}
+
+// The site's accuracy target, and the body handed back to the optimizer: out
+// of llvm.compiler.used and without the mark its clones would inherit.
+double takeHostBody(Function &B) {
+  double tau = 0.0;
+  StringRef value = B.getFnAttribute(kHostBody).getValueAsString();
+  if (!value.empty() && value.getAsDouble(tau))
+    report_fatal_error("Poseidon: the body " + B.getName() +
+                       " carries the accuracy target '" + value +
+                       "', which is not a number");
+  B.removeFnAttr(kHostBody);
+  removeFromUsedLists(*B.getParent(), [&](Constant *C) {
+    return C->stripPointerCasts() == &B;
+  });
+  return tau;
+}
+
+// Undo outlineKernelBody: a filtered site has to leave the kernel exactly as it
+// was found.
+void inlineKernelBody(CallInst *call, Function *body) {
+  InlineFunctionInfo IFI;
+  (void)InlineFunction(*call, IFI);
+  if (body->use_empty())
+    body->eraseFromParent();
 }
 
 } // namespace poseidon

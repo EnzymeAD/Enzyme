@@ -12,13 +12,17 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #include <mpfr.h>
@@ -33,10 +37,15 @@ using namespace llvm;
 
 namespace poseidon {
 
+void diagnose(const Function &F, const DiagnosticLocation &Loc,
+              const Twine &Message, DiagnosticSeverity Severity) {
+  F.getContext().diagnose(DiagnosticInfoUnsupported(
+      F, "Poseidon: " + Message.str(), Loc, Severity));
+}
+
 void reportUserError(const Function &F, const DiagnosticLocation &Loc,
                      const Twine &Message) {
-  F.getContext().diagnose(DiagnosticInfoUnsupported(
-      F, "Poseidon: " + Message.str(), Loc, DS_Error));
+  diagnose(F, Loc, Message, DS_Error);
   // What LLVM's own handler does for a fatal error that is not a crash, short
   // of the crash recovery an in-process clang would turn it into.
   sys::RunInterruptHandlers();
@@ -51,6 +60,26 @@ void reportUserError(LLVMContext &Ctx, const Twine &Message) {
   Ctx.diagnose(DiagnosticInfoGeneric("Poseidon: " + Message, DS_Error));
   sys::RunInterruptHandlers();
   exit(1);
+}
+
+unsigned inlineCallsWhile(Function &F, function_ref<bool(CallBase &)> pick) {
+  constexpr unsigned kMaxInlineRounds = 8;
+  unsigned inlined = 0;
+  for (unsigned round = 0; round < kMaxInlineRounds; ++round) {
+    SmallVector<CallBase *, 4> todo;
+    for (Instruction &I : instructions(F))
+      if (auto *CB = dyn_cast<CallBase>(&I))
+        if (pick(*CB))
+          todo.push_back(CB);
+    if (todo.empty())
+      break;
+    for (CallBase *CB : todo) {
+      InlineFunctionInfo IFI;
+      if (InlineFunction(*CB, IFI).isSuccess())
+        ++inlined;
+    }
+  }
+  return inlined;
 }
 
 void simplifyFunction(Function &F, PassBuilder &PB, OptimizationLevel Level,
@@ -88,12 +117,16 @@ void simplifyFunction(Function &F, PassBuilder &PB, OptimizationLevel Level,
   (void)FPM.run(F, FAM);
 }
 
-void simplifyFunction(Function &F, OptimizationLevel Level) {
+PassBuilder makePassBuilder(LLVMContext &C) {
 #if LLVM_VERSION_MAJOR >= 24
-  PassBuilder PB(F.getContext());
+  return PassBuilder(C);
 #else
-  PassBuilder PB;
+  return PassBuilder();
 #endif
+}
+
+void simplifyFunction(Function &F, OptimizationLevel Level) {
+  PassBuilder PB = makePassBuilder(F.getContext());
   simplifyFunction(F, PB, Level);
 }
 
@@ -107,6 +140,22 @@ SCEVExpander makeSCEVExpander(ScalarEvolution &SE, const char *name) {
 
 double stringToDouble(const std::string &str) {
   return std::strtod(str.c_str(), nullptr);
+}
+
+std::string shortDouble(double v) {
+  std::string s;
+  raw_string_ostream(s) << format("%g", v);
+  return s;
+}
+
+std::string exactDouble(double v) {
+  std::string s;
+  raw_string_ostream(s) << format("%.17g", v);
+  return s;
+}
+
+std::string displayName(const Function &F) {
+  return demangle(F.getName().str());
 }
 
 // A Herbie literal is an exact rational whose numerator or denominator alone

@@ -63,20 +63,16 @@ set(POSEIDON_SRC
     Sites/Canonicalize.cpp
     Model/CostModel.cpp
     Core/CostTable.cpp
-    Targets/DeviceMath.cpp
-    Targets/MathFunctions.cpp
+    Targets/MathLibrary.cpp
     Targets/Target.cpp
     Targets/Host.cpp
     Targets/NVPTX.cpp
     Targets/AMDGPU.cpp
-    Targets/NVPTXTensorCore.cpp
     Targets/OffloadRuntime.cpp
-    Profile/DeviceProfile.cpp
     Pass/Driver.cpp
     Sites/Markers.cpp
     Sites/Annotations.cpp
-    Sites/KernelSites.cpp
-    Sites/HostSites.cpp
+    Sites/CallSites.cpp
     Profile/SiteProfile.cpp
     Pass/Twin.cpp
     Pass/Pipeline.cpp
@@ -136,7 +132,9 @@ add_llvm_library(
   intrinsics_gen)
 target_include_directories(
   ${POSEIDON_PLUGIN_TARGET}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include
+    ${ENZYME_SOURCE_DIR})
 target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE ${MPFR_LIB_PATH})
 
 # What a cached result was computed by: Poseidon's sources. Hashed when they
@@ -476,7 +474,7 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
 endif()
 
 add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp
-               Core/CostTable.cpp Targets/MathFunctions.cpp)
+               Core/CostTable.cpp)
 target_include_directories(
   poseidon-calibrate
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

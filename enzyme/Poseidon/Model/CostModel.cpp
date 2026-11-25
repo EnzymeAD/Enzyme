@@ -10,8 +10,7 @@
 #include "FPCore.h"
 #include "FPFormat.h"
 #include "IR/Utils.h"
-#include "Targets/DeviceMath.h"
-#include "Targets/MathFunctions.h"
+#include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -148,7 +147,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
           OpcodeName = "sqrt";
         else
           OpcodeName = intrinsicBaseName(*CalledFunc).str();
-        if (!libmFuncs().count(OpcodeName) &&
+        if (!isLibmFunction(OpcodeName) &&
             !is_contained({"fmuladd", "maxnum", "minnum"}, OpcodeName))
           unpriced(I);
       } else if (StringRef deviceMath = deviceMathName(CalledFunc->getName());
@@ -162,7 +161,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
           OpcodeName = "minnum";
       } else {
         OpcodeName = mathFunctionOf(CalledFunc->getName()).str();
-        if (!libmFuncs().count(OpcodeName))
+        if (!isLibmFunction(OpcodeName))
           unpriced(I);
       }
     } else {
@@ -214,14 +213,17 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
       return rowCost(CM, F, F.getSubprogram(), Opcode, Type);
     };
     std::unordered_set<std::string> funcs;
-    for (const auto &func : libmFuncs()) {
+    for (const MathFunction &libm : mathFunctions()) {
+      if (!libm.Libm)
+        continue;
+      StringRef func = libm.Name;
       double costFP32 = row(func, "float");
       double costFP64 = row(func, "double");
       double costFPTrunc = row("fptrunc_double_to_float", "double");
       double costFPExt = row("fpext_float_to_double", "float");
       double costFPCast = costFPTrunc + costFPExt;
       if (costFP32 + costFPCast < costFP64)
-        funcs.insert(func);
+        funcs.insert(func.str());
     }
     CM.PTFuncs = std::move(funcs);
   }

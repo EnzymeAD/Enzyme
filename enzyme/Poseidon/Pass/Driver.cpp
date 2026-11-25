@@ -11,12 +11,11 @@
 #include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Pass/Session.h"
+#include "Profile/Instrument.h"
 #include "Profile/ProfileRead.h"
 #include "Profile/SiteProfile.h"
 #include "Sites/Annotations.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/HostSites.h"
-#include "Sites/KernelSites.h"
 #include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Explain.h"
@@ -98,7 +97,7 @@ static void requireProfileDirectory(CallBase *CI, StringRef dir,
   if (isDir)
     for (sys::fs::directory_iterator it(dir, EC), end; !EC && it != end;
          it.increment(EC))
-      if (sys::path::extension(it->path()) == ".fpprofile")
+      if (sys::path::extension(it->path()) == kProfileFileSuffix)
         return;
   reportUserError(*CI,
                   Twine("the profile directory ") + dir + " (" + flag + ") " +
@@ -128,14 +127,16 @@ static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
       requireProfileDirectory(CI, dir, flag);
       if (!absent)
         absent = Unprofiled{false, path.str().str()};
-    } else if (isNeverExecutedProfile(path.str().str(), clone)) {
-      ProfileMap records;
-      FunctionProfileHeader header;
-      parseProfileFile(path.str().str(), clone, records, &header);
-      requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
-      if (!neverExecuted)
-        neverExecuted = Unprofiled{true, path.str().str()};
+      return;
     }
+    ProfileMap records;
+    FunctionProfileHeader header;
+    parseProfileFile(path.str().str(), clone, records, header);
+    if (header.executed)
+      return;
+    requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
+    if (!neverExecuted)
+      neverExecuted = Unprofiled{true, path.str().str()};
   };
   read(S.Opts.Profiling.ProfileUse, "-poseidon-profile-use");
   for (const std::string &dir : S.Opts.Profiling.OutputProfiles)
@@ -233,8 +234,9 @@ static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
                                   ArrayRef<Value *> primalArgs) {
   if (!S.Opts.Matmul.OzakiHostDispatch)
     return;
-  if (std::optional<GemmBodyNote> note = S.Matmul.GemmBodies.get(body))
-    writeGemmDescriptor(S, *CI->getFunction(), primalArgs, *note);
+  if (auto note = S.Matmul.GemmBodies.find(body);
+      note != S.Matmul.GemmBodies.end() && note->second.valid)
+    writeGemmDescriptor(S, *CI->getFunction(), primalArgs, note->second);
 }
 
 static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
@@ -244,9 +246,7 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
   const Options &O = S.Opts;
   const bool profileUse = O.Profiling.usesProfile();
   if (!profileUse) {
-    warn(CI, "a Poseidon site was compiled without -poseidon-profile-generate "
-             "or -poseidon-profile-use=<dir>. Emitting the original "
-             "computation.");
+    warn(CI, Twine(kNoProfileAction) + " Emitting the original computation.");
   } else {
     noteSiteForPins(S, *F);
     auto key = std::make_pair((const Function *)F, errTol);
@@ -395,13 +395,13 @@ bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
 // profile recorded against another canonical form is an error at the site.
 static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
-  llvm::sys::path::append(profilePath, bodyProfileStem(body) + ".fpprofile");
+  llvm::sys::path::append(profilePath, bodyProfileFile(body));
   if (!llvm::sys::fs::exists(profilePath.str()))
     return 0.0;
 
   ProfileMap profileMap;
   FunctionProfileHeader header;
-  parseProfileFile(profilePath.str().str(), body, profileMap, &header);
+  parseProfileFile(profilePath.str().str(), body, profileMap, header);
   if (profileMap.empty())
     return 0.0;
 
@@ -441,8 +441,7 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
   // Without a profile nothing can be applied, so the kernels are left exactly
   // as written rather than outlined and never folded back.
   if (!O.Profiling.usesProfile()) {
-    for (Function *K : sites)
-      warnWithoutProfile(*K);
+    warnSitesWithoutProfile(Sess, M);
     return changed;
   }
 
@@ -513,7 +512,7 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
 bool prepareModule(Session &S, Module &M) {
   if (!S.Opts.Profiling.ProfileGenerate)
     return false;
-  injectHostProfilerInit(M);
+  injectHostProfilerInit(M, S.Opts.Diagnostics.Print);
   predeclareInactiveProfilerProbes(M);
 
   SmallVector<CallInst *, 4> markers;
@@ -554,7 +553,7 @@ bool prepareModule(Session &S, Module &M) {
     // Launch geometry is recorded per profiled function; the probe is keyed by
     // the same poseidon_site_<name> global the value probes carry, so it has to
     // be placed after they exist.
-    injectBlockDimProbes(M);
+    injectBlockDimProbes(M, S.Opts.Diagnostics.Print);
   }
   return anySite;
 }

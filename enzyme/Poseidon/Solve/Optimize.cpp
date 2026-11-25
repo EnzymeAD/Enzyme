@@ -96,16 +96,17 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
 
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
-  parseProfileFile(profilePath, F, profileMap, &profileHeader);
+  parseProfileFile(profilePath, F, profileMap, profileHeader);
   if (profileMap.empty()) {
     llvm::errs() << "Warning: No profile data found in " << profilePath << '\n';
   }
   if (!O.Profiling.OutputProfiles.empty())
     mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
-                        siteProfileFile(S, F), canonicalHash, F);
+                        siteProfileFile(S, F), canonicalHash, F,
+                        O.Diagnostics.Print);
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
-  applySensitivityFloor(profileMap, F.getName());
+  applySensitivityFloor(profileMap, F.getName(), O.Diagnostics.Print);
   requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.

@@ -1,4 +1,4 @@
-//===- HostSites.cpp - host functions and calls that are sites ------------===//
+//===- CallSites.cpp - calls of __poseidon_optimize -----------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,90 +6,40 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "HostSites.h"
+#include "CallSites.h"
 
 #include "Annotations.h"
 #include "Core/Options.h"
+#include "IR/Utils.h"
 #include "Markers.h"
+#include "SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/bit.h"
-#include "llvm/Demangle/Demangle.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
-#include <cmath>
 #include <optional>
 
 using namespace llvm;
 
 namespace poseidon {
-
-// Whether `F` is the call operator of a lambda. A closure type demangles as
-// 'lambda'(...), or as $_<n> where clang needs no mangling number for it (a
-// lambda in a function of a host-only compile).
-static bool isLambdaCallOperator(const Function &F) {
-  // The demangler's nodes point into the name it was given.
-  std::string mangled = F.getName().str();
-  ItaniumPartialDemangler D;
-  if (D.partialDemangle(mangled.c_str()) || !D.isFunction())
-    return false;
-  char *base = D.getFunctionBaseName(nullptr, nullptr);
-  char *context = D.getFunctionDeclContextName(nullptr, nullptr);
-  bool lambda = base && context && StringRef(base) == "operator()" &&
-                (StringRef(context).contains("'lambda") ||
-                 StringRef(context).rsplit("::").second.starts_with("$_"));
-  std::free(base);
-  std::free(context);
-  return lambda;
-}
-
-// Host sites: a host function carrying POSEIDON_OPTIMIZE.
-
-static bool isHostScalar(Type *T) {
-  return T->isIntegerTy() || T->isHalfTy() || T->isBFloatTy() ||
-         T->isFloatTy() || T->isDoubleTy();
-}
-
-// Why `F` cannot be a host site, empty if it can. The profiled clone is
-// differentiated with one activity per parameter, which a pointer, a
-// floating-point scalar and an integer have, and its value comes back only as
-// one of the latter two.
-static std::string hostSiteRefusal(Function &F) {
-  if (F.isVarArg())
-    return "is variadic";
-  Type *R = F.getReturnType();
-  if (!R->isVoidTy() && !isHostScalar(R))
-    return "returns a value that is not a floating-point or integer scalar";
-  for (Argument &A : F.args()) {
-    if (A.hasStructRetAttr())
-      return "returns its value through memory (sret)";
-    bool ok = A.getType()->isPointerTy()
-                  ? !A.hasPassPointeeByValueCopyAttr() && !A.hasByRefAttr()
-                  : isHostScalar(A.getType());
-    if (!ok)
-      return ("takes parameter " + Twine(A.getArgNo() + 1) +
-              " as an aggregate or vector value")
-          .str();
-  }
-  for (Instruction &I : instructions(F))
-    if (auto *CB = dyn_cast<CallBase>(&I))
-      if (CB->getCalledOperand()->stripPointerCasts() == &F)
-        return "calls itself";
-  return "";
-}
 
 // The name of a caller with the accuracy targets of its per-call sites left
 // out. A target the caller takes as a template argument gives it one
@@ -116,93 +66,22 @@ static std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
   return out;
 }
 
-// Make `F` a wrapper around its own body, as outlineKernelBody does for a
-// kernel, but before the inliner runs: every call of F, direct, indirect or
-// from another translation unit, reaches the body through F, and a caller the
-// inliner puts F into calls the body itself. Until the site is lowered the
-// body is kept from being inlined and from interprocedural rewriting, so that
-// it keeps the signature and the code F was written with.
-static void outlineHostFunction(Function &F, std::optional<double> tau) {
-  Module &M = *F.getParent();
-  Function *B =
-      Function::Create(F.getFunctionType(), GlobalValue::InternalLinkage,
-                       F.getName() + "_poseidon_body", &M);
-  B->setAttributes(F.getAttributes());
-  B->setCallingConv(F.getCallingConv());
-  if (F.hasPersonalityFn())
-    B->setPersonalityFn(F.getPersonalityFn());
-  B->removeFnAttr(Attribute::AlwaysInline);
-  B->removeFnAttr(Attribute::InlineHint);
-  B->addFnAttr(Attribute::NoInline);
-  B->addFnAttr(kHostBody, tau ? exactDouble(*tau) : "");
-  B->setSubprogram(F.getSubprogram());
-  F.setSubprogram(nullptr);
-  B->splice(B->begin(), &F);
-  for (auto i = F.arg_begin(), j = B->arg_begin(); i != F.arg_end(); ++i, ++j) {
-    j->setName(i->getName());
-    i->replaceAllUsesWith(&*j);
-  }
-
-  IRBuilder<> Builder(BasicBlock::Create(M.getContext(), "entry", &F));
-  SmallVector<Value *, 8> args;
-  for (Argument &A : F.args())
-    args.push_back(&A);
-  CallInst *call = Builder.CreateCall(B, args);
-  call->setCallingConv(B->getCallingConv());
-  Instruction *ret = F.getReturnType()->isVoidTy() ? Builder.CreateRetVoid()
-                                                   : Builder.CreateRet(call);
-  for (BasicBlock &BB : *B)
-    if (auto *R = dyn_cast<ReturnInst>(BB.getTerminator())) {
-      ret->setDebugLoc(R->getDebugLoc());
-      break;
-    }
-  F.addFnAttr(kSiteLowered);
-  F.addFnAttr(kHostWrapper);
-  appendToCompilerUsed(M, {B});
-}
-
-// The call that calls through `H`, a call of an identity, or null.
-static CallBase *callThrough(CallInst *H) {
-  CallBase *call = nullptr;
-  for (User *U : H->users())
-    if (auto *CB = dyn_cast<CallBase>(U); CB && CB->getCalledOperand() == H)
-      call = CB;
-  return call;
-}
-
-// The accuracy target the identity call `H` carries for `call`, 0 when it
-// carries none; none, with an error at `call`, when it is not a positive
-// finite constant.
+// The accuracy target the identity call `H` carries for its call, 0 when it
+// carries none; none, with an error, when it is no accuracy target.
 static std::optional<double> identityTarget(CallInst *H, CallBase *call,
-                                            StringRef name) {
+                                            const Function &fn) {
   if (H->arg_size() < 2)
     return 0.0;
-  auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1));
-  if (!C) {
-    fail(call, "the accuracy target of __poseidon_optimize_tau for " + name +
-                   " must be a compile-time constant (a literal, a macro or "
-                   "a constant expression)");
-    return std::nullopt;
-  }
-  double tau = C->getValueAPF().convertToDouble();
-  if (!(tau > 0.0) || !std::isfinite(tau)) {
-    fail(call, "the accuracy target " + shortDouble(tau) + " of " + name +
-                   " is not a positive finite number");
-    return std::nullopt;
-  }
-  return tau;
+  return readTarget(call, H->getArgOperand(1), fn);
 }
 
-static void reportAnnotated(CallBase *call, StringRef name) {
-  fail(call, name + " carries POSEIDON_OPTIMIZE, so every call of it is "
-                    "already a site; remove this __poseidon_optimize or the "
-                    "annotation");
-}
-
-// `call`, a call of `fn` with an explicit list, made the marker call that
-// means the same, with `tau`, unless 0, as its poseidon_tau. The call's value
-// is fn's, in the profiling run as well.
-static CallInst *asMarker(CallBase *call, Function *fn, double tau) {
+// `call` made the marker call over `fn` with `tau`, unless 0, as its
+// poseidon_tau, then enzyme_primal_return for a value, then `list` with the
+// parameter attributes `listAttrs`. The call's value is fn's, in the profiling
+// run as well.
+static CallInst *emitMarkerCall(CallBase *call, Function *fn, double tau,
+                                ArrayRef<Value *> list,
+                                ArrayRef<AttributeSet> listAttrs) {
   LLVMContext &C = call->getContext();
   SmallVector<Value *, 16> args{fn};
   if (tau > 0.0) {
@@ -211,8 +90,9 @@ static CallInst *asMarker(CallBase *call, Function *fn, double tau) {
   }
   if (!call->getType()->isVoidTy())
     args.push_back(activityArg(C, "enzyme_primal_return"));
-  const unsigned before = args.size();
-  args.append(call->arg_begin(), call->arg_end());
+  SmallVector<AttributeSet, 16> params(args.size());
+  append_range(params, listAttrs);
+  append_range(args, list);
   auto *FT = FunctionType::get(call->getType(), {PointerType::getUnqual(C)},
                                /*isVarArg=*/true);
   FunctionCallee marker =
@@ -221,9 +101,6 @@ static CallInst *asMarker(CallBase *call, Function *fn, double tau) {
   CallInst *CI = Builder.CreateCall(FT, marker.getCallee(), args);
   CI->setDebugLoc(call->getDebugLoc());
   AttributeList old = call->getAttributes();
-  SmallVector<AttributeSet, 16> params(before);
-  for (unsigned i = 0; i < call->arg_size(); ++i)
-    params.push_back(old.getParamAttrs(i));
   CI->setAttributes(
       AttributeList::get(C, old.getFnAttrs(), old.getRetAttrs(), params));
   call->replaceAllUsesWith(CI);
@@ -247,8 +124,8 @@ static void callAsWritten(CallInst *marker, Function *fn) {
   marker->eraseFromParent();
 }
 
-// `call`, a call of `fn` whose list `list` reads as automatic (a marker call or
-// a call through the explicit identity), made the call __poseidon_optimize or,
+// `call`, a marker call of `fn` whose list `list` reads as automatic, made the
+// call __poseidon_optimize or,
 // with the list's target, __poseidon_optimize_tau writes: fn's own arguments,
 // as given, through the plain identity, whose target is added to the caller's
 // `targets`. The host half of a CUDA or HIP compilation holds no site, so there
@@ -329,12 +206,8 @@ static SmallVector<CallInst *, 4> callsOfAny(Module &M,
 // __poseidon_optimize with an explicit list: the call through the explicit
 // identity is the marker call over fn, and the marker's lowering makes it the
 // site. The host half of a CUDA or HIP compilation holds no site, so there the
-// call runs fn with the primal values of its arguments. A call through the
-// explicit identity whose list is automatic, fn's own arguments and
-// poseidon_tau, is the call through the plain identity (asPlainCall).
-static bool
-lowerExplicitCalls(Module &M,
-                   DenseMap<Function *, SmallVector<double, 2>> &targets) {
+// call runs fn with the primal values of its arguments.
+static bool lowerExplicitCalls(Module &M) {
   SmallVector<CallInst *, 4> identities =
       callsOfAny(M, {kExplicitIdentity, kExplicitIdentityTau});
   if (identities.empty())
@@ -343,43 +216,33 @@ lowerExplicitCalls(Module &M,
   auto annotated = annotatedFunctions(M);
   for (CallInst *H : identities) {
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
-    CallBase *call = callThrough(H);
-    if (!fn || !call || !H->hasOneUse()) {
+    SmallVector<CallBase *, 4> calls = callsOf(*H);
+    if (!fn || calls.size() != 1 || !H->hasOneUse()) {
       fail(H, "__poseidon_optimize needs a function name and a call of it");
       H->replaceAllUsesWith(PoisonValue::get(H->getType()));
       H->eraseFromParent();
       continue;
     }
+    CallBase *call = calls.front();
     const std::string name = displayName(*fn);
-    std::optional<double> tau = identityTarget(H, call, name);
+    std::optional<double> tau = identityTarget(H, call, *fn);
     // Whatever the outcome, the call stops going through the identity, which
     // nothing defines.
     call->setCalledOperand(fn);
     H->eraseFromParent();
     if (!tau)
       continue;
-    std::optional<CallArguments> list =
-        readArgumentList(call, *fn, Identity::Explicit);
-    if (!list)
+    if (!readArgumentList(call, *fn, Identity::Explicit))
       continue;
-    if (*tau > 0.0 && llvm::any_of(call->args(), [](Value *A) {
-          return isActivityMarker(A, "poseidon_tau");
-        })) {
-      fail(call, "this call of " + name +
-                     " gives its accuracy target twice, as the first "
-                     "argument of __poseidon_optimize_tau and after "
-                     "poseidon_tau; give it once");
-      continue;
-    }
-    if (list->kind == ArgumentList::Automatic) {
-      asPlainCall(call, fn, *list, hostHalf, targets);
-      continue;
-    }
     if (annotated.count(fn)) {
-      reportAnnotated(call, name);
+      reportAnnotatedCall(call, name);
       continue;
     }
-    CallInst *marker = asMarker(call, fn, *tau);
+    SmallVector<Value *, 8> args(call->args());
+    SmallVector<AttributeSet, 8> argAttrs;
+    for (unsigned i = 0; i < call->arg_size(); ++i)
+      argAttrs.push_back(call->getAttributes().getParamAttrs(i));
+    CallInst *marker = emitMarkerCall(call, fn, *tau, args, argAttrs);
     if (hostHalf)
       callAsWritten(marker, fn);
   }
@@ -443,14 +306,14 @@ routeAutomaticMarkers(Module &M,
 bool lowerPerCallSites(const Options &O, Module &M) {
   // The targets of the explicit calls are left out of their callers' names
   // too, so they are read before those calls become marker calls; the
-  // targets poseidon_tau gives in automatic lists are added as those calls
+  // targets poseidon_tau gives in marker calls are added as those calls
   // are routed through the plain identity.
   DenseMap<Function *, SmallVector<double, 2>> targets;
   for (CallInst *H : callsOfAny(M, {kPlainIdentityTau, kExplicitIdentityTau}))
     if (H->arg_size() > 1)
       if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
         targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
-  bool changed = lowerExplicitCalls(M, targets);
+  bool changed = lowerExplicitCalls(M);
   changed |= routeAutomaticMarkers(M, targets);
   if (isOffloadHostHalf(M))
     return changed;
@@ -470,14 +333,14 @@ bool lowerPerCallSites(const Options &O, Module &M) {
         targetFreeName(caller->getName(), targets.lookup(caller));
     unsigned k = ordinal[callerKey]++;
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
-    CallBase *call = callThrough(H);
+    SmallVector<CallBase *, 4> calls = callsOf(*H);
     // Whatever the outcome, the call stops going through the helper, which
     // returns its argument, so a later run of the pass does not see it again.
     auto asWritten = [&] {
       H->replaceAllUsesWith(H->getArgOperand(0));
       H->eraseFromParent();
     };
-    if (!fn || !call || !H->hasOneUse()) {
+    if (!fn || calls.size() != 1 || !H->hasOneUse()) {
       if (active)
         fail(H, "__poseidon_optimize needs a function name and a call of it");
       else
@@ -486,14 +349,15 @@ bool lowerPerCallSites(const Options &O, Module &M) {
       asWritten();
       continue;
     }
+    CallBase *call = calls.front();
     const std::string name = displayName(*fn);
-    std::optional<double> tau = identityTarget(H, call, name);
+    std::optional<double> tau = identityTarget(H, call, *fn);
     if (!tau || !readArgumentList(call, *fn, Identity::Plain)) {
       asWritten();
       continue;
     }
     if (annotated.count(fn)) {
-      reportAnnotated(call, name);
+      reportAnnotatedCall(call, name);
       asWritten();
       continue;
     }
@@ -509,9 +373,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
                      ", so this call is not a Poseidon site. The call runs as "
                      "written.");
     else if (!active)
-      warn(call, "a Poseidon site was compiled without "
-                 "-poseidon-profile-generate or -poseidon-profile-use=<dir>. "
-                 "The call runs as written.");
+      warn(call, Twine(kNoProfileAction) + " The call runs as written.");
     if (!why.empty() || !active) {
       asWritten();
       continue;
@@ -519,7 +381,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
 
     ValueToValueMapTy VMap;
     Function *B = CloneFunction(fn, VMap);
-    B->setName(fn->getName() + ".poseidon." + callerKey + "." + Twine(k));
+    B->setName(fn->getName() + kPerCallInfix + callerKey + "." + Twine(k));
     B->setLinkage(GlobalValue::InternalLinkage);
     B->setVisibility(GlobalValue::DefaultVisibility);
     B->setComdat(nullptr);
@@ -538,94 +400,243 @@ bool lowerPerCallSites(const Options &O, Module &M) {
   return true;
 }
 
-// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
-// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
-bool outlineHostSites(const Options &O, Module &M) {
-  if (Target::of(M).isDevice() || isOffloadHostHalf(M))
-    return false;
-  auto annotated = annotatedFunctions(M);
-  if (annotated.empty())
-    return false;
-  const bool active = O.Profiling.profileAction();
+Value *localObject(Value *p, const Function *caller) {
+  Value *obj = getUnderlyingObject(p, /*MaxLookup=*/0);
+  if (auto *AI = dyn_cast<AllocaInst>(obj))
+    return AI->getFunction() == caller && AI->isStaticAlloca() ? AI : nullptr;
+  if (auto *A = dyn_cast<Argument>(obj))
+    return A->getParent() == caller && A->hasByValAttr() ? A : nullptr;
+  return nullptr;
+}
 
-  SmallVector<CallInst *, 4> markers;
-  collectMarkerCalls(M, markers);
+bool pointsNowhere(Value *p) {
+  return isa<ConstantPointerNull>(p) || isa<UndefValue>(p);
+}
 
-  bool changed = false;
-  for (auto &[F, tau] : annotated) {
-    if (isLaunchStub(*F) || F->hasFnAttribute(kSiteLowered))
-      continue;
-    // An annotated lambda marks the kernels that call it, which only a CUDA
-    // or HIP compilation has. Its closure is no pointer the profiler can
-    // shadow, so a host-only build leaves it alone.
-    if (isLambdaCallOperator(*F)) {
-      diagnoseSite(*F,
-                   displayName(*F) +
-                       " is a lambda; POSEIDON_OPTIMIZE on a lambda marks the "
-                       "GPU kernels that call it, and this compilation has "
-                       "none. Emitting the original computation.",
-                   DS_Warning);
-      continue;
-    }
-    if (!active) {
-      diagnoseSite(*F,
-                   "a Poseidon site was compiled without "
-                   "-poseidon-profile-generate or -poseidon-profile-use=<dir>. "
-                   "Emitting the original computation.",
-                   DS_Warning);
-      continue;
-    }
-    auto both = llvm::find_if(
-        markers, [F = F](CallInst *CI) { return markerTargetOrNull(CI) == F; });
-    if (both != markers.end()) {
-      reportAnnotated(*both, displayName(*F));
-      F->addFnAttr(kNotASite);
-      continue;
-    }
-    std::string why = hostSiteRefusal(*F);
-    if (!why.empty()) {
-      diagnoseSite(
-          *F, displayName(*F) + " " + why + ", so it cannot be a Poseidon site",
-          DS_Error);
-      continue;
-    }
-    noteSiteTarget(O, *F, tau);
-    outlineHostFunction(*F, tau);
-    changed = true;
+namespace {
+
+// accessedExtent: every use of the pointer, through constant address
+// arithmetic and into the functions it is passed to.
+struct ExtentWalk {
+  const DataLayout &DL;
+  PointerExtent ext;
+  bool anyAccess = false, anyWrite = false;
+  std::string why;
+  SmallSet<std::pair<const Argument *, int64_t>, 4> entered;
+  // The parameters the pointer is in on the way down.
+  SmallPtrSet<const Argument *, 4> active;
+
+  bool fail(const Twine &reason) {
+    why = reason.str();
+    return false;
   }
-  return changed;
+
+  void claim(int64_t off, MaybeAlign align) {
+    if (align && align->value() > ext.align) {
+      ext.align = align->value();
+      ext.alignedAt = off;
+    }
+  }
+
+  void access(int64_t off, uint64_t bytes, bool write) {
+    if (!bytes)
+      return;
+    const int64_t end = off + (int64_t)bytes;
+    ext.lo = anyAccess ? std::min(ext.lo, off) : off;
+    ext.hi = anyAccess ? std::max(ext.hi, end) : end;
+    anyAccess = true;
+    if (!write)
+      return;
+    ext.writeLo = anyWrite ? std::min(ext.writeLo, off) : off;
+    ext.writeHi = anyWrite ? std::max(ext.writeHi, end) : end;
+    anyWrite = true;
+  }
+
+  bool memoryAccess(int64_t off, Type *T, Align align, bool write) {
+    TypeSize bytes = DL.getTypeStoreSize(T);
+    if (bytes.isScalable())
+      return fail("accesses a scalable vector through");
+    access(off, bytes.getFixedValue(), write);
+    claim(off, align);
+    return true;
+  }
+
+  // An optimizer may load anywhere a parameter's attributes call
+  // dereferenceable, also after the extent is taken, so the extent covers it.
+  // A function that receives the pointer again at another offset while it is
+  // being walked reaches no constant range through it.
+  bool enter(Argument &A, int64_t off) {
+    if (!entered.insert({&A, off}).second)
+      return true;
+    if (!active.insert(&A).second)
+      return fail("passes to " + displayName(*A.getParent()) +
+                  ", which passes it on to itself at another offset");
+    access(off,
+           std::max(A.getDereferenceableBytes(),
+                    A.getDereferenceableOrNullBytes()),
+           false);
+    claim(off, A.getParamAlign());
+    const bool ok = walk(&A, off);
+    active.erase(&A);
+    return ok;
+  }
+
+  bool walk(Value *P, int64_t off) {
+    for (Use &U : P->uses()) {
+      auto *I = dyn_cast<Instruction>(U.getUser());
+      if (!I)
+        return fail("uses otherwise than to load and store through");
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+        APInt delta(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (!GEP->accumulateConstantOffset(DL, delta))
+          return fail("indexes with a value that is not a constant");
+        if (!walk(GEP, off + delta.getSExtValue()))
+          return false;
+      } else if (isa<BitCastInst, AddrSpaceCastInst>(I)) {
+        if (!walk(I, off))
+          return false;
+      } else if (auto *LI = dyn_cast<LoadInst>(I)) {
+        if (!memoryAccess(off, LI->getType(), LI->getAlign(), false))
+          return false;
+      } else if (auto *SI = dyn_cast<StoreInst>(I)) {
+        if (U.getOperandNo() != SI->getPointerOperandIndex())
+          return fail("stores to memory");
+        if (!memoryAccess(off, SI->getValueOperand()->getType(), SI->getAlign(),
+                          true))
+          return false;
+      } else if (auto *RMW = dyn_cast<AtomicRMWInst>(I)) {
+        if (U.getOperandNo() != RMW->getPointerOperandIndex())
+          return fail("stores to memory");
+        if (!memoryAccess(off, RMW->getValOperand()->getType(), RMW->getAlign(),
+                          true))
+          return false;
+      } else if (auto *CX = dyn_cast<AtomicCmpXchgInst>(I)) {
+        if (U.getOperandNo() != CX->getPointerOperandIndex())
+          return fail("stores to memory");
+        if (!memoryAccess(off, CX->getNewValOperand()->getType(),
+                          CX->getAlign(), true))
+          return false;
+      } else if (isa<MemTransferInst, MemSetInst>(I)) {
+        auto *MI = cast<MemIntrinsic>(I);
+        auto *len = dyn_cast<ConstantInt>(MI->getLength());
+        if (!len)
+          return fail("copies or sets through with a length that is not a "
+                      "constant");
+        const bool dest = U.getOperandNo() == 0;
+        access(off, len->getZExtValue(), dest);
+        claim(off, dest ? MI->getDestAlign()
+                        : cast<MemTransferInst>(MI)->getSourceAlign());
+      } else if (auto *II = dyn_cast<IntrinsicInst>(I);
+                 II &&
+                 (II->isLifetimeStartOrEnd() || II->isAssumeLikeIntrinsic())) {
+        continue;
+      } else if (isa<ICmpInst>(I)) {
+        continue;
+      } else if (auto *CB = dyn_cast<CallBase>(I)) {
+        if (!CB->isArgOperand(&U))
+          return fail("calls as a function");
+        const unsigned no = CB->getArgOperandNo(&U);
+        if (CB->doesNotAccessMemory(no) && CB->doesNotCapture(no))
+          continue;
+        if (Type *T = CB->getParamByValType(no)) {
+          if (!memoryAccess(off, T, CB->getParamAlign(no).valueOrOne(), false))
+            return false;
+          continue;
+        }
+        Function *callee = CB->getCalledFunction();
+        if (!callee || callee->isDeclaration() || no >= callee->arg_size())
+          return fail("passes to " +
+                      (callee ? displayName(*callee)
+                              : std::string("an indirect call")) +
+                      ", whose body the pass cannot see");
+        if (!enter(*callee->getArg(no), off))
+          return false;
+      } else if (isa<PHINode, SelectInst>(I)) {
+        return fail("merges with another pointer");
+      } else if (isa<PtrToIntInst>(I)) {
+        return fail("converts to an integer");
+      } else if (isa<ReturnInst>(I)) {
+        return fail("returns");
+      } else {
+        return fail("uses otherwise than to load and store through");
+      }
+    }
+    return true;
+  }
+};
+
+} // namespace
+
+std::optional<PointerExtent> accessedExtent(Argument &A, std::string &why) {
+  ExtentWalk W{A.getParent()->getParent()->getDataLayout(), {}};
+  if (!W.enter(A, 0)) {
+    why = W.why;
+    return std::nullopt;
+  }
+  return W.ext;
 }
 
-SmallVector<Function *, 4> hostSiteBodies(Module &M) {
-  SmallVector<Function *, 4> out;
-  for (Function &F : M)
-    if (!F.empty() && F.hasFnAttribute(kHostBody))
-      out.push_back(&F);
-  return out;
-}
-
-SmallVector<CallBase *, 4> callsOf(Function &F) {
-  SmallVector<CallBase *, 4> out;
-  for (User *U : F.users())
-    if (auto *CB = dyn_cast<CallBase>(U); CB && CB->getCalledOperand() == &F)
-      out.push_back(CB);
-  return out;
-}
-
-// The site's accuracy target, and the body handed back to the optimizer: out
-// of llvm.compiler.used and without the mark its clones would inherit.
-double takeHostBody(Function &B) {
-  double tau = 0.0;
-  StringRef value = B.getFnAttribute(kHostBody).getValueAsString();
-  if (!value.empty() && value.getAsDouble(tau))
-    report_fatal_error("Poseidon: the body " + B.getName() +
-                       " carries the accuracy target '" + value +
-                       "', which is not a number");
-  B.removeFnAttr(kHostBody);
-  removeFromUsedLists(*B.getParent(), [&](Constant *C) {
-    return C->stripPointerCasts() == &B;
-  });
-  return tau;
+// __poseidon_optimize in device code: every call of the copy lowerPerCallSites
+// made becomes a marker over that copy, so that profiling, deferral and the
+// solve are the marker's. Its pointers are marked poseidon_shadow for
+// profileSite, which makes the shadow of a pointer into an object of the
+// caller whose extent it knows (localObject; inlining has put the objects a
+// call passes there by now) or else of the constant range the call reaches
+// through it (accessedExtent).
+bool lowerDeviceCallSites(Module &M) {
+  if (!Target::of(M).isDevice())
+    return false;
+  SmallVector<Function *, 4> bodies = hostSiteBodies(M);
+  if (bodies.empty())
+    return false;
+  LLVMContext &C = M.getContext();
+  for (Function *B : bodies) {
+    double tau = takeHostBody(*B);
+    for (CallBase *CB : callsOf(*B)) {
+      if (!isa<CallInst>(CB)) {
+        fail(CB, perCallSiteName(B->getName()) +
+                     " is reached through an invoke, so this call cannot be a "
+                     "Poseidon site");
+        markOutlineTransparent(B);
+        continue;
+      }
+      std::string why;
+      for (Use &U : CB->args()) {
+        std::string reason;
+        if (!U->getType()->isPointerTy() || pointsNowhere(U.get()) ||
+            localObject(U.get(), CB->getFunction()) ||
+            accessedExtent(*B->getArg(U.getOperandNo()), reason))
+          continue;
+        why +=
+            (Twine(why.empty() ? "" : "; ") + "argument " +
+             Twine(U.getOperandNo() + 1) + " is a pointer the call " + reason)
+                .str();
+      }
+      if (!why.empty()) {
+        fail(CB, perCallSiteName(B->getName()) +
+                     " cannot be a Poseidon site: " + why +
+                     ". The pass makes the shadow of a pointer into a local "
+                     "object of the caller or an aggregate it takes by value, "
+                     "or else of the constant range of memory the call "
+                     "reaches through the pointer. Copy such an argument into "
+                     "a local object, or pass its shadow in the call: "
+                     "enzyme_dup before the pointer and the shadow after it.");
+        markOutlineTransparent(B);
+        continue;
+      }
+      SmallVector<Value *, 16> list;
+      for (Value *a : CB->args()) {
+        Type *T = a->getType();
+        list.push_back(activityArg(C, T->isPointerTy() ? "poseidon_shadow"
+                                      : T->isFloatingPointTy()
+                                          ? "enzyme_out"
+                                          : "enzyme_const"));
+        list.push_back(a);
+      }
+      emitMarkerCall(CB, B, tau, list, {});
+    }
+  }
+  return true;
 }
 
 } // namespace poseidon

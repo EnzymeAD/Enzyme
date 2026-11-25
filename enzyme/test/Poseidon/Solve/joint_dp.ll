@@ -18,7 +18,7 @@
 ; RUN: mkdir %t/sites
 ; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/both -poseidon-cost-budget=-0.4 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
 ; RUN: FileCheck --check-prefix=SITES-BUDGETS %s < %t/sites/both/budgets.txt
-; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 2>&1 | FileCheck --check-prefix=SITES-ONE %s
+; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-print %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 2>&1 | FileCheck --check-prefix=SITES-ONE %s
 
 ; SITES-BOTH: Poseidon JOINT: collecting candidates from 2 marked function(s)
 ; SITES-BOTH: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
