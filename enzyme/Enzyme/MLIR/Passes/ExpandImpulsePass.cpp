@@ -2077,24 +2077,22 @@ static bool addressInList(impulse::SampleOp sampleOp, ArrayAttr addresses) {
   return false;
 }
 
-/// Returns whether `addresses` holds the top-level address of `sampleOp`.
-/// Fails with a diagnostic naming `role` when the matching address is nested.
-static FailureOr<bool> findTopLevelAddress(impulse::SampleOp sampleOp,
+/// Fails with a diagnostic naming `role` when the first address in
+/// `addresses` that starts with the symbol of `sampleOp` is nested.
+static LogicalResult verifyTopLevelAddress(impulse::SampleOp sampleOp,
                                            ArrayAttr addresses,
                                            StringRef role) {
   for (Attribute attr : addresses) {
     auto address = cast<ArrayAttr>(attr);
     if (address.empty() || address[0] != sampleOp.getSymbolAttr())
       continue;
-    if (address.size() != 1) {
-      sampleOp.emitError(
-          "Impulse: distribution function cannot have composite ")
-          << role << " address";
-      return failure();
-    }
-    return true;
+    if (address.size() == 1)
+      return success();
+    return sampleOp.emitError(
+               "Impulse: distribution function cannot have composite ")
+           << role << " address";
   }
-  return false;
+  return success();
 }
 
 /// Sample ops block taint: an unregenerated site's value comes from the trace.
@@ -4155,11 +4153,12 @@ struct ExpandImpulsePass
 
         SmallVector<Value> sampledValues;
         if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
-          FailureOr<bool> constrained = findTopLevelAddress(
-              sampleOp, CI.getConstrainedAddressesAttr(), "constrained");
-          if (failed(constrained))
+          if (failed(verifyTopLevelAddress(
+                  sampleOp, CI.getConstrainedAddressesAttr(), "constrained")))
             return failure();
-          if (*constrained) {
+          bool isConstrained =
+              addressInList(sampleOp, CI.getConstrainedAddressesAttr());
+          if (isConstrained) {
             int64_t constrainedOffset = computeOffsetForSampleInSelection(
                 CI, fn, CI.getConstrainedAddressesAttr(),
                 sampleOp.getSymbolAttr(), symbolTable);
@@ -4179,7 +4178,7 @@ struct ExpandImpulsePass
           }
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
           if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size(),
-                                      *constrained
+                                      isConstrained
                                           ? "logpdf call for constrained sample"
                                           : "logpdf call")))
             return failure();
@@ -4537,11 +4536,9 @@ struct ExpandImpulsePass
         SmallVector<Value> sampledValues;
         if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
           Location loc = sampleOp.getLoc();
-          FailureOr<bool> selected =
-              findTopLevelAddress(sampleOp, regenAddrs, "selected");
-          if (failed(selected))
+          if (failed(verifyTopLevelAddress(sampleOp, regenAddrs, "selected")))
             return failure();
-          bool isSelected = *selected;
+          bool isSelected = addressInList(sampleOp, regenAddrs);
           int64_t sampleOffset = computeOffsetForSampleInSelection(
               CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
 
@@ -4552,11 +4549,10 @@ struct ExpandImpulsePass
           } else {
             bool isConstrained = false;
             if (readsConstraint(sampleOp)) {
-              FailureOr<bool> constrained = findTopLevelAddress(
-                  sampleOp, constrainedAddresses, "constrained");
-              if (failed(constrained))
+              if (failed(verifyTopLevelAddress(sampleOp, constrainedAddresses,
+                                               "constrained")))
                 return failure();
-              isConstrained = *constrained;
+              isConstrained = addressInList(sampleOp, constrainedAddresses);
             }
             int64_t readOffset =
                 isConstrained ? computeOffsetForSampleInSelection(
