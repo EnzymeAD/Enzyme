@@ -20,95 +20,54 @@
 using namespace mlir;
 using namespace mlir::impulse;
 
-ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
-                                            ImpulseMode mode,
-                                            int64_t positionSize,
-                                            int64_t constraintSize) {
-  if (toeval.getFunctionBody().empty()) {
-    llvm::errs() << toeval << "\n";
-    llvm_unreachable("Creating ImpulseUtils from empty function");
-  }
-
-  OpBuilder builder(toeval.getContext());
-
-  std::string suffix;
-  auto originalInputs =
-      cast<mlir::FunctionType>(toeval.getFunctionType()).getInputs();
-  auto originalResults =
-      cast<mlir::FunctionType>(toeval.getFunctionType()).getResults();
-  // Arguments of the clone that precede the original inputs.
-  SmallVector<Type> leadingTypes;
-  SmallVector<mlir::Type, 4> ResultTypes;
-
+FunctionOpInterface impulse::cloneForMode(FunctionOpInterface fn,
+                                          ImpulseMode mode,
+                                          int64_t positionSize,
+                                          int64_t constraintSize) {
+  assert(!fn.getFunctionBody().empty() && "cloning an empty function");
+  Builder builder(fn.getContext());
+  Type f64 = builder.getF64Type();
+  StringRef suffix;
+  SmallVector<Type> argTypes;
   switch (mode) {
   case ImpulseMode::Call:
     suffix = "call";
-    ResultTypes.append(originalResults.begin(), originalResults.end());
-    break;
-  case ImpulseMode::Generate:
-    suffix = "generate";
-    if (positionSize <= 0 || constraintSize < 0) {
-      toeval.emitError("Impulse: Unexpected size parameters");
-      return nullptr;
-    }
-    leadingTypes.push_back(
-        RankedTensorType::get({1, constraintSize}, builder.getF64Type()));
-    ResultTypes.push_back(
-        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
-    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
-    ResultTypes.append(originalResults.begin(), originalResults.end());
-    break;
-  case ImpulseMode::Regenerate:
-    suffix = "regenerate";
-    if (positionSize < 0) {
-      toeval.emitError("Impulse: Unexpected size parameters");
-      return nullptr;
-    }
-    leadingTypes.push_back(
-        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
-    if (constraintSize >= 0)
-      leadingTypes.push_back(
-          RankedTensorType::get({1, constraintSize}, builder.getF64Type()));
-    ResultTypes.push_back(
-        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
-    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
-    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   case ImpulseMode::Simulate:
     suffix = "simulate";
-    if (positionSize < 0) {
-      toeval.emitError("Impulse: Unexpected size parameters");
-      return nullptr;
-    }
-    ResultTypes.push_back(
-        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
-    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
-    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
-  default:
-    llvm_unreachable("Invalid ImpulseMode\n");
+  case ImpulseMode::Generate:
+    suffix = "generate";
+    argTypes.push_back(RankedTensorType::get({1, constraintSize}, f64));
+    break;
+  case ImpulseMode::Regenerate:
+    suffix = "regenerate";
+    argTypes.push_back(RankedTensorType::get({1, positionSize}, f64));
+    if (constraintSize >= 0)
+      argTypes.push_back(RankedTensorType::get({1, constraintSize}, f64));
+    break;
   }
+  int64_t numLeadingArgs = argTypes.size();
+  SmallVector<Type> resultTypes;
+  if (mode != ImpulseMode::Call) {
+    resultTypes.push_back(RankedTensorType::get({1, positionSize}, f64));
+    resultTypes.push_back(RankedTensorType::get({}, f64));
+  }
+  auto fnType = cast<FunctionType>(fn.getFunctionType());
+  llvm::append_range(argTypes, fnType.getInputs());
+  llvm::append_range(resultTypes, fnType.getResults());
 
-  SmallVector<Type> operandTypes(leadingTypes);
-  operandTypes.append(originalInputs.begin(), originalInputs.end());
-  FunctionType functionType =
-      builder.getFunctionType(operandTypes, ResultTypes);
-  auto NewF = cast<FunctionOpInterface>(toeval->cloneWithoutRegions());
-  SymbolTable::setSymbolName(NewF, toeval.getName().str() + "." + suffix);
-  NewF.setType(functionType);
+  auto newFn = cast<FunctionOpInterface>(fn->cloneWithoutRegions());
+  SymbolTable::setSymbolName(newFn, (fn.getName() + "." + suffix).str());
+  newFn.setType(builder.getFunctionType(argTypes, resultTypes));
+  SymbolTable(fn->getParentWithTrait<OpTrait::SymbolTable>()).insert(newFn);
 
-  Operation *parent = toeval->getParentWithTrait<OpTrait::SymbolTable>();
-  SymbolTable table(parent);
-  table.insert(NewF);
-
-  IRMapping originalToNew;
-  cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew);
-
-  Block &entry = NewF.getFunctionBody().front();
-  for (auto [index, type] : llvm::enumerate(leadingTypes))
-    entry.insertArgument(index, type, toeval.getLoc());
-
-  return new ImpulseUtils(NewF, toeval, originalToNew, mode);
+  IRMapping mapping;
+  cloneInto(&fn.getFunctionBody(), &newFn.getFunctionBody(), mapping);
+  Block &entry = newFn.getFunctionBody().front();
+  for (int64_t index = 0; index < numLeadingArgs; ++index)
+    entry.insertArgument(index, argTypes[index], fn.getLoc());
+  return newFn;
 }
 
 Value impulse::emitSplatConstant(OpBuilder &builder, Location loc,

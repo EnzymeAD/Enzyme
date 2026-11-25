@@ -24,27 +24,15 @@ enum class ImpulseMode {
   Regenerate = 3,
 };
 
-class ImpulseUtils {
-public:
-  FunctionOpInterface newFunc;
-
-  ImpulseMode mode;
-  FunctionOpInterface oldFunc;
-  IRMapping originalToNewFn;
-
-  Block *initializationBlock;
-
-  ImpulseUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
-               IRMapping &originalToNewFn_, ImpulseMode mode_)
-      : newFunc(newFunc_), mode(mode_), oldFunc(oldFunc_),
-        originalToNewFn(originalToNewFn_),
-        initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
-
-  static ImpulseUtils *CreateFromClone(FunctionOpInterface toeval,
-                                       ImpulseMode mode,
-                                       int64_t positionSize = -1,
-                                       int64_t constraintSize = -1);
-};
+/// Clones the non-empty function `fn` into its symbol table as
+/// `<name>.<mode>` with the signature the lowering in `mode` needs. A traced
+/// mode returns a `1 x positionSize` f64 trace and an f64 weight before the
+/// results of `fn`. Generate takes a `1 x constraintSize` constraint before
+/// the inputs of `fn`, and regenerate takes the previous `1 x positionSize`
+/// trace and, when `constraintSize` is not negative, such a constraint.
+FunctionOpInterface cloneForMode(FunctionOpInterface fn, ImpulseMode mode,
+                                 int64_t positionSize = -1,
+                                 int64_t constraintSize = -1);
 
 /// Creates a constant of `type` with every element equal to `value`.
 Value emitSplatConstant(OpBuilder &builder, Location loc, RankedTensorType type,
