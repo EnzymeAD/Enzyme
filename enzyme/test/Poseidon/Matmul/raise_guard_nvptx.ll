@@ -1,21 +1,26 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_tri_body.fpprofile
-; RUN: not %opt %s %loadPoseidon \
+; RUN: %opt %s %loadPoseidon \
 ; RUN:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=false \
 ; RUN:   -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
-; RUN:   -poseidon-print -S -o /dev/null 2>&1 | FileCheck %s
+; RUN:   -poseidon-print -S -o %t/out.ll 2>&1 | FileCheck --implicit-check-not='Applying solution for matmul' %s
+; RUN: FileCheck --check-prefix=IR --implicit-check-not=wmma --implicit-check-not=barrier %s < %t/out.ll
 
 ; The in-kernel raise synchronizes the thread block and runs warp-wide
 ; tensor-core calls in the reduction loop's preheader. In tri_body only the
-; threads with threadIdx.x <= threadIdx.y reach the loop, so recognition marks
-; the product, and the raise the solve selects for it is refused.
+; threads with threadIdx.x <= threadIdx.y reach the loop, so no in-kernel raise
+; is proposed and the kernel calls the body as written.
 
-; CHECK: [raise-wmma] preprocess_tri_body: not every thread of the block reaches the reduction loop once
-; CHECK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
-; CHECK-NEXT: error: {{.*}}the in-kernel raise selected for this matrix product synchronizes the thread block, and not every thread of the block reaches the product's loop once.
+; CHECK: [raise-wmma] preprocess_tri_body: not every thread of the block reaches the reduction loop once, so it has no in-kernel raise
+; CHECK: Matmul[0] candidates
+; CHECK-NEXT: (no candidates emitted)
+; CHECK-NEXT: Poseidon error-budget: matmul -> baseline F64
+
+; IR-LABEL: define {{.*}} @_Z10tri_kernelPKdS0_PdS1_(
+; IR-NEXT: call void @tri_body(ptr %A, ptr %B, ptr %C)
 
 source_filename = "raise_guard.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

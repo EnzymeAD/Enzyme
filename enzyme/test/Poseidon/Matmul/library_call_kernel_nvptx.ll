@@ -1,26 +1,29 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_gemm_body.fpprofile
-; RUN: not %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
+; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/work \
 ; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=false \
-; RUN:   -poseidon-raise-wmma -poseidon-tau=1e-12 \
+; RUN:   -poseidon-raise-wmma -poseidon-tau=1e-6 -poseidon-print \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
-; RUN:   -S -o /dev/null 2>&1 | FileCheck --check-prefix=WORK %s
+; RUN:   -S -o /dev/null 2>&1 | FileCheck --check-prefix=WORK --implicit-check-not='wrote descriptor' %s
 ; RUN: sed 's/^  store double 1.000000e+00, ptr %dC, align 8$/  tail call void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef nonnull @gemm_body, i32 noundef %const, ptr noundef %B, i32 noundef %const, ptr noundef %A, i32 noundef %dup, ptr noundef %dC, ptr noundef %C) #2/' %s > %t/two.ll
-; RUN: not %opt %t/two.ll %loadPoseidon -passes=poseidon,poseidon-finalize \
+; RUN: %opt %t/two.ll %loadPoseidon -passes=poseidon,poseidon-finalize \
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/two \
 ; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=false \
-; RUN:   -poseidon-raise-wmma -poseidon-tau=1e-12 \
+; RUN:   -poseidon-raise-wmma -poseidon-tau=1e-6 -poseidon-print \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
-; RUN:   -S -o /dev/null 2>&1 | FileCheck --check-prefix=TWO %s
+; RUN:   -S -o /dev/null 2>&1 | FileCheck --check-prefix=TWO --implicit-check-not='wrote descriptor' %s
 
-; A library call for a standalone body takes the place of its kernel's whole
-; launch. The kernel here stores to dC after its product, which the call would
-; drop, and so would it the second product the kernel computes when that store
-; is replaced by a second site. Both are errors.
+; A library call takes the place of its kernel's whole launch. The kernel here
+; stores to dC after its product, which the call would drop, and with that
+; store replaced by a second site it holds two products. Neither site is
+; offered a library call, and the solve takes the in-kernel raise instead.
 
-; WORK: error: {{.*}}the library call selected for a matrix product would take the place of the whole launch of _Z13matmul_kernelPKdS0_PdS1_, which does other work too; move the product into a kernel of its own, or leave out -poseidon-ozaki-host-dispatch.
-; TWO: error: {{.*}}the library call selected for a matrix product would take the place of the whole launch of _Z13matmul_kernelPKdS0_PdS1_, which does other work too; move the product into a kernel of its own, or leave out -poseidon-ozaki-host-dispatch.
+; WORK: [ozaki-host-dispatch] preprocess_gemm_body: its kernel _Z13matmul_kernelPKdS0_PdS1_ does more than call this site, and the library call takes the place of the whole launch
+; WORK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
+; TWO: [ozaki-host-dispatch] preprocess_gemm_body: its kernel _Z13matmul_kernelPKdS0_PdS1_ does more than call this site, and the library call takes the place of the whole launch
+; TWO: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
+; TWO: [poseidon] gemm_body: same body and target as an earlier site; reusing its solve (preprocess_gemm_body)
 
 source_filename = "work.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

@@ -226,10 +226,10 @@ static CellSampler cellSampler(const CellStat &c, unsigned sampleLogBits) {
 }
 
 // Percentile of a sample vector: the confidence bound for the call-site
-// domain-error estimate.
+// domain-error estimate. No sample bounds nothing, so the error is unbounded.
 static double percentile(std::vector<double> &v, double q) {
   if (v.empty())
-    return 0.0;
+    return std::numeric_limits<double>::infinity();
   std::sort(v.begin(), v.end());
   size_t idx = (size_t)std::ceil(q * (double)v.size());
   if (idx > 0)
@@ -247,8 +247,11 @@ static std::string percentileLabel(double confidence) {
   return s;
 }
 
+// The matrix model draws whole operand matrices per sample, so it takes
+// -poseidon-num-samples within [8, 256], as the flag says.
+constexpr unsigned kMinMatmulSamples = 8, kMaxMatmulSamples = 256;
 static unsigned sampleCount(const Options &O) {
-  return std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
+  return std::clamp(O.Model.NumSamples, kMinMatmulSamples, kMaxMatmulSamples);
 }
 
 // The query as diagnostics name it, e.g. "matmul in=f16 acc=f32".

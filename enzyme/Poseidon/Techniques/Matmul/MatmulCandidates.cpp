@@ -26,6 +26,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
@@ -201,23 +204,38 @@ static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
   // Only the addrspace(3) globals co-resident with this raise count, so take
   // the max over the enclosing kernels rather than a module-wide sum: another
   // kernel of the module does not share this one's shared memory.
+  // A shared global counts for a function when an instruction of it or of a
+  // function it calls uses the global, directly or through constant
+  // expressions.
   auto sharedBytesUsedBy = [&](const Function *root,
                                SmallPtrSetImpl<const GlobalVariable *> &out) {
     SmallVector<const Function *, 8> work{root};
-    SmallPtrSet<const Function *, 8> seen{root};
+    SmallPtrSet<const Function *, 8> reached{root};
     while (!work.empty()) {
       const Function *cur = work.pop_back_val();
-      for (const Instruction &I : instructions(*cur)) {
-        for (const Value *Op : I.operands()) {
-          const Value *base = Op->stripPointerCastsAndAliases();
-          if (auto *GV = dyn_cast<GlobalVariable>(base))
-            if (T.isShared(*GV) && GV->getValueType()->isSized())
-              out.insert(GV);
-        }
+      for (const Instruction &I : instructions(*cur))
         if (auto *CB = dyn_cast<CallBase>(&I))
           if (const Function *Callee = CB->getCalledFunction())
-            if (!Callee->isDeclaration() && seen.insert(Callee).second)
+            if (!Callee->isDeclaration() && reached.insert(Callee).second)
               work.push_back(Callee);
+    }
+    for (const GlobalVariable &GV : mod->globals()) {
+      if (!T.isShared(GV) || !GV.getValueType()->isSized())
+        continue;
+      SmallVector<const User *, 8> users(GV.users());
+      SmallPtrSet<const User *, 8> seen;
+      while (!users.empty()) {
+        const User *U = users.pop_back_val();
+        if (!seen.insert(U).second)
+          continue;
+        if (const auto *I = dyn_cast<Instruction>(U)) {
+          if (reached.contains(I->getFunction())) {
+            out.insert(&GV);
+            break;
+          }
+          continue;
+        }
+        append_range(users, U->users());
       }
     }
   };
@@ -409,6 +427,29 @@ struct InKernelSite {
 };
 } // namespace
 
+// Whether every thread of the block reaches the call of the site exactly once,
+// as the block barriers the raise puts inside the site need: the call
+// post-dominates its kernel's entry and lies in no loop.
+static bool siteReachedByWholeBlock(const Session &S, const AbstractMatmul &m) {
+  const Function &F = *m.scalarLoop.fma->getFunction();
+  const CallBase *site = siteCallOf(S, F);
+  if (site) {
+    Function &kernel = *const_cast<Function *>(site->getFunction());
+    DominatorTree DT(kernel);
+    LoopInfo LI(DT);
+    PostDominatorTree PDT(kernel);
+    const BasicBlock *BB = site->getParent();
+    if (!LI.getLoopFor(BB) && PDT.dominates(BB, &kernel.getEntryBlock()))
+      return true;
+  }
+  if (S.Opts.Diagnostics.Print)
+    llvm::errs() << "[raise-wmma] " << F.getName()
+                 << ": not every thread of the block reaches the site in "
+                 << (site ? site->getFunction()->getName() : "its kernel")
+                 << " once, so it has no in-kernel raise\n";
+  return false;
+}
+
 static InKernelSite inKernelSite(const Session &S, const AbstractMatmul &m) {
   InKernelSite K;
   K.raiseF = m.scalarLoop.fma->getFunction();
@@ -517,6 +558,9 @@ static void proposeInKernelSplit(const Product &P, const InKernelSite &K,
 
 namespace {
 struct LibrarySite {
+  // The library call's descriptor; none when no library call can take the
+  // place of the product.
+  std::optional<GemmBodyNote> note;
   bool dispatchable = false;
   // The product's extents at profile scale. A square product is priced from
   // the modular row "ozaki_dispatch_rel,nmNN", measured on a square; any other
@@ -531,26 +575,18 @@ struct LibrarySite {
 
 static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   LibrarySite L;
-  switch (m.origin) {
-  case AbstractMatmul::Origin::ScalarLoopReduction: {
-    Function *F = m.scalarLoop.fma->getFunction();
-    GemmBodyNote probe;
-    L.dispatchable = computeGemmBodyNote(S.Opts, *F, m, probe);
-    if (S.Opts.Diagnostics.Print && !L.dispatchable)
-      llvm::errs() << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x'
-                   << m.K
-                   << ": host-dispatched Ozaki-II NOT PROPOSED -- the body "
-                      "is not a host-dispatchable GEMM.\n";
-    if (L.dispatchable) {
-      L.staticM = (unsigned)probe.dims[DimM].add;
-      L.staticN = (unsigned)probe.dims[DimNcols].add;
-      L.staticK = (unsigned)probe.dims[DimK].add;
-    }
-    break;
-  }
-  case AbstractMatmul::Origin::HostGemmLoopNest:
-    L.dispatchable = true;
-    break;
+  L.note = libraryCallNote(S, m);
+  const std::optional<GemmBodyNote> &note = L.note;
+  L.dispatchable = note.has_value();
+  if (S.Opts.Diagnostics.Print && !L.dispatchable)
+    llvm::errs() << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x'
+                 << m.K
+                 << ": host-dispatched Ozaki-II NOT PROPOSED -- the body "
+                    "is not a host-dispatchable GEMM.\n";
+  if (note && m.origin == AbstractMatmul::Origin::ScalarLoopReduction) {
+    L.staticM = (unsigned)note->dims[DimM].add;
+    L.staticN = (unsigned)note->dims[DimNcols].add;
+    L.staticK = (unsigned)note->dims[DimK].add;
   }
   L.shapeM = m.globalM ? m.globalM : m.M;
   L.shapeN = m.globalN ? m.globalN : m.N;
@@ -578,6 +614,17 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
   if (!L.dispatchable)
     return;
   const AbstractMatmul &m = P.m;
+  // The runtime's INT32 residue sums hold a reduction shorter than
+  // kOzakiIIMaxK, at the scale the call runs at and at the one simulated.
+  const unsigned reduction = std::max({L.staticK, L.shapeK, m.K});
+  if (reduction >= (unsigned)kOzakiIIMaxK) {
+    if (P.S.Opts.Diagnostics.Print)
+      llvm::errs() << "  Matmul[" << m.id << "] ozaki-ii NOT PROPOSED -- its "
+                   << "reduction of " << reduction
+                   << " is not below the runtime's limit " << kOzakiIIMaxK
+                   << ".\n";
+    return;
+  }
   const bool square = L.shapeM == L.shapeN && L.shapeN == L.shapeK;
   const std::string shapeKey =
       "m" + std::to_string(L.shapeM) + "k" + std::to_string(L.shapeK);
@@ -739,7 +786,7 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                           "poseidon-calibrate.");
     const bool square = L.staticM == L.staticN && L.staticN == L.staticK;
     if (isStatic && !square &&
-        P.S.Matmul.WarnedSquareNativeRows.insert((const void *)&m).second)
+        P.S.Matmul.ReportedNativeRectRows.insert(key).second)
       llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M
                    << 'x' << m.N << 'x' << m.K << ": the native DGEMM runs at "
                    << shape << " with no measured 'ozaki_dispatch_rect_rel,"
@@ -810,13 +857,15 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     const Product P{S, m, baselinePerMac};
 
     // The candidate index is the position in this sequence.
-    if (m.origin == AbstractMatmul::Origin::ScalarLoopReduction) {
+    if (m.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
+        m.scalarLoop.reachedByWholeBlock && siteReachedByWholeBlock(S, m)) {
       const InKernelSite K = inKernelSite(S, m);
       proposeInKernelDirect(P, K, cm);
       proposeInKernelSplit(P, K, cm);
     }
     if (S.Opts.Matmul.OzakiHostDispatch) {
       const LibrarySite L = librarySite(S, m);
+      cm.library = L.note;
       proposeLibraryModular(P, L, cm);
       proposeLibrarySplit(P, L, cm);
       proposeLibraryDirect(P, L, cm);
@@ -864,7 +913,8 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
   const Option &opt = candidates[candidateIndex];
 
   if (opt.realization == Realization::LibraryCall) {
-    applyLibraryCall(S, *matmul, opt.variant);
+    assert(library && "a library call is proposed only with its descriptor");
+    applyLibraryCall(S, *matmul, *library, opt.variant);
     return;
   }
   switch (matmul->origin) {
@@ -876,9 +926,26 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
   }
   switch (opt.variant.scheme) {
   case Scheme::Direct:
-  case Scheme::Split:
+  case Scheme::Split: {
     materializeInKernelRaise(*matmul, opt);
+    // Each raise was proposed against the shared memory its kernel used
+    // before any raise; raises of one kernel that do not share their scratch
+    // add up.
+    Function &F = *matmul->scalarLoop.preheader->getParent();
+    const uint64_t bytes = enclosingKernelSharedBytes(S, F);
+    const uint64_t cap = Target::of(F).maxStaticSharedBytes();
+    if (bytes > cap)
+      reportUserError(F, F.getSubprogram(),
+                      "the in-kernel raises selected for the matrix products "
+                      "of " +
+                          F.getName() + " need " + Twine(bytes) +
+                          " B of static shared memory with what their kernel "
+                          "uses, above the " +
+                          Twine(cap) +
+                          " B a kernel may hold; select fewer of them with "
+                          "-poseidon-apply-rewrites.");
     return;
+  }
   case Scheme::Modular:
   case Scheme::Native:
     break;

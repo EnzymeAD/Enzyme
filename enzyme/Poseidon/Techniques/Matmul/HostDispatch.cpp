@@ -18,6 +18,7 @@
 #include "Sites/Annotations.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/LaunchStubs.h"
+#include "Sites/SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
@@ -25,6 +26,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -207,6 +209,26 @@ storeGuardBounds(Function &F, const AbstractMatmul &m,
   return bound;
 }
 
+// Whether `addr` is its base pointer when every thread and block index is 0.
+static bool startsAtBase(ScalarEvolution &SE, const SCEV *addr) {
+  const SCEV *offset = SE.getMinusSCEV(addr, SE.getPointerBase(addr));
+  struct LaunchIndices {
+    ScalarEvolution &SE;
+    ValueToSCEVMapTy atZero;
+    bool follow(const SCEV *S) {
+      if (const auto *U = dyn_cast<SCEVUnknown>(S)) {
+        LaunchValue kind = launchGeometryOf(U->getValue()).Kind;
+        if (kind == LaunchValue::ThreadIndex || kind == LaunchValue::BlockIndex)
+          atZero[U->getValue()] = SE.getZero(U->getType());
+      }
+      return true;
+    }
+    bool isDone() const { return false; }
+  } indices{SE, {}};
+  visitAll(offset, indices);
+  return SCEVParameterRewriter::rewrite(offset, SE, indices.atZero)->isZero();
+}
+
 // The store the host dispatch takes the place of: the first in F into an
 // argument whose value is the product m computes. The dispatch writes the
 // product where it stores, and fissionGemmForDispatch reads it back there for
@@ -220,8 +242,8 @@ static StoreInst *productStore(Function &F, const AbstractMatmul &m) {
   return nullptr;
 }
 
-bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
-                         GemmBodyNote &note) {
+static bool computeGemmBodyNote(const Options &O, Function &F,
+                                const AbstractMatmul &m, GemmBodyNote &note) {
   note = GemmBodyNote{};
   if (m.origin != AbstractMatmul::Origin::ScalarLoopReduction)
     return false;
@@ -382,11 +404,17 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
                     " product the library call writes");
   }
 
+  // The call takes each operand from the start of its pointer parameter.
+  const SCEV *cAddr = h.SE->getSCEV(cStore->getPointerOperand());
+  if (!startsAtBase(*h.SE, h.aStartSCEV) ||
+      !startsAtBase(*h.SE, h.bStartSCEV) || !startsAtBase(*h.SE, cAddr))
+    return refuse("an operand of the product does not start where its "
+                  "pointer parameter points");
+
   // C's layout and leading dimension from the byte step of its store address
   // along the row and column thread axes: one element along the column axis is
   // row-major, along the row axis column-major.
-  const std::array<int64_t, 3> cStep =
-      threadIndexCoefficients(h.SE->getSCEV(cStore->getPointerOperand()));
+  const std::array<int64_t, 3> cStep = threadIndexCoefficients(cAddr);
   const unsigned axOther = 3 - *axM - *axN;
   constexpr int64_t elemBytes = 8;
   int64_t ldc = 0;
@@ -480,10 +508,59 @@ static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
   return note;
 }
 
-void applyLibraryCall(Session &S, const AbstractMatmul &m,
-                      const SchemeVariant &v) {
-  assert(S.Opts.Matmul.OzakiHostDispatch &&
-         "library calls are proposed only under -poseidon-ozaki-host-dispatch");
+// The launch argument each caller value is, -1 for one that is not: the host
+// reads the argument itself, so a pointer may differ from it only by casts.
+static std::vector<int> launchArgsOf(ArrayRef<Value *> primalArgs) {
+  std::vector<int> paramToArg(primalArgs.size(), -1);
+  for (size_t i = 0; i < primalArgs.size(); ++i) {
+    Value *v = primalArgs[i];
+    if (v && v->getType()->isPointerTy())
+      v = v->stripPointerCasts();
+    if (auto *A = dyn_cast_or_null<Argument>(v))
+      paramToArg[i] = (int)A->getArgNo();
+  }
+  return paramToArg;
+}
+
+// Whether `wrapper` does nothing with an effect but call its site, so that a
+// library call can take the place of its whole launch.
+static bool onlyCallsItsSite(const Function &wrapper) {
+  unsigned effects = 0;
+  for (const Instruction &I : instructions(wrapper)) {
+    if (!I.mayHaveSideEffects())
+      continue;
+    if (const auto *II = dyn_cast<IntrinsicInst>(&I);
+        II && II->isAssumeLikeIntrinsic())
+      continue;
+    ++effects;
+  }
+  return effects <= 1;
+}
+
+const CallBase *siteCallOf(const Session &S, const Function &F) {
+  SmallVector<Value *, 8> callerArgs;
+  const Function *kernel = nullptr;
+  for (unsigned i = 0, e = F.arg_size(); i < e; ++i) {
+    Value *v = siteArg(S, &F, i);
+    callerArgs.push_back(v);
+    if (auto *A = dyn_cast_or_null<Argument>(v))
+      kernel = A->getParent();
+    else if (auto *I = dyn_cast_or_null<Instruction>(v))
+      kernel = I->getFunction();
+  }
+  if (!kernel)
+    return nullptr;
+  for (const Instruction &I : instructions(*kernel))
+    if (const auto *CB = dyn_cast<CallBase>(&I);
+        CB && llvm::all_of(callerArgs, [&](Value *v) {
+          return !v || llvm::is_contained(CB->args(), v);
+        }))
+      return CB;
+  return nullptr;
+}
+
+std::optional<GemmBodyNote> libraryCallNote(const Session &S,
+                                            const AbstractMatmul &m) {
   Function *F = nullptr;
   GemmBodyNote note;
   switch (m.origin) {
@@ -491,21 +568,61 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m,
     F = m.hostGemm->cStore->getFunction();
     note = runtimeShapeNote(m);
     break;
-  case AbstractMatmul::Origin::ScalarLoopReduction: {
+  case AbstractMatmul::Origin::ScalarLoopReduction:
     F = m.scalarLoop.fma->getFunction();
-    bool built = computeGemmBodyNote(S.Opts, *F, m, note);
-    assert(built && note.valid &&
-           "a library call is proposed only for a body with a GEMM note");
-    (void)built;
+    if (!computeGemmBodyNote(S.Opts, *F, m, note))
+      return std::nullopt;
     break;
   }
-  }
+  auto refuse = [&](const Twine &why) -> std::optional<GemmBodyNote> {
+    if (S.Opts.Diagnostics.Print)
+      llvm::errs() << "[ozaki-host-dispatch] " << F->getName() << ": " << why
+                   << '\n';
+    return std::nullopt;
+  };
+  // The host replaces or precedes the whole launch of the kernel with the
+  // library call, reading every operand and dimension from that launch.
+  const CallBase *site = siteCallOf(S, *F);
+  if (!site)
+    return refuse("the kernel the site is called from is not known");
+  const Function *kernel = site->getFunction();
+  if (!onlyCallsItsSite(*kernel))
+    return refuse("its kernel " + kernel->getName() +
+                  " does more than call this site, and the library call takes "
+                  "the place of the whole launch");
+  SmallVector<Value *, 8> callerArgs;
+  for (unsigned i = 0, e = F->arg_size(); i < e; ++i)
+    callerArgs.push_back(siteArg(S, F, i));
+  const std::vector<int> paramToArg = launchArgsOf(callerArgs);
+  auto mapped = [&](int param) {
+    return param >= 0 && (size_t)param < paramToArg.size() &&
+           paramToArg[param] >= 0;
+  };
+  SmallVector<int, 16> params = {note.cParam, note.aParam, note.bParam};
+  for (const RuntimeDim &d : note.dims)
+    for (const LaunchRef &f : d.factors)
+      params.push_back(f.param);
+  for (const auto &[x, y] : note.assumedEqual)
+    params.append({x.param, y.param});
+  if (!llvm::all_of(params, mapped))
+    return refuse("an operand or dimension of the product is not an argument "
+                  "of the kernel " +
+                  kernel->getName() + ", from which the host reads it");
+
+  return note;
+}
+
+void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
+                      const SchemeVariant &v) {
+  assert(S.Opts.Matmul.OzakiHostDispatch &&
+         "library calls are proposed only under -poseidon-ozaki-host-dispatch");
+  Function *F = const_cast<Function *>(anchorOf(m).getFunction());
   note.scheme = descriptorScheme(v);
   note.numModuli = descriptorModulusField(v);
   // One descriptor per body: the host replaces or precedes its kernel's launch
-  // with one library call.
-  if (auto prior = S.Matmul.GemmBodies.find(F);
-      prior != S.Matmul.GemmBodies.end() && prior->second.valid)
+  // with one library call, and the solve chooses for the body's products
+  // independently.
+  if (S.Matmul.GemmBodies.count(F))
     reportUserError(anchorOf(m),
                     "a second matrix product of " + F->getName() +
                         " was selected to run as a library call, and a "
@@ -565,26 +682,9 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
       std::move(message));
 }
 
-// Whether `wrapper` does nothing with an effect but call its site, so that a
-// library call can take the place of its whole launch.
-static bool onlyCallsItsSite(const Function &wrapper) {
-  unsigned effects = 0;
-  for (const Instruction &I : instructions(wrapper)) {
-    if (!I.mayHaveSideEffects())
-      continue;
-    if (const auto *II = dyn_cast<IntrinsicInst>(&I);
-        II && II->isAssumeLikeIntrinsic())
-      continue;
-    ++effects;
-  }
-  return effects <= 1;
-}
-
 // Shared descriptor emit for the per-site path and the deferred joint-dp
-// flush: map C/A/B through `paramToArg` (body parameter to wrapper launch
-// argument, -1 when there is none). A fused body was already fissioned and
-// computes nothing without the descriptor, so an unmapped one is an error; a
-// standalone body still computes its product, and its launch is kept.
+// flush: map C/A/B and the dimensions through `paramToArg` (body parameter to
+// wrapper launch argument), which libraryCallNote checked.
 static void emitMappedDescriptor(Session &S, Function &wrapper,
                                  const GemmBodyNote &n,
                                  ArrayRef<int> paramToArg) {
@@ -593,66 +693,24 @@ static void emitMappedDescriptor(Session &S, Function &wrapper,
       return -1;
     return paramToArg[bp];
   };
-  auto unmapped = [&](StringRef what) {
-    const std::string message =
-        (what +
-         " of the matrix product realized as a library call is not an "
-         "argument of the kernel " +
-         wrapper.getName() + ", from which the host reads it")
-            .str();
-    if (!n.standalone)
-      reportUserError(wrapper, wrapper.getSubprogram(), message);
-    diagnoseSite(wrapper, message + "; the kernel is launched as written",
-                 DS_Warning);
-  };
   int cArg = mapParam(n.cParam);
   int aArg = mapParam(n.aParam);
   int bArg = mapParam(n.bParam);
-  if (cArg < 0 || aArg < 0 || bArg < 0) {
-    unmapped("an operand pointer");
-    return;
-  }
+  assert(cArg >= 0 && aArg >= 0 && bArg >= 0 &&
+         "a library call is proposed only with its operands kernel arguments");
   // Runtime dimensions name body parameters too, and the host side only sees
   // the wrapper's launch arguments, so they go through the same mapping.
   GemmBodyNote mapped = n;
-  SmallVector<LaunchRef *, 16> refs;
   for (RuntimeDim &x : mapped.dims)
     for (LaunchRef &f : x.factors)
-      refs.push_back(&f);
+      f.param = mapParam(f.param);
   for (auto &[x, y] : mapped.assumedEqual) {
-    refs.push_back(&x);
-    refs.push_back(&y);
+    x.param = mapParam(x.param);
+    y.param = mapParam(y.param);
   }
-  for (LaunchRef *f : refs) {
-    int a = mapParam(f->param);
-    if (a < 0) {
-      unmapped("a runtime dimension");
-      return;
-    }
-    f->param = a;
-  }
-  if (n.standalone && !onlyCallsItsSite(wrapper))
-    reportUserError(wrapper, wrapper.getSubprogram(),
-                    "the library call selected for a matrix product would "
-                    "take the place of the whole launch of " +
-                        wrapper.getName() +
-                        ", which does other work too; move the product into a "
-                        "kernel of its own, or leave out "
-                        "-poseidon-ozaki-host-dispatch.");
-  if (!S.Matmul.DispatchedKernels.insert(wrapper.getName()).second)
-    reportUserError(wrapper, wrapper.getSubprogram(),
-                    "the kernel " + wrapper.getName() +
-                        " holds more than one matrix product selected to run "
-                        "as a library call, and its launch takes one; leave "
-                        "out -poseidon-ozaki-host-dispatch.");
+  assert(onlyCallsItsSite(wrapper) &&
+         "a library call is proposed only for a kernel that does nothing else");
   emitDescriptor(S, wrapper.getName(), cArg, aArg, bArg, mapped);
-}
-
-static std::vector<int> launchArgsOf(ArrayRef<Value *> primalArgs) {
-  std::vector<int> paramToArg(primalArgs.size());
-  for (size_t i = 0; i < primalArgs.size(); ++i)
-    paramToArg[i] = traceToArgIndex(primalArgs[i]);
-  return paramToArg;
 }
 
 void writeGemmDescriptor(Session &S, Function &wrapper,

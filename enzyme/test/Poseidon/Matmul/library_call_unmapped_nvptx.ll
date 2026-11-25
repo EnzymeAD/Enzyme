@@ -1,21 +1,19 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_two_store_body.fpprofile
-; RUN: not %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
+; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
 ; RUN:   -poseidon-profile-use=%t/prof \
 ; RUN:   -poseidon-cache=%t/cache -poseidon-enable-herbie=false \
-; RUN:   -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-tau=1e-12 \
+; RUN:   -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-tau=1e-12 -poseidon-print \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
-; RUN:   -S -o /dev/null 2>&1 | FileCheck %s
+; RUN:   -S -o /dev/null 2>&1 | FileCheck --implicit-check-not='wrote descriptor' --implicit-check-not=fissioned %s
 
 ; The fused body of ozaki_dispatch_fused_nvptx.ll, its product's output a
 ; pointer the kernel loads from a global rather than one of its arguments. The
-; body was already fissioned to read the product back from that output, so a
-; library call the host cannot be told where to write is an error.
+; host cannot be told where a library call would write, so none is proposed
+; and the body is not fissioned.
 
-; CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32
-; CHECK: [ozaki-host-dispatch] fissioned GEMM in preprocess_two_store_body
-; CHECK: error: {{.*}}an operand pointer of the matrix product realized as a library call is not an argument of the kernel _Z9two_storePKdS0_PdS1_, from which the host reads it
-; CHECK-NOT: wrote descriptor
+; CHECK: [ozaki-host-dispatch] preprocess_two_store_body: an operand or dimension of the product is not an argument of the kernel _Z9two_storePKdS0_PdS1_, from which the host reads it
+; CHECK: Poseidon error-budget: matmul -> baseline F64
 
 source_filename = "unmapped.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

@@ -203,7 +203,8 @@ cl::opt<std::string> CostModel(
 cl::opt<unsigned>
     NumSamples("poseidon-num-samples", cl::init(kDefaults.Model.NumSamples),
                cl::Hidden,
-               cl::desc("Number of sampled points for input hypercube"));
+               cl::desc("Number of sampled points for input hypercube; the "
+                        "matrix-product model takes it within [8, 256]"));
 cl::opt<unsigned>
     RandomSeed("poseidon-random-seed", cl::init(kDefaults.Model.RandomSeed),
                cl::Hidden,

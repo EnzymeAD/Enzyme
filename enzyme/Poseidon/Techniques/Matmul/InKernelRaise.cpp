@@ -52,19 +52,19 @@ using namespace llvm;
 
 namespace poseidon {
 
-// fptrunc/fpext between FP types (no-op when they match); a bitcast when the
-// bit widths agree but the LLVM types differ.
+// fptrunc/fpext between FP types (no-op when they match). Two types of one
+// width never meet: a product is raised only in float or double, whose
+// multiply-adds are the ones a profile records.
 static Value *emitFPCast(IRBuilder<> &B, Value *v, Type *toTy) {
   Type *fromTy = v->getType();
   if (fromTy == toTy)
     return v;
   unsigned fromBits = fromTy->getScalarSizeInBits();
   unsigned toBits = toTy->getScalarSizeInBits();
+  assert(fromBits != toBits && "no conversion between half and bfloat");
   if (toBits < fromBits)
     return B.CreateFPTrunc(v, toTy);
-  if (toBits > fromBits)
-    return B.CreateFPExt(v, toTy);
-  return B.CreateBitCast(v, toTy);
+  return B.CreateFPExt(v, toTy);
 }
 
 static GlobalVariable *getOrCreateSharedScratch(Module *M, const Twine &name,
@@ -359,11 +359,8 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   BasicBlock *exitBB = h.exitBB;
   assert(preheader && exitBB &&
          "recognition admits only loops with a preheader and one exit block");
-  if (!h.reachedByWholeBlock)
-    reportUserError(*h.fma,
-                    "the in-kernel raise selected for this matrix product "
-                    "synchronizes the thread block, and not every thread of "
-                    "the block reaches the product's loop once.");
+  assert(h.reachedByWholeBlock &&
+         "an in-kernel raise is proposed only where the whole block runs it");
 
   Function *F = preheader->getParent();
   Module *mod = F->getParent();

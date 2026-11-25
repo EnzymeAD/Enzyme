@@ -68,14 +68,19 @@ std::array<int64_t, 3> threadIndexCoefficients(const llvm::SCEV *S);
 void forEachInnermostLoop(llvm::LoopInfo &LI,
                           llvm::function_ref<void(llvm::Loop *)> fn);
 
-// Compute the GemmBodyNote for matmul m inside optimized body F; false
-// (note.valid = false) if anything is unsupported.
-bool computeGemmBodyNote(const Options &O, llvm::Function &F,
-                         const AbstractMatmul &m, GemmBodyNote &note);
+// The call the site clone `F` is reached through, in the kernel that holds the
+// caller values recorded for it; null when they name no kernel.
+const llvm::CallBase *siteCallOf(const Session &S, const llvm::Function &F);
+
+// The library-call descriptor of `m`, its operands and dimensions naming
+// parameters of the site's body; none, with the reason printed, when no
+// library call can take the place of the product.
+std::optional<GemmBodyNote> libraryCallNote(const Session &S,
+                                            const AbstractMatmul &m);
 
 // Records the launch descriptor of the library call `v` that the host compile
 // rewrites the launch from, fissioning a fused constant-trip body.
-void applyLibraryCall(Session &S, const AbstractMatmul &m,
+void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
                       const SchemeVariant &v);
 
 // Emit the tensor-core code of the in-kernel direct or split scheme in place

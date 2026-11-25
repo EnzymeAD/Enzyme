@@ -558,7 +558,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         if (!h.reachedByWholeBlock && O.Diagnostics.Print)
           llvm::errs() << "[raise-wmma] " << F.getName()
                        << ": not every thread of the block reaches the "
-                          "reduction loop once\n";
+                          "reduction loop once, so it has no in-kernel raise\n";
 
         AbstractMatmul am;
         am.id = nextId++;

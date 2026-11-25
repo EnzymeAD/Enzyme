@@ -20,7 +20,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
@@ -301,8 +300,6 @@ struct WmmaTarget {
 struct MatmulState {
   // The GEMM note of each optimized body clone, keyed by the clone.
   std::map<const llvm::Function *, GemmBodyNote> GemmBodies;
-  // The kernels a host-dispatch descriptor was written for.
-  llvm::StringSet<> DispatchedKernels;
   // In the order the sites were split, so that of two sites of one wrapper the
   // same one is recorded last in every compile.
   llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;
@@ -310,7 +307,7 @@ struct MatmulState {
   // The tensor-core shapes the cost model prices, and the warnings already
   // given.
   std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
-  std::set<const void *> WarnedSquareNativeRows;
+  std::set<std::string> ReportedNativeRectRows;
   std::set<std::string> ReportedDirectRows;
   std::set<std::string> ReportedOzakiRectRows;
   std::set<std::string> ReportedInKernelRows;
@@ -339,6 +336,8 @@ public:
   MatmulUnit() : SiteUnit(UnitKind::M) {}
 
   AbstractMatmul *matmul = nullptr;
+  // The descriptor of the product's library call, when it has one.
+  std::optional<GemmBodyNote> library;
   double initialCompCost = -1.0; // per-MAC cost of the baseline (naive) matmul
   // Profiled total MAC count; deploy-size profiles exceed 2^32.
   uint64_t executions = 0;
