@@ -1605,6 +1605,27 @@ static Value packScalars(OpBuilder &builder, Location loc,
   return vec;
 }
 
+/// Returns a `1 x width` trace whose leading columns are `values` and whose
+/// following columns hold `siteScores`, one score per column.
+static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
+                             ArrayRef<Value> siteScores, int64_t width) {
+  auto fullType = RankedTensorType::get({1, width}, builder.getF64Type());
+  auto cellType = RankedTensorType::get({1, 1}, builder.getF64Type());
+  Value zeroFull = f64Const(builder, loc, fullType, 0.0);
+  Value c0 = i64Const(builder, loc, 0);
+  Value trace = impulse::DynamicUpdateSliceOp::create(
+      builder, loc, fullType, zeroFull, values, ValueRange{c0, c0});
+  int64_t firstScoreColumn =
+      cast<RankedTensorType>(values.getType()).getShape()[1];
+  for (auto [i, score] : llvm::enumerate(siteScores)) {
+    Value cell = impulse::ReshapeOp::create(builder, loc, cellType, score);
+    Value column = i64Const(builder, loc, firstScoreColumn + (int64_t)i);
+    trace = impulse::DynamicUpdateSliceOp::create(builder, loc, fullType, trace,
+                                                  cell, ValueRange{c0, column});
+  }
+  return trace;
+}
+
 static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
                                 Value corr) {
   auto vecType = RankedTensorType::get({2}, b.getF64Type());
@@ -2249,29 +2270,11 @@ struct ExpandImpulsePass
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
         SmallVector<Value> newRetVals;
-        Value outTrace = carry.currTrace;
-        if (scoreTailSize > 0) {
-          auto fullType =
-              RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
-          Value zeroFull = f64Const(rewriter, retOp.getLoc(), fullType, 0.0);
-          Value c0 = i64Const(rewriter, retOp.getLoc(), 0);
-          Value acc = impulse::DynamicUpdateSliceOp::create(
-                          rewriter, retOp.getLoc(), fullType, zeroFull,
-                          carry.currTrace, ValueRange{c0, c0})
-                          .getResult();
-          for (auto [i, s] : llvm::enumerate(siteScores)) {
-            auto s11 = impulse::ReshapeOp::create(
-                rewriter, retOp.getLoc(),
-                RankedTensorType::get({1, 1}, rewriter.getF64Type()), s);
-            Value cOff =
-                i64Const(rewriter, retOp.getLoc(), positionSize + (int64_t)i);
-            acc = impulse::DynamicUpdateSliceOp::create(
-                      rewriter, retOp.getLoc(), fullType, acc, s11,
-                      ValueRange{c0, cOff})
-                      .getResult();
-          }
-          outTrace = acc;
-        }
+        Value outTrace =
+            scoreTailSize > 0
+                ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
+                                  siteScores, declaredWidth)
+                : carry.currTrace;
         newRetVals.push_back(outTrace);
         newRetVals.push_back(carry.weight);
         newRetVals.append(retOp.getOperands().begin(),
@@ -4550,29 +4553,11 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
-        Value outTrace = carry.currTrace;
-        if (scoreTailSize > 0) {
-          auto fullType =
-              RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
-          Value zeroFull = f64Const(rewriter, retOp.getLoc(), fullType, 0.0);
-          Value c0 = i64Const(rewriter, retOp.getLoc(), 0);
-          Value acc = impulse::DynamicUpdateSliceOp::create(
-                          rewriter, retOp.getLoc(), fullType, zeroFull,
-                          carry.currTrace, ValueRange{c0, c0})
-                          .getResult();
-          for (auto [i, s] : llvm::enumerate(siteScores)) {
-            auto s11 = impulse::ReshapeOp::create(
-                rewriter, retOp.getLoc(),
-                RankedTensorType::get({1, 1}, rewriter.getF64Type()), s);
-            Value cOff =
-                i64Const(rewriter, retOp.getLoc(), positionSize + (int64_t)i);
-            acc = impulse::DynamicUpdateSliceOp::create(
-                      rewriter, retOp.getLoc(), fullType, acc, s11,
-                      ValueRange{c0, cOff})
-                      .getResult();
-          }
-          outTrace = acc;
-        }
+        Value outTrace =
+            scoreTailSize > 0
+                ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
+                                  siteScores, declaredWidth)
+                : carry.currTrace;
         newRetVals.push_back(outTrace);
         newRetVals.push_back(carry.weight);
         newRetVals.append(retOp.getOperands().begin(),
@@ -5375,29 +5360,11 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
-        Value outTrace = carry.currTrace;
-        if (scoreTailSize > 0) {
-          auto fullType =
-              RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
-          Value zeroFull = f64Const(rewriter, retOp.getLoc(), fullType, 0.0);
-          Value c0 = i64Const(rewriter, retOp.getLoc(), 0);
-          Value acc = impulse::DynamicUpdateSliceOp::create(
-                          rewriter, retOp.getLoc(), fullType, zeroFull,
-                          carry.currTrace, ValueRange{c0, c0})
-                          .getResult();
-          for (auto [i, s] : llvm::enumerate(siteScores)) {
-            auto s11 = impulse::ReshapeOp::create(
-                rewriter, retOp.getLoc(),
-                RankedTensorType::get({1, 1}, rewriter.getF64Type()), s);
-            Value cOff =
-                i64Const(rewriter, retOp.getLoc(), positionSize + (int64_t)i);
-            acc = impulse::DynamicUpdateSliceOp::create(
-                      rewriter, retOp.getLoc(), fullType, acc, s11,
-                      ValueRange{c0, cOff})
-                      .getResult();
-          }
-          outTrace = acc;
-        }
+        Value outTrace =
+            scoreTailSize > 0
+                ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
+                                  siteScores, declaredWidth)
+                : carry.currTrace;
         newRetVals.push_back(outTrace);
         if (hastings) {
           Value corr = carry.corr;
