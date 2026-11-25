@@ -12,15 +12,15 @@
 ; RUN: cp %t/none.csv %t/rowonly.csv && echo 'ozaki_dispatch_rect_rel,dgemm_m128n16k16,0.2' >> %t/rowonly.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/square.csv && echo 'ozaki_dispatch_rect_rel,dgemm_m16n16k16,0.2' >> %t/square.csv
 ; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_sq -poseidon-print 2>&1 \
-; RUN:   | FileCheck --check-prefixes=WARN,BASE --implicit-check-not='native-dgemm cublas' %s
+; RUN:   | FileCheck --check-prefixes=WARN,OZEST,SQ,NATIVE %s
 ; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/oz.csv -poseidon-cache=%t/c_oz -poseidon-print 2>&1 \
-; RUN:   | FileCheck --check-prefixes=WARN,OZAKI --implicit-check-not='native-dgemm cublas' %s
+; RUN:   | FileCheck --check-prefixes=WARN,SQ,OZAKI %s
 ; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/low.csv -poseidon-cache=%t/c_low -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=LOW,NATIVE --implicit-check-not='native-dgemm host dispatch' %s
 ; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/high.csv -poseidon-cache=%t/c_high -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=HIGH,OZAKI --implicit-check-not='native-dgemm host dispatch' %s
 ; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/mk.csv -poseidon-cache=%t/c_mk -poseidon-print 2>&1 \
-; RUN:   | FileCheck --check-prefixes=WARN,OZAKI --implicit-check-not='native-dgemm cublas' %s
+; RUN:   | FileCheck --check-prefixes=WARN,SQ,OZAKI %s
 ; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/rowonly.csv -poseidon-cache=%t/c_rowonly -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=HIGH --implicit-check-not='native-dgemm host dispatch' %s
 ; RUN: %{opt} -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_square -poseidon-print 2>&1 \
@@ -35,9 +35,11 @@
 ; The native DGEMM candidate of the product of Inputs/stale_cache/
 ; matmul_device.ll, whose dispatch extents are constants of the compile. Made
 ; rectangular by profiling it over eight CTAs along its rows, it is dispatched
-; as 128 x 16 x 16 and priced only from the row measured at those extents:
-; without it, or with a row measured at another column count, it is not
-; proposed, and a warning names the row and how to measure it. At tau=1e-14
+; as 128 x 16 x 16 and priced from the row measured at those extents: without
+; it, or with a row measured at another column count, it is priced from the
+; square row, and a warning names the row and how to measure it. Its Ozaki-II
+; candidates without their rows are priced as the square product of the
+; profiled extents (64 times its MACs), with one warning. At tau=1e-14
 ; only Ozaki-II nm=14 and the native DGEMM clear the target, so the rows decide
 ; between them and the F64 baseline. With the profile of Inputs/raise_tcec the
 ; square 16 x 16 x 16 product reads its own row, else the square row, and
@@ -46,7 +48,8 @@
 ; native_dgemm_runtime_cols_nvptx.cu covers a product with a run-time column
 ; count.
 
-; WARN: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch at 128x16x16 is not proposed: this device's cost model carries no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16x16 measures it
+; OZEST: Poseidon: matrix product 0, 16x16x16: ozaki-ii host dispatch at nm=8, 9, 10, 11, 12, 13, 14 is priced as the square product it embeds in (the square row times 64.00): this device's cost model carries no measured 'ozaki_dispatch_rect_rel,nm<nm>_m128k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16 measures it
+; WARN: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch at 128x16x16 is priced from the square 'ozaki_dispatch_rel,dgemm' row: this device's cost model carries no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16x16 measures it
 ; SQ: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01
 ; LOW: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+01  rel=5.000000e-02
 ; HIGH: native-dgemm cublas f64/f64  compCost/MAC=1.024000e+02  rel=2.000000e-01

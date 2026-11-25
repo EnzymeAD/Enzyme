@@ -33,6 +33,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -111,13 +112,12 @@ static std::string inKernelCostClass(const SchemeVariant &v) {
   llvm_unreachable("no in-kernel realization of this scheme");
 }
 
-// The policy for a cost-model row a candidate's price needs and the model does
-// not carry: the candidate is not proposed, its price is never estimated from
-// another row, and the first miss of `row` in a compilation warns, naming the
-// row and the command that measures it. Strict mode makes the miss an error.
-static Error reportMissingRow(Session &S, const AbstractMatmul &m,
-                              const Twine &what, StringRef row,
-                              StringRef measure) {
+// The first miss of `row` in a compilation warns that `what` `consequence`,
+// naming the row and the command that measures it. Strict mode makes the miss
+// an error.
+static Error reportRow(Session &S, const AbstractMatmul &m, const Twine &what,
+                       StringRef row, StringRef measure,
+                       const Twine &consequence) {
   if (S.Opts.Model.StrictMode)
     return userError(anchorOf(m), "strict mode: " + what +
                                       " has no measured '" + row + "' row in " +
@@ -128,12 +128,28 @@ static Error reportMissingRow(Session &S, const AbstractMatmul &m,
   const Instruction &at = anchorOf(m);
   diagnose(*at.getFunction(), at.getDebugLoc(),
            "matrix product " + Twine(m.id) + ", " + Twine(m.M) + "x" +
-               Twine(m.N) + "x" + Twine(m.K) + ": " + what +
-               " is not proposed: this device's cost model carries no "
-               "measured '" +
-               row + "' row; " + measure + " measures it",
+               Twine(m.N) + "x" + Twine(m.K) + ": " + what + " " + consequence +
+               ": this device's cost model carries no measured '" + row +
+               "' row; " + measure + " measures it",
            DS_Warning);
   return Error::success();
+}
+
+// The policy for a cost-model row a candidate's price needs and the model does
+// not carry: the candidate is not proposed, unless its pricing names an
+// estimate (see reportEstimatedRow).
+static Error reportMissingRow(Session &S, const AbstractMatmul &m,
+                              const Twine &what, StringRef row,
+                              StringRef measure) {
+  return reportRow(S, m, what, row, measure, "is not proposed");
+}
+
+// A candidate priced from another row than its own, as the estimate `how`
+// says, until its row is measured.
+static Error reportEstimatedRow(Session &S, const AbstractMatmul &m,
+                                const Twine &what, StringRef row,
+                                StringRef measure, const Twine &how) {
+  return reportRow(S, m, what, row, measure, "is priced " + how);
 }
 
 // The command that measures a device's cost model; a rectangular host
@@ -618,10 +634,25 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
   return opt;
 }
 
-// A rectangular product is priced only from the rows measured at its (M, K),
+// S^3 / (M*N*K) for S = max(M, N, K), at the profiled extents (1 when the
+// profile has none): the MACs of the smallest square a product embeds in, per
+// MAC of the product.
+static double squarePaddingRatio(const AbstractMatmul &m) {
+  const double M = m.globalM, N = m.globalN, K = m.globalK ? m.globalK : m.K;
+  if (!M || !N || !K)
+    return 1.0;
+  const double S = std::max({M, N, K});
+  return (S * S * S) / (M * N * K);
+}
+
+// A rectangular product is priced from the rows measured at its (M, K),
 // since the runtime's per-MAC cost depends on M and K but not on the column
 // count, and a square one from the square rows; the shape is the one
-// LibrarySite gives Ozaki-II. A modulus count without its row is not proposed.
+// LibrarySite gives Ozaki-II. A rectangular product whose row is missing is
+// priced as the square product it embeds in: the square row times the padding
+// ratio, an estimate meant to err dear, so that the missing row costs picks
+// rather than admitting one the measured row would refuse. A modulus count
+// with neither row is not proposed.
 static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
                                    MatmulUnit &cm) {
   if (!L.dispatchable)
@@ -648,12 +679,21 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
   const std::string shapeKey = "m" + shapeM + "k" + shapeK;
   const std::string family =
       square ? "ozaki_dispatch_rel" : "ozaki_dispatch_rect_rel";
-  std::string missing;
+  const double padding = squarePaddingRatio(m);
+  std::string missing, estimated;
   for (unsigned nm : kOzIIModuliCounts) {
     const SchemeVariant v = SchemeVariant::ozakiII(nm);
+    const std::string squareKey = "nm" + std::to_string(nm);
     const std::string key =
-        "nm" + std::to_string(nm) + (square ? std::string() : "_" + shapeKey);
-    const double rel = lookupCost(P.S.CostModel, family, key).value_or(-1.0);
+        squareKey + (square ? std::string() : "_" + shapeKey);
+    double rel = lookupCost(P.S.CostModel, family, key).value_or(-1.0);
+    if (rel <= 0.0 && !square) {
+      rel = lookupCost(P.S.CostModel, "ozaki_dispatch_rel", squareKey)
+                .value_or(-1.0) *
+            padding;
+      if (rel > 0.0)
+        estimated += (estimated.empty() ? "" : ", ") + std::to_string(nm);
+    }
     if (rel <= 0.0) {
       missing += (missing.empty() ? "" : ", ") + std::to_string(nm);
       continue;
@@ -664,13 +704,21 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
     cm.candidates.push_back(opt);
   }
   // One row name for all the moduli of the shape.
+  const std::string rows =
+      family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey);
+  const std::string measure =
+      square
+          ? std::string(kCalibrate)
+          : std::string(kCalibrate) + " --ozaki-rect " + shapeM + "x" + shapeK;
+  if (!estimated.empty())
+    if (Error E = reportEstimatedRow(
+            P.S, m, "ozaki-ii host dispatch at nm=" + estimated, rows, measure,
+            "as the square product it embeds in (the square row times " +
+                formatv("{0:F2}", padding) + ")"))
+      return E;
   if (!missing.empty())
-    return reportMissingRow(
-        P.S, m, "ozaki-ii host dispatch at nm=" + missing,
-        family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey),
-        square ? std::string(kCalibrate)
-               : std::string(kCalibrate) + " --ozaki-rect " + shapeM + "x" +
-                     shapeK);
+    return reportMissingRow(P.S, m, "ozaki-ii host dispatch at nm=" + missing,
+                            rows, measure);
   return Error::success();
 }
 
@@ -761,7 +809,9 @@ static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // M x Ncols x K for every layout combination. Its per-MAC rate depends on the
 // shape, so a call whose extents are constants of this compile is priced from
 // the row measured at those extents when the model has one; any other from
-// the square row (see LibrarySite).
+// the square row (see LibrarySite). The square row is not an upper bound for a
+// rectangular call, whose per-MAC rate is usually worse, so the warning names
+// the row that replaces the estimate.
 static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
   if (!L.dispatchable)
@@ -781,16 +831,20 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
                        .value_or(-1.0)
                  : -1.0;
   const bool rectangular = L.runShape && !(M == N && N == K);
-  if (rel <= 0.0 && rectangular)
-    return reportMissingRow(P.S, m, "native-dgemm host dispatch at " + shape,
-                            "ozaki_dispatch_rect_rel," + rectKey,
-                            std::string(kCalibrate) + " --ozaki-rect " + shape);
-  if (rel <= 0.0)
+  const bool fromSquare = rel <= 0.0;
+  if (fromSquare)
     rel =
         lookupCost(P.S.CostModel, "ozaki_dispatch_rel", "dgemm").value_or(-1.0);
   if (rel <= 0.0)
     return reportMissingRow(P.S, m, "native-dgemm host dispatch",
                             "ozaki_dispatch_rel,dgemm", kCalibrate);
+  if (fromSquare && rectangular)
+    if (Error E = reportEstimatedRow(
+            P.S, m, "native-dgemm host dispatch at " + shape,
+            "ozaki_dispatch_rect_rel," + rectKey,
+            std::string(kCalibrate) + " --ozaki-rect " + shape,
+            "from the square 'ozaki_dispatch_rel,dgemm' row"))
+      return E;
   MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
   cm.candidates.push_back(opt);
