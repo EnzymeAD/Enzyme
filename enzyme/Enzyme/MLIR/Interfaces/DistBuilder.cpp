@@ -348,14 +348,6 @@ static Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
   return reduceSumToScalar(b, loc, kernel);
 }
 
-namespace {
-// `lognorm` depends only on the parameters, so it can be hoisted.
-struct LogpdfSplit {
-  Value unnormed;
-  Value lognorm; // null when `unnormed` is already the whole log density
-};
-} // namespace
-
 static Value splatSample(OpBuilder &b, Location loc,
                          RankedTensorType sampleType, double v) {
   return arith::ConstantOp::create(
@@ -537,9 +529,8 @@ emitStudentTParamTerms(OpBuilder &b, Location loc, Value dfArg, Value scaleArg,
   return {z, coef};
 }
 
-static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
-                                         DistBaseKind base, Value observed,
-                                         ValueRange distArgs) {
+static Value emitNativeLogpdf(OpBuilder &b, Location loc, DistBaseKind base,
+                              Value observed, ValueRange distArgs) {
   auto sampleType = cast<RankedTensorType>(observed.getType());
   Type elemType = sampleType.getElementType();
   auto bcast = [&](Value v) {
@@ -548,16 +539,21 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
   auto splat = [&](double v) { return splatSample(b, loc, sampleType, v); };
   auto reduce = [&](Value v) { return reduceSumToScalar(b, loc, v); };
   auto zeroScalar = [&]() { return scalarConst(b, loc, elemType, 0.0); };
+  auto add = [&](Value lhs, Value rhs) -> Value {
+    return arith::AddFOp::create(b, loc, lhs, rhs);
+  };
 
   switch (base) {
-  case DistBaseKind::STD_UNIFORM:
-    return {emitUnitUniformLogpdf(b, loc, observed, sampleType), zeroScalar()};
+  case DistBaseKind::STD_UNIFORM: {
+    Value logpdf = emitUnitUniformLogpdf(b, loc, observed, sampleType);
+    return add(logpdf, zeroScalar());
+  }
   case DistBaseKind::EXPONENTIAL: {
     Value lam = bcast(distArgs[0]);
     Value unnormed = reduce(arith::NegFOp::create(
         b, loc, arith::MulFOp::create(b, loc, lam, observed)));
     Value lognorm = reduce(math::LogOp::create(b, loc, lam));
-    return {unnormed, lognorm};
+    return add(unnormed, lognorm);
   }
   case DistBaseKind::BERNOULLI: {
     Value logits = bcast(distArgs[0]);
@@ -568,7 +564,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value sp = impulse::emitSoftplus(b, loc, negAbs);
     Value term =
         arith::NegFOp::create(b, loc, arith::AddFOp::create(b, loc, maxL, sp));
-    return {unnormed, reduce(term)};
+    return add(unnormed, reduce(term));
   }
   case DistBaseKind::DISCRETE_UNIFORM: {
     Value low = bcast(distArgs[0]);
@@ -577,7 +573,8 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value range = arith::SubFOp::create(b, loc, hp1, low);
     Value nlog =
         arith::NegFOp::create(b, loc, math::LogOp::create(b, loc, range));
-    return {zeroScalar(), reduce(nlog)};
+    Value zero = zeroScalar();
+    return add(zero, reduce(nlog));
   }
   case DistBaseKind::GAMMA: {
     Value alpha = bcast(distArgs[0]);
@@ -591,7 +588,8 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value aLogB =
         arith::MulFOp::create(b, loc, alpha, math::LogOp::create(b, loc, beta));
     Value normTerm = arith::SubFOp::create(b, loc, aLogB, lgA);
-    return {reduce(kernel), reduce(normTerm)};
+    Value unnormed = reduce(kernel);
+    return add(unnormed, reduce(normTerm));
   }
   case DistBaseKind::STUDENT_T: {
     // -(z - kernel), not kernel - z: the two contract to different FMAs.
@@ -608,7 +606,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
                                          math::Log1pOp::create(b, loc, y2df));
     Value lp =
         arith::NegFOp::create(b, loc, arith::SubFOp::create(b, loc, z, kernel));
-    return {reduce(lp), Value()};
+    return reduce(lp);
   }
   case DistBaseKind::POISSON: {
     Value rate = bcast(distArgs[0]);
@@ -618,7 +616,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value kernel = arith::SubFOp::create(
         b, loc, arith::MulFOp::create(b, loc, observed, logRate), lgk);
     Value lognorm = reduce(arith::NegFOp::create(b, loc, rate));
-    return {reduce(kernel), lognorm};
+    return add(reduce(kernel), lognorm);
   }
   case DistBaseKind::HALF_NORMAL: {
     Value sigma = bcast(distArgs[0]);
@@ -631,7 +629,8 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value norm = arith::SubFOp::create(
         b, loc, arith::SubFOp::create(b, loc, splat(std::log(2.0)), logSig),
         splat(0.5 * std::log(2.0 * M_PI)));
-    return {reduce(kernel), reduce(norm)};
+    Value unnormed = reduce(kernel);
+    return add(unnormed, reduce(norm));
   }
   case DistBaseKind::HALF_CAUCHY: {
     Value scale = bcast(distArgs[0]);
@@ -642,7 +641,8 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value logS = math::LogOp::create(b, loc, scale);
     Value norm =
         arith::SubFOp::create(b, loc, splat(std::log(2.0 / M_PI)), logS);
-    return {reduce(kernel), reduce(norm)};
+    Value unnormed = reduce(kernel);
+    return add(unnormed, reduce(norm));
   }
   case DistBaseKind::HALF_STUDENT_T: {
     // Student-t(df, 0, scale) truncated at 0: cdf(0) is exactly 0.5, so the
@@ -658,7 +658,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
                                          math::Log1pOp::create(b, loc, y2df));
     Value lp = arith::SubFOp::create(b, loc, kernel, z);
     lp = arith::SubFOp::create(b, loc, lp, splat(std::log(0.5)));
-    return {reduce(lp), Value()};
+    return reduce(lp);
   }
   case DistBaseKind::DIRICHLET: {
     // The event is the last axis; only lgamma(sum_K alpha) is summed per block.
@@ -683,7 +683,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
         impulse::LgammaOp::create(b, loc, sumKAlpha.getType(), sumKAlpha);
     Value termB = reduce(lgSumK);
     Value lognorm = arith::SubFOp::create(b, loc, termB, termA);
-    return {reduce(kernel), lognorm};
+    return add(reduce(kernel), lognorm);
   }
   case DistBaseKind::MVN: {
     // |U^-T diff|^2 with one triangular solve, where Sigma = U^T U.
@@ -731,7 +731,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     Value constTerms = arith::AddFOp::create(b, loc, logDet, nLog2pi);
     Value lognorm = arith::MulFOp::create(
         b, loc, scalarConst(b, loc, elemType, -0.5), constTerms);
-    return {unnormed, lognorm};
+    return add(unnormed, lognorm);
   }
   case DistBaseKind::GUMBEL: {
     Value locp = bcast(distArgs[0]);
@@ -744,10 +744,11 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
         b, loc, arith::AddFOp::create(b, loc, z, expNegZ));
     Value lognorm =
         arith::NegFOp::create(b, loc, math::LogOp::create(b, loc, scale));
-    return {reduce(kernel), reduce(lognorm)};
+    Value unnormed = reduce(kernel);
+    return add(unnormed, reduce(lognorm));
   }
   default:
-    llvm::report_fatal_error("emitNativeLogpdfSplit: unsupported base");
+    llvm::report_fatal_error("emitNativeLogpdf: unsupported base");
   }
 }
 
@@ -794,11 +795,7 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
   bool hasChain = chain && !chain.empty();
   if (dist.getBase() != DistBaseKind::STD_NORMAL &&
       !(dist.getBase() == DistBaseKind::STD_UNIFORM && hasChain)) {
-    LogpdfSplit split =
-        emitNativeLogpdfSplit(b, loc, dist.getBase(), observed, distArgs);
-    if (!split.lognorm)
-      return split.unnormed;
-    return arith::AddFOp::create(b, loc, split.unnormed, split.lognorm);
+    return emitNativeLogpdf(b, loc, dist.getBase(), observed, distArgs);
   }
 
   Value val = observed;
