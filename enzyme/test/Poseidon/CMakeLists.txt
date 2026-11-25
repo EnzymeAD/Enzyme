@@ -157,6 +157,10 @@ if(TARGET herbie)
   list(APPEND POSEIDON_TEST_DEPS herbie)
 endif()
 
+# What the tests read besides the compiler, for a tool that runs part of the
+# suite (utils/update_profile_hashes.py).
+add_custom_target(poseidon-test-deps DEPENDS ${POSEIDON_TEST_DEPS})
+
 # check-poseidon needs no device; the tests under Integration/ compile and
 # launch CUDA kernels and have their own target.
 add_lit_testsuite(
