@@ -19,8 +19,9 @@
 namespace mlir {
 namespace impulse {
 
-/// biject_to: the transform chain mapping unconstrained space onto `support`.
-SmallVector<XformAttr> bijectorFor(MLIRContext *ctx, SupportAttr support);
+/// The bijection from unconstrained space onto `support`, IDENTITY when
+/// `support` is null.
+XformAttr bijectorFor(MLIRContext *ctx, SupportAttr support);
 
 /// forward: unconstrained z -> constrained y.
 Value emitBijectorForward(OpBuilder &builder, Location loc, XformAttr xform,
@@ -31,10 +32,6 @@ Value emitBijectorInverse(OpBuilder &builder, Location loc, XformAttr xform,
 /// log|det d(forward)/dz| summed over the event, evaluated at unconstrained z.
 Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
                                XformAttr xform, SupportAttr support, Value z);
-
-/// SIMPLEX maps m*(K-1) -> m*K.
-int64_t bijectorForwardSize(int64_t unconstrainedSize, SupportAttr support);
-int64_t bijectorInverseSize(int64_t constrainedSize, SupportAttr support);
 
 /// True when log|det J| of `kind` does not depend on its input.
 bool isConstantJacobian(XformKind kind);

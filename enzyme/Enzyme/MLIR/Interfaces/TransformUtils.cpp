@@ -17,35 +17,30 @@ using namespace mlir::enzyme::transforms;
 
 int64_t transforms::getUnconstrainedSize(int64_t constrainedSize,
                                          impulse::SupportAttr support) {
-  return impulse::bijectorInverseSize(constrainedSize, support);
+  if (!support || support.getKind() != impulse::SupportKind::SIMPLEX)
+    return constrainedSize;
+  int64_t eventSize = support.getEventSize().getInt();
+  return constrainedSize / eventSize * (eventSize - 1);
 }
 
 Value transforms::unconstrain(OpBuilder &builder, Location loc,
                               Value constrained, impulse::SupportAttr support) {
-  SmallVector<impulse::XformAttr> chain =
-      impulse::bijectorFor(builder.getContext(), support);
-  Value v = constrained;
-  for (impulse::XformAttr xform : chain)
-    v = impulse::emitBijectorInverse(builder, loc, xform, support, v);
-  return v;
+  return impulse::emitBijectorInverse(
+      builder, loc, impulse::bijectorFor(builder.getContext(), support),
+      support, constrained);
 }
 
 Value transforms::constrain(OpBuilder &builder, Location loc,
                             Value unconstrained, impulse::SupportAttr support) {
-  SmallVector<impulse::XformAttr> chain =
-      impulse::bijectorFor(builder.getContext(), support);
-  Value v = unconstrained;
-  for (impulse::XformAttr xform : chain)
-    v = impulse::emitBijectorForward(builder, loc, xform, support, v);
-  return v;
+  return impulse::emitBijectorForward(
+      builder, loc, impulse::bijectorFor(builder.getContext(), support),
+      support, unconstrained);
 }
 
 Value transforms::logAbsDetJacobian(OpBuilder &builder, Location loc,
                                     Value unconstrained,
                                     impulse::SupportAttr support) {
-  // Support bijector chains have exactly one element.
-  SmallVector<impulse::XformAttr> chain =
-      impulse::bijectorFor(builder.getContext(), support);
-  return impulse::emitBijectorLogAbsDetJac(builder, loc, chain.front(), support,
-                                           unconstrained);
+  return impulse::emitBijectorLogAbsDetJac(
+      builder, loc, impulse::bijectorFor(builder.getContext(), support),
+      support, unconstrained);
 }

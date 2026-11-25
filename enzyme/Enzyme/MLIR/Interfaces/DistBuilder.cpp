@@ -33,8 +33,7 @@ bool impulse::distSamplerEmittable(DistAttr dist) {
   }
 }
 
-SmallVector<XformAttr> impulse::bijectorFor(MLIRContext *ctx,
-                                            SupportAttr support) {
+XformAttr impulse::bijectorFor(MLIRContext *ctx, SupportAttr support) {
   XformKind kind = XformKind::IDENTITY;
   if (support) {
     switch (support.getKind()) {
@@ -61,7 +60,7 @@ SmallVector<XformAttr> impulse::bijectorFor(MLIRContext *ctx,
       break;
     }
   }
-  return {XformAttr::get(ctx, kind, /*components=*/ArrayAttr())};
+  return XformAttr::get(ctx, kind, /*components=*/ArrayAttr());
 }
 
 Value impulse::emitLogit(OpBuilder &builder, Location loc, Value x) {
@@ -543,30 +542,6 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
     return emitSplatConstant(builder, loc, scalarType, 0.0);
   }
   llvm_unreachable("unknown XformKind");
-}
-
-int64_t impulse::bijectorForwardSize(int64_t unconstrainedSize,
-                                     SupportAttr support) {
-  if (!support)
-    return unconstrainedSize;
-  if (support.getKind() == SupportKind::SIMPLEX) {
-    int64_t eventSize = support.getEventSize().getInt();
-    int64_t m = unconstrainedSize / (eventSize - 1);
-    return m * eventSize;
-  }
-  return unconstrainedSize;
-}
-
-int64_t impulse::bijectorInverseSize(int64_t constrainedSize,
-                                     SupportAttr support) {
-  if (!support)
-    return constrainedSize;
-  if (support.getKind() == SupportKind::SIMPLEX) {
-    int64_t eventSize = support.getEventSize().getInt();
-    int64_t m = constrainedSize / eventSize;
-    return m * (eventSize - 1);
-  }
-  return constrainedSize;
 }
 
 bool impulse::isConstantJacobian(XformKind kind) {
