@@ -1361,17 +1361,18 @@ namespace {
 /// The trace, weight and Hastings correction carried from one sample site to
 /// the next while a function body is lowered. `offset` is the next trace
 /// column; it advances over both `impulse.if` branches, which take disjoint
-/// columns.
-struct BranchCarry {
-  Value currTrace;
+/// columns. `hastingsCorrection` is set only while a Hastings regenerate is
+/// lowered.
+struct SiteCarry {
+  Value trace;
   Value weight;
   int64_t offset;
-  Value corr = nullptr;
+  Value hastingsCorrection = nullptr;
 };
 } // namespace
 
 using ProcessSampleFn =
-    llvm::function_ref<LogicalResult(impulse::SampleOp, BranchCarry &)>;
+    llvm::function_ref<LogicalResult(impulse::SampleOp, SiteCarry &)>;
 
 // kMHHastingsAttr: weight = [weight, log q(fresh) - log q(replaced)].
 // kMHSiteScoresAttr: weight = [liveness; masked log density] per address.
@@ -1398,39 +1399,39 @@ static Value scalarAt(OpBuilder &b, Location loc, Value tensor,
 /// including those nested in the regions of its ops.
 static LogicalResult processImpulseBlock(Block &block,
                                          PatternRewriter &rewriter,
-                                         BranchCarry &carry,
+                                         SiteCarry &carry,
                                          ProcessSampleFn processSample);
 
 /// Branches start from the pre-if snapshot; untaken slots stay zero.
 static LogicalResult processImpulseIf(impulse::IfOp ifOp,
                                       PatternRewriter &rewriter,
-                                      BranchCarry &carry,
+                                      SiteCarry &carry,
                                       ProcessSampleFn processSample) {
   Location loc = ifOp.getLoc();
-  BranchCarry before = carry;
+  SiteCarry before = carry;
 
   Block &trueBlock = ifOp.getTrueBranch().front();
   if (failed(processImpulseBlock(trueBlock, rewriter, carry, processSample)))
     return failure();
-  BranchCarry afterTrue = carry;
+  SiteCarry afterTrue = carry;
 
   Block &falseBlock = ifOp.getFalseBranch().front();
-  carry.currTrace = before.currTrace;
+  carry.trace = before.trace;
   carry.weight = before.weight;
-  carry.corr = before.corr;
+  carry.hastingsCorrection = before.hastingsCorrection;
   if (failed(processImpulseBlock(falseBlock, rewriter, carry, processSample)))
     return failure();
 
-  auto extendYield = [&](Block &block, const BranchCarry &branch) {
+  auto extendYield = [&](Block &block, const SiteCarry &branch) {
     auto yield = cast<impulse::YieldOp>(block.getTerminator());
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(yield);
     SmallVector<Value> operands(yield.getOperands().begin(),
                                 yield.getOperands().end());
-    operands.push_back(branch.currTrace);
+    operands.push_back(branch.trace);
     operands.push_back(branch.weight);
-    if (branch.corr)
-      operands.push_back(branch.corr);
+    if (branch.hastingsCorrection)
+      operands.push_back(branch.hastingsCorrection);
     impulse::YieldOp::create(rewriter, yield.getLoc(), operands);
     rewriter.eraseOp(yield);
   };
@@ -1440,11 +1441,11 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
   SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
                                    ifOp.getResultTypes().end());
   unsigned oldNumResults = ifOp.getNumResults();
-  newResultTypes.push_back(before.currTrace.getType());
+  newResultTypes.push_back(before.trace.getType());
   // Not always scalar: an MH site-scores regenerate carries a vector.
   newResultTypes.push_back(before.weight.getType());
-  if (before.corr)
-    newResultTypes.push_back(before.corr.getType());
+  if (before.hastingsCorrection)
+    newResultTypes.push_back(before.hastingsCorrection.getType());
 
   rewriter.setInsertionPoint(ifOp);
   auto newIf =
@@ -1454,10 +1455,10 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
   rewriter.inlineRegionBefore(ifOp.getFalseBranch(), newIf.getFalseBranch(),
                               newIf.getFalseBranch().end());
 
-  carry.currTrace = newIf.getResult(oldNumResults);
+  carry.trace = newIf.getResult(oldNumResults);
   carry.weight = newIf.getResult(oldNumResults + 1);
-  if (before.corr)
-    carry.corr = newIf.getResult(oldNumResults + 2);
+  if (before.hastingsCorrection)
+    carry.hastingsCorrection = newIf.getResult(oldNumResults + 2);
 
   rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
   return success();
@@ -1465,7 +1466,7 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
 
 static LogicalResult processImpulseBlock(Block &block,
                                          PatternRewriter &rewriter,
-                                         BranchCarry &carry,
+                                         SiteCarry &carry,
                                          ProcessSampleFn processSample) {
   SmallVector<Operation *> ops;
   for (Operation &op : block)
@@ -1693,15 +1694,15 @@ static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
   return trace;
 }
 
-/// Packs `weight` and the Hastings correction `corr` into the weight vector
-/// of a Hastings regenerate.
+/// Packs `weight` and the Hastings correction `correction` into the weight
+/// vector of a Hastings regenerate.
 static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
-                                Value corr) {
+                                Value correction) {
   auto vecType = RankedTensorType::get({2}, b.getF64Type());
   auto oneType = RankedTensorType::get({1}, b.getF64Type());
   Value acc = emitSplatConstant(b, loc, vecType, 0.0);
   // Named array: a ValueRange over a braced list would dangle in the loop.
-  Value parts[] = {weight, corr};
+  Value parts[] = {weight, correction};
   for (auto [i, v] : llvm::enumerate(parts)) {
     Value idx = emitI64ScalarConstant(b, loc, i);
     Value flat = impulse::ReshapeOp::create(b, loc, oneType, v);
@@ -1801,12 +1802,12 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
 
 namespace {
 /// A proposed MH move. `weight` is the new joint density, or its change for a
-/// score-tail trace; `corr` is subtracted from the joint ratio to form log
-/// alpha unless `logRatio` gives log alpha directly.
+/// score-tail trace; `correction` is subtracted from the joint ratio to form
+/// log alpha unless `logRatio` gives log alpha directly.
 struct MHProposal {
   Value trace;
   Value weight;
-  Value corr;
+  Value correction;
   Value rng;
   Value logRatio;
 };
@@ -1843,7 +1844,7 @@ static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
   Value logAlpha =
       proposal.logRatio
           ? proposal.logRatio
-          : arith::SubFOp::create(builder, loc, jointRatio, proposal.corr)
+          : arith::SubFOp::create(builder, loc, jointRatio, proposal.correction)
                 .getResult();
   Value acceptWeight =
       hasScoreTail
@@ -2165,7 +2166,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
                            ValueRange(proposedSelected[addr]).getTypes()));
     oldYields = cloneLogpdfBody(b, lpBlock, oldPositions);
   }
-  Value corr;
+  Value correction;
   Value logRatio;
   for (int64_t j : selectedOrdinals) {
     Value newScore = newYields[1 + j];
@@ -2173,8 +2174,10 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
                          ? oldYields[1 + j]
                          : scalarAt(b, loc, trace, {0, positionSize + j});
     Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
-    corr =
-        corr ? arith::AddFOp::create(b, loc, corr, change).getResult() : change;
+    correction =
+        correction
+            ? arith::AddFOp::create(b, loc, correction, change).getResult()
+            : change;
   }
 
   if (delta) {
@@ -2225,7 +2228,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   }
   changedColumns = mergeColumnWindows(std::move(changedColumns));
 
-  return {newTrace, newWeight, corr, curRng, logRatio};
+  return {newTrace, newWeight, correction, curRng, logRatio};
 }
 
 /// Proposes the move of the flat-form MH op `op` with a Hastings
@@ -2247,8 +2250,8 @@ static MHProposal proposeFlatMove(OpBuilder &b, Location loc,
       /*selection=*/op.getSelectionAttr(), op.getConstrainedAddressesAttr(),
       b.getStringAttr(""));
   regen->setAttr(kMHHastingsAttr, b.getUnitAttr());
-  auto [weight, corr] = unpackHastingsWeight(b, loc, regen.getWeight());
-  return {regen.getNewTrace(), weight, corr, regen.getOutputs()[0],
+  auto [weight, correction] = unpackHastingsWeight(b, loc, regen.getWeight());
+  return {regen.getNewTrace(), weight, correction, regen.getOutputs()[0],
           /*logRatio=*/Value()};
 }
 
@@ -2609,7 +2612,7 @@ struct MHRunBatcher {
     Value uniform = emitUniformDraw(b, loc, rngOut, vecType);
     Value logRand = math::LogOp::create(b, loc, uniform);
 
-    SmallVector<Value> newTraces, deltaCells, corrCells;
+    SmallVector<Value> newTraces, deltaCells, correctionCells;
     SmallVector<ColumnWindows> changed(numMoves);
     auto elemType = traceType.getElementType();
     auto rowType = RankedTensorType::get({1, (int64_t)numMoves}, elemType);
@@ -2628,7 +2631,7 @@ struct MHRunBatcher {
           /*withLogRatio=*/false, changed[k], &drawOverride);
       newTraces.push_back(proposal.trace);
       deltaCells.push_back(proposal.weight);
-      corrCells.push_back(proposal.corr);
+      correctionCells.push_back(proposal.correction);
     }
 
     SmallVector<SmallVector<int64_t>> cols(numMoves);
@@ -2687,13 +2690,13 @@ struct MHRunBatcher {
                        ? arith::AddFOp::create(b, loc, deltaVec, d).getResult()
                        : d;
       }
-      Value corrVec =
+      Value correctionVec =
           arith::SubFOp::create(b, loc, newOf[ownSlot], oldOf[ownSlot]);
-      logAlphaVec = arith::SubFOp::create(b, loc, deltaVec, corrVec);
+      logAlphaVec = arith::SubFOp::create(b, loc, deltaVec, correctionVec);
     } else {
       deltaVec = packScalars(b, loc, vecType, deltaCells);
       logAlphaVec = arith::SubFOp::create(
-          b, loc, deltaVec, packScalars(b, loc, vecType, corrCells));
+          b, loc, deltaVec, packScalars(b, loc, vecType, correctionCells));
     }
     Value accepted = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
                                            logRand, logAlphaVec);
@@ -2877,24 +2880,24 @@ struct ExpandImpulsePass
       : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
     using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(impulse::UntracedCallOp CI,
+    LogicalResult matchAndRewrite(impulse::UntracedCallOp op,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
       auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
 
       if (fn.getFunctionBody().empty()) {
-        CI.emitError("Impulse: trying to call an empty function");
+        op.emitError("Impulse: trying to call an empty function");
         return failure();
       }
 
       std::unique_ptr<ImpulseUtils> putils(
           ImpulseUtils::CreateFromClone(fn, ImpulseMode::Call));
-      FunctionOpInterface NewF = putils->newFunc;
+      FunctionOpInterface newFn = putils->newFunc;
 
       SmallVector<Operation *, 4> toErase;
-      NewF.walk([&](impulse::SampleOp sampleOp) {
+      newFn.walk([&](impulse::SampleOp sampleOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -2904,15 +2907,15 @@ struct ExpandImpulsePass
         toErase.push_back(sampleOp);
       });
 
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
+      for (Operation *site : toErase)
+        rewriter.eraseOp(site);
 
-      rewriter.setInsertionPoint(CI);
-      auto newCI =
-          func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                               NewF.getResultTypes(), CI.getOperands());
+      rewriter.setInsertionPoint(op);
+      auto call =
+          func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
+                               newFn.getResultTypes(), op.getOperands());
 
-      rewriter.replaceOp(CI, newCI.getResults());
+      rewriter.replaceOp(op, call.getResults());
 
       return success();
     }
@@ -2922,15 +2925,15 @@ struct ExpandImpulsePass
       : public mlir::OpRewritePattern<impulse::SimulateOp> {
     using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(impulse::SimulateOp CI,
+    LogicalResult matchAndRewrite(impulse::SimulateOp op,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
       auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
 
       if (fn.getFunctionBody().empty()) {
-        CI.emitError(
+        op.emitError(
             "Impulse: calling `simulate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
             "`logpdf_fn` attribute to avoid recursive `simulate` calls "
@@ -2938,21 +2941,21 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      ArrayAttr allAddresses = CI.getAllAddressesAttr();
+      ArrayAttr allAddresses = op.getAllAddressesAttr();
       int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, allAddresses, symbolTable);
+          computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
       if (positionSize <= 0) {
-        CI.emitError("Impulse: failed to compute position size for simulate");
+        op.emitError("Impulse: failed to compute position size for simulate");
         return failure();
       }
 
       int64_t declaredWidth =
-          cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
+          cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
       bool hasScoreTail = declaredWidth > positionSize;
       SmallVector<Value> siteScores;
       std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
           fn, ImpulseMode::Simulate, declaredWidth));
-      FunctionOpInterface NewF = putils->newFunc;
+      FunctionOpInterface newFn = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
@@ -2967,12 +2970,9 @@ struct ExpandImpulsePass
           emitSplatConstant(entryBuilder, initLoc, traceType, 0.0);
 
       SmallVector<Operation *> toErase;
-      BranchCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
+      SiteCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
       auto processSample = [&](impulse::SampleOp sampleOp,
-                               BranchCarry &branch) -> LogicalResult {
-        Value &currTrace = branch.currTrace;
-        Value &weightAccumulator = branch.weight;
-        int64_t &currentOffset = branch.offset;
+                               SiteCarry &branch) -> LogicalResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -2984,13 +2984,13 @@ struct ExpandImpulsePass
             return failure();
           Value logpdf =
               emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
-          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                    weightAccumulator, logpdf);
+          branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                branch.weight, logpdf);
           if (hasScoreTail)
             siteScores.push_back(logpdf);
           if (addressInList(sampleOp, allAddresses) &&
-              failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
-                                      currentOffset)))
+              failed(appendSiteValues(rewriter, sampleOp, values, branch.trace,
+                                      branch.offset)))
             return failure();
         } else {
           if (hasScoreTail) {
@@ -3037,8 +3037,8 @@ struct ExpandImpulsePass
             auto subTrace = nestedSimulate.getTrace();
             auto subWeight = nestedSimulate.getWeight();
 
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+            branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                  branch.weight, subWeight);
 
             int64_t mergeOffset = computeOffsetForSampleInSelection(
                 sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
@@ -3048,10 +3048,10 @@ struct ExpandImpulsePass
               return failure();
             }
 
-            currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
-                                      subTrace, mergeOffset);
-            currentOffset =
-                std::max(currentOffset, mergeOffset + subPositionSize);
+            branch.trace = updateColumns(rewriter, sampleOp.getLoc(),
+                                         branch.trace, subTrace, mergeOffset);
+            branch.offset =
+                std::max(branch.offset, mergeOffset + subPositionSize);
 
             for (auto output : nestedSimulate.getOutputs())
               sampledValues.push_back(output);
@@ -3065,25 +3065,25 @@ struct ExpandImpulsePass
       };
 
       LogicalResult result = processImpulseBlock(
-          NewF.getFunctionBody().front(), rewriter, carry, processSample);
+          newFn.getFunctionBody().front(), rewriter, carry, processSample);
 
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
+      for (Operation *site : toErase)
+        rewriter.eraseOp(site);
 
       if (failed(result)) {
-        CI.emitError("Impulse: failed to walk sample ops");
+        op.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
 
-      NewF.walk([&](func::ReturnOp retOp) {
+      newFn.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
         SmallVector<Value> newRetVals;
         Value outTrace =
             hasScoreTail
-                ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
+                ? appendScoreTail(rewriter, retOp.getLoc(), carry.trace,
                                   siteScores, declaredWidth)
-                : carry.currTrace;
+                : carry.trace;
         newRetVals.push_back(outTrace);
         newRetVals.push_back(carry.weight);
         newRetVals.append(retOp.getOperands().begin(),
@@ -3093,11 +3093,11 @@ struct ExpandImpulsePass
         rewriter.eraseOp(retOp);
       });
 
-      rewriter.setInsertionPoint(CI);
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), CI.getInputs());
+      rewriter.setInsertionPoint(op);
+      auto call = func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
+                                       newFn.getResultTypes(), op.getInputs());
 
-      rewriter.replaceOp(CI, newCI.getResults());
+      rewriter.replaceOp(op, call.getResults());
 
       return success();
     }
@@ -3896,7 +3896,7 @@ struct ExpandImpulsePass
       regenerateOp->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
       MHProposal proposal;
       proposal.trace = regenerateOp.getNewTrace();
-      std::tie(proposal.weight, proposal.corr) =
+      std::tie(proposal.weight, proposal.correction) =
           unpackHastingsWeight(rewriter, loc, regenerateOp.getWeight());
       proposal.rng = regenerateOp.getOutputs()[0];
 
@@ -3919,15 +3919,15 @@ struct ExpandImpulsePass
       : public mlir::OpRewritePattern<impulse::GenerateOp> {
     using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(impulse::GenerateOp CI,
+    LogicalResult matchAndRewrite(impulse::GenerateOp op,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
       auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
 
       if (fn.getFunctionBody().empty()) {
-        CI.emitError(
+        op.emitError(
             "Impulse: calling `generate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
             "`logpdf_fn` attribute to avoid recursive `generate` calls "
@@ -3935,25 +3935,25 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      ArrayAttr allAddresses = CI.getAllAddressesAttr();
+      ArrayAttr allAddresses = op.getAllAddressesAttr();
       int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, allAddresses, symbolTable);
+          computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
       if (positionSize <= 0) {
-        CI.emitError("Impulse: failed to compute position size for generate");
+        op.emitError("Impulse: failed to compute position size for generate");
         return failure();
       }
 
       // Operand width, not the packed size: extra columns are simply ignored.
       int64_t constraintSize =
-          cast<RankedTensorType>(CI.getConstraint().getType()).getShape()[1];
+          cast<RankedTensorType>(op.getConstraint().getType()).getShape()[1];
 
       int64_t declaredWidth =
-          cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
+          cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
       bool hasScoreTail = declaredWidth > positionSize;
       SmallVector<Value> siteScores;
       std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
           fn, ImpulseMode::Generate, declaredWidth, constraintSize));
-      FunctionOpInterface NewF = putils->newFunc;
+      FunctionOpInterface newFn = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
@@ -3967,28 +3967,25 @@ struct ExpandImpulsePass
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
       Value zeroTrace =
           emitSplatConstant(entryBuilder, initLoc, traceType, 0.0);
-      Value constraint = NewF.getArgument(0);
+      Value constraint = newFn.getArgument(0);
 
       SmallVector<Operation *> toErase;
-      BranchCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
+      SiteCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
       auto processSample = [&](impulse::SampleOp sampleOp,
-                               BranchCarry &branch) -> LogicalResult {
-        Value &currTrace = branch.currTrace;
-        Value &weightAccumulator = branch.weight;
-        int64_t &currentTraceOffset = branch.offset;
+                               SiteCarry &branch) -> LogicalResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
         if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
           if (failed(verifyTopLevelAddress(
-                  sampleOp, CI.getConstrainedAddressesAttr(), "constrained")))
+                  sampleOp, op.getConstrainedAddressesAttr(), "constrained")))
             return failure();
           bool isConstrained =
-              addressInList(sampleOp, CI.getConstrainedAddressesAttr());
+              addressInList(sampleOp, op.getConstrainedAddressesAttr());
           if (isConstrained) {
             int64_t constrainedOffset = computeOffsetForSampleInSelection(
-                CI, fn, CI.getConstrainedAddressesAttr(),
+                op, fn, op.getConstrainedAddressesAttr(),
                 sampleOp.getSymbolAttr(), symbolTable);
             FailureOr<SmallVector<Value>> read = readSiteValues(
                 rewriter, sampleOp, constraint, constrainedOffset);
@@ -4012,13 +4009,13 @@ struct ExpandImpulsePass
             return failure();
           Value logpdf =
               emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
-          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                    weightAccumulator, logpdf);
+          branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                branch.weight, logpdf);
           if (hasScoreTail)
             siteScores.push_back(logpdf);
           if (addressInList(sampleOp, allAddresses) &&
-              failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
-                                      currentTraceOffset)))
+              failed(appendSiteValues(rewriter, sampleOp, values, branch.trace,
+                                      branch.offset)))
             return failure();
         } else {
           if (hasScoreTail) {
@@ -4040,7 +4037,7 @@ struct ExpandImpulsePass
           ArrayAttr subAllAddresses = buildSubSelection(
               rewriter, allAddresses, sampleOp.getSymbolAttr());
           ArrayAttr subConstrainedAddrs =
-              buildSubSelection(rewriter, CI.getConstrainedAddressesAttr(),
+              buildSubSelection(rewriter, op.getConstrainedAddressesAttr(),
                                 sampleOp.getSymbolAttr());
 
           if (subAllAddresses.empty()) {
@@ -4062,7 +4059,7 @@ struct ExpandImpulsePass
 
             if (subConstraintSize > 0) {
               int64_t subConstraintOffset = computeOffsetForSampleInSelection(
-                  sampleOp, fn, CI.getConstrainedAddressesAttr(),
+                  sampleOp, fn, op.getConstrainedAddressesAttr(),
                   sampleOp.getSymbolAttr(), symbolTable);
 
               subConstraint = impulse::SliceOp::create(
@@ -4093,17 +4090,17 @@ struct ExpandImpulsePass
             Value subTrace = nestedGenerate.getTrace();
             Value subWeight = nestedGenerate.getWeight();
 
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+            branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                  branch.weight, subWeight);
 
             int64_t mergeOffset = computeOffsetForSampleInSelection(
                 sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
                 symbolTable);
 
-            currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
-                                      subTrace, mergeOffset);
-            currentTraceOffset =
-                std::max(currentTraceOffset, mergeOffset + subPositionSize);
+            branch.trace = updateColumns(rewriter, sampleOp.getLoc(),
+                                         branch.trace, subTrace, mergeOffset);
+            branch.offset =
+                std::max(branch.offset, mergeOffset + subPositionSize);
 
             for (auto output : nestedGenerate.getOutputs())
               sampledValues.push_back(output);
@@ -4116,26 +4113,26 @@ struct ExpandImpulsePass
       };
 
       LogicalResult result = processImpulseBlock(
-          NewF.getFunctionBody().front(), rewriter, carry, processSample);
+          newFn.getFunctionBody().front(), rewriter, carry, processSample);
 
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
+      for (Operation *site : toErase)
+        rewriter.eraseOp(site);
 
       if (failed(result)) {
-        CI.emitError("Impulse: failed to walk sample ops");
+        op.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
 
-      NewF.walk([&](func::ReturnOp retOp) {
+      newFn.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
         Value outTrace =
             hasScoreTail
-                ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
+                ? appendScoreTail(rewriter, retOp.getLoc(), carry.trace,
                                   siteScores, declaredWidth)
-                : carry.currTrace;
+                : carry.trace;
         newRetVals.push_back(outTrace);
         newRetVals.push_back(carry.weight);
         newRetVals.append(retOp.getOperands().begin(),
@@ -4145,14 +4142,14 @@ struct ExpandImpulsePass
         rewriter.eraseOp(retOp);
       });
 
-      rewriter.setInsertionPoint(CI);
+      rewriter.setInsertionPoint(op);
       SmallVector<Value> operands;
-      operands.push_back(CI.getConstraint());
-      operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), operands);
+      operands.push_back(op.getConstraint());
+      operands.append(op.getInputs().begin(), op.getInputs().end());
+      auto call = func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
+                                       newFn.getResultTypes(), operands);
 
-      rewriter.replaceOp(CI, newCI.getResults());
+      rewriter.replaceOp(op, call.getResults());
 
       return success();
     }
@@ -4162,15 +4159,15 @@ struct ExpandImpulsePass
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
     using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(impulse::RegenerateOp CI,
+    LogicalResult matchAndRewrite(impulse::RegenerateOp op,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
       auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
 
       if (fn.getFunctionBody().empty()) {
-        CI.emitError(
+        op.emitError(
             "Impulse: calling `regenerate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
             "`logpdf_fn` attribute to avoid recursive `regenerate` calls "
@@ -4178,30 +4175,30 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      ArrayAttr allAddresses = CI.getAllAddressesAttr();
+      ArrayAttr allAddresses = op.getAllAddressesAttr();
       int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, allAddresses, symbolTable);
+          computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
       if (positionSize <= 0) {
-        CI.emitError("Impulse: failed to compute position size for regenerate");
+        op.emitError("Impulse: failed to compute position size for regenerate");
         return failure();
       }
 
-      ArrayAttr constrainedAddresses = CI.getConstrainedAddressesAttr();
-      bool hasConstraint = static_cast<bool>(CI.getConstraint());
+      ArrayAttr constrainedAddresses = op.getConstrainedAddressesAttr();
+      bool hasConstraint = static_cast<bool>(op.getConstraint());
       // Operand width, not the packed size, as in generate.
       int64_t constraintSize =
-          hasConstraint ? cast<RankedTensorType>(CI.getConstraint().getType())
+          hasConstraint ? cast<RankedTensorType>(op.getConstraint().getType())
                               .getShape()[1]
                         : -1;
 
       int64_t declaredWidth =
-          cast<RankedTensorType>(CI.getNewTrace().getType()).getShape()[1];
+          cast<RankedTensorType>(op.getNewTrace().getType()).getShape()[1];
       bool hasScoreTail = declaredWidth > positionSize;
       SmallVector<Value> siteScores;
       int64_t siteOrdinal = 0;
       std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
           fn, ImpulseMode::Regenerate, declaredWidth, constraintSize));
-      FunctionOpInterface NewF = putils->newFunc;
+      FunctionOpInterface newFn = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
@@ -4218,8 +4215,8 @@ struct ExpandImpulsePass
           emitSplatConstant(entryBuilder, initLoc, traceType, 0.0);
       Value initTrace = zeroTrace;
 
-      Value prevTrace = NewF.getArgument(0);
-      Value constraint = hasConstraint ? NewF.getArgument(1) : Value();
+      Value prevTrace = newFn.getArgument(0);
+      Value constraint = hasConstraint ? newFn.getArgument(1) : Value();
 
       // On a score-tail trace the weight is the sum over dirty terms
       // (regenerated or dependent on one) of new minus old log density; clean
@@ -4227,12 +4224,12 @@ struct ExpandImpulsePass
       // are added as they are created.
       DenseSet<Value> tainted;
       if (hasScoreTail) {
-        if (!supportsScoreTail(NewF)) {
-          CI.emitError("Impulse: regenerate over a score-tail trace requires "
+        if (!supportsScoreTail(newFn)) {
+          op.emitError("Impulse: regenerate over a score-tail trace requires "
                        "a straight-line body of top-level distribution sites");
           return failure();
         }
-        tainted = computeRegenerateTaint(NewF, CI.getSelectionAttr());
+        tainted = computeRegenerateTaint(newFn, op.getSelectionAttr());
         // Non-regenerated values are unchanged: start from the previous trace.
         {
           auto valueSliceType = RankedTensorType::get(
@@ -4246,25 +4243,25 @@ struct ExpandImpulsePass
         }
       }
 
-      ArrayAttr selection = CI.getSelectionAttr();
-      bool hastings = CI->hasAttr(kMHHastingsAttr);
+      ArrayAttr selection = op.getSelectionAttr();
+      bool hastings = op->hasAttr(kMHHastingsAttr);
       ArrayAttr siteScoresAttr =
-          CI->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
+          op->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
       bool scoring = static_cast<bool>(siteScoresAttr);
-      // Site symbol -> column of the scores vector or of `oldInfo`.
+      // Site symbol -> column of the scores vector or of `oldSiteScores`.
       DenseMap<Attribute, int64_t> siteIndex;
-      Value oldInfo;
+      Value oldSiteScores;
       DenseSet<Value> hastingsTaint;
-      auto enclosingIfs = [&](Operation *op) {
+      auto enclosingIfs = [&](Operation *site) {
         SmallVector<impulse::IfOp> ifs;
-        for (Operation *p = op->getParentOp(); p && p != NewF.getOperation();
+        for (Operation *p = site->getParentOp(); p && p != newFn.getOperation();
              p = p->getParentOp())
           if (auto ifOp = dyn_cast<impulse::IfOp>(p))
             ifs.push_back(ifOp);
         return ifs;
       };
-      auto inFlippableBranch = [&](Operation *op) {
-        return llvm::any_of(enclosingIfs(op), [&](impulse::IfOp ifOp) {
+      auto inFlippableBranch = [&](Operation *site) {
+        return llvm::any_of(enclosingIfs(site), [&](impulse::IfOp ifOp) {
           return hastingsTaint.contains(ifOp.getPredicate());
         });
       };
@@ -4276,9 +4273,9 @@ struct ExpandImpulsePass
         initWeight = emitSplatConstant(entryBuilder, initLoc, scoresType, 0.0);
       } else if (hastings && !hasScoreTail) {
         // Sites whose old density cannot be evaluated inline at the new state.
-        hastingsTaint = computeRegenerateTaint(NewF, selection);
-        SmallVector<Attribute> oldInfoAddrs;
-        NewF.getFunctionBody().walk([&](impulse::SampleOp s) {
+        hastingsTaint = computeRegenerateTaint(newFn, selection);
+        SmallVector<Attribute> oldScoreAddrs;
+        newFn.getFunctionBody().walk([&](impulse::SampleOp s) {
           if (!s.getDistAttr() && !s.getLogpdfFnAttr())
             return;
           bool needsOld;
@@ -4294,27 +4291,27 @@ struct ExpandImpulsePass
                        inFlippableBranch(s);
           if (!needsOld)
             return;
-          siteIndex[s.getSymbolAttr()] = oldInfoAddrs.size();
-          oldInfoAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
+          siteIndex[s.getSymbolAttr()] = oldScoreAddrs.size();
+          oldScoreAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
         });
-        if (!oldInfoAddrs.empty()) {
+        if (!oldScoreAddrs.empty()) {
           OpBuilder::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPointToStart(&NewF.getFunctionBody().front());
+          rewriter.setInsertionPointToStart(&newFn.getFunctionBody().front());
           auto scoresType = RankedTensorType::get(
-              {2, (int64_t)oldInfoAddrs.size()}, rewriter.getF64Type());
+              {2, (int64_t)oldScoreAddrs.size()}, rewriter.getF64Type());
           SmallVector<Type> scoreTypes{prevTrace.getType(), scoresType};
           scoreTypes.append(fn.getResultTypes().begin(),
                             fn.getResultTypes().end());
           SmallVector<Value> scoreInputs(
-              NewF.getArguments().drop_front(hasConstraint ? 2 : 1));
+              newFn.getArguments().drop_front(hasConstraint ? 2 : 1));
           auto scoreOp = impulse::RegenerateOp::create(
-              rewriter, CI.getLoc(), scoreTypes, CI.getFnAttr(), scoreInputs,
+              rewriter, op.getLoc(), scoreTypes, op.getFnAttr(), scoreInputs,
               prevTrace, constraint, allAddresses, rewriter.getArrayAttr({}),
               hasConstraint ? constrainedAddresses : ArrayAttr(),
               rewriter.getStringAttr(""));
           scoreOp->setAttr(kMHSiteScoresAttr,
-                           rewriter.getArrayAttr(oldInfoAddrs));
-          oldInfo = scoreOp.getWeight();
+                           rewriter.getArrayAttr(oldScoreAddrs));
+          oldSiteScores = scoreOp.getWeight();
         }
       }
       // In MH, constraint entries outside branches may be latent init values.
@@ -4323,7 +4320,8 @@ struct ExpandImpulsePass
           return false;
         return !(hastings || scoring) || !enclosingIfs(s).empty();
       };
-      // `oldInfo` column of a flippable latent (kept if live, else redrawn).
+      // `oldSiteScores` column of a flippable latent (kept if live, else
+      // redrawn).
       auto flipLatentIndex = [&](impulse::SampleOp s, bool isSelected) {
         if (!hastings || isSelected)
           return (int64_t)-1;
@@ -4331,7 +4329,7 @@ struct ExpandImpulsePass
         return it == siteIndex.end() ? (int64_t)-1 : it->second;
       };
       auto oldLiveAt = [&](Location loc, int64_t k) -> Value {
-        Value flag = scalarAt(rewriter, loc, oldInfo, {0, k});
+        Value flag = scalarAt(rewriter, loc, oldSiteScores, {0, k});
         Value half = emitSplatConstant(rewriter, loc, scalarType, 0.5);
         return arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OGT,
                                      flag, half);
@@ -4352,13 +4350,10 @@ struct ExpandImpulsePass
       };
 
       SmallVector<Operation *> toErase;
-      BranchCarry carry{initTrace, initWeight, /*offset=*/0,
-                        hastings ? Value(zeroWeight) : Value()};
+      SiteCarry carry{initTrace, initWeight, /*offset=*/0,
+                      hastings ? Value(zeroWeight) : Value()};
       auto processSample = [&](impulse::SampleOp sampleOp,
-                               BranchCarry &branch) -> LogicalResult {
-        Value &currTrace = branch.currTrace;
-        Value &weightAccumulator = branch.weight;
-        int64_t &currentTraceOffset = branch.offset;
+                               SiteCarry &branch) -> LogicalResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -4369,7 +4364,7 @@ struct ExpandImpulsePass
             return failure();
           bool isSelected = addressInList(sampleOp, selection);
           int64_t sampleOffset = computeOffsetForSampleInSelection(
-              CI, fn, allAddresses, sampleOp.getSymbolAttr(), symbolTable);
+              op, fn, allAddresses, sampleOp.getSymbolAttr(), symbolTable);
 
           int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
           Value oldLive;
@@ -4385,7 +4380,7 @@ struct ExpandImpulsePass
             }
             int64_t readOffset =
                 isConstrained ? computeOffsetForSampleInSelection(
-                                    CI, fn, constrainedAddresses,
+                                    op, fn, constrainedAddresses,
                                     sampleOp.getSymbolAttr(), symbolTable)
                               : sampleOffset;
             FailureOr<SmallVector<Value>> read = readSiteValues(
@@ -4427,8 +4422,8 @@ struct ExpandImpulsePass
           if (scoring) {
             auto it = siteIndex.find(sampleOp.getSymbolAttr());
             if (it != siteIndex.end())
-              weightAccumulator = recordSiteScore(
-                  loc, weightAccumulator, it->second,
+              branch.weight = recordSiteScore(
+                  loc, branch.weight, it->second,
                   emitSiteLogpdf(rewriter, symbolTable, sampleOp, values));
           } else if (!hasScoreTail || termDirty) {
             Value logpdf =
@@ -4438,14 +4433,14 @@ struct ExpandImpulsePass
                     ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore)
                           .getResult()
                     : logpdf;
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, loc, weightAccumulator, contribution);
+            branch.weight = arith::AddFOp::create(rewriter, loc, branch.weight,
+                                                  contribution);
             if (hasScoreTail)
               siteScores.push_back(logpdf);
             if (hastings && isSelected) {
               // A prior draw's proposal density cancels its own term.
-              branch.corr = arith::AddFOp::create(rewriter, loc, branch.corr,
-                                                  contribution);
+              branch.hastingsCorrection = arith::AddFOp::create(
+                  rewriter, loc, branch.hastingsCorrection, contribution);
               if (!hasScoreTail && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
                 Value oldLogpdf = emitSiteLogpdf(
@@ -4453,16 +4448,17 @@ struct ExpandImpulsePass
                     sliceTraceValues(
                         rewriter, loc, prevTrace, sampleOffset,
                         TypeRange(sampleOp->getResultTypes()).drop_front()));
-                branch.corr = arith::SubFOp::create(rewriter, loc, branch.corr,
-                                                    oldLogpdf);
+                branch.hastingsCorrection = arith::SubFOp::create(
+                    rewriter, loc, branch.hastingsCorrection, oldLogpdf);
               }
             } else if (flipIdx >= 0) {
-              // Kept: old density, cancelled via oldInfo; fresh: new density.
+              // Kept: old density, cancelled via oldSiteScores; fresh: new
+              // density.
               Value term = arith::SelectOp::create(
                   rewriter, loc, oldLive,
-                  scalarAt(rewriter, loc, oldInfo, {1, flipIdx}), logpdf);
-              branch.corr =
-                  arith::AddFOp::create(rewriter, loc, branch.corr, term);
+                  scalarAt(rewriter, loc, oldSiteScores, {1, flipIdx}), logpdf);
+              branch.hastingsCorrection = arith::AddFOp::create(
+                  rewriter, loc, branch.hastingsCorrection, term);
             }
           } else {
             siteScores.push_back(oldScore);
@@ -4470,8 +4466,8 @@ struct ExpandImpulsePass
           ++siteOrdinal;
 
           if (addressInList(sampleOp, allAddresses) &&
-              failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
-                                      currentTraceOffset,
+              failed(appendSiteValues(rewriter, sampleOp, values, branch.trace,
+                                      branch.offset,
                                       /*write=*/!hasScoreTail || isSelected)))
             return failure();
         } else {
@@ -4489,7 +4485,7 @@ struct ExpandImpulsePass
           ArrayAttr subAllAddresses = buildSubSelection(
               rewriter, allAddresses, sampleOp.getSymbolAttr());
           ArrayAttr subSelection = buildSubSelection(
-              rewriter, CI.getSelectionAttr(), sampleOp.getSymbolAttr());
+              rewriter, op.getSelectionAttr(), sampleOp.getSymbolAttr());
           ArrayAttr subConstrainedAddrs =
               (constraint && constrainedAddresses)
                   ? buildSubSelection(rewriter, constrainedAddresses,
@@ -4586,19 +4582,19 @@ struct ExpandImpulsePass
                                         rewriter.getUnitAttr());
               auto [w, c] =
                   unpackHastingsWeight(rewriter, sampleOp.getLoc(), subWeight);
-              weightAccumulator = arith::AddFOp::create(
-                  rewriter, sampleOp.getLoc(), weightAccumulator, w);
-              branch.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                  branch.corr, c);
+              branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    branch.weight, w);
+              branch.hastingsCorrection = arith::AddFOp::create(
+                  rewriter, sampleOp.getLoc(), branch.hastingsCorrection, c);
             } else if (!scoring) {
-              weightAccumulator = arith::AddFOp::create(
-                  rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+              branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    branch.weight, subWeight);
             }
 
-            currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
-                                      subTrace, mergeOffset);
-            currentTraceOffset =
-                std::max(currentTraceOffset, mergeOffset + subPositionSize);
+            branch.trace = updateColumns(rewriter, sampleOp.getLoc(),
+                                         branch.trace, subTrace, mergeOffset);
+            branch.offset =
+                std::max(branch.offset, mergeOffset + subPositionSize);
 
             for (auto output : nestedRegenerate.getOutputs())
               sampledValues.push_back(output);
@@ -4611,38 +4607,39 @@ struct ExpandImpulsePass
       };
 
       LogicalResult result = processImpulseBlock(
-          NewF.getFunctionBody().front(), rewriter, carry, processSample);
+          newFn.getFunctionBody().front(), rewriter, carry, processSample);
 
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
+      for (Operation *site : toErase)
+        rewriter.eraseOp(site);
 
       if (failed(result)) {
-        CI.emitError("Impulse: failed to walk sample ops");
+        op.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
 
-      NewF.walk([&](func::ReturnOp retOp) {
+      newFn.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
         Value outTrace =
             hasScoreTail
-                ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
+                ? appendScoreTail(rewriter, retOp.getLoc(), carry.trace,
                                   siteScores, declaredWidth)
-                : carry.currTrace;
+                : carry.trace;
         newRetVals.push_back(outTrace);
         if (hastings) {
-          Value corr = carry.corr;
-          if (oldInfo)
-            for (int64_t k = 0, e = cast<RankedTensorType>(oldInfo.getType())
-                                        .getShape()[1];
+          Value correction = carry.hastingsCorrection;
+          if (oldSiteScores)
+            for (int64_t k = 0,
+                         e = cast<RankedTensorType>(oldSiteScores.getType())
+                                 .getShape()[1];
                  k < e; ++k)
-              corr = arith::SubFOp::create(
-                  rewriter, retOp.getLoc(), corr,
-                  scalarAt(rewriter, retOp.getLoc(), oldInfo, {1, k}));
-          newRetVals.push_back(
-              packHastingsWeight(rewriter, retOp.getLoc(), carry.weight, corr));
+              correction = arith::SubFOp::create(
+                  rewriter, retOp.getLoc(), correction,
+                  scalarAt(rewriter, retOp.getLoc(), oldSiteScores, {1, k}));
+          newRetVals.push_back(packHastingsWeight(rewriter, retOp.getLoc(),
+                                                  carry.weight, correction));
         } else {
           newRetVals.push_back(carry.weight);
         }
@@ -4655,24 +4652,24 @@ struct ExpandImpulsePass
 
       if (hastings || scoring) {
         SmallVector<Type> resultTypes;
-        NewF.walk([&](func::ReturnOp retOp) {
+        newFn.walk([&](func::ReturnOp retOp) {
           resultTypes.assign(retOp.getOperandTypes().begin(),
                              retOp.getOperandTypes().end());
         });
-        NewF.setType(FunctionType::get(CI.getContext(), NewF.getArgumentTypes(),
-                                       resultTypes));
+        newFn.setType(FunctionType::get(op.getContext(),
+                                        newFn.getArgumentTypes(), resultTypes));
       }
 
-      rewriter.setInsertionPoint(CI);
+      rewriter.setInsertionPoint(op);
       SmallVector<Value> operands;
-      operands.push_back(CI.getOriginalTrace());
+      operands.push_back(op.getOriginalTrace());
       if (hasConstraint)
-        operands.push_back(CI.getConstraint());
-      operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), operands);
+        operands.push_back(op.getConstraint());
+      operands.append(op.getInputs().begin(), op.getInputs().end());
+      auto call = func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
+                                       newFn.getResultTypes(), operands);
 
-      rewriter.replaceOp(CI, newCI.getResults());
+      rewriter.replaceOp(op, call.getResults());
 
       return success();
     }
