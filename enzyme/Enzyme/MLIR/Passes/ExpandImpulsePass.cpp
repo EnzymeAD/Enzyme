@@ -53,8 +53,11 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
+/// Sample sites by symbol.
 using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
 
+/// Maps the symbol of every sample site of `fn`, nested ones included, to the
+/// site.
 static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
   SampleOpMap map;
   fn.walk([&](impulse::SampleOp sampleOp) {
@@ -64,12 +67,15 @@ static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
   return map;
 }
 
+/// Returns the site of `map` with symbol `targetSymbol`, or null.
 static impulse::SampleOp findSampleBySymbol(const SampleOpMap &map,
                                             Attribute targetSymbol) {
   auto it = map.find(targetSymbol);
   return it != map.end() ? it->second : nullptr;
 }
 
+/// Returns the number of trace columns the values of `sampleOp` take, or -1
+/// after emitting on `op` when a value is not a statically shaped tensor.
 static int64_t computeSampleElementCount(Operation *op,
                                          impulse::SampleOp sampleOp) {
   int64_t totalCount = 0;
@@ -89,6 +95,11 @@ static int64_t computeSampleElementCount(Operation *op,
   return totalCount;
 }
 
+/// Adds the number of trace columns the site at `address` takes to
+/// `positionSize`, looking each symbol after the first up in the generative
+/// function of the site before it. Returns false when a symbol has no site, and
+/// after emitting on `op` when the address continues past a site without a
+/// non-empty generative function or a value is dynamically shaped.
 static bool computePositionSizeForAddress(Operation *op,
                                           const SampleOpMap &sampleMap,
                                           ArrayRef<Attribute> address,
@@ -127,6 +138,8 @@ static bool computePositionSizeForAddress(Operation *op,
   return true;
 }
 
+/// Returns the number of trace columns the sites of `fn` at the addresses in
+/// `selection` take, or -1 after emitting on `op` when one of them has none.
 static int64_t
 computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
                                 ArrayAttr selection,
@@ -152,6 +165,9 @@ computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
   return positionSize;
 }
 
+/// Returns the first column of the first address starting with `targetSymbol`
+/// on a trace that lays out the sites of `fn` at the addresses in `selection`
+/// in order, or -1 when there is none or an address before it has no site.
 static int64_t
 computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
                                   ArrayAttr selection, Attribute targetSymbol,
@@ -1342,6 +1358,8 @@ SmallVector<Value> MCMCChainEmitter::packStateOut(
   return stateOut;
 }
 
+/// Returns the addresses of `selection` that continue past the symbol
+/// `targetSymbol`, without that first symbol.
 static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
                                    Attribute targetSymbol) {
   SmallVector<Attribute> subAddresses;
@@ -1371,12 +1389,17 @@ struct SiteCarry {
 };
 } // namespace
 
+/// Lowers one sample site of a function body, given the carry at the site.
 using ProcessSampleFn =
     llvm::function_ref<LogicalResult(impulse::SampleOp, SiteCarry &)>;
 
-// kMHHastingsAttr: weight = [weight, log q(fresh) - log q(replaced)].
-// kMHSiteScoresAttr: weight = [liveness; masked log density] per address.
+/// Unit attribute asking an `impulse.regenerate` for the weight vector
+/// `[weight, log q(fresh) - log q(replaced)]`, which carries the Hastings
+/// correction of the regenerated sites next to the weight.
 static constexpr llvm::StringLiteral kMHHastingsAttr = "impulse.mh_hastings";
+/// Array of top-level addresses asking an `impulse.regenerate` for a `2 x N`
+/// weight instead: column `k` holds 1 and the log density of the site at
+/// address `k` where that site runs, else zeros.
 static constexpr llvm::StringLiteral kMHSiteScoresAttr =
     "impulse.mh_site_scores";
 
@@ -1402,7 +1425,11 @@ static LogicalResult processImpulseBlock(Block &block,
                                          SiteCarry &carry,
                                          ProcessSampleFn processSample);
 
-/// Branches start from the pre-if snapshot; untaken slots stay zero.
+/// Lowers the sample sites of both branches of `ifOp` with `processSample` and
+/// replaces `ifOp` with an `impulse.if` that also yields the trace, weight and
+/// Hastings correction of the branch taken, which become `carry`. Both
+/// branches start from the trace and weight of `carry`, so the columns of the
+/// sites of the branch not taken keep their values from before `ifOp`.
 static LogicalResult processImpulseIf(impulse::IfOp ifOp,
                                       PatternRewriter &rewriter,
                                       SiteCarry &carry,
@@ -2076,7 +2103,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   Value curRng = rng;
   Value newTrace = trace;
   DenseMap<Attribute, SmallVector<Value>> proposedSelected;
-  // Program-order ordinal = per-site yield index = score-tail column.
+  // Sites count in program order, the order of the per-site yields and of the
+  // score-tail columns.
   SmallVector<int64_t> selectedOrdinals;
   int64_t siteOrdinal = -1;
 
@@ -2888,6 +2916,8 @@ static void batchMHRuns(Operation *root) {
 
 namespace {
 
+/// Lowers the Impulse inference ops. Runs of chained single-site MH moves are
+/// batched before the patterns run.
 struct ExpandImpulsePass
     : public enzyme::impl::ExpandImpulsePassBase<ExpandImpulsePass> {
   using ExpandImpulsePassBase::ExpandImpulsePassBase;
@@ -2906,6 +2936,8 @@ struct ExpandImpulsePass
                 mlir::enzyme::EnzymeDialect, mlir::impulse::ImpulseDialect>();
   }
 
+  /// Lowers `impulse.untraced_call` to a call of a clone of the callee whose
+  /// sample sites draw fresh values.
   struct LowerUntracedCallPattern
       : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
     using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
@@ -2951,6 +2983,9 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Lowers `impulse.simulate` to a call of a clone of the model that draws
+  /// every site and also returns the trace of `all_addresses` and the joint log
+  /// density.
   struct LowerSimulatePattern
       : public mlir::OpRewritePattern<impulse::SimulateOp> {
     using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
@@ -3345,6 +3380,8 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Lowers an MH `impulse.infer` or `impulse.infer_region` to `num_samples`
+  /// MH steps, each a proposal for the `selection` and an accept test.
   template <typename OpT>
   struct LowerMHInferPattern : public mlir::OpRewritePattern<OpT> {
     static constexpr bool isRegionForm =
@@ -3856,6 +3893,7 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Rejects a Gibbs `impulse.infer`: only the region form has a lowering.
   struct RejectFlatGibbsPattern
       : public mlir::OpRewritePattern<impulse::InferOp> {
     using mlir::OpRewritePattern<impulse::InferOp>::OpRewritePattern;
@@ -3870,6 +3908,8 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Lowers `impulse.mh` to a Hastings `impulse.regenerate` of the selection
+  /// and an accept test.
   struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
     using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
 
@@ -3945,6 +3985,9 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Lowers `impulse.generate` to a call of a clone of the model that reads the
+  /// constrained sites from the constraint, draws the others and also returns
+  /// the trace of `all_addresses` and the joint log density.
   struct LowerGeneratePattern
       : public mlir::OpRewritePattern<impulse::GenerateOp> {
     using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
@@ -4185,6 +4228,11 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Lowers `impulse.regenerate` to a call of a clone of the model that redraws
+  /// the selected sites, reads the others from the old trace and also returns
+  /// the new trace and the weight: the joint log density, or its change on a
+  /// score-tail trace, in the form `kMHHastingsAttr` or `kMHSiteScoresAttr`
+  /// ask for.
   struct LowerRegeneratePattern
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
     using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;

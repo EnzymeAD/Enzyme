@@ -29,6 +29,7 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
+/// Returns whether `fn` contains an `impulse.sample`.
 static bool fnBodyHasSamples(FunctionOpInterface fn) {
   return fn.getFunctionBody()
       .walk([](impulse::SampleOp) { return WalkResult::interrupt(); })
@@ -152,6 +153,8 @@ static void inlineFunctionIntoRegion(
   }
 }
 
+/// Fills `region` with a block that takes the inputs of `sampleOp` and yields
+/// a draw from `dist`, the rng first.
 static void emitDistSamplerIntoRegion(OpBuilder &builder,
                                       impulse::SampleOp sampleOp,
                                       impulse::DistAttr dist, Region &region) {
@@ -170,6 +173,8 @@ static void emitDistSamplerIntoRegion(OpBuilder &builder,
   impulse::YieldOp::create(builder, sampleOp.getLoc(), out);
 }
 
+/// Fills `region` with a block that takes a value of `sampleOp` followed by
+/// its parameters and yields the log density of `dist` at that value.
 static void emitDistLogpdfIntoRegion(OpBuilder &builder,
                                      impulse::SampleOp sampleOp,
                                      impulse::DistAttr dist, Region &region) {
@@ -189,6 +194,10 @@ static void emitDistLogpdfIntoRegion(OpBuilder &builder,
   impulse::YieldOp::create(builder, sampleOp.getLoc(), lp);
 }
 
+/// Emits an `impulse.sample_region` for `sampleOp` at its symbol appended to
+/// `addressPrefix`, with operands mapped through `mapper`, and maps the
+/// results of `sampleOp` to its results. Its regions hold the sampler and log
+/// density of the distribution, or the inlined `fn` and `logpdf_fn`.
 static void convertSampleToSampleRegion(OpBuilder &builder,
                                         impulse::SampleOp sampleOp,
                                         IRMapping &mapper,
@@ -237,6 +246,9 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
     mapper.map(oldResult, newResult);
 }
 
+/// Inlines the sub-model sites at the top level of the sampler of `regionOp`,
+/// whose sampler is a whole generative function, with the addresses of their
+/// sites prefixed by the sub-model's address. Returns whether there was one.
 static bool dissolveSubmodelSites(impulse::InferRegionOp regionOp,
                                   SymbolTableCollection &symbolTable) {
   if (regionOp.getSampling().empty())
@@ -300,6 +312,9 @@ static impulse::InferRegionOp createInferRegion(PatternRewriter &rewriter,
 
 namespace {
 
+/// Rewrites a model-mode `impulse.infer` into an `impulse.infer_region` whose
+/// sampler is the model with an `impulse.sample_region` per site, when every
+/// site is reachable in region form and listed in `all_addresses`.
 struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
   using OpRewritePattern<impulse::InferOp>::OpRewritePattern;
 
@@ -399,6 +414,8 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
   }
 };
 
+/// Rewrites an HMC or NUTS `impulse.infer` with a `logpdf_fn` into an
+/// `impulse.infer_region` whose logpdf region is that function inlined.
 struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
   using OpRewritePattern<impulse::InferOp>::OpRewritePattern;
 
@@ -444,6 +461,8 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
   }
 };
 
+/// Rewrites `impulse.infer` into `impulse.infer_region` where the model allows
+/// it.
 struct InlineInferIntoRegionPass
     : public enzyme::impl::InlineInferIntoRegionPassBase<
           InlineInferIntoRegionPass> {
