@@ -455,7 +455,8 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
     options.clear();
     bool invalid = false;
     for (const std::string &entry : ruleOptions) {
-      auto [key, value] = StringRef(entry).split('=');
+      StringRef key, value;
+      std::tie(key, value) = StringRef(entry).split('=');
       if (key.empty() || value.empty()) {
         getOperation()->emitError("sicm: rule-options entry '")
             << entry << "' is not of the form key=value";

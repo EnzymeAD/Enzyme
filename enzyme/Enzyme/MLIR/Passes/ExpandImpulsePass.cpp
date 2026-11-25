@@ -2956,8 +2956,8 @@ static Value writeBackAccepted(OpBuilder &b, Location loc, Value trace0,
       findStrideGroups(*slots, traceType.getShape()[1]);
   if (!strided) {
     auto rowType = RankedTensorType::get({1, numMoves}, elemType);
-    for (auto [s, result] : llvm::enumerate(resultAt)) {
-      Value row = impulse::ReshapeOp::create(b, loc, rowType, result);
+    for (size_t s = 0, e = resultAt.size(); s < e; ++s) {
+      Value row = impulse::ReshapeOp::create(b, loc, rowType, resultAt[s]);
       SmallVector<int64_t> slotColumns =
           llvm::map_to_vector(columns, [&](ArrayRef<int64_t> moveColumns) {
             return moveColumns[s];
@@ -4505,7 +4505,6 @@ struct ExpandImpulsePass
       Value initWeight = op.getStateIn()[0];
       Value initRng = inputs[0];
       auto traceType = cast<RankedTensorType>(initTrace.getType());
-      auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
 
       ArrayAttr selection = op.getSelectionAttr();
       ArrayAttr allAddresses = op.getAllAddressesAttr();
@@ -4570,10 +4569,7 @@ struct ExpandImpulsePass
       SmallVector<Value> out = emitRepeated(
           rewriter, loc, op.getNumSamples(), {initTrace, initWeight, initRng},
           [&]() -> SmallVector<Value> {
-            Value notAccepted = arith::ConstantOp::create(
-                rewriter, loc, i1TensorType,
-                DenseElementsAttr::get(i1TensorType,
-                                       rewriter.getBoolAttr(false)));
+            Value notAccepted = emitI1ScalarConstant(rewriter, loc, false);
             return {initTrace, initWeight, initRng, notAccepted};
           },
           oneStep);

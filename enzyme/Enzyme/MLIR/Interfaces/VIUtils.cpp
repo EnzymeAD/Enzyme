@@ -16,7 +16,6 @@
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Impulse/InferStateLayout.h"
 #include "Dialect/Ops.h"
-#include "Interfaces/DistBuilder.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
