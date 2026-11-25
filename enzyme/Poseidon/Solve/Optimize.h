@@ -112,16 +112,13 @@ bool solveJointly(Session &S, llvm::Module &M);
 // records no execution of are in no subgraph.
 void buildSubgraphs(
     const Options &O, llvm::Function &F, const ProfileMap &profileMap,
-    const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls, FPGraph &G,
     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
 // Sets the profiled sensitivity, gradient, execution count and value ranges
 // of the subgraphs' nodes.
-void attachProfile(
-    const Options &O, const ProfileMap &profileMap,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    llvm::ArrayRef<Subgraph> subgraphs);
+void attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
+                   llvm::ArrayRef<Subgraph> subgraphs);
 
 // The site's optimization units: the subgraphs after splitting and the
 // shared-staging merge.

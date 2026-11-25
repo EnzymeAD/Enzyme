@@ -177,11 +177,11 @@ proposeSubgraphCandidates(Session &S, Function &F,
 
     if (O.Candidates.EnableHerbie)
       proposeHerbieCandidates(S, F, subgraph, subgraphCounter, symbolCounter,
-                              st.valueToNodeMap, st.symbolToValueMap, st.COs);
+                              st, st.COs);
 
     if (O.Candidates.EnablePT)
-      proposePrecisionCandidates(S, F, subgraph, st.valueToNodeMap,
-                                 profileHeader, expansionSafe, st.CSs);
+      proposePrecisionCandidates(S, F, subgraph, st, profileHeader,
+                                 expansionSafe, st.CSs);
     ++subgraphCounter;
   }
 }
@@ -369,10 +369,9 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
                                    return tryReadProfIdxMetadata(&I, slot);
                                  });
 
-  buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st.valueToNodeMap,
-                 st.subgraphs);
+  buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st, st.subgraphs);
 
-  attachProfile(O, profile.map, st.valueToNodeMap, st.subgraphs);
+  attachProfile(O, profile.map, st, st.subgraphs);
   shapeSubgraphs(O, F, st.subgraphs);
   if (O.Candidates.EnablePT && !O.Candidates.MergeSharedStaging)
     hintSharedStaging(S, F, st.subgraphs);

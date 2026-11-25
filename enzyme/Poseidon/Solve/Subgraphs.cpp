@@ -84,11 +84,10 @@ static void reportUnexecuted(const Function &F,
            DS_Warning);
 }
 
-void buildSubgraphs(
-    const Options &O, Function &F, const ProfileMap &profileMap,
-    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    SmallVectorImpl<Subgraph> &subgraphs) {
+void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
+                    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
+                    FPGraph &G, SmallVectorImpl<Subgraph> &subgraphs) {
+  auto &valueToNodeMap = G.valueToNodeMap;
   // An operation the run never executed is left as written, as an unexecuted
   // matrix product is: the profile gives it no range, which would leave its
   // whole subgraph unpriced. What an executed operation reads was computed on
@@ -235,10 +234,9 @@ void buildSubgraphs(
   }
 }
 
-void attachProfile(
-    const Options &O, const ProfileMap &profileMap,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    ArrayRef<Subgraph> subgraphs) {
+void attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
+                   ArrayRef<Subgraph> subgraphs) {
+  auto &valueToNodeMap = G.valueToNodeMap;
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
       size_t idx;

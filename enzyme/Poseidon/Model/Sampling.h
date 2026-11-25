@@ -31,6 +31,7 @@ namespace poseidon {
 
 struct Options;
 struct Subgraph;
+struct FPGraph;
 class FPNode;
 
 // Per-sample absolute accuracy error.
@@ -52,10 +53,7 @@ public:
     std::optional<double> meanError() const;
   };
 
-  SubgraphSamples(
-      const Options &O, const Subgraph &subgraph,
-      const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-          &valueToNodeMap);
+  SubgraphSamples(const Options &O, const Subgraph &subgraph, const FPGraph &G);
   ~SubgraphSamples();
 
   // -poseidon-num-samples points in the profiled box of the subgraph's inputs,
@@ -102,10 +100,8 @@ private:
 
 // The samples of `subgraph`, made on first use and kept in it until its
 // `samples` is reset.
-SubgraphSamples &
-samplesOf(const Options &O, Subgraph &subgraph,
-          const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-              &valueToNodeMap);
+SubgraphSamples &samplesOf(const Options &O, Subgraph &subgraph,
+                           const FPGraph &G);
 
 } // namespace poseidon
 #endif // POSEIDON_SAMPLING_H

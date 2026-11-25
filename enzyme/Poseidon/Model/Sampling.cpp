@@ -371,10 +371,9 @@ struct SubgraphSamples::RoundReference {
   SmallVector<char, 0> computed;
 };
 
-SubgraphSamples::SubgraphSamples(
-    const Options &O, const Subgraph &subgraph,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
-    : O(O), subgraph(subgraph), valueToNodeMap(valueToNodeMap) {}
+SubgraphSamples::SubgraphSamples(const Options &O, const Subgraph &subgraph,
+                                 const FPGraph &G)
+    : O(O), subgraph(subgraph), valueToNodeMap(G.valueToNodeMap) {}
 
 SubgraphSamples::~SubgraphSamples() = default;
 
@@ -502,13 +501,10 @@ SubgraphSamples::roundReference(const FPNode *node, unsigned round,
   return RR.values;
 }
 
-SubgraphSamples &
-samplesOf(const Options &O, Subgraph &subgraph,
-          const std::unordered_map<Value *, std::shared_ptr<FPNode>>
-              &valueToNodeMap) {
+SubgraphSamples &samplesOf(const Options &O, Subgraph &subgraph,
+                           const FPGraph &G) {
   if (!subgraph.samples)
-    subgraph.samples =
-        std::make_shared<SubgraphSamples>(O, subgraph, valueToNodeMap);
+    subgraph.samples = std::make_shared<SubgraphSamples>(O, subgraph, G);
   return *subgraph.samples;
 }
 

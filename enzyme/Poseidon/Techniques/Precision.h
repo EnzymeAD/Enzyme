@@ -71,11 +71,11 @@ bool demoteFPCastPHIs(llvm::Function &F);
 // The precision candidates of `subgraph`, appended to `CSs` unpriced: two- and
 // three-tier assignments of its operations by profiled sensitivity, over the
 // formats and expansions the target, the cost model and the options allow.
-void proposePrecisionCandidates(
-    Session &S, llvm::Function &F, Subgraph &subgraph,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const FunctionProfileHeader &profileHeader, bool expansionSafe,
-    llvm::SmallVectorImpl<PrecisionUnit> &CSs);
+void proposePrecisionCandidates(Session &S, llvm::Function &F,
+                                Subgraph &subgraph, FPGraph &G,
+                                const FunctionProfileHeader &profileHeader,
+                                bool expansionSafe,
+                                llvm::SmallVectorImpl<PrecisionUnit> &CSs);
 
 class PrecisionUnit : public SubgraphUnit<PTCandidate> {
 public:

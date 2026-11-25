@@ -83,9 +83,7 @@ extern const FPCoreOperator &Neg, &Add, &Sub, &Mul, &Div, &Pow, &Sqrt, &Fma,
 // value where a number belongs or the reverse, or a malformed literal, approx
 // form or array.
 llvm::Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
-    llvm::StringRef expr,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    llvm::StringRef expr, FPGraph &G,
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
         nullptr,
     const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
@@ -104,10 +102,8 @@ std::string renderC(const FPNode &node, const CRendering &how,
                     llvm::StringRef resultDtype = "");
 
 llvm::SmallVector<std::string, 1> fpcoreToC(
-    llvm::StringRef expr,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    const CRendering &how, llvm::StringRef resultDtype = "",
+    llvm::StringRef expr, FPGraph &G, const CRendering &how,
+    llvm::StringRef resultDtype = "",
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
         nullptr);
 

@@ -517,10 +517,9 @@ class Explainer {
   ArrayRef<SolutionStep> steps;
   const SolveRecord &rec;
   ValueNamer namer;
-  // Copies: fpcoreToC may add to the maps it is given, and the explanation
-  // must leave the solve's own as they are.
-  std::unordered_map<Value *, std::shared_ptr<FPNode>> nodes;
-  std::unordered_map<std::string, Value *> symbols;
+  // A copy: fpcoreToC may add to the graph it is given, and the explanation
+  // must leave the solve's own as it is.
+  FPGraph scratch;
   std::set<std::pair<const SiteUnit *, size_t>> applied, skipped, onPareto,
       inSelected;
   std::map<std::pair<const SiteUnit *, size_t>, int64_t> firstBudget;
@@ -608,8 +607,7 @@ class Explainer {
 public:
   Explainer(Session &Sess, Function &F, FunctionFPState &st,
             ArrayRef<SolutionStep> steps, const SolveRecord &rec)
-      : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F),
-        nodes(st.valueToNodeMap), symbols(st.symbolToValueMap),
+      : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F), scratch(st),
         A0(rec.baseline), S(rec.accScale), tau(rec.tau),
         scale(rec.profiledCost) {}
 
@@ -677,18 +675,16 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.baseAcc = CO.initialAccCost;
       A.baseCost = base;
       SmallVector<std::pair<std::string, std::string>, 2> specs;
-      A.c = fpcoreToC(expr, nodes, symbols, how, rdt, &specs);
+      A.c = fpcoreToC(expr, scratch, how, rdt, &specs);
       SmallVector<std::string, 2> notes;
       std::set<std::string> seen;
       for (const auto &[spec, impl] : specs) {
         if (!seen.insert(spec).second)
           continue;
-        SmallVector<std::string, 1> specC =
-            fpcoreToC(spec, nodes, symbols, how, "");
+        SmallVector<std::string, 1> specC = fpcoreToC(spec, scratch, how, "");
         std::string specText = clip(specC.empty() ? spec : specC[0], 120);
         if (!isPolynomial(impl)) {
-          SmallVector<std::string, 1> implC =
-              fpcoreToC(impl, nodes, symbols, how, "");
+          SmallVector<std::string, 1> implC = fpcoreToC(impl, scratch, how, "");
           notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
                           " in place of " + specText);
           continue;
@@ -698,8 +694,8 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
         SmallSet<std::string, 8> args;
         getUniqueArgs(spec, args);
         for (const std::string &arg : args) {
-          auto sv = symbols.find(arg);
-          if (sv == symbols.end() || !sv->second)
+          auto sv = scratch.symbolToValueMap.find(arg);
+          if (sv == scratch.symbolToValueMap.end() || !sv->second)
             continue;
           std::string label = leafLabel(sv->second);
           std::string r = rangeOf(sv->second, label.empty() ? arg : label);

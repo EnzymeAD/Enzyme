@@ -38,6 +38,7 @@ namespace poseidon {
 
 struct FPCoreOperator;
 struct FPFormatInfo;
+struct FPGraph;
 enum class PrecisionChangeType;
 
 class FPNode {
@@ -80,8 +81,7 @@ public:
   // literal: a subgraph input as its symbol, anything else spelled out over
   // its operands.
   std::string
-  toFullExpression(std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-                       &valueToNodeMap,
+  toFullExpression(const FPGraph &G,
                    const llvm::SetVector<llvm::Value *> &subgraphInputs,
                    unsigned depth = 0);
   // Widens the profiled range of a value to [lower, upper]; a literal's range
@@ -112,9 +112,10 @@ unsigned inlinedOps(const FPLLValue &V,
                     const llvm::SetVector<llvm::Value *> &inputs);
 // The existing value a parsed rewrite node recomputes, if the node is one of
 // the operations an input was spelled as: the rewrite reuses it.
-std::shared_ptr<FPNode> existingDefinition(
-    const FPNode &N, const llvm::SetVector<llvm::Value *> &inputs,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap);
+std::shared_ptr<FPNode>
+existingDefinition(const FPNode &N,
+                   const llvm::SetVector<llvm::Value *> &inputs,
+                   const FPGraph &G);
 
 class FPLLValue : public FPNode {
 public:

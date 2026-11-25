@@ -225,9 +225,9 @@ unsigned inlinedOps(const FPLLValue &V, const SetVector<Value *> &inputs) {
   return inlinedOps(V, inputs, memo);
 }
 
-std::shared_ptr<FPNode> existingDefinition(
-    const FPNode &N, const SetVector<Value *> &inputs,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
+std::shared_ptr<FPNode> existingDefinition(const FPNode &N,
+                                           const SetVector<Value *> &inputs,
+                                           const FPGraph &G) {
   auto same = [](const FPNode &A, const FPNode &B) {
     auto *CA = dyn_cast<FPConst>(&A), *CB = dyn_cast<FPConst>(&B);
     return &A == &B || (CA && CB && CA->format == CB->format &&
@@ -246,7 +246,7 @@ std::shared_ptr<FPNode> existingDefinition(
   bool commutes =
       (N.is(fpcore::Add) || N.is(fpcore::Mul)) && N.operands.size() == 2;
   for (Value *V : inputs) {
-    auto *VN = dyn_cast<FPLLValue>(valueToNodeMap.at(V).get());
+    auto *VN = dyn_cast<FPLLValue>(G.valueToNodeMap.at(V).get());
     if (!VN || !inlinedOps(*VN, inputs))
       continue;
     SmallVector<const FPLLValue *, 4> todo{VN};
@@ -254,7 +254,7 @@ std::shared_ptr<FPNode> existingDefinition(
       const FPLLValue *W = todo.pop_back_val();
       // An erased value (its output was rewritten) is recomputed instead.
       if (W->value && (matches(*W, false) || (commutes && matches(*W, true))))
-        return valueToNodeMap.at(W->value);
+        return G.valueToNodeMap.at(W->value);
       for (const auto &O : W->operands)
         if (auto *L = dyn_cast<FPLLValue>(O.get());
             L && !L->operands.empty() && !inputs.contains(L->value))
@@ -264,9 +264,9 @@ std::shared_ptr<FPNode> existingDefinition(
   return nullptr;
 }
 
-std::string FPNode::toFullExpression(
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const SetVector<Value *> &subgraphInputs, unsigned depth) {
+std::string FPNode::toFullExpression(const FPGraph &G,
+                                     const SetVector<Value *> &subgraphInputs,
+                                     unsigned depth) {
   if (auto *C = dyn_cast<FPConst>(this))
     return C->literal();
   auto *V = dyn_cast<FPLLValue>(this);
@@ -288,8 +288,7 @@ std::string FPNode::toFullExpression(
 
   std::string expr = "(" + (is(fpcore::Neg) ? "-" : operationName(*this));
   for (auto operand : operands) {
-    expr += " " + operand->toFullExpression(valueToNodeMap, subgraphInputs,
-                                            depth + 1);
+    expr += " " + operand->toFullExpression(G, subgraphInputs, depth + 1);
   }
   expr += ")";
   return expr;
@@ -375,8 +374,6 @@ SmallVector<Value *, 4>
 emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
                    function_ref<IRBuilder<> &(size_t)> at,
                    ValueToValueMapTy *VMap, const DominatorTree *DT) {
-  std::unordered_map<Value *, std::shared_ptr<FPNode>> noNodes;
-  SetVector<Value *> noInputs;
   DenseMap<const FPNode *, std::string> keys;
   auto formatName = [](const FPNode *N) {
     return N->format ? N->format->Dtype.str() : std::string();
@@ -390,8 +387,7 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
     if (auto *LL = dyn_cast<FPLLValue>(N))
       k = "%" + utohexstr((uintptr_t)LL->value);
     else if (isa<FPConst>(N))
-      k = formatName(N) + ":" +
-          const_cast<FPNode *>(N)->toFullExpression(noNodes, noInputs);
+      k = formatName(N) + ":" + cast<FPConst>(N)->literal();
     else {
       k = N->op->Name.str() + "." + formatName(N) + "(";
       for (const auto &operand : N->operands)

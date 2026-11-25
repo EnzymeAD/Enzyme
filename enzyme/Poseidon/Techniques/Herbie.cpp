@@ -382,15 +382,12 @@ static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
 // unit `CO` and read from `source` (its run's label and cache file), is one
 // the model cannot read: an answer is external input, checked before
 // anything evaluates or lowers it.
-static void checkAnswer(
-    const HerbieCoreAnswer &answer,
-    const std::pair<std::string, std::string> &source, const RewriteUnit &CO,
-    const Function &F,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+static void checkAnswer(const HerbieCoreAnswer &answer,
+                        const std::pair<std::string, std::string> &source,
+                        const RewriteUnit &CO, const Function &F, FPGraph &G) {
   auto check = [&](const std::string &expr) {
-    Expected<std::shared_ptr<FPNode>> parsed = parseHerbieExpr(
-        expr, valueToNodeMap, symbolToValueMap, nullptr, &CO.subgraph->inputs);
+    Expected<std::shared_ptr<FPNode>> parsed =
+        parseHerbieExpr(expr, G, nullptr, &CO.subgraph->inputs);
     if (!parsed)
       reportUserError(
           F, F.getSubprogram(),
@@ -411,13 +408,12 @@ static void checkAnswer(
 }
 
 // Collects Herbie's rewrites of `cores`, cores of the subgraph `subgraphIdx`
-// of the site `F` over the graph the maps describe, into their units `COs`,
-// unpriced.
-static void collectHerbieRewrites(
-    Session &S, const std::vector<std::string> &cores,
-    std::vector<RewriteUnit> &COs, int subgraphIdx, const Function &F,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+// of the site `F` over the graph `G`, into their units `COs`, unpriced.
+static void collectHerbieRewrites(Session &S,
+                                  const std::vector<std::string> &cores,
+                                  std::vector<RewriteUnit> &COs,
+                                  int subgraphIdx, const Function &F,
+                                  FPGraph &G) {
   const std::string label =
       "subgraph " + std::to_string(subgraphIdx) + " of " + F.getName().str();
   HerbieAnswers H = askHerbie(S, cores, label, F);
@@ -444,8 +440,7 @@ static void collectHerbieRewrites(
                        << "); no algebraic candidate from this core\n";
       }
       if (answer.Rewrites)
-        checkAnswer(answer, source, COs[answer.Core], F, valueToNodeMap,
-                    symbolToValueMap);
+        checkAnswer(answer, source, COs[answer.Core], F, G);
       addAnswer(answer, status, COs[answer.Core], seenExprs[answer.Core]);
     }
 
@@ -507,13 +502,12 @@ static constexpr double kPointRelativeHalfWidth = 1e-6;
 
 // The precondition of a core over `args`: each within its profiled range,
 // and, under -poseidon-herbie-pre-floor-bits, away from zero.
-static std::string rangePrecondition(
-    const Options &O, const SmallSet<std::string, 8> &args,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+static std::string rangePrecondition(const Options &O,
+                                     const SmallSet<std::string, 8> &args,
+                                     const FPGraph &G) {
   std::string preconditions;
   for (const std::string &arg : args) {
-    const FPNode &node = *valueToNodeMap.at(symbolToValueMap.at(arg));
+    const FPNode &node = *G.valueToNodeMap.at(G.symbolToValueMap.at(arg));
     double lower = node.getLowerBound();
     double upper = node.getUpperBound();
 
@@ -553,10 +547,8 @@ static std::string rangePrecondition(
 // The outputs' expressions with every subterm used more than once bound by
 // let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
 // output.
-static std::string arrayCoreBody(
-    ArrayRef<Instruction *> outputs,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const SetVector<Value *> &inputs) {
+static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
+                                 const SetVector<Value *> &inputs) {
   auto isLeaf = [&](FPNode *N) {
     if (isa<FPConst>(N))
       return true;
@@ -577,7 +569,7 @@ static std::string arrayCoreBody(
     order.push_back(N);
   };
   for (Instruction *output : outputs) {
-    FPNode *N = valueToNodeMap[output].get();
+    FPNode *N = G.valueToNodeMap[output].get();
     ++uses[N];
     walk(N);
   }
@@ -593,7 +585,7 @@ static std::string arrayCoreBody(
   };
   ref = [&](FPNode *N) -> std::string {
     if (isLeaf(N))
-      return N->toFullExpression(valueToNodeMap, inputs);
+      return N->toFullExpression(G, inputs);
     auto It = names.find(N);
     if (It != names.end())
       return It->second;
@@ -613,7 +605,7 @@ static std::string arrayCoreBody(
   }
   std::string body = "(array";
   for (Instruction *output : outputs)
-    body += " " + ref(valueToNodeMap[output].get());
+    body += " " + ref(G.valueToNodeMap[output].get());
   body += ")";
   return bindings.empty() ? body : "(let* (" + bindings + ") " + body + ")";
 }
@@ -639,12 +631,8 @@ struct CoreBatch {
 // or, under -poseidon-herbie-arrays, one per group of outputs and precision.
 class SubgraphCores {
 public:
-  SubgraphCores(
-      Session &S, Subgraph &subgraph, int subgraphIdx,
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      std::unordered_map<std::string, Value *> &symbolToValueMap)
-      : S(S), O(S.Opts), subgraph(subgraph), subgraphIdx(subgraphIdx),
-        valueToNodeMap(valueToNodeMap), symbolToValueMap(symbolToValueMap) {}
+  SubgraphCores(Session &S, Subgraph &subgraph, int subgraphIdx, FPGraph &G)
+      : S(S), O(S.Opts), subgraph(subgraph), subgraphIdx(subgraphIdx), G(G) {}
 
   // Names each input of the subgraph that is no constant by a symbol, the
   // next of `symbolCounter` for one without.
@@ -677,20 +665,19 @@ private:
   const Options &O;
   Subgraph &subgraph;
   int subgraphIdx;
-  std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
-  std::unordered_map<std::string, Value *> &symbolToValueMap;
+  FPGraph &G;
 };
 
 } // namespace
 
 void SubgraphCores::nameInputs(int &symbolCounter) {
   for (Value *input : subgraph.inputs) {
-    FPNode &node = *valueToNodeMap[input];
+    FPNode &node = *G.valueToNodeMap[input];
     if (isa<FPConst>(node))
       continue;
     if (!node.hasSymbol())
       node.symbol = "v" + std::to_string(symbolCounter++);
-    symbolToValueMap[node.symbol] = input;
+    G.symbolToValueMap[node.symbol] = input;
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] assigning symbol: " << node.symbol << " to "
                    << *input << '\n';
@@ -699,7 +686,7 @@ void SubgraphCores::nameInputs(int &symbolCounter) {
 
 std::optional<EligibleOutput>
 SubgraphCores::eligible(Instruction *output) const {
-  FPNode &node = *valueToNodeMap[output];
+  FPNode &node = *G.valueToNodeMap[output];
   if (node.grad == 0.) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Skipping zero gradient instruction: "
@@ -707,7 +694,7 @@ SubgraphCores::eligible(Instruction *output) const {
     return std::nullopt;
   }
 
-  std::string expr = node.toFullExpression(valueToNodeMap, subgraph.inputs);
+  std::string expr = node.toFullExpression(G, subgraph.inputs);
   if (expr.length() > O.Candidates.MaxExprLength) {
     diagnose(*output->getFunction(), output->getDebugLoc(),
              "an output expression of " + Twine(expr.length()) +
@@ -734,8 +721,7 @@ void SubgraphCores::addPerOutputCores(const EligibleOutput &E,
                                       CoreBatch &batch) const {
   SmallSet<std::string, 8> args;
   getUniqueArgs(E.expr, args);
-  std::string precondition =
-      rangePrecondition(O, args, valueToNodeMap, symbolToValueMap);
+  std::string precondition = rangePrecondition(O, args, G);
   for (const char *prec : precs) {
     RewriteUnit CO(S.CostModel, subgraph, {E.output}, {E.grad}, E.expr,
                    E.executions);
@@ -780,7 +766,7 @@ std::string SubgraphCores::arrayWeights(ArrayRef<Instruction *> outputs) const {
     return "";
   SmallVector<double, 8> sens;
   for (Instruction *output : outputs) {
-    const FPNode &N = *valueToNodeMap[output];
+    const FPNode &N = *G.valueToNodeMap[output];
     if (O.Herbie.HerbieArrayWeights == "gradient") {
       double lo = N.getLowerBound(), hi = N.getUpperBound();
       double meanMag = lo >= 0 || hi <= 0
@@ -821,11 +807,10 @@ void SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
     roots.push_back(E->output);
     grads.push_back(E->grad);
   }
-  std::string body = arrayCoreBody(outputs, valueToNodeMap, subgraph.inputs);
+  std::string body = arrayCoreBody(outputs, G, subgraph.inputs);
   SmallSet<std::string, 8> args;
   getUniqueArgs(body, args);
-  std::string precondition =
-      rangePrecondition(O, args, valueToNodeMap, symbolToValueMap);
+  std::string precondition = rangePrecondition(O, args, G);
   std::string weights = arrayWeights(outputs);
   for (const char *prec : kHerbiePrecisions) {
     std::string herbieInput =
@@ -839,14 +824,10 @@ void SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
   }
 }
 
-void proposeHerbieCandidates(
-    Session &S, Function &F, Subgraph &subgraph, int subgraphCounter,
-    int &symbolCounter,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVectorImpl<RewriteUnit> &COs) {
-  SubgraphCores cores(S, subgraph, subgraphCounter, valueToNodeMap,
-                      symbolToValueMap);
+void proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
+                             int subgraphCounter, int &symbolCounter,
+                             FPGraph &G, SmallVectorImpl<RewriteUnit> &COs) {
+  SubgraphCores cores(S, subgraph, subgraphCounter, G);
   cores.nameInputs(symbolCounter);
 
   // The cores of one output each, searched in their own invocation.
@@ -885,7 +866,7 @@ void proposeHerbieCandidates(
                               numArrayCores ? arrays : perOutput);
   if (numArrayCores)
     collectHerbieRewrites(S, arrays.inputs, arrays.units, subgraphCounter, F,
-                          valueToNodeMap, symbolToValueMap);
+                          G);
   for (const EligibleOutput &E : eligible) {
     SmallVector<const char *, 2> sendAt;
     for (size_t k = 0; k < numArrayCores; ++k)
@@ -904,7 +885,7 @@ void proposeHerbieCandidates(
 
   if (!perOutput.inputs.empty()) {
     collectHerbieRewrites(S, perOutput.inputs, perOutput.units, subgraphCounter,
-                          F, valueToNodeMap, symbolToValueMap);
+                          F, G);
     COs.append(std::make_move_iterator(perOutput.units.begin()),
                std::make_move_iterator(perOutput.units.end()));
   }
@@ -1273,13 +1254,8 @@ namespace {
 // gradients.
 class RewriteAccuracy {
 public:
-  RewriteAccuracy(
-      const Options &O, RewriteUnit &CO,
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      std::unordered_map<std::string, Value *> &symbolToValueMap)
-      : O(O), CO(CO), valueToNodeMap(valueToNodeMap),
-        symbolToValueMap(symbolToValueMap),
-        samples(samplesOf(O, *CO.subgraph, valueToNodeMap)) {}
+  RewriteAccuracy(const Options &O, RewriteUnit &CO, FPGraph &G)
+      : O(O), CO(CO), G(G), samples(samplesOf(O, *CO.subgraph, G)) {}
 
   // Sets the unit's accuracy cost as written and each candidate's, and drops
   // the candidates that cannot be priced.
@@ -1318,8 +1294,7 @@ private:
 
   const Options &O;
   RewriteUnit &CO;
-  std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
-  std::unordered_map<std::string, Value *> &symbolToValueMap;
+  FPGraph &G;
   SubgraphSamples &samples;
   SmallVector<RootSamples, 1> rootSamples;
   // The values each output's original expression reads: an element is
@@ -1342,7 +1317,7 @@ void RewriteAccuracy::unpriceable(StringRef why) {
 bool RewriteAccuracy::priceBaseline() {
   double initialAccCost = 0.0;
   for (auto [root, grad] : zip(CO.roots, CO.rootGrads)) {
-    const FPNode *node = valueToNodeMap[root].get();
+    const FPNode *node = G.valueToNodeMap[root].get();
     const SubgraphSamples::Reference &ref = samples.reference(node);
     std::optional<double> origCost = ref.meanError();
     if (!origCost) {
@@ -1371,9 +1346,8 @@ bool RewriteAccuracy::priceBaseline() {
 RewriteAccuracy::CandidatePricing
 RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
   CandidatePricing P;
-  P.parsed =
-      cantFail(parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap,
-                               nullptr, &CO.subgraph->inputs));
+  P.parsed = cantFail(
+      parseHerbieExpr(candidate.expr, G, nullptr, &CO.subgraph->inputs));
   std::optional<SmallVector<std::shared_ptr<FPNode>, 1>> elements =
       elementsOf(P.parsed, CO);
   if (!elements) {
@@ -1465,7 +1439,8 @@ void RewriteAccuracy::price() {
   for (Value *root : CO.roots) {
     SmallPtrSet<const FPNode *, 32> seen;
     SmallPtrSet<Value *, 8> used;
-    collectInputs(valueToNodeMap[root].get(), CO.subgraph->inputs, seen, used);
+    collectInputs(G.valueToNodeMap[root].get(), CO.subgraph->inputs, seen,
+                  used);
     rootInputs.push_back(std::move(used));
   }
 
@@ -1502,11 +1477,8 @@ namespace {
 // function of the site's module that is erased with it.
 class ScratchFunction {
 public:
-  ScratchFunction(
-      Module &M, const std::string &expr, const FastMathFlags &FMF,
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      std::unordered_map<std::string, Value *> &symbolToValueMap,
-      const SetVector<Value *> &subgraphInputs);
+  ScratchFunction(Module &M, const std::string &expr, const FastMathFlags &FMF,
+                  FPGraph &G, const SetVector<Value *> &subgraphInputs);
   ~ScratchFunction() { F->eraseFromParent(); }
 
   Function &function() const { return *F; }
@@ -1541,11 +1513,9 @@ static Type *scratchReturnType(ArrayRef<Type *> argTypes, StringRef dtype,
   return Type::getDoubleTy(Ctx);
 }
 
-ScratchFunction::ScratchFunction(
-    Module &M, const std::string &expr, const FastMathFlags &FMF,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap,
-    const SetVector<Value *> &subgraphInputs) {
+ScratchFunction::ScratchFunction(Module &M, const std::string &expr,
+                                 const FastMathFlags &FMF, FPGraph &G,
+                                 const SetVector<Value *> &subgraphInputs) {
   LLVMContext &Ctx = M.getContext();
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
@@ -1553,14 +1523,14 @@ ScratchFunction::ScratchFunction(
   SetVector<Value *> args;
   SmallVector<Type *, 8> argTypes;
   for (const std::string &argStr : argStrSet) {
-    Value *argValue = symbolToValueMap[argStr];
+    Value *argValue = G.symbolToValueMap[argStr];
     args.insert(argValue);
     argTypes.push_back(argValue->getType());
     leaves.push_back(argValue);
   }
 
-  std::shared_ptr<FPNode> parsedNode = cantFail(parseHerbieExpr(
-      expr, valueToNodeMap, symbolToValueMap, nullptr, &subgraphInputs));
+  std::shared_ptr<FPNode> parsedNode =
+      cantFail(parseHerbieExpr(expr, G, nullptr, &subgraphInputs));
   // An existing value a node was mapped back to is an argument no symbol names.
   SmallVector<FPNode *, 16> stack{parsedNode.get()};
   SmallPtrSet<FPNode *, 16> seen;
@@ -1682,24 +1652,19 @@ double BoundaryWeights::operator()(const Instruction &I) const {
 // The cost of the Herbie expression `expr` that replaces `Site`, priced in a
 // scratch function of its module simplified by `PB`'s pipeline; a missing
 // cost-model row is an error at `Site`.
-static double priceRewrite(
-    CostModelState &CM, PassBuilder &PB, const std::string &expr,
-    Instruction &Site,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap,
-    const FastMathFlags &FMF, const SetVector<Value *> &subgraphInputs,
-    const BoundaryCastFreq &Boundary) {
-  ScratchFunction Scratch(*Site.getModule(), expr, FMF, valueToNodeMap,
-                          symbolToValueMap, subgraphInputs);
+static double priceRewrite(CostModelState &CM, PassBuilder &PB,
+                           const std::string &expr, Instruction &Site,
+                           FPGraph &G, const FastMathFlags &FMF,
+                           const SetVector<Value *> &subgraphInputs,
+                           const BoundaryCastFreq &Boundary) {
+  ScratchFunction Scratch(*Site.getModule(), expr, FMF, G, subgraphInputs);
   simplifyFunction(Scratch.function(), PB, OptimizationLevel::O3);
   BoundaryWeights weight(Scratch, Boundary);
   return getCompCost(CM, &Scratch.function(), weight, &Site);
 }
 
-BoundaryCastFreq RewriteUnit::boundaryCastFreq(
-    const LoopInfo &LI,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
-    const {
+BoundaryCastFreq RewriteUnit::boundaryCastFreq(const LoopInfo &LI) const {
+  const auto &valueToNodeMap = graph().valueToNodeMap;
   BoundaryCastFreq B;
   const Loop *L = LI.getLoopFor(cast<Instruction>(roots.front())->getParent());
   if (!L || executions == 0)
@@ -1781,8 +1746,8 @@ BoundaryCastFreq RewriteUnit::boundaryCastFreq(
 //===----------------------------------------------------------------------===//
 
 void RewriteUnit::materialize(size_t candidateIndex) {
-  auto &valueToNodeMap = graph().valueToNodeMap;
-  auto &symbolToValueMap = graph().symbolToValueMap;
+  FPGraph &G = graph();
+  auto &valueToNodeMap = G.valueToNodeMap;
   assert(candidateIndex < candidates.size() &&
          "the solver names one of the candidates");
   assert(all_of(roots,
@@ -1791,9 +1756,8 @@ void RewriteUnit::materialize(size_t candidateIndex) {
                 }) &&
          "a rewrite's outputs are in the site when it is materialized");
 
-  std::shared_ptr<FPNode> parsedNode =
-      cantFail(parseHerbieExpr(candidates[candidateIndex].expr, valueToNodeMap,
-                               symbolToValueMap, nullptr, &subgraph->inputs));
+  std::shared_ptr<FPNode> parsedNode = cantFail(parseHerbieExpr(
+      candidates[candidateIndex].expr, G, nullptr, &subgraph->inputs));
   std::optional<SmallVector<std::shared_ptr<FPNode>, 1>> elements =
       elementsOf(parsedNode, *this);
   if (!elements)
@@ -1833,7 +1797,7 @@ void RewriteUnit::materialize(size_t candidateIndex) {
           builder.CreateFPCast(newOutput, root->getType(), "herbie.fpcast");
 
     root->replaceAllUsesWith(newOutput);
-    symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
+    G.symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
     valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
         newOutput, nullptr, valueToNodeMap[root]->format);
   }
@@ -1932,13 +1896,11 @@ void RewriteUnit::price() {
   const FastMathFlags FMF = output->getFastMathFlags();
   DominatorTree DT(*st.F);
   LoopInfo LI(DT);
-  const BoundaryCastFreq Boundary = boundaryCastFreq(LI, st.valueToNodeMap);
+  const BoundaryCastFreq Boundary = boundaryCastFreq(LI);
   for (RewriteCandidate &c : candidates)
     c.CompCost = priceRewrite(session().CostModel, session().PB, c.expr,
-                              *output, st.valueToNodeMap, st.symbolToValueMap,
-                              FMF, subgraph->inputs, Boundary);
-  RewriteAccuracy(session().Opts, *this, st.valueToNodeMap, st.symbolToValueMap)
-      .price();
+                              *output, st, FMF, subgraph->inputs, Boundary);
+  RewriteAccuracy(session().Opts, *this, st).price();
 }
 
 void RewriteUnit::printPriced(raw_ostream &OS) {

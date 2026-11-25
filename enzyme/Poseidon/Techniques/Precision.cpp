@@ -491,10 +491,8 @@ scoreCandidate(const PTCandidate &candidate, ArrayRef<FPNode *> outputs,
 // mean error at the outputs over the subgraph's samples, and drops the
 // candidates that cannot be scored. With no usable sample the unit keeps the
 // subgraph as written.
-static void priceAccuracy(
-    const Options &O, PrecisionUnit &CS,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
-  SubgraphSamples &samples = samplesOf(O, *CS.subgraph, valueToNodeMap);
+static void priceAccuracy(const Options &O, PrecisionUnit &CS, FPGraph &G) {
+  SubgraphSamples &samples = samplesOf(O, *CS.subgraph, G);
   Expected<ArrayRef<SubgraphSamples::Point>> drawn = samples.points();
 
   auto unpriceable = [&](StringRef why) {
@@ -517,7 +515,7 @@ static void priceAccuracy(
   SmallVector<const SubgraphSamples::Reference *, 4> refs;
   SmallVector<std::optional<double>, 4> origErrors;
   for (Instruction *output : CS.subgraph->outputs) {
-    FPNode *node = valueToNodeMap[output].get();
+    FPNode *node = G.valueToNodeMap[output].get();
     outputs.push_back(node);
     CS.perOutputInitialAccCost[node] = 0.;
     refs.push_back(&samples.reference(node));
@@ -1037,15 +1035,13 @@ fmtTiers(ArrayRef<std::pair<PrecisionChangeType, int>> tierPcts) {
 // Records each operation's measured frequency in `subgraph`, so the baseline
 // walk and every candidate's weight each instruction by its own, snapped onto
 // the classes of loop depth the candidate walk sees.
-static void
-measureFrequencies(const Options &O, Function &F, Subgraph &subgraph,
-                   const std::unordered_map<Value *, std::shared_ptr<FPNode>>
-                       &valueToNodeMap) {
+static void measureFrequencies(const Options &O, Function &F,
+                               Subgraph &subgraph, const FPGraph &G) {
   DominatorTree freqDT(F);
   LoopInfo freqLI(freqDT);
   auto note = [&](Instruction *I) {
-    auto it = valueToNodeMap.find(I);
-    if (it == valueToNodeMap.end() || !it->second ||
+    auto it = G.valueToNodeMap.find(I);
+    if (it == G.valueToNodeMap.end() || !it->second ||
         it->second->executions == 0)
       return;
     uint64_t e = it->second->executions;
@@ -1209,20 +1205,20 @@ void TierSweep::threeTier(TierTriple tiers, ArrayRef<FPLLValue *> sortedAsc,
   }
 }
 
-void proposePrecisionCandidates(
-    Session &S, Function &F, Subgraph &subgraph,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const FunctionProfileHeader &profileHeader, bool expansionSafe,
-    SmallVectorImpl<PrecisionUnit> &CSs) {
+void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
+                                FPGraph &G,
+                                const FunctionProfileHeader &profileHeader,
+                                bool expansionSafe,
+                                SmallVectorImpl<PrecisionUnit> &CSs) {
   const Options &O = S.Opts;
-  const uint64_t o0Exec = valueToNodeMap[subgraph.outputs[0]]->executions;
+  const uint64_t o0Exec = G.valueToNodeMap[subgraph.outputs[0]]->executions;
 
   // Filled before CS is built, whose baseline walk reads them.
   subgraph.opExec.clear();
   subgraph.depthExec.clear();
   subgraph.execNormalizer = o0Exec;
   if (freqWeightedPricing(O))
-    measureFrequencies(O, F, subgraph, valueToNodeMap);
+    measureFrequencies(O, F, subgraph, G);
 
   PrecisionUnit CS(S.CostModel, subgraph);
   CS.executions = o0Exec;
@@ -1236,7 +1232,7 @@ void proposePrecisionCandidates(
   const std::unordered_set<std::string> &PTFuncs = getPTFuncs(S.CostModel, F);
   SetVector<FPLLValue *> funcsSet, allSet;
   for (Instruction *I : subgraph.operations) {
-    auto *node = cast<FPLLValue>(valueToNodeMap[I].get());
+    auto *node = cast<FPLLValue>(G.valueToNodeMap[I].get());
     allSet.insert(node);
     if (PTFuncs.count(operationName(*node)) != 0) {
       funcsSet.insert(node);
@@ -1513,7 +1509,7 @@ void PrecisionUnit::price() {
                  << " precision candidate(s) dropped, first because "
                  << firstWhy << '\n';
   candidates = std::move(priced);
-  priceAccuracy(session().Opts, *this, graph().valueToNodeMap);
+  priceAccuracy(session().Opts, *this, graph());
 }
 
 void PrecisionUnit::scaleErrors(double factor) {

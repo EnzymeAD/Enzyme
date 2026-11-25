@@ -115,10 +115,7 @@ public:
   bool isArray() const { return roots.size() > 1; }
 
   double getCompCostDelta(size_t candidateIndex);
-  BoundaryCastFreq boundaryCastFreq(
-      const llvm::LoopInfo &LI,
-      const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-          &valueToNodeMap) const;
+  BoundaryCastFreq boundaryCastFreq(const llvm::LoopInfo &LI) const;
 
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::R);
@@ -157,12 +154,10 @@ void reportHerbieAnswers(Session &S);
 // Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
 // `subgraphCounter`, appended to `COs` unpriced. Its inputs are named from
 // `symbolCounter`, which the site's subgraphs share.
-void proposeHerbieCandidates(
-    Session &S, llvm::Function &F, Subgraph &subgraph, int subgraphCounter,
-    int &symbolCounter,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    llvm::SmallVectorImpl<RewriteUnit> &COs);
+void proposeHerbieCandidates(Session &S, llvm::Function &F, Subgraph &subgraph,
+                             int subgraphCounter, int &symbolCounter,
+                             FPGraph &G,
+                             llvm::SmallVectorImpl<RewriteUnit> &COs);
 
 } // namespace poseidon
 #endif // POSEIDON_HERBIE_H

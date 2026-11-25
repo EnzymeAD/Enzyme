@@ -303,8 +303,7 @@ static constexpr StringLiteral kProjectionHead = "ref.";
 
 namespace {
 struct FPCoreParser {
-  std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
-  std::unordered_map<std::string, Value *> &symbolToValueMap;
+  FPGraph &G;
   SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs;
   const SetVector<Value *> *subgraphInputs;
 
@@ -340,7 +339,7 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
     return malformed("an empty expression", expr);
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#')
     if (std::shared_ptr<FPNode> node =
-            valueToNodeMap[symbolToValueMap[trimmedExpr]])
+            G.valueToNodeMap[G.symbolToValueMap[trimmedExpr]])
       return node;
   Expected<std::shared_ptr<FPNode>> literal = parseLiteral(trimmedExpr);
   if (!literal || *literal)
@@ -495,18 +494,16 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
 
   if (subgraphInputs)
     if (std::shared_ptr<FPNode> existing =
-            existingDefinition(*node, *subgraphInputs, valueToNodeMap))
+            existingDefinition(*node, *subgraphInputs, G))
       return existing;
   return node;
 }
 
 Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
-    StringRef expr,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    StringRef expr, FPGraph &G,
     SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
     const SetVector<Value *> *subgraphInputs) {
-  FPCoreParser P{valueToNodeMap, symbolToValueMap, approxSpecs, subgraphInputs};
+  FPCoreParser P{G, approxSpecs, subgraphInputs};
   Expected<std::shared_ptr<FPNode>> N = P.parse(expr, /*top=*/true);
   if (N && isBoolean(**N))
     return malformed("a truth value where a number is expected", expr);
@@ -890,16 +887,14 @@ static bool isRenderableFPCore(
 }
 
 SmallVector<std::string, 1>
-fpcoreToC(StringRef expr,
-          std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-          std::unordered_map<std::string, Value *> &symbolToValueMap,
-          const CRendering &how, StringRef resultDtype,
+fpcoreToC(StringRef expr, FPGraph &G, const CRendering &how,
+          StringRef resultDtype,
           SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
   SmallVector<std::string, 1> out;
-  if (!isRenderableFPCore(expr, symbolToValueMap))
+  if (!isRenderableFPCore(expr, G.symbolToValueMap))
     return out;
-  Expected<std::shared_ptr<FPNode>> parsed = parseHerbieExpr(
-      expr, valueToNodeMap, symbolToValueMap, approxSpecs, how.inputs);
+  Expected<std::shared_ptr<FPNode>> parsed =
+      parseHerbieExpr(expr, G, approxSpecs, how.inputs);
   if (!parsed) {
     consumeError(parsed.takeError());
     return out;

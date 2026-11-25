@@ -40,10 +40,8 @@ struct EvaluateFPCore : PassParent<EvaluateFPCore> {
     for (MDNode *Entry : Exprs->operands()) {
       std::string Expr =
           cast<MDString>(Entry->getOperand(0))->getString().str();
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
-      std::unordered_map<std::string, Value *> SymbolToValue;
-      std::shared_ptr<FPNode> Node =
-          cantFail(parseHerbieExpr(Expr, ValueToNode, SymbolToValue));
+      FPGraph G;
+      std::shared_ptr<FPNode> Node = cantFail(parseHerbieExpr(Expr, G));
       SmallVector<double, 1> Reference, Binary64;
       getMPFRValues({Node.get()}, {}, Reference);
       getFPValues({Node.get()}, {}, Binary64);
@@ -69,17 +67,15 @@ struct LowerFPCore : PassParent<LowerFPCore> {
       Function *Scratch = Function::Create(
           FunctionType::get(Type::getVoidTy(C), {Double, Double}, false),
           GlobalValue::InternalLinkage, "", M);
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
-      std::unordered_map<std::string, Value *> SymbolToValue;
+      FPGraph G;
       for (auto [Symbol, Arg] : zip(StringRef("xy"), Scratch->args())) {
         auto Node = std::make_shared<FPLLValue>(
             &Arg, nullptr, &formatOf(PrecisionChangeType::FP64));
         Node->symbol = std::string(1, Symbol);
-        ValueToNode[&Arg] = Node;
-        SymbolToValue[Node->symbol] = &Arg;
+        G.valueToNodeMap[&Arg] = Node;
+        G.symbolToValueMap[Node->symbol] = &Arg;
       }
-      std::shared_ptr<FPNode> Node =
-          cantFail(parseHerbieExpr(Expr, ValueToNode, SymbolToValue));
+      std::shared_ptr<FPNode> Node = cantFail(parseHerbieExpr(Expr, G));
       IRBuilder<> B(BasicBlock::Create(C, "entry", Scratch));
       Value *V = Node->getLLValue(B);
       B.CreateRet(V);
