@@ -50,6 +50,9 @@ namespace poseidon {
 struct Options;
 class Session;
 
+/// The thread axis a matrix index runs along: x, y or z; Unknown when no index
+/// is recorded, Other for an index of no thread axis, of three, or of two that
+/// do not fuse.
 enum class TidAxis : uint8_t {
   Unknown,
   TidX,
@@ -58,28 +61,37 @@ enum class TidAxis : uint8_t {
   Other,
 };
 
-// A matrix row or column index of the thread: tid[fast], or, fused from two
-// thread axes, tid[fast] + fuseMult * tid[slow], where fuseMult is the extent
-// of the fast axis.
+/// A matrix row or column index of the thread: tid[fast], or, fused from two
+/// thread axes, tid[fast] + fuseMult * tid[slow], where fuseMult is the extent
+/// of the fast axis.
 struct MatrixIndex {
+  /// The axis whose thread index steps the matrix index by one.
   TidAxis fast = TidAxis::Unknown;
+  /// The second axis of a fused index; Unknown for an index of one axis.
   TidAxis slow = TidAxis::Unknown;
+  /// What the slow axis's thread index is multiplied by, in units of the matrix
+  /// index; 0 for an index of one axis.
   unsigned fuseMult = 0;
+  /// Whether the index fuses two thread axes.
   bool fused() const { return slow != TidAxis::Unknown; }
 };
 
-// Exclusive upper bounds on the global thread index of each axis,
-// blockIdx.a * blockDim.a + threadIdx.a; 0 leaves the axis unbounded.
+/// Exclusive upper bounds on the global thread index of each axis,
+/// blockIdx.a * blockDim.a + threadIdx.a; 0 leaves the axis unbounded.
 struct ThreadIndexBounds {
+  /// Per axis x, y, z, the exclusive bound in threads of the grid; 0 for none.
   std::array<uint64_t, 3> ub = {0, 0, 0};
+  /// Whether some axis is bounded.
   bool any() const { return ub[0] || ub[1] || ub[2]; }
+  /// Lowers the bound of `axis` (0, 1 or 2) to `bound` unless it is already
+  /// lower.
   void tighten(unsigned axis, uint64_t bound) {
     if (!ub[axis] || bound < ub[axis])
       ub[axis] = bound;
   }
 };
 
-// The index (0, 1, 2) of a thread axis; none for Unknown and Other.
+/// The index (0, 1, 2) of a thread axis; none for Unknown and Other.
 inline std::optional<unsigned> tidAxisIndex(TidAxis a) {
   switch (a) {
   case TidAxis::TidX:
@@ -95,261 +107,361 @@ inline std::optional<unsigned> tidAxisIndex(TidAxis a) {
   return std::nullopt;
 }
 
+/// A constant-trip reduction loop that computes a matrix product. Its IR
+/// pointers are into the site's function and stay valid while that function is
+/// optimized.
 struct ScalarLoopHandle {
-  // Copied out of the LoopInfo of the recognition, which does not outlive it.
+  /// The loop's preheader, where the in-kernel raise is emitted. The blocks
+  /// are copied because the recognition's LoopInfo does not outlive the handle.
   llvm::BasicBlock *preheader = nullptr;
+  /// The loop's unique exit block, where the in-kernel raise reads the product
+  /// back.
   llvm::BasicBlock *exitBB = nullptr;
+  /// The blocks of the loop.
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> blocks;
+  /// The accumulating multiply-add, whose value after the latch is the product.
   llvm::Instruction *fma = nullptr;
+  /// The contractable multiply under `fma`; null when `fma` is llvm.fma or
+  /// llvm.fmuladd.
   llvm::Instruction *fmul = nullptr;
-  // The pointer operands of the A and B loads.
+  /// The pointer operands of the A and B loads.
   llvm::Value *aPtr = nullptr;
+  /// The pointer operand of the B load.
   llvm::Value *bPtr = nullptr;
 
-  // Per-thread addresses of A and B at the first iteration, including the
-  // blockIdx * blockDim term.
+  /// Per-thread addresses of A and B at the first iteration, including the
+  /// blockIdx * blockDim term.
   const llvm::SCEV *aStartSCEV = nullptr;
+  /// B's per-thread address at the first iteration.
   const llvm::SCEV *bStartSCEV = nullptr;
+  /// The analysis the two start addresses belong to, alive while the site's
+  /// function is optimized.
   llvm::ScalarEvolution *SE = nullptr;
 
-  // Set only when the profile header shows blockDim.z == 1.
+  /// Whether the profiled block has blockDim.z == 1.
   bool is2DBlock = false;
-  // Whether the in-kernel raise can take the place of the loop: every thread
-  // of the block runs the preheader, where it synchronizes the block, exactly
-  // once, and the loop's exit takes only the product from it.
+  /// Whether the in-kernel raise can take the place of the loop: every thread
+  /// of the block runs the preheader, where it synchronizes the block, exactly
+  /// once, and the loop's exit takes only the product from it.
   bool inKernelRaisable = false;
-  // The block shape the profile recorded, which the raise is laid out for.
+  /// The block shape the profile recorded, which the raise is laid out for.
   uint32_t profiledBlock[3] = {0, 0, 0};
-  // The guards a thread passes on its way to the loop: a block raises only
-  // when every one of its threads passes them.
+  /// The guards a thread passes on its way to the loop: a block raises only
+  /// when every one of its threads passes them.
   ThreadIndexBounds loopGuard;
 
-  // The thread index of A's row and of B's column.
+  /// The thread index of A's row and of B's column.
   MatrixIndex aRow, bCol;
 
-  // Threads per CTA from the profile header (0 = unknown). A block whose size
-  // is not a multiple of 32 has a partial last warp, in which the
-  // warp-collective wmma ops are undefined.
+  /// Threads per CTA in the profiled block (0 = unknown). A block whose size
+  /// is not a multiple of 32 has a partial last warp, in which the
+  /// warp-collective wmma ops are undefined.
   unsigned blockThreads = 0;
 
+  /// A's byte step per reduction iteration: one element.
   int64_t aStrideByte = 0;
+  /// B's byte step per reduction iteration: one element when B is K-contiguous,
+  /// a positive multiple of it when B is K-strided.
   int64_t bStrideByte = 0;
+  /// A's leading dimension in bytes: the byte step per unit of A's row index;
+  /// without one, the element size of A's outermost GEP when that is above one
+  /// element, else K elements.
   int64_t aLeadingDimByte = 0;
+  /// B's leading dimension in bytes: the byte step per unit of B's column index
+  /// when B is K-contiguous; otherwise as for A, from B's outermost GEP or K
+  /// elements.
   int64_t bLeadingDimByte = 0;
 };
 
-// One GEMM dimension (extent or leading dimension) as a monomial over launch
-// values of the optimized body:
-//     value = mul * factors[0] * factors[1] * ... + add
-// (no factors => the constant `add`), the form the host-side stub rewrite
-// evaluates from the launch arguments alone.
+/// One GEMM dimension (extent or leading dimension) as a monomial over launch
+/// values of the optimized body:
+///     value = mul * factors[0] * factors[1] * ... + add
+/// (no factors => the constant `add`), the form the host-side stub rewrite
+/// evaluates from the launch arguments alone.
 struct RuntimeDim {
+  /// The launch values multiplied together, in launch order; empty for a
+  /// constant.
   llvm::SmallVector<LaunchRef, 2> factors;
+  /// The coefficient of the product of `factors`.
   int64_t mul = 1;
+  /// The constant term; the whole value when `factors` is empty.
   int64_t add = 0;
+  /// The dimension that is `value` at every launch.
   static RuntimeDim constant(int64_t value) {
     RuntimeDim d;
     d.add = value;
     return d;
   }
+  /// Whether the dimension depends on no launch value.
   bool isConst() const { return factors.empty(); }
 };
 
+/// `d` as diagnostics and printed descriptors show it, a factor named `arg<i>`
+/// and a field of one `arg<i>[+<offset>]`.
 std::string runtimeDimString(const RuntimeDim &d);
 
-// The dimensions of a GEMM, in the order the dispatch entries take them.
+/// The dimensions of a GEMM, in the order the dispatch entries take them.
 enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
+/// The number of GemmDim values.
 constexpr unsigned kNumGemmDims = 6;
 
-// What a host-dispatch descriptor holds: launch values per dimension, assumed
-// equalities, and the magnitude of a dimension's constants and of its value,
-// an int of the dispatch entries.
+/// The most launch values one dimension of a descriptor multiplies.
 constexpr unsigned kMaxDimFactors = 8;
+/// The most pairs of assumed-equal launch values a descriptor holds.
 constexpr unsigned kMaxAssumedEqual = 16;
+/// The largest magnitude of a dimension's constants and of its value, the int a
+/// dispatch entry takes.
 constexpr int64_t kMaxDimConstant = INT32_MAX;
 
-// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
-// and runtime-dimension factors name parameters of the body until the
-// descriptor is written, and launch arguments of the wrapper kernel after.
+/// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
+/// and runtime-dimension factors name parameters of the body until the
+/// descriptor is written, and launch arguments of the wrapper kernel after.
 struct GemmBodyNote {
+  /// The parameters that hold C, A and B: of the optimized body until the
+  /// descriptor is written, of the wrapper kernel's launch after; -1 when
+  /// unknown.
   int cParam = -1, aParam = -1, bParam = -1;
-  // Byte offsets of the three operand pointers inside their parameter, when
-  // the parameter is a by-value aggregate; -1 when it is the pointer itself.
+  /// Byte offsets of the three operand pointers inside their parameter, when
+  /// the parameter is a by-value aggregate; -1 when it is the pointer itself.
   int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  // The selected variant's scheme, which names the host runtime entry, and
-  // its descriptorModulusField.
+  /// The selected variant's scheme, which names the host runtime entry, and
+  /// its descriptorModulusField.
   Scheme scheme = Scheme::OzakiII;
+  /// The descriptor's modulus field for `scheme` (descriptorModulusField); its
+  /// default means nothing until a library call is applied.
   unsigned numModuli = kOzakiIIMaxModuli;
   bool standalone = false; // body is a pure GEMM (only the C store)
+  /// Whether the recognizer derived every field; a note that is not valid is
+  /// never written.
   bool valid = false;
-  // M x Ncols x K and the leading dimensions (in elements) at deploy scale,
-  // indexed by GemmDim. The host stub evaluates a dimension with factors from
-  // the launch arguments, so a build profiled at one problem size runs at
-  // another.
+  /// M x Ncols x K and the leading dimensions (in elements) at deploy scale,
+  /// indexed by GemmDim. The host stub evaluates a dimension with factors from
+  /// the launch arguments, so a build profiled at one problem size runs at
+  /// another.
   RuntimeDim dims[kNumGemmDims];
+  /// Storage orders as the dispatch entries take them: A or B column-major has
+  /// its reduction index contiguous, C column-major its row index.
   bool aColMajor = false, bColMajor = false, cColMajor = false;
-  // 1 accumulates into C.
+  /// 1 accumulates into C.
   double beta = 0.0;
 
-  // Deploy extents recovered from the launch geometry: a dimension that does
-  // not track matrix order has no sound rescale from a surrogate profile. With
-  // `launchCrop` set, dims[DimM] and dims[DimNcols] are the constants gating
-  // the C store, and cropMAxis/cropNAxis name the thread axis each index runs
-  // along so the host stub takes extent = min(crop, gridDim * blockDim).
+  /// Deploy extents recovered from the launch geometry: a dimension that does
+  /// not track matrix order has no sound rescale from a surrogate profile. With
+  /// `launchCrop` set, dims[DimM] and dims[DimNcols] are the constants gating
+  /// the C store, and cropMAxis/cropNAxis name the thread axis each index runs
+  /// along so the host stub takes extent = min(crop, gridDim * blockDim).
   bool launchCrop = false;
   int cropMAxis = -1, cropNAxis = -1; // 0/1/2 = thread axis x/y/z
 
-  // Launch values the runtime-shape recognition assumed equal; the stub
-  // dispatches only when every pair agrees and launches the kernel otherwise.
+  /// Launch values the runtime-shape recognition assumed equal; the stub
+  /// dispatches only when every pair agrees and launches the kernel otherwise.
   llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
 };
 
-// A dense GEMM recognized from a thread-parallel reduction nest, whose extents
-// and leading dimensions are runtime expressions.
+/// A dense GEMM recognized from a thread-parallel reduction nest, whose extents
+/// and leading dimensions are runtime expressions.
 struct RuntimeGemmHandle {
-  // Chain members: the R reduction loops the contraction was split across by
-  // full unrolling of the outer contraction level (R = 1 when there was only
-  // one level). fmas[r] is member r's accumulating fma; fmuls[r] is its
-  // separate fmul, or null for an llvm.fmuladd.
+  /// Chain members: the R reduction loops the contraction was split across by
+  /// full unrolling of the outer contraction level (R = 1 when there was only
+  /// one level). fmas[r] is member r's accumulating fma.
   llvm::SmallVector<llvm::Instruction *, 8> fmas;
+  /// Per member, the separate multiply of fmas[r]; null for llvm.fma or
+  /// llvm.fmuladd.
   llvm::SmallVector<llvm::Instruction *, 8> fmuls;
+  /// Per member, the load of the operand the descriptor takes as A.
   llvm::SmallVector<llvm::LoadInst *, 8> aLoads;
 
-  // Epilogue: `C[..] (+)= acc`, null for a beta=0 store.
+  /// Epilogue: `C[..] (+)= acc`, null for a beta=0 store.
   llvm::Instruction *epilogue = nullptr;
+  /// The store of the product into C.
   llvm::StoreInst *cStore = nullptr;
 
-  // The library-call descriptor, every field derived from the nest.
+  /// The library-call descriptor, every field derived from the nest.
   GemmBodyNote library;
 };
 
+/// A matrix product recognized in a site's function, with the handle of the
+/// recognizer that found it. Its IR pointers are into that function and stay
+/// valid while it is optimized.
 struct AbstractMatmul {
+  /// The product's index among the products of its function, `matmul[id]` in
+  /// diagnostics.
   unsigned id = ~0u;
 
+  /// The extents in elements the accuracy model simulates and an in-kernel
+  /// raise tiles: M x N is the output tile of one CTA at the profiled block
+  /// shape; K is the compile-time trip count of a constant-shape product and
+  /// the profile-scale reduction length of a runtime-shape one. ~0u until
+  /// recognized.
   unsigned M = ~0u, N = ~0u, K = ~0u;
 
-  // Global launch geometry from the profile; M/N above are the per-CTA tile.
-  // 0 = unknown.
+  /// Global launch geometry from the profile; M/N above are the per-CTA tile.
+  /// 0 = unknown.
   unsigned gridCTAs = 0;             // CTAs the in-kernel launch issues
   unsigned globalM = 0, globalN = 0; // full GEMM output extent
-  // Profile-scale reduction length, so that with globalM/globalN the shape is
-  // at one scale. 0 = unavailable, and the compile-time trip count K is used.
+  /// Profile-scale reduction length, so that with globalM/globalN the shape is
+  /// at one scale. 0 = unavailable, and the compile-time trip count K is used.
   unsigned globalK = 0;
 
-  // The type of A, B, the accumulator and the result.
+  /// The type of A, B, the accumulator and the result.
   FPKind elemType = FPKind::Invalid;
 
+  /// Which recognizer found the product.
   enum class Origin {
+    /// A constant-trip reduction loop whose output rows and columns are thread
+    /// indices (see ScalarLoopHandle); either realization.
     ScalarLoopReduction,
-    // A dense GEMM whose M / Ncols / K and leading dimensions are runtime
-    // expressions over the kernel's arguments, contracted across one or more
-    // reduction loops (see RuntimeGemmHandle). Host dispatch only: an in-kernel
-    // raise needs compile-time tile extents.
+    /// A dense GEMM whose M / Ncols / K and leading dimensions are runtime
+    /// expressions over the kernel's arguments, contracted across one or more
+    /// reduction loops (see RuntimeGemmHandle). Host dispatch only: an
+    /// in-kernel raise needs compile-time tile extents.
     HostGemmLoopNest,
   };
+  /// Which of `scalarLoop` and `hostGemm` describes the product.
   Origin origin = Origin::ScalarLoopReduction;
 
+  /// The loop of a ScalarLoopReduction product; empty for the other origin.
   ScalarLoopHandle scalarLoop;
+  /// The nest of a HostGemmLoopNest product; null for the other origin.
   std::shared_ptr<RuntimeGemmHandle> hostGemm;
 
+  /// The instructions a realization replaces: the blocks of the reduction loops
+  /// and, for a runtime-shape product, its epilogue fadd.
   llvm::SetVector<llvm::Instruction *> footprint;
+  /// The product's value: the last member's multiply-add, read after its loop.
   llvm::Value *outputValue = nullptr;
 };
 
-// Recognize dense GEMMs written as thread-parallel reduction nests with runtime
-// dimensions (Origin::HostGemmLoopNest) among the loops no matmul in `out`
-// already claims. Appends only matmuls whose whole descriptor (extents,
-// leading dimensions, layouts, beta and the profile-scale shape) could
-// be reconstructed; every other nest is skipped with a printed reason.
+/// Recognize dense GEMMs written as thread-parallel reduction nests with
+/// runtime dimensions (Origin::HostGemmLoopNest) among the loops no matmul in
+/// `out` already claims. Appends only matmuls whose whole descriptor (extents,
+/// leading dimensions, layouts, beta and the profile-scale shape) could be
+/// reconstructed; every other nest is skipped with a printed reason.
 void findHostGemmLoopNests(const Options &O, llvm::Function &F,
                            llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            const ProfileMap &prof,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
-// Recognize the constant-trip reduction loops of F that compute a matrix
-// product (Origin::ScalarLoopReduction), with the per-CTA extents and the
-// launch geometry from `profileHeader`.
+/// Recognize the constant-trip reduction loops of F that compute a matrix
+/// product (Origin::ScalarLoopReduction), with the per-CTA extents and the
+/// launch geometry from `profileHeader`.
 void findScalarLoopMatmuls(const Options &O, llvm::Function &F,
                            llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
-// Profile generation only: the reduction trip counts (profile-scale) of the
-// scalar-loop matmuls of one profiled clone, as (fma probe index, trip) pairs
-// for the clone's profile header, so the profile-use compile sees the shape
-// at one scale. Must run on the clone without probes, which break the
-// reduction shape.
+/// Profile generation only: the reduction trip counts (profile-scale) of the
+/// scalar-loop matmuls of one profiled clone, as (fma probe index, trip) pairs
+/// for the clone's profile header, so the profile-use compile sees the shape
+/// at one scale. Must run on the clone without probes, which break the
+/// reduction shape.
 void collectScalarLoopReductionTrips(
     const Options &O, llvm::Function &F,
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
 
+/// A site of a joint solve whose library-call descriptor is written after
+/// materialization: the kernel it is launched through and how the body's
+/// parameters map to that kernel's arguments.
 struct PendingGemm {
+  /// The name of the wrapper kernel in the module.
   std::string wrapperName;
   std::vector<int> paramToArg; // body-param index -> wrapper launch-arg index
 };
 
+/// A tensor-core instruction shape the cost model prices.
 struct WmmaTarget {
+  /// The tile extents in elements.
   unsigned M, N, K;
+  /// The operand format.
   FPKind inputPrec;
+  /// The accumulator format.
   FPKind accPrec;
 };
 
-// What the matrix-product pipeline records over a compile.
+/// What the matrix-product pipeline records over a compile.
 struct MatmulState {
-  // The GEMM note of each optimized body clone, keyed by the clone.
+  /// The GEMM note of each optimized body clone, keyed by the clone.
   std::map<const llvm::Function *, GemmBodyNote> GemmBodies;
-  // In the order the sites were split, so that of two sites of one wrapper the
-  // same one is recorded last in every compile.
+  /// In the order the sites were split, so that of two sites of one wrapper the
+  /// same one is recorded last in every compile.
   llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;
 
-  // The tensor-core shapes the cost model prices, and the warnings already
-  // given.
+  /// The tensor-core shapes the cost model prices, read at their first use in
+  /// a compile.
   std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
-  // The cost-model rows a missing-row warning has named.
+  /// The cost-model rows a missing-row warning has named.
   llvm::StringSet<> ReportedRows;
-  // Whether -poseidon-print has said that this build has no TCEC runtime.
+  /// Whether -poseidon-print has said that this build has no TCEC runtime.
   bool ReportedNoTcecRuntime = false;
 };
 
+/// The optimization unit of one matrix product: its candidates, each a scheme
+/// realized in the kernel or as a library call, priced per MAC of the product.
 class MatmulUnit : public SiteUnit {
 public:
+  /// One candidate: a scheme variant, its realization, its tile, its price and
+  /// its accuracy.
   struct Option {
+    /// The tensor-core tile in elements of an in-kernel raise; for a library
+    /// call, the tile its runtime accumulates in, whose K the accuracy model
+    /// may take as the order of the sum. ~0u when unset.
     unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
+    /// The scheme, its formats and its parameter.
     SchemeVariant variant;
+    /// Where the scheme runs.
     Realization realization = Realization::InKernel;
 
-    // Per-MAC reciprocal-throughput cost in cost-model units; the solver puts
-    // the change over the profiled MACs on its axis.
+    /// The candidate's cost per MAC of the product in cost-model units
+    /// (reciprocal throughput), comparable with initialCompCost; -1 unpriced.
     double compCost = -1.0;
+    /// The mean over the sampled operands of the absolute error of the
+    /// simulated output tile, weighted by the profiled gradient; unnormalized,
+    /// it only ranks candidates.
     double accuracyCost = 0.0;
-    // Relative domain error (sensitivity-weighted, normalized) at the
-    // confidence percentile, comparable to a domain tolerance; accuracyCost
-    // is an unnormalized sum that only ranks candidates.
+    /// Relative domain error (sensitivity-weighted, normalized) at the
+    /// confidence percentile, comparable to a domain tolerance; accuracyCost
+    /// is an unnormalized sum that only ranks candidates.
     double domainError = 0.0;
   };
 
+  /// An empty unit; `matmul` is set before it is solved.
   MatmulUnit() : SiteUnit(UnitKind::M) {}
 
+  /// The product; it belongs to its function's recognition results, which
+  /// outlive the unit.
   AbstractMatmul *matmul = nullptr;
-  // The descriptor of the product's library call, when it has one.
+  /// The descriptor of the product's library call, when it has one.
   std::optional<GemmBodyNote> library;
-  double initialCompCost = -1.0; // per-MAC cost of the baseline (naive) matmul
-  // Profiled total MAC count; deploy-size profiles exceed 2^32.
+  /// The cost per MAC of the loop as written in cost-model units: one
+  /// iteration's reciprocal throughputs (for a runtime-shape product, one
+  /// member's iteration and the epilogue spread over K).
+  double initialCompCost = -1.0;
+  /// The product's MACs over the profiling run, at profile scale; a profile at
+  /// deploy size exceeds 2^32.
   uint64_t executions = 0;
+  /// The candidates, indexed as the solver indexes them.
   llvm::SmallVector<Option, 8> candidates;
-  // Candidates this build cannot offer, by name, each with why.
+  /// Candidates this build cannot offer, by name, each with why.
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
+  /// The cost of candidate `idx` over the profiling run, less the loop's as
+  /// written: the change of its per-MAC cost times `executions`, in cost-model
+  /// units.
   double getCompCostDelta(size_t idx) const {
     return (candidates[idx].compCost - initialCompCost) * (double)executions;
   }
+  /// The accuracy cost of candidate `idx`; the loop as written has none.
   double getAccCostDelta(size_t idx) const {
     return candidates[idx].accuracyCost;
   }
 
+  /// Realizes candidate `candidateIndex` in place of the product. An error is a
+  /// user error the realization finds, such as a second library call for one
+  /// body.
   llvm::Error apply(Session &S, size_t candidateIndex);
 
+  /// Whether `U` is a MatmulUnit, for isa and dyn_cast.
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::M);
   }
@@ -360,7 +472,7 @@ public:
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
     return getAccCostDelta(i);
   }
-  // A raise replaces the loop that computes the product.
+  /// A raise replaces the loop that computes the product.
   bool consumesFootprint() const override { return true; }
   const llvm::SetVector<llvm::Instruction *> *footprint() const override {
     return matmul ? &matmul->footprint : nullptr;
@@ -380,19 +492,23 @@ public:
   std::string selectionText(size_t i) const override;
 };
 
+/// The label of `opt` in candidate names and diagnostics.
 std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
-// `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
-// B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
+/// Appends to `out` a unit with priced candidates for each product of
+/// `matmuls` the profiling run executed. `sampleLogBits`: 0 samples operands
+/// uniformly over the profiled [min, max]; B > 0 log-uniformly in magnitude
+/// over [maxMag * 2^-B, maxMag]. An error is a user error about the profile or
+/// the cost model.
 llvm::Error generateMatmulCandidates(Session &S,
                                      llvm::ArrayRef<AbstractMatmul> matmuls,
                                      const ProfileMap &scalarProfile,
                                      unsigned sampleLogBits,
                                      llvm::SmallVectorImpl<MatmulUnit> &out);
 
-// Per matmul, pick the cheapest candidate whose estimated relative domain error
-// is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at
-// baseline in this mode.
+/// Per matmul, pick the cheapest candidate whose estimated relative domain
+/// error is <= `budget` and that beats the F64 baseline; scalar subgraphs are
+/// left at baseline in this mode.
 llvm::SmallVector<SolutionStep>
 errorBudgetSelector(const Options &O, llvm::SmallVectorImpl<MatmulUnit> &CMs,
                     double budget);
