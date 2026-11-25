@@ -129,9 +129,7 @@ static Expected<HerbieRunOptions> herbieRunOptions(Session &S,
                                                    const Function &F) {
   const Options &O = S.Opts;
   HerbieRunOptions Opts;
-  Opts.Program = O.Herbie.HerbieBinary.empty()
-                     ? std::string(POSEIDON_HERBIE_DEFAULT_BINARY)
-                     : O.Herbie.HerbieBinary;
+  Opts.Program = herbieProgram(O.Herbie);
   Opts.CacheOnly = !sys::fs::exists(Opts.Program);
   Expected<const HerbiePlatform *> Platform = herbiePlatform(S, F);
   if (!Platform)
@@ -327,10 +325,9 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
                                       : "the cache " + Opts.CacheDir +
                                             " holds no Herbie answer") +
               " for " + RunLabel +
-              (Opts.Program.empty()
-                   ? ", and this Poseidon was built without Herbie"
-                   : ", and the Herbie at " + Opts.Program + " cannot run (" +
-                         R.Failure + ")") +
+              (Opts.Program.empty() ? ", and " + kBuiltWithoutHerbie.str()
+                                    : ", and the Herbie at " + Opts.Program +
+                                          " cannot run (" + R.Failure + ")") +
               ". Point -poseidon-herbie-binary at a Herbie, or turn algebraic "
               "rewriting off with -poseidon-enable-rewrite=0.");
     if (!R.Warning.empty())

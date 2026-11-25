@@ -177,6 +177,8 @@ static Error proposeSubgraphCandidates(Session &S, Function &F,
   int symbolCounter = 0;
   int subgraphCounter = 0;
 
+  if (O.Candidates.RewritesLackHerbie && !subgraphs.empty())
+    remarkNoHerbie(S, F);
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 

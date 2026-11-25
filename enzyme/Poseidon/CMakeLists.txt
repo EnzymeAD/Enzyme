@@ -368,7 +368,7 @@ add_subdirectory(tools)
 
 # The Herbie the pass runs by default (tools/CMakeLists.txt).
 set_source_files_properties(
-  Techniques/Rewrite/Rewrite.cpp
+  Pass/Options.cpp
   PROPERTIES
     COMPILE_DEFINITIONS
     POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")

@@ -8,7 +8,8 @@
 //
 // One field per -poseidon-* flag of Options.def, in the struct of the flag's
 // group. A field's initializer is its flag's default, so a default-constructed
-// Options is a compile given no flag.
+// Options is a compile given no flag, except that readOptions turns algebraic
+// rewriting off when no Herbie can run and the flag was not given.
 //
 //===----------------------------------------------------------------------===//
 
@@ -102,6 +103,10 @@ struct ProfilingOptions {
 struct CandidateOptions {
 #define POSEIDON_CANDIDATE_OPTION POSEIDON_FIELD
 #include "Options.def"
+
+  /// EnableRewrites is off because no Herbie can run, not because the flag
+  /// said so.
+  bool RewritesLackHerbie = false;
 };
 
 /// The accuracy target, the cost budget, how the DP searches, and the rewrites
@@ -150,6 +155,10 @@ struct Options {
 
 /// The options of this compile, read from the -poseidon-* flags.
 Options readOptions();
+
+/// The Herbie a compile runs: -poseidon-herbie-binary, else the one the build
+/// was configured with; empty when there is neither.
+std::string herbieProgram(const HerbieOptions &H);
 
 /// The first mistake in the flags' values: a flag outside its choices, or a
 /// number flag a solve reads that was given no number or an impossible one. A

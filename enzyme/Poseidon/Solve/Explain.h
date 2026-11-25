@@ -103,6 +103,10 @@ void explainUnprofiled(Session &S, llvm::Function &F, double tau,
                        bool siteTarget, llvm::StringRef status,
                        llvm::StringRef cause, llvm::StringRef profile);
 
+/// The missed-optimization remark, once per compile, that no algebraic
+/// rewrite is proposed because no Herbie can run.
+void remarkNoHerbie(Session &S, llvm::Function &F);
+
 /// Remarks and the explanation of the solve of the site of `st`; an operation
 /// of a subgraph the cost model has no row for is an error.
 llvm::Error explainSolve(Session &S, llvm::Function &F, SiteState &st,

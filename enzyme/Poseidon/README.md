@@ -17,11 +17,14 @@ Project website: <https://prontolab.github.io/numerics/>
 Poseidon needs LLVM 21 or newer, built with clang, and MPFR and GMP. Its
 algebraic rewrites run Herbie: `-DPOSEIDON_HERBIE_BINARY=<herbie>` names a
 prebuilt one, and `-DPOSEIDON_BUILD_HERBIE=ON` builds it from source, which
-takes Rust and Racket. The CUDA runtimes are built when CMake finds a CUDA
-toolkit; the HIP runtimes when `-DPOSEIDON_ROCM_PATH=<rocm>` names a ROCm
-installation, for the processor `-DPOSEIDON_AMDGPU_ARCH` names (default
-`gfx942`); the error-corrected GEMM runtime when
-`-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` names a built cuMpSGEMM.
+takes Rust and Racket. A build without Herbie proposes no algebraic rewrites
+and says so in a remark (`-Rpass-missed=poseidon`); asking for them with
+`-poseidon-enable-rewrite` is then an error, unless the `-poseidon-cache`
+directory holds Herbie's answers from another build. The CUDA runtimes are
+built when CMake finds a CUDA toolkit; the HIP runtimes when
+`-DPOSEIDON_ROCM_PATH=<rocm>` names a ROCm installation, for the processor
+`-DPOSEIDON_AMDGPU_ARCH` names (default `gfx942`); the error-corrected GEMM
+runtime when `-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` names a built cuMpSGEMM.
 
 ```sh
 cmake -G Ninja -S enzyme -B build \

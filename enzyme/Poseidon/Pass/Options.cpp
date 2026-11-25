@@ -32,6 +32,11 @@ template <typename T> static std::string value(T v) {
   return std::to_string(v);
 }
 
+std::string herbieProgram(const HerbieOptions &H) {
+  return H.HerbieBinary.empty() ? POSEIDON_HERBIE_DEFAULT_BINARY
+                                : H.HerbieBinary;
+}
+
 FlagValues solveFlagValues(const Options &O) {
   FlagValues out;
 #define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key, ...) \

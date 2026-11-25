@@ -1842,6 +1842,22 @@ void explainUnprofiled(Session &S, Function &F, double tau, bool siteTarget,
   explainLeftAlone(S, F, tau, siteTarget, status, cause, profile);
 }
 
+void remarkNoHerbie(Session &S, Function &F) {
+  if (S.Herbie.LackReported)
+    return;
+  S.Herbie.LackReported = true;
+  const std::string program = herbieProgram(S.Opts.Herbie);
+  OptimizationRemarkEmitter ORE(&F);
+  ORE.emit([&]() {
+    OptimizationRemarkMissed R(kPass, "NoHerbie", siteLocation(S, F),
+                               &F.getEntryBlock());
+    R << "Poseidon proposes no algebraic rewrites: "
+      << (program.empty() ? kBuiltWithoutHerbie.str()
+                          : "there is no Herbie at " + program);
+    return R;
+  });
+}
+
 Error explainSolve(Session &S, Function &F, SiteState &st,
                    ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
   const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);

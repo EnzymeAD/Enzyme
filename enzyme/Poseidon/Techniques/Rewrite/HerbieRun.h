@@ -87,6 +87,12 @@ std::string readFileDigest(llvm::StringRef Path);
 /// The digests of the Herbie binaries a compile ran, by path.
 using HerbieBinaryDigests = std::map<std::string, std::string>;
 
+/// Why a build configured without Herbie has none to run, and how to give it
+/// one.
+inline constexpr llvm::StringLiteral kBuiltWithoutHerbie =
+    "this Poseidon was built without Herbie (configure it with "
+    "-DPOSEIDON_HERBIE_BINARY=<herbie> or -DPOSEIDON_BUILD_HERBIE=ON)";
+
 /// What a compile keeps between its Herbie runs: the platform Herbie searches
 /// against, derived from the cost model once it is resolved, and the digest of
 /// each Herbie binary run.
@@ -99,6 +105,8 @@ struct HerbieRunState {
   HerbieBinaryDigests HerbieDigests;
   /// The answers searches took, by origin, since they were last reported.
   unsigned Cached = 0, Fresh = 0;
+  /// Whether the compile has said it proposes no rewrites for want of a Herbie.
+  bool LackReported = false;
 };
 
 /// How one Herbie run went and what it answered.

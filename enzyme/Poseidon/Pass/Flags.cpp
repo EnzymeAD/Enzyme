@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Regex.h"
 
 #include <cmath>
@@ -121,6 +122,14 @@ Options readOptions() {
         std::pair(&flags::ProfileUse, &O.Profiling.ProfileUse)})
     if (flag->getNumOccurrences() && dir->empty())
       *dir = kDefaultProfileDir.str();
+  // Rewriting runs Herbie: left to its default, it is off when no Herbie can
+  // run, except under -poseidon-strict-mode, where a missing Herbie stays an
+  // error.
+  if (!flags::EnableRewrites.getNumOccurrences() && !O.Model.StrictMode &&
+      !sys::fs::exists(herbieProgram(O.Herbie))) {
+    O.Candidates.EnableRewrites = false;
+    O.Candidates.RewritesLackHerbie = true;
+  }
   std::vector<unsigned> &terms = O.Herbie.HerbieNumTaylorTerms;
   llvm::sort(terms);
   terms.erase(llvm::unique(terms), terms.end());

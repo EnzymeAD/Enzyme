@@ -82,7 +82,8 @@ POSEIDON_PROFILING_OPTION(
 // Candidate classes.
 POSEIDON_CANDIDATE_OPTION(EnableRewrites, Bool, true, "poseidon-enable-rewrite",
                           Hidden, SolveInput, "",
-                          "Use Herbie to rewrite floating-point expressions")
+                          "Use Herbie to rewrite floating-point expressions "
+                          "(default: on when a Herbie can run)")
 POSEIDON_CANDIDATE_OPTION(EnablePrecision, Bool, true,
                           "poseidon-enable-precision", Hidden, SolveInput, "",
                           "Propose precision changes of floating-point "

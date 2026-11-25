@@ -277,11 +277,12 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
         inconvertibleErrorCode(),
         "no Herbie answer for " + Label + " is cached in " + cache.answerPath +
             ", and " +
-            (Opts.Program.empty() ? "this Poseidon was built without Herbie"
-                                  : "there is no Herbie at " + Opts.Program) +
-            " to compute it. Compute the answer on a machine with Herbie and "
-            "copy its -poseidon-cache directory here, or turn algebraic "
-            "rewriting off with -poseidon-enable-rewrite=0.");
+            (Opts.Program.empty()
+                 ? kBuiltWithoutHerbie.str()
+                 : "there is no Herbie at " + Opts.Program + " to compute it") +
+            ". Compute the answer on a machine with Herbie and copy its "
+            "-poseidon-cache directory here, or turn algebraic rewriting off "
+            "with -poseidon-enable-rewrite=0.");
   return std::nullopt;
 }
 

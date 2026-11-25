@@ -65,5 +65,5 @@ set(POSEIDON_HERBIE_BINARY_PATH "${POSEIDON_HERBIE_BINARY_PATH}"
 if(POSEIDON_HERBIE_BINARY_PATH)
   message(STATUS "Poseidon: herbie = ${POSEIDON_HERBIE_BINARY_PATH}")
 else()
-  message(STATUS "Poseidon: no default Herbie")
+  message(STATUS "Poseidon: no Herbie, so no algebraic rewrites by default")
 endif()
