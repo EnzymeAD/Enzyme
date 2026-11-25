@@ -46,11 +46,10 @@
     }                                                                          \
   } while (0)
 
-// The name and signature are those of the GEMM site whose profile --profile
-// names, written at a small size, so that profile is the one this harness
-// enumerates candidates from: reverse-mode AD of a K=N reduction does not
-// survive on this translation unit, and the profile only decides which
-// candidates exist, never what they measure.
+/// The GEMM site, by the name poseidon-calibrate finds its profile under. The
+/// profile is recorded at a small -DCAL_N, since reverse-mode AD of a K=N
+/// reduction does not survive at the timed size, and decides only which
+/// candidates exist, never what they measure.
 POSEIDON_OPTIMIZE __global__ void matmul_opt(double *C, const double *A,
                                              const double *B) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;

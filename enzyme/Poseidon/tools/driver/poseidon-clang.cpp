@@ -6,17 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Three user actions, modelled on clang's PGO:
-//
-//   poseidon-clang++ -poseidon-profile-generate app.cu -o app
-//   poseidon-probe -- ./app small_problem
-//   poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
-//
-// The driver execs the clang the plugins were built against with Poseidon's
-// pass plugin, and Enzyme's after it to generate a profile, Poseidon's include
-// directory, and the runtime libraries the selected action requires. Every
-// other -poseidon-<flag> reaches the pass as -Xclang -mllvm -Xclang
-// -poseidon-<flag>.
+// Runs the clang the plugins were built against with Poseidon's plugin,
+// Enzyme's to generate a profile, Poseidon's header directory and the runtimes
+// the action links. A -poseidon-<flag> reaches the pass as
+// -Xclang -mllvm -Xclang -poseidon-<flag>.
 //
 //===----------------------------------------------------------------------===//
 
@@ -66,30 +59,30 @@ using clang::driver::getDriverOptTable;
 
 using namespace llvm;
 
-// A mistake in what the driver is given, in the form the pass reports one in:
-// `<driver>: error: Poseidon: <message>`, exit status 1.
+/// Reports a mistake in what the driver is given as the pass reports one,
+/// `<driver>: error: Poseidon: <message>`, and returns exit status 1.
 static int userError(StringRef Prog, const Twine &Message) {
   errs() << Prog << ": error: Poseidon: " << Message << '\n';
   return 1;
 }
 
-// The environment variable `Name`, or `Fallback` where it is unset or empty.
+/// The environment variable `Name`, or `Fallback` where it is unset or empty.
 static std::string envOr(StringRef Name, StringRef Fallback) {
   std::optional<std::string> Value = sys::Process::GetEnv(Name);
   return Value && !Value->empty() ? *Value : Fallback.str();
 }
 
-// `Rel` under the installation prefix `Prefix`.
+/// `Rel` under the installation prefix `Prefix`.
 static std::string underPrefix(StringRef Prefix, const Twine &Rel) {
   SmallString<256> P(Prefix);
   sys::path::append(P, Rel);
   return std::string(P);
 }
 
-// The toolkit a GPU runtime is linked from: the one given, else the one
-// Poseidon was built against (none if it was built without), which has to be
-// on this machine. `GivenBy` names the environment variable that gave it; a
-// path on the command line clang checks itself where it needs one.
+/// The root of the GPU toolkit a link takes its runtime from: `Given`, else
+/// `Built`, the one Poseidon was built against, which has to be on this
+/// machine. A `Given` from the environment variable `GivenBy` has to be a
+/// directory; clang checks a path on the command line itself.
 static Expected<std::string> toolkitRoot(StringRef Toolkit, StringRef Given,
                                          StringRef GivenBy, StringRef Built,
                                          StringRef How) {
@@ -105,18 +98,21 @@ static Expected<std::string> toolkitRoot(StringRef Toolkit, StringRef Given,
                            Built + ", is not on this machine; " + How);
 }
 
+/// Prints -poseidon-help.
 static void printHelp(StringRef Prog) {
   outs()
       << Prog
       << ": clang with the Poseidon pass plugins loaded.\n\n"
          "  1. compile with -poseidon-profile-generate\n"
-         "  2. run the program on a small problem: it writes its profile to\n"
+         "  2. run the program on a small problem; it writes its profile to\n"
          "     POSEIDON_PROFILE_DIR (default " POSEIDON_DEFAULT_PROFILE_DIR
-         ");\n"
-         "     poseidon-probe -- <program> also measures the condition "
-         "numbers\n"
-         "     the accuracy model needs, in 1 + 3 x <sites> more runs\n"
-         "  3. compile with -poseidon-profile-use\n"
+         "). A program\n"
+         "     that declares its result with poseidon_metric runs under\n"
+         "     poseidon-probe -- <program>, which measures each site's\n"
+         "     condition number against it in 1 + 3 x <sites> more runs\n"
+         "  3. compile with -poseidon-profile-use, which prices candidates\n"
+         "     from the cost model poseidon-calibrate measured for the\n"
+         "     target device\n"
          "Profiling a host function needs glibc, whose __libc_malloc the\n"
          "profiler wraps to record heap extents.\n\n"
          "  -poseidon-profile-generate    instrument the annotated sites and\n"
@@ -149,11 +145,13 @@ static void printHelp(StringRef Prog) {
          "it, reaches the pass as -Xclang -mllvm -Xclang -poseidon-<flag>.\n"
          "POSEIDON_PLUGIN and ENZYME_PLUGIN override the plugin paths baked\n"
          "in at build time; POSEIDON_ECHO=1 prints the clang command line\n"
-         "this driver runs.\n";
+         "this driver runs. Every -poseidon-<flag> is listed by\n"
+         "  "
+      << Prog << " -mllvm -help-hidden -c -x c /dev/null\n";
 }
 
-// The name and value of a Poseidon flag, -poseidon-<flag>[=<value>] or
-// --poseidon-<flag>[=<value>].
+/// The `<flag>[=<value>]` of -poseidon-<flag>[=<value>] or
+/// --poseidon-<flag>[=<value>].
 static std::optional<StringRef> poseidonFlag(StringRef A) {
   if (A.consume_front("-") &&
       (A.consume_front("-poseidon-") || A.consume_front("poseidon-")))
@@ -161,8 +159,7 @@ static std::optional<StringRef> poseidonFlag(StringRef A) {
   return std::nullopt;
 }
 
-// Whether the argument names the translation unit itself, written as a
-// Poseidon flag or as the value of an option that forwards it.
+/// Whether the argument is -poseidon-unit, bare or as the value of -mllvm=.
 static bool namesUnit(StringRef A) {
   A.consume_front("-mllvm=");
   return A.consume_front("-") &&
@@ -172,22 +169,26 @@ static bool namesUnit(StringRef A) {
 }
 
 namespace {
-// What clang makes of a command line, read from the compilation its driver
-// builds for it, which runs no job.
+/// What clang makes of a command line.
 struct Invocation {
-  // Whether clang compiles or links an input, and whether the product is a
-  // linked image.
+  /// Whether clang compiles or links an input, and whether it links an image.
   bool HasInput = false, Links = false;
+  /// Whether it offloads to CUDA or HIP.
   bool CUDA = false, HIP = false;
-  // An input in a C++ language, CUDA and HIP among them, and an input in any
-  // language at all.
+  /// Whether an input is C++ (CUDA and HIP among them), and whether one is not
+  /// an object.
   bool CXX = false, Source = false;
+  /// The values of --cuda-path, --rocm-path, --hip-path and -stdlib.
   std::string CudaPath, RocmPath, HipPath, StdLib;
-  // The first argument of a compile job that lets the code generator fuse or
-  // reorder floating-point operations across statements, if any.
+  /// The first compile-job argument that lets the code generator fuse or
+  /// reorder floating-point operations across statements, or empty.
   std::string LooseFP;
 };
 } // namespace
+
+/// Reads `Argv` the way clang's driver would, from the compilation it builds
+/// without running a job. A command line clang rejects reads as one with no
+/// input: clang reports it when the driver runs it.
 
 static Invocation analyze(StringRef Clang, ArrayRef<const char *> Argv) {
   using namespace clang::driver;
@@ -234,20 +235,18 @@ static Invocation analyze(StringRef Clang, ArrayRef<const char *> Argv) {
 }
 
 namespace {
-// The user's arguments with every Poseidon flag in the form clang hands to the
-// pass, and the action they ask for.
+/// The user's arguments, with every Poseidon flag in the form clang hands to
+/// the pass, and the action they ask for.
 struct Request {
   SmallVector<std::string, 0> User;
   bool ProfileGenerate = false, ProfileUse = false;
 };
 } // namespace
 
-// The Poseidon flags of `Args`, found where clang's option table puts each
-// argument (`Parsed`): bare, which clang does not know, or as the value of
-// -mllvm. clang hands -Xclang to each of its compile jobs and to nothing else,
-// so the flag reaches every compiler that loads the plugin and never a linker,
-// and a line that only links is not warned about it. A flag a user already
-// wrote as -Xclang -mllvm -Xclang -poseidon-<flag> is left as it is.
+/// `Args` with each Poseidon flag as -Xclang -mllvm -Xclang -poseidon-<flag>:
+/// one clang's option table (`Parsed`) does not know, or the value of -mllvm.
+/// A flag already written in that form is kept. -Xclang reaches every compile
+/// job and no linker, so a line that only links is not warned about the flag.
 static Request convertFlags(ArrayRef<const char *> Args,
                             const opt::InputArgList &Parsed) {
   Request R;
@@ -291,11 +290,11 @@ static Request convertFlags(ArrayRef<const char *> Args,
   return R;
 }
 
-// The unit name of this invocation's translation units: the host half of a
-// compile takes the launch descriptors of the device half that compiled the
-// same source under the same unit name, so every compile job of an invocation
-// gets the same one, and no other invocation gets it.
+/// The -poseidon-unit of every compile job of this invocation, unique to it:
+/// the host half of a compile reads the launch descriptors its device half
+/// wrote under the same unit.
 static std::string unitName(ArrayRef<const char *> Args) {
+  // Without a working directory the arguments alone name the invocation.
   SmallString<256> Cwd;
   (void)sys::fs::current_path(Cwd);
   std::string Identity(Cwd);
@@ -307,9 +306,8 @@ static std::string unitName(ArrayRef<const char *> Args) {
                                        /*LowerCase=*/false, /*Width=*/16);
 }
 
-// The arguments that link the runtimes the request needs from `LibDir`, and
-// the GPU runtimes of the toolkit they need. A C++ link (`CXX`) has the C++
-// library already.
+/// The arguments that link the runtimes `R` needs, Poseidon's from `LibDir`
+/// and the GPU toolkit's, and for a C link (`CXX` false) the C++ library.
 static Expected<SmallVector<std::string, 0>>
 linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
               bool CXX) {
@@ -317,10 +315,8 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
   auto AsNeeded = [&](StringRef Lib) {
     Link.append({"-Wl,--push-state,--as-needed", Lib.str(), "-Wl,--pop-state"});
   };
-  // A link of objects alone names no language; its objects may hold code of
-  // the GPU this build has, so it gets that GPU's runtimes, which the program
-  // records a need for only if it uses them. It takes a toolkit only where it
-  // is.
+  // A link of objects alone names no language, so it gets the runtimes of the
+  // GPU this build has, as needed, from a toolkit that is installed.
   bool Objects = !Inv.Source;
   bool CUDA =
       Inv.CUDA || (Objects && !Inv.HIP && POSEIDON_DRIVER_PROFILER_CUDA);
@@ -358,8 +354,7 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
       return Root.takeError();
     RocmRoot = *Root;
   }
-  // clang links no CUDA runtime of its own, and every action here ends in a
-  // device launch.
+  // clang links no CUDA runtime of its own.
   if (!CudaRoot.empty()) {
     Link.push_back("-L" + CudaRoot + "/lib64");
     if (Objects)
@@ -379,9 +374,8 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
   // the allocations this library records.
   if (R.ProfileGenerate)
     Link.push_back("-lposeidon_profile_host");
-  // The host half of the GPU profiler (the pass links the device half into
-  // each device module). The two export the same names, so a link takes one
-  // of them, and never the other GPU's.
+  // The host half of the GPU profiler. The CUDA and HIP ones export the same
+  // names, so a link takes one.
   if (R.ProfileGenerate && HIP && POSEIDON_DRIVER_PROFILER_HIP)
     Link.push_back("-lposeidon_profile_hip");
   else if (R.ProfileGenerate && CUDA && POSEIDON_DRIVER_PROFILER_CUDA)
@@ -393,10 +387,9 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
     // they export disjoint symbols and only the chosen one runs.
     Link.push_back("-lposeidon_rt");
     AsNeeded("-lcublas");
-    // What the runtime links besides the toolkit's libraries, each found
-    // again where it was built when the program runs, after cuBLAS: cuMpSGEMM
-    // defines cuBLAS's GEMM entry points. Handed to the linker alone: after
-    // the user's -x cuda clang would compile a file input.
+    // Libraries of the runtime outside the toolkit (cuMpSGEMM, which defines
+    // cuBLAS's GEMM entry points, so after cuBLAS), found again where they
+    // were built. -Xlinker, since after a -x cuda clang compiles a file input.
     SmallVector<StringRef, 2> RuntimeLibs;
     StringRef(POSEIDON_DRIVER_RT_LIBS).split(RuntimeLibs, ',', -1, false);
     for (StringRef Lib : RuntimeLibs)
@@ -415,15 +408,14 @@ linkArguments(const Invocation &Inv, const Request &R, StringRef LibDir,
 }
 
 namespace {
-// The plugins, header directory and runtime directory a compile uses.
+/// The plugins, header directory and runtime directory a compile uses.
 struct Installation {
   std::string Plugin, Enzyme, Include, LibDir;
 };
 } // namespace
 
-// Those of the build tree the driver `Exe` runs from, or of its installation,
-// never some of each; Enzyme's plugin only to generate a profile. Enzyme
-// installs its plugins to lib/.
+/// Those of the build tree the driver `Exe` runs from or of its installation,
+/// never some of each; Enzyme's plugin only to generate a profile.
 static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
   StringRef BuiltEnzyme = POSEIDON_DRIVER_ENZYME;
   Installation In = {POSEIDON_DRIVER_PLUGIN, BuiltEnzyme.str(),
@@ -434,6 +426,7 @@ static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
     In.Plugin = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR
                             "/" POSEIDON_DRIVER_PLUGIN_NAME);
     if (!BuiltEnzyme.empty())
+      // Enzyme installs its plugins to lib/.
       In.Enzyme =
           underPrefix(Prefix, "lib/" + sys::path::filename(BuiltEnzyme));
     In.Include = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_INCLUDEDIR);
@@ -443,10 +436,8 @@ static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
   if (!sys::fs::exists(In.Plugin))
     return createStringError("Poseidon plugin not found at " + In.Plugin +
                              "; set POSEIDON_PLUGIN");
-  // Enzyme differentiates the probes and is loaded for nothing else, so that
-  // Enzyme changes no other compile. A program that asks Enzyme for
-  // derivatives of its own loads the plugin among its arguments, as with clang
-  // alone; they come after Poseidon's plugin, the order the two need.
+  // Enzyme differentiates the probes and nothing else; a program with
+  // derivatives of its own loads it itself, as with clang alone.
   if (!ProfileGenerate) {
     In.Enzyme.clear();
   } else if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
@@ -463,9 +454,8 @@ static Expected<Installation> locate(StringRef Exe, bool ProfileGenerate) {
   return In;
 }
 
-// Runs `Cmd`. Expanded response files can make it longer than the system
-// takes; clang then reads it from a response file of the driver's own,
-// written as clang writes its response files.
+/// Runs `Cmd`, from a response file written as clang writes one when the
+/// expanded command is longer than the system takes.
 static int runClang(StringRef Prog, ArrayRef<std::string> Cmd) {
   SmallVector<StringRef, 128> Argv(Cmd.begin(), Cmd.end());
   SmallString<128> ResponseFile;
@@ -534,11 +524,10 @@ int main(int argc, char **argv) {
     Probe.push_back(A.c_str());
   Invocation Inv = analyze(ClangFor, Probe);
 
-  // Error-free transformations survive only if the compiler contracts within
-  // a statement and never across one, and never reassociates. Before LLVM 24
-  // the code generator applies -ffp-contract=fast and the fast-math options
-  // to every operation of the module, the expansions included; from 24 on
-  // only to the operations that carry the flags, which the expansions do not.
+  // Error-free transformations survive only if nothing is fused or reordered
+  // across statements. Before LLVM 24 the code generator applies
+  // -ffp-contract=fast and fast-math to every operation, the expansions'
+  // included.
 #if LLVM_VERSION_MAJOR < 24
   if (R.ProfileUse && !Inv.LooseFP.empty()) {
     const opt::Arg *Loose = Parsed.getLastArg(
@@ -586,23 +575,18 @@ int main(int argc, char **argv) {
     AddPlugin(In.Plugin);
     if (!In.Enzyme.empty())
       AddPlugin(In.Enzyme);
-    // Every HIP device compile is an LTO pre-link compile, in which Enzyme
-    // leaves a derivative request to the post-link run unless told otherwise,
-    // and the device link loads no plugin. The requests profile generation
-    // emits, and a user's own request in a site, have to be lowered in the
-    // compile itself. Ahead of the user's arguments, so that a later
-    // -enzyme-lto-prelink wins.
+    // A HIP device compile is an LTO pre-link compile, where Enzyme leaves
+    // derivatives to a device link that loads no plugin. Ahead of the user's
+    // arguments, so that their -enzyme-lto-prelink wins.
     if (Inv.HIP && !In.Enzyme.empty())
       Cmd.append(
           {"-Xclang", "-mllvm", "-Xclang", POSEIDON_DRIVER_ENZYME_HIP_OPTION});
-    // A system directory, as the CMake package gives it: the header's
-    // diagnostics are not the user's.
+    // A system directory, as the CMake package gives it.
     Cmd.append({"-isystem", In.Include});
     // Error-free transformations survive only if the compiler contracts within
     // a statement and never across one.
     Cmd.push_back("-ffp-contract=on");
-    // poseidon.h then links the device math a rewrite or a derivative may
-    // call.
+    // poseidon.h then keeps the device math a rewrite or a derivative calls.
     Cmd.push_back("-DPOSEIDON_DEVICE_MATH");
   }
   Cmd.append(R.User.begin(), R.User.end());

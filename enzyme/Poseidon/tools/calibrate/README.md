@@ -99,9 +99,14 @@ error-corrected dispatch (no HIP runtime) and `direct_dispatch_rel,tf32_f32`
 Every `*_rel` row is one number in one unit: the candidate's wall clock over the
 scalar-FP64 GEMM's, at the same shape on the same device, so the DP compares an
 in-kernel raise against a library dispatch directly. The in-kernel arm needs a
-profile of the kernel it raises to know which candidates the pass proposes
-(`--profile <dir>`); the profile decides which candidates exist, never what they
-measure.
+profile of the kernel it raises to know which candidates the pass proposes; the
+profile decides which candidates exist, never what they measure. It is recorded
+from the harness `inkernel_calibrate.cu` (installed under
+`share/poseidon/tools/calibrate`) at a small size:
+
+    poseidon-clang++ -poseidon-profile-generate -DCAL_N=256 inkernel_calibrate.cu -o harness
+    POSEIDON_PROFILE_DIR=<dir> ./harness --profiling
+    poseidon-calibrate --gpu 0 --only inkernel --profile <dir>
 
 A class with no measured row is not proposed. The pass does not compose a price
 for it out of per-MMA rows: a materialized raise also pays a scratch fill,

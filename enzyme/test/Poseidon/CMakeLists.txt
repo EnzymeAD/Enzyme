@@ -131,12 +131,6 @@ endforeach()
 # What the build has, for the features of the lit configuration.
 set(POSEIDON_TEST_HAS_CUDA "${CMAKE_CUDA_COMPILER}")
 set(POSEIDON_TEST_TCEC_CUMPSGEMM "${POSEIDON_TCEC_USE_CUMPSGEMM}")
-foreach(_backend AMDGPU NVPTX)
-  set(POSEIDON_TEST_HAS_${_backend} OFF)
-  if(_backend IN_LIST LLVM_TARGETS_TO_BUILD)
-    set(POSEIDON_TEST_HAS_${_backend} ON)
-  endif()
-endforeach()
 # The HIP runtimes, and the device profilers the plugin carries.
 set(POSEIDON_TEST_HAS_HIP OFF)
 if(TARGET poseidon_rt_hip)
@@ -151,13 +145,8 @@ if(TARGET poseidon_device_profiler_amdgpu)
   set(POSEIDON_TEST_HAS_AMDGPU_PROFILER ON)
 endif()
 llvm_canonicalize_cmake_booleans(
-  POSEIDON_TEST_HAS_CUDA
-  POSEIDON_TEST_TCEC_CUMPSGEMM
-  POSEIDON_TEST_HAS_AMDGPU
-  POSEIDON_TEST_HAS_NVPTX
-  POSEIDON_TEST_HAS_HIP
-  POSEIDON_TEST_HAS_NVPTX_PROFILER
-  POSEIDON_TEST_HAS_AMDGPU_PROFILER)
+  POSEIDON_TEST_HAS_CUDA POSEIDON_TEST_TCEC_CUMPSGEMM POSEIDON_TEST_HAS_HIP
+  POSEIDON_TEST_HAS_NVPTX_PROFILER POSEIDON_TEST_HAS_AMDGPU_PROFILER)
 
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in

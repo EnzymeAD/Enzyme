@@ -6,10 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Poseidon prices every candidate from one CSV measured on the device the code
-// will run on. This tool measures it, and is to Poseidon what llvm-profdata is
-// to clang PGO: run it once per GPU or host CPU, and every later compile finds
-// the model by the module's target-cpu.
+// Measures the cost model Poseidon prices candidates from, once per GPU or
+// host CPU, where a later compile finds it by the module's target-cpu.
 //
 //===----------------------------------------------------------------------===//
 
@@ -52,7 +50,7 @@ static cl::opt<std::string>
 static cl::opt<std::string>
     Out("out", cl::init(""), cl::value_desc("path"),
         cl::desc("Cost model to write; a path not ending in .csv is a "
-                 "directory, which takes cm_<target-cpu>_<device>.csv "
+                 "directory, which takes cm_<arch>_<device>.csv "
                  "(default: $XDG_CACHE_HOME/poseidon)"));
 static cl::opt<bool>
     Check("check", cl::desc("Validate the resolved cost model against this "
@@ -66,8 +64,9 @@ static cl::opt<std::string>
                   "herbie-platform"));
 static cl::opt<std::string> ProfileDir(
     "profile", cl::init(""), cl::value_desc("dir"),
-    cl::desc("Profile of a GEMM site the in-kernel arm enumerates its "
-             "candidates from (required by that arm)"));
+    cl::desc("Profile directory of the in-kernel harness, "
+             "inkernel_calibrate.cu, from which the in-kernel arm learns its "
+             "candidates (required by that arm)"));
 static cl::opt<std::string>
     Python("python", cl::init(POSEIDON_CALIBRATE_PYTHON),
            cl::value_desc("path"),
@@ -98,19 +97,21 @@ static cl::opt<unsigned>
                   "the in-kernel arm are timed at"));
 static cl::opt<unsigned>
     Reps("reps", cl::init(30), cl::value_desc("count"),
-         cl::desc("Timed repetitions per dispatch measurement"));
+         cl::desc("Timed repetitions of each dispatch and in-kernel "
+                  "measurement"));
 
+/// The directory of this executable.
 static std::string ToolDir;
 
+/// The tool `Name` installed next to this one.
 static std::string sibling(StringRef Name) {
   SmallString<256> P(ToolDir);
   sys::path::append(P, Name);
   return std::string(P);
 }
 
-// share/poseidon of the installation this tool was started from, and the
-// source tree it was built from when it runs out of its build directory. The
-// two layouts carry the same names below that point.
+/// `Rel` under share/poseidon of this tool's installation, else under the
+/// source tree it was built from; the two layouts match below that point.
 static std::string shipped(StringRef Rel) {
   SmallString<256> P(sys::path::parent_path(ToolDir));
   sys::path::append(P, "share/poseidon", Rel);
@@ -121,19 +122,22 @@ static std::string shipped(StringRef Rel) {
   return std::string(S);
 }
 
+/// `V` with six decimals, as a row holds it.
 static std::string decimal(double V) { return formatv("{0:F6}", V).str(); }
 
+/// Prints `poseidon-calibrate: <Message>` to stderr.
 static void printError(const Twine &Message) {
   errs() << "poseidon-calibrate: " << Message << '\n';
 }
 
+/// Prints `Message` as an error and exits with status 1.
 [[noreturn]] static void fail(const Twine &Message) {
   printError(Message);
   std::exit(1);
 }
 
-// Runs a program to its exit status, with its stdout and its stderr sent to
-// the files named, if any.
+/// Runs a program to its exit status, its stdout and stderr sent to the files
+/// named, if any.
 static int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
                StringRef StderrFile = "") {
   outs().flush();
@@ -151,6 +155,7 @@ static int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
   return RC;
 }
 
+/// The contents of `Path`; a file that cannot be read is fatal.
 static std::string readFile(StringRef Path) {
   auto Buf = MemoryBuffer::getFile(Path);
   if (!Buf)
@@ -158,8 +163,8 @@ static std::string readFile(StringRef Path) {
   return (*Buf)->getBuffer().str();
 }
 
-// Writes `Path` whole or not at all: an interrupted run leaves the model it
-// started from.
+/// Writes `Path` whole or not at all, so that an interrupted run leaves the
+/// model it started from.
 static void writeFile(StringRef Path, StringRef Content) {
   std::string Part = (Path + ".part").str();
   {
@@ -173,7 +178,7 @@ static void writeFile(StringRef Path, StringRef Content) {
     fail("cannot write " + Path + ": " + EC.message());
 }
 
-// The stdout of a program that exits with status 0.
+/// The stdout of a program that exits with status 0.
 static std::optional<std::string> capture(ArrayRef<StringRef> Argv,
                                           StringRef StderrFile = "") {
   SmallString<128> Tmp;
@@ -185,6 +190,7 @@ static std::optional<std::string> capture(ArrayRef<StringRef> Argv,
   return readFile(Tmp);
 }
 
+/// Whether `Csv` holds a row of `Family`.
 static bool hasFamily(StringRef Csv, StringRef Family) {
   for (StringRef Line : llvm::split(Csv, '\n'))
     if (Line.starts_with(Family) &&
@@ -193,14 +199,14 @@ static bool hasFamily(StringRef Csv, StringRef Family) {
   return false;
 }
 
-// The (family, key) a row is identified by.
+/// The (family, key) a row is identified by.
 static std::pair<StringRef, StringRef> rowKey(StringRef Line) {
   auto [Family, Rest] = Line.split(',');
   return {Family, Rest.split(',').first};
 }
 
-// Replaces the rows whose (family, key) the new rows carry and keeps the
-// others.
+/// Replaces the rows of `Csv` whose (family, key) `Rows` carry, and keeps the
+/// others.
 static void mergeRows(std::string &Csv, StringRef Rows) {
   SmallVector<StringRef, 8> New;
   for (StringRef Line : llvm::split(Rows, '\n'))
@@ -223,28 +229,28 @@ static void mergeRows(std::string &Csv, StringRef Rows) {
 }
 
 namespace {
-// The device a cost model is measured on.
+/// The device a cost model is measured on.
 struct Device {
-  // A GPU's id among the visible devices.
+  /// A GPU's id among the visible devices.
   std::string Id;
-  // Punctuation stripped, as it appears in the file name.
+  /// The name in the model's file name, punctuation stripped.
   std::string Name;
-  // sm_<cc>, gfx<NNN> on an AMD GPU, a CPU's target-cpu.
+  /// sm_<cc>, gfx<NNN> on an AMD GPU, a CPU's target-cpu.
   std::string Arch;
-  // An AMD GPU, which the -hip tools measure.
+  /// An AMD GPU, which the -hip tools measure.
   bool Hip = false;
-  // This host's CPU (--cpu).
+  /// This host's CPU (--cpu).
   bool Host = false;
-  // A host's model name, as the system reports it.
+  /// A host's model name, as the system reports it.
   std::string Model;
-  // The host's features, when Arch is its own CPU.
+  /// The host's features, when Arch is its own CPU.
   std::string Features;
 };
 } // namespace
 
-// The GPU --gpu names, else the first one the vendor's visible-devices variable
-// lists: the microbenchmark of each vendor this build has, CUDA's first, names
-// it with --device.
+/// The GPU --gpu names, else the first the vendor's visible-devices variable
+/// lists, as the microbenchmark of each vendor this build has names it, CUDA's
+/// first.
 static Device queryDevice() {
   // What each microbenchmark said when it named no device.
   std::string Reasons;
@@ -302,7 +308,7 @@ static Device queryDevice() {
                         : ":" + Reasons));
 }
 
-// The model name the system reports for this host's CPU, or empty.
+/// The model name the system reports for this host's CPU, or empty.
 static std::string hostModelName() {
   auto Buf = MemoryBuffer::getFileAsStream("/proc/cpuinfo");
   if (!Buf)
@@ -315,11 +321,10 @@ static std::string hostModelName() {
   return std::string();
 }
 
-// The host measured for the target-cpu --cpu names. A compile for `native`
-// takes the CPU name and features LLVM detects here, so the microbenchmarks are
-// compiled for them; a named CPU takes that CPU's own features, as -march=
-// does. The model name distinguishes machines with the same target-cpu, and a
-// system that reports none names the device by its detected CPU.
+/// This host, measured for the target-cpu --cpu names: `native` takes the CPU
+/// and features LLVM detects, as -march=native does, and a named CPU that
+/// CPU's own features. The device is named by the CPU's model name, or by the
+/// detected CPU on a system that reports none.
 static Device queryHost() {
   Device D;
   D.Host = true;
@@ -356,6 +361,7 @@ static Device queryHost() {
   return D;
 }
 
+/// The model file of `D`: --out, a directory --out names, or the user cache.
 static std::string resolveCsv(const Device &D) {
   std::string Path = Out;
   if (Path.empty())
@@ -374,16 +380,17 @@ static std::string resolveCsv(const Device &D) {
   return Path;
 }
 
+/// The arms --only takes.
 static constexpr StringLiteral Arms[] = {
     "microbm", "herbie-platform", "ozaki",   "ozaki-rect",
     "tcec",    "direct",          "inkernel"};
 
-// The arms that take a host: the per-op microbenchmark, and the platform arm,
-// which reads a CSV.
+/// Whether `Arm` measures a host as well as a GPU.
 static bool isHostArm(StringRef Arm) {
   return Arm == "microbm" || Arm == "herbie-platform";
 }
 
+/// Whether this run measures `Arm`.
 static bool wants(StringRef Arm) {
   if (Only.empty())
     return true;
@@ -392,7 +399,7 @@ static bool wants(StringRef Arm) {
   return llvm::is_contained(Asked, Arm);
 }
 
-// The interpreter the Python arms run under.
+/// The interpreter the Python arms run under.
 static std::string python() {
   if (!Python.empty() &&
       (Python.getNumOccurrences() || sys::fs::exists(Python)))
@@ -404,31 +411,25 @@ static std::string python() {
   return *P;
 }
 
-// The calibrator binary that measures this device: the HIP build of it on an
-// AMD GPU.
+/// The calibrator `Name` that measures `D`: its HIP build on an AMD GPU.
 static std::string tool(const Device &D, StringRef Name) {
   return sibling(D.Hip ? (Name + "-hip").str() : Name.str());
 }
 
-// The architectures of a GPU cost model; anything else is a host's.
+/// Whether `Arch` is a GPU's; anything else is a host's.
 static bool isGpuArch(StringRef Arch) {
   return Arch.starts_with("sm_") || Arch.starts_with("gfx");
 }
 
-// ---- the arms -------------------------------------------------------------
-
-// The Herbie platform generated from a CSV lives next to it, named after it:
-// one platform per cost model, so a directory holding two devices' models
-// cannot mix them up.
+/// The Herbie platform of the model `Csv`, next to it and named after it, so
+/// that two devices' models in one directory keep apart.
 static std::string platformPathFor(StringRef Csv) {
   StringRef Stem = Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv;
   return Stem.str() + ".herbie.rkt";
 }
 
-// Herbie's algebraic search ranks candidates by a platform cost table. This
-// arm writes that table from the same CSV the DP prices from, so a rewrite is
-// proposed and priced on one device's numbers. No GPU is touched: the CSV is
-// the only input.
+/// Writes the Herbie platform of a GPU model from `Csv` alone, so that Herbie
+/// ranks rewrites by the prices the DP solves with.
 static void armHerbiePlatform(StringRef Csv) {
   CostModelState CM(Csv.str());
   if (Error E = loadCostModel(CM))
@@ -467,9 +468,8 @@ static void armHerbiePlatform(StringRef Csv) {
   outs() << "[calibrate] wrote " << Out << '\n';
 }
 
-// A host is measured by microbm_cpu.py, which JIT-compiles each
-// microbenchmark with llvmlite for the CPU and features it is given. Its rows
-// go to `Part`.
+/// Measures the host `D` with microbm_cpu.py into `Part`, and returns its exit
+/// status.
 static int measureHost(const Device &D, StringRef Part) {
   std::string Py = python();
   std::optional<std::string> Missing =
@@ -502,6 +502,7 @@ static int measureHost(const Device &D, StringRef Part) {
   return run(Argv, Part);
 }
 
+/// Measures the per-op rows into a new `Csv`.
 static void armMicrobm(StringRef Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
     outs() << "[calibrate] per-op throughputs already measured: " << Csv
@@ -525,6 +526,8 @@ static void armMicrobm(StringRef Csv, const Device &D) {
   outs() << "[calibrate] wrote " << Csv << '\n';
 }
 
+/// Merges `Rows`, which an arm's run printed, into `Csv`; a failed run or one
+/// with no row of `Family` is fatal.
 static void writeRows(StringRef Csv, StringRef Arm, StringRef Family,
                       const std::optional<std::string> &Rows) {
   if (!Rows)
@@ -539,6 +542,7 @@ static void writeRows(StringRef Csv, StringRef Arm, StringRef Family,
       outs() << "  " << Line.trim() << '\n';
 }
 
+/// Whether `Csv` has `Family` and --force does not ask for it again.
 static bool alreadyMeasured(StringRef Csv, StringRef Arm, StringRef Family) {
   if (Force || !hasFamily(readFile(Csv), Family))
     return false;
@@ -546,7 +550,8 @@ static bool alreadyMeasured(StringRef Csv, StringRef Arm, StringRef Family) {
   return true;
 }
 
-// The dispatch calibrator measures the family of the arm it is named.
+/// Measures the dispatch family of `Arm`, which names it to the dispatch
+/// calibrator.
 static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
                         StringRef Family) {
   if (alreadyMeasured(Csv, Arm, Family))
@@ -557,11 +562,9 @@ static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
                      utostr(Reps)}));
 }
 
-// The ozaki-rect rows are keyed by the shape of the product they price, so
-// the shapes come from the caller: MxK measures the Ozaki-II rows of (M, K)
-// at the calibrator's large column count, MxNxK the native DGEMM row of a call
-// with exactly those extents. Rows of shapes this run does not measure are
-// kept.
+/// Measures the rows of the --ozaki-rect shapes: MxK the Ozaki-II rows of
+/// (M, K), MxNxK the native DGEMM row of a call of those extents. Rows of
+/// other shapes are kept.
 static void armOzakiRect(StringRef Csv, const Device &D) {
   if (OzakiRect.empty()) {
     outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
@@ -607,8 +610,8 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
   writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", capture(Args));
 }
 
-// The error-corrected dispatch runs on cuMpSGEMM, so a build without it has no
-// such candidate for the row to price.
+/// Measures the error-corrected dispatch, which only a build with cuMpSGEMM
+/// has.
 static void armTcec(StringRef Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "
@@ -625,7 +628,7 @@ static void armTcec(StringRef Csv, const Device &D) {
   armDispatch(Csv, D, "tcec", "tcec_dispatch_rel");
 }
 
-// The time `Exe` reports for `Reps` runs of its kernel, if it runs.
+/// The time `Exe` reports for --reps runs of its kernel, if it runs.
 static std::optional<double> timeOf(StringRef Exe) {
   std::optional<std::string> Output = capture({Exe, utostr(Reps)});
   SmallVector<StringRef, 2> Match;
@@ -636,9 +639,8 @@ static std::optional<double> timeOf(StringRef Exe) {
   return Ms;
 }
 
-// The in-kernel classes of the candidate table a compile printed to `Log`,
-// each with the index of the candidate that applies it. A host-dispatch
-// family is priced by an arm of its own.
+/// The in-kernel classes of the candidate table a compile printed to `Log`,
+/// each with the index of the candidate that applies it.
 static std::map<std::string, std::string> inKernelClasses(StringRef Log) {
   // "[poseidon]   #8 tcec n=2 wmma m16n16k8 tf32/f32  compCost/MAC=..."
   Regex Candidate("^\\[poseidon\\][ ]+#([0-9]+) (.*)  compCost/MAC");
@@ -662,10 +664,9 @@ static std::map<std::string, std::string> inKernelClasses(StringRef Log) {
   return Classes;
 }
 
-// The in-kernel classes are the one family the compiler has to be asked about:
-// each is a rewrite the pass proposes, so the harness compiles its kernel once
-// per class through the plugin and times what a real solve would emit. A class
-// the pass cannot propose or build here is reported and left absent.
+/// Measures each in-kernel class the pass proposes for the harness kernel by
+/// compiling the kernel with that class applied and timing it. A class that
+/// does not build or run is reported and left absent.
 static void armInKernel(const std::string &Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] inkernel: tensor-core raises inside a kernel are "
@@ -787,8 +788,8 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   writeFile(Csv, Content);
 }
 
-// Resolves the model as a compile for this device does, with --out in the
-// place of -poseidon-cost-model, and reports what of it a full run writes.
+/// Resolves the model as a compile for `D` does, with --out in the place of
+/// -poseidon-cost-model, and reports which row families it lacks.
 static int checkModel(const Device &D) {
   CostModelState CM(Out.empty() ? std::string() : resolveCsv(D));
   Error E = requireCostModel(CM, D.Arch, "this device", !D.Host);

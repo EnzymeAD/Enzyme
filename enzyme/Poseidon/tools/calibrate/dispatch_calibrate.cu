@@ -47,8 +47,7 @@
     }                                                                          \
   } while (0)
 
-// The naive scalar-FP64 GEMM, the cost model's FP64 baseline (per-MAC
-// throughput of a triple-loop reduction): the denominator of every rel.
+/// The naive scalar-FP64 GEMM whose time is the denominator of every row.
 __global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
   int col = blockIdx.y * blockDim.y + threadIdx.y;
@@ -60,12 +59,13 @@ __global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
   C[(size_t)col * N + row] = s;
 }
 
-// The reference shape, the timed repetitions, and the modulus count or mode
-// the dispatch under test runs with. The square products are row-major with
-// leading dimensions N, as the pass dispatches a square GEMM.
+/// The reference shape, the timed repetitions, and the modulus count or mode
+/// the dispatch under test runs with. The square products are row-major with
+/// leading dimensions N, as the pass dispatches a square GEMM.
 static int N, Reps, Variant;
 static double *dA, *dB, *dC;
 
+/// One launch of each measured GEMM on the square operands.
 static void run_ref() {
   dim3 b(16, 16), g((N + 15) / 16, (N + 15) / 16);
   ref_gemm<<<g, b>>>(dC, dA, dB, N);
@@ -88,6 +88,7 @@ static void run_tc() {
 }
 #endif
 
+/// The mean time in milliseconds of `reps` calls of `fn`, after one warm-up.
 static float timeit(void (*fn)(), int reps) {
   cudaEvent_t a, b;
   CK(cudaEventCreate(&a));
@@ -106,6 +107,7 @@ static float timeit(void (*fn)(), int reps) {
   return ms / reps;
 }
 
+/// `n` device doubles drawn uniformly from [-1, 1].
 static double *rand_dev(size_t n) {
   double *h = (double *)malloc(n * 8), *d;
   for (size_t i = 0; i < n; i++)
@@ -116,10 +118,10 @@ static double *rand_dev(size_t n) {
   return d;
 }
 
-// __poseidon_ozaki_dgemm at an M x K operand A. Its cost is linear in the
-// column count, so its rows are keyed by (M, K) alone and measured at
-// kRectCols columns. The operands are laid out as the recognizer dispatches a
-// reduce: A row-major M x K, B and C column-major, C accumulated.
+/// The column count the Ozaki-II rows of an M x K operand A are measured at;
+/// their cost is linear in it, so they are keyed by (M, K) alone. The
+/// operands are laid out as the recognizer dispatches a reduction: A
+/// row-major M x K, B and C column-major, C accumulated.
 static const int kRectCols = 12288;
 static int RM, RN, RK;
 static double *rA, *rB, *rC;
@@ -135,7 +137,7 @@ static void run_rect_native() {
                           /*cColMajor=*/1, 1.0, 1.0, 0);
 }
 
-// Time per MAC of `fn` at `cols` columns.
+/// Time per MAC of `fn` at `cols` columns.
 static double rect_per_mac(void (*fn)(), int cols) {
   RN = cols;
   rB = rand_dev((size_t)RK * cols);
@@ -147,6 +149,7 @@ static double rect_per_mac(void (*fn)(), int cols) {
   return (double)t / ((double)RM * cols * RK);
 }
 
+/// Prints the Ozaki-II rows of (M, K), one per modulus count.
 static void rect_rows(int M, int K, float t_ref) {
   const double ref_per_mac = (double)t_ref / ((double)N * N * N);
   RM = M;
@@ -163,9 +166,8 @@ static void rect_rows(int M, int K, float t_ref) {
   CK(cudaFree(rA));
 }
 
-// The native DGEMM at a product's own extents: a DGEMM with few columns runs
-// far below its rate at many, so a call whose extents are constants of its
-// compile is priced from this row, keyed by them.
+/// Prints the native DGEMM row of a call of exactly these extents, which a
+/// DGEMM with few columns runs far below the square rate at.
 static void full_row(int M, int Ncols, int K, float t_ref) {
   const double ref_per_mac = (double)t_ref / ((double)N * N * N);
   RM = M;
@@ -179,7 +181,7 @@ static void full_row(int M, int Ncols, int K, float t_ref) {
   CK(cudaFree(rA));
 }
 
-// One row, rel = (time of `fn`) / t_ref.
+/// Prints the row `family`,`key` at the time of `fn` over `t_ref`.
 static void row(const char *family, const char *key, void (*fn)(),
                 float t_ref) {
   float t = timeit(fn, Reps);
@@ -191,6 +193,7 @@ static void row(const char *family, const char *key, void (*fn)(),
   printf("%s,%s,%.6f\n", family, key, rel);
 }
 
+/// The ozaki family: the square rows, or those of the shapes in argv[4...].
 static int ozaki(int argc, char **argv, float t_ref) {
   if (argc > 4) {
     for (int i = 4; i < argc; ++i) {
@@ -225,6 +228,7 @@ static int ozaki(int argc, char **argv, float t_ref) {
   return 0;
 }
 
+/// The direct family: one row per reduced-precision mode.
 static int direct(float t_ref) {
   // The modes of __poseidon_direct_dgemm, in the class spelling of the rows.
   static const struct {
@@ -243,7 +247,7 @@ static int direct(float t_ref) {
   return 0;
 }
 
-// The positive integer `s` spells, or 0.
+/// The positive integer `s` spells, or 0.
 static int positive(const char *s) {
   char *end;
   long v = strtol(s, &end, 10);

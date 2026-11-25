@@ -105,11 +105,10 @@ if @POSEIDON_TEST_HAS_NVPTX_PROFILER@:
 if @POSEIDON_TEST_HAS_AMDGPU_PROFILER@:
     config.available_features.add('amdgpu-device-profiler')
 config.substitutions.append(('%cuda_lib_dir', '@CUDAToolkit_LIBRARY_DIR@'))
-# Tests that generate NVPTX code, or whose passes read its target information.
-if @POSEIDON_TEST_HAS_NVPTX@:
-    config.available_features.add('nvptx-registered-target')
-if @POSEIDON_TEST_HAS_AMDGPU@:
-    config.available_features.add('amdgpu-registered-target')
+# Tests that generate code for a target, or whose passes read its target
+# information, as Enzyme's suites name them.
+for arch in "@LLVM_TARGETS_TO_BUILD@".split(';'):
+    config.available_features.add(arch.lower() + '-registered-target')
 # HIP device compiles against the ROCm installation the build names; a compile
 # that links the device profiler or the HIP runtimes targets their processor.
 rocm_path = "@POSEIDON_ROCM_PATH@"

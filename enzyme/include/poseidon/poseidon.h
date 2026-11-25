@@ -6,14 +6,22 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// What an application includes to use Poseidon: the annotations and calls that
-// mark the code it optimizes, and poseidon_metric.
+// The annotations that mark the code Poseidon optimizes, and poseidon_metric.
+// A site is code whose floating-point operations Poseidon profiles and
+// rewrites: a function marked POSEIDON_OPTIMIZE or POSEIDON_OPTIMIZE_TAU, or
+// one call made through __poseidon_optimize or __poseidon_optimize_tau. A site
+// without an accuracy target of its own is solved under the compile's
+// -poseidon-tau or -poseidon-cost-budget.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_POSEIDON_H
 #define POSEIDON_POSEIDON_H
 
+/// Marks the function it precedes as a site: a host or device function, a CUDA
+/// or HIP kernel, or a lambda. POSEIDON_OPTIMIZE_TAU(t) also gives the site
+/// the relative accuracy target t, a constant.
+//
 // Both forms carry one argument so that every Poseidon entry of
 // llvm.global.annotations has one type: clang types the array after its first
 // entry, and on AMDGPU an entry without arguments has another. The int 0 is no
@@ -22,8 +30,11 @@
 #define POSEIDON_OPTIMIZE_TAU(t)                                               \
   __attribute__((annotate("poseidon", (double)(t))))
 
-// The call through an identity the pass recognizes: the argument list is the
-// call's own, so conversions apply and the return value comes back. In C++ the
+/// __poseidon_optimize(fn, args...) calls fn(args...) and makes that one call a
+/// site, with the call's own argument conversions and return value;
+/// __poseidon_optimize_tau(t, fn, args...) also gives it the accuracy target t.
+//
+// The call goes through an identity the pass recognizes. In C++ the argument
 // list chooses the identity: the plain one when fn takes the arguments as
 // written; else the explicit one, which nothing defines, and the call has fn's
 // return type and the arguments as given.
@@ -64,14 +75,18 @@
 #define POSEIDON_SITE_TARGETS
 #endif
 
-// Where a profiling run writes and a solve reads when neither is told
-// otherwise; POSEIDON_PROFILE_DIR overrides it.
+/// Where a profiling run writes its profile and -poseidon-profile-use reads it
+/// when neither is told otherwise; POSEIDON_PROFILE_DIR overrides it for the
+/// run.
 #define POSEIDON_DEFAULT_PROFILE_DIR "./poseidon.profile"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/// Declares the quantity of interest of a profiling run, the program's result,
+/// as `name` = `value`; the last call counts. poseidon-probe measures each
+/// site's condition number against it.
 void poseidon_metric(const char *name, double value);
 
 POSEIDON_SITE_HELPER POSEIDON_SITE_TARGETS void *__poseidon_site(void *fn) {
@@ -113,13 +128,14 @@ POSEIDON_SITE_TARGETS auto __poseidon_callee_of(long, _Ret (*)(_Params...),
 }
 #endif
 
-// The libdevice (CUDA) or ocml (HIP) functions a rewrite or a derivative of a
-// device site may call, kept in a device module that includes this header
-// under POSEIDON_DEVICE_MATH, which a compile that loads the Poseidon plugin
-// defines. Taking their addresses keeps them in the C calling convention; one
-// only ever called directly may become fastcc. Each address is stored by a
-// statement of its own: C++20 deprecates using the value of an assignment to a
-// volatile object.
+/// Under POSEIDON_DEVICE_MATH, which a compile that loads the Poseidon plugin
+/// defines, a device module keeps the libdevice (CUDA) or ocml (HIP) functions
+/// a rewrite or a derivative of a device site may call.
+//
+// Taking their addresses keeps them in the C calling convention; one only ever
+// called directly may become fastcc. Each address is stored by a statement of
+// its own: C++20 deprecates using the value of an assignment to a volatile
+// object.
 #if defined(POSEIDON_DEVICE_MATH) && defined(__CUDA_ARCH__) &&                 \
     defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
 #define POSEIDON_KEEP(fn)                                                      \
@@ -220,8 +236,8 @@ __poseidon_device_math(void) {
 #undef POSEIDON_KEEP
 #endif
 
-// Tells the plugin that this device compile defines POSEIDON_DEVICE_MATH,
-// which it requires of a device module with a site under a profile action.
+/// Tells the plugin that this device compile defines POSEIDON_DEVICE_MATH,
+/// which it requires of a device module with a site under a profile action.
 #if defined(POSEIDON_DEVICE_MATH) &&                                           \
     (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
 extern "C" inline __attribute__((device, used)) void
