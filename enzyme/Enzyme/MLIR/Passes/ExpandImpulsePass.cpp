@@ -1249,17 +1249,12 @@ struct ExpandImpulsePass
       SmallVector<SupportInfo> supports;
       FlatSymbolRefAttr logpdfFnAttr;
 
-      auto sizesFromSupports = [&](int64_t constrainedFallback) {
+      auto sizesFromSupports = [&]() {
         constrainedPositionSize = 0;
         positionSize = 0;
         for (const auto &info : supports) {
           constrainedPositionSize += info.size;
           positionSize += info.unconstrainedSize;
-        }
-        // Nested addresses get no support info; use the constrained width.
-        if (constrainedPositionSize != constrainedFallback) {
-          constrainedPositionSize = constrainedFallback;
-          positionSize = constrainedFallback;
         }
       };
 
@@ -1285,10 +1280,7 @@ struct ExpandImpulsePass
                            "from the infer_region sampler");
           return failure();
         }
-        int64_t constrainedFallback = 0;
-        for (const auto &info : supports)
-          constrainedFallback += info.size;
-        sizesFromSupports(constrainedFallback);
+        sizesFromSupports();
         if (positionSize <= 0)
           return failure();
       } else {
@@ -1307,7 +1299,12 @@ struct ExpandImpulsePass
         supports = collectSupportInfoForSelection(
             mcmcOp, fn, selection, allAddresses, symbolTable,
             /*positionDeclarationOrder=*/false);
-        sizesFromSupports(constrainedFallback);
+        sizesFromSupports();
+        // Nested addresses get no support info; use the constrained width.
+        if (constrainedPositionSize != constrainedFallback) {
+          constrainedPositionSize = constrainedFallback;
+          positionSize = constrainedFallback;
+        }
 
         auto fnType = cast<FunctionType>(fn.getFunctionType());
         fnResultTypes.assign(fnType.getResults().begin(),
@@ -1323,7 +1320,6 @@ struct ExpandImpulsePass
         totalWarmup = *tw;
 
       ArrayAttr schema = mcmcOp.getStateSchemaAttr();
-      bool isResume = !mcmcOp.getStateIn().empty();
       int64_t numChains = mcmcOp.getNumChains();
       bool exposeAdaptation =
           impulse::slotIndex(schema, state_slot::kWindowIdx).has_value();
@@ -1336,11 +1332,11 @@ struct ExpandImpulsePass
           adaptationInValsBase.push_back(
               *daIdx + i < stateIn.size() ? stateIn[*daIdx + i] : Value());
       }
-      bool hasAdaptationInBase = isResume && !adaptationInValsBase.empty() &&
+      bool hasAdaptationInBase = !adaptationInValsBase.empty() &&
                                  adaptationInValsBase.front() != nullptr;
 
       // Multi-chain slots are chain-major; runOneChain reads them per chain.
-      if (isResume && numChains <= 1) {
+      if (numChains <= 1) {
         if (Value s = stateInSlot(mcmcOp, state_slot::kStepSize))
           stepSize = s;
         if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
@@ -1477,7 +1473,7 @@ struct ExpandImpulsePass
         Value chainInvMass = invMass;
         SmallVector<Value> adaptationInVals = adaptationInValsBase;
         bool hasAdaptationIn = hasAdaptationInBase;
-        if (isResume && numChains > 1) {
+        if (numChains > 1) {
           if (Value s = stateInSlot(mcmcOp, state_slot::kStepSize))
             chainStepSize = sliceChainDim(s, chainIdx);
           if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
@@ -1497,7 +1493,7 @@ struct ExpandImpulsePass
         Value resumeGrad = chainStateInSlot(state_slot::kGradient);
         Value resumePE = chainStateInSlot(state_slot::kPotentialEnergy);
 
-        if (isResume && resumePosition && resumeGrad && resumePE) {
+        if (resumePosition && resumeGrad && resumePE) {
           currentQ = resumePosition;
           currentGrad = resumeGrad;
           currentU = resumePE;
@@ -1613,17 +1609,6 @@ struct ExpandImpulsePass
               DenseElementsAttr::get(
                   i64TensorType, rewriter.getI64IntegerAttr(totalWarmup - 1)));
 
-          if (!adaptedInvMass) {
-            adaptedInvMass = arith::ConstantOp::create(
-                rewriter, loc, positionType,
-                DenseElementsAttr::get(positionType,
-                                       rewriter.getFloatAttr(elemType, 1.0)));
-            adaptedMassMatrixSqrt = arith::ConstantOp::create(
-                rewriter, loc, positionType,
-                DenseElementsAttr::get(positionType,
-                                       rewriter.getFloatAttr(elemType, 1.0)));
-          }
-
           Value initialStepSize = chainStepSize;
           initialStepSize = conditionalDump(
               rewriter, loc, initialStepSize,
@@ -1644,7 +1629,6 @@ struct ExpandImpulsePass
                           ArrayRef<Value>(adaptationInVals).slice(5, 3))
                     : initWelford(rewriter, loc, positionSize, diagonal);
             welfordConfig.diagonal = diagonal;
-            welfordConfig.regularize = true;
           }
 
           Value windowIdx =
@@ -2241,9 +2225,8 @@ struct ExpandImpulsePass
 
       // As NumPyro's MCMC.run: split the key per chain, or reuse saved keys.
       Value rngSlotIn = stateInSlot(mcmcOp, state_slot::kRng);
-      bool multiResume = isResume && rngSlotIn;
       impulse::RandomSplitOp splitOp;
-      if (!multiResume) {
+      if (!rngSlotIn) {
         SmallVector<Type> chainKeyTypes(numChains, rngInput.getType());
         splitOp = impulse::RandomSplitOp::create(rewriter, loc, chainKeyTypes,
                                                  rngInput);
@@ -2253,7 +2236,7 @@ struct ExpandImpulsePass
       perChain.reserve(numChains);
       for (int64_t c = 0; c < numChains; ++c) {
         Value chainRng =
-            multiResume ? sliceChainDim(rngSlotIn, c) : splitOp.getResult(c);
+            rngSlotIn ? sliceChainDim(rngSlotIn, c) : splitOp.getResult(c);
         perChain.push_back(runOneChain(chainRng, c));
       }
 
