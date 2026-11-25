@@ -4,20 +4,24 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+using namespace mlir;
+using namespace mlir::impulse;
+
 #include "Dialect/Impulse/ImpulseEnums.cpp.inc"
 #include "Dialect/Impulse/ImpulseOpsDialect.cpp.inc"
 
 /// Symbol name only, so the operand list's `(` is not parsed as an attribute.
-static mlir::ParseResult parseOptionalCallee(mlir::OpAsmParser &parser,
-                                             mlir::FlatSymbolRefAttr &fn) {
-  mlir::StringAttr name;
+static ParseResult parseOptionalCallee(OpAsmParser &parser,
+                                       FlatSymbolRefAttr &fn) {
+  StringAttr name;
   if (succeeded(parser.parseOptionalSymbolName(name)))
-    fn = mlir::FlatSymbolRefAttr::get(name);
-  return mlir::success();
+    fn = FlatSymbolRefAttr::get(name);
+  return success();
 }
 
-static void printOptionalCallee(mlir::OpAsmPrinter &printer, mlir::Operation *,
-                                mlir::FlatSymbolRefAttr fn) {
+/// Prints `fn`, if set, as parseOptionalCallee reads it.
+static void printOptionalCallee(OpAsmPrinter &printer, Operation *,
+                                FlatSymbolRefAttr fn) {
   if (!fn)
     return;
   printer << ' ';
@@ -27,25 +31,27 @@ static void printOptionalCallee(mlir::OpAsmPrinter &printer, mlir::Operation *,
 #define GET_OP_CLASSES
 #include "Dialect/Impulse/ImpulseOps.cpp.inc"
 
-static mlir::ParseResult parseDistTail(mlir::AsmParser &parser,
-                                       mlir::ArrayAttr &transforms,
-                                       int64_t &eventDim) {
+/// Parses the optional `, [transforms]` and `, event_dim = k` that follow the
+/// base of a DistAttr.
+static ParseResult parseDistTail(AsmParser &parser, ArrayAttr &transforms,
+                                 int64_t &eventDim) {
   transforms = {};
   eventDim = 0;
   if (failed(parser.parseOptionalComma()))
-    return mlir::success();
+    return success();
   if (failed(parser.parseOptionalKeyword("event_dim"))) {
     if (parser.parseAttribute(transforms))
-      return mlir::failure();
+      return failure();
     if (failed(parser.parseOptionalComma()))
-      return mlir::success();
+      return success();
     if (parser.parseKeyword("event_dim"))
-      return mlir::failure();
+      return failure();
   }
-  return mlir::failure(parser.parseEqual() || parser.parseInteger(eventDim));
+  return failure(parser.parseEqual() || parser.parseInteger(eventDim));
 }
 
-static void printDistTail(mlir::AsmPrinter &printer, mlir::ArrayAttr transforms,
+/// Prints what parseDistTail reads.
+static void printDistTail(AsmPrinter &printer, ArrayAttr transforms,
                           int64_t eventDim) {
   if (transforms) {
     printer << ", ";
@@ -68,9 +74,6 @@ void mlir::impulse::ImpulseDialect::initialize() {
 #include "Dialect/Impulse/ImpulseAttributes.cpp.inc"
       >();
 }
-
-using namespace mlir;
-using namespace mlir::impulse;
 
 //===----------------------------------------------------------------------===//
 // DistAttr

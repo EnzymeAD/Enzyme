@@ -32,14 +32,6 @@ Value emitBijectorInverse(OpBuilder &builder, Location loc, XformAttr xform,
 Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
                                XformAttr xform, SupportAttr support, Value z);
 
-/// True when log|det J| of `kind` does not depend on its input.
-bool isConstantJacobian(XformKind kind);
-
-/// Elementwise log(x / (1 - x)).
-Value emitLogit(OpBuilder &builder, Location loc, Value x);
-/// Elementwise log(sigmoid(x)), stable for large |x|.
-Value emitLogSigmoid(OpBuilder &builder, Location loc, Value x);
-
 /// Elementwise log1p(exp(x)).
 Value emitSoftplus(OpBuilder &builder, Location loc, Value x);
 /// Elementwise log(exp(x) - 1), the inverse of emitSoftplus.

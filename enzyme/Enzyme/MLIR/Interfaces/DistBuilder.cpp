@@ -63,7 +63,8 @@ XformAttr impulse::bijectorFor(MLIRContext *ctx, SupportAttr support) {
   return XformAttr::get(ctx, kind, /*components=*/ArrayAttr());
 }
 
-Value impulse::emitLogit(OpBuilder &builder, Location loc, Value x) {
+/// Elementwise log(x / (1 - x)).
+static Value emitLogit(OpBuilder &builder, Location loc, Value x) {
   auto xType = cast<RankedTensorType>(x.getType());
   Value oneConst = emitSplatConstant(builder, loc, xType, 1.0);
   auto oneMinusX = arith::SubFOp::create(builder, loc, oneConst, x);
@@ -72,8 +73,9 @@ Value impulse::emitLogit(OpBuilder &builder, Location loc, Value x) {
   return arith::SubFOp::create(builder, loc, logX, logOneMinusX);
 }
 
-Value impulse::emitLogSigmoid(OpBuilder &builder, Location loc, Value x) {
-  // -log_add_exp(-x, 0), stable for large |x|.
+/// Elementwise log(sigmoid(x)) as -log_add_exp(-x, 0), which is stable for
+/// large |x|.
+static Value emitLogSigmoid(OpBuilder &builder, Location loc, Value x) {
   auto negX = arith::NegFOp::create(builder, loc, x);
   Value zeroConst =
       emitSplatConstant(builder, loc, cast<RankedTensorType>(x.getType()), 0.0);
@@ -218,7 +220,7 @@ static Value constrainSimplex(OpBuilder &builder, Location loc,
                                     shiftMat(builder, loc, d, elemType));
   Value z = impulse::LogisticOp::create(builder, loc, xMatType, xsh);
   Value negXsh = arith::NegFOp::create(builder, loc, xsh);
-  Value log1mZ = impulse::emitLogSigmoid(builder, loc, negXsh);
+  Value log1mZ = emitLogSigmoid(builder, loc, negXsh);
 
   Value logPexcl =
       prefixSum(builder, loc, log1mZ,
@@ -284,9 +286,9 @@ static Value logDetSimplex(OpBuilder &builder, Location loc,
       impulse::ReshapeOp::create(builder, loc, xMatType, unconstrained);
   Value xsh = arith::SubFOp::create(builder, loc, xmat,
                                     shiftMat(builder, loc, d, elemType));
-  Value logZ = impulse::emitLogSigmoid(builder, loc, xsh);
+  Value logZ = emitLogSigmoid(builder, loc, xsh);
   Value negXsh = arith::NegFOp::create(builder, loc, xsh);
-  Value log1mZ = impulse::emitLogSigmoid(builder, loc, negXsh);
+  Value log1mZ = emitLogSigmoid(builder, loc, negXsh);
   Value logPexcl =
       prefixSum(builder, loc, log1mZ,
                 triOnes(builder, loc, d.n, /*strict=*/true, elemType));
@@ -455,7 +457,7 @@ static Value emitXformLogAbsDetJac(OpBuilder &builder, Location loc,
     return reduceSumToScalar(
         builder, loc, emitLogSigmoidDerivative(builder, loc, forwardInput));
   case XformKind::SOFTPLUS: {
-    Value logSigZ = impulse::emitLogSigmoid(builder, loc, forwardInput);
+    Value logSigZ = emitLogSigmoid(builder, loc, forwardInput);
     return reduceSumToScalar(builder, loc, logSigZ);
   }
   case XformKind::AFFINE: {
@@ -503,7 +505,7 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
   case XformKind::LESS_THAN:
     return sumVector(builder, loc, unconstrained);
   case XformKind::SOFTPLUS: {
-    Value logSigZ = impulse::emitLogSigmoid(builder, loc, unconstrained);
+    Value logSigZ = emitLogSigmoid(builder, loc, unconstrained);
     return sumVector(builder, loc, logSigZ);
   }
   case XformKind::SIGMOID:
@@ -542,10 +544,6 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
     return emitSplatConstant(builder, loc, scalarType, 0.0);
   }
   llvm_unreachable("unknown XformKind");
-}
-
-bool impulse::isConstantJacobian(XformKind kind) {
-  return kind == XformKind::IDENTITY || kind == XformKind::AFFINE;
 }
 
 impulse::ScaledUnitLowerCholeskyResult

@@ -1,4 +1,4 @@
-//===- InferStateLayout.h - Canonical impulse.infer state schema ---------===//
+//===- InferStateLayout.h - Canonical infer state schema --------*- C++ -*-===//
 
 #ifndef ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H
 #define ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H
@@ -21,73 +21,76 @@
 namespace mlir {
 namespace impulse {
 
+/// One slot of a `state_schema`: its name and the type of its value.
 struct StateSlot {
-  llvm::StringRef name;
-  mlir::RankedTensorType type;
+  StringRef name;
+  RankedTensorType type;
 };
 
 /// Names of the `state_schema` slots.
 namespace state_slot {
-inline constexpr llvm::StringLiteral kPosition = "position";
-inline constexpr llvm::StringLiteral kGradient = "gradient";
-inline constexpr llvm::StringLiteral kPotentialEnergy = "potential_energy";
-inline constexpr llvm::StringLiteral kStepSize = "step_size";
-inline constexpr llvm::StringLiteral kInverseMassMatrix = "inverse_mass_matrix";
-inline constexpr llvm::StringLiteral kDaLogStepSize = "da_log_step_size";
-inline constexpr llvm::StringLiteral kDaLogStepSizeAvg = "da_log_step_size_avg";
-inline constexpr llvm::StringLiteral kDaGradientAvg = "da_gradient_avg";
-inline constexpr llvm::StringLiteral kDaStepCount = "da_step_count";
-inline constexpr llvm::StringLiteral kDaProxCenter = "da_prox_center";
-inline constexpr llvm::StringLiteral kWelfordMean = "welford_mean";
-inline constexpr llvm::StringLiteral kWelfordM2 = "welford_m2";
-inline constexpr llvm::StringLiteral kWelfordN = "welford_n";
-inline constexpr llvm::StringLiteral kWindowIdx = "window_idx";
-inline constexpr llvm::StringLiteral kWarmupOffset = "warmup_offset";
-inline constexpr llvm::StringLiteral kRng = "rng";
-inline constexpr llvm::StringLiteral kLoc = "loc";
-inline constexpr llvm::StringLiteral kScaleUnconstrained =
-    "scale_unconstrained";
-inline constexpr llvm::StringLiteral kScaleTrilUnconstrained =
+inline constexpr StringLiteral kPosition = "position";
+inline constexpr StringLiteral kGradient = "gradient";
+inline constexpr StringLiteral kPotentialEnergy = "potential_energy";
+inline constexpr StringLiteral kStepSize = "step_size";
+inline constexpr StringLiteral kInverseMassMatrix = "inverse_mass_matrix";
+inline constexpr StringLiteral kDaLogStepSize = "da_log_step_size";
+inline constexpr StringLiteral kDaLogStepSizeAvg = "da_log_step_size_avg";
+inline constexpr StringLiteral kDaGradientAvg = "da_gradient_avg";
+inline constexpr StringLiteral kDaStepCount = "da_step_count";
+inline constexpr StringLiteral kDaProxCenter = "da_prox_center";
+inline constexpr StringLiteral kWelfordMean = "welford_mean";
+inline constexpr StringLiteral kWelfordM2 = "welford_m2";
+inline constexpr StringLiteral kWelfordN = "welford_n";
+inline constexpr StringLiteral kWindowIdx = "window_idx";
+inline constexpr StringLiteral kWarmupOffset = "warmup_offset";
+inline constexpr StringLiteral kRng = "rng";
+inline constexpr StringLiteral kLoc = "loc";
+inline constexpr StringLiteral kScaleUnconstrained = "scale_unconstrained";
+inline constexpr StringLiteral kScaleTrilUnconstrained =
     "scale_tril_unconstrained";
-inline constexpr llvm::StringLiteral kOptMLoc = "opt_m_loc";
-inline constexpr llvm::StringLiteral kOptVLoc = "opt_v_loc";
-inline constexpr llvm::StringLiteral kOptMScale = "opt_m_scale";
-inline constexpr llvm::StringLiteral kOptVScale = "opt_v_scale";
-inline constexpr llvm::StringLiteral kOptMScaleTril = "opt_m_scale_tril";
-inline constexpr llvm::StringLiteral kOptVScaleTril = "opt_v_scale_tril";
-inline constexpr llvm::StringLiteral kOptStepCount = "opt_step_count";
-inline constexpr llvm::StringLiteral kWeight = "weight";
+inline constexpr StringLiteral kOptMLoc = "opt_m_loc";
+inline constexpr StringLiteral kOptVLoc = "opt_v_loc";
+inline constexpr StringLiteral kOptMScale = "opt_m_scale";
+inline constexpr StringLiteral kOptVScale = "opt_v_scale";
+inline constexpr StringLiteral kOptMScaleTril = "opt_m_scale_tril";
+inline constexpr StringLiteral kOptVScaleTril = "opt_v_scale_tril";
+inline constexpr StringLiteral kOptStepCount = "opt_step_count";
+inline constexpr StringLiteral kWeight = "weight";
 } // namespace state_slot
 
 /// Whether the state schema and the warmup adaptation treat an inverse mass
 /// matrix of type `type` as a diagonal: `tensor<N>` and `tensor<1xN>` hold the
 /// diagonal for every N, `tensor<1x1>` included; any other shape is a dense
 /// matrix.
-inline bool isDiagonalInverseMass(mlir::RankedTensorType type) {
+inline bool isDiagonalInverseMass(RankedTensorType type) {
   return type.getRank() == 1 ||
          (type.getRank() == 2 && type.getShape()[0] == 1);
 }
 
-/// Sizes and types are per chain; numChains > 1 prepends a chain dimension.
-inline llvm::SmallVector<StateSlot>
-buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
-                 mlir::RankedTensorType invMassType, int64_t numChains = 1,
-                 mlir::RankedTensorType rngType = {}) {
-  mlir::MLIRContext *ctx = elemType.getContext();
-  auto i64TensorType =
-      mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
-  auto f64 = mlir::Float64Type::get(ctx);
-  auto positionType = mlir::RankedTensorType::get({1, positionSize}, elemType);
-  auto scalarType = mlir::RankedTensorType::get({}, elemType);
+/// The HMC/NUTS slots for `positionSize` positions of `elemType`, with the
+/// adaptation state when `adaptive`. A null `invMassType` stands for a
+/// diagonal of position type. When `numChains` > 1, every slot gets a leading
+/// chain dimension and an `rng` slot holds one key of type `rngType`
+/// (`tensor<2xui64>` when null) per chain.
+inline SmallVector<StateSlot>
+buildStateSchema(bool adaptive, int64_t positionSize, Type elemType,
+                 RankedTensorType invMassType, int64_t numChains = 1,
+                 RankedTensorType rngType = {}) {
+  MLIRContext *ctx = elemType.getContext();
+  auto i64TensorType = RankedTensorType::get({}, IntegerType::get(ctx, 64));
+  auto f64 = Float64Type::get(ctx);
+  auto positionType = RankedTensorType::get({1, positionSize}, elemType);
+  auto scalarType = RankedTensorType::get({}, elemType);
 
   bool diagonal = !invMassType || isDiagonalInverseMass(invMassType);
-  mlir::RankedTensorType invType = invMassType ? invMassType : positionType;
-  auto welfordVec = mlir::RankedTensorType::get({positionSize}, f64);
-  mlir::RankedTensorType welfordM2 =
+  RankedTensorType invType = invMassType ? invMassType : positionType;
+  auto welfordVec = RankedTensorType::get({positionSize}, f64);
+  RankedTensorType welfordM2 =
       diagonal ? welfordVec
-               : mlir::RankedTensorType::get({positionSize, positionSize}, f64);
+               : RankedTensorType::get({positionSize, positionSize}, f64);
 
-  llvm::SmallVector<StateSlot> slots = {
+  SmallVector<StateSlot> slots = {
       {state_slot::kPosition, positionType},
       {state_slot::kGradient, positionType},
       {state_slot::kPotentialEnergy, scalarType},
@@ -110,35 +113,33 @@ buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
   }
   if (numChains > 1) {
     for (StateSlot &slot : slots) {
-      llvm::SmallVector<int64_t> shape;
+      SmallVector<int64_t> shape;
       shape.push_back(numChains);
       shape.append(slot.type.getShape().begin(), slot.type.getShape().end());
-      slot.type =
-          mlir::RankedTensorType::get(shape, slot.type.getElementType());
+      slot.type = RankedTensorType::get(shape, slot.type.getElementType());
     }
-    auto ui64 = mlir::IntegerType::get(ctx, 64, mlir::IntegerType::Unsigned);
-    mlir::RankedTensorType perChainRng =
-        rngType ? rngType : mlir::RankedTensorType::get({2}, ui64);
-    llvm::SmallVector<int64_t> rngShape;
+    auto ui64 = IntegerType::get(ctx, 64, IntegerType::Unsigned);
+    RankedTensorType perChainRng =
+        rngType ? rngType : RankedTensorType::get({2}, ui64);
+    SmallVector<int64_t> rngShape;
     rngShape.push_back(numChains);
     rngShape.append(perChainRng.getShape().begin(),
                     perChainRng.getShape().end());
     slots.push_back(
         {state_slot::kRng,
-         mlir::RankedTensorType::get(rngShape, perChainRng.getElementType())});
+         RankedTensorType::get(rngShape, perChainRng.getElementType())});
   }
   return slots;
 }
 
 /// The VI slots of the guide `guide`, which is not CUSTOM.
-inline llvm::SmallVector<StateSlot>
-buildVIStateSchema(GuideKind guide, int64_t positionSize, mlir::Type elemType) {
-  mlir::MLIRContext *ctx = elemType.getContext();
-  auto i64TensorType =
-      mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
-  auto vecType = mlir::RankedTensorType::get({1, positionSize}, elemType);
+inline SmallVector<StateSlot>
+buildVIStateSchema(GuideKind guide, int64_t positionSize, Type elemType) {
+  MLIRContext *ctx = elemType.getContext();
+  auto i64TensorType = RankedTensorType::get({}, IntegerType::get(ctx, 64));
+  auto vecType = RankedTensorType::get({1, positionSize}, elemType);
   int64_t flat = positionSize * (positionSize + 1) / 2;
-  auto flatType = mlir::RankedTensorType::get({flat}, elemType);
+  auto flatType = RankedTensorType::get({flat}, elemType);
 
   switch (guide) {
   case GuideKind::AUTO_NORMAL:
@@ -175,17 +176,17 @@ buildVIStateSchema(GuideKind guide, int64_t positionSize, mlir::Type elemType) {
 }
 
 /// Only `weight`: trace and rng travel as the op's universal results.
-inline llvm::SmallVector<StateSlot> buildMHStateSchema(mlir::Type elemType) {
-  auto scalarType = mlir::RankedTensorType::get({}, elemType);
+inline SmallVector<StateSlot> buildMHStateSchema(Type elemType) {
+  auto scalarType = RankedTensorType::get({}, elemType);
   return {{state_slot::kWeight, scalarType}};
 }
 
-inline std::optional<unsigned> slotIndex(mlir::ArrayAttr schema,
-                                         llvm::StringRef name) {
+/// The index of slot `name` in `schema`, if `schema` has one.
+inline std::optional<unsigned> slotIndex(ArrayAttr schema, StringRef name) {
   if (!schema)
     return std::nullopt;
   for (auto [i, attr] : llvm::enumerate(schema))
-    if (auto s = mlir::dyn_cast<mlir::StringAttr>(attr))
+    if (auto s = dyn_cast<StringAttr>(attr))
       if (s.getValue() == name)
         return static_cast<unsigned>(i);
   return std::nullopt;
@@ -193,11 +194,10 @@ inline std::optional<unsigned> slotIndex(mlir::ArrayAttr schema,
 
 /// The `stateIn` value of slot `name` under `schema`, or null when the schema
 /// has no such slot or `stateIn` is empty.
-inline mlir::Value stateInSlot(mlir::ArrayAttr schema, mlir::ValueRange stateIn,
-                               llvm::StringRef name) {
+inline Value stateInSlot(ArrayAttr schema, ValueRange stateIn, StringRef name) {
   std::optional<unsigned> idx = slotIndex(schema, name);
   if (!idx || *idx >= stateIn.size())
-    return mlir::Value();
+    return Value();
   return stateIn[*idx];
 }
 

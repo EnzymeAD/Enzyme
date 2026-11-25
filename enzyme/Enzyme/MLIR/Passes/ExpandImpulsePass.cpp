@@ -1343,7 +1343,9 @@ SmallVector<Value> MCMCChainEmitter::packStateOut(
     return adaptationOut[*impulse::slotIndex(schema, name) - first];
   };
 
-  // The verifier guarantees the declared schema has this layout.
+  // Assumes the declared `state_schema` is the canonical layout, which
+  // InferOp::verify checks for impulse.infer; impulse.infer_region has no
+  // verifier.
   SmallVector<Value> stateOut;
   auto invMassTy = cast<RankedTensorType>(invMass.getType());
   for (const impulse::StateSlot &slot : impulse::buildStateSchema(

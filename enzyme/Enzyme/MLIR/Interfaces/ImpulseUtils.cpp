@@ -90,7 +90,7 @@ ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
 
   SmallVector<Type> operandTypes(leadingTypes);
   operandTypes.append(originalInputs.begin(), originalInputs.end());
-  mlir::FunctionType functionType =
+  FunctionType functionType =
       builder.getFunctionType(operandTypes, ResultTypes);
   auto NewF = cast<FunctionOpInterface>(toeval->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, toeval.getName().str() + "." + suffix);
