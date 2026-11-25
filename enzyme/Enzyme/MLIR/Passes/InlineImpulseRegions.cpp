@@ -270,52 +270,63 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
     mapper.map(oldResult, newResult);
 }
 
-/// Inlines the sub-model sites at the top level of the sampler of `regionOp`,
-/// whose sampler is a whole generative function, with the addresses of their
-/// sites prefixed by the sub-model's address. Returns whether there was one.
-static bool dissolveSubmodelSites(impulse::InferRegionOp regionOp,
+/// Clones `body`, the body of the sub-model at `prefix` with its arguments
+/// bound to `inputs`, at the insertion point of `builder`, and returns the
+/// values it yields. Each site becomes an `impulse.sample_region` at its
+/// symbol appended to `prefix`, and the body of each nested sub-model is
+/// inlined the same way.
+static SmallVector<Value>
+inlineSubmodelBody(OpBuilder &builder, Block &body, ValueRange inputs,
+                   ArrayAttr prefix, SymbolTableCollection &symbolTable) {
+  IRMapping mapper;
+  mapper.map(body.getArguments(), inputs);
+  for (Operation &op : body.without_terminator()) {
+    auto site = dyn_cast<impulse::SampleOp>(&op);
+    if (!site) {
+      builder.clone(op, mapper);
+      continue;
+    }
+    if (site.getDistAttr() || site.getLogpdfFnAttr()) {
+      convertSampleToSampleRegion(builder, site, mapper, symbolTable, prefix);
+      continue;
+    }
+    SmallVector<Attribute> address(prefix.begin(), prefix.end());
+    address.push_back(site.getSymbolAttr());
+    auto callee = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        site, site.getFnAttr());
+    SmallVector<Value> siteInputs = llvm::map_to_vector(
+        site.getInputs(), [&](Value v) { return mapper.lookupOrDefault(v); });
+    mapper.map(site.getResults(),
+               inlineSubmodelBody(builder, callee.getFunctionBody().front(),
+                                  siteInputs, builder.getArrayAttr(address),
+                                  symbolTable));
+  }
+  return llvm::map_to_vector(
+      body.getTerminator()->getOperands(),
+      [&](Value operand) { return mapper.lookupOrDefault(operand); });
+}
+
+/// Replaces each sub-model site at the top level of the sampler of
+/// `regionOp`, an `impulse.sample_region` whose sampler is a whole generative
+/// function, with that function's body; see `inlineSubmodelBody`.
+static void dissolveSubmodelSites(impulse::InferRegionOp regionOp,
                                   SymbolTableCollection &symbolTable) {
   if (regionOp.getSampling().empty())
-    return false;
-  Block &samplerEntry = regionOp.getSampling().front();
-
+    return;
   SmallVector<impulse::SampleRegionOp> submodels;
-  for (Operation &op : samplerEntry) {
-    auto site = dyn_cast<impulse::SampleRegionOp>(&op);
-    if (!site)
-      continue;
+  for (auto site :
+       regionOp.getSampling().front().getOps<impulse::SampleRegionOp>())
     if (site.getLogpdf().empty() && !site.getLogpdfFnAttr() &&
         !site.getSampling().empty() && site.getAddressAttr())
       submodels.push_back(site);
-  }
 
   for (impulse::SampleRegionOp site : submodels) {
-    ArrayAttr prefix = site.getAddressAttr();
-    Block &body = site.getSampling().front();
-
     OpBuilder builder(site);
-    IRMapping mapper;
-    for (auto [arg, input] : llvm::zip(body.getArguments(), site.getInputs()))
-      mapper.map(arg, input);
-
-    for (Operation &op : body.without_terminator()) {
-      if (auto innerSample = dyn_cast<impulse::SampleOp>(&op)) {
-        convertSampleToSampleRegion(builder, innerSample, mapper, symbolTable,
-                                    prefix);
-        continue;
-      }
-      builder.clone(op, mapper);
-    }
-
-    auto *yield = body.getTerminator();
-    for (auto [result, operand] :
-         llvm::zip(site.getResults(), yield->getOperands()))
-      result.replaceAllUsesWith(mapper.lookupOrDefault(operand));
-
+    site->replaceAllUsesWith(inlineSubmodelBody(
+        builder, site.getSampling().front(), site.getInputs(),
+        site.getAddressAttr(), symbolTable));
     site.erase();
   }
-
-  return !submodels.empty();
 }
 
 /// Creates an `impulse.infer_region` with the operands, result types and
@@ -475,8 +486,7 @@ struct InlineInferIntoRegionPass
 
     SymbolTableCollection symbolTable;
     getOperation()->walk([&](impulse::InferRegionOp regionOp) {
-      while (dissolveSubmodelSites(regionOp, symbolTable)) {
-      }
+      dissolveSubmodelSites(regionOp, symbolTable);
     });
   }
 };
