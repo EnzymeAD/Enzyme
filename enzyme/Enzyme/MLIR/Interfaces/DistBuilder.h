@@ -1,7 +1,8 @@
 //===- DistBuilder.h - Emit distribution sampler/logpdf IR ----*- C++ -*-===//
 //
-// Emits only impulse, arith and math ops; LowerImpulse converts the impulse
-// compute ops to the target dialect, so every frontend shares this library.
+// Builds the sampler, the log density and the unconstraining bijection of an
+// `#impulse.dist` attribute out of impulse, enzyme.broadcast, arith and math
+// ops.
 //
 //===----------------------------------------------------------------------===//
 
@@ -55,7 +56,9 @@ struct ScaledUnitLowerCholeskyResult {
   Value sumLogDiag;
 };
 
-/// NumPyro's ScaledUnitLowerCholeskyTransform; `xFlat` = [strict lower, diag].
+/// Builds the scale factor diag(softplus(d)) * L, with L unit lower triangular,
+/// from `xFlat` = [strict lower entries of L in row-major order, d], and the
+/// sum of log(softplus(d)).
 ScaledUnitLowerCholeskyResult
 emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
                             int64_t d, Type elemType);

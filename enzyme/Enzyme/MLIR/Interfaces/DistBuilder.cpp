@@ -1,4 +1,9 @@
 //===- DistBuilder.cpp - Emit distribution sampler/logpdf IR --------------===//
+//
+// Each sampler and log density fixes its operation order and its RNG draws:
+// reordering them changes the bits of the result.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Interfaces/DistBuilder.h"
 #include "Dialect/Ops.h"
@@ -48,7 +53,7 @@ static SupportKind applyXformToSupport(XformAttr xform, SupportKind in) {
   return in;
 }
 
-/// Must agree with the frontend `support(::Type)`; the verifier compares them.
+/// Support of the base distribution before its transform chain.
 static SupportKind baseSupport(DistBaseKind base) {
   switch (base) {
   case DistBaseKind::STD_UNIFORM:
@@ -293,7 +298,7 @@ static Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
     return reduceSumToScalar(b, loc, logSigZ);
   }
   case XformKind::AFFINE: {
-    // log(scale) without abs, as in the traced Normal logpdf.
+    // log(scale), not log|scale|: a negative scale gives NaN.
     Value scaleB = broadcastToSample(b, loc, distArgs[1], sampleType);
     Value logScale = math::LogOp::create(b, loc, scaleB);
     return reduceSumToScalar(b, loc, logScale);
@@ -361,7 +366,7 @@ static Value splatSample(OpBuilder &b, Location loc,
                              b.getFloatAttr(sampleType.getElementType(), v)));
 }
 
-/// Lowers to the same bits as Reactant's `rand`, matching the traced path.
+/// Draws `sampleType` values uniform on [0, 1) and advances `rng`.
 static Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
                              RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
@@ -375,7 +380,7 @@ static Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
   return op.getResult();
 }
 
-/// Op for op as Reactant's `randexp`.
+/// Standard exponential sample -log1p(-u) from a uniform sample `u`.
 static Value stdExpFromUniform(OpBuilder &b, Location loc, Value u) {
   Value negU = arith::NegFOp::create(b, loc, u);
   Value l1p = math::Log1pOp::create(b, loc, negU);
@@ -399,7 +404,6 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
   case DistBaseKind::BERNOULLI: {
     Value u = emitUniformDraw(b, loc, rng, sampleType);
     Value logits = bcast(distArgs[0]);
-    // 1 / (1 + exp(-logits)), not LogisticOp: bitwise as the traced sampler.
     Value negLogits = arith::NegFOp::create(b, loc, logits);
     Value e = math::ExpOp::create(b, loc, negLogits);
     Value one = splatSample(b, loc, sampleType, 1.0);
@@ -414,7 +418,6 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     Value low = bcast(distArgs[0]);
     Value high = bcast(distArgs[1]);
     Value one = splatSample(b, loc, sampleType, 1.0);
-    // (high - low) + 1 in the traced sampler's order.
     Value n = arith::AddFOp::create(
         b, loc, arith::SubFOp::create(b, loc, high, low), one);
     Value scaled = arith::MulFOp::create(b, loc, u, n);
@@ -422,7 +425,6 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     return arith::AddFOp::create(b, loc, low, fl);
   }
   case DistBaseKind::HALF_NORMAL: {
-    // Matches the traced abs.(sigma .* randn) only up to sub-ULP differences.
     Type elemType = sampleType.getElementType();
     Value zero = scalarConst(b, loc, elemType, 0.0);
     Value one = scalarConst(b, loc, elemType, 1.0);
@@ -436,8 +438,8 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     return math::AbsFOp::create(b, loc, scaled);
   }
   case DistBaseKind::HALF_CAUCHY: {
-    // u * (1 - eps) + eps, as in the traced JAX construction.
     Value u = emitUniformDraw(b, loc, rng, sampleType);
+    // Moves u off 0, the pole of tan(pi * (u - 0.5)).
     double epsF64 = std::numeric_limits<double>::epsilon();
     Value oneMinusEps = splatSample(b, loc, sampleType, 1.0 - epsF64);
     Value epsV = splatSample(b, loc, sampleType, epsF64);
@@ -452,7 +454,7 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     return arith::MulFOp::create(b, loc, bcast(distArgs[0]), at);
   }
   case DistBaseKind::MVN: {
-    // mu + U^T z with the upper factor U, op for op as the traced sampler.
+    // mu + U^T z with the upper Cholesky factor U of Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];
     int64_t n = 1;
@@ -478,7 +480,7 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     return arith::AddFOp::create(b, loc, mu, upperCholTz);
   }
   case DistBaseKind::GUMBEL: {
-    // Not bit-matched to jax.random.gumbel, which draws u on [tiny, 1).
+    // u = 0 maps to -inf.
     Value u = emitUniformDraw(b, loc, rng, sampleType);
     Value g = arith::NegFOp::create(
         b, loc,
@@ -494,8 +496,9 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
   }
 }
 
-// NumPyro StudentT.log_prob's parameter-only terms {z, coef}, in its order.
-// Single-element df and scale are computed once and broadcast: same bits.
+/// The parameter-only terms {z, coef} of the Student-t log density. Single
+/// element df and scale are computed once and broadcast, which gives the same
+/// bits as computing them per element.
 static std::pair<Value, Value>
 emitStudentTParamTerms(OpBuilder &b, Location loc, Value dfArg, Value scaleArg,
                        RankedTensorType sampleType) {
@@ -598,8 +601,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     return {reduce(kernel), reduce(normTerm)};
   }
   case DistBaseKind::STUDENT_T: {
-    // NumPyro's StudentT.log_prob in its operation order, returned whole.
-    // -(z - kernel), not kernel - z, so XLA CPU fuses the FMA as JAX does.
+    // -(z - kernel), not kernel - z: the two contract to different FMAs.
     auto [z, coef] =
         emitStudentTParamTerms(b, loc, distArgs[0], distArgs[2], sampleType);
     Value df = bcast(distArgs[0]);
@@ -650,8 +652,8 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     return {reduce(kernel), reduce(norm)};
   }
   case DistBaseKind::HALF_STUDENT_T: {
-    // NumPyro's StudentT(df, 0, scale) truncated at 0, in its operation order.
-    // With loc == low == 0, cdf(0) is exactly 0.5: the normalizer is log(0.5).
+    // Student-t(df, 0, scale) truncated at 0: cdf(0) is exactly 0.5, so the
+    // normalizer is log(0.5).
     auto [z, coef] =
         emitStudentTParamTerms(b, loc, distArgs[0], distArgs[1], sampleType);
     Value df = bcast(distArgs[0]);
@@ -694,7 +696,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     return {reduce(kernel), lognorm};
   }
   case DistBaseKind::MVN: {
-    // One solve, as NumPyro's _batch_mahalanobis: |U^-T diff|^2, Sigma = U^T U.
+    // |U^-T diff|^2 with one triangular solve, where Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];
     int64_t n = 1;
