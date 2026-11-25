@@ -97,7 +97,6 @@ set(POSEIDON_SRC
     Techniques/Precision.cpp
     Model/FPFormat.cpp
     Profile/ProfileRead.cpp
-    Techniques/Matmul/RaiseWMMA.cpp
     Model/Sampling.cpp
     Solve/Solvers.cpp
     Solve/SiteTable.cpp
@@ -108,11 +107,11 @@ set(POSEIDON_SRC
     Techniques/Unit.cpp
     Model/FPNode.cpp
     IR/Utils.cpp
-    Techniques/Matmul/WmmaUtils.cpp
     Techniques/Matmul/MatmulAccuracy.cpp
     Techniques/Matmul/MatmulCandidates.cpp
     Techniques/Matmul/MatmulSimulation.cpp
-    Techniques/Matmul/RecognizeHostGemm.cpp)
+    Techniques/Matmul/RecognizeHostGemm.cpp
+    Techniques/Matmul/RecognizeScalarLoop.cpp)
 
 set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
 if(Clang_FOUND)

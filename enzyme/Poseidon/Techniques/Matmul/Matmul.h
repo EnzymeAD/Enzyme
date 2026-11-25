@@ -125,11 +125,12 @@ struct RuntimeDim {
   llvm::SmallVector<LaunchRef, 2> factors;
   int64_t mul = 1;
   int64_t add = 0;
-  bool isConst() const { return factors.empty(); }
-  // One whole parameter, the form a descriptor carries positionally.
-  bool isPlain() const {
-    return factors.size() < 2 && (factors.empty() || !factors[0].isField());
+  static RuntimeDim constant(int64_t value) {
+    RuntimeDim d;
+    d.add = value;
+    return d;
   }
+  bool isConst() const { return factors.empty(); }
   bool operator==(const RuntimeDim &o) const {
     return factors == o.factors && mul == o.mul && add == o.add;
   }
@@ -237,6 +238,10 @@ void collectScalarLoopReductionTrips(
     const Options &O, llvm::Function &F,
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
 
+// The dimensions of a GEMM, in the order the _ex entries take them.
+enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
+constexpr unsigned kNumGemmDims = 6;
+
 // The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
 // and runtime-dimension factors name parameters of the body until the
 // descriptor is written, and launch arguments of the wrapper kernel after.
@@ -245,36 +250,28 @@ struct GemmBodyNote {
   // Byte offsets of the three operand pointers inside their parameter, when
   // the parameter is a by-value aggregate; -1 when it is the pointer itself.
   int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  unsigned N = 0; // square dim (== gK); square fast path
   // descriptorScheme and descriptorModulusField of the selected variant.
   DispatchScheme scheme = DispatchScheme::OzakiII;
   unsigned numModuli = kOzakiIIMaxModuli;
   bool standalone = false; // body is a pure GEMM (only the C store)
   bool valid = false;
-  // General GEMM geometry, gM x gNcols x gK with per-operand leading dims (in
-  // elements) and layouts; a square row-major NN GEMM takes the square entry,
-  // anything else the _ex entry.
-  unsigned gM = 0, gNcols = 0, gK = 0;
-  unsigned lda = 0, ldb = 0, ldc = 0; // leading dims, in elements
+  // M x Ncols x K and the leading dimensions (in elements) at deploy scale,
+  // indexed by GemmDim. The host stub evaluates a dimension with factors from
+  // the launch arguments, so a build profiled at one problem size runs at
+  // another.
+  RuntimeDim dims[kNumGemmDims];
   bool aColMajor = false, bColMajor = false, cColMajor = false;
+  // 1 accumulates into C.
+  double beta = 0.0;
 
   // Deploy extents recovered from the launch geometry: a dimension that does
   // not track matrix order has no sound rescale from a surrogate profile. With
-  // `launchCrop` set, gM/gNcols hold the deploy extents from the constants
-  // gating the C store, and cropMAxis/cropNAxis name the thread axis each index
-  // runs along so the host stub takes extent = min(crop, gridDim * blockDim).
+  // `launchCrop` set, dims[DimM] and dims[DimNcols] are the constants gating
+  // the C store, and cropMAxis/cropNAxis name the thread axis each index runs
+  // along so the host stub takes extent = min(crop, gridDim * blockDim).
   bool launchCrop = false;
   int cropMAxis = -1, cropNAxis = -1; // 0/1/2 = thread axis x/y/z
 
-  // Runtime geometry (Origin::HostGemmLoopNest): with `runtimeDims` set the
-  // host stub evaluates each dimension from the launch arguments (RuntimeDim),
-  // so a build profiled at one problem size runs at another; the six integers
-  // above are then the profile-scale values. `beta` = 1 accumulates into C. A
-  // descriptor without these tokens reads back as false / 0.0.
-  using RtDim = RuntimeDim;
-  bool runtimeDims = false;
-  RtDim rM, rNcols, rK, rlda, rldb, rldc;
-  double beta = 0.0;
   // Launch values the recognition assumed equal (RuntimeGemmHandle); the stub
   // dispatches only when every pair agrees and launches the kernel otherwise.
   llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;

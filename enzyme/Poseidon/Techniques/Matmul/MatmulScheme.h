@@ -83,14 +83,36 @@ inline unsigned modulusCount(const SchemeVariant &v) {
   return v.moduli;
 }
 
-// Captured significand bits of the N-slice Veltkamp split
-// (emitNwayVeltkampSplit): each slice adds p bits, p = 8 for BF16 and 11 for
-// F16/TF32; the scale only keeps the residual inside the slice format's
-// exponent range. The fill narrows F64 to F32 and the accumulator is F32, so
-// the family is capped at 24 bits.
+// A format a split scheme slices an operand into. Each slice is the residual
+// left by the slices before it, multiplied by 2^scaleExponent and rounded to
+// nearest in the format, so it keeps `significandBits` bits of that residual;
+// the reconstruction divides the scale back out exactly. The scale therefore
+// sets no precision: it only keeps a residual, at most 2^-significandBits of
+// what it is cut from, inside the format's exponent range, which BF16 shares
+// with F32.
+struct SliceFormat {
+  FPKind kind;
+  unsigned significandBits;
+  int scaleExponent;
+};
+inline constexpr SliceFormat kSliceFormats[] = {
+    {FPKind::F16, 11, 11},
+    {FPKind::BF16, 8, 7},
+    {FPKind::TF32, 11, 11},
+};
+
+inline const SliceFormat &sliceFormat(FPKind k) {
+  for (const SliceFormat &f : kSliceFormats)
+    if (f.kind == k)
+      return f;
+  llvm::report_fatal_error("sliceFormat: not a slice format");
+}
+
+// Captured significand bits of the N-slice split: N times the bits of one
+// slice. The fill narrows F64 to F32 and the accumulator is F32, so the family
+// is capped at 24 bits.
 inline unsigned splitCapturedBits(const SchemeVariant &v) {
-  unsigned sliceSigBits = (v.operand == FPKind::BF16) ? 8u : 11u;
-  return std::min(sliceSigBits * sliceCount(v), 24u);
+  return std::min(sliceFormat(v.operand).significandBits * sliceCount(v), 24u);
 }
 
 // Whether this compiler has __poseidon_tcec_dgemm (runtime/tcec/tcec_rt.cu),

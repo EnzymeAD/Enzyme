@@ -293,12 +293,11 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
       return false;
   }
 
-  note.N = (unsigned)K;
-  // Every dim must be deploy scale: gK is, but globalM/globalN are
+  // Every dim must be deploy scale: K is, but globalM/globalN are
   // profile-scale and are rescaled by K/globalK. Fall back to the square dim K
   // when the global geometry is unavailable. Leading dims come from the handle
   // (bytes to elements); C mirrors B's major order.
-  note.gK = (unsigned)K;
+  unsigned gM = 0, gNcols = 0;
   if (m.globalM && m.globalN && m.globalK) {
     // The K/globalK rescale is only sound for a dimension that tracks matrix
     // order (one equal to globalK at profile scale); rescaling a
@@ -314,8 +313,8 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
       unsigned cropM = 0, cropN = 0;
       int axM = -1, axN = -1;
       if (recoverGuardExtents(O, F, m, cStore, cropM, cropN, axM, axN)) {
-        note.gM = cropM;
-        note.gNcols = cropN;
+        gM = cropM;
+        gNcols = cropN;
         note.launchCrop = true;
         note.cropMAxis = axM;
         note.cropNAxis = axN;
@@ -348,21 +347,25 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
       return false;
     }
     if (!recovered) {
-      note.gM =
-          (unsigned)((uint64_t)m.globalM * (uint64_t)K / (uint64_t)m.globalK);
-      note.gNcols =
+      gM = (unsigned)((uint64_t)m.globalM * (uint64_t)K / (uint64_t)m.globalK);
+      gNcols =
           (unsigned)((uint64_t)m.globalN * (uint64_t)K / (uint64_t)m.globalK);
     }
   } else {
-    note.gM = m.globalM ? m.globalM : (unsigned)K;
-    note.gNcols = m.globalN ? m.globalN : (unsigned)K;
+    gM = m.globalM ? m.globalM : (unsigned)K;
+    gNcols = m.globalN ? m.globalN : (unsigned)K;
   }
   note.aColMajor = false;
   note.bColMajor = bColMajor;
   note.cColMajor = bColMajor; // heuristic: output matches B's major order
-  note.lda = h.aLeadingDimByte ? (unsigned)(h.aLeadingDimByte / 8) : note.gK;
-  note.ldb = h.bLeadingDimByte ? (unsigned)(h.bLeadingDimByte / 8) : note.gK;
-  note.ldc = note.cColMajor ? note.gM : note.gNcols;
+  note.dims[DimM] = RuntimeDim::constant(gM);
+  note.dims[DimNcols] = RuntimeDim::constant(gNcols);
+  note.dims[DimK] = RuntimeDim::constant(K);
+  note.dims[DimLda] =
+      RuntimeDim::constant(h.aLeadingDimByte ? h.aLeadingDimByte / 8 : K);
+  note.dims[DimLdb] =
+      RuntimeDim::constant(h.bLeadingDimByte ? h.bLeadingDimByte / 8 : K);
+  note.dims[DimLdc] = RuntimeDim::constant(note.cColMajor ? gM : gNcols);
   note.standalone = (storeCount == 1);
   note.valid = true;
   return true;
@@ -414,26 +417,16 @@ static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
   note.assumedEqual = g.assumedEqual;
   note.standalone = true;
   note.valid = true;
-  note.runtimeDims = true;
   note.beta = g.beta;
-  // Profile-scale constants, written only as the descriptor's fallback: the
-  // host rewrite evaluates the runtime forms below instead.
-  note.N = m.globalK;
-  note.gM = m.globalM;
-  note.gNcols = m.globalN;
-  note.gK = m.globalK;
-  note.lda = (unsigned)(g.lda.isConst() ? g.lda.add : m.globalK);
-  note.ldb = (unsigned)(g.ldb.isConst() ? g.ldb.add : m.globalK);
-  note.ldc = (unsigned)(g.ldc.isConst() ? g.ldc.add : m.globalM);
   note.aColMajor = g.aColMajor;
   note.bColMajor = g.bColMajor;
   note.cColMajor = g.cColMajor;
-  note.rM = g.M;
-  note.rNcols = g.Ncols;
-  note.rK = g.K;
-  note.rlda = g.lda;
-  note.rldb = g.ldb;
-  note.rldc = g.ldc;
+  note.dims[DimM] = g.M;
+  note.dims[DimNcols] = g.Ncols;
+  note.dims[DimK] = g.K;
+  note.dims[DimLda] = g.lda;
+  note.dims[DimLdb] = g.ldb;
+  note.dims[DimLdc] = g.ldc;
   return note;
 }
 
@@ -466,17 +459,15 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m,
 
 static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
                            int aArg, int bArg, const GemmBodyNote &n) {
-  const GemmBodyNote::RtDim *dims[6] = {&n.rM,   &n.rNcols, &n.rK,
-                                        &n.rlda, &n.rldb,   &n.rldc};
-  bool plainDims = llvm::all_of(
-      dims, [](const GemmBodyNote::RtDim *x) { return x->isPlain(); });
   std::string message;
   raw_string_ostream msg(message);
   msg << "[ozaki-host-dispatch] wrote descriptor for " << wrapperName
       << ": C=" << launchRefString({cArg, n.cOffset}, "arg")
       << " A=" << launchRefString({aArg, n.aOffset}, "arg")
-      << " B=" << launchRefString({bArg, n.bOffset}, "arg") << ' ' << n.gM
-      << 'x' << n.gNcols << 'x' << n.gK << " nm=" << n.numModuli
+      << " B=" << launchRefString({bArg, n.bOffset}, "arg") << ' '
+      << runtimeDimString(n.dims[DimM]) << 'x'
+      << runtimeDimString(n.dims[DimNcols]) << 'x'
+      << runtimeDimString(n.dims[DimK]) << " nm=" << n.numModuli
       << (n.standalone ? " (standalone)" : " (fused)");
   for (const auto &[x, y] : n.assumedEqual)
     msg << ", if " << launchRefString(x, "arg")
@@ -485,37 +476,22 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
   recordDescriptor(
       S, LaunchKind::HostDispatch, wrapperName,
       [&](raw_ostream &os) {
-        os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' ' << n.N << ' '
-           << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' ' << n.gM << ' '
-           << n.gNcols << ' ' << n.gK << ' ' << n.lda << ' ' << n.ldb << ' '
-           << n.ldc << ' ' << (n.aColMajor ? 1 : 0) << ' '
-           << (n.bColMajor ? 1 : 0) << ' ' << (n.cColMajor ? 1 : 0) << ' '
-           << (n.scheme == DispatchScheme::Tcec     ? 1
-               : n.scheme == DispatchScheme::Direct ? 2
-                                                    : 0);
-        if (n.runtimeDims && plainDims) {
-          os << " 1";
-          for (const GemmBodyNote::RtDim *x : dims)
-            os << ' ' << (x->isConst() ? -1 : x->factors[0].param) << ' '
-               << x->mul << ' ' << x->add;
-          os << ' ' << n.beta;
+        os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' '
+           << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' '
+           << (n.aColMajor ? 1 : 0) << ' ' << (n.bColMajor ? 1 : 0) << ' '
+           << (n.cColMajor ? 1 : 0) << ' ' << (unsigned)n.scheme;
+        // Per dimension the factor count, each factor's argument and offset,
+        // mul and add.
+        os << " rd";
+        for (const RuntimeDim &x : n.dims) {
+          os << ' ' << x.factors.size();
+          for (const LaunchRef &f : x.factors)
+            os << ' ' << f.param << ' ' << f.offset;
+          os << ' ' << x.mul << ' ' << x.add;
         }
-        // The same geometry when a dimension is a field of an aggregate
-        // argument or a product of launch values: per dimension the
-        // factor count, each factor's argument and offset, mul and add.
-        if (n.runtimeDims && !plainDims) {
-          os << " rd";
-          for (const GemmBodyNote::RtDim *x : dims) {
-            os << ' ' << x->factors.size();
-            for (const LaunchRef &f : x->factors)
-              os << ' ' << f.param << ' ' << f.offset;
-            os << ' ' << x->mul << ' ' << x->add;
-          }
-          os << ' ' << n.beta;
-        }
-        // Keyword-tagged rather than positional: the extents the kernel's
-        // index guard gates its store with, intersected at the dispatch with
-        // the launch geometry.
+        os << ' ' << n.beta;
+        // The extents the kernel's index guard gates its store with,
+        // intersected at the dispatch with the launch geometry.
         if (n.launchCrop)
           os << " lc " << n.cropMAxis << ' ' << n.cropNAxis;
         if (n.cOffset >= 0 || n.aOffset >= 0 || n.bOffset >= 0)
@@ -554,13 +530,9 @@ static void emitMappedDescriptor(Session &S, StringRef wrapperName,
   // the wrapper's launch arguments, so they go through the same mapping.
   GemmBodyNote mapped = n;
   SmallVector<LaunchRef *, 16> refs;
-  if (mapped.runtimeDims) {
-    GemmBodyNote::RtDim *dd[6] = {&mapped.rM,   &mapped.rNcols, &mapped.rK,
-                                  &mapped.rlda, &mapped.rldb,   &mapped.rldc};
-    for (GemmBodyNote::RtDim *x : dd)
-      for (LaunchRef &f : x->factors)
-        refs.push_back(&f);
-  }
+  for (RuntimeDim &x : mapped.dims)
+    for (LaunchRef &f : x.factors)
+      refs.push_back(&f);
   for (auto &[x, y] : mapped.assumedEqual) {
     refs.push_back(&x);
     refs.push_back(&y);
@@ -611,17 +583,6 @@ namespace {
 // factors naming launch arguments of `kernel`.
 struct LaunchDesc : GemmBodyNote {
   std::string kernel;
-  // Whether anything is read from inside an aggregate argument, which only the
-  // launch's own argument array holds in every host ABI.
-  bool readsFields() const {
-    if (cOffset >= 0 || aOffset >= 0 || bOffset >= 0 || !assumedEqual.empty())
-      return true;
-    for (const GemmBodyNote::RtDim *x :
-         {&rM, &rNcols, &rK, &rlda, &rldb, &rldc})
-      if (!x->isPlain())
-        return true;
-    return false;
-  }
 };
 } // namespace
 
@@ -719,54 +680,24 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
         d.cParam = Cursor.integer<int>("C argument");
         d.aParam = Cursor.integer<int>("A argument");
         d.bParam = Cursor.integer<int>("B argument");
-        d.N = Cursor.integer<unsigned>("N");
         d.standalone = Cursor.integer<int>("standalone flag") != 0;
         d.numModuli = Cursor.integer<unsigned>("modulus field");
         if (d.numModuli > kOzakiIIMaxModuli)
           Cursor.fail("its modulus field " + Twine(d.numModuli) + " is above " +
                       Twine(kOzakiIIMaxModuli));
-        d.gM = Cursor.integer<unsigned>("M");
-        d.gNcols = Cursor.integer<unsigned>("column count");
-        d.gK = Cursor.integer<unsigned>("K");
-        d.lda = Cursor.integer<unsigned>("lda");
-        d.ldb = Cursor.integer<unsigned>("ldb");
-        d.ldc = Cursor.integer<unsigned>("ldc");
         d.aColMajor = Cursor.integer<int>("A layout") != 0;
         d.bColMajor = Cursor.integer<int>("B layout") != 0;
         d.cColMajor = Cursor.integer<int>("C layout") != 0;
-        switch (Cursor.integer<int>("scheme")) {
-        case 0:
-          d.scheme = DispatchScheme::OzakiII;
-          break;
-        case 1:
-          d.scheme = DispatchScheme::Tcec;
-          break;
-        case 2:
-          d.scheme = DispatchScheme::Direct;
-          break;
-        default:
-          Cursor.fail("its scheme is not 0, 1 or 2");
-        }
-        GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                      &d.rlda, &d.rldb,   &d.rldc};
-        // Positional runtime-geometry block: flag + 6 x (param mul add), then
-        // beta.
-        if (Cursor.consume("1")) {
-          for (GemmBodyNote::RtDim *x : dd) {
-            int param = Cursor.integer<int>("runtime dimension argument");
-            if (param >= 0)
-              x->factors.push_back({param, -1});
-            x->mul = Cursor.integer<int64_t>("runtime dimension factor");
-            x->add = Cursor.integer<int64_t>("runtime dimension term");
-          }
-          d.beta = Cursor.real("beta");
-          d.runtimeDims = true;
-        }
-        // Keyword blocks of fields and products, and of the launch geometry
-        // (see emitDescriptor).
+        unsigned scheme = Cursor.integer<unsigned>("scheme");
+        if (scheme > (unsigned)DispatchScheme::Direct)
+          Cursor.fail("its scheme " + Twine(scheme) + " is above " +
+                      Twine((unsigned)DispatchScheme::Direct));
+        d.scheme = (DispatchScheme)scheme;
+        // Keyword blocks (see emitDescriptor), of which rd is required.
+        bool haveDims = false;
         while (!Cursor.atEnd()) {
           if (Cursor.consume("rd")) {
-            for (GemmBodyNote::RtDim *x : dd) {
+            for (RuntimeDim &x : d.dims) {
               unsigned nf = Cursor.integer<unsigned>("factor count");
               if (nf > 8)
                 Cursor.fail("its factor count " + Twine(nf) + " is above 8");
@@ -774,13 +705,13 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
                 LaunchRef r;
                 r.param = Cursor.integer<int>("factor argument");
                 r.offset = Cursor.integer<int64_t>("factor offset");
-                x->factors.push_back(r);
+                x.factors.push_back(r);
               }
-              x->mul = Cursor.integer<int64_t>("runtime dimension factor");
-              x->add = Cursor.integer<int64_t>("runtime dimension term");
+              x.mul = Cursor.integer<int64_t>("dimension factor");
+              x.add = Cursor.integer<int64_t>("dimension term");
             }
             d.beta = Cursor.real("beta");
-            d.runtimeDims = true;
+            haveDims = true;
           } else if (Cursor.consume("pf")) {
             d.cOffset = Cursor.integer<int64_t>("C offset");
             d.aOffset = Cursor.integer<int64_t>("A offset");
@@ -809,6 +740,8 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
             break;
           }
         }
+        if (!haveDims)
+          Cursor.fail("it has no rd block");
         if (Error E = Cursor.takeError())
           return E;
         descs[d.kernel] = d;
@@ -817,33 +750,9 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
   return !descs.empty();
 }
 
-// Launch geometry, host side: the configuration a <<<grid, block>>> site pushes
-// is popped inside the stub, so the stub is where a launch-derived extent can
-// be taken; at the call site the dim3 temporaries are not constants at
-// PipelineStart.
-//
-// Fresh pop for the standalone rewrite, whose body (pop included) is replaced;
-// it also keeps the runtime's configuration stack balanced.
-static void emitPopConfig(IRBuilder<> &B, Module &M, Value *&gridOut,
-                          Value *&blockOut) {
-  LLVMContext &C = M.getContext();
-  Type *i32 = Type::getInt32Ty(C);
-  Type *i64 = Type::getInt64Ty(C);
-  Type *ptr = PointerType::get(C, 0);
-  Type *dim3Ty = ArrayType::get(i32, 3);
-  auto *grid = B.CreateAlloca(dim3Ty, nullptr, "dispatch.grid");
-  auto *block = B.CreateAlloca(dim3Ty, nullptr, "dispatch.block");
-  grid->setAlignment(Align(8));
-  block->setAlignment(Align(8));
-  auto *shmem = B.CreateAlloca(i64, nullptr, "dispatch.shmem");
-  auto *stream = B.CreateAlloca(ptr, nullptr, "dispatch.stream");
-  B.CreateCall(popCallConfiguration(M), {grid, block, shmem, stream});
-  gridOut = grid;
-  blockOut = block;
-}
-
-// The pop the fused stub already performs; its dim3 out-parameters are the
-// same geometry, and a second pop would consume the next launch's.
+// The configuration pop of a CUDA or HIP stub: a <<<grid, block>>> site pushes
+// its launch geometry and the stub pops it, so the pop's dim3 out-parameters
+// are where a launch-derived extent is read.
 static CallInst *findPopConfig(Function &F) {
   for (Instruction &I : instructions(F))
     if (auto *CI = dyn_cast<CallInst>(&I))
@@ -853,13 +762,14 @@ static CallInst *findPopConfig(Function &F) {
   return nullptr;
 }
 
-// A square row-major NN GEMM takes the square entry; anything non-square,
-// transposed or launch-cropped takes the layout-aware _ex entry. A
-// runtime-shaped GEMM always takes _ex: its extents are not known here.
+// The square entry takes one N for every dimension: it serves a row-major NN
+// GEMM whose six dimensions are the same constant and that is not
+// launch-cropped. Everything else takes the layout-aware _ex entry.
 static bool takesSquareEntry(const LaunchDesc &d) {
-  return !d.runtimeDims && !d.launchCrop &&
-         (d.gM == d.gNcols && d.gNcols == d.gK && !d.aColMajor &&
-          !d.bColMajor && !d.cColMajor);
+  const RuntimeDim &k = d.dims[DimK];
+  return !d.launchCrop && !d.aColMajor && !d.bColMajor && !d.cColMajor &&
+         k.isConst() &&
+         llvm::all_of(d.dims, [&](const RuntimeDim &x) { return x == k; });
 }
 
 // The launch a CUDA or HIP stub ends in.
@@ -875,7 +785,10 @@ static CallInst *findLaunchCall(Function &F) {
 // Kernel argument `r.param` lives where entry r.param of the launch's argument
 // array points, as the CUDA runtime reads it; a field of an aggregate argument
 // is at its offset from there in every host ABI, which the stub's own
-// parameters are not (a small aggregate arrives split into registers).
+// parameters are not (a small aggregate arrives split into registers). An
+// integer is read as `T` at its address: recognition admits no integer
+// narrower than 32 bits, and on the little-endian hosts the runtimes support
+// the first 32 bits of a wider one are its low 32 bits.
 static Value *loadLaunchValue(IRBuilder<> &B, Value *argArray,
                               const LaunchRef &r, Type *T) {
   Type *ptr = B.getPtrTy();
@@ -886,12 +799,11 @@ static Value *loadLaunchValue(IRBuilder<> &B, Value *argArray,
   return B.CreateLoad(T, at);
 }
 
-// The dispatch for a descriptor that reads inside an aggregate argument: built
-// in front of the stub's launch, from the launch's own argument array. The
-// launch is removed (standalone) or kept (fused); with assumed equalities it
-// runs instead of the dispatch whenever one of them does not hold.
-static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
-                                   FunctionCallee callee, bool squareRM) {
+// Builds the dispatch in front of the stub's launch, from the launch's own
+// argument array. The launch is removed (standalone) or kept (fused); with
+// assumed equalities it runs instead of the dispatch whenever one of them does
+// not hold.
+static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   CallInst *launch = findLaunchCall(F);
   CallInst *pop = findPopConfig(F);
   // A fused body was already fissioned device-side and computes nothing
@@ -914,14 +826,15 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   Type *dbl = Type::getDoubleTy(C);
   auto I32 = [&](int64_t v) { return ConstantInt::get(i32, (uint64_t)v); };
   Value *argArray = launchArguments(*launch);
+  const bool squareRM = takesSquareEntry(d);
+  // Resolved per descriptor: the scheme is a per-site solver decision.
+  FunctionCallee callee = getDispatchCallee(M, d.scheme, squareRM);
 
   IRBuilder<> B(launch);
   auto value = [&](const LaunchRef &r, Type *T) {
     return loadLaunchValue(B, argArray, r, T);
   };
-  auto dim = [&](const GemmBodyNote::RtDim &r, unsigned constFallback) {
-    if (!d.runtimeDims)
-      return (Value *)I32(constFallback);
+  auto dim = [&](const RuntimeDim &r) {
     Value *v = nullptr;
     for (const LaunchRef &f : r.factors) {
       Value *x = value(f, i32);
@@ -935,14 +848,14 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
       v = B.CreateAdd(v, I32(r.add));
     return v;
   };
-  auto cropDim = [&](int axis, unsigned cropConst) -> Value * {
+  auto cropDim = [&](int axis, const RuntimeDim &crop) -> Value * {
     Value *g = B.CreateLoad(
         i32, B.CreateConstInBoundsGEP1_32(i32, poppedGrid(*pop), axis));
     Value *b = B.CreateLoad(
         i32, B.CreateConstInBoundsGEP1_32(i32, poppedBlock(*pop), axis));
     Value *ext = B.CreateMul(g, b);
-    return B.CreateSelect(B.CreateICmpULT(ext, I32(cropConst)), ext,
-                          I32(cropConst));
+    return B.CreateSelect(B.CreateICmpULT(ext, I32(crop.add)), ext,
+                          I32(crop.add));
   };
 
   Value *Cp = value({d.cParam, d.cOffset}, ptr);
@@ -954,19 +867,20 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   Value *nm = I32(d.numModuli);
   SmallVector<Value *, 16> args;
   if (squareRM) {
-    Value *N = I32(d.N);
+    Value *N = I32(d.dims[DimK].add);
     args = {Cp, Ap, Bp, N, N, N, N, I32(0), I32(0), one, beta, stream, nm};
   } else {
     args = {Cp,
             Ap,
             Bp,
-            d.launchCrop ? cropDim(d.cropMAxis, d.gM) : dim(d.rM, d.gM),
-            d.launchCrop ? cropDim(d.cropNAxis, d.gNcols)
-                         : dim(d.rNcols, d.gNcols),
-            dim(d.rK, d.gK),
-            dim(d.rlda, d.lda),
-            dim(d.rldb, d.ldb),
-            dim(d.rldc, d.ldc),
+            d.launchCrop ? cropDim(d.cropMAxis, d.dims[DimM])
+                         : dim(d.dims[DimM]),
+            d.launchCrop ? cropDim(d.cropNAxis, d.dims[DimNcols])
+                         : dim(d.dims[DimNcols]),
+            dim(d.dims[DimK]),
+            dim(d.dims[DimLda]),
+            dim(d.dims[DimLdb]),
+            dim(d.dims[DimLdc]),
             I32(d.aColMajor ? 1 : 0),
             I32(d.bColMajor ? 1 : 0),
             I32(d.cColMajor ? 1 : 0),
@@ -1018,175 +932,20 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
 }
 
 // Runs before inlining (PipelineStart), while `__device_stub__K` is still a
-// standalone function whose parameters are the kernel's launch args. Standalone
-// descriptors replace the whole body with the dispatch call; fused bodies get
-// the dispatch prepended and keep the (device-side fissioned) launch.
+// function of its own that ends in the kernel's launch.
 static bool rewriteGemmStubBodies(const Options &O, Module &M) {
   std::map<std::string, LaunchDesc> descs;
   if (!readDispatchDescriptors(O, M, descs))
     return false;
 
-  LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
-  Type *i32 = Type::getInt32Ty(C);
-  Type *dbl = Type::getDoubleTy(C);
-
   bool changed = false;
   for (Function &F : M) {
     if (F.isDeclaration() || !F.getReturnType()->isVoidTy())
       continue;
-    StringRef cn = F.getName();
     auto dIt = llvm::find_if(
         descs, [&](const auto &kv) { return isLaunchStubFor(F, kv.first); });
-    if (dIt == descs.end())
-      continue;
-    const LaunchDesc &d = dIt->second;
-    if (d.readsFields()) {
-      changed |= dispatchFromLaunchArgs(
-          M, F, d, getDispatchCallee(M, d.scheme, takesSquareEntry(d)),
-          takesSquareEntry(d));
-      continue;
-    }
-    unsigned need = (unsigned)std::max({d.cParam, d.aParam, d.bParam});
-    if (d.runtimeDims) {
-      const GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                          &d.rlda, &d.rldb,   &d.rldc};
-      for (const GemmBodyNote::RtDim *x : dd)
-        if (!x->isConst())
-          need = std::max(need, (unsigned)x->factors[0].param);
-    }
-    if (F.arg_size() <= need)
-      continue;
-    if (d.runtimeDims) {
-      const GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                          &d.rlda, &d.rldb,   &d.rldc};
-      if (llvm::any_of(dd, [&](const GemmBodyNote::RtDim *x) {
-            return !x->isConst() &&
-                   !F.getArg(x->factors[0].param)->getType()->isIntegerTy();
-          })) {
-        errs() << "[ozaki-host-dispatch] " << cn
-               << ": a runtime GEMM dimension references a non-integer launch "
-                  "argument; skipping the dispatch rewrite\n";
-        continue;
-      }
-    }
-    Value *Cp = F.getArg(d.cParam);
-    Value *Ap = F.getArg(d.aParam);
-    Value *Bp = F.getArg(d.bParam);
-    Value *one_d = ConstantFP::get(dbl, 1.0);
-    Value *beta_d = ConstantFP::get(dbl, d.beta);
-    Value *nullStream = ConstantPointerNull::get(cast<PointerType>(ptr));
-    Value *nmV = ConstantInt::get(i32, d.numModuli);
-    auto I32 = [&](int v) { return ConstantInt::get(i32, (unsigned)v); };
-
-    // The launch configuration of this launch, when the descriptor's extents
-    // are intersected with it.
-    Value *gridCfg = nullptr, *blockCfg = nullptr;
-    // extent = min(crop, gridDim[axis] * blockDim[axis]): neither bound alone
-    // is the extent.
-    auto cropDim = [&](IRBuilder<> &B, int axis,
-                       unsigned cropConst) -> Value * {
-      Value *g = B.CreateLoad(
-          i32, B.CreateConstInBoundsGEP1_32(i32, gridCfg, (unsigned)axis));
-      Value *b = B.CreateLoad(
-          i32, B.CreateConstInBoundsGEP1_32(i32, blockCfg, (unsigned)axis));
-      Value *ext = B.CreateMul(g, b);
-      Value *cst = ConstantInt::get(i32, cropConst);
-      return B.CreateSelect(B.CreateICmpULT(ext, cst), ext, cst);
-    };
-
-    bool squareRM = takesSquareEntry(d);
-    // Resolved per descriptor: the scheme is a per-site solver decision.
-    FunctionCallee callee = getDispatchCallee(M, d.scheme, squareRM);
-    // Runtime dimensions are materialized as `mul*arg + add` right before the
-    // dispatch call, so a build profiled at one problem size deploys at
-    // another.
-    auto rtDim = [&](IRBuilder<> &B, const GemmBodyNote::RtDim &r,
-                     unsigned constFallback) -> Value * {
-      if (!d.runtimeDims)
-        return I32((int)constFallback);
-      if (r.isConst())
-        return ConstantInt::get(i32, (uint64_t)r.add);
-      Value *v = B.CreateZExtOrTrunc(F.getArg(r.factors[0].param), i32);
-      if (r.mul != 1)
-        v = B.CreateMul(v, ConstantInt::get(i32, (uint64_t)r.mul));
-      if (r.add)
-        v = B.CreateAdd(v, ConstantInt::get(i32, (uint64_t)r.add));
-      return v;
-    };
-    auto buildArgs = [&](IRBuilder<> &B) -> SmallVector<Value *, 16> {
-      if (squareRM) {
-        Value *Nv = I32((int)d.N);
-        return {Cp,     Ap,     Bp,    Nv,     Nv,         Nv, Nv,
-                I32(0), I32(0), one_d, beta_d, nullStream, nmV};
-      }
-      return {Cp,
-              Ap,
-              Bp,
-              d.launchCrop ? cropDim(B, d.cropMAxis, d.gM)
-                           : rtDim(B, d.rM, d.gM),
-              d.launchCrop ? cropDim(B, d.cropNAxis, d.gNcols)
-                           : rtDim(B, d.rNcols, d.gNcols),
-              rtDim(B, d.rK, d.gK),
-              rtDim(B, d.rlda, d.lda),
-              rtDim(B, d.rldb, d.ldb),
-              rtDim(B, d.rldc, d.ldc),
-              I32(d.aColMajor ? 1 : 0),
-              I32(d.bColMajor ? 1 : 0),
-              I32(d.cColMajor ? 1 : 0),
-              one_d,
-              beta_d,
-              nullStream,
-              nmV};
-    };
-    const char *calleeName = dispatchSym(d.scheme, squareRM);
-    if (d.launchCrop)
-      errs() << "[ozaki-host-dispatch] " << cn
-             << ": deploy extents taken from this launch -- M=min(" << d.gM
-             << ", gridDim*blockDim on axis " << d.cropMAxis << "), Ncols=min("
-             << d.gNcols << ", gridDim*blockDim on axis " << d.cropNAxis
-             << ")\n";
-    if (d.standalone) {
-      // Pure GEMM: replace the launch entirely.
-      F.deleteBody();
-      BasicBlock *bb = BasicBlock::Create(C, "entry", &F);
-      IRBuilder<> B(bb);
-      if (d.launchCrop)
-        emitPopConfig(B, M, gridCfg, blockCfg);
-      SmallVector<Value *, 16> args = buildArgs(B);
-      B.CreateCall(callee, args);
-      B.CreateRetVoid();
-      errs() << "[ozaki-host-dispatch] replaced stub body " << cn << " -> "
-             << calleeName << " (C=arg" << d.cParam << " A=arg" << d.aParam
-             << " B=arg" << d.bParam << ' ' << d.gM << 'x' << d.gNcols << 'x'
-             << d.gK << ")\n";
-    } else {
-      // Fused: prepend the dispatch (fills the output buffer) and keep the
-      // launch, whose kernel was fissioned device-side into the epilogue.
-      Instruction *ip = &*F.getEntryBlock().getFirstInsertionPt();
-      if (d.launchCrop) {
-        // After the stub's own pop (its out-parameters are this launch's
-        // geometry) and still before the launch.
-        CallInst *pop = findPopConfig(F);
-        if (!pop)
-          report_fatal_error(
-              "a fused host-dispatched GEMM needs the launch geometry, but its "
-              "stub performs no __cudaPopCallConfiguration; the kernel was "
-              "already fissioned device-side, so there is no correct code to "
-              "emit here.");
-        gridCfg = poppedGrid(*pop);
-        blockCfg = poppedBlock(*pop);
-        ip = pop->getNextNode();
-      }
-      IRBuilder<> B(ip);
-      SmallVector<Value *, 16> args = buildArgs(B);
-      B.CreateCall(callee, args);
-      errs() << "[ozaki-host-dispatch] prepended dispatch to stub " << cn
-             << " -> " << calleeName << " (fused) (C=arg" << d.cParam
-             << " A=arg" << d.aParam << " B=arg" << d.bParam << ' ' << d.gM
-             << 'x' << d.gNcols << 'x' << d.gK << ")\n";
-    }
-    changed = true;
+    if (dIt != descs.end())
+      changed |= rewriteStub(M, F, dIt->second);
   }
   return changed;
 }

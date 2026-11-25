@@ -158,14 +158,14 @@ int main(void) {
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)
 // CHECK: [poseidon] pin: rt_gemm_body:M0=native-dgemm cublas f64/f64{{$}}
-// CHECK: [ozaki-host-dispatch] wrote descriptor for _Z14rt_gemm_kerneliiiPdS_S_S_S_S_: C=arg7 A=arg5 B=arg3 3x6x12 nm=0 (standalone){{$}}
+// CHECK: [ozaki-host-dispatch] wrote descriptor for _Z14rt_gemm_kerneliiiPdS_S_S_S_S_: C=arg7 A=arg5 B=arg3 arg2x3*arg1x3*arg0 nm=0 (standalone){{$}}
 // CHECK-NEXT: [poseidon] {{.*}}raise_host_gemm_runtime_k.cu: 1 function(s) a rewrite reached; every other function as written
-// CHECK: [ozaki-host-dispatch] replaced stub body _Z29__device_stub__rt_gemm_kerneliiiPdS_S_S_S_S_ -> __poseidon_ozaki_dgemm_ex (C=arg7 A=arg5 B=arg3 3x6x12){{$}}
+// CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z29__device_stub__rt_gemm_kerneliiiPdS_S_S_S_S_ with __poseidon_ozaki_dgemm_ex (C=arg7 A=arg5 B=arg3){{$}}
 
 // The descriptor the stub is built from: C, A, B are launch arguments 7, 5 and
-// 3, and after the profile shape 3x6x12 the runtime block gives M, Ncols, K,
-// lda, ldb and ldc each as (argument, multiplier, addend): nDofs, 3 numEls,
-// 3 numPoints for K, lda and ldb, and nDofs; beta is 1.
+// 3, and the rd block gives M, Ncols, K, lda, ldb and ldc each as (factor
+// count, argument and offset of each factor, multiplier, addend): nDofs,
+// 3 numEls, 3 numPoints for K, lda and ldb, and nDofs; beta is 1.
 // DESC: "host dispatch": [
-// DESC-NEXT: "_Z14rt_gemm_kerneliiiPdS_S_S_S_S_ 7 5 3 12 1 0 3 6 12 12 12 3 0 1 1 0 1 2 1 0 1 3 0 0 3 0 0 3 0 0 3 0 2 1 0 1.000000e+00"{{$}}
+// DESC-NEXT: "_Z14rt_gemm_kerneliiiPdS_S_S_S_S_ 7 5 3 1 0 0 1 1 0 rd 1 2 -1 1 0 1 1 -1 3 0 1 0 -1 3 0 1 0 -1 3 0 1 0 -1 3 0 1 2 -1 1 0 1.000000e+00"{{$}}
 // DESC-NEXT: ],

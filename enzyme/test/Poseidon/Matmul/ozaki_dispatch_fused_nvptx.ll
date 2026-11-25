@@ -13,7 +13,7 @@
 ; there for the other store.
 
 ; LOG: wrote descriptor for _Z9two_storePKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (fused)
-; DESC: "_Z9two_storePKdS0_PdS1_ 2 0 1 16 0 12 16 16 16 16 16 16 0 0 0 0"
+; DESC: "_Z9two_storePKdS0_PdS1_ 2 0 1 0 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 
 ; CHECK-LABEL: define {{.*}} @preprocess_two_store_body(
 ; CHECK-SAME: ptr {{.*}}, ptr {{.*}}, ptr {{.*}}[[C:%.+]], ptr {{.*}}[[D:%.+]])

@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/hoststub_cache/launches_*.json %t/
-; RUN: %clang -O0 -x ir -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck %s
-; Host-side launch stubs replaced by library dispatches from the descriptors in the manifest of hoststub.cu, unit fixture, in Inputs/hoststub_cache (a square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one); the pass runs at PipelineStart of the clang pipeline, which is why this drives clang on IR. Host IR from Inputs/hoststub_cache/hoststub.cu (clang --cuda-host-only -O0).
+; RUN: %clang -O0 -x ir -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+; Host-side launches replaced by library dispatches, which read their operands from the launch's argument array, from the descriptors in the manifest of hoststub.cu, unit fixture, in Inputs/hoststub_cache (a square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one); the pass runs at PipelineStart of the clang pipeline, which is why this drives clang on IR. Host IR from Inputs/hoststub_cache/hoststub.cu (clang --cuda-host-only -O0).
 
 ; ModuleID = 'hoststub.cu'
 source_filename = "hoststub.cu"
@@ -209,15 +209,31 @@ attributes #5 = { "uniform-work-group-size" }
 !3 = !{i32 7, !"uwtable", i32 2}
 !4 = !{i32 7, !"frame-pointer", i32 2}
 
-; CHECK: [ozaki-host-dispatch] replaced stub body _Z26__device_stub__gemm_kernelPKdS0_Pd -> __poseidon_direct_dgemm (C=arg2 A=arg0 B=arg1 512x512x512)
-; CHECK: [ozaki-host-dispatch] replaced stub body _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi -> __poseidon_tcec_dgemm_ex (C=arg2 A=arg0 B=arg1 128x512x256)
+; CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z26__device_stub__gemm_kernelPKdS0_Pd with __poseidon_direct_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi with __poseidon_tcec_dgemm_ex (C=arg2 A=arg0 B=arg1){{$}}
 ; CHECK-LABEL: define {{.*}} @_Z26__device_stub__gemm_kernelPKdS0_Pd(
-; CHECK-SAME: ptr {{.*}}%[[A:.+]], ptr {{.*}}%[[B:.+]], ptr {{.*}}%[[C:.+]])
-; CHECK-NEXT: entry:
+; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 3
+; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; CHECK-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; CHECK-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; CHECK-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; CHECK-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; CHECK-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
 ; CHECK-NEXT: call void @__poseidon_direct_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 512, i32 512, i32 512, i32 512, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 1)
-; CHECK-NEXT: ret void
+; CHECK-NEXT: br label
 ; CHECK-LABEL: define {{.*}} @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(
-; CHECK-SAME: ptr {{.*}}%[[A:.+]], ptr {{.*}}%[[B:.+]], ptr {{.*}}%[[C:.+]], i32 {{.*}}%{{.+}})
-; CHECK-NEXT: entry:
+; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; CHECK-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; CHECK-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; CHECK-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; CHECK-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; CHECK-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
 ; CHECK-NEXT: call void @__poseidon_tcec_dgemm_ex(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 128, i32 512, i32 256, i32 256, i32 256, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 3)
-; CHECK-NEXT: ret void
+; CHECK-NEXT: br label

@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
 // CHECK: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{.*}} <= 1.000000e-12 at confidence 9.500000e-01)
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32
 // CHECK: [ozaki-host-dispatch] wrote descriptor for _Z11gemm_kernelPdPKdS1_: C=arg0 A=arg1 B=arg2 256x256x256 nm=12 (standalone)
-// CHECK: [ozaki-host-dispatch] replaced stub body _Z26__device_stub__gemm_kernelPdPKdS1_ -> __poseidon_ozaki_dgemm (C=arg0 A=arg1 B=arg2 256x256x256)
+// CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z26__device_stub__gemm_kernelPdPKdS1_ with __poseidon_ozaki_dgemm (C=arg0 A=arg1 B=arg2)
 
 // OPT: max relative error vs cublasDgemm
 // OPT-NEXT: GEMM-PASS

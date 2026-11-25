@@ -213,6 +213,19 @@ static LaunchRef rgLaunchValue(const Value *v) {
   return launchFieldOf(v);
 }
 
+// Why the host cannot read the launch value `v` (at `r`) as a dimension or an
+// assumed-equal operand, which it loads as an i32: a narrower integer would be
+// read past its end. Empty when it can.
+static std::string rgHostReadRefusal(const Value *v, const LaunchRef &r) {
+  auto *T = dyn_cast<IntegerType>(v->getType());
+  if (T && T->getBitWidth() >= 32)
+    return "";
+  std::string what = T ? ", an i" + std::to_string(T->getBitWidth()) + ","
+                       : ", which is not an integer,";
+  return launchRefString(r, "param") + what +
+         " but the host reads each launch value as an i32";
+}
+
 namespace {
 
 struct RgAtoms {
@@ -329,7 +342,8 @@ static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
       continue;
     }
     if (haveTerm) {
-      why = "value depends on more than one runtime term";
+      why = "a GEMM dimension is not expressible as mul*arg+add: value "
+            "depends on more than one runtime term";
       return false;
     }
     for (unsigned a : kv.first) {
@@ -337,8 +351,14 @@ static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
       auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
       LaunchRef r = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
       if (r.param < 0) {
-        why = "value depends on a term that is not a parameter of the "
-              "optimized body or a field of one passed by value";
+        why = "a GEMM dimension is not expressible as mul*arg+add: value "
+              "depends on a term that is not a parameter of the optimized "
+              "body or a field of one passed by value";
+        return false;
+      }
+      if (std::string refusal = rgHostReadRefusal(U->getValue(), r);
+          !refusal.empty()) {
+        why = "a GEMM dimension depends on " + refusal;
         return false;
       }
       out.factors.push_back(r);
@@ -351,18 +371,22 @@ static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
   return true;
 }
 
-// The launch value `p` is, when it is exactly one (coefficient 1, no constant).
-static std::optional<LaunchRef> rgSingleLaunchValue(const RgPoly &p,
-                                                    const RgAtoms &A) {
+// The launch value `p` is, when it is exactly one (coefficient 1, no constant)
+// that the host can read; `why` receives the reason when the host cannot.
+static std::optional<LaunchRef>
+rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A, std::string &why) {
   if (p.t.size() != 1 || p.t.begin()->first.size() != 1 ||
       p.t.begin()->second != 1)
     return std::nullopt;
   const SCEV *S = A.byId[p.t.begin()->first[0]];
   auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
   LaunchRef r = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
-  if (r.param >= 0 && U->getType()->isIntegerTy())
-    return r;
-  return std::nullopt;
+  if (r.param < 0 || !U->getType()->isIntegerTy())
+    return std::nullopt;
+  why = rgHostReadRefusal(U->getValue(), r);
+  if (!why.empty())
+    return std::nullopt;
+  return r;
 }
 
 static int rgTidAxis(const Value *v) {
@@ -761,13 +785,14 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
   // Exact equality, or two launch values the dense reading needs equal and
   // nothing here can prove so (e.g. a captured tensor's extent and the loop
   // bound next to it): kept for the dispatch to check at the launch.
+  std::string assumedWhy;
   auto sameOrAssumed = [&](const RgPoly &a, const RgPoly &b) -> bool {
     if (a == b)
       return true;
-    std::optional<LaunchRef> x = rgSingleLaunchValue(a, atoms);
+    std::optional<LaunchRef> x = rgSingleLaunchValue(a, atoms, assumedWhy);
     if (!x)
       return false;
-    std::optional<LaunchRef> y = rgSingleLaunchValue(b, atoms);
+    std::optional<LaunchRef> y = rgSingleLaunchValue(b, atoms, assumedWhy);
     if (!y)
       return false;
     std::pair<LaunchRef, LaunchRef> eq = std::minmax(*x, *y);
@@ -835,9 +860,15 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
         !rgDivExact(rgSub(op1Poly[r], op1Poly[0]), (int64_t)r * step1[0],
                     along1) ||
         !sameOrAssumed(along0, tripPoly) || !sameOrAssumed(along1, tripPoly)) {
-      why = "chain member " + std::to_string(r) +
-            " is not contiguous with member 0 along the reduction axis, so the "
-            "two contraction levels do not flatten into one index";
+      if (!assumedWhy.empty())
+        why = "chain member " + std::to_string(r) +
+              " is contiguous with member 0 only under an equality the host "
+              "cannot check: " +
+              assumedWhy;
+      else
+        why = "chain member " + std::to_string(r) +
+              " is not contiguous with member 0 along the reduction axis, so "
+              "the two contraction levels do not flatten into one index";
       return false;
     }
   }
@@ -1056,16 +1087,13 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
     why = "a leading dimension is not a whole number of elements";
     return false;
   }
-  std::string dimWhy;
-  if (!rgToRuntimeDim(rowExtent, atoms, H.M, dimWhy) ||
-      !rgToRuntimeDim(colExtent, atoms, H.Ncols, dimWhy) ||
-      !rgToRuntimeDim(kPoly, atoms, H.K, dimWhy) ||
-      !rgToRuntimeDim(ldaElems, atoms, H.lda, dimWhy) ||
-      !rgToRuntimeDim(ldbElems, atoms, H.ldb, dimWhy) ||
-      !rgToRuntimeDim(ldcElems, atoms, H.ldc, dimWhy)) {
-    why = "a GEMM dimension is not expressible as mul*arg+add: " + dimWhy;
+  if (!rgToRuntimeDim(rowExtent, atoms, H.M, why) ||
+      !rgToRuntimeDim(colExtent, atoms, H.Ncols, why) ||
+      !rgToRuntimeDim(kPoly, atoms, H.K, why) ||
+      !rgToRuntimeDim(ldaElems, atoms, H.lda, why) ||
+      !rgToRuntimeDim(ldbElems, atoms, H.ldb, why) ||
+      !rgToRuntimeDim(ldcElems, atoms, H.ldc, why))
     return false;
-  }
 
   if (!isBasePointer(aBasePoly, H.aRef) || !isBasePointer(bBasePoly, H.bRef) ||
       !isBasePointer(bC, H.cRef)) {

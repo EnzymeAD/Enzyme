@@ -13,12 +13,20 @@
 
 ; DEV1: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
-; HOST1: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1 16x16x16){{$}}
-; HOST1: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%[0-9]+]], ptr noundef [[B:%[0-9]+]], ptr noundef [[C:%[0-9]+]], ptr noundef %{{[0-9]+}})
-; HOST1-NEXT: entry:
-; HOST1-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
-; HOST1-NEXT: ret void
-; HOST1-NEXT: }
+; HOST1: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; HOST1-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
+; HOST1: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; HOST1: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; HOST1-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; HOST1-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; HOST1-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; HOST1-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; HOST1-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; HOST1-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; HOST1-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; HOST1-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; HOST1-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; HOST1-NEXT: br label
 ; HOST1-NOT: call {{.*}}@cudaLaunchKernel(
 
 ; DEV2-NOT: wrote descriptor

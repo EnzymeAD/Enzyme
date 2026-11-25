@@ -14,15 +14,11 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
 
 #include <cstdint>
 #include <optional>
-#include <utility>
 
 namespace poseidon {
 
@@ -69,69 +65,10 @@ bool computeGemmBodyNote(const Options &O, llvm::Function &F,
 void applyLibraryCall(Session &S, const AbstractMatmul &m,
                       const SchemeVariant &v);
 
-// Emit the Direct scheme's tensor-core rewrite of a scalar-loop matmul;
-// aborts on any precondition violation.
-void materializeScalarLoopRaise(const AbstractMatmul &m,
-                                const MatmulUnit::Option &opt);
-
-// Emit the split scheme's N-slice rewrite of a scalar-loop matmul (a Veltkamp
-// N-slice split, an N(N+1)/2-mma chain per K-block and a scaled readback
-// combine) with an F16/BF16/TF32 input slice and an F32 accumulator; aborts
-// on any precondition violation.
-void materializeOzakiIRaise(const AbstractMatmul &m,
-                            const MatmulUnit::Option &opt);
-
-llvm::Type *llvmTypeForFPKind(llvm::LLVMContext &ctx, FPKind k);
-
-// fptrunc/fpext between FP types (no-op when they match); a bitcast when the
-// bit widths agree but the LLVM types differ (F32 vs TF32-as-F32).
-llvm::Value *emitFPCast(llvm::IRBuilder<> &B, llvm::Value *v, llvm::Type *toTy);
-
-llvm::GlobalVariable *getOrCreateSharedScratch(llvm::Module *M,
-                                               const llvm::Twine &name,
-                                               llvm::Type *eltTy,
-                                               uint64_t numElts);
-
-// Emit a (possibly fused) matrix row/column index: tid[fast] when slow is
-// Unknown, otherwise tid[fast] + mult * tid[slow], where `mult` is the extent
-// of the fast axis.
-llvm::Value *emitTidIndex(llvm::IRBuilder<> &B, llvm::Module *M, TidAxis fast,
-                          TidAxis slow, unsigned mult);
-
-// (linearizedThreadId, blockSize) from tid.{x,y,z} and ntid.{x,y,z}.
-// `is2DBlock` skips the tid.z / ntid.z reads; only set it when the block's z
-// dim is statically 1 (e.g. profileHeader.maxBlockDim[2] == 1).
-std::pair<llvm::Value *, llvm::Value *>
-emitThreadLinAndBlockSize(llvm::IRBuilder<> &B, llvm::Module *M,
-                          bool is2DBlock = false);
-
-// Block-cooperative fill of a (numRows x numCols) tile in `scratchBase` from
-// `srcBlockBase` (per-block base, no threadIdx contribution).
-// `assumeBlockCoversAll` emits a single conditional instead of the loop and is
-// wrong if blockSize < numElts at runtime, so set it only when the profile
-// header proves the block covers the tile. Splits the current block; the
-// builder ends in the "after" block.
-void emitCooperativeScratchFill(
-    llvm::IRBuilder<> &B, llvm::Value *scratchBase, llvm::Type *dstTy,
-    FPKind dstKind, llvm::Value *srcBlockBase, llvm::Type *srcTy,
-    uint64_t numRows, uint64_t numCols, int64_t srcRowStrideByte,
-    int64_t srcColStrideByte, int64_t dstRowStrideByte,
-    int64_t dstColStrideByte, llvm::Value *threadLin, llvm::Value *blockSize,
-    bool assumeBlockCoversAll = false);
-
-// Padded variant: fill a (fillRows x fillCols) tile whose valid source extent
-// is (validRows x validCols) at runtime; every element outside it is written an
-// exact zero. Zero-fill rather than masking the MMA: wmma fragments are
-// warp-collective, so a per-thread guard around the MMA corrupts the whole
-// fragment, while zeros in the pad contribute exactly 0 (an uninitialized pad
-// would feed 0 * Inf = NaN into every output element).
-void emitCooperativeScratchFillPadded(
-    llvm::IRBuilder<> &B, llvm::Value *scratchBase, llvm::Type *dstTy,
-    FPKind dstKind, llvm::Value *srcBlockBase, llvm::Type *srcTy,
-    uint64_t fillRows, uint64_t fillCols, llvm::Value *validRows,
-    llvm::Value *validCols, int64_t srcRowStrideByte, int64_t srcColStrideByte,
-    int64_t dstRowStrideByte, int64_t dstColStrideByte, llvm::Value *threadLin,
-    llvm::Value *blockSize, bool assumeBlockCoversAll = false);
+// Emit the tensor-core code of the in-kernel direct or split scheme in place
+// of a scalar-loop matmul; aborts on any precondition violation.
+void materializeInKernelRaise(const AbstractMatmul &m,
+                              const MatmulUnit::Option &opt);
 
 // The arithmetic of one candidate, as the matrix accuracy model simulates it.
 struct MatmulAccuracyQuery {

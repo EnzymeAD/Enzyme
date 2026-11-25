@@ -59,6 +59,9 @@ PrecisionChangeType getPrecisionChangeType(llvm::Type *type);
 llvm::StringRef getPrecisionChangeTypeString(PrecisionChangeType type);
 
 FPKind fpKindFromType(llvm::Type *T);
+// The LLVM type a value of kind `k` is stored in: TF32 in float, S8 and S32 in
+// i8 and i32.
+llvm::Type *llvmTypeForFPKind(llvm::LLVMContext &ctx, FPKind k);
 
 struct PrecisionChange {
   llvm::SetVector<FPLLValue *> nodes;

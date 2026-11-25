@@ -48,7 +48,7 @@
 ; WRITE-FULL-NEXT: },
 ; WRITE-FULL-NEXT: "value": {
 ; WRITE-FULL-NEXT: "host dispatch": [
-; WRITE-FULL-NEXT: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 16 1 12 16 16 16 16 16 16 0 0 0 0"
+; WRITE-FULL-NEXT: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; WRITE-FULL-NEXT: ],
 ; WRITE-FULL-NEXT: "profile generation": []
 
@@ -101,12 +101,20 @@
 
 ; UNIT-CUID: "unit": "0123abcd"
 
-; UNIT-DISPATCH: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1 16x16x16){{$}}
-; UNIT-DISPATCH: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%[0-9]+]], ptr noundef [[B:%[0-9]+]], ptr noundef [[C:%[0-9]+]], ptr noundef %{{[0-9]+}})
-; UNIT-DISPATCH-NEXT: entry:
-; UNIT-DISPATCH-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
-; UNIT-DISPATCH-NEXT: ret void
-; UNIT-DISPATCH-NEXT: }
+; UNIT-DISPATCH: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; UNIT-DISPATCH-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
+; UNIT-DISPATCH: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; UNIT-DISPATCH: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; UNIT-DISPATCH-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; UNIT-DISPATCH-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; UNIT-DISPATCH-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; UNIT-DISPATCH-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; UNIT-DISPATCH-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; UNIT-DISPATCH-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; UNIT-DISPATCH-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; UNIT-DISPATCH-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; UNIT-DISPATCH-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; UNIT-DISPATCH-NEXT: br label
 ; UNIT-DISPATCH-NOT: call {{.*}}@cudaLaunchKernel(
 
 ; The two kernels of the module below dispatch the product of matmul_body,
@@ -146,8 +154,8 @@
 ; ORDER-JOINT-NEXT: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=13 (standalone)
 
 ; ORDER-MANIFEST:      "host dispatch": [
-; ORDER-MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 16 1 [[NMA]] 16 16 16 16 16 16 0 0 0 0",
-; ORDER-MANIFEST-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 16 1 [[NMM]] 16 16 16 16 16 16 0 0 0 0"
+; ORDER-MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 1 [[NMA]] 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00",
+; ORDER-MANIFEST-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 [[NMM]] 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; ORDER-MANIFEST-NEXT: ],
 ; ORDER-MANIFEST-NEXT: "profile generation": []
 

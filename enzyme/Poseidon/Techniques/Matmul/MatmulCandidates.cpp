@@ -163,8 +163,6 @@ static constexpr WmmaTarget kExpectedWmmaTargets[] = {
     {8, 32, 16, FPKind::BF16, FPKind::F32},
     {16, 16, 8, FPKind::TF32, FPKind::F32},
     {8, 8, 4, FPKind::F64, FPKind::F64},
-    // INT8 tensor-core: m16n16k16 s8 input x s32 accumulator (IMMA)
-    {16, 16, 16, FPKind::S8, FPKind::S32},
 };
 
 static const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
@@ -468,14 +466,9 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
 
 static void proposeInKernelDirect(const Product &P, const InKernelSite &K,
                                   MatmulUnit &cm) {
-  for (const WmmaTarget &t : getAvailableWmmaTargets(P.S)) {
-    // Integer kinds (S8/S32) have no FP accuracy model; they only appear in
-    // the modular library calls, never as Direct replacements.
-    if (t.inputPrec == FPKind::S8 || t.inputPrec == FPKind::S32)
-      continue;
+  for (const WmmaTarget &t : getAvailableWmmaTargets(P.S))
     proposeInKernel(P, K, SchemeVariant::direct(t.inputPrec, t.accPrec), t.M,
                     t.N, t.K, cm);
-  }
 }
 
 // The split scheme in the kernel: operands are split into N narrow Veltkamp
@@ -527,7 +520,6 @@ constexpr unsigned kModularTile = 16;
 namespace {
 struct LibrarySite {
   bool dispatchable = false;
-  bool modularOffered = false;
   // S^3 / (M*N*K), the zero padding __poseidon_ozaki_dgemm_ex pays to reach a
   // square of side S.
   double padWaste = 1.0;
@@ -561,21 +553,18 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   L.padWaste = squarePaddingRatio(m);
   switch (m.origin) {
   case AbstractMatmul::Origin::ScalarLoopReduction: {
-    bool s8TileAvailable = wmmaTileAvailable(
-        S, kModularTile, kModularTile, kModularTile, FPKind::S8, FPKind::S32);
     Function *F = m.scalarLoop.fma->getFunction();
     GemmBodyNote probe;
     L.dispatchable = computeGemmBodyNote(S.Opts, *F, m, probe);
-    if (S.Opts.Diagnostics.Print && s8TileAvailable && !L.dispatchable)
+    if (S.Opts.Diagnostics.Print && !L.dispatchable)
       llvm::errs() << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x'
                    << m.K
                    << ": host-dispatched Ozaki-II NOT PROPOSED -- the body "
                       "is not a host-dispatchable GEMM.\n";
-    L.modularOffered = s8TileAvailable && L.dispatchable;
-    if (L.dispatchable && !probe.runtimeDims) {
-      L.staticM = probe.gM;
-      L.staticN = probe.gNcols;
-      L.staticK = probe.gK;
+    if (L.dispatchable) {
+      L.staticM = (unsigned)probe.dims[DimM].add;
+      L.staticN = (unsigned)probe.dims[DimNcols].add;
+      L.staticK = (unsigned)probe.dims[DimK].add;
     }
     L.rectM = m.globalM ? m.globalM : m.M;
     L.rectK = m.globalK ? m.globalK : m.K;
@@ -583,7 +572,6 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   }
   case AbstractMatmul::Origin::HostGemmLoopNest:
     L.dispatchable = true;
-    L.modularOffered = true;
     L.rectM = m.globalM;
     L.rectK = m.globalK;
     return L;
@@ -608,7 +596,7 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
 // by (M, K) only, since its per-MAC cost does not depend on the column count.
 static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
-  if (!L.modularOffered)
+  if (!L.dispatchable)
     return;
   const AbstractMatmul &m = P.m;
   for (unsigned nm : kOzIIModuliCounts) {
@@ -910,10 +898,8 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
   }
   switch (opt.variant.scheme) {
   case Scheme::Direct:
-    materializeScalarLoopRaise(*matmul, opt);
-    return;
   case Scheme::Split:
-    materializeOzakiIRaise(*matmul, opt);
+    materializeInKernelRaise(*matmul, opt);
     return;
   case Scheme::Modular:
   case Scheme::Native:

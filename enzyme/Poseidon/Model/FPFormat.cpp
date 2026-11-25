@@ -30,6 +30,27 @@ FPKind fpKindFromType(Type *T) {
   return FPKind::Invalid;
 }
 
+Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
+  switch (k) {
+  case FPKind::F16:
+    return Type::getHalfTy(ctx);
+  case FPKind::BF16:
+    return Type::getBFloatTy(ctx);
+  case FPKind::TF32:
+  case FPKind::F32:
+    return Type::getFloatTy(ctx);
+  case FPKind::F64:
+    return Type::getDoubleTy(ctx);
+  case FPKind::S8:
+    return Type::getInt8Ty(ctx);
+  case FPKind::S32:
+    return Type::getInt32Ty(ctx);
+  case FPKind::Invalid:
+    report_fatal_error("llvmTypeForFPKind: Invalid FPKind");
+  }
+  llvm_unreachable("unknown FPKind");
+}
+
 Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
   switch (type) {
   case PrecisionChangeType::BF16:

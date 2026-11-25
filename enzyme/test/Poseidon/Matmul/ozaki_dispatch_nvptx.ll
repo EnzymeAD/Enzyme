@@ -35,14 +35,22 @@
 ; TAU12: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7)
 ; TAU12: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
-; DESC12: _Z13matmul_kernelPKdS0_PdS1_ 2 0 1 16 1 12 16 16 16 16 16 16 0 0 0 0
+; DESC12: _Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00
 
-; HOST12: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1 16x16x16)
+; HOST12: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; HOST12-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
-; HOST12-SAME: ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
-; HOST12-NEXT: entry:
-; HOST12-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
-; HOST12-NEXT: ret void
+; HOST12: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; HOST12: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; HOST12-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; HOST12-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; HOST12-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; HOST12-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; HOST12-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; HOST12-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; HOST12-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; HOST12-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; HOST12-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; HOST12-NEXT: br label
 ; HOST12-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
 ; TAU7: Poseidon error-budget: matmul -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (domain err 7.986923e-09 <= 1.000000e-07 at confidence 9.500000e-01)
@@ -57,11 +65,20 @@
 ; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
 ; TAU16: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
-; HOST16: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1 16x16x16)
-; HOST16: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
-; HOST16-NEXT: entry:
-; HOST16-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
-; HOST16-NEXT: ret void
+; HOST16: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; HOST16-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
+; HOST16: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; HOST16: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; HOST16-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; HOST16-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; HOST16-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; HOST16-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; HOST16-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; HOST16-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; HOST16-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; HOST16-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; HOST16-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
+; HOST16-NEXT: br label
 ; HOST16-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
 ; OFF-NOT: ozaki-ii
@@ -74,7 +91,7 @@
 ; raises and the host-dispatch families of cm_sm_120_synthetic_dispatch.csv. The
 ; cheapest candidate whose modelled domain error clears tau wins, so the
 ; Ozaki-II moduli count rises as tau tightens. The device compile writes the
-; dispatch descriptor into the unit's manifest (last field 0 = Ozaki-II, seventh
+; dispatch descriptor into the unit's manifest (tenth field 0 = Ozaki-II, sixth
 ; field = nm), and the host compile of the kernel's launch stub
 ; (Inputs/ozaki_dispatch/ozaki_stub_host.ll, from ozaki_stub.cu via clang -x cuda
 ; --cuda-host-only -O0 -S -emit-llvm, renamed to this module's source and
