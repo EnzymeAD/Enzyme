@@ -47,8 +47,9 @@ void addPendingGemmDispatch(Session &S, const llvm::Function *body,
 void flushPendingGemmDispatches(Session &S);
 
 // Rewrite the launch in each launch stub that a host dispatch descriptor in M's
-// manifest matches into a call of the GEMM runtime. Host module only.
-bool rewriteGemmStubBodies(const Options &O, llvm::Module &M);
+// manifest matches into a call of the GEMM runtime. Host module only. An error
+// for a descriptor that does not parse.
+llvm::Expected<bool> rewriteGemmStubBodies(const Options &O, llvm::Module &M);
 
 } // namespace poseidon
 #endif // POSEIDON_HOST_DISPATCH_H

@@ -35,10 +35,11 @@ struct SiteRecords;
 
 /// Turns each __poseidon_optimize call into a call of a copy of its target
 /// made for that call, marked as a host body and recorded in `T`.
-bool lowerPerCallSites(const Options &O, SiteRecords &T, llvm::Module &M);
+llvm::Expected<bool> lowerPerCallSites(const Options &O, SiteRecords &T,
+                                       llvm::Module &M);
 /// In a device module, turns each call of a per-call copy into a marker call
 /// whose pointers the profiler shadows.
-bool lowerDeviceCallSites(const Options &O, llvm::Module &M);
+llvm::Expected<bool> lowerDeviceCallSites(const Options &O, llvm::Module &M);
 
 /// The object of `caller` that `p` points into, through the address arithmetic
 /// its shadow can repeat, when the pass knows the object's whole extent: a

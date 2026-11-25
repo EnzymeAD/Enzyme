@@ -99,22 +99,22 @@ void recordProfileHeader(LaunchManifest &L, llvm::StringRef wrapperName,
 void recordProfileTable(LaunchManifest &L, unsigned functions, unsigned slots);
 
 /// What the device half of host module M recorded with recordProfileTable;
-/// none when it profiles nothing.
-std::pair<unsigned, unsigned> readProfileTable(const Options &O,
-                                               const llvm::Module &M);
+/// none when it profiles nothing, an error when the entry is not two counts.
+llvm::Expected<std::pair<unsigned, unsigned>>
+readProfileTable(const Options &O, const llvm::Module &M);
 
 /// Replaces the manifest of device module M by the descriptors recorded since
 /// the last write and prints their messages, all in order of kernel name; with
-/// none recorded, removes it, since no manifest means nothing to rewrite. A
-/// manifest that cannot be written or removed stops the compile.
-void writeLaunchManifest(const Options &O, LaunchManifest &L,
-                         const llvm::Module &M);
+/// none recorded, removes it, since no manifest means nothing to rewrite. An
+/// error when the manifest cannot be written or removed.
+llvm::Error writeLaunchManifest(const Options &O, LaunchManifest &L,
+                                const llvm::Module &M);
 
 /// Hands `parse` the space-separated tokens of every `kind` descriptor in the
 /// manifest of host module M; token 0 is always the wrapper kernel name. A unit
-/// without a manifest has none. A descriptor `parse` refuses stops the compile,
-/// naming the manifest, the descriptor and the error.
-void readDescriptors(
+/// without a manifest has none. A descriptor `parse` refuses is an error naming
+/// the manifest, the descriptor and what `parse` said.
+llvm::Error readDescriptors(
     const Options &O, const llvm::Module &M, LaunchKind kind,
     llvm::function_ref<llvm::Error(llvm::ArrayRef<llvm::StringRef>)> parse);
 

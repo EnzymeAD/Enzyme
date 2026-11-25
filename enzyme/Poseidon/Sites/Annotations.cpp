@@ -46,12 +46,15 @@ namespace poseidon {
 
 static constexpr StringLiteral kAnnotation = "poseidon";
 
-void diagnoseSite(Function &F, const Twine &message,
-                  DiagnosticSeverity severity) {
+void warnSite(Function &F, const Twine &message) {
   if (F.hasFnAttribute(kNotASite))
     return;
   F.addFnAttr(kNotASite);
-  diagnose(F, F.getSubprogram(), message, severity);
+  diagnose(F, F.getSubprogram(), message, DS_Warning);
+}
+
+Error siteError(Function &F, const Twine &message) {
+  return userError(F, F.getSubprogram(), message);
 }
 
 namespace {
@@ -127,15 +130,22 @@ static std::optional<StringRef> entryAnnotation(Value *op) {
 
 /// The annotated functions of this module with the accuracy target each
 /// annotation carries, in module order so that the site numbering does not
-/// depend on the order a container happened to hash them in. A Poseidon
-/// annotation that cannot be read as written is a compile error on its function
-/// rather than a site without the target its source asked for.
-MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
+/// depend on the order a container happened to hash them in. A function whose
+/// Poseidon annotation cannot be read as written is left out, and the mistake
+/// added to `errors`: a compile error on the function rather than a site
+/// without the target its source asked for.
+static MapVector<Function *, std::optional<double>>
+readAnnotations(Module &M, Error &errors) {
   GlobalVariable *GA;
   ConstantArray *arr = globalAnnotations(M, GA);
   if (!arr)
     return {};
   DenseMap<Function *, std::optional<double>> found;
+  SmallPtrSet<Function *, 2> unreadable;
+  auto refuse = [&](Function &fn, const Twine &message) {
+    if (unreadable.insert(&fn).second)
+      errors = joinErrors(std::move(errors), siteError(fn, message));
+  };
   for (Value *op : arr->operands()) {
     std::optional<StringRef> text = entryAnnotation(op);
     if (!text)
@@ -150,20 +160,16 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
     AnnotationArgument arg = readAnnotationArgument(
         entry->getNumOperands() > 4 ? entry->getOperand(4) : nullptr);
     if (arg.Kind == AnnotationArgument::Malformed) {
-      diagnoseSite(*fn,
-                   displayName(*fn) +
-                       " carries a Poseidon annotation whose arguments are "
-                       "not one accuracy target",
-                   DS_Error);
+      refuse(*fn, displayName(*fn) +
+                      " carries a Poseidon annotation whose arguments are "
+                      "not one accuracy target");
       continue;
     }
     if (arg.Kind == AnnotationArgument::Target) {
       if (!isAccuracyTarget(arg.Tau)) {
-        diagnoseSite(*fn,
-                     displayName(*fn) + " carries the accuracy target " +
-                         shortDouble(arg.Tau) +
-                         ", which is not a positive finite number",
-                     DS_Error);
+        refuse(*fn, displayName(*fn) + " carries the accuracy target " +
+                        shortDouble(arg.Tau) +
+                        ", which is not a positive finite number");
         continue;
       }
       tau = arg.Tau;
@@ -172,19 +178,34 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
     if (inserted || !tau)
       continue;
     if (it->second && *it->second != *tau)
-      diagnoseSite(*fn,
-                   displayName(*fn) + " carries two different accuracy targets",
-                   DS_Error);
+      refuse(*fn, displayName(*fn) + " carries two different accuracy targets");
     it->second = tau;
   }
 
   MapVector<Function *, std::optional<double>> out;
   for (Function &F : M) {
     auto it = found.find(&F);
-    if (it != found.end() && !F.hasFnAttribute(kNotASite))
+    if (it != found.end() && !F.hasFnAttribute(kNotASite) &&
+        !unreadable.count(&F))
       out.insert({&F, it->second});
   }
   return out;
+}
+
+MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
+  Error errors = Error::success();
+  MapVector<Function *, std::optional<double>> out = readAnnotations(M, errors);
+  // checkSiteAnnotations reports them.
+  consumeError(std::move(errors));
+  return out;
+}
+
+Error checkSiteAnnotations(Module &M) {
+  if (isOffloadHostHalf(M))
+    return Error::success();
+  Error errors = Error::success();
+  readAnnotations(M, errors);
+  return errors;
 }
 
 void noteSiteTarget(const Options &O, const Function &F,
@@ -272,7 +293,7 @@ static void annotateLike(Function &K, Function &fn) {
 /// the site is an error in a compile that generates or uses a profile, and is
 /// left as written with a warning in any other; an annotated kernel keeps its
 /// own annotation.
-bool propagateDeviceSites(const Options &O, Module &M) {
+Expected<bool> propagateDeviceSites(const Options &O, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
     return false;
@@ -282,6 +303,7 @@ bool propagateDeviceSites(const Options &O, Module &M) {
                     [&](auto &kv) { return !T.isKernel(*kv.first); }))
     return false;
 
+  Error errors = Error::success();
   SmallPtrSet<Function *, 4> called;
   SmallVector<std::pair<Function *, Function *>, 4> sites;
   for (Function &K : M) {
@@ -318,14 +340,15 @@ bool propagateDeviceSites(const Options &O, Module &M) {
       continue;
     }
     if (!why.empty()) {
-      const bool active = O.Profiling.profileAction();
-      diagnoseSite(K,
-                   displayName(K) + " calls " + names +
-                       ", which carry POSEIDON_OPTIMIZE, and " + why +
-                       ", so it is no wrapper around the call and not their "
-                       "site; move that work out of the kernel, or annotate "
-                       "the kernel instead",
-                   active ? DS_Error : DS_Warning);
+      const std::string message =
+          displayName(K) + " calls " + names +
+          ", which carry POSEIDON_OPTIMIZE, and " + why +
+          ", so it is no wrapper around the call and not their site; move "
+          "that work out of the kernel, or annotate the kernel instead";
+      if (O.Profiling.profileAction())
+        errors = joinErrors(std::move(errors), siteError(K, message));
+      else
+        warnSite(K, message);
       continue;
     }
     for (Function *W : wrappers)
@@ -335,6 +358,8 @@ bool propagateDeviceSites(const Options &O, Module &M) {
       fn->addFnAttr(kSiteCallee);
     sites.push_back({&K, governing});
   }
+  if (errors)
+    return std::move(errors);
   for (auto &[K, fn] : sites)
     annotateLike(*K, *fn);
   // Its kernels are the sites now; the function itself is not one.
@@ -381,10 +406,10 @@ bool foldDeviceSiteCallees(const Options &O, Module &M) {
   return changed;
 }
 
-void reportAnnotatedCall(CallBase *call, StringRef name) {
-  fail(call, name + " carries POSEIDON_OPTIMIZE, so every call of it is "
-                    "already a site; remove this __poseidon_optimize or the "
-                    "annotation");
+Error annotatedCallError(CallBase &call, StringRef name) {
+  return userError(call, name + " carries POSEIDON_OPTIMIZE, so every call of "
+                                "it is already a site; remove this "
+                                "__poseidon_optimize or the annotation");
 }
 
 void warnSitesWithoutProfile(const Options &O, SiteRecords &T, Module &M) {
@@ -593,13 +618,12 @@ outlineInto(Function &F, Function &B,
 /// Make the kernel a wrapper around its own body so that both phases see the
 /// structure they already handle: a function holding the annotated computation,
 /// reached through one call whose arguments are the site's inputs. Returns that
-/// call, or null if the kernel cannot be a site.
-CallInst *outlineKernelBody(SiteRecords &T, Function &K, Function *&bodyOut) {
-  if (K.isVarArg() || !K.getReturnType()->isVoidTy()) {
-    diagnoseSite(K, "an annotated kernel must be a void, non-variadic function",
-                 DS_Error);
-    return nullptr;
-  }
+/// call; an error, before any change, if the kernel cannot be a site.
+Expected<CallInst *> outlineKernelBody(SiteRecords &T, Function &K,
+                                       Function *&bodyOut) {
+  if (K.isVarArg() || !K.getReturnType()->isVoidTy())
+    return siteError(
+        K, "an annotated kernel must be a void, non-variadic function");
   Module &M = *K.getParent();
   // An AMDGPU kernel takes an aggregate by reference into its constant
   // argument segment; the body takes it through a generic pointer, which the
@@ -607,16 +631,12 @@ CallInst *outlineKernelBody(SiteRecords &T, Function &K, Function *&bodyOut) {
   SmallVector<Type *, 8> params(K.getFunctionType()->params());
   for (Argument &A : K.args())
     if (A.hasByRefAttr()) {
-      if (!reroots(&A)) {
-        diagnoseSite(K,
-                     displayName(K) + " uses its aggregate parameter " +
-                         Twine(A.getArgNo() + 1) +
-                         " otherwise than by loading or copying from it, so "
-                         "it cannot be a Poseidon site; copy the parameter "
-                         "into a local object first",
-                     DS_Error);
-        return nullptr;
-      }
+      if (!reroots(&A))
+        return siteError(K, displayName(K) + " uses its aggregate parameter " +
+                                Twine(A.getArgNo() + 1) +
+                                " otherwise than by loading or copying from "
+                                "it, so it cannot be a Poseidon site; copy the "
+                                "parameter into a local object first");
       params[A.getArgNo()] = getInt8PtrTy(M.getContext());
     }
   // Named alike with and without -fgpu-rdc, which profile generation adds and
@@ -688,7 +708,7 @@ static void outlineHostFunction(SiteRecords &T, Function &F,
 
 /// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
 /// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
-bool outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
+Expected<bool> outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
   if (Target::of(M).isDevice() || isOffloadHostHalf(M))
     return false;
   MapVector<Function *, std::optional<double>> annotated =
@@ -701,6 +721,7 @@ bool outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
   collectMarkerCalls(M, markers);
 
   bool changed = false;
+  Error errors = Error::success();
   for (auto &[F, tau] : annotated) {
     if (F->hasFnAttribute(kSiteLowered))
       continue;
@@ -708,37 +729,37 @@ bool outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
     // or HIP compilation has. Its closure is no pointer the profiler can
     // shadow, so a host-only build leaves it alone.
     if (isLambdaCallOperator(*F)) {
-      diagnoseSite(*F,
-                   displayName(*F) +
+      warnSite(*F, displayName(*F) +
                        " is a lambda and this compilation has no GPU kernel "
                        "that calls it, so it is left as written; "
                        "POSEIDON_OPTIMIZE on a lambda marks the kernels that "
-                       "call it in a CUDA or HIP compilation",
-                   DS_Warning);
+                       "call it in a CUDA or HIP compilation");
       continue;
     }
     if (!active) {
-      diagnoseSite(*F, kNoProfileAction, DS_Warning);
+      warnSite(*F, kNoProfileAction);
       continue;
     }
     auto both = llvm::find_if(
         markers, [F = F](CallInst *CI) { return markerTargetOrNull(CI) == F; });
     if (both != markers.end()) {
-      reportAnnotatedCall(*both, displayName(*F));
-      F->addFnAttr(kNotASite);
+      errors = joinErrors(std::move(errors),
+                          annotatedCallError(**both, displayName(*F)));
       continue;
     }
     if (std::optional<std::string> why = hostSiteRefusal(*F)) {
-      diagnoseSite(*F,
-                   displayName(*F) + " " + *why +
-                       ", so it cannot be a Poseidon site",
-                   DS_Error);
+      errors =
+          joinErrors(std::move(errors),
+                     siteError(*F, displayName(*F) + " " + *why +
+                                       ", so it cannot be a Poseidon site"));
       continue;
     }
     noteSiteTarget(O, *F, tau);
     outlineHostFunction(T, *F, tau);
     changed = true;
   }
+  if (errors)
+    return std::move(errors);
   return changed;
 }
 

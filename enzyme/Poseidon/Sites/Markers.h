@@ -18,6 +18,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/Error.h"
 
 #include <optional>
 
@@ -44,13 +45,11 @@ constexpr llvm::StringLiteral kAutodiffRequest = "__enzyme_autodiff_poseidon";
 
 /// Reports `message` as a warning at the marker call `CI`.
 void warn(llvm::CallBase *CI, const llvm::Twine &message);
-/// Reports `message` as an error at the marker call `CI`.
-void fail(llvm::CallBase *CI, const llvm::Twine &message);
 /// The function the marker call `CI` names, or null, without a diagnostic.
 llvm::Function *markerTargetOrNull(llvm::CallInst *CI);
-/// The function the marker call `CI` names; null, with an error, if it names
-/// none or one without a body.
-llvm::Function *markerTarget(llvm::CallInst *CI);
+/// The function the marker call `CI` names; an error if it names none or one
+/// without a body.
+llvm::Expected<llvm::Function *> markerTarget(llvm::CallInst *CI);
 /// The argument of a marker call or an Enzyme request that says what the
 /// argument after it is, as enzyme_dup does.
 llvm::Value *activityArg(llvm::LLVMContext &C, llvm::StringRef name);
@@ -93,19 +92,19 @@ struct CallArguments {
 /// poseidon_* name other than poseidon_tau), and an automatic list otherwise.
 /// poseidon_tau and the constant after it give the accuracy target of a marker
 /// call; the rest of an automatic list are fn's own arguments. An explicit list
-/// is read by parseMarker. None, with an error at `call`, when the list cannot
-/// be read as either.
-std::optional<CallArguments> readArgumentList(llvm::CallBase *call,
-                                              const llvm::Function &fn,
-                                              Identity identity);
+/// is read by parseMarker. An error at `call` when the list cannot be read as
+/// either.
+llvm::Expected<CallArguments> readArgumentList(llvm::CallBase *call,
+                                               const llvm::Function &fn,
+                                               Identity identity);
 
 /// Whether `tau` is an accuracy target: positive and finite.
 bool isAccuracyTarget(double tau);
 
-/// The accuracy target `value` gives a call of `fn`; none, with an error at
-/// `call`, unless it is a floating-point constant that isAccuracyTarget.
-std::optional<double> readTarget(llvm::CallBase *call, llvm::Value *value,
-                                 const llvm::Function &fn);
+/// The accuracy target `value` gives a call of `fn`; an error at `call` unless
+/// it is a floating-point constant that isAccuracyTarget.
+llvm::Expected<double> readTarget(llvm::CallBase *call, llvm::Value *value,
+                                  const llvm::Function &fn);
 
 /// Inlines into the deferred `body` the functions Enzyme generated for it;
 /// how many calls were inlined.
@@ -150,9 +149,9 @@ struct MarkerArgs {
   double errTol = 0.0;
 };
 
-/// What the marker call `CI` of body `F` says; none, with an error at `CI`, if
-/// the marker cannot be read.
-std::optional<MarkerArgs> parseMarker(llvm::CallInst *CI, llvm::Function *F);
+/// What the marker call `CI` of body `F` says; an error at `CI` if the marker
+/// cannot be read.
+llvm::Expected<MarkerArgs> parseMarker(llvm::CallInst *CI, llvm::Function *F);
 
 } // namespace poseidon
 

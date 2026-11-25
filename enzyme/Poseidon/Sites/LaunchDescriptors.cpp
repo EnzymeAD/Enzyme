@@ -123,29 +123,29 @@ void recordProfileTable(LaunchManifest &L, unsigned functions, unsigned slots) {
   L.ProfiledSlots = slots;
 }
 
-std::pair<unsigned, unsigned> readProfileTable(const Options &O,
-                                               const Module &M) {
+Expected<std::pair<unsigned, unsigned>> readProfileTable(const Options &O,
+                                                         const Module &M) {
   std::optional<Manifest> m = manifestOf(O, M);
   if (!m)
-    return {0, 0};
+    return std::make_pair(0u, 0u);
   CacheEntryRead read = readCacheEntry(m->path, m->key);
   const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
   const json::Object *table = value ? value->getObject(kProfileTable) : nullptr;
   if (!table)
-    return {0, 0};
+    return std::make_pair(0u, 0u);
   std::optional<int64_t> functions = table->getInteger("functions");
   std::optional<int64_t> slots = table->getInteger("slots");
   if (!functions || !slots || *functions < 0 || *slots < 0 ||
       *functions > UINT32_MAX || *slots > UINT32_MAX)
-    reportUserError(M.getContext(),
-                    "the launch manifest " + m->path +
-                        " holds a profile table entry that is not two counts; "
-                        "remove the -poseidon-cache directory and compile the "
-                        "unit again");
-  return {(unsigned)*functions, (unsigned)*slots};
+    return userError("the launch manifest " + m->path +
+                     " holds a profile table entry that is not two counts; "
+                     "remove the -poseidon-cache directory and compile the "
+                     "unit again");
+  return std::make_pair((unsigned)*functions, (unsigned)*slots);
 }
 
-void writeLaunchManifest(const Options &O, LaunchManifest &L, const Module &M) {
+Error writeLaunchManifest(const Options &O, LaunchManifest &L,
+                          const Module &M) {
   const bool any =
       L.ProfiledFunctions || llvm::any_of(kKinds, [&](LaunchKind kind) {
         return !recorded(L, kind).empty();
@@ -153,31 +153,29 @@ void writeLaunchManifest(const Options &O, LaunchManifest &L, const Module &M) {
   std::optional<Manifest> found = manifestOf(O, M);
   if (!found) {
     if (any)
-      reportUserError(M.getContext(),
-                      "this device compile hands the launches of its sites to "
-                      "its host half, and -poseidon-cache= names no directory "
-                      "to keep them in; pass -poseidon-launch-dir=<dir> to "
-                      "both halves");
-    return;
+      return userError("this device compile hands the launches of its sites "
+                       "to its host half, and -poseidon-cache= names no "
+                       "directory to keep them in; pass "
+                       "-poseidon-launch-dir=<dir> to both halves");
+    return Error::success();
   }
   const Manifest &m = *found;
   // The device code is already compiled for the rewritten stubs (a dispatched
   // product fissioned out of its kernel, a profiled kernel taking shadow
   // buffers), so a host half reading no manifest or an earlier one would build
   // a wrong program.
-  auto fail = [&](StringRef action, const Twine &why) {
-    reportUserError(M.getContext(),
-                    "cannot " + action + " the launch manifest " + m.path +
-                        ": " + why +
-                        ". The manifest is kept in the -poseidon-launch-dir "
-                        "directory, or else the -poseidon-cache one, which "
-                        "has to be writable.");
+  auto cannot = [&](StringRef action, const Twine &why) {
+    return userError("cannot " + action + " the launch manifest " + m.path +
+                     ": " + why +
+                     ". The manifest is kept in the -poseidon-launch-dir "
+                     "directory, or else the -poseidon-cache one, which has "
+                     "to be writable.");
   };
   if (!any) {
     if (sys::fs::exists(m.path))
       if (std::error_code EC = sys::fs::remove(m.path))
-        fail("remove", EC.message());
-    return;
+        return cannot("remove", EC.message());
+    return Error::success();
   }
   json::Object value;
   for (LaunchKind kind : kKinds) {
@@ -200,9 +198,9 @@ void writeLaunchManifest(const Options &O, LaunchManifest &L, const Module &M) {
                                         {"slots", L.ProfiledSlots}};
   if (std::error_code EC =
           sys::fs::create_directories(sys::path::parent_path(m.path)))
-    fail("write", EC.message());
+    return cannot("write", EC.message());
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
-    fail("write", toString(std::move(E)));
+    return cannot("write", toString(std::move(E)));
   for (LaunchKind kind : kKinds) {
     for (const auto &[kernel, r] : recorded(L, kind))
       errs() << r.message;
@@ -210,13 +208,14 @@ void writeLaunchManifest(const Options &O, LaunchManifest &L, const Module &M) {
   }
   L.ProfileHeaders.clear();
   L.ProfiledFunctions = L.ProfiledSlots = 0;
+  return Error::success();
 }
 
-void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
-                     function_ref<Error(ArrayRef<StringRef>)> parse) {
+Error readDescriptors(const Options &O, const Module &M, LaunchKind kind,
+                      function_ref<Error(ArrayRef<StringRef>)> parse) {
   std::optional<Manifest> found = manifestOf(O, M);
   if (!found)
-    return;
+    return Error::success();
   const Manifest &m = *found;
   CacheEntryRead read = readCacheEntry(m.path, m.key);
   const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
@@ -232,27 +231,25 @@ void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
             "; no launch stub is rewritten from it",
         DS_Warning));
   if (!lines)
-    return;
+    return Error::success();
   for (const json::Value &entry : *lines) {
     std::optional<StringRef> line = entry.getAsString();
     if (!line)
-      reportUserError(M.getContext(),
-                      "the launch manifest " + m.path + " holds a " +
-                          kindName(kind) +
-                          " entry that is not a string; remove the "
-                          "-poseidon-cache directory and compile the unit "
-                          "again");
+      return userError("the launch manifest " + m.path + " holds a " +
+                       kindName(kind) +
+                       " entry that is not a string; remove the "
+                       "-poseidon-cache directory and compile the unit again");
     SmallVector<StringRef, 8> toks;
     line->trim().split(toks, ' ');
     if (Error E = parse(toks))
-      reportUserError(M.getContext(),
-                      "the launch manifest " + m.path + " holds the " +
-                          kindName(kind) + " descriptor '" + *line +
-                          "', which does not parse: " + toString(std::move(E)) +
-                          ". The device compile of this unit writes it into "
-                          "the -poseidon-cache directory; remove that "
-                          "directory and compile the unit again.");
+      return userError("the launch manifest " + m.path + " holds the " +
+                       kindName(kind) + " descriptor '" + *line +
+                       "', which does not parse: " + toString(std::move(E)) +
+                       ". The device compile of this unit writes it into the "
+                       "-poseidon-cache directory; remove that directory and "
+                       "compile the unit again.");
   }
+  return Error::success();
 }
 
 void readProfileHeaders(const Options &O, const Module &M,

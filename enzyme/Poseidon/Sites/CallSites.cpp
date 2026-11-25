@@ -70,9 +70,9 @@ static std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
 }
 
 /// The accuracy target the identity call `H` carries for its call, 0 when it
-/// carries none; none, with an error, when it is no accuracy target.
-static std::optional<double> identityTarget(CallInst *H, CallBase *call,
-                                            const Function &fn) {
+/// carries none; an error when it is no accuracy target.
+static Expected<double> identityTarget(CallInst *H, CallBase *call,
+                                       const Function &fn) {
   if (H->arg_size() < 2)
     return 0.0;
   return readTarget(call, H->getArgOperand(1), fn);
@@ -112,9 +112,10 @@ static CallInst *emitMarkerCall(CallBase *call, Function *fn, double tau,
 }
 
 /// `marker`, a marker call of `fn`, made the call of fn with the primal values
-/// of its arguments, or erased when its list cannot be read.
-static void callAsWritten(CallInst *marker, Function *fn) {
-  if (std::optional<MarkerArgs> parsed = parseMarker(marker, fn)) {
+/// of its arguments, or erased, with an error, when its list cannot be read.
+static Error callAsWritten(CallInst *marker, Function *fn) {
+  Expected<MarkerArgs> parsed = parseMarker(marker, fn);
+  if (parsed) {
     IRBuilder<> Builder(marker);
     CallInst *direct =
         Builder.CreateCall(fn->getFunctionType(), fn, parsed->primalArgs);
@@ -125,6 +126,7 @@ static void callAsWritten(CallInst *marker, Function *fn) {
     marker->replaceAllUsesWith(PoisonValue::get(marker->getType()));
   }
   marker->eraseFromParent();
+  return parsed.takeError();
 }
 
 /// `call`, a marker call of `fn` whose list `list` reads as automatic, made the
@@ -135,9 +137,10 @@ static void callAsWritten(CallInst *marker, Function *fn) {
 /// there it is the call of fn. Erased, with an error at `call`, when the
 /// arguments are not of fn's parameter types or the call's value is used as
 /// another type than fn returns.
-static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
-                        bool hostHalf,
-                        DenseMap<Function *, SmallVector<double, 2>> &targets) {
+static Error
+asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
+            bool hostHalf,
+            DenseMap<Function *, SmallVector<double, 2>> &targets) {
   const std::string name = displayName(*fn);
   auto types = map_range(list.own, [](Value *A) { return A->getType(); });
   std::string why;
@@ -151,11 +154,11 @@ static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
           " as another type than it returns; give the call " + name +
           "'s return type";
   if (!why.empty()) {
-    fail(call, why);
+    Error E = userError(*call, why);
     if (!call->use_empty())
       call->replaceAllUsesWith(PoisonValue::get(call->getType()));
     call->eraseFromParent();
-    return;
+    return E;
   }
   Module &M = *call->getModule();
   IRBuilder<> Builder(call);
@@ -186,6 +189,7 @@ static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
   if (!call->use_empty())
     call->replaceAllUsesWith(direct);
   call->eraseFromParent();
+  return Error::success();
 }
 
 /// The calls of the module's functions named `names`, in module order.
@@ -209,8 +213,9 @@ static SmallVector<CallInst *, 4> callsOfAny(Module &M,
 /// __poseidon_optimize with an explicit list: the call through the explicit
 /// identity is the marker call over fn, and the marker's lowering makes it the
 /// site. The host half of a CUDA or HIP compilation holds no site, so there the
-/// call runs fn with the primal values of its arguments.
-static bool lowerExplicitCalls(Module &M) {
+/// call runs fn with the primal values of its arguments. The mistakes found are
+/// added to `errors`.
+static bool lowerExplicitCalls(Module &M, Error &errors) {
   SmallVector<CallInst *, 4> identities =
       callsOfAny(M, {kExplicitIdentity, kExplicitIdentityTau});
   if (identities.empty())
@@ -222,24 +227,33 @@ static bool lowerExplicitCalls(Module &M) {
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
     SmallVector<CallBase *, 4> calls = callsOf(*H);
     if (!fn || calls.size() != 1 || !H->hasOneUse()) {
-      fail(H, "__poseidon_optimize needs a function name and a call of it");
+      errors = joinErrors(
+          std::move(errors),
+          userError(*H, "__poseidon_optimize needs a function name and a "
+                        "call of it"));
       H->replaceAllUsesWith(PoisonValue::get(H->getType()));
       H->eraseFromParent();
       continue;
     }
     CallBase *call = calls.front();
     const std::string name = displayName(*fn);
-    std::optional<double> tau = identityTarget(H, call, *fn);
+    Expected<double> tau = identityTarget(H, call, *fn);
     // Whatever the outcome, the call stops going through the identity, which
     // nothing defines.
     call->setCalledOperand(fn);
     H->eraseFromParent();
-    if (!tau)
+    if (!tau) {
+      errors = joinErrors(std::move(errors), tau.takeError());
       continue;
-    if (!readArgumentList(call, *fn, Identity::Explicit))
+    }
+    if (Expected<CallArguments> list =
+            readArgumentList(call, *fn, Identity::Explicit);
+        !list) {
+      errors = joinErrors(std::move(errors), list.takeError());
       continue;
+    }
     if (annotated.count(fn)) {
-      reportAnnotatedCall(call, name);
+      errors = joinErrors(std::move(errors), annotatedCallError(*call, name));
       continue;
     }
     SmallVector<Value *, 8> args(call->args());
@@ -248,7 +262,7 @@ static bool lowerExplicitCalls(Module &M) {
       argAttrs.push_back(call->getAttributes().getParamAttrs(i));
     CallInst *marker = emitMarkerCall(call, fn, *tau, args, argAttrs);
     if (hostHalf)
-      callAsWritten(marker, fn);
+      errors = joinErrors(std::move(errors), callAsWritten(marker, fn));
   }
   return true;
 }
@@ -259,10 +273,11 @@ static bool lowerExplicitCalls(Module &M) {
 /// whose own arguments hold no pointer needs no shadow and stays the marker
 /// call it is, as does one with an explicit list. In the host half of a CUDA or
 /// HIP compilation, which holds no site, every marker call runs fn with the
-/// primal values of its arguments.
+/// primal values of its arguments. The mistakes found are added to `errors`.
 static bool
 routeAutomaticMarkers(Module &M,
-                      DenseMap<Function *, SmallVector<double, 2>> &targets) {
+                      DenseMap<Function *, SmallVector<double, 2>> &targets,
+                      Error &errors) {
   SmallVector<CallInst *, 4> markers;
   collectMarkerCalls(M, markers);
   const bool hostHalf = isOffloadHostHalf(M);
@@ -271,12 +286,15 @@ routeAutomaticMarkers(Module &M,
     Function *fn = markerTargetOrNull(CI);
     if (!fn)
       continue;
-    std::optional<CallArguments> list =
-        readArgumentList(CI, *fn, Identity::None);
+    Expected<CallArguments> list = readArgumentList(CI, *fn, Identity::None);
     if (list && list->kind == ArgumentList::Explicit) {
       if (hostHalf) {
-        callAsWritten(CI, fn);
+        errors = joinErrors(std::move(errors), callAsWritten(CI, fn));
         changed = true;
+      } else {
+        // Read here as well as where it is lowered: a mistake among the
+        // other calls stops the compile before then.
+        errors = joinErrors(std::move(errors), parseMarker(CI, fn).takeError());
       }
       continue;
     }
@@ -286,12 +304,14 @@ routeAutomaticMarkers(Module &M,
       continue;
     changed = true;
     if (!list) {
+      errors = joinErrors(std::move(errors), list.takeError());
       if (!CI->use_empty())
         CI->replaceAllUsesWith(PoisonValue::get(CI->getType()));
       CI->eraseFromParent();
       continue;
     }
-    asPlainCall(CI, fn, *list, hostHalf, targets);
+    errors = joinErrors(std::move(errors),
+                        asPlainCall(CI, fn, *list, hostHalf, targets));
   }
   return changed;
 }
@@ -351,20 +371,22 @@ static Function *makePerCallCopy(SiteRecords &T, Function &fn, Function &caller,
 /// There the call through the identity is left for the inliner to fold. The
 /// calls through the explicit identity and the marker calls are read first
 /// (lowerExplicitCalls, routeAutomaticMarkers).
-bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
+Expected<bool> lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
   // The targets of the explicit calls are left out of their callers' names
   // too, so they are read before those calls become marker calls; the
   // targets poseidon_tau gives in marker calls are added as those calls
   // are routed through the plain identity.
   DenseMap<Function *, SmallVector<double, 2>> targets = identityTargets(M);
-  bool changed = lowerExplicitCalls(M);
-  changed |= routeAutomaticMarkers(M, targets);
-  if (isOffloadHostHalf(M))
-    return changed;
+  Error errors = Error::success();
+  bool changed = lowerExplicitCalls(M, errors);
+  changed |= routeAutomaticMarkers(M, targets, errors);
   SmallVector<CallInst *, 4> helpers =
       callsOfAny(M, {kPlainIdentity, kPlainIdentityTau});
-  if (helpers.empty())
+  if (isOffloadHostHalf(M) || helpers.empty()) {
+    if (errors)
+      return std::move(errors);
     return changed;
+  }
   const bool active = O.Profiling.profileAction();
   MapVector<Function *, std::optional<double>> annotated =
       annotatedFunctions(M);
@@ -387,7 +409,9 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
     };
     if (!fn || calls.size() != 1 || !H->hasOneUse()) {
       if (active)
-        fail(H, "__poseidon_optimize needs a function name and a call of it");
+        errors = joinErrors(std::move(errors),
+                            userError(*H, "__poseidon_optimize needs a "
+                                          "function name and a call of it"));
       else
         warn(H, "__poseidon_optimize needs a function name and a call of it; "
                 "the call runs as written");
@@ -396,20 +420,30 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
     }
     CallBase *call = calls.front();
     const std::string name = displayName(*fn);
-    std::optional<double> tau = identityTarget(H, call, *fn);
-    if (!tau || !readArgumentList(call, *fn, Identity::Plain)) {
+    Expected<double> tau = identityTarget(H, call, *fn);
+    if (!tau) {
+      errors = joinErrors(std::move(errors), tau.takeError());
+      asWritten();
+      continue;
+    }
+    if (Expected<CallArguments> list =
+            readArgumentList(call, *fn, Identity::Plain);
+        !list) {
+      errors = joinErrors(std::move(errors), list.takeError());
       asWritten();
       continue;
     }
     if (annotated.count(fn)) {
-      reportAnnotatedCall(call, name);
+      errors = joinErrors(std::move(errors), annotatedCallError(*call, name));
       asWritten();
       continue;
     }
     std::optional<std::string> why = perCallRefusal(*call, *fn);
     if (why && active)
-      fail(call,
-           name + " " + *why + ", so this call cannot be a Poseidon site");
+      errors = joinErrors(
+          std::move(errors),
+          userError(*call, name + " " + *why +
+                               ", so this call cannot be a Poseidon site"));
     else if (why)
       warn(call, name + " " + *why +
                      ", so this call is not a Poseidon site and runs as "
@@ -429,6 +463,8 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
                    << displayName(*caller) << ": accuracy target "
                    << shortDouble(*tau) << '\n';
   }
+  if (errors)
+    return std::move(errors);
   return true;
 }
 
@@ -613,22 +649,25 @@ Expected<PointerExtent> accessedExtent(Argument &A) {
 /// caller whose extent it knows (localObject; inlining has put the objects a
 /// call passes there by now) or else of the constant range the call reaches
 /// through it (accessedExtent).
-bool lowerDeviceCallSites(const Options &O, Module &M) {
+Expected<bool> lowerDeviceCallSites(const Options &O, Module &M) {
   if (!Target::of(M).isDevice())
     return false;
   SmallVector<Site, 4> bodies = collectSites(O, M, {Site::Form::HostBody});
   if (bodies.empty())
     return false;
   LLVMContext &C = M.getContext();
+  Error errors = Error::success();
   for (Site &site : bodies) {
     Function *B = site.fn;
     double tau = site.target.value_or(0.0);
     releaseHostBody(*B);
     for (CallBase *CB : callsOf(*B)) {
       if (!isa<CallInst>(CB)) {
-        fail(CB, perCallSiteName(B->getName()) +
-                     " is reached through an invoke, so this call cannot be a "
-                     "Poseidon site");
+        errors = joinErrors(
+            std::move(errors),
+            userError(*CB, perCallSiteName(B->getName()) +
+                               " is reached through an invoke, so this call "
+                               "cannot be a Poseidon site"));
         markOutlineTransparent(B);
         continue;
       }
@@ -647,14 +686,18 @@ bool lowerDeviceCallSites(const Options &O, Module &M) {
                    .str();
       }
       if (!why.empty()) {
-        fail(CB, perCallSiteName(B->getName()) +
-                     " cannot be a Poseidon site: " + why +
-                     ". The pass makes the shadow of a pointer into a local "
-                     "object of the caller or an aggregate it takes by value, "
-                     "or else of the constant range of memory the call "
-                     "reaches through the pointer. Copy such an argument into "
-                     "a local object, or pass its shadow in the call: "
-                     "enzyme_dup before the pointer and the shadow after it.");
+        errors = joinErrors(
+            std::move(errors),
+            userError(*CB,
+                      perCallSiteName(B->getName()) +
+                          " cannot be a Poseidon site: " + why +
+                          ". The pass makes the shadow of a pointer into a "
+                          "local object of the caller or an aggregate it "
+                          "takes by value, or else of the constant range of "
+                          "memory the call reaches through the pointer. Copy "
+                          "such an argument into a local object, or pass its "
+                          "shadow in the call: enzyme_dup before the pointer "
+                          "and the shadow after it."));
         markOutlineTransparent(B);
         continue;
       }
@@ -670,6 +713,8 @@ bool lowerDeviceCallSites(const Options &O, Module &M) {
       emitMarkerCall(CB, B, tau, list, {});
     }
   }
+  if (errors)
+    return std::move(errors);
   return true;
 }
 

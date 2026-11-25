@@ -329,13 +329,17 @@ bool registerProfileStatic(Module &M, StringRef key, StringRef profileName,
   return true;
 }
 
-bool registerDeviceProfileTable(const Options &O, Module &M) {
+Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
   if (!O.Profiling.generatesProfile() || Target::of(M).isDevice() ||
       M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
     return false;
   std::optional<VariableRegistration> registration = variableRegistration(M);
   if (!registration)
     return false;
+  Expected<std::pair<unsigned, unsigned>> sizes = readProfileTable(O, M);
+  if (!sizes)
+    return sizes.takeError();
+  auto [functions, slots] = *sizes;
 
   LLVMContext &C = M.getContext();
   Type *VoidTy = Type::getVoidTy(C);
@@ -354,7 +358,6 @@ bool registerDeviceProfileTable(const Options &O, Module &M) {
       "__poseidon_profile_register_module_table", &M);
   ctor->addFnAttr(Attribute::NoUnwind);
   IRBuilder<> B(BasicBlock::Create(C, "entry", ctor));
-  auto [functions, slots] = readProfileTable(O, M);
   B.CreateCall(M.getOrInsertFunction(
                    "__poseidon_profile_register_module",
                    FunctionType::get(

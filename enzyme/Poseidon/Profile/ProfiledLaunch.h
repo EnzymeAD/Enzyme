@@ -28,7 +28,8 @@ struct Options;
 /// in M's manifest matches into a call of __poseidon_launch_profiled, which
 /// allocates, zeroes and seeds the shadow buffers the profiling kernel takes
 /// and launches it. Host module only. An error at a matched stub that does
-/// not launch through the CUDA or HIP launch API.
+/// not launch through the CUDA or HIP launch API, or for a descriptor that does
+/// not parse.
 llvm::Expected<bool> rewriteProfileStubBodies(const Options &O,
                                               llvm::Module &M);
 

@@ -80,7 +80,7 @@ void noteSiteIdentity(SiteRecords &T, Function &body, std::string identity) {
 }
 
 std::string siteIdentity(const SiteRecords &T, const Function &body) {
-  auto it = T.Identities.find(const_cast<Function *>(&body));
+  auto it = T.Identities.find(&body);
   return it != T.Identities.end() ? it->second : functionIdentity(body);
 }
 

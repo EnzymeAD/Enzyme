@@ -36,7 +36,7 @@ template <typename BODY> __global__ static void HipKernel2D(int N, BODY body) {
 // A kernel that computes more than the lambda cannot be its site.
 // WRAPPER: annotated_lambda_amdgpu.hip:[[@LINE+4]]:{{[0-9]+}}: error: Poseidon: void Scaled<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, double*, reduce(int, int, int, double*, double*, double*)::'lambda'(int)) calls reduce(int, int, int, double*, double*, double*)::'lambda'(int)::operator()(int) const, which carry POSEIDON_OPTIMIZE, and does floating-point work outside them (in void Scaled<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, double*, reduce(int, int, int, double*, double*, double*)::'lambda'(int))), so it is no wrapper around the call and not their site; move that work out of the kernel, or annotate the kernel instead
 // WRAPPER-NOT: error:
-// WRAPPER: {{[12] warnings? and 1 error}} generated when compiling for {{.*}}
+// WRAPPER: {{^}}1 error generated when compiling for {{.*}}
 template <typename BODY>
 __global__ static void Scaled(int N, double *s, BODY body) {
   int k = blockIdx.x;

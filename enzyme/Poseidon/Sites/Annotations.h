@@ -21,7 +21,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/Support/Error.h"
 
 #include <optional>
 #include <string>
@@ -65,22 +65,30 @@ constexpr llvm::StringLiteral kNoProfileAction =
     "-poseidon-profile-use=<dir>, so it is left as written; compile with one "
     "of the two to profile or optimize it";
 
-/// Reports `message` at the annotated function `F` with `severity`.
-void diagnoseSite(llvm::Function &F, const llvm::Twine &message,
-                  llvm::DiagnosticSeverity severity);
+/// Warns with `message` at the annotated function `F`, once, and marks it as no
+/// site.
+void warnSite(llvm::Function &F, const llvm::Twine &message);
+/// The user error `message` at the function `F`.
+llvm::Error siteError(llvm::Function &F, const llvm::Twine &message);
+/// The functions the module's Poseidon annotations name, in module order, with
+/// the accuracy target each carries; one whose annotation cannot be read is
+/// left out.
 llvm::MapVector<llvm::Function *, std::optional<double>>
 annotatedFunctions(llvm::Module &M);
+/// The mistakes in the module's Poseidon annotations, none in the host half of
+/// a CUDA or HIP compilation, which holds no site.
+llvm::Error checkSiteAnnotations(llvm::Module &M);
 /// Prints, under -poseidon-print, the accuracy target site `F` carries.
 void noteSiteTarget(const Options &O, const llvm::Function &F,
                     std::optional<double> tau);
 /// Makes each kernel that calls an annotated device function a site, as if
 /// it carried the annotation itself.
-bool propagateDeviceSites(const Options &O, llvm::Module &M);
+llvm::Expected<bool> propagateDeviceSites(const Options &O, llvm::Module &M);
 /// Inlines into each device site kernel what it calls besides the math
 /// library, warning about a call that cannot be folded.
 bool foldDeviceSiteCallees(const Options &O, llvm::Module &M);
-/// An error at `call`, a __poseidon_optimize of the annotated function `name`.
-void reportAnnotatedCall(llvm::CallBase *call, llvm::StringRef name);
+/// The error at `call`, a __poseidon_optimize of the annotated function `name`.
+llvm::Error annotatedCallError(llvm::CallBase &call, llvm::StringRef name);
 
 /// Warns once per module about every annotated kernel of a compile without a
 /// profile action.
@@ -96,7 +104,8 @@ bool leaveSitesAsWritten(const Options &O, SiteRecords &T, llvm::Module &M);
 std::optional<std::string> hostSiteRefusal(llvm::Function &F);
 /// Makes each annotated host function a wrapper around an outlined body that
 /// carries the site's accuracy target, recording the site's identity in `T`.
-bool outlineHostSites(const Options &O, SiteRecords &T, llvm::Module &M);
+llvm::Expected<bool> outlineHostSites(const Options &O, SiteRecords &T,
+                                      llvm::Module &M);
 /// The calls whose callee is `F` itself.
 llvm::SmallVector<llvm::CallBase *, 4> callsOf(llvm::Value &F);
 /// The host body `B` handed back to the optimizer: out of llvm.compiler.used
@@ -106,10 +115,10 @@ void releaseHostBody(llvm::Function &B);
 /// Lets the inliner fold `body` back into its caller.
 void markOutlineTransparent(llvm::Function *body);
 /// Moves the code of kernel `K` into a new body, recorded in `T` with K's
-/// identity, that K calls; that call, or null with an error if K cannot be
-/// a site.
-llvm::CallInst *outlineKernelBody(SiteRecords &T, llvm::Function &K,
-                                  llvm::Function *&bodyOut);
+/// identity, that K calls; that call, or an error, before any change, if K
+/// cannot be a site.
+llvm::Expected<llvm::CallInst *>
+outlineKernelBody(SiteRecords &T, llvm::Function &K, llvm::Function *&bodyOut);
 /// Inlines `body` back at `call`, undoing outlineKernelBody.
 void inlineKernelBody(llvm::CallInst *call, llvm::Function *body);
 

@@ -15,6 +15,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Regex.h"
 
 #include <cmath>
 #include <limits>
@@ -168,6 +169,13 @@ Error validateOptions(const Options &O) {
     return userError(
         "-poseidon-herbie-array-weights=" + Twine(H.HerbieArrayWeights) +
         " is not 'sensitivity', 'gradient' or 'none'.");
+  if (std::string err; !O.Profiling.Kernels.empty() &&
+                       O.Profiling.Kernels != "all" &&
+                       !Regex(O.Profiling.Kernels).isValid(err))
+    return userError(Twine("-poseidon-kernels=") + O.Profiling.Kernels +
+                     " is not a valid regular expression: " + err +
+                     ". Give a regular expression of kernel names, or "
+                     "'all'.");
   if (!O.Profiling.usesProfile())
     return Error::success();
   const std::pair<StringRef, double> numbers[] = {

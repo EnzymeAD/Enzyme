@@ -49,28 +49,20 @@ static void collectKernels(const Options &O, Module &M,
     // and what is left here no kernel of this translation unit calls.
     if (!T.isKernel(*fn)) {
       if (T.isDevice())
-        diagnoseSite(*fn,
-                     displayName(*fn) +
-                         " is a device function no kernel of this translation "
-                         "unit calls, so it is left as written; on the device, "
-                         "put POSEIDON_OPTIMIZE on a kernel or on a function a "
-                         "kernel calls",
-                     DS_Warning);
+        warnSite(*fn, displayName(*fn) +
+                          " is a device function no kernel of this "
+                          "translation unit calls, so it is left as written; "
+                          "on the device, put POSEIDON_OPTIMIZE on a kernel "
+                          "or on a function a kernel calls");
       continue;
     }
     found.insert({fn, {Site::Form::Kernel, fn, nullptr, tau}});
   }
 
   if (!O.Profiling.Kernels.empty()) {
+    // validateOptions refuses a pattern that is not a regular expression.
     bool all = O.Profiling.Kernels == "all";
     Regex re(O.Profiling.Kernels);
-    std::string err;
-    if (!all && !re.isValid(err))
-      reportUserError(M.getContext(),
-                      Twine("-poseidon-kernels=") + O.Profiling.Kernels +
-                          " is not a valid regular expression: " + err +
-                          ". Give a regular expression of kernel names, or "
-                          "'all'.");
     for (Function &F : M)
       if (!F.isDeclaration() && !F.hasFnAttribute(kSiteLowered) &&
           T.isKernel(F) && (all || re.match(F.getName())))

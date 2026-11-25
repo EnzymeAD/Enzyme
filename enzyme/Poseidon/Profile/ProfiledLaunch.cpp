@@ -47,9 +47,9 @@ struct ProfDesc {
 };
 } // namespace
 
-static bool readProfDescriptors(const Options &O, Module &M,
-                                std::map<std::string, ProfDesc> &out) {
-  readDescriptors(
+static Error readProfDescriptors(const Options &O, Module &M,
+                                 std::map<std::string, ProfDesc> &out) {
+  return readDescriptors(
       O, M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) -> Error {
         DescriptorCursor Cursor(toks);
         ProfDesc d;
@@ -73,7 +73,6 @@ static bool readProfDescriptors(const Options &O, Module &M,
         out[d.kernel] = d;
         return Error::success();
       });
-  return !out.empty();
 }
 
 static Constant *profIntArray(Module &M, const Twine &nameT,
@@ -97,7 +96,9 @@ static Constant *profIntArray(Module &M, const Twine &nameT,
 
 Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
   std::map<std::string, ProfDesc> descs;
-  if (!readProfDescriptors(O, M, descs))
+  if (Error E = readProfDescriptors(O, M, descs))
+    return std::move(E);
+  if (descs.empty())
     return false;
 
   LLVMContext &C = M.getContext();

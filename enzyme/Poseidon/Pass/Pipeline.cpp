@@ -182,11 +182,22 @@ struct OptimizePass : PassParent<OptimizePass> {
     if (Error E = requirePluginOrder(O, M))
       return stopOnError(S, M, std::move(E));
 
-    bool changed = lowerPerCallSites(O, S.Sites, M);
+    Error errors = checkSiteAnnotations(M);
+    Expected<bool> perCall = lowerPerCallSites(O, S.Sites, M);
+    if (!perCall || errors)
+      return stopOnError(S, M,
+                         joinErrors(std::move(errors), perCall.takeError()));
+    bool changed = *perCall;
     if (O.Profiling.profileAction())
       recordMarkerIdentities(S.Sites, M);
-    changed |= lowerDeviceCallSites(O, M);
-    changed |= outlineHostSites(O, S.Sites, M);
+    Expected<bool> deviceCalls = lowerDeviceCallSites(O, M);
+    if (!deviceCalls)
+      return stopOnError(S, M, deviceCalls.takeError());
+    changed |= *deviceCalls;
+    Expected<bool> hostSites = outlineHostSites(O, S.Sites, M);
+    if (!hostSites)
+      return stopOnError(S, M, hostSites.takeError());
+    changed |= *hostSites;
     changed |= foldDeviceSiteCallees(O, M);
     Expected<bool> prepared = prepareModule(S, M);
     if (!prepared)
@@ -446,12 +457,26 @@ struct HostSitePass : PassParent<HostSitePass> {
           return stopOnError(S, M, std::move(E));
       changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
     }
-    changed |= lowerPerCallSites(O, S.Sites, M);
+    Error errors = checkSiteAnnotations(M);
+    Expected<bool> perCall = lowerPerCallSites(O, S.Sites, M);
+    if (!perCall || errors)
+      return stopOnError(S, M,
+                         joinErrors(std::move(errors), perCall.takeError()));
+    changed |= *perCall;
     if (O.Profiling.profileAction())
       recordMarkerIdentities(S.Sites, M);
-    changed |= propagateDeviceSites(O, M);
-    changed |= outlineHostSites(O, S.Sites, M);
-    changed |= registerDeviceProfileTable(O, M);
+    Expected<bool> deviceSites = propagateDeviceSites(O, M);
+    if (!deviceSites)
+      return stopOnError(S, M, deviceSites.takeError());
+    changed |= *deviceSites;
+    Expected<bool> hostSites = outlineHostSites(O, S.Sites, M);
+    if (!hostSites)
+      return stopOnError(S, M, hostSites.takeError());
+    changed |= *hostSites;
+    Expected<bool> table = registerDeviceProfileTable(O, M);
+    if (!table)
+      return stopOnError(S, M, table.takeError());
+    changed |= *table;
     changed |= defineProfileDirectory(O, M);
     if (!O.Profiling.profileAction())
       changed |= leaveSitesAsWritten(O, S.Sites, M);
@@ -527,7 +552,8 @@ struct FinalizePass : PassParent<FinalizePass> {
     if (O.Profiling.generatesProfile())
       recordProfileTableSize(S.Launches, M);
     if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
-      writeLaunchManifest(S.Opts, S.Launches, M);
+      if (Error E = writeLaunchManifest(S.Opts, S.Launches, M))
+        return stopOnError(S, M, std::move(E));
     releaseDeviceMath(M);
     SmallSetVector<Function *, 4> rewritten;
     for (WeakVH &handle : S.RewrittenFunctions)

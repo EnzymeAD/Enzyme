@@ -105,7 +105,7 @@ int main() {
   // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: this call uses the value of shift(double const*, double*, int) as another type than it returns; give the call shift(double const*, double*, int)'s return type
   d += __poseidon_fp_optimize<double>((void *)shift, x, y6, n);
   printf("%d %g\n", p, d);
-  // LISTS: 8 warnings and 9 errors generated.
+  // LISTS: 9 errors generated.
 #endif
 }
 

@@ -397,9 +397,9 @@ struct DispatchArgs {
 };
 } // namespace
 
-static bool readDispatchDescriptors(const Options &O, Module &M,
-                                    std::map<std::string, LaunchDesc> &descs) {
-  readDescriptors(
+static Error readDispatchDescriptors(const Options &O, Module &M,
+                                     std::map<std::string, LaunchDesc> &descs) {
+  return readDescriptors(
       O, M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) -> Error {
         DescriptorCursor Cursor(toks);
         LaunchDesc d;
@@ -482,7 +482,6 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
         descs[d.kernel] = d;
         return Error::success();
       });
-  return !descs.empty();
 }
 
 // Kernel argument `r.param` lives where entry r.param of the launch's argument
@@ -650,10 +649,10 @@ static bool rewriteStub(const Options &O, Module &M, Function &F,
 
 // Runs before inlining (PipelineStart), while `__device_stub__K` is still a
 // function of its own that ends in the kernel's launch.
-bool rewriteGemmStubBodies(const Options &O, Module &M) {
+Expected<bool> rewriteGemmStubBodies(const Options &O, Module &M) {
   std::map<std::string, LaunchDesc> descs;
-  if (!readDispatchDescriptors(O, M, descs))
-    return false;
+  if (Error E = readDispatchDescriptors(O, M, descs))
+    return std::move(E);
 
   bool changed = false;
   for (Function &F : M) {

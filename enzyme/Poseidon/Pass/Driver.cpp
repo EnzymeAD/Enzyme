@@ -299,15 +299,14 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
 
 static Expected<bool> optimizeMarker(Session &S, CallInst *CI,
                                      SmallVectorImpl<CallBase *> &calls) {
-  Function *F = markerTarget(CI);
+  Expected<Function *> F = markerTarget(CI);
   if (!F)
-    return false;
-
-  std::optional<MarkerArgs> marker = parseMarker(CI, F);
+    return F.takeError();
+  Expected<MarkerArgs> marker = parseMarker(CI, *F);
   if (!marker)
-    return false;
-  if (Error E =
-          optimizeSiteBody(S, CI, F, marker->primalArgs, marker->errTol, calls))
+    return marker.takeError();
+  if (Error E = optimizeSiteBody(S, CI, *F, marker->primalArgs, marker->errTol,
+                                 calls))
     return std::move(E);
   return true;
 }
@@ -419,12 +418,14 @@ static Expected<bool> optimizeKernels(Session &Sess,
   if (!filter) {
     for (const Site *site : kernels) {
       Function *body = nullptr;
-      if (CallInst *call = outlineKernelBody(Sess.Sites, *site->fn, body)) {
-        markOutlineTransparent(body);
-        if (Error E = optimize(call, body, *site))
-          return std::move(E);
-        changed = true;
-      }
+      Expected<CallInst *> call =
+          outlineKernelBody(Sess.Sites, *site->fn, body);
+      if (!call)
+        return call.takeError();
+      markOutlineTransparent(body);
+      if (Error E = optimize(*call, body, *site))
+        return std::move(E);
+      changed = true;
     }
     return changed;
   }
@@ -442,9 +443,9 @@ static Expected<bool> optimizeKernels(Session &Sess,
   double regexTotal = 0.0;
   for (const Site *site : kernels) {
     Function *body = nullptr;
-    CallInst *call = outlineKernelBody(Sess.Sites, *site->fn, body);
+    Expected<CallInst *> call = outlineKernelBody(Sess.Sites, *site->fn, body);
     if (!call)
-      continue;
+      return call.takeError();
     markOutlineTransparent(body);
     double cost = 0.0;
     if (site->byRegex) {
@@ -454,7 +455,7 @@ static Expected<bool> optimizeKernels(Session &Sess,
       cost = *priced;
     }
     regexTotal += cost;
-    outlined.push_back({site, body, call, cost});
+    outlined.push_back({site, body, *call, cost});
   }
 
   for (Outlined &K : outlined) {

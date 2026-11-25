@@ -45,10 +45,6 @@ void warn(CallBase *CI, const Twine &message) {
   diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Warning);
 }
 
-void fail(CallBase *CI, const Twine &message) {
-  diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Error);
-}
-
 /// The body a marker names, or null, without diagnostics: a malformed marker
 /// is reported once, by the handler that lowers it. An empty body is returned
 /// as found; only markerTarget refuses it.
@@ -77,19 +73,17 @@ Value *activityArg(LLVMContext &C, StringRef name) {
   return MetadataAsValue::get(C, MDString::get(C, name));
 }
 
-Function *markerTarget(CallInst *CI) {
+Expected<Function *> markerTarget(CallInst *CI) {
   Function *F = markerTargetOrNull(CI);
   if (!F) {
     std::string buf;
     llvm::raw_string_ostream os(buf);
     os << *CI->getArgOperand(CI->hasStructRetAttr() ? 1 : 0);
-    fail(CI, "failed to find the annotated function in " + buf);
-    return nullptr;
+    return userError(*CI, "failed to find the annotated function in " + buf);
   }
-  if (F->empty()) {
-    fail(CI, "the annotated function " + F->getName() + " has no body");
-    return nullptr;
-  }
+  if (F->empty())
+    return userError(*CI,
+                     "the annotated function " + F->getName() + " has no body");
   return F;
 }
 
@@ -287,30 +281,25 @@ static std::string listRemedy(StringRef name) {
 
 bool isAccuracyTarget(double tau) { return tau > 0.0 && std::isfinite(tau); }
 
-std::optional<double> readTarget(CallBase *call, Value *value,
-                                 const Function &fn) {
-  if (!value) {
-    fail(call, "poseidon_tau without a value");
-    return std::nullopt;
-  }
+Expected<double> readTarget(CallBase *call, Value *value, const Function &fn) {
+  if (!value)
+    return userError(*call, "poseidon_tau without a value");
   auto *CFP = dyn_cast<ConstantFP>(value);
-  if (!CFP) {
-    fail(call, "the accuracy target of " + displayName(fn) +
-                   " must be a compile-time floating-point constant (a "
-                   "literal, a macro or a constant expression)");
-    return std::nullopt;
-  }
+  if (!CFP)
+    return userError(*call,
+                     "the accuracy target of " + displayName(fn) +
+                         " must be a compile-time floating-point constant (a "
+                         "literal, a macro or a constant expression)");
   double tau = CFP->getValueAPF().convertToDouble();
-  if (!isAccuracyTarget(tau)) {
-    fail(call, "the accuracy target " + shortDouble(tau) + " of " +
-                   displayName(fn) + " is not a positive finite number");
-    return std::nullopt;
-  }
+  if (!isAccuracyTarget(tau))
+    return userError(*call, "the accuracy target " + shortDouble(tau) + " of " +
+                                displayName(fn) +
+                                " is not a positive finite number");
   return tau;
 }
 
-std::optional<CallArguments>
-readArgumentList(CallBase *call, const Function &fn, Identity identity) {
+Expected<CallArguments> readArgumentList(CallBase *call, const Function &fn,
+                                         Identity identity) {
   const bool marker = identity == Identity::None;
   const bool sret = marker && (call->hasStructRetAttr() ||
                                fn.hasParamAttribute(0, Attribute::StructRet));
@@ -326,28 +315,25 @@ readArgumentList(CallBase *call, const Function &fn, Identity identity) {
         activity = name;
     }
   const std::string name = displayName(fn);
-  if (hasTau && identity != Identity::None) {
-    fail(call, "poseidon_tau among the arguments of this call of " + name +
+  if (hasTau && identity != Identity::None)
+    return userError(
+        *call, "poseidon_tau among the arguments of this call of " + name +
                    " gives the accuracy target only of a marker call; give "
                    "the target as the first argument of "
                    "__poseidon_optimize_tau");
-    return std::nullopt;
-  }
-  if (activity && identity == Identity::Plain) {
-    fail(call, name + " takes the arguments of this call as written, but " +
+  if (activity && identity == Identity::Plain)
+    return userError(
+        *call, name + " takes the arguments of this call as written, but " +
                    *activity + " among them is an activity marker, which " +
                    "makes them an explicit list" + listRemedy(name));
-    return std::nullopt;
-  }
   if (activity)
     return CallArguments{ArgumentList::Explicit, {}, std::nullopt};
-  if (identity == Identity::Explicit) {
-    fail(call, name +
+  if (identity == Identity::Explicit)
+    return userError(
+        *call, name +
                    " does not take the arguments of this call as written, "
                    "and none of them is an activity marker" +
                    listRemedy(name));
-    return std::nullopt;
-  }
   CallArguments out{ArgumentList::Automatic, {}, std::nullopt};
   // A marker call without sret passes fn's sret pointer before the list.
   const bool resultPointer =
@@ -359,28 +345,28 @@ readArgumentList(CallBase *call, const Function &fn, Identity identity) {
       out.own.push_back(args[i]);
       continue;
     }
-    if (out.tau) {
-      fail(call, "this call of " + name +
-                     " gives its accuracy target twice, each time after "
-                     "poseidon_tau; give it once");
-      return std::nullopt;
-    }
+    if (out.tau)
+      return userError(*call,
+                       "this call of " + name +
+                           " gives its accuracy target twice, each time after "
+                           "poseidon_tau; give it once");
     ++i;
-    out.tau = readTarget(call, i < args.size() ? args[i] : nullptr, fn);
-    if (!out.tau)
-      return std::nullopt;
+    Expected<double> tau =
+        readTarget(call, i < args.size() ? args[i] : nullptr, fn);
+    if (!tau)
+      return tau.takeError();
+    out.tau = *tau;
   }
   // A call through the plain identity is checked against fn's signature where
   // it is lowered, the same with and without a profile.
   const size_t passed = out.own.size() - resultPointer,
                params = fn.arg_size() - sret;
-  if (identity != Identity::Plain && passed != params) {
-    fail(call, "this call passes " + Twine(passed) + " argument(s) to " + name +
-                   ", which takes " + Twine(params) +
-                   ", and none of them is an activity marker" +
-                   listRemedy(name));
-    return std::nullopt;
-  }
+  if (identity != Identity::Plain && passed != params)
+    return userError(*call, "this call passes " + Twine(passed) +
+                                " argument(s) to " + name + ", which takes " +
+                                Twine(params) +
+                                ", and none of them is an activity marker" +
+                                listRemedy(name));
   return out;
 }
 
@@ -397,8 +383,8 @@ struct ArgumentMarkers {
 
 /// Reads the activity markers from argument `i` of the marker call `CI` of
 /// `F`, leaving `i` at the argument they precede; a poseidon_tau's target goes
-/// to `out`. None, with an error, if they cannot be read.
-static std::optional<ArgumentMarkers>
+/// to `out`. An error if they cannot be read.
+static Expected<ArgumentMarkers>
 readArgumentMarkers(CallInst *CI, Function *F, size_t &i, MarkerArgs &out) {
   ArgumentMarkers markers;
   Value *res = CI->getArgOperand(i);
@@ -412,10 +398,10 @@ readArgumentMarkers(CallInst *CI, Function *F, size_t &i, MarkerArgs &out) {
     } else if (*name == "poseidon_tau") {
       out.forward[i] = false;
       ++i;
-      std::optional<double> tau = readTarget(
+      Expected<double> tau = readTarget(
           CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr, *F);
       if (!tau)
-        return std::nullopt;
+        return tau.takeError();
       out.errTol = *tau;
       out.forward[i] = false;
       markers.consumed = true;
@@ -431,22 +417,18 @@ readArgumentMarkers(CallInst *CI, Function *F, size_t &i, MarkerArgs &out) {
       skip = info->extraOperands;
       if (info->role == enzyme_markers::MarkerRole::CallFlag) {
         i += skip;
-        if (i >= CI->arg_size()) {
-          fail(CI, *name + " without its operand");
-          return std::nullopt;
-        }
+        if (i >= CI->arg_size())
+          return userError(*CI, *name + " without its operand");
         markers.consumed = true;
         return markers;
       }
     } else {
-      fail(CI, "unsupported Poseidon annotation argument " + *name);
-      return std::nullopt;
+      return userError(*CI,
+                       "unsupported Poseidon annotation argument " + *name);
     }
     i += 1 + skip;
-    if (i >= CI->arg_size()) {
-      fail(CI, "activity marker without an argument");
-      return std::nullopt;
-    }
+    if (i >= CI->arg_size())
+      return userError(*CI, "activity marker without an argument");
     res = CI->getArgOperand(i);
   }
   return markers;
@@ -454,21 +436,19 @@ readArgumentMarkers(CallInst *CI, Function *F, size_t &i, MarkerArgs &out) {
 
 /// Records argument `i` of the marker call `CI` as the caller value of the
 /// next parameter of `F` (after an sret one when `sret`), with the activity
-/// `markers` give it or its type implies, stepping `i` over its shadow. False,
-/// with an error, if the argument fits no parameter or needs a marker.
-static bool readArgument(CallInst *CI, Function *F, bool sret, size_t &i,
-                         ArgumentMarkers markers, MarkerArgs &out) {
+/// `markers` give it or its type implies, stepping `i` over its shadow. An
+/// error if the argument fits no parameter or needs a marker.
+static Error readArgument(CallInst *CI, Function *F, bool sret, size_t &i,
+                          ArgumentMarkers markers, MarkerArgs &out) {
   size_t param = out.primalArgs.size() + sret;
-  if (param >= F->getFunctionType()->getNumParams()) {
-    fail(CI, "more arguments than " + F->getName() + " has parameters");
-    return false;
-  }
+  if (param >= F->getFunctionType()->getNumParams())
+    return userError(*CI,
+                     "more arguments than " + F->getName() + " has parameters");
   if (markers.madeShadow) {
-    if (!F->getFunctionType()->getParamType(param)->isPointerTy()) {
-      fail(CI, "poseidon_shadow on parameter " + Twine(param) + " of " +
-                   F->getName() + ", which is not a pointer");
-      return false;
-    }
+    if (!F->getFunctionType()->getParamType(param)->isPointerTy())
+      return userError(*CI, "poseidon_shadow on parameter " + Twine(param) +
+                                " of " + F->getName() +
+                                ", which is not a pointer");
     out.madeShadows.push_back(
         {*markers.madeShadow, (unsigned)i, (unsigned)param});
   }
@@ -477,47 +457,45 @@ static bool readArgument(CallInst *CI, Function *F, bool sret, size_t &i,
     // what the markers of an explicit list say, so it needs one.
     Type *PTy = F->getFunctionType()->getParamType(param);
     if (PTy->isPointerTy()) {
-      fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
+      return userError(
+          *CI, "parameter " + Twine(param) + " of " + F->getName() +
                    " is a pointer without an activity marker in an "
                    "explicit list; put enzyme_dup before it and its shadow "
                    "after it, or enzyme_const before it");
-      return false;
     }
-    if (!PTy->isFloatingPointTy() && !PTy->isIntegerTy()) {
-      fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
-                   " needs an explicit activity marker");
-      return false;
-    }
+    if (!PTy->isFloatingPointTy() && !PTy->isIntegerTy())
+      return userError(*CI, "parameter " + Twine(param) + " of " +
+                                F->getName() +
+                                " needs an explicit activity marker");
     markers.dup = false;
   }
   out.primalArgs.push_back(CI->getArgOperand(i));
   if (*markers.dup)
     ++i;
-  return true;
+  return Error::success();
 }
 
-std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
+Expected<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
   MarkerArgs out;
   bool sret =
       CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
   out.forward.assign(CI->arg_size(), true);
 
   for (size_t i = 1 + sret; i < CI->arg_size(); ++i) {
-    std::optional<ArgumentMarkers> markers = readArgumentMarkers(CI, F, i, out);
+    Expected<ArgumentMarkers> markers = readArgumentMarkers(CI, F, i, out);
     if (!markers)
-      return std::nullopt;
+      return markers.takeError();
     if (markers->consumed)
       continue;
-    if (!readArgument(CI, F, sret, i, *markers, out))
-      return std::nullopt;
+    if (Error E = readArgument(CI, F, sret, i, *markers, out))
+      return E;
   }
 
   size_t expected = F->getFunctionType()->getNumParams() - sret;
-  if (out.primalArgs.size() != expected) {
-    fail(CI, "decoded " + Twine(out.primalArgs.size()) + " argument(s) for " +
-                 F->getName() + ", which takes " + Twine(expected));
-    return std::nullopt;
-  }
+  if (out.primalArgs.size() != expected)
+    return userError(*CI, "decoded " + Twine(out.primalArgs.size()) +
+                              " argument(s) for " + F->getName() +
+                              ", which takes " + Twine(expected));
   return out;
 }
 

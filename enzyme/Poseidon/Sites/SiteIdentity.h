@@ -46,7 +46,9 @@ struct SiteClone {
 /// each body the pass made for a site and of each marker's target.
 struct SiteRecords {
   std::map<const llvm::Function *, SiteClone> Clones;
-  llvm::ValueMap<llvm::Function *, std::string> Identities;
+  /// Keyed by value, not function: a later pass may replace a function by an
+  /// alias or a constant.
+  llvm::ValueMap<const llvm::Value *, std::string> Identities;
   /// Whether the module's sites were warned about as compiled without a
   /// profile action.
   bool WarnedWithoutProfile = false;

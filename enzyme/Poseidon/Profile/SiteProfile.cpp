@@ -118,13 +118,13 @@ static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
 static Expected<bool> profileMarker(Session &S, CallInst *CI,
                                     DenseMap<Function *, Function *> &clones,
                                     unsigned &nextSiteId) {
-  Function *F = markerTarget(CI);
-  if (!F)
-    return false;
-
-  std::optional<MarkerArgs> marker = parseMarker(CI, F);
+  Expected<Function *> target = markerTarget(CI);
+  if (!target)
+    return target.takeError();
+  Function *F = *target;
+  Expected<MarkerArgs> marker = parseMarker(CI, F);
   if (!marker)
-    return false;
+    return marker.takeError();
 
   // Two annotations on the same body share one instrumented clone, so their
   // executions accumulate into one profile record under one site id.
@@ -143,8 +143,9 @@ static Expected<bool> profileMarker(Session &S, CallInst *CI,
     if (!shadowed)
       return shadowed.takeError();
     CI = *shadowed;
-    if (!(marker = parseMarker(CI, F)))
-      return false;
+    marker = parseMarker(CI, F);
+    if (!marker)
+      return marker.takeError();
   }
 
   Module &M = *CI->getModule();
@@ -503,9 +504,10 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
 static Expected<bool> profileKernel(Session &S, Function &K,
                                     unsigned &nextSiteId) {
   Function *body = nullptr;
-  CallInst *call = outlineKernelBody(S.Sites, K, body);
-  if (!call)
-    return false;
+  Expected<CallInst *> outlined = outlineKernelBody(S.Sites, K, body);
+  if (!outlined)
+    return outlined.takeError();
+  CallInst *call = *outlined;
 
   std::string header;
   Function *clone = instrumentedClone(S, *body, nextSiteId, &header);

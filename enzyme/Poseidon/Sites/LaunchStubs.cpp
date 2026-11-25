@@ -35,7 +35,10 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
     changed = *rewritten;
     changed |= registerProfiledKernels(O, M);
   } else {
-    changed = rewriteGemmStubBodies(O, M);
+    Expected<bool> rewritten = rewriteGemmStubBodies(O, M);
+    if (!rewritten)
+      return stopOnError(S, M, rewritten.takeError());
+    changed = *rewritten;
   }
   return changed ? llvm::PreservedAnalyses::none()
                  : llvm::PreservedAnalyses::all();

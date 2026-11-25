@@ -75,8 +75,10 @@ bool registerProfileStatic(llvm::Module &M, llvm::StringRef key,
 /// Host module of a CUDA or HIP translation unit, before its registration is
 /// inlined: register the host shadow of the device module's profiler table
 /// with the CUDA or HIP runtime and with the profiler runtime, with the counts
-/// the device half recorded with recordProfileTableSize.
-bool registerDeviceProfileTable(const Options &O, llvm::Module &M);
+/// the device half recorded with recordProfileTableSize. An error when what it
+/// recorded cannot be read.
+llvm::Expected<bool> registerDeviceProfileTable(const Options &O,
+                                                llvm::Module &M);
 
 /// Device module, once its probes are placed: records for the host half how
 /// many functions it profiles and how many probes the largest holds, which the
