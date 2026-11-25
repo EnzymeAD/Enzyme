@@ -4895,6 +4895,9 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     if (arg->isConstant() || arg->hasInternalLinkage() ||
         arg->hasPrivateLinkage() ||
         (arg->hasExternalLinkage() && arg->hasInitializer())) {
+      if (width != 1)
+        report_fatal_error("cannot create the shadow global of a constant "
+                           "at vector width greater than 1");
       Type *type = arg->getValueType();
       auto shadow = new GlobalVariable(
           *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
@@ -4910,6 +4913,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
         shadow->setInitializer(GetOrCreateShadowConstant(
             context, Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
             runtimeActivity, strongZero, width, AtomicAdd));
+      Logic.replaceLocalGlobalShadows(arg, {shadow});
       return shadow;
     }
   }
@@ -6026,6 +6030,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             IRBuilder<> bb(inversionAllocs);
             Type *allocaTy = arg->getValueType();
 
+            // Other functions may have registered local shadows of arg.
+            size_t FirstLocal = Logic.LocalGlobalShadows[arg].size();
+            unsigned AllocaLane = 0;
+            unsigned InitLane = 0;
             auto rule1 = [&]() {
               AllocaInst *antialloca = bb.CreateAlloca(
                   allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
@@ -6033,6 +6041,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               if (arg->getAlign()) {
                 antialloca->setAlignment(*arg->getAlign());
               }
+              Logic.LocalGlobalShadows[arg].push_back(
+                  {AllocaLane++, antialloca, nullptr});
               return antialloca;
             };
 
@@ -6066,6 +6076,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               assert((width > 1 && antialloca->getType() ==
                                        ArrayType::get(arg->getType(), width)) ||
                      antialloca->getType() == arg->getType());
+              Logic.LocalGlobalShadows[arg][FirstLocal + InitLane++].Init =
+                  memset;
               return antialloca;
             };
 
@@ -6110,6 +6122,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Type *elemTy = arg->getValueType();
         IRBuilder<> B(inversionAllocs);
 
+        SmallVector<Constant *, 1> LaneShadows;
         auto rule = [&]() {
           auto shadow = new GlobalVariable(
               *arg->getParent(), elemTy, arg->isConstant(), arg->getLinkage(),
@@ -6118,7 +6131,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               arg->isExternallyInitialized());
           shadow->setAlignment(arg->getAlign());
           shadow->setUnnamedAddr(arg->getUnnamedAddr());
-
+          LaneShadows.push_back(shadow);
           return shadow;
         };
 
@@ -6145,6 +6158,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                              TR.query(oval).Lookup(tsize, DL)));
         }
 
+        Logic.replaceLocalGlobalShadows(arg, LaneShadows);
         invertedPointers.insert(std::make_pair(
             (const Value *)oval, InvertedPointerVH(this, shadow)));
         return shadow;

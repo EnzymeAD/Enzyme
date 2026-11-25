@@ -37,10 +37,12 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/CommandLine.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -465,6 +467,24 @@ public:
   void *ExternalContext;
 
   EnzymeLogic(bool PostOpt) : PostOpt(PostOpt), ExternalContext(nullptr) {}
+
+  /// A zeroed alloca that stands in for the shadow of a global without a
+  /// shadow global, and the memset that zeroes it.
+  struct LocalGlobalShadow {
+    unsigned Lane;
+    llvm::WeakVH Shadow;
+    llvm::WeakVH Init;
+  };
+  /// The local shadows created for each global. Once the global gets a shadow
+  /// global, they are replaced by it, so all derivatives of the global agree.
+  llvm::DenseMap<llvm::GlobalVariable *,
+                 llvm::SmallVector<LocalGlobalShadow, 1>>
+      LocalGlobalShadows;
+
+  /// Replace the local shadows of \p Global with \p Shadows, its shadow
+  /// globals (one per vector lane), and drop their zero initialization.
+  void replaceLocalGlobalShadows(llvm::GlobalVariable *Global,
+                                 llvm::ArrayRef<llvm::Constant *> Shadows);
 
   struct AugmentedCacheKey {
     llvm::Function *fn;

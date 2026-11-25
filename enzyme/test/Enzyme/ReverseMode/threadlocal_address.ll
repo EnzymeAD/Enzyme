@@ -8,8 +8,8 @@
 ; pointer identity on the global: its shadow is the address of the shadow
 ; global and it carries no derivative of its own.
 
-; CHECK: @counter_shadow = thread_local global double 0.000000e+00
-@counter = thread_local global double 3.000000e+00, align 8
+@counter_shadow = thread_local global double 0.000000e+00, align 8
+@counter = thread_local global double 3.000000e+00, align 8, !enzyme_shadow !0
 @.fmt = private unnamed_addr constant [13 x i8] c"%f %f %f\0A\00\00\00\00", align 1
 
 declare ptr @llvm.threadlocal.address.p0(ptr)
@@ -35,9 +35,13 @@ entry:
   %rev = call double (...) @__enzyme_autodiff(ptr @scale, double 2.000000e+00)
   %tls0 = call ptr @llvm.threadlocal.address.p0(ptr @counter)
   store double 3.000000e+00, ptr %tls0, align 8
+  ; The shadow global keeps derivatives across calls, so reset it.
+  %dtls = call ptr @llvm.threadlocal.address.p0(ptr @counter_shadow)
+  store double 0.000000e+00, ptr %dtls, align 8
   ; CHECK: call fast double @fwddiffescale(double 2.000000e+00, double 1.000000e+00)
   %fwd = call double (...) @__enzyme_fwddiff(ptr @scale, double 2.000000e+00, double 1.000000e+00)
   store double 3.000000e+00, ptr %tls0, align 8
+  store double 0.000000e+00, ptr %dtls, align 8
   ; CHECK: call { ptr, double } @augmented_scale(double 2.000000e+00)
   %aug = call { ptr, double } (...) @__enzyme_augmentfwd(ptr @scale, double 2.000000e+00)
   %tape = extractvalue { ptr, double } %aug, 0
@@ -48,15 +52,17 @@ entry:
 }
 
 ; CHECK-LABEL: define internal { double } @diffescale(double %x, double %differeturn)
-; CHECK: %[[shadow:.+]] = alloca double
+; CHECK: %[[shadow:.+]] = call ptr @llvm.threadlocal.address.p0(ptr @counter_shadow)
 ; CHECK: %tls = call ptr @llvm.threadlocal.address.p0(ptr @counter)
 ; CHECK: load double, ptr %[[shadow]]
 ; CHECK: store double {{.+}}, ptr %[[shadow]]
 
 ; CHECK-LABEL: define internal double @fwddiffescale(double %x, double %"x'")
-; CHECK: %[[fshadow:.+]] = alloca double
+; CHECK: %[[fshadow:.+]] = call ptr @llvm.threadlocal.address.p0(ptr @counter_shadow)
 ; CHECK: %tls = call ptr @llvm.threadlocal.address.p0(ptr @counter)
 ; CHECK: %"c'ipl" = load double, ptr %[[fshadow]]
 
 ; CHECK-LABEL: define internal { double } @diffescale.{{[0-9]+}}(double %x, double %differeturn, ptr %tapeArg)
 ; CHECK: call ptr @llvm.threadlocal.address.p0(ptr @counter_shadow)
+
+!0 = !{ptr @counter_shadow}
