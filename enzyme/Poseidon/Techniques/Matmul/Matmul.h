@@ -445,6 +445,10 @@ public:
   llvm::SmallVector<Option, 8> candidates;
   /// Candidates this build cannot offer, by name, each with why.
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
+  /// Under an accuracy target, the site's accuracy scale
+  /// (SiteState::accScale), which a candidate's domainError is multiplied by
+  /// on the DP's accuracy axis; none in a budget solve.
+  std::optional<double> targetScale;
 
   /// The cost of candidate `idx` over the profiling run, less the loop's as
   /// written: the change of its per-MAC cost times `executions`, in cost-model
@@ -452,9 +456,13 @@ public:
   double getCompCostDelta(size_t idx) const {
     return (candidates[idx].compCost - initialCompCost) * (double)executions;
   }
-  /// The accuracy cost of candidate `idx`; the loop as written has none.
+  /// The error candidate `idx` adds on the DP's accuracy axis; the loop as
+  /// written has none. Under an accuracy target it is domainError times
+  /// targetScale, so that divided by the site's accuracy scale it is the
+  /// product's relative output error; in a budget solve, accuracyCost.
   double getAccCostDelta(size_t idx) const {
-    return candidates[idx].accuracyCost;
+    return targetScale ? candidates[idx].domainError * *targetScale
+                       : candidates[idx].accuracyCost;
   }
 
   /// Realizes candidate `candidateIndex` in place of the product. An error is a
@@ -472,6 +480,11 @@ public:
   }
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
     return getAccCostDelta(i);
+  }
+  /// The raise and dispatch prices are measured wall-clock ratios that repeat
+  /// to about 0.6% run to run.
+  double costTieBand(size_t i) const override {
+    return 0.006 * std::fabs(candidates[i].compCost) * (double)executions;
   }
   /// A raise replaces the loop that computes the product.
   bool consumesFootprint() const override { return true; }
@@ -510,14 +523,6 @@ llvm::Error generateMatmulCandidates(Session &S,
                                      const ProfileMap &scalarProfile,
                                      unsigned sampleLogBits,
                                      llvm::SmallVectorImpl<MatmulUnit> &out);
-
-/// Per matmul, pick the cheapest candidate whose estimated relative domain
-/// error is <= `budget` and that beats the F64 baseline; scalar subgraphs are
-/// left at baseline in this mode.
-llvm::SmallVector<SolutionStep>
-errorBudgetSelector(const Options &O,
-                    llvm::SmallVectorImpl<MatmulUnit> &matmulUnits,
-                    double budget);
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_MATMUL_MATMUL_H

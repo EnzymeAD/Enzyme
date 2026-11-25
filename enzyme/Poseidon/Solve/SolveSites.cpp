@@ -23,6 +23,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/StructuralHash.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -86,10 +87,9 @@ bool fromJSON(const json::Value &V, StoredPoint &P, json::Path Path) {
 // The key holds everything the table is computed from, the code that prices
 // and solves it included. The candidates are part of it although the inputs
 // before them decide them: a Herbie search can end differently under the same
-// inputs (a timeout), and under an accuracy target the matrix products are
-// left out of the table. The entry is filed under the digest of the key
-// without the compiler, so that a rebuilt compiler replaces the entries of the
-// one before it.
+// inputs (a timeout). The entry is filed under the digest of the key without
+// the compiler, so that a rebuilt compiler replaces the entries of the one
+// before it.
 static Error keySiteTable(Session &S, const SiteState &st,
                           ArrayRef<SiteUnit *> units, StringRef profilePath,
                           DPTable &table) {
@@ -133,6 +133,10 @@ static Error keySiteTable(Session &S, const SiteState &st,
 
   for (const auto &[name, value] : solveFlagValues(O))
     key.add(("-" + name).str(), value);
+  // Under a target a matrix product enters with its domain error, sampled
+  // over another range by default.
+  if (st.tau > 0.0 || O.Solver.Tau > 0.0)
+    key.add("matrix product error", "domain error");
 
   std::string candidates;
   raw_string_ostream os(candidates);
@@ -354,6 +358,18 @@ static double baselineAccCost(ArrayRef<RewriteUnit> rewriteUnits,
   return baseline;
 }
 
+StringRef selectorName(SolveSelector selector) {
+  switch (selector) {
+  case SolveSelector::DP:
+    return "dp";
+  case SolveSelector::Joint:
+    return "joint";
+  case SolveSelector::Pinned:
+    return "pinned";
+  }
+  llvm_unreachable("every selector has a name");
+}
+
 bool selectable(const Options &O, double accCost) {
   return std::isfinite(accCost) &&
          (O.Model.ExponentPenalty <= 0.0 || accCost < O.Model.ExponentPenalty);
@@ -376,14 +392,20 @@ static std::optional<DPCost> selectWithinBudget(const Options &O,
 
 // The selectable point whose modelled relative error (baseline + accuracy
 // cost) / accScale is at most `tau`: the cheapest one under
-// -poseidon-tau-cheapest, else the most accurate one.
-static std::optional<DPCost> selectUnderTarget(const Options &O,
-                                               const CostMap &frontier,
-                                               double baseline, double accScale,
-                                               double tau) {
+// -poseidon-tau-cheapest, else the most accurate one. Two costs that differ by
+// less than the cheapest point's steps can be mispriced by (costTieBand) are a
+// tie: of the points within the target that save cost and are no costlier than
+// that, the most accurate is taken, the cheaper of two equally accurate ones.
+static std::optional<DPCost>
+selectUnderTarget(const Options &O, const CostScale &scale,
+                  const CostMap &frontier, const SolutionMap &solutions,
+                  double baseline, double accScale, double tau) {
+  auto meets = [&](double acc) {
+    return selectable(O, acc) && (baseline + acc) / accScale <= tau;
+  };
   std::optional<DPCost> best;
   for (const auto &[cost, acc] : frontier) {
-    if (!selectable(O, acc) || !((baseline + acc) / accScale <= tau))
+    if (!meets(acc))
       continue;
     if (!best) {
       best = cost;
@@ -395,7 +417,26 @@ static std::optional<DPCost> selectUnderTarget(const Options &O,
             : acc < bestAcc)
       best = cost;
   }
-  return best;
+  if (!best || !O.Solver.TauCheapest || *best >= 0)
+    return best;
+  double band = 0.0;
+  for (const SolutionStep &step : solutions.at(*best))
+    band += step.unit->costTieBand(step.candidateIndex);
+  std::optional<DPCost> width = scale.toDPCost(band);
+  if (!width)
+    return best;
+  DPCost tied = *best;
+  for (auto it = frontier.upper_bound(*best);
+       it != frontier.end() && it->first < 0 && it->first <= *best + *width;
+       ++it)
+    if (meets(it->second) && it->second < frontier.at(tied))
+      tied = it->first;
+  if (tied != *best && O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] cost " << scale.share(tied) << " ties with "
+                 << scale.share(*best)
+                 << " within the measured prices' band; the more accurate "
+                    "point is selected\n";
+  return tied;
 }
 
 static void printDPTable(const CostScale &scale,
@@ -527,7 +568,7 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
     printDPTable(scale, costToAccuracyMap, costToSolutionMap);
 
   if (record) {
-    record->selector = joint ? "joint" : "dp";
+    record->selector = joint ? SolveSelector::Joint : SolveSelector::DP;
     record->fromCache = loadedFromCache;
     record->table = costToAccuracyMap;
     record->solutions = costToSolutionMap;
@@ -568,7 +609,8 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
     if (Error E =
             checkToleranceInputs(*sites.front()->F, names, accScale, baseline))
       return std::move(E);
-    best = selectUnderTarget(O, costToAccuracyMap, baseline, accScale, tau);
+    best = selectUnderTarget(O, scale, costToAccuracyMap, costToSolutionMap,
+                             baseline, accScale, tau);
     if (!best) {
       double bestAchievable = std::numeric_limits<double>::infinity();
       for (const auto &pair : costToAccuracyMap)

@@ -928,10 +928,8 @@ void Explainer::judge(Unit &U) {
       A.status = "applied";
       A.rank = -1;
       U.applied = true;
-      if (rec.selector == "pinned")
+      if (rec.selector == SolveSelector::Pinned)
         A.reason = "selected by -poseidon-pin";
-      else if (A.kind == "matmul" && rec.selector == "error-budget")
-        A.reason = "the cheapest product candidate that meets the target";
       else if (tau > 0.0)
         A.reason = "part of the cheapest solution that meets the target";
       else
@@ -949,22 +947,6 @@ void Explainer::judge(Unit &U) {
       A.reason = "it edits instructions a selected matrix-product raise "
                  "consumes";
       A.rank = 3;
-      continue;
-    }
-    if (A.kind == "matmul" && rec.selector == "error-budget") {
-      const auto *MU = cast<MatmulUnit>(A.item);
-      const MatmulUnit::Option &o = MU->candidates[A.index];
-      if (tau > 0.0 && o.domainError > tau) {
-        A.reason = "modelled domain error " + num(o.domainError) +
-                   " is above the target " + num(tau);
-        A.rank = A.costDelta && *A.costDelta < 0 ? 0 : 2;
-      } else if (o.compCost >= MU->initialCompCost) {
-        A.reason = "not cheaper than the product as written";
-        A.rank = 3;
-      } else {
-        A.reason = "a cheaper candidate also meets the target";
-        A.rank = 1;
-      }
       continue;
     }
     if (tau > 0.0 && A.err && *A.err > tau) {
@@ -1290,7 +1272,7 @@ Error Explainer::buildMatmul(size_t m) {
     double acc = MU.getAccCostDelta(j);
     if (std::isfinite(acc)) {
       A.accDelta = acc;
-      if (rec.selector != "error-budget" && std::isfinite(relErr(acc)))
+      if (std::isfinite(relErr(acc)))
         A.err = relErr(acc);
     }
     if (std::isfinite(o.domainError))
@@ -1317,7 +1299,7 @@ std::optional<int64_t> Explainer::appliedDelta() const {
       }
   if (complete)
     return total;
-  if (rec.selector == "dp" && rec.selected)
+  if (rec.selector == SolveSelector::DP && rec.selected)
     return *rec.selected;
   return std::nullopt;
 }
@@ -1366,7 +1348,7 @@ json::Object Explainer::toJSON() {
 
   json::Object target = targetJSON(Sess.Opts, tau, rec.siteTarget);
   target["cost_model"] = costModelPath(Sess.CostModel);
-  target["selector"] = rec.selector;
+  target["selector"] = selectorName(rec.selector);
   if (rec.fromCache)
     target["from_cache"] = true;
   if (!rec.sites.empty()) {
@@ -1396,15 +1378,9 @@ json::Object Explainer::toJSON() {
   if (before && delta)
     result["cost_after"] = scale.share(*before + *delta);
   putNum(result, "modelled_rel_error_as_written", relErr(0.0));
-  bool matmulApplied = false;
-  for (const Unit &U : units)
-    for (const Alt &A : U.alts)
-      matmulApplied |= A.status == "applied" && A.kind == "matmul";
-  if (!matmulApplied || rec.selector != "error-budget") {
-    double acc = selectedAcc().value_or(
-        steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN());
-    putNum(result, "modelled_rel_error", relErr(acc));
-  }
+  double acc = selectedAcc().value_or(
+      steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN());
+  putNum(result, "modelled_rel_error", relErr(acc));
   json::Array appliedIds;
   json::Array stepList;
   for (const SolutionStep &step : steps) {
@@ -1584,12 +1560,9 @@ std::string Explainer::siteLeftReason() const {
     return "no frontier point is within the cost budget " +
            costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
   }
-  if (rec.selector == "pinned")
+  if (rec.selector == SolveSelector::Pinned)
     return "no -poseidon-pin item names a candidate of this site";
-  if (rec.selected)
-    return "the selected frontier point leaves the site as written";
-  return "no product candidate meets the target and is cheaper than as "
-         "written";
+  return "the selected frontier point leaves the site as written";
 }
 
 void Explainer::emitRemarks() {

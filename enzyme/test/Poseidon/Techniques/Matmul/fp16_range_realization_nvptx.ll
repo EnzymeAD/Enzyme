@@ -22,7 +22,7 @@
 ; TAU: [poseidon] domain error tcec library p95_relErr=1.106362e-07
 ; TAU: #10 tcec-dispatch wmma m16n16k16 f16/f32  compCost/MAC=1.400000e+01  rel=2.734375e-02  domainError=[[ERR:[0-9.e+-]+]]
 ; TAU-NEXT: #11 direct-dispatch cublas f16/f32  {{.*}}  domainError=INF
-; TAU: [poseidon] error budget: matmul -> tcec-dispatch wmma m16n16k16 f16/f32 (domain err [[ERR]] <= 1.000000e-06
+; TAU: tau=1.000000e-06 {{.*}} rel=[[ERR]]{{$}}
 ; TAU: Applying solution for matmul[0] -> tcec-dispatch wmma m16n16k16 f16/f32 (#10)
 
 ; KEY: "TCEC backend": "cuMpSGEMM",

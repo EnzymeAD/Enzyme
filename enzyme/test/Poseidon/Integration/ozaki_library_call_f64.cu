@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
 
 // CHECK: Matmul[0]: 16x16x256 type=f64 origin=ConstantShape
 // CHECK: ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC={{.*}}  rel=4.687500e-02  domainError=
-// CHECK: [poseidon] error budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{.*}} <= 1.000000e-12 at confidence 9.500000e-01)
+// CHECK: tau=1.000000e-12 {{.*}} selected cost=-{{[0-9.]+e-[0-9]+}} accCost={{.*}} rel={{[0-9.]+e-1[3-9]}}{{$}}
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32
 // CHECK: [poseidon] wrote descriptor for _Z11gemm_kernelPdPKdS1_: C=arg0 A=arg1 B=arg2 256x256x256 nm=12 (standalone)
 // CHECK: [poseidon] replaced the launch in stub _Z26__device_stub__gemm_kernelPdPKdS1_ with __poseidon_ozakiii_dgemm (C=arg0 A=arg1 B=arg2)

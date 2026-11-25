@@ -137,14 +137,6 @@ static bool reads(const OptimizationUnit &later,
   return excludes(later, earlier) || later.pricedAgainst(earlier);
 }
 
-bool overlapsConsumed(const SolutionStep &step, ArrayRef<SolutionStep> chosen) {
-  if (step.unit->consumesFootprint())
-    return false;
-  return llvm::any_of(chosen, [&](const SolutionStep &c) {
-    return c.unit->consumesFootprint() && c.unit->footprintOverlaps(*step.unit);
-  });
-}
-
 // The pruned DP's admission of `unit` into a strategy holding `prior`:
 // refused if a prior step rewrites one of its outputs; a unit that consumes
 // its footprint is refused by any prior step it overlaps; any other unit

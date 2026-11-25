@@ -27,7 +27,7 @@
 ; CHECK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
 ; CHECK: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
 ; CHECK: [poseidon] preprocess_intra_body: not every thread of the block reaches the reduction loop once, so it has no in-kernel raise
-; CHECK: [poseidon] error budget: matmul -> baseline F64
+; CHECK: [poseidon] preprocess_intra_body: tau={{[^ ]+}} S={{[^ ]+}} A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
 ; CHECK-NOT: Applying solution for matmul
 
 ; IR-LABEL: define {{.*}} @preprocess_or_body(

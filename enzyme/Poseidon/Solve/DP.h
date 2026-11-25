@@ -134,6 +134,10 @@ public:
   /// Candidate i's error change, on the application's scale, given the steps
   /// already in the strategy.
   virtual double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
+  /// The cost change, in cost-model units over the profiled run, by which
+  /// candidate i's price can be off: a price measured as a wall-clock ratio
+  /// repeats only to within it. 0 for a price exact on the model's terms.
+  virtual double costTieBand(size_t i) const { return 0.0; }
   /// True when costDelta and errorDelta do not read `prior`. Only such a unit's
   /// step can be displaced, its deltas charged back exactly.
   virtual bool pricedAlone() const { return true; }
@@ -175,11 +179,6 @@ private:
   /// The subclass, as kind() returns it.
   unsigned kindId;
 };
-
-/// Whether `step`, which does not consume its footprint, overlaps a step of
-/// `chosen` that does.
-bool overlapsConsumed(const SolutionStep &step,
-                      llvm::ArrayRef<SolutionStep> chosen);
 
 // In both orders below, `sites` lists each site's units in site order.
 

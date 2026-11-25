@@ -147,7 +147,7 @@
 ; RUN: cp %t/order/c/launches_tcec_matmul.cu_*.json %t/order/joint1.json
 ; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u -poseidon-solve-jointly 2> %t/order/joint2.err -poseidon-print
 ; RUN: FileCheck --check-prefix=ORDER-JOINT %s < %t/order/joint1.err
-; RUN: FileCheck --check-prefix=ORDER-MANIFEST -DNMA=14 -DNMM=13 %s < %t/order/joint1.json
+; RUN: FileCheck --check-prefix=ORDER-MANIFEST -DNMA=12 -DNMM=12 %s < %t/order/joint1.json
 ; RUN: grep 'wrote descriptor' %t/order/joint1.err > %t/order/joint1.wrote
 ; RUN: grep 'wrote descriptor' %t/order/joint2.err > %t/order/joint2.wrote
 ; RUN: diff %t/order/joint1.wrote %t/order/joint2.wrote
@@ -159,8 +159,8 @@
 ; ORDER-LOG-NEXT: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; ORDER-JOINT: {{^}}[poseidon] {{.+}}: tau=1.000000e-12 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
-; ORDER-JOINT: [poseidon] wrote descriptor for _Z12alpha_kernelPKdS0_PdS1_: C=arg2 A=arg1 B=arg0 16x16x16 nm=14 (standalone)
-; ORDER-JOINT-NEXT: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=13 (standalone)
+; ORDER-JOINT: [poseidon] wrote descriptor for _Z12alpha_kernelPKdS0_PdS1_: C=arg2 A=arg1 B=arg0 16x16x16 nm=12 (standalone)
+; ORDER-JOINT-NEXT: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; ORDER-MANIFEST:      "library calls": [
 ; ORDER-MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 1 [[NMA]] 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00",

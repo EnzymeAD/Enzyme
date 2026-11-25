@@ -14,7 +14,7 @@
 ; proposed.
 
 ; CHECK: [poseidon] preprocess_gemm_body: not every thread of the block reaches the site in _Z13guard_kernelPKdS0_PdS1_ once, so it has no in-kernel raise
-; CHECK: [poseidon] error budget: matmul -> baseline F64
+; CHECK: [poseidon] preprocess_gemm_body: tau={{[^ ]+}} S={{[^ ]+}} A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
 
 ; IR-LABEL: define {{.*}} @_Z13guard_kernelPKdS0_PdS1_(
 ; IR: call void @gemm_body(ptr %A, ptr %B, ptr %C)

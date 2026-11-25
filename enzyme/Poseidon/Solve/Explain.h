@@ -19,8 +19,8 @@
 //              against) and profile (the profile file read)
 //   target     tau and tau_from ("site" or "flag") under an accuracy target,
 //              else budget (the -poseidon-cost-budget share); for a solved site
-//              also cost_model, selector ("dp", "joint", "error-budget",
-//              "pinned"), from_cache (the DP table was read from the cache),
+//              also cost_model, selector ("dp", "joint", "pinned"),
+//              from_cache (the DP table was read from the cache),
 //              sites (the IR functions of a joint solve)
 //   scale      (solved sites) accuracy_scale S and baseline_accuracy_cost A0:
 //              an accuracy cost a is the modelled relative error (A0 + a) / S;
@@ -56,9 +56,9 @@
 //              cost-model row that prices it), precision, outputs,
 //              fpcore, c, approx, approx_note, changes (each with from, to
 //              and the indices of its ops), cost_delta, modelled_error,
-//              modelled_domain_error (of a product: under the "error-budget"
-//              selector the applied one is the cheapest whose domain error is
-//              at most tau), herbie_error_bits, status ("applied", "pareto",
+//              modelled_domain_error (of a product: its relative output
+//              error, its term of modelled_error under a target),
+//              herbie_error_bits, status ("applied", "pareto",
 //              "rejected") and reason
 //   pareto     (solved sites) the frontier in cost order: budget (the
 //              -poseidon-cost-budget that selects the point; none for a point

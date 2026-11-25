@@ -17,7 +17,7 @@
 ; CHECK: [poseidon] preprocess_tri_body: not every thread of the block reaches the reduction loop once, so it has no in-kernel raise
 ; CHECK: [poseidon] matmul[0] candidates
 ; CHECK-NEXT: (no candidates emitted)
-; CHECK-NEXT: [poseidon] error budget: matmul -> baseline F64
+; CHECK: [poseidon] preprocess_tri_body: tau={{[^ ]+}} S={{[^ ]+}} A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
 
 ; IR-LABEL: define {{.*}} @_Z10tri_kernelPKdS0_PdS1_(
 ; IR-NEXT: call void @tri_body(ptr %A, ptr %B, ptr %C)

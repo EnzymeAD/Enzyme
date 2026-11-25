@@ -204,7 +204,7 @@ int main(int argc, char **argv) {
 // CHECK-NEXT: [poseidon]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+80] A=param1[+48] B=param1[+16]
 // CHECK: [poseidon] Found 1 matrix product(s) in [[BODY]]
 // CHECK-NEXT: Matmul[0]: 192x1x192 type=f64 origin=RuntimeShape
-// CHECK: [poseidon] error budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{[0-9.]+e-[0-9]+}} <= 1.000000e-12 at confidence 9.500000e-01)
+// CHECK: tau=1.000000e-12 {{.*}} selected cost=-{{[0-9.]+e-[0-9]+}} accCost={{.*}} rel={{[0-9.]+e-1[3-9]}}{{$}}
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#4)
 // CHECK: [poseidon] pin: [[KERNEL:_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_]]:M0=ozaki-ii nm=12 wmma m16n16k16 s8/s32{{$}}
 // CHECK: [poseidon] wrote descriptor for [[KERNEL]]: C=arg1[+80] A=arg1[+48] B=arg1[+16] arg1[+0]xarg0x3*arg1[+4] nm=12 (standalone), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}

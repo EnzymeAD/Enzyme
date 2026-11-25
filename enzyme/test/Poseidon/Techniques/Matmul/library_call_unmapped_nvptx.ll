@@ -13,7 +13,7 @@
 ; and the body is not fissioned.
 
 ; CHECK: [poseidon] preprocess_two_store_body: an operand or dimension of the product is not an argument of the kernel _Z9two_storePKdS0_PdS1_, from which the host reads it
-; CHECK: [poseidon] error budget: matmul -> baseline F64
+; CHECK: [poseidon] preprocess_two_store_body: tau={{[^ ]+}} S={{[^ ]+}} A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
 
 source_filename = "unmapped.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

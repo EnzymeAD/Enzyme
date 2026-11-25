@@ -99,7 +99,12 @@ poseidon-clang -O2 -poseidon-profile-use -poseidon-tau=1e-8 app.c -o app_opt
 poseidon-clang++ -O2 -poseidon-profile-use -poseidon-tau=1e-8 app.cu -o app_opt
 ```
 
-`-poseidon-tau` is the relative accuracy target of every site without its own;
+`-poseidon-tau` is the relative accuracy target of every site without its own.
+It bounds a site's modelled relative error, a sum over the parts of the site:
+a matrix product contributes its relative output error (none as written), an
+FP subgraph its output error weighted by the profiled sensitivities and
+divided by the site's summed sensitivity. The cheapest set of rewrites that
+keeps the sum within the target is applied.
 `-poseidon-cost-budget=<share>` instead bounds the share of a site's profiled
 cost a rewrite may add, or with a negative share has to save. Herbie results
 and solved tables are kept in `./.poseidon` (`-poseidon-cache=<dir>`), so a

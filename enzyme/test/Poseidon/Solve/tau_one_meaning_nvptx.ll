@@ -11,6 +11,12 @@
 ; RUN: cat %t/x1/*.explain.json | FileCheck --check-prefix=FROMSITE %s
 ; RUN: cat %t/x2/*.explain.json | FileCheck --check-prefix=FROMFLAG %s
 ; RUN: not %opt %t/key.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c4 -S -o /dev/null 2>&1 | FileCheck --check-prefix=KEY %s
+; RUN: %opt %t/site_kernel.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S -poseidon-print -o /dev/null -poseidon-tau=1e-4 -poseidon-matmul-sample-log-bits=0 -poseidon-cache=%t/c5 -poseidon-explain=%t/x5 2>&1 | FileCheck --check-prefix=SUM %s
+; RUN: %opt %t/site_kernel.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S -poseidon-print -o /dev/null -poseidon-tau=1e-4 -poseidon-matmul-sample-log-bits=0 -poseidon-solve-jointly -poseidon-cache=%t/c6 -poseidon-explain=%t/x6 2>&1 | FileCheck --check-prefix=SUM %s
+; RUN: %python -c "import json, sys; d = json.load(open(sys.argv[1])); m = [a for u in d['subgraphs'] for a in u['alternatives'] if a['kind'] == 'matmul' and a['status'] == 'applied']; print('site %.6e product %.6e' % (d['result']['modelled_rel_error'], m[0]['modelled_domain_error']))" %t/x5/matmul_body.explain.json | FileCheck --check-prefix=SUM-EXPLAIN %s
+; RUN: %python -c "import json, sys; d = json.load(open(sys.argv[1])); m = [a for u in d['subgraphs'] for a in u['alternatives'] if a['kind'] == 'matmul' and a['status'] == 'applied']; print('site %.6e product %.6e' % (d['result']['modelled_rel_error'], m[0]['modelled_domain_error']))" %t/x6/matmul_body.explain.json | FileCheck --check-prefix=SUM-EXPLAIN %s
+; RUN: %opt %t/site_kernel.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S -poseidon-print -o /dev/null -poseidon-tau=2.909958e-4 -poseidon-cache=%t/c7 -poseidon-explain=%t/x7 2>&1 | FileCheck --check-prefix=SHARE %s
+; RUN: %python -c "import json, sys; d = json.load(open(sys.argv[1])); m = [a for u in d['subgraphs'] for a in u['alternatives'] if a['kind'] == 'matmul' and a['status'] == 'applied']; print('site %.6e product %.6e' % (d['result']['modelled_rel_error'], m[0]['modelled_domain_error']))" %t/x7/matmul_body.explain.json | FileCheck --check-prefix=SHARE-EXPLAIN %s
 
 ; One site with a matrix product and elementwise work. The accuracy target is
 ; the same number wherever it is written: given at the site (poseidon_tau) or
@@ -25,6 +31,20 @@
 ; FROMSITE: "tau_from": "site"
 ; FROMFLAG: "tau_from": "flag"
 ; KEY: error: {{.*}}Poseidon: unsupported Poseidon annotation argument poseidon_confidence
+
+; Under a target the site's modelled relative error is the sum over its units:
+; the product's relative error and the precision change's share. Solved alone
+; or jointly, the site selects the same pair, and its explanation reports the
+; sum, the product's error included. At a target just above what the FP16
+; raise alone models, 2.909954e-04, that raise with the precision change would
+; exceed the target, and the TCEC raise is taken instead.
+; SUM: [poseidon] preprocess_matmul_body: tau=1.000000e-04 S=5.101078e+04 A0=2.628106e-14 selected cost=-1.051897e-01 accCost=4.434190e+00 rel=8.692653e-05{{$}}
+; SUM: [poseidon] pin: matmul_body:M0=wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}
+; SUM-EXPLAIN: site 8.692653e-05 product 8.692588e-05
+; SHARE-NOT: M0=wmma
+; SHARE: [poseidon] preprocess_matmul_body: tau=2.909958e-04 {{.*}} rel=1.583396e-07{{$}}
+; SHARE: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}
+; SHARE-EXPLAIN: site 1.583396e-07 product 1.576873e-07
 
 ; ModuleID = 'tcec_matmul.cu'
 

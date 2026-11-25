@@ -59,9 +59,9 @@
 ; LOW: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+01  rel=5.000000e-02
 ; HIGH: native-dgemm cublas f64/f64  compCost/MAC=1.024000e+02  rel=2.000000e-01
 
-; NATIVE: [poseidon] error budget: matmul -> native-dgemm cublas f64/f64 (domain err
-; OZAKI: [poseidon] error budget: matmul -> ozaki-ii nm=14 wmma m16n16k16 s8/s32 (domain err
-; BASE: [poseidon] error budget: matmul -> baseline F64
+; NATIVE: Applying solution for matmul[0] -> native-dgemm cublas f64/f64
+; OZAKI: Applying solution for matmul[0] -> ozaki-ii nm=14 wmma m16n16k16 s8/s32
+; BASE: selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00{{$}}
 
 ; NONE: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch is not proposed: this device's cost model carries no measured 'library_ozaki_rel,dgemm' row; poseidon-calibrate --gpu <id> measures it
 

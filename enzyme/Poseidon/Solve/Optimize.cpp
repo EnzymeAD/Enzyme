@@ -274,6 +274,11 @@ static Error putOnApplicationScale(Session &S, Function &F,
   if (factor != 1.0)
     for (SiteUnit *unit : st.units)
       unit->scaleErrors(factor);
+  // Under a target a product's relative error is a term of the site's
+  // relative error, which the DP reads as an accuracy cost over accScale.
+  if (st.tau > 0.0 || O.Solver.Tau > 0.0)
+    for (MatmulUnit &unit : st.matmulUnits)
+      unit.targetScale = st.accScale;
   return Error::success();
 }
 
@@ -307,16 +312,6 @@ static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
   for (Function &G : make_early_inc_range(M))
     if (G.isDeclaration() && G.use_empty() && !before.contains(G.getName()))
       G.eraseFromParent();
-}
-
-// The units the DP solves: every unit of the site, or under an accuracy
-// target every unit but the matrix products, which errorBudgetSelector picks.
-static SmallVector<SiteUnit *> solvedUnits(const SiteState &st, bool target) {
-  SmallVector<SiteUnit *> units;
-  for (SiteUnit *unit : st.units)
-    if (!target || !isa<MatmulUnit>(unit))
-      units.push_back(unit);
-  return units;
 }
 
 void SiteState::sealUnits(Session &S) {
@@ -376,14 +371,11 @@ static Error requireCostsOnAxis(SiteState &st, ArrayRef<SiteUnit *> units) {
 static Error priceUnlessCached(Session &S, SiteState &st,
                                StringRef profilePath) {
   const Options &O = S.Opts;
-  // A joint or a manual solve reads no table, and an accuracy target leaves
-  // the matrix products to errorBudgetSelector (optimizeSite).
+  // A joint or a manual solve reads no table.
   if (!O.Herbie.Cache.empty() && !O.Solver.SolveJointly &&
       O.Solver.Pin.empty()) {
-    const bool target = st.tau > 0.0 || O.Solver.Tau > 0.0;
-    const SmallVector<SiteUnit *> units = solvedUnits(st, target);
     Expected<std::unique_ptr<DPTable>> table =
-        lookupDPTable(S, st, units, profilePath);
+        lookupDPTable(S, st, st.units, profilePath);
     if (!table)
       return table.takeError();
     st.table = std::move(*table);
@@ -392,13 +384,10 @@ static Error priceUnlessCached(Session &S, SiteState &st,
   }
   if (Error E = priceCandidates(st))
     return E;
-  // A manual solve runs no DP; under an accuracy target the matrix products
-  // of a site solved alone go to errorBudgetSelector instead.
+  // A manual solve runs no DP.
   if (!O.Solver.Pin.empty())
     return Error::success();
-  const bool target = st.tau > 0.0 || O.Solver.Tau > 0.0;
-  return requireCostsOnAxis(st,
-                            solvedUnits(st, target && !O.Solver.SolveJointly));
+  return requireCostsOnAxis(st, st.units);
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its
@@ -605,35 +594,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
         return pinned.takeError();
       append_range(steps, *pinned);
     }
-    record.selector = "pinned";
-  } else if (!joint && tau > 0.0 && !sites.front()->matmulUnits.empty()) {
-    SiteState &st = *sites.front();
-    // The target is a relative error, which is what errorBudgetSelector
-    // compares a matrix product against. The elementwise units are solved by
-    // the normalized DP under the same number.
-    steps = errorBudgetSelector(O, st.matmulUnits, tau);
-    const SmallVector<SiteUnit *> elemUnits = solvedUnits(st, /*target=*/true);
-    Expected<SmallVector<SolutionStep>> elemSteps =
-        elemUnits.empty()
-            ? SmallVector<SolutionStep>()
-            : solveSites(S, sites, ArrayRef<SiteUnit *>(elemUnits), tau,
-                         /*joint=*/false, rec);
-    if (!elemSteps)
-      return elemSteps.takeError();
-    for (const SolutionStep &e : *elemSteps) {
-      // The two selectors run independently, so the DP's footprint rule is
-      // applied between their results here, loudly: dropping a priced
-      // rewrite changes what the site emits.
-      if (overlapsConsumed(e, steps)) {
-        diagnose(*st.F, st.F->getSubprogram(),
-                 "a selected rewrite edits instructions a selected matrix "
-                 "product consumes; the rewrite is dropped",
-                 DS_Warning);
-        continue;
-      }
-      steps.push_back(e);
-    }
-    record.selector = "error-budget";
+    record.selector = SolveSelector::Pinned;
   } else {
     SmallVector<ArrayRef<SiteUnit *>, 4> units;
     for (SiteState *st : sites)
@@ -673,22 +634,24 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   return changed;
 }
 
+// The matrix accuracy model's operand sampling under `target`, 0 for none:
+// -poseidon-matmul-sample-log-bits when given. Uniform sampling over
+// [min, max] under-prices fixed-point Ozaki on matrices of wide dynamic range,
+// so a target defaults to a wide log-uniform range.
+static unsigned matmulSampleLogBits(const Options &O, double target) {
+  return O.Model.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
+}
+
 Expected<bool> optimizeSite(Session &S, Function &F, double tau) {
   const Options &O = S.Opts;
   // A target written at the site wins over -poseidon-tau, the target of every
   // site that carries none; both mean the same.
   const double target = tau > 0.0 ? tau : (double)O.Solver.Tau;
 
-  // Uniform sampling over [min, max] under-prices fixed-point Ozaki on matrices
-  // of wide dynamic range, so a target defaults to a wide log-uniform range
-  // unless -poseidon-matmul-sample-log-bits is given. Only the matrix accuracy
-  // model reads it.
-  unsigned sampleLogBits =
-      O.Model.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
-
   const StringSet<> declared = declaredFunctions(*F.getParent());
   SiteState st;
-  Expected<bool> collected = collectFPCandidates(S, F, tau, sampleLogBits, st);
+  Expected<bool> collected =
+      collectFPCandidates(S, F, tau, matmulSampleLogBits(O, target), st);
   if (!collected)
     return collected.takeError();
   if (!*collected) {
@@ -762,7 +725,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   for (auto &[F, tau] : targets) {
     auto st = std::make_unique<SiteState>();
     Expected<bool> collected =
-        collectFPCandidates(S, *F, tau, O.Model.SampleLogBits.value_or(0), *st);
+        collectFPCandidates(S, *F, tau, matmulSampleLogBits(O, tau), *st);
     if (!collected)
       return collected.takeError();
     if (*collected) {

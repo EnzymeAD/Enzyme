@@ -55,7 +55,7 @@
 ; TAU12-NEXT: #11 direct-dispatch cublas bf16/f32  compCost/MAC=6.000000e+00  rel=1.171875e-02  domainError=2.340575e-03
 ; TAU12-NEXT: #12 direct-dispatch cublas tf32/f32  compCost/MAC=8.000000e+00  rel=1.562500e-02  domainError=3.137466e-04
 ; TAU12-NEXT: #13 native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01  domainError=0.000000e+00
-; TAU12: [poseidon] error budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)
+; TAU12: tau=1.000000e-12 {{.*}} rel=1.840864e-13{{$}}
 ; TAU12: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7)
 ; TAU12: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
@@ -91,15 +91,15 @@
 ; PTSZ-NEXT: br label
 ; PTSZ-NOT: cudaLaunchKernel_ptsz(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
-; TAU7: [poseidon] error budget: matmul -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (domain err 7.986923e-09 <= 1.000000e-07 at confidence 9.500000e-01)
+; TAU7: tau=1.000000e-07 {{.*}} rel=7.986923e-09{{$}}
 ; TAU7: Applying solution for matmul[0] -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (#3)
 ; TAU7: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=8 (standalone)
 
-; TAU10: [poseidon] error budget: matmul -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (domain err 4.205447e-11 <= 1.000000e-10 at confidence 9.500000e-01)
+; TAU10: tau=1.000000e-10 {{.*}} rel=4.205447e-11{{$}}
 ; TAU10: Applying solution for matmul[0] -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (#5)
 ; TAU10: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=10 (standalone)
 
-; TAU16: [poseidon] error budget: matmul -> native-dgemm cublas f64/f64 (domain err 0.000000e+00 <= 1.000000e-16 at confidence 9.500000e-01)
+; TAU16: tau=1.000000e-16 {{.*}} rel=0.000000e+00{{$}}
 ; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
 ; TAU16: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
@@ -122,7 +122,7 @@
 ; HOST16-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
 ; OFF-NOT: ozaki-ii
-; OFF: [poseidon] error budget: matmul -> baseline F64 (no rewrite clears 1.000000e-12 at confidence 9.500000e-01 faster than F64)
+; OFF: tau=1.000000e-12 {{.*}} selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00{{$}}
 ; OFF-NOT: Applying solution for matmul
 ; OFF-NOT: wrote descriptor
 

@@ -5,21 +5,21 @@
 ; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-0.5 -poseidon-matmul-exponent-penalty=0 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../../Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/nopenalty 2>&1 | FileCheck --check-prefix=NOPENALTY %s
 
 ; NORMAL: [poseidon] domain error matmul in=f16 acc=f32 p95_relErr=3.137966e-04
-; NORMAL: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=9.867296e+00
-; NORMAL-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=5.093297e-03
-; NORMAL-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=1.896120e-03
-; NORMAL: [poseidon] error budget: matmul -> wmma m16n16k16 f16/f32 (domain err 3.137966e-04 <= 1.000000e-03 at confidence 9.500000e-01)
+; NORMAL: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=1.538569e+01
+; NORMAL-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=7.710461e-03
+; NORMAL-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=2.880546e-03
+; NORMAL: [poseidon] preprocess_matmul_body: tau=1.000000e-03 S=4.903078e+04 A0=0.000000e+00 selected cost=-9.375000e-01 accCost=1.538569e+01 rel=3.137966e-04
 ; NORMAL: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 
 ; TINY: [poseidon] domain error matmul in=f16 acc=f32 p95_relErr=1.000000e+00
 ; TINY: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=INF
 ; TINY: #1 tcec n=2 wmma m16n16k16 f16/f32  compCost/MAC=4.000000e+01  rel=7.812500e-02  domainError=INF
-; TINY: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=1.000000e+30
-; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=1.000000e+30
-; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=1.000000e+30
-; TINY-NOT: error budget: matmul -> wmma m16n16k16 f16/f32
+; TINY: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=INF
+; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=INF
+; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=INF
 ; TINY-NOT: Applying solution for matmul[0]
-; TINY: error budget: matmul -> baseline F64 (no rewrite clears 1.000000e-03
+; TINY: [poseidon] preprocess_matmul_body: tau=1.000000e-03 S=4.903078e-05 A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
+; TINY-NOT: Applying solution for matmul[0]
 ; TINY: Finished optimizing preprocess_matmul_body
 
 ; On the budget path the penalty keeps every flushing format out of the

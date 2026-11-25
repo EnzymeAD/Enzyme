@@ -73,5 +73,5 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
 // CHECK: Poseidon: matrix product 0, 24x1x192: ozaki-ii host dispatch at nm=8, 9, 10, 11, 12, 13, 14 is priced as the square product it embeds in (the square row times 512.00): this device's cost model carries no measured 'library_ozaki_rect_rel,nm<nm>_m24k192' row; poseidon-calibrate --gpu <id> --ozaki-rect 24x192 measures it{{$}}
 // CHECK: [poseidon] matmul[0] pricing: baseline/MAC=5.146667e+02 executions=7077888
 // CHECK: [poseidon]   #10 native-dgemm cublas f64/f64  compCost/MAC=2.573333e+02  rel=5.000000e-01  domainError=5.102214e-16
-// CHECK: [poseidon] error budget: matmul -> native-dgemm cublas f64/f64 (domain err 5.102214e-16 <= 1.000000e-12 at confidence 9.500000e-01)
+// CHECK: tau=1.000000e-12 {{.*}} rel=5.102214e-16{{$}}
 // CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)

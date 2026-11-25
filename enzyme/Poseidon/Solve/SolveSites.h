@@ -37,11 +37,24 @@ struct SiteState;
 struct Options;
 class Session;
 
+/// What chose a solve's applied steps.
+enum class SolveSelector {
+  /// The DP over one site's units.
+  DP,
+  /// The DP over the units of the sites of -poseidon-solve-jointly.
+  Joint,
+  /// -poseidon-pin, without a DP.
+  Pinned,
+};
+
+/// The selector as the explanation spells it: "dp", "joint" or "pinned".
+llvm::StringRef selectorName(SolveSelector selector);
+
 /// How a site's solve went, for its explanation: the frontier it searched and
 /// the point it chose.
 struct SolveRecord {
-  /// What chose the applied point: "dp", "joint", "pinned" or "error-budget".
-  std::string selector;
+  /// What chose the applied point.
+  SolveSelector selector = SolveSelector::DP;
   /// Whether the frontier came from the DP table cache.
   bool fromCache = false;
   /// The frontier: per cost, the least accuracy cost of a strategy of that
@@ -102,11 +115,14 @@ solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
 
 /// Solves `units[i]`, units of the site `sites[i]`, in one DP and selects a
 /// frontier point: under `tau` > 0 the one the target picks, else the most
-/// accurate one within -poseidon-cost-budget. `tau` is measured against the
-/// sites' accScale, so that an accuracy cost divided by it is a per-operation
-/// relative rounding level. A single site's table is read from or written to
-/// the cache when the site has one. `joint` marks a solve of the sites of
-/// -poseidon-solve-jointly, however many.
+/// accurate one within -poseidon-cost-budget. Under `tau` a point's modelled
+/// relative error is (A0 + its accuracy cost) / the sites' summed accScale,
+/// A0 the accuracy cost of the sites as written: for one site, the sum over
+/// its units of an FP subgraph's accuracy cost over accScale (a per-operation
+/// relative rounding level) and a matrix product's relative domain error. A
+/// single site's table is read from or written to the cache when the site has
+/// one. `joint` marks a solve of the sites of -poseidon-solve-jointly, however
+/// many.
 llvm::Expected<llvm::SmallVector<SolutionStep>>
 solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
