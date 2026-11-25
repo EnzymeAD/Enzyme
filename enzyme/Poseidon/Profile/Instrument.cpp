@@ -575,15 +575,21 @@ loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
 }
 
 /// Gives the profiler library `L` the target and layout of `M`, and drops what
-/// describes its own compile: module flags, producer, keep-alive lists, and
-/// the processor its functions were compiled for.
+/// describes its own compile: its named metadata (module flags, producer, NVVM
+/// IR version, the TBAA of its headers' errno), keep-alive lists, and the
+/// processor its functions were compiled for. The linker appends every named
+/// metadata node it is given to the module, so a module without a site would
+/// otherwise not come out as written. Debug-info units stay, as the debug info
+/// of its functions refers to them.
 static void adaptDeviceProfiler(Module &L, const Module &M) {
   L.setTargetTriple(M.getTargetTriple());
   L.setDataLayout(M.getDataLayout());
-  if (NamedMDNode *moduleFlags = L.getModuleFlagsMetadata())
-    L.eraseNamedMetadata(moduleFlags);
-  if (NamedMDNode *ident = L.getNamedMetadata("llvm.ident"))
-    L.eraseNamedMetadata(ident);
+  SmallVector<NamedMDNode *, 4> named;
+  for (NamedMDNode &N : L.named_metadata())
+    if (N.getName() != "llvm.dbg.cu")
+      named.push_back(&N);
+  for (NamedMDNode *N : named)
+    L.eraseNamedMetadata(N);
   for (StringRef used : {"llvm.used", "llvm.compiler.used"})
     if (GlobalVariable *G = L.getNamedGlobal(used))
       G->eraseFromParent();

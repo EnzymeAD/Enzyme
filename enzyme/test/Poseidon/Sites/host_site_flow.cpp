@@ -41,7 +41,7 @@ void wave_elsewhere(const double *x, double *y, int n) { wave(x, y, n); }
 
 POSEIDON_OPTIMIZE void wave(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
-    // REMARK: host_site_flow.cpp:[[@LINE+1]]:26: remark: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error 7.1e-18 -> 1.2e-08, cost 1 -> 0.3125 (-69%) [PT0_0] [-Rpass=poseidon]
+    // REMARK: host_site_flow.cpp:[[@LINE+1]]:26: remark: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.3125 (-69%) [PT0_0] [-Rpass=poseidon]
     y[i] = std::exp(-0.5 * x[i] * x[i]) * std::cos(4.0 * x[i]);
 }
 
@@ -116,11 +116,14 @@ int main(int argc, char **argv) {
 // USE: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64(0%) + FP32(100%)
 // USE-NOT: Applying solution
 
-// REMARK: host_site_flow.cpp:[[@LINE-68]]:14: remark: Poseidon runs all 4 operations in float: (double)((float)? + ((float)x[i] * 0.5f * (float)x[i] + sinf((float)x[i]))); modelled error 8.3e-19 -> 7.4e-08, cost 1 -> 0.3 (-70%) [PT0_0] [-Rpass=poseidon]
-// REMARK: host_site_flow.cpp:[[@LINE-59]]:40: remark: Poseidon runs all 3 operations in float: (double)((float)? * sqrtf((float)p[i] * (float)p[i] + 1.0f) + (float)q[i]); modelled error 0 -> 2.9e-08, cost 1 -> 0.583333 (-42%) [PT0_0] [-Rpass=poseidon]
-// REMARK: host_site_flow.cpp:[[@LINE-52]]:12: remark: Poseidon runs all 2 operations in float: (double)((float)x[i] * cosf((float)x[i])); modelled error 1.8e-17 -> 3.7e-08, cost 1 -> 0.416667 (-58%) [PT0_0] [-Rpass=poseidon]
-// REMARK: host_site_flow.cpp:[[@LINE-58]]:62: remark: Poseidon runs all 4 operations in float: (double)(expf((float)x) * (float)x + (float)x * -2.0f + 1.0f); modelled error 1.1e-17 -> 8.2e-09, cost 1 -> 0.35 (-65%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-68]]:14: remark: Poseidon runs all 4 operations in float: (double)((float)? + ((float)x[i] * 0.5f * (float)x[i] + sinf((float)x[i]))); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.3 (-70%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-59]]:40: remark: Poseidon runs all 3 operations in float: (double)((float)? * sqrtf((float)p[i] * (float)p[i] + 1.0f) + (float)q[i]); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.583333 (-42%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-52]]:12: remark: Poseidon runs all 2 operations in float: (double)((float)x[i] * cosf((float)x[i])); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.416667 (-58%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-58]]:62: remark: Poseidon runs all 4 operations in float: (double)(expf((float)x) * (float)x + (float)x * -2.0f + 1.0f); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.35 (-65%) [PT0_0] [-Rpass=poseidon]
 // REMARK-NOT: remark:
+// The modelled errors are matched by pattern: they come from the profile, whose
+// values the host computes, and a host with a fused multiply-add rounds them
+// otherwise.
 
 // The call through the pointer and the one from the other translation unit
 // run the same rewritten body.

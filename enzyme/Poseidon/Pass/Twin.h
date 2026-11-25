@@ -29,6 +29,11 @@ class Module;
 
 namespace poseidon {
 
+// A copy of `M`, in its context, whose values keep the use-list order of the
+// values they copy, which passes that iterate a value's users read: the
+// module as written, to compile as a build without the plugin would.
+std::unique_ptr<llvm::Module> snapshotAsWritten(const llvm::Module &M);
+
 // Compiles `twin`, the module as written, with the default pipeline of
 // `Phase` as a build without a profile, takes into it the functions in
 // `rewritten`, those a rewrite reached, and gives M its contents. M is left as

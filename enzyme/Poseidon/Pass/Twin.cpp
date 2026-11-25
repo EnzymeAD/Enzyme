@@ -10,6 +10,7 @@
 
 #include "Targets/Target.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Constants.h"
@@ -265,6 +266,33 @@ static void adoptModule(Module &M, Module &from) {
       own->addOperand(op);
   }
   M.setModuleInlineAsm(from.getModuleInlineAsm());
+}
+
+std::unique_ptr<Module> snapshotAsWritten(const Module &M) {
+  ValueToValueMapTy VMap;
+  std::unique_ptr<Module> twin = CloneModule(M, VMap);
+  // CloneModule orders each copy's uses as it creates them; a value the
+  // bitcode reader gave its module, such as a function of libdevice, may have
+  // its uses in another order, and a pass that visits predecessors or users in
+  // order can then decide otherwise on the copy.
+  for (const auto &[original, mapped] : VMap) {
+    Value *copy = mapped;
+    if (!copy || copy == original || original->hasOneUse() ||
+        original->use_empty())
+      continue;
+    DenseMap<std::pair<const User *, unsigned>, unsigned> position;
+    for (const Use &U : original->uses())
+      if (Value *user = VMap.lookup(U.getUser()))
+        position.try_emplace({cast<User>(user), U.getOperandNo()},
+                             position.size());
+    auto rank = [&](const Use &U) {
+      auto it = position.find({U.getUser(), U.getOperandNo()});
+      return it == position.end() ? position.size() : it->second;
+    };
+    copy->sortUseList(
+        [&](const Use &L, const Use &R) { return rank(L) < rank(R); });
+  }
+  return twin;
 }
 
 void replaceWithAsWritten(Module &M, std::unique_ptr<Module> twin,

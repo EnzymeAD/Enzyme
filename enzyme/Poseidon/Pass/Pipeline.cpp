@@ -47,7 +47,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 
 #include <memory>
@@ -500,7 +499,7 @@ struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
       return PreservedAnalyses::all();
     if (O.Profiling.usesProfile() && !O.Profiling.generatesProfile() &&
         !O.Solver.JointDP)
-      S.AsWrittenTwin = CloneModule(M);
+      S.AsWrittenTwin = snapshotAsWritten(M);
     return PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }

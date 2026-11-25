@@ -8,13 +8,13 @@
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
 ; RUN: %{opt} -poseidon-cache=%t/tau12 -poseidon-unit=tcec -poseidon-tau=1e-12 -o %t/tau12.ll 2>&1 | FileCheck --check-prefix=TAU12 %s
 ; RUN: cat %t/tau12/launches_*.json | FileCheck --check-prefix=DESC12 %s
-; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
 ; RUN: sed 's/@cudaLaunchKernel(/@cudaLaunchKernel_ptsz(/g' %t/host.ll > %t/host_ptsz.ll
-; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host_ptsz.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=PTSZ %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host_ptsz.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=PTSZ %s
 ; RUN: %{opt} -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau16 -poseidon-unit=tcec -poseidon-tau=1e-16 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU16 %s
-; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-unit=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-unit=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
 ; RUN: %{opt} -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-ozaki-host-dispatch=false -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OFF %s
 

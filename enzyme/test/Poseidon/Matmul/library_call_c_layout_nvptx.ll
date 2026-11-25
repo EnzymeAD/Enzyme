@@ -4,7 +4,7 @@
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-print -S
-; DEFINE: %{host} = %clang -O0 -x ir -fno-discard-value-names %loadClangPoseidon \
+; DEFINE: %{host} = %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %loadClangPoseidon \
 ; DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c \
 ; DEFINE:   -mllvm -poseidon-unit=layout -S -emit-llvm -o -
 ; RUN: rm -rf %t && mkdir -p %t/prof
