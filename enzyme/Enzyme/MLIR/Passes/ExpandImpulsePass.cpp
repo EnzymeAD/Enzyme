@@ -61,27 +61,6 @@ static int64_t computeTensorElementCount(RankedTensorType tensorType) {
   return elemCount;
 }
 
-namespace state_slot {
-constexpr StringLiteral kPosition = "position";
-constexpr StringLiteral kGradient = "gradient";
-constexpr StringLiteral kPotentialEnergy = "potential_energy";
-constexpr StringLiteral kStepSize = "step_size";
-constexpr StringLiteral kInverseMassMatrix = "inverse_mass_matrix";
-constexpr StringLiteral kDaLogStepSize = "da_log_step_size";
-constexpr StringLiteral kWindowIdx = "window_idx";
-constexpr StringLiteral kWarmupOffset = "warmup_offset";
-constexpr StringLiteral kRng = "rng";
-} // namespace state_slot
-
-/// The `stateIn` value of slot `name` under `schema`, or null when the schema
-/// has no such slot or `stateIn` is empty.
-static Value stateInSlot(ArrayAttr schema, ValueRange stateIn, StringRef name) {
-  std::optional<unsigned> idx = impulse::slotIndex(schema, name);
-  if (!idx || *idx >= stateIn.size())
-    return Value();
-  return stateIn[*idx];
-}
-
 using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
 
 static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
@@ -790,12 +769,9 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
                                builder.getF64FloatAttr(maxDeltaEnergyVal)));
   }
 
-  if (initInvMass) {
-    // tensor<N> and tensor<1xN> are diagonal, as in buildStateSchema.
-    auto invMassType = cast<RankedTensorType>(initInvMass.getType());
-    diagonal = invMassType.getRank() == 1 ||
-               (invMassType.getRank() == 2 && invMassType.getShape()[0] == 1);
-  }
+  if (initInvMass)
+    diagonal = impulse::isDiagonalInverseMass(
+        cast<RankedTensorType>(initInvMass.getType()));
 }
 
 SmallVector<ChainResult> MCMCChainEmitter::emitChains(Value rng) {
@@ -889,7 +865,7 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
 }
 
 Value MCMCChainEmitter::stateInSlot(StringRef name) const {
-  return ::stateInSlot(schema, stateIn, name);
+  return impulse::stateInSlot(schema, stateIn, name);
 }
 
 Value MCMCChainEmitter::chainStateInSlot(StringRef name, int64_t chainIdx) {
