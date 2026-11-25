@@ -9,16 +9,17 @@ add_llvm_library(
   PARTIAL_SOURCES_INTENDED
   DISABLE_LLVM_LINK_LLVM_DYLIB)
 add_dependencies(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MLIREnzyme
-                 MLIREnzymeToLLVMIRTranslation)
+                 MLIREnzymeAutoDiffInterface MLIREnzymeToLLVMIRTranslation)
 target_include_directories(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE ${FLANG_INCLUDE_DIRS})
 # The enzyme dialect and its translation carry the type annotations to LLVM
-# IR; bundle them by file, so that their MLIR dependencies resolve from the
-# host.
+# IR, and the autodiff interfaces build them (MTypeTree); bundle them by file,
+# so that their MLIR dependencies resolve from the host.
 target_link_libraries(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
-  PRIVATE $<TARGET_FILE:MLIREnzymeToLLVMIRTranslation> $<TARGET_FILE:MLIREnzyme>)
+  PRIVATE $<TARGET_FILE:MLIREnzymeToLLVMIRTranslation>
+          $<TARGET_FILE:MLIREnzymeAutoDiffInterface> $<TARGET_FILE:MLIREnzyme>)
 target_link_options(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE -Wl,--allow-shlib-undefined)

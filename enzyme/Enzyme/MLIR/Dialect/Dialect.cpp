@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect.h"
-#include "Interfaces/MTypeTree.h"
 #include "Ops.h"
 #include "mlir/IR/DialectImplementation.h"
 
@@ -241,62 +240,4 @@ void enzyme::TypeTreeAttr::print(AsmPrinter &printer) const {
   printer << '<';
   printTypeTreeNode(printer, *this);
   printer << '>';
-}
-
-/// Builds the node of the entries in [begin, end), which share their first
-/// `depth` offsets: its type is that of the entry of exactly `depth` offsets,
-/// if any, and its subtrees group the longer entries by their next offset.
-static enzyme::TypeTreeAttr
-getTypeTreeNode(MLIRContext *context,
-                enzyme::MTypeTree::ConcreteTypeMapType::const_iterator begin,
-                enzyme::MTypeTree::ConcreteTypeMapType::const_iterator end,
-                size_t depth) {
-  TypeTreeKind kind = TypeTreeKind::Unknown;
-  Type floatType;
-  // The mapping orders an entry before its extensions.
-  if (begin != end && begin->first.size() == depth) {
-    const enzyme::MConcreteType &type = begin->second;
-    switch (type.SubTypeEnum) {
-    case BaseType::Integer:
-      kind = TypeTreeKind::Integer;
-      break;
-    case BaseType::Float:
-      kind = TypeTreeKind::Float;
-      floatType = type.isFloat();
-      break;
-    case BaseType::Pointer:
-      kind = TypeTreeKind::Pointer;
-      break;
-    case BaseType::Anything:
-      kind = TypeTreeKind::Anything;
-      break;
-    case BaseType::Unknown:
-      break;
-    }
-    ++begin;
-  }
-  SmallVector<int64_t> offsets;
-  SmallVector<enzyme::TypeTreeAttr> subtrees;
-  while (begin != end) {
-    int offset = begin->first[depth];
-    auto groupEnd = std::find_if(begin, end, [&](const auto &entry) {
-      return entry.first[depth] != offset;
-    });
-    if (enzyme::TypeTreeAttr subtree =
-            getTypeTreeNode(context, begin, groupEnd, depth + 1)) {
-      offsets.push_back(offset);
-      subtrees.push_back(subtree);
-    }
-    begin = groupEnd;
-  }
-  if (kind == TypeTreeKind::Unknown && subtrees.empty())
-    return {};
-  return enzyme::TypeTreeAttr::get(context, kind, floatType, offsets, subtrees);
-}
-
-enzyme::TypeTreeAttr enzyme::getTypeTreeAttr(MLIRContext *context,
-                                             const MTypeTree &tree) {
-  const MTypeTree::ConcreteTypeMapType &mapping = tree.getMapping();
-  return getTypeTreeNode(context, mapping.begin(), mapping.end(),
-                         /*depth=*/0);
 }

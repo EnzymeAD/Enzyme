@@ -40,7 +40,7 @@
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
-#include "Interfaces/MTypeTree.h"
+#include "Interfaces/EnzymeLogic.h"
 #include "Target/EnzymeToLLVMIRTranslation.h"
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
