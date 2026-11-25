@@ -2501,7 +2501,6 @@ struct MHMove {
 /// The ops between the first and the last move of a run that read the traces
 /// of the moves before the last.
 struct InterleavedOps {
-  bool ok = true;
   /// The trace of move `i`, for every move but the last.
   DenseMap<Value, unsigned> intermediate;
   /// Ops that read an intermediate trace directly or through another reader,
@@ -2626,10 +2625,11 @@ static bool sameValueOrConstant(Value a, Value b) {
 }
 
 /// Collects the ops between the moves of `moves` that read intermediate
-/// traces. Clears `ok` when such an op has memory effects or feeds a move, an
-/// intermediate trace has another reader, or a reader result used after the
+/// traces. Returns nothing when such an op has memory effects or feeds a move,
+/// an intermediate trace has another reader, or a reader result used after the
 /// run would differ on the final trace.
-static InterleavedOps analyzeInterleavedOps(MutableArrayRef<MHMove> moves) {
+static std::optional<InterleavedOps>
+analyzeInterleavedOps(MutableArrayRef<MHMove> moves) {
   InterleavedOps interleaved;
   unsigned numMoves = moves.size();
   Block *block = moves.front().op->getBlock();
@@ -2672,10 +2672,8 @@ static InterleavedOps analyzeInterleavedOps(MutableArrayRef<MHMove> moves) {
       ArrayRef<int64_t> starts = slice.getStartIndices(),
                         limits = slice.getLimitIndices(),
                         strides = slice.getStrides();
-      if (starts.size() != 2) {
-        interleaved.ok = false;
-        return interleaved;
-      }
+      if (starts.size() != 2)
+        return std::nullopt;
       unsigned i = interleaved.intermediate.lookup(slice.getOperand());
       fromIntermediate = true;
       for (int64_t c = starts[1]; c < limits[1]; c += strides[1]) {
@@ -2694,10 +2692,8 @@ static InterleavedOps analyzeInterleavedOps(MutableArrayRef<MHMove> moves) {
     }
     if (!fromIntermediate)
       continue;
-    if (!isMemoryEffectFree(o)) {
-      interleaved.ok = false;
-      return interleaved;
-    }
+    if (!isMemoryEffectFree(o))
+      return std::nullopt;
     interleaved.readers.push_back(o);
     interleaved.readerSet.insert(o);
     finalSafe[o] = safe;
@@ -2711,32 +2707,30 @@ static InterleavedOps analyzeInterleavedOps(MutableArrayRef<MHMove> moves) {
               moves[i + 1].op.getOriginalTraceMutable()[0].getOperandNumber())
         continue;
       Operation *anc = block->findAncestorOpInBlock(*u.getOwner());
-      if (!anc || !interleaved.readerSet.contains(anc)) {
-        interleaved.ok = false;
-        return interleaved;
-      }
+      if (!anc || !interleaved.readerSet.contains(anc))
+        return std::nullopt;
     }
   for (Operation *o : interleaved.readers)
     for (Value r : o->getResults())
       for (OpOperand &u : r.getUses()) {
         Operation *anc = block->findAncestorOpInBlock(*u.getOwner());
-        if (!anc || (moveOps.contains(anc) && anc == u.getOwner())) {
-          interleaved.ok = false; // an operand of a move, not a region capture
-          return interleaved;
-        }
+        // A reader result may be captured by a move's regions, not be its
+        // operand.
+        if (!anc || (moveOps.contains(anc) && anc == u.getOwner()))
+          return std::nullopt;
         if (last->isBeforeInBlock(anc)) {
-          if (!finalSafe.lookup(o)) {
-            interleaved.ok = false;
-            return interleaved;
-          }
+          if (!finalSafe.lookup(o))
+            return std::nullopt;
           interleaved.liveOut.insert(r);
         }
       }
   return interleaved;
 }
 
-/// Returns whether the run `moves` can be emitted as one batched move.
-static bool isBatchable(MutableArrayRef<MHMove> moves) {
+/// Returns the ops between the moves of the run `moves` when the run can be
+/// emitted as one batched move, else nothing.
+static std::optional<InterleavedOps>
+analyzeBatch(MutableArrayRef<MHMove> moves) {
   unsigned numMoves = moves.size();
   Block *block = moves.front().op->getBlock();
   Operation *last = moves.back().op;
@@ -2746,7 +2740,7 @@ static bool isBatchable(MutableArrayRef<MHMove> moves) {
         m.draw.getResult().getType() != firstDraw.getResult().getType() ||
         !sameValueOrConstant(m.draw.getA(), firstDraw.getA()) ||
         !sameValueOrConstant(m.draw.getB(), firstDraw.getB()))
-      return false;
+      return std::nullopt;
   }
   ColumnWindows all;
   for (MHMove &m : moves)
@@ -2755,19 +2749,20 @@ static bool isBatchable(MutableArrayRef<MHMove> moves) {
   llvm::sort(all);
   for (unsigned i = 1; i < all.size(); ++i)
     if (all[i].first < all[i - 1].second)
-      return false;
+      return std::nullopt;
   for (MHMove &m : moves)
     for (Value v : {m.op.getDiagnostics(), m.op.getLogDensities()})
       for (OpOperand &u : v.getUses()) {
         Operation *anc = block->findAncestorOpInBlock(*u.getOwner());
         if (!anc || !last->isBeforeInBlock(anc))
-          return false;
+          return std::nullopt;
       }
-  InterleavedOps interleaved = analyzeInterleavedOps(moves);
-  if (!interleaved.ok)
-    return false;
-  DenseMap<Value, unsigned> &intermediate = interleaved.intermediate;
-  DenseMap<Value, llvm::BitVector> &moveDependence = interleaved.moveDependence;
+  std::optional<InterleavedOps> interleaved = analyzeInterleavedOps(moves);
+  if (!interleaved)
+    return std::nullopt;
+  DenseMap<Value, unsigned> &intermediate = interleaved->intermediate;
+  DenseMap<Value, llvm::BitVector> &moveDependence =
+      interleaved->moveDependence;
   for (unsigned k = 0; k < numMoves; ++k) {
     impulse::InferRegionOp op = moves[k].op;
     auto seedCaptured = [&](SiteDependence &dep, Region &r) {
@@ -2784,16 +2779,16 @@ static bool isBatchable(MutableArrayRef<MHMove> moves) {
     };
     SiteDependence lpDep(numMoves);
     if (!seedCaptured(lpDep, op.getLogpdf()))
-      return false;
+      return std::nullopt;
     Block &lpBlock = op.getLogpdf().front();
     lpDep.seed(lpBlock.getArgument(0), k);
     lpDep.run(lpBlock);
     for (Value y : llvm::drop_begin(lpBlock.getTerminator()->getOperands()))
       if (lpDep.get(y).count() > 1)
-        return false;
+        return std::nullopt;
     SiteDependence sDep(numMoves);
     if (!seedCaptured(sDep, op.getSampling()))
-      return false;
+      return std::nullopt;
     Block &sBlock = op.getSampling().front();
     for (Operation &o : sBlock)
       if (auto s = dyn_cast<impulse::SampleRegionOp>(&o))
@@ -2806,217 +2801,274 @@ static bool isBatchable(MutableArrayRef<MHMove> moves) {
       llvm::BitVector p = sDep.get(param);
       p.reset(k);
       if (p.any())
-        return false;
+        return std::nullopt;
     }
   }
-  return true;
+  return interleaved;
 }
 
-/// Replaces the run `moves` with one draw of all proposals, a vector accept
-/// test and the write-back of the accepted columns.
-static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
-  unsigned numMoves = moves.size();
-  impulse::InferRegionOp first = moves.front().op, last = moves.back().op;
-  Location loc = last.getLoc();
-  Value trace0 = first.getOriginalTrace();
-  Value weight0 = first.getStateIn()[0];
-  Value rng0 = first.getInputs()[0];
-  auto traceType = cast<RankedTensorType>(trace0.getType());
-  auto weightType = cast<RankedTensorType>(weight0.getType());
-  Type rngType = rng0.getType();
-  InterleavedOps interleaved = analyzeInterleavedOps(moves);
-  DenseMap<Operation *, SmallVector<unsigned>> readsIntermediate;
-  for (Operation *o : interleaved.readers)
-    for (OpOperand &u : o->getOpOperands())
-      if (interleaved.intermediate.count(u.get()))
-        readsIntermediate[o].push_back(u.getOperandNumber());
-  for (unsigned i = 0; i + 1 < numMoves; ++i)
-    moves[i].op.getTrace().replaceUsesWithIf(trace0, [&](OpOperand &u) {
-      return !(
-          u.getOwner() == moves[i + 1].op.getOperation() &&
-          u.getOperandNumber() ==
-              moves[i + 1].op.getOriginalTraceMutable()[0].getOperandNumber());
-    });
+namespace {
+/// A batchable run and the ops between its moves.
+struct MHBatch {
+  SmallVector<MHMove> moves;
+  InterleavedOps interleaved;
+};
 
-  OpBuilder b(last);
+/// The proposals of a batched run.
+struct BatchedProposals {
+  /// The key after the draw of all proposals and the accept uniforms.
+  Value rngOut;
+  /// The logs of the accept uniforms, one per move.
+  Value logRand;
+  SmallVector<MHProposal> moves;
+};
 
+/// The columns the moves of a batched run change, when they line up: slot
+/// `s` holds a value column in every move or a score column in every move,
+/// and the score of each move's own site sits at slot `ownSlot`.
+struct SlotLayout {
+  /// The columns of each move, in slot order.
+  SmallVector<SmallVector<int64_t>> columns;
+  int64_t ownSlot = -1;
+  /// The proposed and the current value of each slot, one entry per move.
+  SmallVector<Value> proposedAt;
+  SmallVector<Value> currentAt;
+};
+} // namespace
+
+/// Emits one draw of the proposals of all `moves` from key `rng0`, the
+/// uniforms of their accept tests as a `vecType` vector, and each move's
+/// proposal from `trace0` with its draw taken from the batched one.
+static BatchedProposals proposeAll(OpBuilder &b, Location loc,
+                                   MutableArrayRef<MHMove> moves, Value trace0,
+                                   Value rng0, RankedTensorType vecType) {
   impulse::RandomOp firstDraw = moves.front().draw;
   auto drawType = cast<RankedTensorType>(firstDraw.getResult().getType());
-  SmallVector<int64_t> batchedShape{(int64_t)numMoves};
-  batchedShape.append(drawType.getShape().begin(), drawType.getShape().end());
-  auto proposals = impulse::RandomOp::create(
+  SmallVector<int64_t> batchedShape{(int64_t)moves.size()};
+  llvm::append_range(batchedShape, drawType.getShape());
+  auto draws = impulse::RandomOp::create(
       b, loc,
-      TypeRange{rngType,
+      TypeRange{rng0.getType(),
                 RankedTensorType::get(batchedShape, drawType.getElementType())},
       rng0, firstDraw.getA(), firstDraw.getB(),
       firstDraw.getRngDistributionAttr());
-  auto vecType =
-      RankedTensorType::get({(int64_t)numMoves}, weightType.getElementType());
-  Value rngOut = proposals.getOutputRngState();
-  Value uniform = emitUniformDraw(b, loc, rngOut, vecType);
-  Value logRand = math::LogOp::create(b, loc, uniform);
-
-  SmallVector<Value> newTraces, deltaCells, correctionCells;
-  SmallVector<ColumnWindows> changedWindows(numMoves);
-  auto elemType = traceType.getElementType();
-  auto rowType = RankedTensorType::get({1, (int64_t)numMoves}, elemType);
-  auto colType = RankedTensorType::get({1, 1}, elemType);
-  auto unitSlice = [&](Value t, int64_t c) -> Value {
-    return emitColumnSlice(b, loc, colType, t, c);
-  };
-  for (unsigned k = 0; k < numMoves; ++k) {
-    Operation *draw = moves[k].draw;
-    Value drawn = takeLeading(b, loc, proposals.getResult(), k);
-    MHProposal proposal = proposeRegionMove(
-        b, loc, moves[k].op, moves[k].layout, trace0, rng0, /*delta=*/true,
+  BatchedProposals batched;
+  batched.rngOut = draws.getOutputRngState();
+  Value uniform = emitUniformDraw(b, loc, batched.rngOut, vecType);
+  batched.logRand = math::LogOp::create(b, loc, uniform);
+  for (auto [k, move] : llvm::enumerate(moves)) {
+    Operation *draw = move.draw;
+    Value drawn = takeLeading(b, loc, draws.getResult(), k);
+    batched.moves.push_back(proposeRegionMove(
+        b, loc, move.op, move.layout, trace0, rng0, /*delta=*/true,
         /*withLogRatio=*/false,
-        [&](Operation *o) { return o == draw ? drawn : Value(); });
-    changedWindows[k] = std::move(proposal.changed);
-    newTraces.push_back(proposal.trace);
-    deltaCells.push_back(proposal.weight);
-    correctionCells.push_back(proposal.correction);
+        [&](Operation *o) { return o == draw ? drawn : Value(); }));
   }
+  return batched;
+}
 
-  SmallVector<SmallVector<int64_t>> columns(numMoves);
-  for (unsigned k = 0; k < numMoves; ++k)
-    for (auto [windowStart, windowEnd] : changedWindows[k])
+/// Returns how the columns the `proposals` of `moves` change line up in
+/// slots, or nothing when they do not.
+static std::optional<SlotLayout>
+findSlotLayout(MutableArrayRef<MHMove> moves, ArrayRef<MHProposal> proposals) {
+  SlotLayout slots;
+  for (const MHProposal &proposal : proposals) {
+    SmallVector<int64_t> &columns = slots.columns.emplace_back();
+    for (auto [windowStart, windowEnd] : proposal.changed)
       for (int64_t c = windowStart; c < windowEnd; ++c)
-        columns[k].push_back(c);
-  // Slots line up when slot `s` holds a value column in every move or a score
-  // column in every move, and each move's own score sits at slot `ownSlot`.
-  size_t numSlots = columns.front().size();
-  int64_t ownSlot = -1;
-  bool alignedSlots = true;
-  for (unsigned k = 0; k < numMoves && alignedSlots; ++k) {
-    alignedSlots = columns[k].size() == numSlots;
-    for (size_t s = 0; s < numSlots && alignedSlots; ++s)
-      alignedSlots = (columns[k][s] >= moves[k].layout.positionSize) ==
-                     (columns[0][s] >= moves[0].layout.positionSize);
+        columns.push_back(c);
+  }
+  ArrayRef<int64_t> firstColumns = slots.columns.front();
+  int64_t firstPositionSize = moves.front().layout.positionSize;
+  for (auto [k, move] : llvm::enumerate(moves)) {
+    ArrayRef<int64_t> columns = slots.columns[k];
+    if (columns.size() != firstColumns.size())
+      return std::nullopt;
+    int64_t positionSize = move.layout.positionSize;
     int64_t own = -1;
-    for (size_t s = 0; s < numSlots && alignedSlots; ++s)
-      if (columns[k][s] == moves[k].layout.positionSize + moves[k].ordinal)
+    for (auto [s, column] : llvm::enumerate(columns)) {
+      if ((column >= positionSize) != (firstColumns[s] >= firstPositionSize))
+        return std::nullopt;
+      if (column == positionSize + move.ordinal)
         own = s;
-    alignedSlots = alignedSlots && own >= 0 && (k == 0 || own == ownSlot);
-    ownSlot = own;
-  }
-  SmallVector<Value> proposedAt(numSlots), currentAt(numSlots);
-  Value deltaVec, logAlphaVec;
-  if (alignedSlots) {
-    for (size_t s = 0; s < numSlots; ++s) {
-      SmallVector<Value> proposed;
-      for (unsigned k = 0; k < numMoves; ++k)
-        proposed.push_back(unitSlice(newTraces[k], columns[k][s]));
-      proposedAt[s] = packScalars(b, loc, vecType, proposed);
-      int64_t stride = columns[1][s] - columns[0][s];
-      bool even = stride >= 1;
-      for (unsigned k = 1; k < numMoves && even; ++k)
-        even = columns[k][s] - columns[k - 1][s] == stride;
-      if (even) {
-        currentAt[s] = impulse::ReshapeOp::create(
-            b, loc, vecType,
-            emitColumnSlice(b, loc, rowType, trace0, columns[0][s], stride));
-      } else {
-        SmallVector<Value> incoming;
-        for (unsigned k = 0; k < numMoves; ++k)
-          incoming.push_back(unitSlice(trace0, columns[k][s]));
-        currentAt[s] = packScalars(b, loc, vecType, incoming);
-      }
     }
-    for (size_t s = 0; s < numSlots; ++s) {
-      if (columns[0][s] < moves[0].layout.positionSize)
-        continue;
-      accumulate(b, loc, deltaVec,
-                 arith::SubFOp::create(b, loc, proposedAt[s], currentAt[s]));
-    }
-    Value correctionVec =
-        arith::SubFOp::create(b, loc, proposedAt[ownSlot], currentAt[ownSlot]);
-    logAlphaVec = arith::SubFOp::create(b, loc, deltaVec, correctionVec);
-  } else {
-    deltaVec = packScalars(b, loc, vecType, deltaCells);
-    logAlphaVec = arith::SubFOp::create(
-        b, loc, deltaVec, packScalars(b, loc, vecType, correctionCells));
+    if (own < 0 || (k != 0 && own != slots.ownSlot))
+      return std::nullopt;
+    slots.ownSlot = own;
   }
-  Value accepted = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
-                                         logRand, logAlphaVec);
-  Value trace = trace0, weight = weight0;
-  SmallVector<Value> acceptedOf;
-  // In sweep order, matching the sequential weight updates.
-  for (unsigned k = 0; k < numMoves; ++k) {
-    Value acc = takeLeading(b, loc, accepted, k);
-    acceptedOf.push_back(acc);
-    Value acceptWeight =
-        arith::AddFOp::create(b, loc, weight, takeLeading(b, loc, deltaVec, k));
-    weight = arith::SelectOp::create(b, loc, acc, acceptWeight, weight);
-  }
+  return slots;
+}
 
-  if (!alignedSlots) {
+/// Gathers the proposed and the current value of each slot of `slots` across
+/// the moves into `vecType` vectors, from the proposals' traces and `trace0`.
+static void emitSlotVectors(OpBuilder &b, Location loc, Value trace0,
+                            ArrayRef<MHProposal> proposals, SlotLayout &slots,
+                            RankedTensorType vecType) {
+  unsigned numMoves = proposals.size();
+  Type elemType = cast<RankedTensorType>(trace0.getType()).getElementType();
+  auto rowType = RankedTensorType::get({1, (int64_t)numMoves}, elemType);
+  auto cellType = RankedTensorType::get({1, 1}, elemType);
+  ArrayRef<SmallVector<int64_t>> columns = slots.columns;
+  for (size_t s = 0, e = columns.front().size(); s < e; ++s) {
+    SmallVector<Value> proposed;
     for (unsigned k = 0; k < numMoves; ++k)
-      trace = writeBackMHWindows(b, loc, trace, newTraces[k], acceptedOf[k],
-                                 changedWindows[k]);
-  } else {
-    SmallVector<Value> resultAt(numSlots);
-    for (size_t s = 0; s < numSlots; ++s)
-      resultAt[s] = arith::SelectOp::create(b, loc, accepted, proposedAt[s],
-                                            currentAt[s]);
-    // Slots within moveStride columns share a window, viewed as numMoves
-    // rows of moveStride columns.
-    int64_t moveStride = columns[1][0] - columns[0][0];
-    bool stridedByMove = moveStride >= 1;
-    for (size_t s = 0; s < numSlots && stridedByMove; ++s)
-      for (unsigned k = 0; k < numMoves && stridedByMove; ++k)
-        stridedByMove =
-            columns[k][s] == columns[0][s] + (int64_t)k * moveStride;
-    SmallVector<std::pair<int64_t, SmallVector<size_t>>> groups;
-    if (stridedByMove) {
-      SmallVector<size_t> order(numSlots);
-      for (size_t i = 0; i < numSlots; ++i)
-        order[i] = i;
-      llvm::sort(order, [&](size_t x, size_t y) {
-        return columns[0][x] < columns[0][y];
-      });
-      for (size_t s : order) {
-        if (!groups.empty() && columns[0][s] < groups.back().first + moveStride)
-          groups.back().second.push_back(s);
-        else
-          groups.push_back({columns[0][s], {s}});
-      }
-      for (size_t i = 0; i < groups.size() && stridedByMove; ++i) {
-        int64_t end = groups[i].first + (int64_t)numMoves * moveStride;
-        stridedByMove = end <= traceType.getShape()[1] &&
-                        (i + 1 == groups.size() || end <= groups[i + 1].first);
-      }
+      proposed.push_back(
+          emitColumnSlice(b, loc, cellType, proposals[k].trace, columns[k][s]));
+    slots.proposedAt.push_back(packScalars(b, loc, vecType, proposed));
+    int64_t stride = columns[1][s] - columns[0][s];
+    bool even = stride >= 1;
+    for (unsigned k = 1; k < numMoves && even; ++k)
+      even = columns[k][s] - columns[k - 1][s] == stride;
+    if (even) {
+      slots.currentAt.push_back(impulse::ReshapeOp::create(
+          b, loc, vecType,
+          emitColumnSlice(b, loc, rowType, trace0, columns[0][s], stride)));
+      continue;
     }
-    if (stridedByMove) {
-      auto blockType =
-          RankedTensorType::get({(int64_t)numMoves, moveStride}, elemType);
-      auto blockColType =
-          RankedTensorType::get({(int64_t)numMoves, 1}, elemType);
-      auto winType =
-          RankedTensorType::get({1, (int64_t)numMoves * moveStride}, elemType);
-      for (auto &[groupStart, slots] : groups) {
-        Value block = impulse::ReshapeOp::create(
-            b, loc, blockType,
-            emitColumnSlice(b, loc, winType, trace0, groupStart));
-        for (size_t s : slots) {
-          Value slotCol =
-              impulse::ReshapeOp::create(b, loc, blockColType, resultAt[s]);
-          block =
-              updateColumns(b, loc, block, slotCol, columns[0][s] - groupStart);
-        }
-        Value blockWin = impulse::ReshapeOp::create(b, loc, winType, block);
-        trace = updateColumns(b, loc, trace, blockWin, groupStart);
-      }
-    } else {
-      for (size_t s = 0; s < numSlots; ++s) {
-        Value row = impulse::ReshapeOp::create(b, loc, rowType, resultAt[s]);
-        for (unsigned k = 0; k < numMoves; ++k) {
-          Value unitCell = unitSlice(row, k);
-          trace = updateColumns(b, loc, trace, unitCell, columns[k][s]);
-        }
-      }
-    }
+    SmallVector<Value> current;
+    for (unsigned k = 0; k < numMoves; ++k)
+      current.push_back(
+          emitColumnSlice(b, loc, cellType, trace0, columns[k][s]));
+    slots.currentAt.push_back(packScalars(b, loc, vecType, current));
   }
+}
 
+/// Emits the weight changes and the log alphas of the batched `proposals` as
+/// `vecType` vectors: from the slot vectors when the columns line up in
+/// `slots`, which this fills, else from each proposal's own values.
+static std::pair<Value, Value> emitLogAlpha(OpBuilder &b, Location loc,
+                                            Value trace0, int64_t positionSize,
+                                            ArrayRef<MHProposal> proposals,
+                                            std::optional<SlotLayout> &slots,
+                                            RankedTensorType vecType) {
+  if (!slots) {
+    SmallVector<Value> deltas, corrections;
+    for (const MHProposal &proposal : proposals) {
+      deltas.push_back(proposal.weight);
+      corrections.push_back(proposal.correction);
+    }
+    Value deltaVec = packScalars(b, loc, vecType, deltas);
+    return {deltaVec,
+            arith::SubFOp::create(b, loc, deltaVec,
+                                  packScalars(b, loc, vecType, corrections))};
+  }
+  emitSlotVectors(b, loc, trace0, proposals, *slots, vecType);
+  Value deltaVec;
+  for (auto [s, column] : llvm::enumerate(slots->columns.front()))
+    if (column >= positionSize)
+      accumulate(b, loc, deltaVec,
+                 arith::SubFOp::create(b, loc, slots->proposedAt[s],
+                                       slots->currentAt[s]));
+  int64_t own = slots->ownSlot;
+  Value correctionVec = arith::SubFOp::create(b, loc, slots->proposedAt[own],
+                                              slots->currentAt[own]);
+  return {deltaVec, arith::SubFOp::create(b, loc, deltaVec, correctionVec)};
+}
+
+/// Returns the column every slot of `slots` starts at in move 0 grouped into
+/// windows of `numMoves` rows of `moveStride` columns, one row per move, when
+/// each move's columns are the previous move's shifted by `moveStride` and the
+/// windows fit in a `width`-wide trace without overlapping. Each group is its
+/// first column and its slots.
+static std::optional<
+    std::pair<int64_t, SmallVector<std::pair<int64_t, SmallVector<size_t>>>>>
+findStrideGroups(const SlotLayout &slots, int64_t width) {
+  ArrayRef<SmallVector<int64_t>> columns = slots.columns;
+  int64_t numMoves = columns.size();
+  size_t numSlots = columns.front().size();
+  int64_t moveStride = columns[1][0] - columns[0][0];
+  if (moveStride < 1)
+    return std::nullopt;
+  for (size_t s = 0; s < numSlots; ++s)
+    for (int64_t k = 0; k < numMoves; ++k)
+      if (columns[k][s] != columns[0][s] + k * moveStride)
+        return std::nullopt;
+  SmallVector<size_t> order(numSlots);
+  for (size_t i = 0; i < numSlots; ++i)
+    order[i] = i;
+  llvm::sort(order,
+             [&](size_t x, size_t y) { return columns[0][x] < columns[0][y]; });
+  SmallVector<std::pair<int64_t, SmallVector<size_t>>> groups;
+  for (size_t s : order) {
+    if (!groups.empty() && columns[0][s] < groups.back().first + moveStride)
+      groups.back().second.push_back(s);
+    else
+      groups.push_back({columns[0][s], {s}});
+  }
+  for (size_t i = 0; i < groups.size(); ++i) {
+    int64_t end = groups[i].first + numMoves * moveStride;
+    if (end > width || (i + 1 != groups.size() && end > groups[i + 1].first))
+      return std::nullopt;
+  }
+  return std::make_pair(moveStride, std::move(groups));
+}
+
+/// Writes the values of the accepted proposals into `trace0`: window by
+/// window per move without `slots`, else per slot vector, through blocks of
+/// one row per move where the moves' columns are evenly strided.
+static Value writeBackAccepted(OpBuilder &b, Location loc, Value trace0,
+                               ArrayRef<MHProposal> proposals, Value accepted,
+                               ArrayRef<Value> acceptedOf,
+                               const std::optional<SlotLayout> &slots) {
+  Value trace = trace0;
+  if (!slots) {
+    for (auto [proposal, acc] : llvm::zip(proposals, acceptedOf))
+      trace = writeBackMHWindows(b, loc, trace, proposal.trace, acc,
+                                 proposal.changed);
+    return trace;
+  }
+  int64_t numMoves = proposals.size();
+  auto traceType = cast<RankedTensorType>(trace0.getType());
+  Type elemType = traceType.getElementType();
+  SmallVector<Value> resultAt;
+  for (auto [proposed, current] :
+       llvm::zip(slots->proposedAt, slots->currentAt))
+    resultAt.push_back(
+        arith::SelectOp::create(b, loc, accepted, proposed, current));
+  ArrayRef<SmallVector<int64_t>> columns = slots->columns;
+  auto strided = findStrideGroups(*slots, traceType.getShape()[1]);
+  if (!strided) {
+    auto rowType = RankedTensorType::get({1, numMoves}, elemType);
+    auto cellType = RankedTensorType::get({1, 1}, elemType);
+    for (auto [s, result] : llvm::enumerate(resultAt)) {
+      Value row = impulse::ReshapeOp::create(b, loc, rowType, result);
+      for (int64_t k = 0; k < numMoves; ++k) {
+        Value cell = emitColumnSlice(b, loc, cellType, row, k);
+        trace = updateColumns(b, loc, trace, cell, columns[k][s]);
+      }
+    }
+    return trace;
+  }
+  auto &[moveStride, groups] = *strided;
+  auto blockType = RankedTensorType::get({numMoves, moveStride}, elemType);
+  auto blockColType = RankedTensorType::get({numMoves, 1}, elemType);
+  auto winType = RankedTensorType::get({1, numMoves * moveStride}, elemType);
+  for (auto &[groupStart, groupSlots] : groups) {
+    Value block = impulse::ReshapeOp::create(
+        b, loc, blockType,
+        emitColumnSlice(b, loc, winType, trace0, groupStart));
+    for (size_t s : groupSlots) {
+      Value slotCol =
+          impulse::ReshapeOp::create(b, loc, blockColType, resultAt[s]);
+      block = updateColumns(b, loc, block, slotCol, columns[0][s] - groupStart);
+    }
+    Value blockWin = impulse::ReshapeOp::create(b, loc, winType, block);
+    trace = updateColumns(b, loc, trace, blockWin, groupStart);
+  }
+  return trace;
+}
+
+/// Replaces the results of the moves of `batch` with the batched `trace`,
+/// `weight`, key `rngOut` and accept flags `acceptedOf`, recomputes the
+/// interleaved readers used after the run on the final trace, and erases the
+/// moves. `readsIntermediate` lists the operands of each reader that read an
+/// intermediate trace.
+static void replaceRun(
+    OpBuilder &b, Location loc, MHBatch &batch,
+    const DenseMap<Operation *, SmallVector<unsigned>> &readsIntermediate,
+    Value trace, Value weight, Value rngOut, ArrayRef<Value> acceptedOf) {
+  const InterleavedOps &interleaved = batch.interleaved;
+  impulse::InferRegionOp last = batch.moves.back().op;
   if (!interleaved.liveOut.empty()) {
     IRMapping cloneMap;
     for (Operation *o : interleaved.readers) {
@@ -3033,9 +3085,9 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
     }
   }
 
-  for (unsigned k = 0; k < numMoves; ++k) {
-    impulse::InferRegionOp op = moves[k].op;
-    op.getDiagnostics().replaceAllUsesWith(acceptedOf[k]);
+  for (auto [move, acc] : llvm::zip(batch.moves, acceptedOf)) {
+    impulse::InferRegionOp op = move.op;
+    op.getDiagnostics().replaceAllUsesWith(acc);
     auto ldType = cast<ShapedType>(op.getLogDensities().getType());
     if (!op.getLogDensities().use_empty())
       op.getLogDensities().replaceAllUsesWith(
@@ -3044,8 +3096,58 @@ static void emitBatchedRun(MutableArrayRef<MHMove> moves) {
   last.getTrace().replaceAllUsesWith(trace);
   last.getOutputRngState().replaceAllUsesWith(rngOut);
   last.getStateOut()[0].replaceAllUsesWith(weight);
-  for (unsigned k = numMoves; k-- > 0;)
-    moves[k].op->erase();
+  for (MHMove &move : llvm::reverse(batch.moves))
+    move.op->erase();
+}
+
+/// Replaces the run of `batch` with one draw of all proposals, a vector accept
+/// test and the write-back of the accepted columns.
+static void emitBatchedRun(MHBatch &batch) {
+  MutableArrayRef<MHMove> moves = batch.moves;
+  unsigned numMoves = moves.size();
+  impulse::InferRegionOp first = moves.front().op, last = moves.back().op;
+  Location loc = last.getLoc();
+  Value trace0 = first.getOriginalTrace();
+  Value weight0 = first.getStateIn()[0];
+  Value rng0 = first.getInputs()[0];
+  DenseMap<Operation *, SmallVector<unsigned>> readsIntermediate;
+  for (Operation *o : batch.interleaved.readers)
+    for (OpOperand &u : o->getOpOperands())
+      if (batch.interleaved.intermediate.count(u.get()))
+        readsIntermediate[o].push_back(u.getOperandNumber());
+  for (unsigned i = 0; i + 1 < numMoves; ++i)
+    moves[i].op.getTrace().replaceUsesWithIf(trace0, [&](OpOperand &u) {
+      return !(
+          u.getOwner() == moves[i + 1].op.getOperation() &&
+          u.getOperandNumber() ==
+              moves[i + 1].op.getOriginalTraceMutable()[0].getOperandNumber());
+    });
+
+  OpBuilder b(last);
+  auto vecType = RankedTensorType::get(
+      {(int64_t)numMoves},
+      cast<RankedTensorType>(weight0.getType()).getElementType());
+  BatchedProposals proposals = proposeAll(b, loc, moves, trace0, rng0, vecType);
+  std::optional<SlotLayout> slots = findSlotLayout(moves, proposals.moves);
+  auto [deltaVec, logAlphaVec] =
+      emitLogAlpha(b, loc, trace0, moves.front().layout.positionSize,
+                   proposals.moves, slots, vecType);
+  Value accepted = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
+                                         proposals.logRand, logAlphaVec);
+  Value weight = weight0;
+  SmallVector<Value> acceptedOf;
+  // In sweep order, matching the sequential weight updates.
+  for (unsigned k = 0; k < numMoves; ++k) {
+    Value acc = takeLeading(b, loc, accepted, k);
+    acceptedOf.push_back(acc);
+    Value acceptWeight =
+        arith::AddFOp::create(b, loc, weight, takeLeading(b, loc, deltaVec, k));
+    weight = arith::SelectOp::create(b, loc, acc, acceptWeight, weight);
+  }
+  Value trace = writeBackAccepted(b, loc, trace0, proposals.moves, accepted,
+                                  acceptedOf, slots);
+  replaceRun(b, loc, batch, readsIntermediate, trace, weight, proposals.rngOut,
+             acceptedOf);
 }
 
 /// Replaces the runs of chained single-site MH moves under `root` with batched
@@ -3059,9 +3161,8 @@ static void batchMHRuns(Operation *root) {
       if (!op)
         continue;
       std::optional<MHMove> m = analyzeMHMove(op);
-      if (!m) {
+      if (!m)
         continue;
-      }
       if (!run.empty() && !continuesRun(run.back(), *m)) {
         if (run.size() >= 2)
           runs.push_back(run);
@@ -3075,21 +3176,24 @@ static void batchMHRuns(Operation *root) {
   // Longest piece first: a shorter one can fail where a longer one holds.
   // Pieces are capped so the search for the longest one stays bounded.
   constexpr size_t kMaxBatchSize = 256;
-  SmallVector<SmallVector<MHMove>> batches;
+  SmallVector<MHBatch, 0> batches;
   for (SmallVector<MHMove> &run : runs) {
     size_t i = 0;
     while (i < run.size()) {
       size_t j = std::min(run.size(), i + kMaxBatchSize) - 1;
+      std::optional<InterleavedOps> interleaved;
       for (; j > i; --j)
-        if (isBatchable(MutableArrayRef<MHMove>(run).slice(i, j + 1 - i)))
+        if ((interleaved = analyzeBatch(
+                 MutableArrayRef<MHMove>(run).slice(i, j + 1 - i))))
           break;
       if (j > i)
         batches.push_back(
-            SmallVector<MHMove>(run.begin() + i, run.begin() + j + 1));
+            {SmallVector<MHMove>(run.begin() + i, run.begin() + j + 1),
+             std::move(*interleaved)});
       i = j + 1;
     }
   }
-  for (SmallVector<MHMove> &batch : batches)
+  for (MHBatch &batch : batches)
     emitBatchedRun(batch);
 }
 
