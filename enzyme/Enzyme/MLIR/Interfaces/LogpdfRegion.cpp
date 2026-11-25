@@ -43,8 +43,7 @@ isHoistableArmOp(Operation &op,
   if (op.getNumRegions() != 0 || op.getNumResults() == 0 ||
       !isMemoryEffectFree(&op))
     return false;
-  return isa<arith::ConstantOp, SliceOp, ReshapeOp>(op) ||
-         isHoistableFromBranch(&op);
+  return op.hasTrait<OpTrait::ConstantLike>() || isHoistableFromBranch(&op);
 }
 
 /// Clones `block` through `map` with every site replaced by its density, and

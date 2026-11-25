@@ -334,6 +334,18 @@ private:
   bool missedValue = false;
 };
 
+/// The rule set of the impulse dialect: no rewrite rules, and the slices and
+/// reshapes, which only move elements, may leave a branch of a density.
+struct ImpulseSICMRuleSet : public SICMRuleSetInterface {
+  using SICMRuleSetInterface::SICMRuleSetInterface;
+
+  void populateRules(RewritePatternSet &patterns) const override {}
+
+  bool isHoistableFromBranch(Operation *op) const override {
+    return isa<SliceOp, ReshapeOp>(op);
+  }
+};
+
 struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
   using SICMPassBase::SICMPassBase;
 
@@ -346,6 +358,9 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
 
   void getDependentDialects(DialectRegistry &registry) const override {
     SICMPassBase::getDependentDialects(registry);
+    registry.addExtension(+[](MLIRContext *, ImpulseDialect *dialect) {
+      dialect->addInterfaces<ImpulseSICMRuleSet>();
+    });
     if (!schedule.empty())
       registry.insert<transform::TransformDialect, pdl::PDLDialect,
                       pdl_interp::PDLInterpDialect>();

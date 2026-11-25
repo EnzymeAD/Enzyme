@@ -20,8 +20,7 @@ namespace impulse {
 /// address or log density, or does not match the address arrays of the op.
 /// An op in a branch that holds sample sites moves above the branch when its
 /// operands come from outside the branch, it has results but no regions or
-/// memory effects, and it is an `arith.constant`, `impulse.slice` or
-/// `impulse.reshape` or `isHoistableFromBranch` holds.
+/// memory effects, and it is constant-like or `isHoistableFromBranch` holds.
 bool constructLogpdfRegion(
     InferRegionOp regionOp,
     function_ref<bool(Operation *)> isHoistableFromBranch);
