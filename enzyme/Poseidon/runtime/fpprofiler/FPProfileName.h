@@ -89,10 +89,18 @@ inline void writeProfileRecord(std::ostream &out, size_t slot,
         << r.maxOperands[i] << ", " << r.minMagOperands[i] << "]\n";
 }
 
-// The directory a profiling run writes to.
+// The directory -poseidon-profile-generate=<dir> named, defined by each unit
+// it compiled; weak, as a program may have none.
+extern "C" const char __poseidon_profile_dir[] __attribute__((weak));
+
+// The directory a profiling run writes to: POSEIDON_PROFILE_DIR, else the one
+// the program was built with, else the default.
 inline std::string profileDirectory() {
-  const char *dir = getenv("POSEIDON_PROFILE_DIR");
-  return dir ? dir : POSEIDON_DEFAULT_PROFILE_DIR;
+  if (const char *dir = getenv("POSEIDON_PROFILE_DIR"))
+    return dir;
+  if (__poseidon_profile_dir)
+    return __poseidon_profile_dir;
+  return POSEIDON_DEFAULT_PROFILE_DIR;
 }
 
 // Whether this process is a run of the condition-number measurement, which

@@ -152,7 +152,7 @@ struct OptimizePass : PassParent<OptimizePass> {
     changed |= foldDeviceSiteCallees(O, M);
     changed |= prepareModule(S, M);
     SmallVector<CallBase *, 4> calls;
-    if (!O.Profiling.ProfileGenerate)
+    if (!O.Profiling.generatesProfile())
       changed |= optimizeSites(
           S, collectSites(O, M, {Site::Form::HostBody, Site::Form::Kernel}),
           calls);
@@ -310,12 +310,12 @@ struct LatePass : PassParent<LatePass> {
     // sees.
     DenseMap<Function *, Function *> asLeft;
     canonicalizeBodies(O, M, bodies, AMs,
-                       O.Profiling.ProfileGenerate ? nullptr : &asLeft);
+                       O.Profiling.generatesProfile() ? nullptr : &asLeft);
 
     markers = collectDeferredSites(M);
 
     bool instrumented = false;
-    if (O.Profiling.ProfileGenerate) {
+    if (O.Profiling.generatesProfile()) {
       DenseMap<Function *, Function *> clones;
       unsigned nextSiteId = getNextSiteId(M);
       for (const Site &site : markers)
@@ -388,6 +388,7 @@ struct HostSitePass : PassParent<HostSitePass> {
     changed |= propagateDeviceSites(O, M);
     changed |= outlineHostSites(S, M);
     changed |= registerDeviceProfileTable(O, M);
+    changed |= defineProfileDirectory(O, M);
     if (!O.Profiling.profileAction())
       changed |= leaveSitesAsWritten(S, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
@@ -408,7 +409,7 @@ struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
     const Options &O = S.Opts;
     if (S.IsTwin || isOffloadHostHalf(M) || !hasSite(O, M))
       return PreservedAnalyses::all();
-    if (O.Profiling.usesProfile() && !O.Profiling.ProfileGenerate &&
+    if (O.Profiling.usesProfile() && !O.Profiling.generatesProfile() &&
         !O.Solver.JointDP)
       S.AsWrittenTwin = CloneModule(M);
     return PreservedAnalyses::all();
@@ -442,16 +443,16 @@ struct FinalizePass : PassParent<FinalizePass> {
     finalizeModule(S, M);
     // An annotation takes the address of the function it names, and a profiled
     // kernel may make an unknown call.
-    if (O.Profiling.ProfileGenerate && T.allocatesAddressTakenShared())
+    if (O.Profiling.generatesProfile() && T.allocatesAddressTakenShared())
       dropSiteAnnotations(M);
-    linkDeviceProfiler(M, O.Profiling.ProfileGenerate);
-    if (O.Profiling.ProfileGenerate)
+    linkDeviceProfiler(M, O.Profiling.generatesProfile());
+    if (O.Profiling.generatesProfile())
       requireSharedMemoryLimit(M);
-    requireDeviceCallees(M, O.Profiling.ProfileGenerate);
+    requireDeviceCallees(M, O.Profiling.generatesProfile());
     // Written after every site is processed and every check that can stop the
     // compile has passed, so a host half never reads the manifest of a device
     // half that failed.
-    if (O.Profiling.ProfileGenerate)
+    if (O.Profiling.generatesProfile())
       recordProfileTableSize(S, M);
     if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
       writeLaunchManifest(S, M);
@@ -489,7 +490,7 @@ struct IfSitePass : PassParent<IfSitePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     const Options &O = sessionOf(M, MAM).Opts;
     if (!hasSite(O, M))
-      return O.Profiling.ProfileGenerate &&
+      return O.Profiling.generatesProfile() &&
                      injectHostProfilerInit(M, O.Diagnostics.Print)
                  ? PreservedAnalyses::none()
                  : PreservedAnalyses::all();

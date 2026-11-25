@@ -100,6 +100,12 @@ void injectBlockDimProbes(llvm::Module &M, bool print);
 // whether it placed the call.
 bool injectHostProfilerInit(llvm::Module &M, bool print);
 
+// Host module of a -poseidon-profile-generate=<dir> compile: defines the
+// directory the program's profiling runs write to, as clang's
+// -fprofile-generate=<dir> does; POSEIDON_PROFILE_DIR overrides it at run
+// time. Every unit defines it, weakly, so the linker keeps one.
+bool defineProfileDirectory(const Options &O, llvm::Module &M);
+
 // Device module: declare the probes enzyme_inactive before anything calls them,
 // so that AD never differentiates them.
 void predeclareInactiveProfilerProbes(llvm::Module &M);

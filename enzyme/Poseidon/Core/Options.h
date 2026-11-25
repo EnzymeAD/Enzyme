@@ -83,11 +83,13 @@ struct ProfilingOptions {
 #define POSEIDON_PROFILING_OPTION POSEIDON_FIELD
 #include "Options.def"
 
+  // The compile builds the program to write profiles.
+  bool generatesProfile() const { return !ProfileGenerate.empty(); }
   // The compile solves from profiles.
   bool usesProfile() const { return !ProfileUse.empty(); }
   // Whether this compile generates or uses a profile: anything else leaves
   // every site as written.
-  bool profileAction() const { return ProfileGenerate || usesProfile(); }
+  bool profileAction() const { return generatesProfile() || usesProfile(); }
 };
 
 struct CandidateOptions {

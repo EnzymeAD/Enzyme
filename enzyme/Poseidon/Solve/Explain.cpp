@@ -1735,12 +1735,11 @@ void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
   json::Object result{{"status", status}, {"reason", reason}};
   if (!profile.empty())
     result["profile"] = profile;
-  writeExplanation(
-      S, body ? bodyProfileStem(S, F) : profileNameStem(F.getName().str()),
-      json::Object{{"schema", kSchema},
-                   {"function", functionJSON(S, F)},
-                   {"target", targetJSON(S.Opts, tau, siteTarget)},
-                   {"result", std::move(result)}});
+  writeExplanation(S, body ? bodyProfileStem(S, F) : siteFileStem(S, F),
+                   json::Object{{"schema", kSchema},
+                                {"function", functionJSON(S, F)},
+                                {"target", targetJSON(S.Opts, tau, siteTarget)},
+                                {"result", std::move(result)}});
 }
 
 void explainNothingToOptimize(Session &S, Function &F, double tau,
@@ -1782,7 +1781,7 @@ void explainSolve(Session &S, Function &F, FunctionFPState &st,
   if (remarks)
     E.emitRemarks();
   if (write)
-    writeExplanation(S, profileNameStem(F.getName().str()), E.toJSON());
+    writeExplanation(S, siteFileStem(S, F), E.toJSON());
 }
 
 } // namespace poseidon

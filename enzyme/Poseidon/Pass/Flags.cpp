@@ -101,8 +101,11 @@ Options readOptions() {
 #define POSEIDON_OPTION(Group, Field, ...)                                     \
   O.Group.Field = valueOf(flags::Field);
 #include "Core/Options.def"
-  if (flags::ProfileUse.getNumOccurrences() && O.Profiling.ProfileUse.empty())
-    O.Profiling.ProfileUse = kDefaultProfileDir.str();
+  for (auto [flag, dir] :
+       {std::pair(&flags::ProfileGenerate, &O.Profiling.ProfileGenerate),
+        std::pair(&flags::ProfileUse, &O.Profiling.ProfileUse)})
+    if (flag->getNumOccurrences() && dir->empty())
+      *dir = kDefaultProfileDir.str();
   std::vector<unsigned> &terms = O.Herbie.HerbieNumTaylorTerms;
   llvm::sort(terms);
   terms.erase(llvm::unique(terms), terms.end());

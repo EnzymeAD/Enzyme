@@ -50,11 +50,13 @@
 #endif
 
 // Profiling.
-POSEIDON_PROFILING_OPTION(ProfileGenerate, Bool, false,
-                          "poseidon-profile-generate", User, Other, "",
-                          "Build the program to write the FP profile of its "
-                          "sites when it runs")
 // Given without a directory, the one a profiling run writes by default.
+POSEIDON_PROFILING_OPTION(ProfileGenerate, Directory, "",
+                          "poseidon-profile-generate", User, Other,
+                          "directory",
+                          "Build the program to write the FP profile of its "
+                          "sites into this directory when it runs, unless "
+                          "POSEIDON_PROFILE_DIR names another")
 POSEIDON_PROFILING_OPTION(ProfileUse, Directory, "", "poseidon-profile-use",
                           User, Other, "directory",
                           "Optimize the sites from the FP profiles in this "

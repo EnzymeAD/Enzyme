@@ -190,7 +190,7 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
   // materializes only in the optimize phase: profile-gen builds instrument the
   // original kernel and do not link the runtime.
   bool changed = false;
-  if (O.Profiling.ProfileGenerate) {
+  if (O.Profiling.generatesProfile()) {
     changed |= rewriteProfileStubBodies(O, M);
     changed |= registerProfiledKernels(O, M);
   } else {

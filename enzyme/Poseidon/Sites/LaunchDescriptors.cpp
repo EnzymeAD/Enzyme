@@ -90,7 +90,7 @@ static Manifest manifestOf(const Options &O, const Module &M) {
 }
 
 bool handsOverLaunches(const Options &O) {
-  return O.Profiling.ProfileGenerate ||
+  return O.Profiling.generatesProfile() ||
          (O.Matmul.OzakiHostDispatch && O.Profiling.usesProfile());
 }
 

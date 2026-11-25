@@ -76,10 +76,11 @@ poseidon-clang -O2 -poseidon-profile-generate app.c -o app
 ./app small-input
 ```
 
-The run writes the profile of each site to `./poseidon.profile`, or to the
-directory `POSEIDON_PROFILE_DIR` names. A small problem is enough when its
-values are of the kind the large ones compute. A program that declares its
-result with `poseidon_metric(name, value)` runs under
+The run writes the profile of each site to `./poseidon.profile`, to the
+directory `-poseidon-profile-generate=<dir>` names, or to the one
+`POSEIDON_PROFILE_DIR` names when the program runs. A small problem is
+enough when its values are of the kind the large ones compute. A program
+that declares its result with `poseidon_metric(name, value)` runs under
 `poseidon-probe -- ./app small-input` instead, which measures each site's
 condition number against that result in 1 + 3 x <sites> more runs. Profiling
 host code needs glibc.

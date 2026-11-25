@@ -8,6 +8,7 @@
 
 #include "Instrument.h"
 
+#include "Core/Options.h"
 #include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Pass/Session.h"
@@ -15,6 +16,7 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "poseidon/poseidon.h"
 #include "runtime/fpprofiler/FPProfilerCUDA.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -327,7 +329,7 @@ bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
 }
 
 bool registerDeviceProfileTable(const Options &O, Module &M) {
-  if (!O.Profiling.ProfileGenerate || Target::of(M).isDevice() ||
+  if (!O.Profiling.generatesProfile() || Target::of(M).isDevice() ||
       M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
     return false;
   std::optional<VariableRegistration> registration = variableRegistration(M);
@@ -665,6 +667,18 @@ bool injectHostProfilerInit(Module &M, bool print) {
   if (print)
     llvm::errs()
         << "[poseidon] FP profiler CUDA registration injected at main\n";
+  return true;
+}
+
+bool defineProfileDirectory(const Options &O, Module &M) {
+  constexpr StringLiteral kName = "__poseidon_profile_dir";
+  const std::string &dir = O.Profiling.ProfileGenerate;
+  if (dir.empty() || dir == POSEIDON_DEFAULT_PROFILE_DIR ||
+      Target::of(M).isDevice() || M.getNamedGlobal(kName))
+    return false;
+  Constant *text = ConstantDataArray::getString(M.getContext(), dir);
+  new GlobalVariable(M, text->getType(), /*isConstant=*/true,
+                     GlobalValue::WeakAnyLinkage, text, kName);
   return true;
 }
 

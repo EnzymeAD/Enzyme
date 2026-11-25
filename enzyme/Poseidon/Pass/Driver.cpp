@@ -469,7 +469,7 @@ bool optimizeSites(Session &S, ArrayRef<Site> sites,
 }
 
 bool prepareModule(Session &S, Module &M) {
-  if (!S.Opts.Profiling.ProfileGenerate)
+  if (!S.Opts.Profiling.generatesProfile())
     return false;
   injectHostProfilerInit(M, S.Opts.Diagnostics.Print);
   predeclareInactiveProfilerProbes(M);
@@ -562,7 +562,7 @@ void finalizeModule(Session &S, Module &M) {
   }
   S.SiteClones.clear();
   S.SolvedSites.clear();
-  restoreHostWrapperDebugInfo(M, S.Opts.Profiling.ProfileGenerate);
+  restoreHostWrapperDebugInfo(M, S.Opts.Profiling.generatesProfile());
   // The site counter is a note the early run leaves for the late one; nothing
   // downstream reads it.
   if (auto *NMD = M.getNamedMetadata(kNextSiteIdMD))

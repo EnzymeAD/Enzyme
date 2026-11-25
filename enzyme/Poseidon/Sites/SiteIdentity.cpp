@@ -151,6 +151,11 @@ static std::string siteProfileStem(const Session &S, const Function &clone) {
   return profileNameStem(clone.getName().str());
 }
 
+std::string siteFileStem(const Session &S, const Function &F) {
+  const Function *origin = siteOriginOf(S, F);
+  return fileStem(F.getName(), siteIdentity(S, origin ? *origin : F));
+}
+
 std::string siteProfileFile(const Session &S, const Function &clone) {
   return siteProfileStem(S, clone) + kProfileFileSuffix;
 }

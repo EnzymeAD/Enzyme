@@ -11,7 +11,7 @@
 ; CHECK-NEXT: --poseidon-explain=<directory>
 ; CHECK: --poseidon-kernels=<regex>
 ; CHECK-NEXT: --poseidon-print
-; CHECK-NEXT: --poseidon-profile-generate
+; CHECK-NEXT: --poseidon-profile-generate[=<directory>]
 ; CHECK-NEXT: --poseidon-profile-use[=<directory>]
 ; CHECK: --poseidon-tau=<error>
 ; CHECK-NOT: --poseidon-

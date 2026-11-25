@@ -87,6 +87,9 @@ const llvm::Function *siteOriginOf(const Session &S,
 // The profile stem and file name of the site cut from `body`.
 std::string bodyProfileStem(const Session &S, const llvm::Function &body);
 std::string bodyProfileFile(const Session &S, const llvm::Function &body);
+// The stem of a file named after the site clone or body `F`, which is told
+// apart from a same-named function of another source file as its profile is.
+std::string siteFileStem(const Session &S, const llvm::Function &F);
 // The ".fpprofile" file name of a site clone. The profiling run writes one
 // record per marked body, so every clone of one body reads the same file.
 std::string siteProfileFile(const Session &S, const llvm::Function &clone);
