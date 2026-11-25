@@ -44,7 +44,6 @@ constexpr llvm::StringLiteral kAutodiffRequest = "__enzyme_autodiff_poseidon";
 
 void warn(llvm::CallBase *CI, const llvm::Twine &message);
 void fail(llvm::CallBase *CI, const llvm::Twine &message);
-llvm::Function *calleeOf(llvm::CallInst *CI);
 llvm::Function *markerTargetOrNull(llvm::CallInst *CI);
 llvm::Function *markerTarget(llvm::CallInst *CI);
 // The argument of a marker call or an Enzyme request that says what the

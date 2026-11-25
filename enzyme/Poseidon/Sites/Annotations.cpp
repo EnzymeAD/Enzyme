@@ -10,6 +10,7 @@
 
 #include "Canonicalize.h"
 #include "Core/Options.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "LaunchDescriptors.h"
 #include "Markers.h"
@@ -493,7 +494,7 @@ std::string hostSiteRefusal(Function &F) {
   }
   for (Instruction &I : instructions(F))
     if (auto *CB = dyn_cast<CallBase>(&I))
-      if (CB->getCalledOperand()->stripPointerCasts() == &F)
+      if (getFunctionFromCall(CB) == &F)
         return "calls itself";
   return "";
 }
@@ -620,7 +621,7 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
                      DS_Error);
         return nullptr;
       }
-      params[A.getArgNo()] = PointerType::getUnqual(M.getContext());
+      params[A.getArgNo()] = getInt8PtrTy(M.getContext());
     }
   // Named alike with and without -fgpu-rdc, which profile generation adds and
   // a solve need not: the profile is found by this name.

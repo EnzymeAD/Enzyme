@@ -38,6 +38,8 @@ config.substitutions.append(('%loadPoseidonEnzyme',
                              opt_load(poseidon_plugin) + ' ' +
                              opt_load(enzyme_opt_plugin)))
 config.substitutions.append(('%loadPoseidon', opt_load(poseidon_plugin)))
+config.substitutions.append(('%poseidon_plugin', poseidon_plugin))
+config.substitutions.append(('%enzyme_clang_plugin', enzyme_clang_plugin))
 
 config.substitutions.append(('%poseidon_clangxx',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-clang++'))

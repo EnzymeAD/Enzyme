@@ -8,6 +8,7 @@
 
 #include "Instrument.h"
 
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Pass/Session.h"
 #include "Sites/Canonicalize.h"
@@ -51,7 +52,7 @@ namespace poseidon {
 
 Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
   LLVMContext &Ctx = M.getContext();
-  Type *PtrTy = PointerType::getUnqual(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
   GlobalVariable *gv = gvName.empty() ? nullptr : M.getNamedGlobal(gvName);
   if (!gv) {
     auto *strConst = ConstantDataArray::getString(Ctx, contents, true);
@@ -87,7 +88,7 @@ FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
 // operands), (site name, slot, value, adjoint), and (site id, value) of the
 // perturbation at `FpTy`.
 static FunctionType *logValueType(LLVMContext &C) {
-  Type *Ptr = PointerType::getUnqual(C), *I64 = Type::getInt64Ty(C),
+  Type *Ptr = getInt8PtrTy(C), *I64 = Type::getInt64Ty(C),
        *Double = Type::getDoubleTy(C);
   return FunctionType::get(Type::getVoidTy(C), {Ptr, I64, Double, I64, Ptr},
                            false);
@@ -97,7 +98,7 @@ static FunctionType *logGradientType(LLVMContext &C) {
   Type *Double = Type::getDoubleTy(C);
   return FunctionType::get(
       Type::getVoidTy(C),
-      {PointerType::getUnqual(C), Type::getInt64Ty(C), Double, Double}, false);
+      {getInt8PtrTy(C), Type::getInt64Ty(C), Double, Double}, false);
 }
 
 static FunctionType *perturbType(Type *FpTy) {
@@ -193,7 +194,7 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
   LLVMContext &Ctx = M.getContext();
   const ProbeABI &P = Target::of(M).probes();
   Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *PtrTy = PointerType::getUnqual(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
   Type *SizeTy = Type::getInt64Ty(Ctx);
   Type *Int32Ty = Type::getInt32Ty(Ctx);
 
@@ -277,7 +278,7 @@ void emitProfileStaticData(Function &clone, StringRef text) {
     return;
   }
   LLVMContext &Ctx = M.getContext();
-  Type *PtrTy = PointerType::getUnqual(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
 
   Constant *namePtr = getProfileNamePointer(M, clone.getName());
   Constant *textPtr =
@@ -299,7 +300,7 @@ void emitProfileStaticData(Function &clone, StringRef text) {
 bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
   LLVMContext &Ctx = M.getContext();
   Type *VoidTy = Type::getVoidTy(Ctx);
-  Type *PtrTy = PointerType::getUnqual(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
 
   Constant *namePtr = getProfileNamePointer(M, name);
   Constant *textPtr =
@@ -331,7 +332,7 @@ bool registerDeviceProfileTable(const Options &O, Module &M) {
 
   LLVMContext &C = M.getContext();
   Type *VoidTy = Type::getVoidTy(C);
-  Type *PtrTy = PointerType::getUnqual(C);
+  Type *PtrTy = getInt8PtrTy(C);
   const uint64_t size = sizeof(PoseidonCUDAProfileTable);
   auto *shadowTy = ArrayType::get(Type::getInt8Ty(C), size);
   auto *shadow = new GlobalVariable(
@@ -674,7 +675,7 @@ void injectBlockDimProbes(Module &M, bool print) {
   if (!logFn)
     return;
   LLVMContext &Ctx = M.getContext();
-  Type *PtrTy = PointerType::getUnqual(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
   FunctionCallee probeFn = getProfilerHook(
       M, P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
 
@@ -685,7 +686,7 @@ void injectBlockDimProbes(Module &M, bool print) {
     Value *nameArg = nullptr;
     for (Instruction &I : instructions(F))
       if (auto *CI = dyn_cast<CallInst>(&I);
-          CI && CI->getCalledOperand()->stripPointerCasts() == logFn) {
+          CI && getFunctionFromCall(CI) == logFn) {
         nameArg = CI->getArgOperand(0);
         break;
       }

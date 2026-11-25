@@ -40,3 +40,6 @@ if int(config.llvm_ver) < 24:
 # which a HIP compile's device half is an LTO pre-link compile.
 if int(config.llvm_ver) >= 23:
     config.available_features.add('offload-new-driver')
+# From LLVM 23 a function's GUID is kept as !guid metadata.
+if int(config.llvm_ver) >= 23:
+    config.available_features.add('guid-metadata')

@@ -8,6 +8,7 @@
 
 #include "SiteProfile.h"
 
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Instrument.h"
 #include "Pass/Session.h"
@@ -373,7 +374,7 @@ static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
   }
 
   SmallVector<Type *, 16> params(K.getFunctionType()->params());
-  Type *PtrTy = PointerType::getUnqual(C);
+  Type *PtrTy = getInt8PtrTy(C);
   for (size_t k = 0; k < shadowed.size(); ++k)
     params.push_back(PtrTy);
 
@@ -596,7 +597,7 @@ void registerStackArrays(Session &S, Module &M) {
 void registerGlobals(Module &M) {
   LLVMContext &C = M.getContext();
   const DataLayout &DL = M.getDataLayout();
-  Type *PtrTy = PointerType::getUnqual(C);
+  Type *PtrTy = getInt8PtrTy(C);
   Type *I64 = Type::getInt64Ty(C);
   StructType *entryTy = StructType::get(C, {PtrTy, I64});
   SmallVector<Constant *, 32> entries;
@@ -649,7 +650,7 @@ static void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
     CI = changeToCall(cast<InvokeInst>(CB));
   Module &M = *CI->getModule();
   LLVMContext &C = M.getContext();
-  Type *PtrTy = PointerType::getUnqual(C);
+  Type *PtrTy = getInt8PtrTy(C);
   const unsigned nptr = D.ptrParams.size();
   ArrayType *arrTy = ArrayType::get(PtrTy, nptr);
 
@@ -727,7 +728,7 @@ static bool profileHostBody(Session &S, Function &B, unsigned &nextSiteId) {
     D.name = getStringPointer(M, "", name);
     D.param = constantArray(M, I32, param);
     D.seed = constantArray(M, I32, seed);
-    D.paramNames = constantArray(M, PointerType::getUnqual(C), names);
+    D.paramNames = constantArray(M, getInt8PtrTy(C), names);
   }
 
   for (CallBase *CB : calls)

@@ -8,6 +8,7 @@
 
 #include "LaunchDescriptors.h"
 #include "Core/CacheKey.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Pass/Session.h"
 #include "Targets/OffloadRuntime.h"
@@ -262,7 +263,7 @@ static bool isByValueParam(const Argument &A) {
 // attribute is not enough: under -fgpu-rdc, which profile generation adds, a
 // kernel is weak_odr and nothing infers it.
 static bool onlyRead(const Argument &A) {
-  if (A.onlyReadsMemory())
+  if (isReadOnly(A.getParent(), A.getArgNo()))
     return true;
   SmallVector<const Value *, 8> work{&A};
   SmallPtrSet<const Value *, 8> seen{&A};
@@ -282,9 +283,8 @@ static bool onlyRead(const Argument &A) {
         return false;
       }
       if (auto *CB = dyn_cast<CallBase>(user))
-        if (CB->isArgOperand(&U) &&
-            CB->onlyReadsMemory(CB->getArgOperandNo(&U)) &&
-            CB->doesNotCapture(CB->getArgOperandNo(&U)))
+        if (CB->isArgOperand(&U) && isReadOnly(CB, CB->getArgOperandNo(&U)) &&
+            isNoCapture(CB, CB->getArgOperandNo(&U)))
           continue;
       return false;
     }
@@ -318,18 +318,8 @@ LaunchRef launchFieldOf(const Value *v) {
     auto *A = dyn_cast<Argument>(EV->getAggregateOperand());
     if (!A)
       return {};
-    const DataLayout &DL = EV->getModule()->getDataLayout();
-    Type *T = A->getType();
-    uint64_t off = 0;
-    for (unsigned idx : EV->indices()) {
-      if (auto *ST = dyn_cast<StructType>(T)) {
-        off += DL.getStructLayout(ST)->getElementOffset(idx);
-        T = ST->getElementType(idx);
-      } else {
-        T = cast<ArrayType>(T)->getElementType();
-        off += idx * DL.getTypeAllocSize(T);
-      }
-    }
+    uint64_t off = getAggregateElementOffset(EV->getModule()->getDataLayout(),
+                                             A->getType(), EV->getIndices());
     return {(int)A->getArgNo(), (int64_t)off};
   }
   return {};

@@ -8,6 +8,7 @@
 
 #include "OffloadRuntime.h"
 
+#include "Enzyme/Utils.h"
 #include "Target.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -139,7 +140,7 @@ CallInst *findLaunchCall(Function &F) {
 
 FunctionCallee popCallConfiguration(Module &M) {
   LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
+  Type *ptr = getInt8PtrTy(C);
   FunctionType *FT =
       FunctionType::get(Type::getInt32Ty(C), {ptr, ptr, ptr, ptr}, false);
   return M.getOrInsertFunction(M.getFunction("__hipPopCallConfiguration")
@@ -210,7 +211,7 @@ void registerDeviceVariable(Module &M, const VariableRegistration &R,
   }
   LLVMContext &C = M.getContext();
   Type *VoidTy = Type::getVoidTy(C);
-  Type *PtrTy = PointerType::getUnqual(C);
+  Type *PtrTy = getInt8PtrTy(C);
   Type *I32Ty = Type::getInt32Ty(C);
   Type *I64Ty = Type::getInt64Ty(C);
   FunctionCallee registerVar = M.getOrInsertFunction(

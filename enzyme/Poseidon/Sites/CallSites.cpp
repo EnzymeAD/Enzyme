@@ -10,6 +10,7 @@
 
 #include "Annotations.h"
 #include "Core/Options.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Markers.h"
 #include "Site.h"
@@ -94,7 +95,7 @@ static CallInst *emitMarkerCall(CallBase *call, Function *fn, double tau,
   SmallVector<AttributeSet, 16> params(args.size());
   append_range(params, listAttrs);
   append_range(args, list);
-  auto *FT = FunctionType::get(call->getType(), {PointerType::getUnqual(C)},
+  auto *FT = FunctionType::get(call->getType(), {getInt8PtrTy(C)},
                                /*isVarArg=*/true);
   FunctionCallee marker =
       call->getModule()->getOrInsertFunction(kMarkerName, FT);
@@ -160,7 +161,7 @@ static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
   Value *callee = fn;
   if (!hostHalf) {
     LLVMContext &C = M.getContext();
-    Type *Ptr = PointerType::getUnqual(C);
+    Type *Ptr = getInt8PtrTy(C);
     CallInst *identity;
     if (list.tau) {
       Type *Double = Type::getDoubleTy(C);
@@ -390,6 +391,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
     B->removeFnAttr(Attribute::InlineHint);
     B->addFnAttr(Attribute::NoInline);
     B->addFnAttr(kHostBody, *tau > 0.0 ? exactDouble(*tau) : "");
+    resetClonedGUID(B);
     appendToCompilerUsed(M, {B});
     call->setCalledOperand(B);
     H->eraseFromParent();
@@ -537,7 +539,7 @@ struct ExtentWalk {
         if (!CB->isArgOperand(&U))
           return fail("calls as a function");
         const unsigned no = CB->getArgOperandNo(&U);
-        if (CB->doesNotAccessMemory(no) && CB->doesNotCapture(no))
+        if (isReadNone(CB, no) && isNoCapture(CB, no))
           continue;
         if (Type *T = CB->getParamByValType(no)) {
           if (!memoryAccess(off, T, CB->getParamAlign(no).valueOrOne(), false))

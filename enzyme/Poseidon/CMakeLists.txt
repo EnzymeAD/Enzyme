@@ -172,9 +172,14 @@ add_llvm_library(
   intrinsics_gen)
 target_include_directories(
   ${POSEIDON_PLUGIN_TARGET}
-  PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include
-    ${ENZYME_SOURCE_DIR})
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
+# Enzyme's helpers, of which the plugin calls only those that touch no Enzyme
+# state (test/Poseidon/Pass/enzyme_symbols.ll). A system directory, so that
+# the helpers a source file does not call do not warn as unused.
+target_include_directories(
+  ${POSEIDON_PLUGIN_TARGET}
+  SYSTEM
+  PRIVATE ${ENZYME_SOURCE_DIR})
 target_include_directories(
   ${POSEIDON_PLUGIN_TARGET}
   SYSTEM

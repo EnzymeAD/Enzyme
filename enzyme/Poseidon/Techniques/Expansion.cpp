@@ -9,6 +9,7 @@
 #include "Expansion.h"
 #include "Core/ExpansionRoutines.h"
 #include "Core/Options.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
@@ -330,9 +331,9 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
 }
 
 // The math function a call to `callee` computes: sqrt, fma or fmuladd for an
-// intrinsic, else the name its enzyme_math attribute gives, else
-// mathFunctionOf's answer.
-static StringRef mathNameOf(const Function &callee) {
+// intrinsic, else mathFunctionOf's answer for its name, the one its enzyme_math
+// attribute gives when it has one.
+static StringRef mathNameOf(Function &callee) {
   if (callee.isIntrinsic()) {
     Intrinsic::ID id = callee.getIntrinsicID();
     if (id == Intrinsic::sqrt)
@@ -343,9 +344,7 @@ static StringRef mathNameOf(const Function &callee) {
       return "fma";
     return StringRef();
   }
-  if (callee.hasFnAttribute("enzyme_math"))
-    return callee.getFnAttribute("enzyme_math").getValueAsString();
-  return mathFunctionOf(callee.getName());
+  return mathFunctionOf(getFuncName(&callee));
 }
 
 // Loop-carried phi incomings are deferred: the accumulator phi and the
@@ -546,9 +545,10 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
         externalUses.push_back(&U);
     }
     if (!externalUses.empty()) {
-      BasicBlock::iterator restorePos =
-          isa<PHINode>(I) ? I->getParent()->getFirstNonPHIIt()
-                          : std::next(BasicBlock::iterator(I));
+      BasicBlock::iterator restorePos = std::next(BasicBlock::iterator(I));
+      if (isa<PHINode>(I))
+        // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
+        restorePos = I->getParent()->getFirstNonPHIIt();
       IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
       Value *restored = emitExpansionToFP(RestoreB, v, I->getType());
       assert(restored->getType() == I->getType() &&
@@ -582,8 +582,9 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
       if (!v.x.empty() && phi->getType()->isDoubleTy())
         carriedPhis.push_back(phi);
   for (PHINode *phi : carriedPhis) {
-    IRBuilder<> RB =
-        builderAt(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
+    // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
+    BasicBlock::iterator at = phi->getParent()->getFirstNonPHIIt();
+    IRBuilder<> RB = builderAt(phi->getParent(), at);
     Value *restored = emitExpansionToFP(RB, expansionMap[phi], phi->getType());
     phi->replaceAllUsesWith(restored);
     if (restoredValues)

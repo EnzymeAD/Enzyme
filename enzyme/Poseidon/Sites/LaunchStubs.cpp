@@ -8,6 +8,7 @@
 
 #include "LaunchStubs.h"
 #include "Annotations.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "LaunchDescriptors.h"
 #include "Pass/Session.h"
@@ -101,7 +102,7 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
     return false;
 
   LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
+  Type *ptr = getInt8PtrTy(C);
   Type *i32 = Type::getInt32Ty(C);
   Type *i64 = Type::getInt64Ty(C);
   FunctionCallee helper = M.getOrInsertFunction(

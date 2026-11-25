@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Enzyme/Utils.h"
 #include "MathLibrary.h"
 #include "NVPTXTensorCore.h"
 #include "Target.h"
@@ -228,7 +229,7 @@ Wmma declareWmma(Module *M, unsigned m, unsigned n, unsigned k,
       "llvm.nvvm.wmma." + shape + ".mma.row." + layoutB + "." + mmaSuffix);
   Intrinsic::ID storeD = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
                                               ".store.d.row.stride." + d);
-  PointerType *genPtrTy = PointerType::get(M->getContext(), /*addrspace=*/0);
+  PointerType *genPtrTy = getInt8PtrTy(M->getContext());
   return {Intrinsic::getOrInsertDeclaration(M, loadA, {genPtrTy}),
           Intrinsic::getOrInsertDeclaration(M, loadB, {genPtrTy}),
           Intrinsic::getOrInsertDeclaration(M, mma),

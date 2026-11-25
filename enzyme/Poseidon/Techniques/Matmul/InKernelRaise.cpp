@@ -17,6 +17,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Model/FPFormat.h"
@@ -403,7 +404,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   Type *i32Ty = Type::getInt32Ty(ctx);
   Type *i64Ty = Type::getInt64Ty(ctx);
   Type *f32Ty = Type::getFloatTy(ctx);
-  PointerType *genPtrTy = PointerType::get(ctx, /*addrspace=*/0);
+  PointerType *genPtrTy = getInt8PtrTy(ctx);
 
   // The scratch element type matches the wmma fragment's element view; TF32
   // wmma loads bit-cast F32 storage into i32 fragments, so F32 is stored after
@@ -793,7 +794,9 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   // Store the final accumulators to the output scratch, warp-gated too: only
   // warp 0's PHIs hold the result, and the barrier after makes the store
   // visible to the readback in exitBB.
-  IRBuilder<> afterB = builderAt(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
+  // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
+  BasicBlock::iterator afterAt = afterLoopBB->getFirstNonPHIIt();
+  IRBuilder<> afterB = builderAt(afterLoopBB, afterAt);
   BasicBlock *storeMergeBB = nullptr;
   if (useWarpGate) {
     Value *afterTlin =

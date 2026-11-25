@@ -11,6 +11,7 @@
 #include "Annotations.h"
 #include "Core/Options.h"
 #include "Enzyme/EnzymeCallMarkers.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -48,16 +49,6 @@ void fail(CallBase *CI, const Twine &message) {
   diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Error);
 }
 
-// The call's function type may disagree with the declaration's when the
-// annotation is declared fully variadic, and getCalledFunction() gives up in
-// that case.
-Function *calleeOf(CallInst *CI) {
-  Value *callee = CI->getCalledOperand();
-  if (auto *ce = dyn_cast<ConstantExpr>(callee); ce && ce->isCast())
-    callee = ce->getOperand(0);
-  return dyn_cast<Function>(callee);
-}
-
 // The body a marker names, or null, without diagnostics: a malformed marker
 // is reported once, by the handler that lowers it. An empty body is returned
 // as found; only markerTarget refuses it.
@@ -80,6 +71,9 @@ Function *markerTargetOrNull(CallInst *CI) {
 }
 
 Value *activityArg(LLVMContext &C, StringRef name) {
+  assert((name.starts_with("poseidon_") ||
+          enzyme_markers::lookupEnzymeMarker(name)) &&
+         "not an activity marker Enzyme reads");
   return MetadataAsValue::get(C, MDString::get(C, name));
 }
 
@@ -139,7 +133,7 @@ static bool isEnzymeGeneratedName(StringRef name) {
 unsigned foldEnzymeGenerated(Function &body) {
   return inlineCallsWhile(body, [&](CallBase &CB) {
     auto *CI = dyn_cast<CallInst>(&CB);
-    Function *callee = CI ? calleeOf(CI) : nullptr;
+    Function *callee = CI ? getFunctionFromCall(CI) : nullptr;
     return callee && !callee->isDeclaration() && callee != &body &&
            isEnzymeGeneratedName(callee->getName());
   });
@@ -162,6 +156,7 @@ Function *asLeftByPipeline(Function &body,
   // NVPTX gives only a local symbol a name PTX can spell.
   copy->setLinkage(GlobalValue::InternalLinkage);
   copy->removeFnAttr(kSiteDeferred);
+  resetClonedGUID(copy);
   copies[&body] = copy;
   for (Instruction &I : instructions(*copy))
     if (auto *CB = dyn_cast<CallBase>(&I))
@@ -189,7 +184,7 @@ bool callsEnzymeRequest(Function &F) {
       auto *CI = dyn_cast<CallInst>(&I);
       if (!CI)
         continue;
-      Function *callee = calleeOf(CI);
+      Function *callee = getFunctionFromCall(CI);
       if (!callee)
         continue;
       // Poseidon's own request is emitted over an instrumented clone, never
@@ -227,7 +222,7 @@ void collectMarkerCalls(Module &M, SmallVectorImpl<CallInst *> &out) {
       continue;
     for (Instruction &I : instructions(F))
       if (auto *CI = dyn_cast<CallInst>(&I))
-        if (Function *callee = calleeOf(CI))
+        if (Function *callee = getFunctionFromCall(CI))
           if (isMarkerCall(callee->getName()))
             out.push_back(CI);
   }

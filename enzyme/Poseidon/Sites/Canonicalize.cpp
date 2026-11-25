@@ -8,6 +8,7 @@
 
 #include "Canonicalize.h"
 
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "SiteIdentity.h"
 #include "Targets/MathLibrary.h"
@@ -275,11 +276,7 @@ insertNewCanonicalIV(Loop *L, Type *Ty, const Twine &Name) {
   IRBuilder<> B = builderAt(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
-#if LLVM_VERSION_MAJOR >= 24
-  B.SetInsertPoint(Header->getFirstNonPHIOrPseudoProbe());
-#else
-  B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
-#endif
+  B.SetInsertPoint(getFirstNonPHIOrDbg(Header));
   auto *Inc = cast<Instruction>(
       B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), Name + ".next",
                   /*NUW*/ true, /*NSW*/ true));
@@ -324,8 +321,9 @@ static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     PN->eraseFromParent();
 
     SCEVExpander Exp = makeSCEVExpander(SE, "poseidon");
-    Value *NewIV =
-        Exp.expandCodeFor(S, Tmp->getType(), Header->getFirstNonPHIIt());
+    // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
+    BasicBlock::iterator at = Header->getFirstNonPHIIt();
+    Value *NewIV = Exp.expandCodeFor(S, Tmp->getType(), at);
 
     if (auto *addrec = dyn_cast<SCEVAddRecExpr>(S)) {
       if (addrec->getLoop()->getHeader() == Header) {
@@ -341,7 +339,7 @@ static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     Tmp->eraseFromParent();
   }
 
-  Increment->moveAfter(&*CanonicalIV->getParent()->getFirstNonPHIIt());
+  Increment->moveAfter(getFirstNonPHI(CanonicalIV->getParent()));
   SmallVector<Instruction *, 1> toErase;
   for (auto *use : CanonicalIV->users()) {
     auto *BO = dyn_cast<BinaryOperator>(use);
@@ -544,6 +542,7 @@ Function *canonicalize(Function &F) {
   // can call exit() or spin forever is neither willreturn nor mustprogress.
   NewF->setAttributes(F.getAttributes());
   setFullWillReturn(NewF);
+  resetClonedGUID(NewF);
 
   CanonicalizeAnalyses A(NewF->getContext());
   FunctionAnalysisManager &FAM = A.FAM;

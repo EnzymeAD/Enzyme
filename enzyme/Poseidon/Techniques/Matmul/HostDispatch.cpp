@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "HostDispatch.h"
+#include "Enzyme/Utils.h"
 #include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Pass/Session.h"
@@ -774,7 +775,7 @@ static bool dispatchHasMode(Scheme s) {
 
 static FunctionCallee getDispatchCallee(Module &M, Scheme scheme) {
   LLVMContext &C = M.getContext();
-  Type *Ptr = PointerType::get(C, 0);
+  Type *Ptr = getInt8PtrTy(C);
   Type *I32 = Type::getInt32Ty(C);
   Type *Double = Type::getDoubleTy(C);
 #define POSEIDON_GEMM_TYPE(CType, IRType, Name) IRType,
@@ -934,7 +935,7 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
     return false;
   }
   LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
+  Type *ptr = getInt8PtrTy(C);
   Type *i32 = Type::getInt32Ty(C);
   Type *i64 = Type::getInt64Ty(C);
   Type *dbl = Type::getDoubleTy(C);
