@@ -15,7 +15,8 @@
 ;
 ; -poseidon-split-calls=pow gives the pow call its own FP subgraph with the
 ; operations only it uses (the fma and the fneg; log T stays with its other
-; user), whatever -poseidon-min-uses-split/-poseidon-min-ops-split (99 here) say.
+; user), whatever -poseidon-min-uses-split/-poseidon-min-ops-split say (unset
+; here, which splits at no shared operation).
 ;
 ; The accuracy model draws T and y and evaluates log T from them, so every draw
 ; lands inside the profiled input box.

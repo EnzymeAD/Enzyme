@@ -19,6 +19,9 @@ namespace poseidon {
 static std::string value(bool v) { return v ? "1" : "0"; }
 static std::string value(double v) { return formatv("{0:e16}", v).str(); }
 static std::string value(const std::string &v) { return v; }
+static std::string value(const std::optional<unsigned> &v) {
+  return v ? std::to_string(*v) : "";
+}
 static std::string value(const std::vector<std::string> &v) {
   return join(v, ",");
 }

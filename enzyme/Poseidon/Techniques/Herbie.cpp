@@ -109,6 +109,20 @@ static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
 }
 
 // How this compile runs Herbie: its -poseidon-herbie-* flags.
+// Herbie's --timeout has no unbounded value; this one stands for no limit of
+// Poseidon's.
+static constexpr unsigned kUnboundedCoreTimeout = 9999;
+
+// Herbie's per-core --timeout: -poseidon-herbie-timeout, else the subgraph's
+// wall-clock budget, which bounds it anyway.
+static unsigned herbieCoreTimeout(const Options &O) {
+  if (O.Herbie.HerbieTimeout)
+    return O.Herbie.HerbieTimeout;
+  if (O.Herbie.HerbieSubgraphTimeout)
+    return O.Herbie.HerbieSubgraphTimeout;
+  return kUnboundedCoreTimeout;
+}
+
 static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
   const Options &O = S.Opts;
   HerbieRunOptions Opts;
@@ -120,7 +134,7 @@ static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
   Opts.NumPoints = O.Herbie.HerbieNumPts;
   Opts.NumIters = O.Herbie.HerbieNumIters;
   Opts.NumEnodes = O.Herbie.HerbieNumEnodes;
-  Opts.CoreTimeout = O.Herbie.HerbieTimeout;
+  Opts.CoreTimeout = herbieCoreTimeout(O);
   Opts.NumThreads = O.Herbie.HerbieNumThreads;
   Opts.Processes = O.Herbie.HerbieProcesses;
   Opts.SubgraphTimeout = O.Herbie.HerbieSubgraphTimeout;

@@ -350,7 +350,8 @@ static double baselineAccCost(ArrayRef<RewriteUnit> COs,
 }
 
 bool selectable(const Options &O, double accCost) {
-  return std::isfinite(accCost) && accCost < O.Model.ExponentPenalty;
+  return std::isfinite(accCost) &&
+         (O.Model.ExponentPenalty <= 0.0 || accCost < O.Model.ExponentPenalty);
 }
 
 // The most accurate selectable point within the budget. The frontier's

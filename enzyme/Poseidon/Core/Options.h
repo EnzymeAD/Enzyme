@@ -19,6 +19,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,6 +30,8 @@ namespace poseidon {
 enum class OptionKind {
   Bool,
   Unsigned,
+  // An unsigned that may be left unset.
+  OptionalUnsigned,
   Int,
   // A double; an empty value reads as NaN, which validateOptions refuses.
   Number,
@@ -52,6 +55,9 @@ template <> struct OptionField<OptionKind::Bool> {
 };
 template <> struct OptionField<OptionKind::Unsigned> {
   using type = unsigned;
+};
+template <> struct OptionField<OptionKind::OptionalUnsigned> {
+  using type = std::optional<unsigned>;
 };
 template <> struct OptionField<OptionKind::Int> {
   using type = int;

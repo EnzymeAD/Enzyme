@@ -367,7 +367,8 @@ static bool isExpansionBottleneck(const Options &O, Instruction *I,
     }
   }
 
-  if (!forced && internalUses < O.Candidates.MinUsesSplit) {
+  if (!forced && (O.Candidates.MinUsesSplit == 0 ||
+                  internalUses < O.Candidates.MinUsesSplit)) {
     return false;
   }
 

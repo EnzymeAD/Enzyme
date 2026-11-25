@@ -118,12 +118,13 @@ POSEIDON_CANDIDATE_OPTION(MaxExprLength, Unsigned, 10000,
                           "Longest expression, in characters, of an output "
                           "sent to Herbie; a longer one is not rewritten by "
                           "Herbie")
-POSEIDON_CANDIDATE_OPTION(MinUsesSplit, Unsigned, 99, "poseidon-min-uses-split",
+POSEIDON_CANDIDATE_OPTION(MinUsesSplit, Unsigned, 0, "poseidon-min-uses-split",
                           Hidden, SolveInput, "",
                           "Split an FP subgraph at an operation that at least "
                           "this many of its operations use, when "
-                          "-poseidon-min-ops-split operations feed it alone")
-POSEIDON_CANDIDATE_OPTION(MinOpsSplit, Unsigned, 99, "poseidon-min-ops-split",
+                          "-poseidon-min-ops-split operations feed it alone; "
+                          "0 splits at no such operation")
+POSEIDON_CANDIDATE_OPTION(MinOpsSplit, Unsigned, 1, "poseidon-min-ops-split",
                           Hidden, SolveInput, "",
                           "Split an FP subgraph at an operation that "
                           "-poseidon-min-uses-split of its operations use only "
@@ -191,12 +192,12 @@ POSEIDON_MODEL_OPTION(RandomSeed, Unsigned, 239778888, "poseidon-random-seed",
                       "Seed of the accuracy model's samples and of Herbie's "
                       "search")
 POSEIDON_MODEL_OPTION(
-    SampleLogBits, Unsigned, 0, "poseidon-sample-log-bits", Hidden, SolveInput,
-    "",
+    SampleLogBits, OptionalUnsigned, std::nullopt, "poseidon-sample-log-bits",
+    Hidden, SolveInput, "",
     "Sample a matrix product's accuracy inputs log-uniformly in magnitude over "
     "[m * 2^-B, m], m the largest profiled magnitude and B this value; 0 "
-    "samples uniformly over the profiled range, except that a site solved "
-    "under an accuracy target takes B = 40")
+    "samples uniformly over the profiled range. Unset, a site solved under an "
+    "accuracy target takes B = 40 and any other solve samples uniformly")
 POSEIDON_MODEL_OPTION(StrictMode, Bool, false, "poseidon-strict-mode", Hidden,
                       SolveInput, "",
                       "Stop with an error wherever the pass would warn and "
@@ -225,7 +226,9 @@ POSEIDON_MODEL_OPTION(
     SolveInput, "",
     "Penalty added to a matrix-product candidate's accuracy cost when its "
     "input format flushes the smallest nonzero operand magnitude the profile "
-    "recorded to zero")
+    "recorded to zero; no point of that accuracy cost or more is selected, so "
+    "the default keeps such a candidate out of every solution. 0 prices it "
+    "at its modelled error")
 POSEIDON_MODEL_OPTION(Threads, Unsigned, 1, "poseidon-threads", Hidden, Other,
                       "",
                       "Threads the accuracy model runs on (0 = all hardware "
@@ -249,9 +252,10 @@ POSEIDON_HERBIE_OPTION(
     "compile)")
 POSEIDON_HERBIE_OPTION(HerbieNumThreads, Int, 8, "poseidon-herbie-num-threads",
                        Hidden, Other, "", "Threads Herbie runs on")
-POSEIDON_HERBIE_OPTION(HerbieTimeout, Int, 9999, "poseidon-herbie-timeout",
+POSEIDON_HERBIE_OPTION(HerbieTimeout, Unsigned, 0, "poseidon-herbie-timeout",
                        Hidden, Other, "",
-                       "Herbie's --timeout, in seconds, for each FPCore")
+                       "Herbie's --timeout, in seconds, for each FPCore; 0 "
+                       "takes -poseidon-herbie-subgraph-timeout")
 POSEIDON_HERBIE_OPTION(HerbieNumPts, Int, 1024, "poseidon-herbie-num-pts",
                        Hidden, SolveInput, "",
                        "Herbie's --num-points, the input points it judges "

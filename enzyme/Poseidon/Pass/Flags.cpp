@@ -49,6 +49,9 @@ public:
 template <OptionKind K> struct Flag {
   using type = cl::opt<OptionValue<K>>;
 };
+template <> struct Flag<OptionKind::OptionalUnsigned> {
+  using type = cl::opt<unsigned>;
+};
 template <> struct Flag<OptionKind::Number> {
   using type = cl::opt<double, false, NumberParser>;
 };
@@ -67,6 +70,8 @@ static auto valueModifier(const T &Default) {
     return cl::CommaSeparated;
   else if constexpr (K == OptionKind::Directory)
     return cl::ValueOptional;
+  else if constexpr (K == OptionKind::OptionalUnsigned)
+    return cl::ValueRequired;
   else
     return cl::init(Default);
 }
@@ -81,6 +86,14 @@ static T valueOf(const cl::opt<T, false, P> &Flag) {
 }
 template <typename T> static std::vector<T> valueOf(const cl::list<T> &Flag) {
   return std::vector<T>(Flag.begin(), Flag.end());
+}
+// The value of a flag of kind K: for an optional one, none unless it is given.
+template <OptionKind K, typename F> static OptionValue<K> read(const F &Flag) {
+  if constexpr (K == OptionKind::OptionalUnsigned)
+    return Flag.getNumOccurrences() ? OptionValue<K>(Flag.getValue())
+                                    : std::nullopt;
+  else
+    return valueOf(Flag);
 }
 
 // Before the flags, which take their defaults from it.
@@ -98,8 +111,8 @@ namespace flags {
 
 Options readOptions() {
   Options O;
-#define POSEIDON_OPTION(Group, Field, ...)                                     \
-  O.Group.Field = valueOf(flags::Field);
+#define POSEIDON_OPTION(Group, Field, Kind, ...)                               \
+  O.Group.Field = read<OptionKind::Kind>(flags::Field);
 #include "Core/Options.def"
   for (auto [flag, dir] :
        {std::pair(&flags::ProfileGenerate, &O.Profiling.ProfileGenerate),

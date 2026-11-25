@@ -592,9 +592,8 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   // of wide dynamic range, so a target defaults to a wide log-uniform range
   // unless -poseidon-sample-log-bits is given. Only the matrix accuracy model
   // reads it.
-  unsigned sampleLogBits = O.Model.SampleLogBits;
-  if (target > 0.0 && sampleLogBits == 0)
-    sampleLogBits = 40;
+  unsigned sampleLogBits =
+      O.Model.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
 
   const StringSet<> declared = declaredFunctions(*F.getParent());
   FunctionFPState st;
@@ -667,7 +666,8 @@ bool solveJointly(Session &S, Module &M) {
   std::vector<std::unique_ptr<FunctionFPState>> states;
   for (auto &[F, errTol] : targets) {
     auto st = std::make_unique<FunctionFPState>();
-    if (collectFPCandidates(S, *F, errTol, O.Model.SampleLogBits, *st)) {
+    if (collectFPCandidates(S, *F, errTol, O.Model.SampleLogBits.value_or(0),
+                            *st)) {
       states.push_back(std::move(st));
     } else {
       if (O.Diagnostics.Print)
