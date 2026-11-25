@@ -29,8 +29,8 @@ def XformAttr : Impulse_Attr<"Xform", "xform"> {
   let description = [{
     One bijection y = f(x) of the `transforms` of a `#impulse.dist`:
     IDENTITY x; EXP exp(x); AFFINE loc + scale * x, with loc and scale the
-    first two parameters of the site; SIGMOID 1 / (1 + exp(-x)); SOFTPLUS
-    log(1 + exp(x)).
+    first two parameters of the site and scale > 0; SIGMOID 1 / (1 + exp(-x));
+    SOFTPLUS log(1 + exp(x)).
   }];
   let parameters = (ins "XformKind":$kind);
   let assemblyFormat = "`<` $kind `>`";
@@ -56,8 +56,12 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     HALF_STUDENT_T (df, scale). The value of a MULTIVARIATE_NORMAL site has
     the type of its mean.
 
-    The support of the distribution is the support of `base` mapped through
-    each bijection.
+    The support of the distribution has the kind of the support of `base`
+    mapped through each bijection, and no bounds: EXP and SOFTPLUS give
+    POSITIVE, SIGMOID gives UNIT_INTERVAL, AFFINE turns UNIT_INTERVAL into
+    INTERVAL and keeps every other kind, and IDENTITY keeps it. The support of
+    the discrete bases BERNOULLI, POISSON and DISCRETE_UNIFORM has the kind
+    REAL.
   }];
   let parameters = (ins
     "DistBaseKind":$base,
@@ -81,9 +85,17 @@ def SupportAttr : Impulse_Attr<"Support", "support"> {
   let description = [{
     The set of values on which a density is nonzero. INTERVAL reads
     `lower_bound` and `upper_bound`, GREATER_THAN reads `lower_bound`, and
-    LESS_THAN reads `upper_bound`. For SIMPLEX, `event_size` is the length K
-    of one simplex, and a value of m*K elements holds m simplices. The other
-    kinds take no parameters.
+    LESS_THAN reads `upper_bound`; the bounds are written `lower = a` and
+    `upper = b`. For SIMPLEX, `event_size` is the length K of one simplex, and
+    a value of m*K elements holds m simplices. The other kinds take no
+    parameters.
+
+    Each kind is the image of a bijection from unconstrained values: REAL x;
+    POSITIVE exp(x); UNIT_INTERVAL 1 / (1 + exp(-x)); INTERVAL lower_bound +
+    (upper_bound - lower_bound) / (1 + exp(-x)); GREATER_THAN lower_bound +
+    exp(x); LESS_THAN upper_bound - exp(x), each elementwise; SIMPLEX the
+    stick-breaking map from m*(K-1) values to m simplices. The unconstrained
+    coordinates of a value are its preimage.
   }];
   let parameters = (ins
     "SupportKind":$kind,
@@ -104,7 +116,7 @@ def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {
     Parameters of Hamiltonian Monte Carlo with a fixed trajectory.
     - trajectory_length: the integration time of one transition.
     - adapt_step_size (default true): adapt the step size during warmup by
-      dual averaging.
+      dual averaging toward a mean acceptance probability of 0.8.
     - adapt_mass_matrix (default true): adapt the inverse mass matrix during
       warmup to the covariance of the warmup samples.
     - num_steps (default 0): when positive, each transition takes exactly
@@ -131,7 +143,7 @@ def NUTSConfigAttr : Impulse_Attr<"NUTSConfig", "nuts_config"> {
     - max_delta_energy (default 1000): a leapfrog step whose energy exceeds
       the initial energy of the transition by more than this diverges.
     - adapt_step_size (default true): adapt the step size during warmup by
-      dual averaging.
+      dual averaging toward a mean acceptance probability of 0.8.
     - adapt_mass_matrix (default true): adapt the inverse mass matrix during
       warmup to the covariance of the warmup samples.
   }];
@@ -147,9 +159,9 @@ def NUTSConfigAttr : Impulse_Attr<"NUTSConfig", "nuts_config"> {
 def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
   let summary = "Configuration for variational inference";
   let description = [{
-    Stochastic variational inference: fits the family `guide_kind` over the
-    unconstrained position by maximizing a Monte Carlo estimate of the ELBO
-    with the update rule `optimizer_kind`.
+    Stochastic variational inference: fits the family `guide_kind` to the
+    target by maximizing a Monte Carlo estimate of the ELBO with the update
+    rule `optimizer_kind`.
     - num_particles (default 1): draws per ELBO estimate.
     - init_scale (default 0.1): the initial scale of the AUTO_NORMAL and
       AUTO_MULTIVARIATE_NORMAL guides.
@@ -187,11 +199,9 @@ def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
 def MHConfigAttr : Impulse_Attr<"MHConfig", "mh_config"> {
   let summary = "Configuration for Metropolis-Hastings inference";
   let description = [{
-    Marker config selecting the Metropolis-Hastings algorithm on `impulse.infer`
-    / `impulse.infer_region`. MH carries no algorithm parameters of its own: the
-    proposal selection lives in the shared `selection` attribute (the addresses
-    to regenerate), the full trace layout in `all_addresses`, and the internal
-    step count in `num_samples`.
+    Selects Metropolis-Hastings: each of `num_samples` steps redraws the sites
+    in `selection` from their distributions and accepts the move with the
+    Metropolis-Hastings probability. The config has no parameters.
   }];
   let parameters = (ins);
   let assemblyFormat = "";
@@ -200,15 +210,13 @@ def MHConfigAttr : Impulse_Attr<"MHConfig", "mh_config"> {
 def GibbsConfigAttr : Impulse_Attr<"GibbsConfig", "gibbs_config"> {
   let summary = "Configuration for enumerative Gibbs sampling";
   let description = [{
-    Marker config selecting enumerative Gibbs on `impulse.infer` /
-    `impulse.infer_region`: each selected site, in `selection` order, is
-    redrawn from its exact full conditional, computed by scoring every value
-    of its finite support (BERNOULLI: {0, 1}). Only the density terms that
-    depend on the site are scored. `num_samples` is the number of sweeps.
-    A `constraint` operand (with `constrained_addresses`) supplies the
-    observed values of constrained sites, so a flip that makes a branch-local
-    observation live scores it from the observation and writes it into the
-    trace.
+    Selects enumerative Gibbs sampling: each of `num_samples` sweeps redraws
+    the sites in `selection`, in that order, from their exact full
+    conditionals, each computed by scoring both values of the site. Every
+    site in `selection` is a scalar BERNOULLI site at the top level of the
+    model. A site in `constrained_addresses` that runs in a branch of an
+    `impulse.if` takes its value from `constraint` whenever it runs, and the
+    trace holds that value. The config has no parameters.
   }];
   let parameters = (ins);
   let assemblyFormat = "";
@@ -218,7 +226,7 @@ def SymbolAttr : Impulse_Attr<"Symbol", "symbol"> {
   let summary = "Name of a sample site within its model";
   let description = [{
     An opaque integer that names a sample site within its model; the sites of
-    one model have distinct symbols.
+    one model must have distinct symbols.
   }];
   let parameters = (ins "uint64_t":$id);
   let assemblyFormat = "`<` $id `>`";

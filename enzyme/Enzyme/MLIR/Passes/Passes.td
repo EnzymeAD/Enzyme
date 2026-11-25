@@ -66,8 +66,8 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
     replaced by the code that draws or reads its value and scores it, and an
     inference op becomes the code of its algorithm, with gradients computed
     by `enzyme.autodiff_region`. `impulse.infer` with `gibbs_config` must be
-    in region form. With `postpasses`, that pass pipeline then runs on the
-    result.
+    in region form, and `impulse.infer_region` needs a non-empty `logpdf`
+    region. With `postpasses`, that pass pipeline then runs on the result.
   }];
   let dependentDialects = [
     "arith::ArithDialect",
@@ -99,11 +99,11 @@ def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
     Converts `impulse.infer` into `impulse.infer_region`. With `fn`, the body
     of `fn` becomes `sampling`, every `impulse.sample` becomes an
     `impulse.sample_region` whose regions hold the sampler and the log density
-    of the site, the sites of a model that a site runs take the place of that
-    site under its address, and `logpdf` stays empty. With `logpdf_fn`, the
-    body of `logpdf_fn` becomes `logpdf` and `sampling` stays empty. An op
-    whose model or algorithm the region form does not support is left
-    unchanged.
+    of the site and whose `support` is that of its `dist` when the site has
+    none, the sites of a model that a site runs take the place of that site
+    under its address, and `logpdf` stays empty. With `logpdf_fn`, the body
+    of `logpdf_fn` becomes `logpdf` and `sampling` stays empty. An op whose
+    model or algorithm the region form does not support is left unchanged.
   }];
   let dependentDialects = [
     "arith::ArithDialect",
@@ -116,18 +116,23 @@ def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
 def SICMPass : Pass<"sicm"> {
   let summary = "Sample-invariant code motion";
   let description = [{
-    For each `impulse.infer_region`, moves the computation that does not
-    depend on the sampled values above the op: first out of `sampling`, then
-    out of `logpdf`, which the pass builds from the optimized `sampling` when
-    it is empty. Each region gets up to `max-iterations` rounds, stopping
-    after a round that changes nothing, of (1) the rewrite rules, which split
-    a sample-dependent op into sample-dependent and sample-invariant parts,
-    and (2) hoisting the sample-invariant ops. The rules are those of every
-    loaded dialect that implements `SICMRuleSetInterface` or, with
-    `schedule`, the patterns of the `transform.apply_patterns` ops in the
-    `schedule-entry-point` sequence of a transform script. Each round also
-    moves every constant to the entry block of the closest enclosing region
-    that is isolated from above, merging equal constants.
+    For each `impulse.infer_region`, moves the sample-invariant computation,
+    which does not depend on the values of the sites in `selection`, above
+    the op: first out of `sampling`, then out of `logpdf`. When `logpdf` is
+    empty, the pass builds it from the optimized `sampling` if every site of
+    `sampling` has an address and a log density and is nested in no op other
+    than `impulse.if`, the sites in `selection` are at the top level of
+    `sampling`, and `all_addresses` lists exactly the sites; building it
+    empties the `logpdf` region of every site. Each region gets up to `max-iterations`
+    rounds, stopping after a round that changes nothing, of (1) the rewrite
+    rules, which split a sample-dependent op into sample-dependent and
+    sample-invariant parts, and (2) hoisting the sample-invariant ops. The
+    rules are those of every loaded dialect that implements
+    `SICMRuleSetInterface` or, with `schedule`, the patterns of the
+    `transform.apply_patterns` ops in the `schedule-entry-point` sequence of a
+    transform script. Each round also moves every constant to the entry block
+    of the closest enclosing region that is isolated from above, merging
+    equal constants.
   }];
   let dependentDialects = [
     "arith::ArithDialect",

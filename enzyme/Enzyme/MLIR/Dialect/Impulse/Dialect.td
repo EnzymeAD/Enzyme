@@ -23,13 +23,19 @@ def Impulse_Dialect : Dialect {
 
     A site is named within its model by its `symbol`. Its address is the array
     of the symbols of the sites on the call path from the outermost model down
-    to the site, ending with its own.
+    to the site, ending with its own. The `all_addresses` of an op lists the
+    sites in the order in which they run, those of the true branch of an
+    `impulse.if` before those of its false branch.
 
     A trace of an address array is a `tensor<1xNxT>` that holds the flattened
-    values of the sites of the array, in the order of the array. A score-tail
-    trace holds, after these N values, one more column per sample site of the
-    model, in the order the sites appear in the model, with the log density of
-    that site.
+    values of the sites of the array, in the order of the array; the values of
+    a site that does not run are zero. A score-tail trace holds, after these N
+    values, one more column per sample site of the model, in the order the
+    sites appear in the model, with the log density of that site; an op takes
+    a trace wider than N as a score-tail trace. The traces that
+    `impulse.simulate`, `impulse.generate`, `impulse.regenerate` and
+    `impulse.mh` take and return have element type `f64`, and their weights
+    are `tensor<f64>`.
 
     The `name` attribute of an op is a label without semantics.
   }];

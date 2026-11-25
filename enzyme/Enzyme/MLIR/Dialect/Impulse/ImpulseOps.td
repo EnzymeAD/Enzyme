@@ -26,18 +26,22 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def SampleOp : Impulse_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Sample from a distribution";
+  let summary = "A sample site of a model";
   let description = [{
     Draws the value of one sample site of a model. `inputs` are the RNG state
-    followed by the parameters of the distribution, and `outputs` are the
-    advanced RNG state followed by the sampled values.
+    followed by the parameters of the distribution, or the arguments of the
+    model the site runs, and `outputs` are the advanced RNG state followed by
+    the sampled values.
 
-    With `dist`, the distribution is `dist`, and `fn`, when present, is a
-    sampler for it with the signature of this op. Without `dist`, `fn` is
-    required. If `logpdf_fn` is present, `fn` is the sampler and `logpdf_fn`
-    its log density: a function of the sampled values followed by the
-    parameters that returns a scalar. If not, `fn` is a model that this site
-    runs, and the sites of `fn` are nested under the address of this site.
+    With `dist`, the site draws from `dist` and its log density is that of
+    `dist`; `logpdf_fn` is not used. `fn`, when present, is a sampler for
+    `dist` with the signature of this op, and draws the value when the base of
+    `dist` has no built-in sampler: GAMMA, STUDENT_T, HALF_STUDENT_T, POISSON
+    and DIRICHLET. Without `dist`, `fn` is required. If `logpdf_fn` is
+    present, `fn` is the sampler and `logpdf_fn` its log density: a function
+    of the sampled values followed by the parameters that returns a scalar.
+    If not, `fn` is a model that this site runs, and the sites of `fn` are
+    nested under the address of this site.
 
     `symbol` names the site within its model. `support`, when present, is the
     support of the sampled values; with `dist`, it must be of the same kind as
@@ -64,7 +68,7 @@ def SampleOp : Impulse_Op<"sample",
 }
 
 def UntracedCallOp : Impulse_Op<"untraced_call"> {
-  let summary = "Call a probabilistic function without tracing";
+  let summary = "Run a model without a trace";
   let description = [{
     Calls the model `fn` on `inputs`; `outputs` are its results. Every site of
     `fn` draws a new value, and no trace or weight is computed.
@@ -84,7 +88,7 @@ def UntracedCallOp : Impulse_Op<"untraced_call"> {
 }
 
 def SimulateOp : Impulse_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Simulate a generative function";
+  let summary = "Run a model, drawing every site";
   let description = [{
     Runs the model `fn` on `inputs`, every site drawing a new value. `trace`
     is the trace of `all_addresses` and `weight` the joint log density of the
@@ -110,7 +114,7 @@ def SimulateOp : Impulse_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpI
 }
 
 def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Constrained generation from a generative function";
+  let summary = "Run a model with some sites fixed to given values";
   let description = [{
     Runs the model `fn` on `inputs`. A site in `constrained_addresses` takes
     its value from `constraint`, a trace of `constrained_addresses`; every
@@ -143,17 +147,16 @@ def RegenerateOp : Impulse_Op<"regenerate",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Regenerate selected addresses in a trace";
   let description = [{
-    Runs the model `fn` on `inputs` again, the sites in `selection` drawing
-    new values. Every other site takes its value from `original_trace`, a
-    trace of `all_addresses`, except that a site in `constrained_addresses`
-    takes it from `constraint`, a trace of `constrained_addresses`, whenever
-    the site runs. `new_trace` has the type of `original_trace` and holds the
-    values of the new run; `outputs` are the results of `fn`.
-
-    With a plain trace, `weight` is the joint log density of the new run. With
-    a score-tail trace, `weight` is the joint log density of the new run minus
-    that of `original_trace`, taken from the log densities it holds, and
-    `new_trace` holds the log densities of the new run.
+    Runs the model `fn` on `inputs`, the sites in `selection` drawing new
+    values. Every other site takes its value from `original_trace`, a trace of
+    `all_addresses`, except that a site in `constrained_addresses` takes it
+    from `constraint`, a trace of `constrained_addresses`, whenever the site
+    runs. `new_trace` has the type of `original_trace` and holds the values of
+    the new run. With a plain trace, `weight` is the joint log density of the
+    new run. With a score-tail trace, `weight` is the joint log density of the
+    new run minus that of `original_trace`, taken from the log densities it
+    holds, and `new_trace` holds the log densities of the new run. `outputs`
+    are the results of `fn`.
   }];
 
   let arguments = (ins
@@ -180,18 +183,19 @@ def RegenerateOp : Impulse_Op<"regenerate",
 
 def MHOp : Impulse_Op<"mh",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "Metropolis-Hastings step for probabilistic inference";
+  let summary = "One Metropolis-Hastings step on a trace";
   let description = [{
-    One Metropolis-Hastings step on `original_trace`, a trace of
+    Takes one Metropolis-Hastings step on `original_trace`, a trace of
     `all_addresses` whose joint log density is `original_weight`. The proposal
-    is the `impulse.regenerate` of `original_trace` with the same `fn`,
-    `inputs`, `all_addresses`, `selection`, `constraint` and
-    `constrained_addresses`, and it is accepted with the Metropolis-Hastings
-    probability for a proposal that draws the regenerated sites from their
-    distributions. If `accepted` is true, `new_trace` and `new_weight` are the
-    trace of the proposal and its joint log density; otherwise they are
-    `original_trace` and `original_weight`. `output_rng_state` is the advanced
-    RNG state.
+    runs the model `fn` on `inputs`, the sites in `selection` drawing new
+    values from their distributions. Every other site keeps its value in
+    `original_trace`, except that a site in `constrained_addresses` that runs
+    in a branch of an `impulse.if` takes it from `constraint`, a trace of
+    `constrained_addresses`. The proposal is accepted with the
+    Metropolis-Hastings probability. If `accepted` is true, `new_trace` and
+    `new_weight` are the trace of the proposal and its joint log density;
+    otherwise they are `original_trace` and `original_weight`.
+    `output_rng_state` is the advanced RNG state.
   }];
 
   let arguments = (ins
@@ -270,7 +274,7 @@ class Impulse_InferSignatureResults {
 def InferOp : Impulse_Op<"infer",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]>,
     Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
-  let summary = "Inference over the sample sites of a model";
+  let summary = "Run an inference algorithm on a model or a log density";
   let description = [{
     Runs the inference algorithm selected by exactly one of `hmc_config`,
     `nuts_config`, `mh_config`, `gibbs_config` and `vi_config`. `inputs[0]` is
@@ -279,26 +283,32 @@ def InferOp : Impulse_Op<"infer",
     The target is either the model `fn` or the log density `logpdf_fn`. With
     `fn`, `original_trace` is a trace of `all_addresses`, the sites in
     `selection` are inferred, and the other sites keep their values in
-    `original_trace`. With `logpdf_fn`, the target is `logpdf_fn` applied to a
-    flat position vector followed by `inputs[1:]`; the position has as many
-    elements as `init_position`, or as one chain of it when `num_chains` > 1.
+    `original_trace`; the position is the flattened values of the sites in
+    `selection`, in that order. With `logpdf_fn`, which requires
+    `init_position`, the target is `logpdf_fn` applied to a flat position
+    vector followed by `inputs[1:]`; the position has as many elements as
+    `init_position`, or as one chain of it when `num_chains` > 1. In
+    unconstrained coordinates, the value of each site is replaced by its image
+    under the inverse of the bijection of its `support`.
 
     HMC and NUTS run `num_warmup` warmup iterations, which adapt the step size
     and the inverse mass matrix as the config requests, then `num_samples`
-    iterations, of which they keep every `thinning`-th. `trace` has one row
-    per kept sample with the values of the sites in `selection`, in that
-    order (with `logpdf_fn`, the position); `log_densities` holds the log
-    density of each kept sample in unconstrained coordinates, and
-    `diagnostics` its [accepted, diverging] flags. With `fn`, the chain starts
-    from the values in `original_trace`; with `logpdf_fn`, at
-    `init_position`. `init_step_size` is the initial step size, and
-    `init_inverse_mass_matrix` the initial inverse mass matrix (a vector for a
-    diagonal matrix, the identity when absent). `total_warmup`, when set, is
-    the length of the warmup schedule of which this op runs `num_warmup`
-    iterations, starting at the iteration in the `warmup_offset` state slot.
-    `num_chains` > 1 runs independent chains: `trace`, `diagnostics`,
-    `log_densities` and `state_out` get a leading chain dimension, and the
-    `rng` state slot holds the RNG state of every chain.
+    iterations, of which they keep the `num_samples` / `thinning` (rounded
+    down) iterations i, counted from 0, for which `num_samples` - i is a
+    multiple of `thinning`. They move the position in unconstrained
+    coordinates. `trace` has one row per kept sample with the position;
+    `log_densities` holds the log density of each kept sample in
+    unconstrained coordinates, and `diagnostics` its [accepted, diverging]
+    flags. With `fn`, the chain starts from the values in `original_trace`;
+    with `logpdf_fn`, at `init_position`. `init_step_size` is the initial
+    step size, and `init_inverse_mass_matrix` the initial inverse mass matrix
+    (a vector for a diagonal matrix, the identity when absent).
+    `total_warmup`, when set, is the length of the warmup schedule of which
+    this op runs `num_warmup` iterations, starting at the iteration in the
+    `warmup_offset` state slot. `num_chains` > 1, for HMC and NUTS only, runs
+    independent chains: `trace`, `diagnostics`, `log_densities` and
+    `state_out` get a leading chain dimension, and the `rng` state slot holds
+    the RNG state of every chain.
 
     MH runs `num_samples` Metropolis-Hastings steps, each redrawing the sites
     in `selection` from their distributions, and Gibbs runs `num_samples`
@@ -307,20 +317,28 @@ def InferOp : Impulse_Op<"infer",
     `original_trace`, `diagnostics` the acceptance flag of the last step
     (always true for Gibbs), and `log_densities` is zero. `state_in` and
     `state_out` hold one slot, `weight`, the joint log density of the trace.
-    `constraint` is a trace of `constrained_addresses` with observed values.
+    Only MH and Gibbs take `constraint` and `constrained_addresses`: a site
+    in `constrained_addresses` that runs in a branch of an `impulse.if` takes
+    its value from `constraint`, a trace of `constrained_addresses`.
 
-    VI runs `num_samples` optimizer steps with learning rate `init_step_size`.
-    `trace` holds the location of the guide in unconstrained coordinates after
-    each step, `diagnostics` the ELBO estimate of each step, and
-    `log_densities` is zero. `init_position` is the initial location of the
-    guide, and `init_scale` the initial scale of an AUTO_NORMAL guide.
+    VI takes `fn` and runs `num_samples` optimizer steps with learning rate
+    `init_step_size`; its position lists the sites of `selection` in the
+    order of `all_addresses`. The location of the guide is in unconstrained
+    coordinates for AUTO_NORMAL and AUTO_DELTA, and in the coordinates of the
+    sites for AUTO_MULTIVARIATE_NORMAL. `trace` holds the location after each
+    step, mapped to the coordinates of the sites for AUTO_DELTA,
+    `diagnostics` the ELBO estimate of each step, and `log_densities` is
+    zero. `init_position` is the initial location of the guide, and
+    `init_scale` the initial scale of an AUTO_NORMAL guide.
 
     `state_out` is the state of the algorithm after the run, one tensor per
-    name in `state_schema`; passing it as `state_in` continues the run. A
-    non-empty `state_in` takes the place of the initial values that
-    `init_inverse_mass_matrix`, `init_step_size` (except as the learning rate
-    of VI), `init_position` and `init_scale` give. `autodiff_attrs` are added
-    to the attributes of the differentiation of the log density.
+    name in `state_schema`, which VI requires; passing it as `state_in`
+    continues the run. The names, order and types of the slots are fixed by
+    the algorithm, its config and the position. A non-empty `state_in` takes
+    the place of the initial values that `init_inverse_mass_matrix`,
+    `init_step_size` (except as the learning rate of VI), `init_position` and
+    `init_scale` give. `autodiff_attrs` are added to the attributes of the
+    differentiation of the log density.
   }];
 
   let arguments = !con(args, (ins DefaultValuedStrAttr<StrAttr, "">:$name));
@@ -351,7 +369,9 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
   let summary = "Region form of impulse.sample";
   let description = [{
     `impulse.sample` with its sampler and its log density in regions.
-    `sampling` takes `inputs` as block arguments and yields `outputs`.
+    `sampling` takes `inputs` as block arguments and yields `outputs`; it is
+    empty when the site has no sampler, a `dist` whose base has no built-in
+    sampler and no `fn`.
     `logpdf` takes the non-RNG results followed by the non-RNG inputs as block
     arguments and yields their log density as a scalar. `logpdf` is empty when
     the site runs a model, whose sites are then nested in `sampling`, and in
@@ -440,7 +460,7 @@ def InferRegionOp : Impulse_Op<"infer_region",
 //===----------------------------------------------------------------------===//
 
 def RandomOp : Impulse_Op<"random"> {
-  let summary = "Generate random numbers using specified distribution";
+  let summary = "Draw random values from a distribution";
   let description = [{
     Draws `result` from `rng_distribution` with the parameters `a` and `b`,
     and returns the advanced RNG state as `output_rng_state`. `result` is a
@@ -490,11 +510,13 @@ def RandomSplitOp : Impulse_Op<"random_split"> {
 //===----------------------------------------------------------------------===//
 
 def ForOp : Impulse_Op<"for", [AutomaticAllocationScope]> {
-  let summary = "Counted loop for probabilistic programming";
+  let summary = "Counted loop";
   let description = [{
-    A counted loop operation that iterates from `lower_bound` to
-    `upper_bound` by `step`, carrying `init_args` through each iteration. The
-    iteration variable and the carried values are passed to the body region.
+    Runs `region` once for each i = `lower_bound`, `lower_bound` + `step`, ...
+    less than `upper_bound`; the bounds and `step` are rank-0 tensors of one
+    type. `region` takes i followed by the carried values, which start as
+    `init_args`, and yields the carried values of the next iteration.
+    `results` are the carried values after the last iteration.
   }];
 
   let arguments = (ins
@@ -517,12 +539,13 @@ def ForOp : Impulse_Op<"for", [AutomaticAllocationScope]> {
 }
 
 def WhileOp : Impulse_Op<"while", [AutomaticAllocationScope]> {
-  let summary = "While loop with condition";
+  let summary = "Loop while a condition holds";
   let description = [{
-    Iterates while the condition holds. Both regions take the current values
-    as block arguments: `condition_region` yields a rank-0 boolean tensor, and
-    `body_region` yields the values of the next iteration. The results are the
-    values for which the condition first evaluates to false.
+    Runs `body_region` while `condition_region` yields true. Both regions take
+    the carried values, which start as `init_args`, as block arguments:
+    `condition_region` yields a rank-0 boolean tensor, and `body_region`
+    yields the carried values of the next iteration. `results` are the
+    carried values for which `condition_region` first yields false.
   }];
 
   let arguments = (ins Variadic<AnyType>:$init_args);
@@ -542,8 +565,10 @@ def WhileOp : Impulse_Op<"while", [AutomaticAllocationScope]> {
 def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> {
   let summary = "Conditional execution with two branches";
   let description = [{
-    A conditional operation that executes exactly one of two branches based on a
-    boolean predicate.
+    Runs `true_branch` if `predicate`, a rank-0 boolean tensor, is true and
+    `false_branch` otherwise. Neither region takes arguments, and each yields
+    values of the types of `results`, which are the values that the region
+    that runs yields.
   }];
 
   let arguments = (ins AnyType:$predicate);
@@ -562,6 +587,11 @@ def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> 
 def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,
     ParentOneOf<["ForOp", "WhileOp", "IfOp", "InferRegionOp", "SampleRegionOp"]>]> {
   let summary = "Terminator of the regions of impulse ops";
+  let description = [{
+    Ends a region of `impulse.for`, `impulse.while`, `impulse.if`,
+    `impulse.sample_region` or `impulse.infer_region` and passes `operands` to
+    the parent op, whose description states what each region yields.
+  }];
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
@@ -655,13 +685,10 @@ def SelectOp : Impulse_Op<"select",
     [Pure, AllTypesMatch<["true_value", "false_value", "result"]>]> {
   let summary = "Select between two values";
   let description = [{
-    Elementwise selection between `true_value` and `false_value`: each result
-    element is the corresponding `true_value` element where `condition` is true,
-    otherwise the `false_value` element. As an extension over `arith.select`, a
-    rank-0 `tensor<i1>` `condition` selects between the two operands as whole
-    tensors, so the operands may have a shape that differs from a per-element
-    condition. When `condition` matches the operand shape, selection is per
-    element.
+    Returns `true_value` where `condition` is true and `false_value`
+    elsewhere. `condition` is a boolean tensor: of rank 0, it selects one of
+    the two operands whole; of the shape of the operands, it selects each
+    element. `true_value`, `false_value` and the result have one type.
   }];
 
   let arguments = (ins
@@ -695,7 +722,7 @@ def ReshapeOp : Impulse_Op<"reshape", [Pure]> {
 def SliceOp : Impulse_Op<"slice", [Pure]> {
   let summary = "Extract a static slice from a tensor";
   let description = [{
-    Extracts a statically-shaped sub-tensor of `operand`. In each dimension `d`
+    Extracts a sub-tensor of static shape from `operand`. In each dimension `d`
     it takes the elements at indices `start_indices[d] + k*strides[d]` for
     `k = 0, 1, ...` while the index stays below `limit_indices[d]`, yielding
     `ceil((limit_indices[d] - start_indices[d]) / strides[d])` elements. All
@@ -720,12 +747,11 @@ def SliceOp : Impulse_Op<"slice", [Pure]> {
 def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
   let summary = "Extract a slice from a tensor at dynamic start indices";
   let description = [{
-    Extracts a sub-tensor of static shape `slice_sizes` from `operand`, starting
-    at the runtime `start_indices` (one scalar index tensor per operand
-    dimension). Before use, each start index is clamped into
-    `[0, operand_dim - slice_sizes[d]]` so the whole slice stays in bounds, so
-    out-of-range indices shift the window to the nearest fully-in-bounds position
-    rather than reading out of bounds. The result shape is `slice_sizes`.
+    Extracts a sub-tensor of static shape `slice_sizes` from `operand`,
+    starting at the runtime `start_indices`, one rank-0 integer tensor per
+    operand dimension. Each start index is first clamped to
+    `[0, operand_dim - slice_sizes[d]]`, which moves an out-of-range window to
+    the nearest position inside `operand`. The result shape is `slice_sizes`.
   }];
 
   let arguments = (ins
@@ -743,12 +769,12 @@ def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
 def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
   let summary = "Update a slice in a tensor at dynamic start indices";
   let description = [{
-    Produces a copy of `operand` with `update` written in starting at the runtime
-    `start_indices` (one scalar index tensor per operand dimension). Before use,
-    each start index is clamped into `[0, operand_dim - update_dim[d]]` so the
-    entire `update` lands in bounds, so out-of-range indices shift the write
-    window to the nearest fully-in-bounds position rather than writing out of
-    bounds. The result has the shape of `operand`.
+    Returns a copy of `operand` with `update`, a tensor of the same rank,
+    written starting at the runtime `start_indices`, one rank-0 integer tensor
+    per operand dimension. Each start index is first clamped to
+    `[0, operand_dim - update_dim[d]]`, which moves an out-of-range window to
+    the nearest position inside `operand`. The result has the shape of
+    `operand`.
   }];
 
   let arguments = (ins
@@ -768,10 +794,10 @@ def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
 //===----------------------------------------------------------------------===//
 
 def LogisticOp : Impulse_Op<"logistic", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
-  let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
+  let summary = "Elementwise logistic function";
   let description = [{
-    Elementwise logistic (sigmoid) function `1 / (1 + exp(-x))` over `operand`.
-    Result and operand share shape and element type.
+    Elementwise logistic function `1 / (1 + exp(-x))` of `operand`. Result
+    and operand share shape and element type.
   }];
 
   let arguments = (ins AnyRankedTensor:$operand);
@@ -783,9 +809,9 @@ def LogisticOp : Impulse_Op<"logistic", [Pure, SameOperandsAndResultElementType,
 }
 
 def LgammaOp : Impulse_Op<"lgamma", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
-  let summary = "Computes the log of the absolute value of the Gamma function";
+  let summary = "Elementwise log of the absolute value of the Gamma function";
   let description = [{
-    Elementwise log|Gamma(x)| over `operand`. Result and operand share shape
+    Elementwise `log|Gamma(x)|` of `operand`. Result and operand share shape
     and element type.
   }];
 
