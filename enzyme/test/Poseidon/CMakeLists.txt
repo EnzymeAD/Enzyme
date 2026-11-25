@@ -1,16 +1,10 @@
-set(POSEIDON_TEST_GPU_ARCH ""
-    CACHE
-      STRING
-      "CUDA architecture (sm_XY) the integration tests compile for; empty = the CUDA runtimes' first, else sm_120")
-set(POSEIDON_TEST_GPU_ARCH_RESOLVED "${POSEIDON_TEST_GPU_ARCH}")
-if(NOT POSEIDON_TEST_GPU_ARCH_RESOLVED)
-  set(POSEIDON_TEST_GPU_ARCH_RESOLVED "sm_120")
-  if(CMAKE_CUDA_COMPILER AND POSEIDON_CUDA_ARCH)
-    set(POSEIDON_TEST_GPU_ARCH_RESOLVED "${POSEIDON_CUDA_ARCH}")
-  endif()
+# The CUDA architecture the tests compile for: the CUDA runtimes' first, else
+# sm_120.
+set(POSEIDON_TEST_GPU_ARCH sm_120)
+if(POSEIDON_HAS_CUDA AND POSEIDON_CUDA_ARCH)
+  set(POSEIDON_TEST_GPU_ARCH ${POSEIDON_CUDA_ARCH})
 endif()
-message(
-  STATUS "Poseidon: integration tests target ${POSEIDON_TEST_GPU_ARCH_RESOLVED}")
+message(STATUS "Poseidon: integration tests target ${POSEIDON_TEST_GPU_ARCH}")
 
 # The tests price from made-up cost models written into the build tree. A GPU
 # model a test runs Herbie under carries the Herbie platform generated from it,
@@ -52,7 +46,7 @@ add_custom_command(
   OUTPUT ${_outputs}
   COMMAND
     ${Python3_EXECUTABLE} ${_generator} ${POSEIDON_TEST_COST_MODELS}
-    ${POSEIDON_TEST_GPU_ARCH_RESOLVED} ${_platforms}
+    ${POSEIDON_TEST_GPU_ARCH} ${_platforms}
   DEPENDS ${_generator} ${_platform}
   COMMENT "Writing the cost models of the Poseidon tests")
 add_custom_target(poseidon-test-cost-models DEPENDS ${_outputs})
@@ -129,24 +123,11 @@ foreach(_lib ${_rt_libs})
   string(APPEND POSEIDON_TEST_RT_LINK " ${_lib} -Wl,-rpath,${_dir}")
 endforeach()
 # What the build has, for the features of the lit configuration.
-set(POSEIDON_TEST_HAS_CUDA "${CMAKE_CUDA_COMPILER}")
-set(POSEIDON_TEST_TCEC_CUMPSGEMM "${POSEIDON_TCEC_USE_CUMPSGEMM}")
-# The HIP runtimes, and the device profilers the plugin carries.
-set(POSEIDON_TEST_HAS_HIP OFF)
-if(TARGET poseidon_rt_hip)
-  set(POSEIDON_TEST_HAS_HIP ON)
-endif()
-set(POSEIDON_TEST_HAS_NVPTX_PROFILER OFF)
-if(TARGET poseidon_device_profiler)
-  set(POSEIDON_TEST_HAS_NVPTX_PROFILER ON)
-endif()
-set(POSEIDON_TEST_HAS_AMDGPU_PROFILER OFF)
-if(TARGET poseidon_device_profiler_amdgpu)
-  set(POSEIDON_TEST_HAS_AMDGPU_PROFILER ON)
-endif()
-llvm_canonicalize_cmake_booleans(
-  POSEIDON_TEST_HAS_CUDA POSEIDON_TEST_TCEC_CUMPSGEMM POSEIDON_TEST_HAS_HIP
-  POSEIDON_TEST_HAS_NVPTX_PROFILER POSEIDON_TEST_HAS_AMDGPU_PROFILER)
+set(POSEIDON_TEST_HAS_CUDA ${POSEIDON_HAS_CUDA})
+set(POSEIDON_TEST_HAS_HIP ${POSEIDON_HAS_HIP})
+set(POSEIDON_TEST_HAS_TCEC ${POSEIDON_HAS_TCEC})
+llvm_canonicalize_cmake_booleans(POSEIDON_TEST_HAS_CUDA POSEIDON_TEST_HAS_HIP
+                                 POSEIDON_TEST_HAS_TCEC)
 
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in

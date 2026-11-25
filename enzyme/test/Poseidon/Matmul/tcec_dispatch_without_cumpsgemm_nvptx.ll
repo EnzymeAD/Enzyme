@@ -12,4 +12,4 @@
 ; PRICED: #9 ozaki-ii nm=14 wmma m16n16k16 s8/s32
 ; PRICED-NEXT: #10 direct-dispatch cublas f16/f32
 ; KEY: "TCEC backend": "none",
-; PIN: error: {{.*}}Poseidon: -poseidon-apply-rewrites: matmul_body: M0 has no candidate named 'tcec-dispatch wmma m16n16k16 f16/f32': pricing dropped it, because this compiler was built without cuMpSGEMM, on which the error-corrected dispatch runs; configure it with -DPOSEIDON_TCEC_USE_CUMPSGEMM=ON -DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>
+; PIN: error: {{.*}}Poseidon: -poseidon-apply-rewrites: matmul_body: M0 has no candidate named 'tcec-dispatch wmma m16n16k16 f16/f32': pricing dropped it, because this compiler was built without cuMpSGEMM, on which the error-corrected dispatch runs; configure it with -DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>

@@ -1,12 +1,9 @@
-# The Herbie executable the rewriting pass shells out to unless a compile names
-# one with -poseidon-herbie-binary: a prebuilt one, one built from source, or
+# POSEIDON_HERBIE_BINARY_PATH, the Herbie executable the rewriting pass shells
+# out to unless a compile names one with -poseidon-herbie-binary:
+# POSEIDON_HERBIE_BINARY, the one POSEIDON_BUILD_HERBIE builds from source, or
 # none. No platform is compiled into the binary: the device is not known at
 # build time, so each device's platform is generated from its cost model CSV
 # and passed to Herbie by path.
-set(POSEIDON_HERBIE_BINARY ""
-    CACHE FILEPATH "Prebuilt Herbie executable the pass runs by default")
-option(POSEIDON_BUILD_HERBIE
-       "Build Herbie from source, which takes Rust and Racket" OFF)
 if(POSEIDON_HERBIE_BINARY AND POSEIDON_BUILD_HERBIE)
   message(
     FATAL_ERROR
@@ -21,7 +18,7 @@ if(POSEIDON_BUILD_HERBIE)
     GIT_REPOSITORY https://github.com/herbie-fp/herbie
     GIT_TAG 73ba1fe76f97d4cdb852a602addd82e3a983b209
     PREFIX
-      ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix
+      ${POSEIDON_BINARY_DIR}/herbie-prefix
       # A pinned commit has nothing to update, and an update would rerun the
       # build step, whose raco pkg install refuses the package it installed.
     UPDATE_COMMAND ""
@@ -55,14 +52,13 @@ if(POSEIDON_BUILD_HERBIE)
       src/main.rkt
     COMMAND raco distribute herbie-compiled herbie
     INSTALL_COMMAND
-      ${CMAKE_COMMAND} -E make_directory
-      ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+      ${CMAKE_COMMAND} -E make_directory ${POSEIDON_BINARY_DIR}/herbie/install
     COMMAND
       ${CMAKE_COMMAND} -E copy_directory
-      ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled
-      ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie)
+      ${POSEIDON_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled
+      ${POSEIDON_BINARY_DIR}/herbie/install/herbie)
   set(POSEIDON_HERBIE_BINARY_PATH
-      "${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie/bin/herbie")
+      "${POSEIDON_BINARY_DIR}/herbie/install/herbie/bin/herbie")
 endif()
 set(POSEIDON_HERBIE_BINARY_PATH "${POSEIDON_HERBIE_BINARY_PATH}"
     CACHE INTERNAL "Herbie executable the pass runs by default")

@@ -1,12 +1,56 @@
 # Poseidon: profile-guided numerical rewriting, built as its own pass plugin
 # next to Enzyme's. Profile generation loads both (Poseidon first); a
 # profile-use compile loads Poseidon alone.
+#
+# This file declares what the build takes and builds the plugin;
+# runtime/CMakeLists.txt builds the libraries a compiled program links and
+# tools/CMakeLists.txt the programs a user runs. Each installs what it builds;
+# the CMake package of both trees is configured here.
+
 if(NOT ENZYME_ENABLE_PLUGINS)
   message(FATAL_ERROR "ENZYME_POSEIDON needs ENZYME_ENABLE_PLUGINS")
 endif()
 if(LLVM_VERSION_MAJOR LESS 21)
   message(FATAL_ERROR "ENZYME_POSEIDON needs LLVM 21 or newer")
 endif()
+# The driver runs the clang of LLVM_DIR and parses command lines with its
+# driver library, and the device profilers and HIP runtimes are compiled by it.
+if(NOT Clang_FOUND OR NOT EXISTS ${LLVM_TOOLS_BINARY_DIR}/clang++)
+  message(
+    FATAL_ERROR
+      "ENZYME_POSEIDON needs the clang of LLVM_DIR (${LLVM_TOOLS_BINARY_DIR}/clang++ and its CMake package); build LLVM with clang")
+endif()
+
+# Where the sources and the build are, for the subdirectories and the tests.
+set(POSEIDON_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
+    CACHE INTERNAL "Poseidon's source directory")
+set(POSEIDON_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}
+    CACHE INTERNAL "Poseidon's build directory")
+
+# --- Options
+
+# The Herbie the rewriting pass runs unless a compile names one: a prebuilt
+# executable, one built from source (cmake/Herbie.cmake), or none.
+set(POSEIDON_HERBIE_BINARY ""
+    CACHE FILEPATH "Prebuilt Herbie executable the pass runs by default")
+option(POSEIDON_BUILD_HERBIE
+       "Build Herbie from source, which takes Rust and Racket" OFF)
+# The CUDA runtimes are built when CMake finds a CUDA compiler, for
+# CMAKE_CUDA_ARCHITECTURES (default: the GPUs of this machine).
+# The HIP runtimes are built when POSEIDON_ROCM_PATH names a ROCm
+# installation, for the one processor POSEIDON_AMDGPU_ARCH.
+set(POSEIDON_ROCM_PATH ""
+    CACHE PATH "ROCm installation HIP compiles use (--rocm-path)")
+set(POSEIDON_AMDGPU_ARCH gfx942
+    CACHE STRING "AMD GPU processor of the HIP builds (--offload-arch)")
+# The error-corrected GEMM runtime (TCEC) is cuMpSGEMM's, built when
+# POSEIDON_CUMPSGEMM_ROOT names a built checkout of it; without, the pass does
+# not offer that candidate.
+set(POSEIDON_CUMPSGEMM_ROOT ""
+    CACHE PATH "Built cuMpSGEMM checkout of the TCEC runtime")
+
+# --- What the build has
+
 # MPFR's library is the one Enzyme found (MPFR_LIB_PATH). Its header, and
 # GMP's, which it includes, are looked for next to the libraries and then in
 # CMAKE_PREFIX_PATH, CMAKE_INCLUDE_PATH and the system: an MPFR or a GMP
@@ -35,16 +79,6 @@ if(_poseidon_missing)
       "${_poseidon_missing}. Add the installation prefix of each to "
       "CMAKE_PREFIX_PATH.")
 endif()
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
-# Build-tree layout mirrors an installation (bin/, lib/), which is what the
-# driver resolves its plugin and runtimes against.
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
-set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
-set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
@@ -78,9 +112,103 @@ if(CMAKE_CUDA_COMPILER)
     set(POSEIDON_CUDA_ARCH sm_${CMAKE_MATCH_1} CACHE INTERNAL "")
   endif()
 endif()
+# The toolkit the CUDA runtimes link and the driver and the device profiler
+# compile against (its root, the directory above nvcc's).
 find_package(CUDAToolkit QUIET)
+get_filename_component(POSEIDON_CUDA_ROOT "${CUDAToolkit_BIN_DIR}" DIRECTORY)
 
-include(Herbie)
+if(POSEIDON_ROCM_PATH AND NOT "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
+  message(
+    FATAL_ERROR
+      "POSEIDON_ROCM_PATH needs an LLVM with the AMDGPU target; ${LLVM_DIR} has ${LLVM_TARGETS_TO_BUILD}")
+endif()
+if(NOT POSEIDON_AMDGPU_ARCH MATCHES "^gfx[0-9a-f]+$")
+  message(
+    FATAL_ERROR
+      "POSEIDON_AMDGPU_ARCH='${POSEIDON_AMDGPU_ARCH}' is not "
+      "one AMD GPU processor (gfx942, gfx90a, ...)")
+endif()
+if(POSEIDON_CUMPSGEMM_ROOT AND NOT CMAKE_CUDA_COMPILER)
+  message(FATAL_ERROR "POSEIDON_CUMPSGEMM_ROOT needs a CUDA compiler")
+endif()
+
+# Which GPU runtimes this build has, for the runtimes, the tools, the package
+# and the tests.
+set(POSEIDON_HAS_CUDA OFF)
+if(CMAKE_CUDA_COMPILER)
+  set(POSEIDON_HAS_CUDA ON)
+endif()
+set(POSEIDON_HAS_HIP OFF)
+if(POSEIDON_ROCM_PATH)
+  set(POSEIDON_HAS_HIP ON)
+endif()
+set(POSEIDON_HAS_TCEC OFF)
+if(POSEIDON_CUMPSGEMM_ROOT)
+  set(POSEIDON_HAS_TCEC ON)
+endif()
+foreach(_runtime CUDA HIP TCEC)
+  set(POSEIDON_HAS_${_runtime} ${POSEIDON_HAS_${_runtime}}
+      CACHE INTERNAL "Whether this build has the ${_runtime} runtime")
+endforeach()
+
+# How a HIP source is compiled: by the clang the plugin is built against, for
+# POSEIDON_AMDGPU_ARCH. HIP marks its error type nodiscard; the sources drop
+# the same results their CUDA builds drop.
+if(POSEIDON_HAS_HIP)
+  # hip_as_cuda.h, which every HIP build includes, includes hipBLAS.
+  if(NOT EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
+    message(
+      FATAL_ERROR
+        "POSEIDON_ROCM_PATH=${POSEIDON_ROCM_PATH} has no hipBLAS "
+        "(lib/libhipblas.so), which the HIP runtimes need")
+  endif()
+  set(POSEIDON_HIP_CXX
+      ${LLVM_TOOLS_BINARY_DIR}/clang++
+      -x
+      hip
+      --offload-arch=${POSEIDON_AMDGPU_ARCH}
+      --rocm-path=${POSEIDON_ROCM_PATH}
+      -std=c++17
+      -O3
+      -Wno-unused-value)
+endif()
+
+# The Enzyme plugin of this build, which differentiates the profiling probes,
+# for the driver, the package and the tests: POSEIDON_ENZYME_PLUGIN is empty
+# in a build without it.
+set(POSEIDON_ENZYME_PLUGIN_NAME
+    ClangEnzyme-${LLVM_VERSION_MAJOR}${CMAKE_SHARED_MODULE_SUFFIX})
+set(POSEIDON_ENZYME_PLUGIN_PATH
+    ${ENZYME_BINARY_DIR}/Enzyme/${POSEIDON_ENZYME_PLUGIN_NAME})
+set(_poseidon_enzyme_plugin "")
+if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
+  set(_poseidon_enzyme_plugin ${POSEIDON_ENZYME_PLUGIN_PATH})
+endif()
+set(POSEIDON_ENZYME_PLUGIN "${_poseidon_enzyme_plugin}"
+    CACHE INTERNAL "The Enzyme clang plugin of this build tree")
+# Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves a
+# derivative request to the post-link run unless told otherwise, and the device
+# link loads no plugin. poseidon-clang, POSEIDON_ENZYME_OPTIONS and
+# Poseidon::EnzymeOptions give it to the HIP compiles that load Enzyme.
+set(POSEIDON_ENZYME_HIP_OPTION "-enzyme-lto-prelink=1")
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(GNUInstallDirs)
+
+# Build-tree layout mirrors an installation (bin/, lib/), which is what the
+# driver resolves its plugin and runtimes against.
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
+set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
+set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
+
+# The tools link LLVM and clang's driver library as LLVM's own tools do
+# (add_llvm_executable, clang_target_link_libraries): the shared libraries
+# where LLVM and clang were built to link them.
+include(${CLANG_CMAKE_DIR}/AddClang.cmake)
+
+# --- The plugin
 
 set(POSEIDON_SRC
     Core/CacheKey.cpp
@@ -137,19 +265,6 @@ set(POSEIDON_SRC
     Techniques/Matmul/RecognizeHostGemm.cpp
     Techniques/Matmul/RecognizeScalarLoop.cpp)
 
-# The driver runs the clang of LLVM_DIR and parses command lines with its
-# driver library, and the device profilers and HIP tools are compiled by it.
-if(NOT Clang_FOUND OR NOT EXISTS ${LLVM_TOOLS_BINARY_DIR}/clang++)
-  message(
-    FATAL_ERROR
-      "ENZYME_POSEIDON needs the clang of LLVM_DIR (${LLVM_TOOLS_BINARY_DIR}/clang++ and its CMake package); build LLVM with clang")
-endif()
-
-# The tools link LLVM and clang's driver library as LLVM's own tools do
-# (add_llvm_executable, clang_target_link_libraries): the shared libraries
-# where LLVM and clang were built to link them.
-include(${CLANG_CMAKE_DIR}/AddClang.cmake)
-
 # The cost table, which the calibrator reads as the plugin does.
 add_library(poseidon_costtable OBJECT Core/CostTable.cpp)
 set_target_properties(
@@ -187,6 +302,11 @@ target_include_directories(
 target_link_libraries(
   ${POSEIDON_PLUGIN_TARGET}
   PRIVATE ${MPFR_LIB_PATH} ${POSEIDON_GMP_LIB})
+if(POSEIDON_HAS_TCEC)
+  target_compile_definitions(
+    ${POSEIDON_PLUGIN_TARGET}
+    PRIVATE POSEIDON_TCEC_USE_CUMPSGEMM)
+endif()
 
 # What a cached result was computed by: Poseidon's sources. Hashed when they
 # change, not when the build is configured.
@@ -216,11 +336,6 @@ target_include_directories(
   ${POSEIDON_PLUGIN_TARGET}
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/identity)
 
-set_source_files_properties(
-  Techniques/Herbie.cpp
-  PROPERTIES
-    COMPILE_DEFINITIONS
-    POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
 # The accuracy model emulates the emitted FP32 expansions and the GEMM
 # runtimes bit for bit, and the sampler reproduces the standard library's
 # uniform reals bit for bit; each holds only if every operation is rounded as
@@ -235,456 +350,26 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     PROPERTIES
       COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off;-frounding-math")
 endif()
-include(GNUInstallDirs)
-
-# The device half of the GPU profiler as bitcode the plugin carries and links
-# into each device module it compiles for profile generation:
-# FPProfilerDevice<suffix>.bc compiled by COMPILE, embedded as the array
-# kDeviceProfiler<suffix> that CONSUMER includes, compiled with DEFINES.
-function(poseidon_embed_device_profiler suffix consumer)
-  cmake_parse_arguments(PARSE_ARGV 2 _arg "" "" "COMPILE;DEFINES")
-  set(_src ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfilerDevice.cu)
-  set(_bc ${CMAKE_CURRENT_BINARY_DIR}/FPProfilerDevice${suffix}.bc)
-  set(_inc ${CMAKE_CURRENT_BINARY_DIR}/FPProfilerDevice${suffix}.inc)
-  add_custom_command(
-    OUTPUT ${_bc}
-    COMMAND ${_arg_COMPILE} -emit-llvm -c ${_src} -o ${_bc}
-    DEPENDS
-      ${_src} ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfilerCUDA.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/hip_as_cuda.h
-    VERBATIM)
-  add_custom_command(
-    OUTPUT ${_inc}
-    COMMAND
-      ${CMAKE_COMMAND} -DIN=${_bc} -DOUT=${_inc} -DNAME=kDeviceProfiler${suffix}
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
-    DEPENDS ${_bc} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
-    VERBATIM)
-  string(TOLOWER "${suffix}" _target)
-  if(_target)
-    set(_target _${_target})
-  endif()
-  add_custom_target(poseidon_device_profiler${_target} DEPENDS ${_inc})
-  add_dependencies(${POSEIDON_PLUGIN_TARGET} poseidon_device_profiler${_target})
-  target_include_directories(
-    ${POSEIDON_PLUGIN_TARGET}
-    PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-  set_property(
-    SOURCE ${consumer}
-    APPEND
-    PROPERTY COMPILE_DEFINITIONS ${_arg_DEFINES})
-  set_property(SOURCE ${consumer} APPEND PROPERTY OBJECT_DEPENDS ${_inc})
-endfunction()
-
-# The architecture only admits the atomics the source uses; the code is
-# generated for the GPU of the module the bitcode is linked into.
-if(CMAKE_CUDA_COMPILER)
-  get_filename_component(POSEIDON_CUDA_ROOT ${CUDAToolkit_BIN_DIR} DIRECTORY)
-  poseidon_embed_device_profiler(
-    ""
-    Targets/NVPTX.cpp
-    COMPILE
-    ${LLVM_TOOLS_BINARY_DIR}/clang++
-    -x
-    cuda
-    --cuda-device-only
-    --cuda-gpu-arch=sm_60
-    --cuda-path=${POSEIDON_CUDA_ROOT}
-    -std=c++17
-    -O3
-    DEFINES
-    POSEIDON_DEVICE_PROFILER)
-endif()
-
-# The ROCm installation HIP compiles take their device libraries and headers
-# from, and the one AMD GPU processor the HIP runtimes, calibrators and device
-# profiler are compiled for.
-set(POSEIDON_ROCM_PATH ""
-    CACHE PATH "ROCm installation HIP compiles use (--rocm-path)")
-set(POSEIDON_AMDGPU_ARCH gfx942
-    CACHE STRING "AMD GPU processor of the HIP builds (--offload-arch)")
-if(NOT POSEIDON_AMDGPU_ARCH MATCHES "^gfx[0-9a-f]+$")
-  message(
-    FATAL_ERROR
-      "POSEIDON_AMDGPU_ARCH='${POSEIDON_AMDGPU_ARCH}' is not "
-      "one AMD GPU processor (gfx942, gfx90a, ...)")
-endif()
-
-add_library(poseidon_profile STATIC runtime/fpprofiler/FPProfiler.cpp)
-target_include_directories(
-  poseidon_profile
-  PRIVATE ${ENZYME_SOURCE_DIR}/include)
-# Linked into profile-generate builds only: it replaces malloc for the process.
-add_library(poseidon_profile_host STATIC runtime/fpprofiler/FPProfilerHost.cpp)
-
-# The error-corrected GEMM dispatch is cuMpSGEMM's; a build without it neither
-# offers that candidate nor has its runtime.
-option(POSEIDON_TCEC_USE_CUMPSGEMM
-       "Build the error-corrected GEMM dispatch, which runs on cuMpSGEMM" OFF)
-set(POSEIDON_CUMPSGEMM_ROOT ""
-    CACHE PATH "cuMpSGEMM checkout for POSEIDON_TCEC_USE_CUMPSGEMM")
-if(POSEIDON_TCEC_USE_CUMPSGEMM)
-  if(NOT CMAKE_CUDA_COMPILER OR NOT POSEIDON_CUMPSGEMM_ROOT)
-    message(
-      FATAL_ERROR
-        "POSEIDON_TCEC_USE_CUMPSGEMM needs a CUDA compiler and "
-        "POSEIDON_CUMPSGEMM_ROOT")
-  endif()
-  target_compile_definitions(
-    ${POSEIDON_PLUGIN_TARGET}
-    PRIVATE POSEIDON_TCEC_USE_CUMPSGEMM)
-endif()
-
-if(CMAKE_CUDA_COMPILER)
-  add_library(
-    poseidon_rt
-    STATIC
-      runtime/native/native_rt.cu runtime/ozaki/ozaki_rt.cu
-      runtime/direct/direct_rt.cu)
-  # Whole-program per translation unit: every kernel is launched from the host
-  # entry point in its own file, so the archive carries complete fatbins and an
-  # application built by any compiler can link it.
-  set_target_properties(poseidon_rt PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
-  # Optimized in every build type but Debug, as LLVM's own runtimes are;
-  # -Xcompiler, since nvcc warns when its own -O is given twice.
-  target_compile_options(
-    poseidon_rt
-    PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Xcompiler=-O3>)
-  # What a program that links poseidon_rt links besides it is said here only
-  # (poseidon_rt_link_files).
-  target_link_libraries(poseidon_rt PUBLIC CUDA::cublas CUDA::cudart)
-  if(POSEIDON_TCEC_USE_CUMPSGEMM)
-    target_sources(poseidon_rt PRIVATE runtime/tcec/tcec_rt.cu)
-    target_include_directories(
-      poseidon_rt
-      PRIVATE ${POSEIDON_CUMPSGEMM_ROOT}/include)
-    target_link_libraries(
-      poseidon_rt
-      PUBLIC ${POSEIDON_CUMPSGEMM_ROOT}/build/libcumpsgemm.so)
-  endif()
-
-  # The host half of the GPU profiler, linked by every profile-generate build
-  # of CUDA code. It links no CUDA runtime: it takes the program's own, the
-  # one the program's device modules are registered with.
-  add_library(poseidon_profile_cuda STATIC runtime/fpprofiler/FPProfilerCUDA.cu)
-  set_target_properties(
-    poseidon_profile_cuda
-    PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
-  target_include_directories(
-    poseidon_profile_cuda
-    PRIVATE ${ENZYME_SOURCE_DIR}/include)
-
-  add_executable(poseidon-microbm tools/calibrate/microbm.cu)
-  set(POSEIDON_TOOL_TARGETS poseidon-microbm)
-  # The dispatch calibrator times the runtime entry points, so it links them.
-  add_executable(poseidon-dispatch-calibrate
-                 tools/calibrate/dispatch_calibrate.cu)
-  target_compile_definitions(
-    poseidon-dispatch-calibrate
-    PRIVATE POSEIDON_TCEC=$<BOOL:${POSEIDON_TCEC_USE_CUMPSGEMM}>)
-  target_include_directories(
-    poseidon-dispatch-calibrate
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(
-    poseidon-dispatch-calibrate
-    PRIVATE poseidon_rt CUDA::cublas)
-  list(APPEND POSEIDON_TOOL_TARGETS poseidon-dispatch-calibrate)
-  # Installed, it still finds cuMpSGEMM where it was built, as the programs
-  # poseidon-clang links do.
-  if(POSEIDON_TCEC_USE_CUMPSGEMM)
-    set_target_properties(
-      poseidon-dispatch-calibrate
-      PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
-  endif()
-endif()
-
-# The device profiler, runtimes and calibrators compiled as HIP for
-# POSEIDON_AMDGPU_ARCH by the clang the plugin is built against, each source
-# whole as the CUDA ones are. TCEC has no HIP build.
-set(POSEIDON_HIP_RUNTIMES OFF)
-if(POSEIDON_ROCM_PATH AND NOT "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
-  message(
-    FATAL_ERROR
-      "POSEIDON_ROCM_PATH needs an LLVM with the AMDGPU target; ${LLVM_DIR} has ${LLVM_TARGETS_TO_BUILD}")
-endif()
-if(POSEIDON_ROCM_PATH)
-  set(POSEIDON_HIP_RUNTIMES ON)
-  # hip_as_cuda.h, which every HIP build includes, includes hipBLAS.
-  if(NOT EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
-    message(
-      FATAL_ERROR
-        "POSEIDON_ROCM_PATH=${POSEIDON_ROCM_PATH} has no hipBLAS "
-        "(lib/libhipblas.so), which the HIP runtimes need")
-  endif()
-  # HIP marks its error type nodiscard; these sources drop the same results
-  # their CUDA builds drop.
-  set(_poseidon_hip_cxx
-      ${LLVM_TOOLS_BINARY_DIR}/clang++
-      -x
-      hip
-      --offload-arch=${POSEIDON_AMDGPU_ARCH}
-      --rocm-path=${POSEIDON_ROCM_PATH}
-      -std=c++17
-      -O3
-      -Wno-unused-value)
-
-  # It links the ROCm device libraries of that processor (printf's hostcall),
-  # which differ per ISA, so the plugin links it only into modules for that
-  # processor.
-  poseidon_embed_device_profiler(
-    AMDGPU
-    Targets/AMDGPU.cpp
-    COMPILE
-    ${_poseidon_hip_cxx}
-    --cuda-device-only
-    --no-gpu-bundle-output
-    -fgpu-rdc
-    DEFINES
-    POSEIDON_DEVICE_PROFILER_AMDGPU
-    POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH="${POSEIDON_AMDGPU_ARCH}")
-
-  set(POSEIDON_HIP_RUNTIME_HEADERS
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/hip_as_cuda.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/GemmDispatch.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/GemmDispatch.inc
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/GemmRuntime.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfilerCUDA.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfileName.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/ShadowTable.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/ozaki/OzakiII.h
-      ${ENZYME_SOURCE_DIR}/include/poseidon/poseidon.h)
-  # The HIP headers define CUDA's directed-rounding intrinsics (the Ozaki-II
-  # scaling's __dadd_ru, __fsub_rd, ...) only under
-  # OCML_BASIC_ROUNDED_OPERATIONS.
-  function(poseidon_add_hip_library name)
-    set(_objs)
-    foreach(_src ${ARGN})
-      get_filename_component(_stem ${_src} NAME_WE)
-      set(_obj ${CMAKE_CURRENT_BINARY_DIR}/hip/${name}/${_stem}.o)
-      add_custom_command(
-        OUTPUT ${_obj}
-        COMMAND
-          ${_poseidon_hip_cxx}
-          -fPIC
-          -DOCML_BASIC_ROUNDED_OPERATIONS
-          -I${ENZYME_SOURCE_DIR}/include
-          -c
-          ${CMAKE_CURRENT_SOURCE_DIR}/${_src}
-          -o
-          ${_obj}
-        DEPENDS
-          ${CMAKE_CURRENT_SOURCE_DIR}/${_src} ${POSEIDON_HIP_RUNTIME_HEADERS}
-        VERBATIM)
-      list(APPEND _objs ${_obj})
-    endforeach()
-    add_library(${name} STATIC ${_objs})
-    set_target_properties(${name} PROPERTIES LINKER_LANGUAGE CXX)
-  endfunction()
-
-  # Like poseidon_profile_cuda, it takes the program's own HIP runtime.
-  poseidon_add_hip_library(poseidon_profile_hip
-                           runtime/fpprofiler/FPProfilerCUDA.cu)
-  poseidon_add_hip_library(poseidon_rt_hip runtime/native/native_rt.cu
-                           runtime/ozaki/ozaki_rt.cu runtime/direct/direct_rt.cu)
-  # In this build tree, the libraries of POSEIDON_ROCM_PATH; installed, those
-  # of the ROCm installation of the machine the package is used on, which the
-  # package configuration finds.
-  target_link_libraries(
-    poseidon_rt_hip
-    INTERFACE
-      $<BUILD_INTERFACE:${POSEIDON_ROCM_PATH}/lib/libhipblas.so>
-      $<BUILD_INTERFACE:${POSEIDON_ROCM_PATH}/lib/libamdhip64.so>
-      $<INSTALL_INTERFACE:Poseidon::rocm_hipblas>
-      $<INSTALL_INTERFACE:Poseidon::rocm_amdhip64>)
-
-  # The HIP runtime's own dependencies (the HSA runtime) resolve when a
-  # calibrator runs, so a host without the GPU stack links them too.
-  function(poseidon_add_hip_tool name src)
-    set(_exe ${CMAKE_CURRENT_BINARY_DIR}/bin/${name})
-    set(_libs)
-    if(ARGN)
-      set(_libs -x none ${ARGN})
-    endif()
-    add_custom_command(
-      OUTPUT ${_exe}
-      COMMAND
-        ${_poseidon_hip_cxx}
-        -I${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/${src}
-        ${_libs}
-        -L${POSEIDON_ROCM_PATH}/lib
-        -lamdhip64
-        -Wl,-rpath,${POSEIDON_ROCM_PATH}/lib
-        -Wl,--allow-shlib-undefined
-        -o
-        ${_exe}
-      DEPENDS
-        ${CMAKE_CURRENT_SOURCE_DIR}/${src} ${POSEIDON_HIP_RUNTIME_HEADERS}
-        ${ARGN}
-      VERBATIM)
-    add_custom_target(${name} ALL DEPENDS ${_exe})
-  endfunction()
-
-  poseidon_add_hip_tool(poseidon-microbm-hip tools/calibrate/microbm.cu)
-  poseidon_add_hip_tool(
-    poseidon-dispatch-calibrate-hip tools/calibrate/dispatch_calibrate.cu
-    $<TARGET_FILE:poseidon_rt_hip> ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
-  add_dependencies(poseidon-dispatch-calibrate-hip poseidon_rt_hip)
-  set(POSEIDON_HIP_TOOL_TARGETS poseidon-microbm-hip
-      poseidon-dispatch-calibrate-hip)
-endif()
-
-set(LLVM_LINK_COMPONENTS Support TargetParser)
-add_llvm_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp
-                    $<TARGET_OBJECTS:poseidon_costtable>)
-target_include_directories(
-  poseidon-calibrate
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_definitions(
-  poseidon-calibrate
-  PRIVATE
-    POSEIDON_CALIBRATE_TCEC=$<BOOL:${POSEIDON_TCEC_USE_CUMPSGEMM}>
-    POSEIDON_CALIBRATE_HERBIE="${POSEIDON_HERBIE_BINARY_PATH}"
-    POSEIDON_CALIBRATE_PYTHON="${Python3_EXECUTABLE}"
-    POSEIDON_CALIBRATE_SRCDIR="${CMAKE_CURRENT_SOURCE_DIR}")
-if(CMAKE_CUDA_COMPILER)
-  add_dependencies(poseidon-calibrate poseidon-clang ${POSEIDON_TOOL_TARGETS})
-endif()
-if(POSEIDON_HIP_RUNTIMES)
-  add_dependencies(poseidon-calibrate ${POSEIDON_HIP_TOOL_TARGETS})
-endif()
-
-add_executable(poseidon-probe tools/probe/poseidon-probe.cpp)
-
-# Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves a
-# derivative request to the post-link run unless told otherwise, and the device
-# link loads no plugin. poseidon-clang, POSEIDON_ENZYME_OPTIONS and
-# Poseidon::EnzymeOptions give it to the HIP compiles that load Enzyme.
-set(POSEIDON_ENZYME_HIP_OPTION "-enzyme-lto-prelink=1")
-
-# The Enzyme plugin of this build tree, which differentiates the profiling
-# probes, for the driver, the package and the tests.
-set(POSEIDON_ENZYME_PLUGIN_NAME
-    ClangEnzyme-${LLVM_VERSION_MAJOR}${CMAKE_SHARED_MODULE_SUFFIX})
-set(POSEIDON_ENZYME_PLUGIN ""
-    CACHE INTERNAL "The Enzyme clang plugin of this build tree")
-if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
-  set(POSEIDON_ENZYME_PLUGIN
-      ${ENZYME_BINARY_DIR}/Enzyme/${POSEIDON_ENZYME_PLUGIN_NAME}
-      CACHE INTERNAL "The Enzyme clang plugin of this build tree")
-endif()
-
-# The libraries poseidon_rt links, in its order: cuMpSGEMM defines cuBLAS's
-# GEMM entry points and comes after cuBLAS, so that a call of cuBLAS reaches
-# cuBLAS. Without TOOLKIT only those that are files, which a link adds beyond
-# the CUDA toolkit's libraries; with it every one, as a file.
-function(poseidon_rt_link_files out)
-  cmake_parse_arguments(PARSE_ARGV 1 _arg "TOOLKIT" "" "")
-  set(_files "")
-  if(TARGET poseidon_rt)
-    get_target_property(_libs poseidon_rt INTERFACE_LINK_LIBRARIES)
-    foreach(_lib ${_libs})
-      if(NOT TARGET ${_lib})
-        list(APPEND _files ${_lib})
-      elseif(_arg_TOOLKIT)
-        get_target_property(_file ${_lib} LOCATION)
-        list(APPEND _files ${_file})
-      endif()
-    endforeach()
-  endif()
-  set(${out} ${_files} PARENT_SCOPE)
-endfunction()
-poseidon_rt_link_files(POSEIDON_DRIVER_RT_LIBS)
-# Comma-separated: a compile definition is no CMake list.
-string(JOIN "," POSEIDON_DRIVER_RT_LIBS ${POSEIDON_DRIVER_RT_LIBS})
-
-# One binary, two names: the C or the C++ clang, chosen from argv[0].
-set(LLVM_LINK_COMPONENTS Option Support TargetParser)
-add_llvm_executable(poseidon-clang tools/driver/poseidon-clang.cpp)
-target_include_directories(poseidon-clang PRIVATE ${ENZYME_SOURCE_DIR}/include)
-target_compile_definitions(
-  poseidon-clang
-  PRIVATE
-    POSEIDON_DRIVER_CLANG="${LLVM_TOOLS_BINARY_DIR}/clang"
-    POSEIDON_DRIVER_CLANGXX="${LLVM_TOOLS_BINARY_DIR}/clang++"
-    POSEIDON_DRIVER_PLUGIN_NAME="${POSEIDON_PLUGIN_TARGET}${CMAKE_SHARED_MODULE_SUFFIX}"
-    POSEIDON_DRIVER_PLUGIN="$<TARGET_FILE:${POSEIDON_PLUGIN_TARGET}>"
-    POSEIDON_DRIVER_ENZYME="${POSEIDON_ENZYME_PLUGIN}"
-    POSEIDON_DRIVER_ENZYME_HIP_OPTION="${POSEIDON_ENZYME_HIP_OPTION}"
-    POSEIDON_DRIVER_INCLUDE="${ENZYME_SOURCE_DIR}/include"
-    POSEIDON_DRIVER_LIBDIR="${CMAKE_CURRENT_BINARY_DIR}/lib"
-    POSEIDON_DRIVER_BINDIR="$<TARGET_FILE_DIR:poseidon-clang>"
-    POSEIDON_DRIVER_INSTALL_LIBDIR="${CMAKE_INSTALL_LIBDIR}"
-    POSEIDON_DRIVER_INSTALL_INCLUDEDIR="${CMAKE_INSTALL_INCLUDEDIR}"
-    POSEIDON_DRIVER_PROFILER_CUDA=$<BOOL:${CMAKE_CUDA_COMPILER}>
-    POSEIDON_DRIVER_PROFILER_HIP=$<BOOL:${POSEIDON_HIP_RUNTIMES}>
-    POSEIDON_DRIVER_RT_LIBS="${POSEIDON_DRIVER_RT_LIBS}"
-    POSEIDON_DRIVER_CUDA_ROOT="${CUDAToolkit_TARGET_DIR}"
-    POSEIDON_DRIVER_ROCM_ROOT="${POSEIDON_ROCM_PATH}")
-clang_target_link_libraries(poseidon-clang PRIVATE clangDriver)
-# Enzyme takes zlib out of LLVMSupport's interface for its table generator;
-# clang's driver library compresses offload bundles with it.
-if(LLVM_ENABLE_ZLIB AND NOT LLVM_LINK_LLVM_DYLIB)
-  target_link_libraries(poseidon-clang PRIVATE ZLIB::ZLIB)
-endif()
-add_dependencies(poseidon-clang ${POSEIDON_PLUGIN_TARGET})
-if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
-  add_dependencies(poseidon-clang ClangEnzyme-${LLVM_VERSION_MAJOR})
-endif()
-
-add_custom_command(
-  TARGET poseidon-clang
-  POST_BUILD
-  COMMAND
-    ${CMAKE_COMMAND} -E create_symlink poseidon-clang
-    $<TARGET_FILE_DIR:poseidon-clang>/poseidon-clang++)
 
 install(
-  TARGETS
-  ${POSEIDON_PLUGIN_TARGET}
-  poseidon_profile
-  poseidon_profile_host
-  poseidon-clang
-  poseidon-calibrate
-  poseidon-probe
+  TARGETS ${POSEIDON_PLUGIN_TARGET}
   EXPORT PoseidonTargets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(
-  CODE
-  "execute_process(COMMAND \"${CMAKE_COMMAND}\" -E create_symlink
-             poseidon-clang
-             \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/poseidon-clang++\")")
-if(CMAKE_CUDA_COMPILER)
-  install(
-    TARGETS poseidon_rt poseidon_profile_cuda ${POSEIDON_TOOL_TARGETS}
-    EXPORT PoseidonTargets
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()
-if(POSEIDON_HIP_RUNTIMES)
-  install(
-    TARGETS poseidon_rt_hip poseidon_profile_hip
-    EXPORT PoseidonTargets
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-  foreach(_tool ${POSEIDON_HIP_TOOL_TARGETS})
-    install(
-      PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/bin/${_tool}
-      DESTINATION ${CMAKE_INSTALL_BINDIR})
-  endforeach()
-endif()
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(
   DIRECTORY ${ENZYME_SOURCE_DIR}/include/poseidon
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-# The sources poseidon-calibrate runs.
-install(
-  FILES tools/calibrate/inkernel_calibrate.cu tools/calibrate/microbm_cpu.py
-  tools/calibrate/herbie_platform.py
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon/tools/calibrate)
-install(
-  PROGRAMS tools/explain/poseidon-explain
-  DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+add_subdirectory(runtime)
+add_subdirectory(tools)
+
+# The Herbie the pass runs by default (tools/CMakeLists.txt).
+set_source_files_properties(
+  Techniques/Herbie.cpp
+  PROPERTIES
+    COMPILE_DEFINITIONS
+    POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
+
+# --- The CMake package
 
 # find_package(Poseidon CONFIG) from this build tree (Poseidon_DIR is this
 # directory) and from an installation. The configuration lays out each tree's
@@ -692,11 +377,6 @@ install(
 # interface targets (cmake/PoseidonConfig.cmake.in).
 set(POSEIDON_VERSION 0.1)
 set(POSEIDON_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/Poseidon)
-set(POSEIDON_HAS_CUDA OFF)
-if(CMAKE_CUDA_COMPILER)
-  set(POSEIDON_HAS_CUDA ON)
-endif()
-set(POSEIDON_HAS_HIP ${POSEIDON_HIP_RUNTIMES})
 install(
   EXPORT PoseidonTargets
   NAMESPACE Poseidon::
@@ -708,8 +388,7 @@ export(
 
 include(CMakePackageConfigHelpers)
 set(POSEIDON_CONFIG_INCLUDE_DIR ${ENZYME_SOURCE_DIR}/include)
-set(POSEIDON_CONFIG_ENZYME_PLUGIN
-    ${ENZYME_BINARY_DIR}/Enzyme/${POSEIDON_ENZYME_PLUGIN_NAME})
+set(POSEIDON_CONFIG_ENZYME_PLUGIN ${POSEIDON_ENZYME_PLUGIN_PATH})
 set(POSEIDON_CONFIG_FINDS_ROCM FALSE)
 configure_package_config_file(
   cmake/PoseidonConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/PoseidonConfig.cmake

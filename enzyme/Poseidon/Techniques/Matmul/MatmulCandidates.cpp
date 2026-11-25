@@ -651,7 +651,6 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
         {matmulOptionLabel(opt),
          "this compiler was built without cuMpSGEMM, on which the "
          "error-corrected dispatch runs; configure it with "
-         "-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON "
          "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>"});
     return;
   }

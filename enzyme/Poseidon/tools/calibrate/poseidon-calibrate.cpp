@@ -621,7 +621,6 @@ static void armTcec(StringRef Csv, const Device &D) {
   if (!POSEIDON_CALIBRATE_TCEC) {
     outs() << "[calibrate] tcec: this build has no error-corrected dispatch, "
               "which needs cuMpSGEMM (configure with "
-              "-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON "
               "-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>); its row stays absent\n";
     return;
   }
