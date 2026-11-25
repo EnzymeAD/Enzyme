@@ -1913,6 +1913,22 @@ static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
   return {accepted, acceptWeight, rng};
 }
 
+/// Emits the MH step of `proposal` from `trace` and `weight`: the accept test,
+/// and the trace and weight of the proposal where it is accepted. Only the
+/// columns in `windows` take the proposed values.
+static MHStep emitMHStep(OpBuilder &builder, Location loc, Value trace,
+                         Value weight, const MHProposal &proposal,
+                         bool hasScoreTail,
+                         ArrayRef<std::pair<int64_t, int64_t>> windows) {
+  MHDecision decision =
+      emitMHDecision(builder, loc, weight, proposal, hasScoreTail);
+  Value newTrace = writeBackMHWindows(builder, loc, trace, proposal.trace,
+                                      decision.accepted, windows);
+  Value newWeight = arith::SelectOp::create(builder, loc, decision.accepted,
+                                            decision.acceptWeight, weight);
+  return {newTrace, newWeight, decision.rng, decision.accepted};
+}
+
 /// Returns whether `op` or an op nested in it has an operand in `values`.
 static bool usesAnyOf(Operation *op, const DenseSet<Value> &values) {
   auto inValues = [&](Value v) { return values.contains(v); };
@@ -2279,28 +2295,59 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   return {newTrace, newWeight, correction, curRng, logRatio};
 }
 
-/// Proposes the move of the flat-form MH op `op` with a Hastings
-/// `impulse.regenerate`. The weight is the change of the joint density on a
-/// score-tail trace, else the new joint density.
-static MHProposal proposeFlatMove(OpBuilder &b, Location loc,
-                                  impulse::InferOp op,
-                                  ArrayRef<Type> fnResultTypes, Value trace,
-                                  Value rng) {
+/// Proposes the move of the flat-form MH op `op`, an `impulse.mh` or an MH
+/// `impulse.infer`, from `trace` with a Hastings `impulse.regenerate` named
+/// `name` that calls the model, whose results have `fnResultTypes`, on
+/// `inputs`. The weight is the change of the joint density on a score-tail
+/// trace, else the new joint density.
+template <typename OpT>
+static MHProposal proposeFlatMove(OpBuilder &b, Location loc, OpT op,
+                                  ValueRange inputs, Value trace,
+                                  StringAttr name, TypeRange fnResultTypes) {
   auto weightType = RankedTensorType::get({2}, b.getF64Type());
   SmallVector<Type> regenResultTypes{trace.getType(), weightType};
-  for (Type t : fnResultTypes)
-    regenResultTypes.push_back(t);
-  SmallVector<Value> inputs(op.getInputs().begin(), op.getInputs().end());
-  inputs[0] = rng;
+  llvm::append_range(regenResultTypes, fnResultTypes);
   auto regen = impulse::RegenerateOp::create(
       b, loc, regenResultTypes, op.getFnAttr(), inputs, trace,
       op.getConstraint(), /*all_addresses=*/op.getAllAddressesAttr(),
       /*selection=*/op.getSelectionAttr(), op.getConstrainedAddressesAttr(),
-      b.getStringAttr(""));
+      name);
   regen->setAttr(kMHHastingsAttr, b.getUnitAttr());
   auto [weight, correction] = unpackHastingsWeight(b, loc, regen.getWeight());
   return {regen.getNewTrace(), weight, correction, regen.getOutputs()[0],
           /*logRatio=*/Value()};
+}
+
+/// Creates the body block of `forOp`, whose arguments are the iteration index
+/// and the carried values, and moves the insertion point to its start.
+static Block *createForBody(OpBuilder &builder, impulse::ForOp forOp) {
+  SmallVector<Type> types{forOp.getLowerBound().getType()};
+  llvm::append_range(types, forOp.getResultTypes());
+  SmallVector<Location> locs(types.size(), forOp.getLoc());
+  return builder.createBlock(&forOp.getRegion(), {}, types, locs);
+}
+
+/// Emits `step` `count` times, each time on the values the previous step
+/// returned, and returns the values of the last step. A single step runs in
+/// place on `start`. More steps run in an `impulse.for` that carries the values
+/// `loopInit` creates after the loop bounds, or `start` without `loopInit`.
+static SmallVector<Value>
+emitRepeated(OpBuilder &builder, Location loc, int64_t count, ValueRange start,
+             function_ref<SmallVector<Value>()> loopInit,
+             function_ref<SmallVector<Value>(ValueRange)> step) {
+  if (count <= 1)
+    return step(start);
+  Value lowerBound = emitI64ScalarConstant(builder, loc, 0);
+  Value upperBound = emitI64ScalarConstant(builder, loc, count);
+  Value one = emitI64ScalarConstant(builder, loc, 1);
+  SmallVector<Value> init = loopInit ? loopInit() : SmallVector<Value>(start);
+  auto forOp = impulse::ForOp::create(builder, loc, ValueRange(init).getTypes(),
+                                      lowerBound, upperBound, one, init);
+  Block *body = createForBody(builder, forOp);
+  impulse::YieldOp::create(builder, loc,
+                           step(body->getArguments().drop_front()));
+  builder.setInsertionPointAfter(forOp);
+  return SmallVector<Value>(forOp.getResults());
 }
 
 //===----------------------------------------------------------------------===//
@@ -3437,8 +3484,6 @@ struct ExpandImpulsePass
       Value initWeight = op.getStateIn()[0];
       Value initRng = inputs[0];
       auto traceType = cast<RankedTensorType>(initTrace.getType());
-      auto weightType = cast<RankedTensorType>(initWeight.getType());
-      Type rngType = initRng.getType();
       auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
 
       ArrayAttr selection = op.getSelectionAttr();
@@ -3446,7 +3491,6 @@ struct ExpandImpulsePass
 
       SymbolTableCollection symbolTable;
       FunctionOpInterface fn;
-      SmallVector<Type> fnResultTypes;
       if constexpr (!isRegionForm) {
         fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
             op, op.getFnAttr());
@@ -3454,8 +3498,6 @@ struct ExpandImpulsePass
           op.emitError("Impulse MH: `fn` must reference a non-empty funcOp");
           return failure();
         }
-        for (Type t : fn.getResultTypes())
-          fnResultTypes.push_back(t);
       }
 
       int64_t fullPositionSize = 0;
@@ -3486,67 +3528,40 @@ struct ExpandImpulsePass
             mhChangedColumnsFlat(op, fn, allAddresses, selection,
                                  traceType.getShape()[1], symbolTable);
 
-      auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
-                         Value rng) -> MHStep {
+      // Carries the trace, the weight, the key and whether the step accepted.
+      auto oneStep = [&](ValueRange carried) -> SmallVector<Value> {
+        Value trace = carried[0], rng = carried[2];
         MHProposal proposal;
-        if constexpr (isRegionForm)
+        if constexpr (isRegionForm) {
+          proposal = proposeRegionMove(rewriter, loc, op, layout, trace, rng,
+                                       hasScoreTail,
+                                       /*withLogRatio=*/true, changedColumns);
+        } else {
+          SmallVector<Value> inputs(op.getInputs());
+          inputs[0] = rng;
           proposal =
-              proposeRegionMove(b, loc, op, layout, trace, rng, hasScoreTail,
-                                /*withLogRatio=*/true, changedColumns);
-        else
-          proposal = proposeFlatMove(b, loc, op, fnResultTypes, trace, rng);
-        MHDecision decision =
-            emitMHDecision(b, loc, weight, proposal, hasScoreTail);
-        Value newTrace = writeBackMHWindows(b, loc, trace, proposal.trace,
-                                            decision.accepted, changedColumns);
-        Value newWeight = arith::SelectOp::create(
-            b, loc, decision.accepted, decision.acceptWeight, weight);
-        return {newTrace, newWeight, decision.rng, decision.accepted};
+              proposeFlatMove(rewriter, loc, op, inputs, trace,
+                              rewriter.getStringAttr(""), fn.getResultTypes());
+        }
+        MHStep step = emitMHStep(rewriter, loc, trace, carried[1], proposal,
+                                 hasScoreTail, changedColumns);
+        return {step.trace, step.weight, step.rng, step.accepted};
       };
-
-      int64_t numSamples = op.getNumSamples();
-      Value outTrace, outWeight, outRng, outAccepted;
-
-      if (numSamples <= 1) {
-        MHStep step = oneStep(rewriter, initTrace, initWeight, initRng);
-        outTrace = step.trace;
-        outWeight = step.weight;
-        outRng = step.rng;
-        outAccepted = step.accepted;
-      } else {
-        Value c0 = emitI64ScalarConstant(rewriter, loc, 0),
-              cN = emitI64ScalarConstant(rewriter, loc, numSamples),
-              c1 = emitI64ScalarConstant(rewriter, loc, 1);
-        Value falseC = arith::ConstantOp::create(
-            rewriter, loc, i1TensorType,
-            DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
-        SmallVector<Type> loopTypes{traceType, weightType, rngType,
-                                    i1TensorType};
-        SmallVector<Value> initArgs{initTrace, initWeight, initRng, falseC};
-        auto forOp = impulse::ForOp::create(rewriter, loc, loopTypes, c0, cN,
-                                            c1, initArgs);
-        Block *body = rewriter.createBlock(&forOp.getRegion());
-        body->addArgument(c0.getType(), loc);
-        for (Type t : loopTypes)
-          body->addArgument(t, loc);
-        rewriter.setInsertionPointToStart(body);
-        MHStep step = oneStep(rewriter, body->getArgument(1),
-                              body->getArgument(2), body->getArgument(3));
-        impulse::YieldOp::create(
-            rewriter, loc,
-            ValueRange{step.trace, step.weight, step.rng, step.accepted});
-        rewriter.setInsertionPointAfter(forOp);
-        outTrace = forOp.getResult(0);
-        outWeight = forOp.getResult(1);
-        outRng = forOp.getResult(2);
-        outAccepted = forOp.getResult(3);
-      }
+      SmallVector<Value> out = emitRepeated(
+          rewriter, loc, op.getNumSamples(), {initTrace, initWeight, initRng},
+          [&]() -> SmallVector<Value> {
+            Value notAccepted = arith::ConstantOp::create(
+                rewriter, loc, i1TensorType,
+                DenseElementsAttr::get(i1TensorType,
+                                       rewriter.getBoolAttr(false)));
+            return {initTrace, initWeight, initRng, notAccepted};
+          },
+          oneStep);
 
       // MH reports no per-sample log density; `log_densities` is zero.
       Value outLogDensities = arith::ConstantOp::create(
           rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
-      rewriter.replaceOp(
-          op, {outTrace, outAccepted, outLogDensities, outRng, outWeight});
+      rewriter.replaceOp(op, {out[0], out[3], outLogDensities, out[2], out[1]});
       return success();
     }
   };
@@ -3594,7 +3609,6 @@ struct ExpandImpulsePass
       Value initRng = op.getInputs()[0];
       auto traceType = cast<RankedTensorType>(initTrace.getType());
       auto weightType = cast<RankedTensorType>(initWeight.getType());
-      Type rngType = initRng.getType();
       int64_t width = traceType.getShape()[1];
       bool hasScoreTail = width > positionSize;
       if (hasScoreTail && width != positionSize + (int64_t)numYields) {
@@ -3855,34 +3869,13 @@ struct ExpandImpulsePass
         return {writeObserved(b, trace), weight, rng};
       };
 
-      int64_t numSamples = op.getNumSamples();
-      Value outTrace, outWeight, outRng;
-      if (numSamples <= 1) {
-        auto r = oneSweep(rewriter, initTrace, initWeight, initRng);
-        outTrace = r[0];
-        outWeight = r[1];
-        outRng = r[2];
-      } else {
-        Value c0 = emitI64ScalarConstant(rewriter, loc, 0),
-              cN = emitI64ScalarConstant(rewriter, loc, numSamples),
-              c1 = emitI64ScalarConstant(rewriter, loc, 1);
-        SmallVector<Type> loopTypes{traceType, weightType, rngType};
-        SmallVector<Value> initArgs{initTrace, initWeight, initRng};
-        auto forOp = impulse::ForOp::create(rewriter, loc, loopTypes, c0, cN,
-                                            c1, initArgs);
-        Block *body = rewriter.createBlock(&forOp.getRegion());
-        body->addArgument(c0.getType(), loc);
-        for (Type t : loopTypes)
-          body->addArgument(t, loc);
-        rewriter.setInsertionPointToStart(body);
-        auto r = oneSweep(rewriter, body->getArgument(1), body->getArgument(2),
-                          body->getArgument(3));
-        impulse::YieldOp::create(rewriter, loc, ValueRange{r[0], r[1], r[2]});
-        rewriter.setInsertionPointAfter(forOp);
-        outTrace = forOp.getResult(0);
-        outWeight = forOp.getResult(1);
-        outRng = forOp.getResult(2);
-      }
+      SmallVector<Value> out = emitRepeated(
+          rewriter, loc, op.getNumSamples(), {initTrace, initWeight, initRng},
+          /*loopInit=*/nullptr, [&](ValueRange carried) {
+            std::array<Value, 3> r =
+                oneSweep(rewriter, carried[0], carried[1], carried[2]);
+            return SmallVector<Value>(r.begin(), r.end());
+          });
 
       // Gibbs always accepts; `log_densities` is a zero placeholder.
       auto diagType = cast<ShapedType>(op.getDiagnostics().getType());
@@ -3891,8 +3884,8 @@ struct ExpandImpulsePass
           DenseElementsAttr::get(diagType, rewriter.getBoolAttr(true)));
       Value logDensities = arith::ConstantOp::create(
           rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
-      rewriter.replaceOp(
-          op, {outTrace, diagnostics, logDensities, outRng, outWeight});
+      rewriter.replaceOp(op,
+                         {out[0], diagnostics, logDensities, out[2], out[1]});
       return success();
     }
   };
@@ -3937,8 +3930,6 @@ struct ExpandImpulsePass
 
       Value oldTrace = mhOp.getOriginalTrace();
       Value oldWeight = mhOp.getOriginalWeight();
-      SmallVector<Value> inputs(mhOp.getInputs().begin(),
-                                mhOp.getInputs().end());
       auto allAddresses = mhOp.getAllAddressesAttr();
 
       auto traceType = oldTrace.getType();
@@ -3955,24 +3946,9 @@ struct ExpandImpulsePass
       bool hasScoreTail =
           cast<RankedTensorType>(traceType).getShape()[1] > fullPositionSize;
 
-      SmallVector<Type> regenResultTypes;
-      regenResultTypes.push_back(traceType);
-      regenResultTypes.push_back(
-          RankedTensorType::get({2}, rewriter.getF64Type()));
-      for (auto t : fn.getResultTypes())
-        regenResultTypes.push_back(t);
-
-      auto regenerateOp = impulse::RegenerateOp::create(
-          rewriter, loc, regenResultTypes, mhOp.getFnAttr(), inputs, oldTrace,
-          mhOp.getConstraint(), allAddresses, selection,
-          mhOp.getConstrainedAddressesAttr(), nameAttr);
-
-      regenerateOp->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
-      MHProposal proposal;
-      proposal.trace = regenerateOp.getNewTrace();
-      std::tie(proposal.weight, proposal.correction) =
-          unpackHastingsWeight(rewriter, loc, regenerateOp.getWeight());
-      proposal.rng = regenerateOp.getOutputs()[0];
+      MHProposal proposal =
+          proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
+                          nameAttr, fn.getResultTypes());
 
       MHDecision decision =
           emitMHDecision(rewriter, loc, oldWeight, proposal, hasScoreTail);
