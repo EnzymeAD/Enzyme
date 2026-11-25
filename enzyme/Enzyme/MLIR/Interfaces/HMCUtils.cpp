@@ -261,15 +261,15 @@ Value impulse::scatterPositionToTrace(OpBuilder &builder, Location loc,
 
   Value result = fullTrace;
   for (const auto &info : ctx.supports) {
-    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
+    auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
     auto posOffset = arith::ConstantOp::create(
         builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.offset)));
+        DenseElementsAttr::get(
+            i64TensorType, builder.getI64IntegerAttr(info.constrainedOffset)));
     SmallVector<Value> extractIndices{c0, posOffset};
     auto slice = impulse::DynamicSliceOp::create(
         builder, loc, sliceType, position2d, extractIndices,
-        builder.getDenseI64ArrayAttr({1, info.size}));
+        builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
 
     auto traceOffset = arith::ConstantOp::create(
         builder, loc, i64TensorType,
@@ -289,7 +289,7 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
   // Constrained width, which differs from positionSize for SIMPLEX.
   int64_t constrainedSize = 0;
   for (const auto &info : ctx.supports)
-    constrainedSize += info.size;
+    constrainedSize += info.constrainedSize;
   auto positionType2d = RankedTensorType::get({1, constrainedSize}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto c0 = arith::ConstantOp::create(
@@ -302,7 +302,7 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                              builder.getFloatAttr(elemType, 0.0)));
   Value result = zeroConst;
   for (const auto &info : ctx.supports) {
-    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
+    auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
     auto traceOffset = arith::ConstantOp::create(
         builder, loc, i64TensorType,
         DenseElementsAttr::get(i64TensorType,
@@ -310,12 +310,12 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
     SmallVector<Value> extractIndices{c0, traceOffset};
     auto slice = impulse::DynamicSliceOp::create(
         builder, loc, sliceType, fullTrace, extractIndices,
-        builder.getDenseI64ArrayAttr({1, info.size}));
+        builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
 
     auto posOffset = arith::ConstantOp::create(
         builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.offset)));
+        DenseElementsAttr::get(
+            i64TensorType, builder.getI64IntegerAttr(info.constrainedOffset)));
     SmallVector<Value> updateIndices{c0, posOffset};
     result = impulse::DynamicUpdateSliceOp::create(
         builder, loc, positionType2d, result, slice, updateIndices);
@@ -785,8 +785,7 @@ static TransitionStart startTransition(OpBuilder &builder, Location loc,
       builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
       rng);
   Value rngMomentum = split.getResult(1);
-  // The logpdf mode draws the momentum from the unsplit key, as the reference
-  // implementation does.
+  // The logpdf mode draws the momentum from the unsplit key.
   if (!ctx.hasCustomLogpdf()) {
     auto momentumSplit = impulse::RandomSplitOp::create(
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
@@ -811,8 +810,6 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  // num_steps = ceil(trajectory_length / step_size)
-  // adjusted_step_size = trajectory_length / num_steps
   Value numSteps, adjustedStepSize;
   if (ctx.numSteps > 0) {
     numSteps = emitI64ScalarConstant(builder, loc, ctx.numSteps);
@@ -832,7 +829,6 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto [rngNext, rngTransition, p0, initialHamiltonian] =
       startTransition(builder, loc, U, rng, ctx, debugDump);
 
-  // Leapfrog integration loop
   auto direction = arith::ConstantOp::create(
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
@@ -844,7 +840,6 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, i64TensorType,
       DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
 
-  // Loop carries: [q, p, grad, U, rng]
   SmallVector<Type> loopResultTypes = {positionType, positionType, positionType,
                                        scalarType, rngTransition.getType()};
   auto forLoopOp =
@@ -852,12 +847,9 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                              ValueRange{q, p0, grad, U, rngTransition});
 
   Block *loopBody = builder.createBlock(&forLoopOp.getRegion());
-  loopBody->addArgument(i64TensorType, loc);           // iv
-  loopBody->addArgument(positionType, loc);            // q
-  loopBody->addArgument(positionType, loc);            // p
-  loopBody->addArgument(positionType, loc);            // gradient
-  loopBody->addArgument(scalarType, loc);              // U
-  loopBody->addArgument(rngTransition.getType(), loc); // rng
+  loopBody->addArgument(i64TensorType, loc);
+  for (Type type : loopResultTypes)
+    loopBody->addArgument(type, loc);
 
   builder.setInsertionPointToStart(loopBody);
   auto qLoop = loopBody->getArgument(1);
@@ -869,7 +861,6 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto step = computeIntegrationStep(builder, loc, leaf, rngLoop, direction,
                                      adjustedCtx);
 
-  // Yield [q, p, grad, U, rng]
   impulse::YieldOp::create(
       builder, loc, ValueRange{step.q, step.p, step.grad, step.U, step.rng});
 
@@ -880,12 +871,10 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto UProposal = forLoopOp.getResult(3);
   auto rngAfterLeapfrog = forLoopOp.getResult(4);
 
-  // Compute K1, H1 for proposal
   auto K1 =
       computeKineticEnergy(builder, loc, pProposal, ctx.invMass, positionType);
   auto H1 = arith::AddFOp::create(builder, loc, UProposal, K1);
 
-  // MH accept/reject
   auto zeroConst = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
@@ -893,12 +882,10 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  // α = min(1, exp(H0 - H1))
   auto dH = arith::SubFOp::create(builder, loc, initialHamiltonian, H1);
   auto expDH = math::ExpOp::create(builder, loc, dH);
   auto accProb = arith::MinimumFOp::create(builder, loc, oneConst, expDH);
 
-  // u ~ Uniform(0, 1)
   auto randomOp = impulse::RandomOp::create(
       builder, loc, TypeRange{rngAfterLeapfrog.getType(), scalarType},
       rngAfterLeapfrog, zeroConst, oneConst,
@@ -906,16 +893,14 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                         impulse::RngDistribution::UNIFORM));
   auto randUniform = randomOp.getResult();
 
-  // accepted = u < α
   auto acceptedTensor = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
-  // HMC doesn't collect divergence information so set to false
+  // HMC does not detect divergent trajectories.
   auto falseConst = arith::ConstantOp::create(
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
 
-  // Select between original and proposal
   auto qFinal = impulse::SelectOp::create(builder, loc, positionType,
                                           acceptedTensor, qProposal, q);
   auto gradFinal = impulse::SelectOp::create(
@@ -938,7 +923,6 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto [rngNext, rngTree, p0, initialHamiltonian] =
       startTransition(builder, loc, U, rng, ctx, debugDump);
 
-  // Initialize NUTS tree state
   auto iterCtx = ctx.withH0(initialHamiltonian);
 
   auto zeroI64 = arith::ConstantOp::create(
@@ -970,15 +954,13 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                .p_sum = p0,
                                .rng = rngTree};
 
-  // Build NUTS tree
   auto finalTree = buildTree(builder, loc, initialTree, iterCtx, debugDump);
 
-  // NUTS always accepts the proposal (implicit acceptance in the tree)
+  // The tree itself selects the proposal, so the transition always accepts.
   auto trueConst = arith::ConstantOp::create(
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
 
-  // Compute mean acceptance probability for step size adaptation
   auto oneI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
       DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
@@ -1888,7 +1870,7 @@ static Value transformPosition(OpBuilder &builder, Location loc, Value position,
   int64_t inSize = inputType.getShape()[1];
   int64_t outSize = 0;
   for (const SupportInfo &info : supports)
-    outSize += toUnconstrained ? info.unconstrainedSize : info.size;
+    outSize += toUnconstrained ? info.unconstrainedSize : info.constrainedSize;
 
   auto positionType1D = RankedTensorType::get({inSize}, elemType);
   Value position1D =
@@ -1896,8 +1878,10 @@ static Value transformPosition(OpBuilder &builder, Location loc, Value position,
 
   SmallVector<Value> slices;
   for (const SupportInfo &info : supports) {
-    int64_t offset = toUnconstrained ? info.offset : info.unconstrainedOffset;
-    int64_t size = toUnconstrained ? info.size : info.unconstrainedSize;
+    int64_t offset =
+        toUnconstrained ? info.constrainedOffset : info.unconstrainedOffset;
+    int64_t size =
+        toUnconstrained ? info.constrainedSize : info.unconstrainedSize;
     auto sliceType = RankedTensorType::get({size}, elemType);
     Value slice =
         impulse::SliceOp::create(builder, loc, sliceType, position1D,

@@ -1,7 +1,13 @@
-//===- VIUtils.cpp - Variational Inference lowering utilities -------------===//
+//===- VIUtils.cpp - Variational inference lowering -----------------------===//
 //
-// The key splits, draws and update formulas reproduce NumPyro's SVI bit for
-// bit, so their order and arithmetic must not change.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// The key splits, draws and update formulas fix the bits of the result; do not
+// reorder them.
 //
 //===----------------------------------------------------------------------===//
 
@@ -209,14 +215,16 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         builder, loc, TypeRange{rngType, rngType}, chain);
     chain = siteSplit.getResult(0);
     Value siteKey = siteSplit.getResult(1);
-    auto siteEpsType = RankedTensorType::get({1, info.size}, elemType);
+    auto siteEpsType =
+        RankedTensorType::get({1, info.constrainedSize}, elemType);
     auto randOp = impulse::RandomOp::create(
         builder, loc, TypeRange{rngType, siteEpsType}, siteKey, zeroScalar,
         oneScalar,
         impulse::RngDistributionAttr::get(builder.getContext(),
                                           impulse::RngDistribution::NORMAL));
     Value siteEps = randOp.getResult();
-    Value offsetI64 = emitI64ScalarConstant(builder, loc, info.offset);
+    Value offsetI64 =
+        emitI64ScalarConstant(builder, loc, info.constrainedOffset);
     eps = impulse::DynamicUpdateSliceOp::create(
         builder, loc, positionType, eps, siteEps, ValueRange{c0i64, offsetI64});
   }
@@ -869,16 +877,19 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       chain = siteSplit.getResult(0);
       Value siteKey = siteSplit.getResult(1);
 
-      auto siteFlatType = RankedTensorType::get({info.size}, elemType);
+      auto siteFlatType =
+          RankedTensorType::get({info.constrainedSize}, elemType);
       auto draw = impulse::RandomOp::create(
           rewriter, loc, TypeRange{rngType, siteFlatType}, siteKey, negRadius,
           posRadius, uniformAttr);
       Value initDraw = draw.getResult();
 
-      auto sliceType = RankedTensorType::get({1, info.size}, elemType);
+      auto sliceType =
+          RankedTensorType::get({1, info.constrainedSize}, elemType);
       Value initDraw2D =
           impulse::ReshapeOp::create(rewriter, loc, sliceType, initDraw);
-      Value offsetIdx = emitI64ScalarConstant(rewriter, loc, info.offset);
+      Value offsetIdx =
+          emitI64ScalarConstant(rewriter, loc, info.constrainedOffset);
       loc0 = impulse::DynamicUpdateSliceOp::create(
           rewriter, loc, positionType, loc0, initDraw2D,
           ValueRange{c0i64, offsetIdx});

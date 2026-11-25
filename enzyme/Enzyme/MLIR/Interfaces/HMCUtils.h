@@ -20,19 +20,28 @@
 namespace mlir {
 namespace impulse {
 
+/// Where the values of one inferred site sit in the position vector, in
+/// constrained and in unconstrained coordinates, and in the trace.
 struct SupportInfo {
-  // `offset`, `traceOffset` and `size` are in constrained coordinates.
-  int64_t offset;
+  /// First position column of the site's constrained values.
+  int64_t constrainedOffset;
+  /// First trace column of the site's values.
   int64_t traceOffset;
-  int64_t size;
+  /// Number of constrained values of the site.
+  int64_t constrainedSize;
+  /// First position column of the site's unconstrained values.
   int64_t unconstrainedOffset;
+  /// Number of unconstrained values of the site; differs from
+  /// `constrainedSize` only for SIMPLEX.
   int64_t unconstrainedSize;
+  /// The support of the site's values; null means all of R.
   impulse::SupportAttr support;
 
-  SupportInfo(int64_t offset, int64_t traceOffset, int64_t size,
-              int64_t unconstrainedOffset, int64_t unconstrainedSize,
-              impulse::SupportAttr support)
-      : offset(offset), traceOffset(traceOffset), size(size),
+  SupportInfo(int64_t constrainedOffset, int64_t traceOffset,
+              int64_t constrainedSize, int64_t unconstrainedOffset,
+              int64_t unconstrainedSize, impulse::SupportAttr support)
+      : constrainedOffset(constrainedOffset), traceOffset(traceOffset),
+        constrainedSize(constrainedSize),
         unconstrainedOffset(unconstrainedOffset),
         unconstrainedSize(unconstrainedSize), support(support) {}
 };
@@ -64,8 +73,7 @@ struct MCMCKernelResult {
   Value grad;        // Gradient at new position
   Value U;           // Potential energy at new position
   Value accepted;    // Whether proposal was accepted
-  Value divergent;   // Whether step was divergent (NUTS only; currently always
-                     // false for HMC)
+  Value divergent;   // Whether the trajectory diverged; false for HMC
   Value accept_prob; // Mean acceptance probability
   Value rng;         // Updated RNG state
 };
@@ -348,13 +356,9 @@ NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
                            const NUTSTreeState &subTree, Value direction,
                            Value rng, bool biased, const NUTSContext &ctx);
 
-/// Initializes HMC/NUTS state from a trace
-/// Specifically:
-///   - Extracts position from trace
-///   - Computes initial potential energy U0 = -weight
-///   - Samples initial momentum p0 ~ N(0, M)
-///   - Computes initial kinetic energy and Hamiltonian
-///   - Computes initial gradient via AutoDiffRegionOp
+/// Returns the starting position, its potential energy and gradient, and the
+/// key for the first transition. The position is `initialPosition` with a
+/// custom log density, else read from the trace and unconstrained.
 InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
                         const HMCContext &ctx, Value initialPosition = Value(),
                         bool debugDump = false);

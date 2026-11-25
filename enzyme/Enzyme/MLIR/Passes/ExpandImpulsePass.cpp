@@ -1403,9 +1403,7 @@ SmallVector<Value> MCMCChainEmitter::packStateOut(
     return adaptationOut[*impulse::slotIndex(schema, name) - first];
   };
 
-  // Assumes the declared `state_schema` is the canonical layout, which
-  // InferOp::verify checks for impulse.infer; impulse.infer_region has no
-  // verifier.
+  // The op verifier checks that `state_schema` has the canonical layout.
   SmallVector<Value> stateOut;
   auto invMassTy = cast<RankedTensorType>(invMass.getType());
   for (const impulse::StateSlot &slot : impulse::buildStateSchema(
@@ -3175,6 +3173,8 @@ struct ExpandImpulsePass
     }
   };
 
+  /// Lowers an `impulse.infer` or `impulse.infer_region` with an HMC or NUTS
+  /// config to its chains.
   template <typename MCMCOpT>
   struct LowerMCMCPattern : public mlir::OpRewritePattern<MCMCOpT> {
     static constexpr bool isRegionForm =
@@ -3240,7 +3240,7 @@ struct ExpandImpulsePass
         model.constrainedPositionSize = 0;
         model.positionSize = 0;
         for (const auto &info : model.supports) {
-          model.constrainedPositionSize += info.size;
+          model.constrainedPositionSize += info.constrainedSize;
           model.positionSize += info.unconstrainedSize;
         }
       };
@@ -3314,7 +3314,8 @@ struct ExpandImpulsePass
     }
   };
 
-  // The VI learning rate is the `init_step_size` operand.
+  /// Lowers an `impulse.infer` or `impulse.infer_region` with a VI config to
+  /// an SVI loop whose learning rate is the `init_step_size` operand.
   template <typename OpT>
   struct LowerVIPattern : public mlir::OpRewritePattern<OpT> {
     static constexpr bool isRegionForm =

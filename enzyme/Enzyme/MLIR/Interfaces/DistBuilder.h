@@ -1,4 +1,10 @@
-//===- DistBuilder.h - Emit distribution sampler/logpdf IR ----*- C++ -*-===//
+//===- DistBuilder.h - Emit distribution sampler/logpdf IR ------*- C++ -*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // Builds the sampler and the log density of an `#impulse.dist` attribute and
 // the bijection that unconstrains a support out of impulse, enzyme.broadcast,
@@ -25,7 +31,8 @@ Value emitBijectorForward(OpBuilder &builder, Location loc, SupportAttr support,
 /// Maps `y` in `support` back to unconstrained space.
 Value emitBijectorInverse(OpBuilder &builder, Location loc, SupportAttr support,
                           Value y);
-/// log|det d(forward)/dz| summed over the event, evaluated at unconstrained z.
+/// Returns log|det J| of emitBijectorForward at the unconstrained `z`, summed
+/// to a rank-0 tensor.
 Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
                                SupportAttr support, Value z);
 
@@ -53,13 +60,15 @@ Value emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
 /// False for rejection-loop samplers, whose RNG stream cannot be replayed.
 bool distSamplerEmittable(DistAttr dist);
 
-/// Returns {newRng, value}.
+/// Draws a `sampleType` sample of `dist` with parameters `distArgs` from
+/// `rng`. Returns the advanced RNG state, then the sample.
 SmallVector<Value> emitDistSampler(OpBuilder &builder, Location loc,
                                    DistAttr dist, Value rng,
                                    ValueRange distArgs,
                                    RankedTensorType sampleType);
 
-/// base_logpdf(inverse(y)) minus the forward chain's log|det J|, as a scalar.
+/// Returns the log density of `observed` under `dist` with parameters
+/// `distArgs`, summed to a rank-0 tensor.
 Value emitDistLogpdf(OpBuilder &builder, Location loc, DistAttr dist,
                      Value observed, ValueRange distArgs);
 
