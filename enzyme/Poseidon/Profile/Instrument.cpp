@@ -517,29 +517,25 @@ static const Function &userFunctionOf(const Function &F) {
   reportUserError(F, F.getSubprogram(), *target.profilerMismatch(F));
 }
 
-bool linkDeviceProfiler(Module &M, bool profileGenerate) {
-  const Target &target = Target::of(M);
-  if (!profileGenerate || !target.isDevice())
-    return false;
-  if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
-    if (!T->isDeclaration())
-      return false;
-  // Without the target's device profiler the probes would stay external and
-  // the program would fail only at its link.
-  StringRef bitcode = target.profilerBitcode();
-  if (bitcode.empty()) {
-    const ProbeABI &P = target.probes();
-    const StringRef probes[] = {
-        P.LogValue,  P.LogGradient,   P.PerturbF64,          P.PerturbF32,
-        P.BlockDims, P.PublishStatic, P.OverlappingArguments};
-    for (Function &F : M)
-      for (Instruction &I : instructions(F))
-        if (const auto *call = dyn_cast<CallBase>(&I))
-          if (const Function *callee = call->getCalledFunction();
-              callee && is_contained(probes, callee->getName()))
-            refuseProbe(target, F);
-    return false;
-  }
+/// Stops at every probe call of `M`, whose target this build carries no
+/// device profiler for.
+static void refuseUnservedProbes(const Target &target, Module &M) {
+  const ProbeABI &P = target.probes();
+  const StringRef probes[] = {
+      P.LogValue,  P.LogGradient,   P.PerturbF64,          P.PerturbF32,
+      P.BlockDims, P.PublishStatic, P.OverlappingArguments};
+  for (Function &F : M)
+    for (Instruction &I : instructions(F))
+      if (const auto *call = dyn_cast<CallBase>(&I))
+        if (const Function *callee = call->getCalledFunction();
+            callee && is_contained(probes, callee->getName()))
+          refuseProbe(target, F);
+}
+
+/// The device profiler `bitcode`, checked to define the table the host
+/// runtime writes and to serve every probe `M` calls.
+static std::unique_ptr<Module>
+loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
   Expected<std::unique_ptr<Module>> parsed = parseBitcodeFile(
       MemoryBufferRef(bitcode, "FPProfilerDevice.bc"), M.getContext());
   if (!parsed)
@@ -565,11 +561,15 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
         if (target.profilerMismatch(*call->getFunction()))
           refuseProbe(target, *call->getFunction());
   }
+  return std::move(*parsed);
+}
 
+/// Gives the profiler library `L` the target and layout of `M`, and drops what
+/// describes its own compile: module flags, producer, keep-alive lists, and
+/// the processor its functions were compiled for.
+static void adaptDeviceProfiler(Module &L, const Module &M) {
   L.setTargetTriple(M.getTargetTriple());
   L.setDataLayout(M.getDataLayout());
-  // The library's module flags, producer and keep-alive lists describe its own
-  // compile; the module keeps its own, and takes only what its probes reach.
   if (NamedMDNode *moduleFlags = L.getModuleFlagsMetadata())
     L.eraseNamedMetadata(moduleFlags);
   if (NamedMDNode *ident = L.getNamedMetadata("llvm.ident"))
@@ -577,12 +577,14 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
   for (StringRef used : {"llvm.used", "llvm.compiler.used"})
     if (GlobalVariable *G = L.getNamedGlobal(used))
       G->eraseFromParent();
-  // Code generation follows the GPU the module is compiled for.
   for (Function &F : L) {
     F.removeFnAttr("target-cpu");
     F.removeFnAttr("target-features");
   }
+}
 
+/// The names of what `L` defines for others that `M` does not define itself.
+static SmallVector<std::string, 16> definedOnlyBy(Module &L, Module &M) {
   StringSet<> own;
   for (const GlobalValue &G : M.global_values())
     if (!G.isDeclaration())
@@ -592,6 +594,29 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
     if (!G.isDeclaration() && !G.hasLocalLinkage() &&
         !own.contains(G.getName()))
       linked.push_back(G.getName().str());
+  return linked;
+}
+
+bool linkDeviceProfiler(Module &M, bool profileGenerate) {
+  const Target &target = Target::of(M);
+  if (!profileGenerate || !target.isDevice())
+    return false;
+  if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
+    if (!T->isDeclaration())
+      return false;
+  // Without the target's device profiler the probes would stay external and
+  // the program would fail only at its link.
+  StringRef bitcode = target.profilerBitcode();
+  if (bitcode.empty()) {
+    refuseUnservedProbes(target, M);
+    return false;
+  }
+  std::unique_ptr<Module> L = loadDeviceProfiler(target, bitcode, M);
+  GlobalVariable *libTable = L->getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE);
+  // Code generation follows the GPU the module is compiled for, and the
+  // module keeps its own flags, taking only what its probes reach.
+  adaptDeviceProfiler(*L, M);
+  SmallVector<std::string, 16> linked = definedOnlyBy(*L, M);
 
   // The host half registers the table whether or not a probe reads it.
   GlobalVariable *table = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE);
@@ -602,7 +627,7 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
         nullptr, GlobalValue::NotThreadLocal, libTable->getAddressSpace());
   appendToCompilerUsed(M, {table});
 
-  if (Linker::linkModules(M, std::move(*parsed), Linker::Flags::LinkOnlyNeeded))
+  if (Linker::linkModules(M, std::move(L), Linker::Flags::LinkOnlyNeeded))
     report_fatal_error("Poseidon: linking the device profiler failed");
 
   // Local to the module, so relocatable device code links one copy per unit;
