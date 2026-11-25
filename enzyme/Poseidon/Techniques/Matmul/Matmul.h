@@ -26,6 +26,7 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Support/JSON.h"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -65,6 +66,17 @@ struct MatrixIndex {
   TidAxis slow = TidAxis::Unknown;
   unsigned fuseMult = 0;
   bool fused() const { return slow != TidAxis::Unknown; }
+};
+
+// Exclusive upper bounds on the global thread index of each axis,
+// blockIdx.a * blockDim.a + threadIdx.a; 0 leaves the axis unbounded.
+struct ThreadIndexBounds {
+  std::array<uint64_t, 3> ub = {0, 0, 0};
+  bool any() const { return ub[0] || ub[1] || ub[2]; }
+  void tighten(unsigned axis, uint64_t bound) {
+    if (!ub[axis] || bound < ub[axis])
+      ub[axis] = bound;
+  }
 };
 
 // The index (0, 1, 2) of a thread axis; none for Unknown and Other.
@@ -108,6 +120,9 @@ struct ScalarLoopHandle {
   bool inKernelRaisable = false;
   // The block shape the profile recorded, which the raise is laid out for.
   uint32_t profiledBlock[3] = {0, 0, 0};
+  // The guards a thread passes on its way to the loop: a block raises only
+  // when every one of its threads passes them.
+  ThreadIndexBounds loopGuard;
 
   // The thread index of A's row and of B's column.
   MatrixIndex aRow, bCol;

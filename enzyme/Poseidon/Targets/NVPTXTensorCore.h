@@ -33,9 +33,11 @@ constexpr unsigned kWarpSize = 32;
 constexpr unsigned kLog2WarpSize = 5;
 static_assert(1u << kLog2WarpSize == kWarpSize);
 
-// threadIdx and blockDim on `axis` (0 to 2).
+// threadIdx, blockIdx and blockDim on `axis` (0 to 2).
 llvm::Value *emitThreadIndex(llvm::IRBuilderBase &B, llvm::Module *M,
                              unsigned axis);
+llvm::Value *emitBlockIndex(llvm::IRBuilderBase &B, llvm::Module *M,
+                            unsigned axis);
 llvm::Value *emitBlockDim(llvm::IRBuilderBase &B, llvm::Module *M,
                           unsigned axis);
 

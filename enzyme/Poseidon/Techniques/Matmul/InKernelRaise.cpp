@@ -315,26 +315,41 @@ static void emitTileFill(
   B.SetInsertPoint(&*afterBB->getFirstInsertionPt());
 }
 
-// Branches from `preheader` to a new block, which it returns, when the block
-// shape of the launch is the profiled one and to `loopHeader` otherwise. The
-// branch is uniform across the block.
-static BasicBlock *emitBlockShapeGuard(BasicBlock &preheader,
-                                       BasicBlock &loopHeader,
-                                       const ScalarLoopHandle &h) {
+// Branches from `preheader` to a new block, which it returns, when the launch
+// has the profiled block shape and every thread of the block passes the
+// loop's guards, and to `loopHeader` otherwise. Both tests read only the
+// block's index and shape, so the branch is uniform across the block.
+static BasicBlock *emitRaiseGuard(BasicBlock &preheader, BasicBlock &loopHeader,
+                                  const ScalarLoopHandle &h) {
   Function *F = preheader.getParent();
   Module *mod = F->getParent();
   IRBuilder<> GB(preheader.getTerminator());
-  Value *sameShape = nullptr;
+  Value *raise = nullptr;
   for (unsigned axis = 0; axis < 3; ++axis) {
     Value *eq = GB.CreateICmpEQ(
         nvptx::emitBlockDim(GB, mod, axis),
         ConstantInt::get(GB.getInt32Ty(), h.profiledBlock[axis]));
-    sameShape = sameShape ? GB.CreateAnd(sameShape, eq) : eq;
+    raise = raise ? GB.CreateAnd(raise, eq) : eq;
+  }
+  // The block's last global thread index on the axis, computed without wrap,
+  // is below the bound: (blockIdx + 1) * blockDim <= ub.
+  for (unsigned axis = 0; axis < 3; ++axis) {
+    const uint64_t ub = h.loopGuard.ub[axis];
+    if (!ub)
+      continue;
+    Type *i64Ty = GB.getInt64Ty();
+    Value *block = GB.CreateZExt(nvptx::emitBlockIndex(GB, mod, axis), i64Ty);
+    Value *dim = GB.CreateZExt(nvptx::emitBlockDim(GB, mod, axis), i64Ty);
+    Value *end = GB.CreateMul(GB.CreateAdd(block, ConstantInt::get(i64Ty, 1)),
+                              dim, "raise.end");
+    Value *inside =
+        GB.CreateICmpULE(end, ConstantInt::get(i64Ty, ub), "raise.inside");
+    raise = GB.CreateAnd(raise, inside);
   }
   BasicBlock *raiseBB =
       BasicBlock::Create(mod->getContext(), "raise.entry", F, &loopHeader);
   IRBuilder<>(raiseBB).CreateBr(&loopHeader);
-  GB.CreateCondBr(sameShape, raiseBB, &loopHeader);
+  GB.CreateCondBr(raise, raiseBB, &loopHeader);
   preheader.getTerminator()->eraseFromParent();
   return raiseBB;
 }
@@ -913,13 +928,14 @@ void materializeInKernelRaise(const AbstractMatmul &m,
          "an in-kernel raise is proposed only where it can take the loop's "
          "place");
 
-  // The raise is laid out for the profiled block shape, so it runs only in a
-  // block of that shape; a launch of another shape runs the loop as written.
+  // The raise is laid out for the profiled block shape and needs every thread
+  // of the block, so it runs only in a block of that shape whose threads all
+  // pass the loop's guards; any other block runs the code as written.
   BasicBlock *loopHeader = preheader->getSingleSuccessor();
   BasicBlock *loopLatch = exitBB->getSinglePredecessor();
   assert(loopHeader && loopLatch &&
          "recognition admits only a loop whose exit is entered from its latch");
-  preheader = emitBlockShapeGuard(*preheader, *loopHeader, h);
+  preheader = emitRaiseGuard(*preheader, *loopHeader, h);
 
   RaiseContext C = makeRaiseContext(m, t, preheader->getParent());
   SmallVector<GlobalVariable *, 8> aScratch, bScratch, dScratch;

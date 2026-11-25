@@ -34,8 +34,10 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -229,6 +231,101 @@ std::array<int64_t, 3> threadIndexCoefficients(const SCEV *S) {
   std::array<int64_t, 3> coef = {0, 0, 0};
   extractTidCoefficients(S, 1, coef);
   return coef;
+}
+
+// `blockIdx.a * blockDim.a + threadIdx.a` on one axis, modulo casts and operand
+// order; an intra-block index would bound the tile, not the matrix.
+static bool isGlobalThreadIndex(const Value *v, int &axis) {
+  while (const auto *CI = dyn_cast<CastInst>(v))
+    v = CI->getOperand(0);
+  const auto *add = dyn_cast<BinaryOperator>(v);
+  if (!add || add->getOpcode() != Instruction::Add)
+    return false;
+  for (unsigned i = 0; i < 2; ++i) {
+    LaunchGeometry t = launchGeometryOf(add->getOperand(i));
+    if (t.Kind != LaunchValue::ThreadIndex)
+      continue;
+    const auto *mul = dyn_cast<BinaryOperator>(add->getOperand(1 - i));
+    if (!mul || mul->getOpcode() != Instruction::Mul)
+      continue;
+    for (unsigned j = 0; j < 2; ++j) {
+      LaunchGeometry c = launchGeometryOf(mul->getOperand(j));
+      LaunchGeometry n = launchGeometryOf(mul->getOperand(1 - j));
+      if (c.Kind == LaunchValue::BlockIndex &&
+          n.Kind == LaunchValue::BlockDim && c.Axis == t.Axis &&
+          n.Axis == t.Axis) {
+        axis = t.Axis;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Tightens `bound` on the axis of `idx` to `ub` when `idx` is a global thread
+// index.
+static bool boundGlobalThreadIndex(const Value *idx, uint64_t ub,
+                                   ThreadIndexBounds &bound) {
+  int axis = -1;
+  if (!isGlobalThreadIndex(idx, axis))
+    return false;
+  bound.tighten(axis, ub);
+  return true;
+}
+
+static bool collectIndexBounds(const Value *cond, bool holds,
+                               ThreadIndexBounds &bound, unsigned depth) {
+  if (depth > 8)
+    return false;
+  if (const auto *BO = dyn_cast<BinaryOperator>(cond)) {
+    if ((BO->getOpcode() == Instruction::Or && !holds) ||
+        (BO->getOpcode() == Instruction::And && holds))
+      return collectIndexBounds(BO->getOperand(0), holds, bound, depth + 1) &&
+             collectIndexBounds(BO->getOperand(1), holds, bound, depth + 1);
+    return false;
+  }
+  const auto *IC = dyn_cast<ICmpInst>(cond);
+  if (!IC)
+    return false;
+  CmpInst::Predicate P = holds ? IC->getPredicate() : IC->getInversePredicate();
+  const Value *idx = IC->getOperand(0);
+  const auto *cst = dyn_cast<ConstantInt>(IC->getOperand(1));
+  if (!cst) {
+    cst = dyn_cast<ConstantInt>(IC->getOperand(0));
+    if (!cst)
+      return false;
+    idx = IC->getOperand(1);
+    P = CmpInst::getSwappedPredicate(P);
+  }
+  if (cst->getValue().isNegative() || cst->getValue().getActiveBits() > 31)
+    return false;
+  uint64_t ub;
+  switch (P) {
+  case CmpInst::ICMP_SLT:
+  case CmpInst::ICMP_ULT:
+    ub = cst->getZExtValue();
+    break;
+  case CmpInst::ICMP_SLE:
+  case CmpInst::ICMP_ULE:
+    ub = cst->getZExtValue() + 1;
+    break;
+  default:
+    return false;
+  }
+  if (ub == 0)
+    return false;
+  // (a | b) u< 2^n is how (a u< 2^n) && (b u< 2^n) folds.
+  if (const auto *Or = dyn_cast<BinaryOperator>(idx);
+      Or && Or->getOpcode() == Instruction::Or && CmpInst::isUnsigned(P) &&
+      isPowerOf2_64(ub))
+    return boundGlobalThreadIndex(Or->getOperand(0), ub, bound) &&
+           boundGlobalThreadIndex(Or->getOperand(1), ub, bound);
+  return boundGlobalThreadIndex(idx, ub, bound);
+}
+
+bool collectThreadIndexBounds(const Value *cond, bool holds,
+                              ThreadIndexBounds &bound) {
+  return collectIndexBounds(cond, holds, bound, 0);
 }
 
 // The matrix index whose threads' byte offsets are `S`: one thread axis, or
@@ -478,6 +575,38 @@ void collectScalarLoopReductionTrips(
                  << " reduction trip(s) for " << F.getName() << '\n';
 }
 
+// The guards a thread passes on its way to `preheader`, which it reaches at
+// most once: each block from the entry that `preheader` does not post-dominate
+// branches on a thread-index bound, and only the edge where the bound holds
+// leads there. Every thread that passes them reaches `preheader`. None when
+// some thread skips it for another reason.
+static std::optional<ThreadIndexBounds>
+guardsBefore(Function &F, BasicBlock *preheader, const DominatorTree &DT,
+             const PostDominatorTree &PDT, const LoopInfo &LI) {
+  if (LI.getLoopFor(preheader))
+    return std::nullopt;
+  ThreadIndexBounds bound;
+  BasicBlock *X = &F.getEntryBlock();
+  while (!PDT.dominates(preheader, X)) {
+    Value *cond = nullptr;
+    BasicBlock *onTrue = nullptr, *onFalse = nullptr;
+    if (LI.getLoopFor(X) ||
+        !PatternMatch::match(
+            X->getTerminator(),
+            PatternMatch::m_Br(PatternMatch::m_Value(cond),
+                               PatternMatch::m_BasicBlock(onTrue),
+                               PatternMatch::m_BasicBlock(onFalse))))
+      return std::nullopt;
+    const bool viaTrue = DT.dominates(BasicBlockEdge(X, onTrue), preheader);
+    const bool viaFalse = DT.dominates(BasicBlockEdge(X, onFalse), preheader);
+    if (viaTrue == viaFalse ||
+        !collectThreadIndexBounds(cond, /*holds=*/viaTrue, bound))
+      return std::nullopt;
+    X = viaTrue ? onTrue : onFalse;
+  }
+  return bound;
+}
+
 void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                            LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
@@ -502,6 +631,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
   // Profile-scale reduction lengths recorded at profile generation, keyed by
   // the fma's probe index.
   const std::map<size_t, unsigned> &redTrip = profileHeader.redTrip;
+  DominatorTree DT(F);
   PostDominatorTree PDT(F);
 
   forEachScalarLoopReduction(
@@ -529,12 +659,15 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                          profileHeader.maxBlockDim[1] *
                          profileHeader.maxBlockDim[2];
         // The in-kernel raise puts block barriers and warp-wide tensor-core
-        // calls in the preheader, so every thread of the block that runs F
-        // has to execute it exactly once: it does when the preheader
-        // post-dominates the entry and lies in no loop.
-        const bool wholeBlock = !LI.getLoopFor(h.preheader) &&
-                                PDT.dominates(h.preheader, &F.getEntryBlock());
-        if (!wholeBlock && O.Diagnostics.Print)
+        // calls in the preheader, so every thread of a block that raises has
+        // to execute it exactly once. A thread that passes the loop's guards
+        // does, and a block raises only when all of its threads pass them.
+        std::optional<ThreadIndexBounds> guard =
+            guardsBefore(F, h.preheader, DT, PDT, LI);
+        const bool wholeBlock = guard.has_value();
+        if (wholeBlock)
+          h.loopGuard = *guard;
+        else if (O.Diagnostics.Print)
           llvm::errs() << "[raise-wmma] " << F.getName()
                        << ": not every thread of the block reaches the "
                           "reduction loop once, so it has no in-kernel raise\n";

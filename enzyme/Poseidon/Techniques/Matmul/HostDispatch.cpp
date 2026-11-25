@@ -88,108 +88,15 @@ static bool valueReaches(const Value *v, const Value *target) {
   return false;
 }
 
-// `blockIdx.a * blockDim.a + threadIdx.a` on one axis, modulo casts and operand
-// order; an intra-block index would bound the tile, not the matrix.
-static bool isGlobalThreadIndex(const Value *v, int &axis) {
-  while (const auto *CI = dyn_cast<CastInst>(v))
-    v = CI->getOperand(0);
-  const auto *add = dyn_cast<BinaryOperator>(v);
-  if (!add || add->getOpcode() != Instruction::Add)
-    return false;
-  for (unsigned i = 0; i < 2; ++i) {
-    LaunchGeometry t = launchGeometryOf(add->getOperand(i));
-    if (t.Kind != LaunchValue::ThreadIndex)
-      continue;
-    const auto *mul = dyn_cast<BinaryOperator>(add->getOperand(1 - i));
-    if (!mul || mul->getOpcode() != Instruction::Mul)
-      continue;
-    for (unsigned j = 0; j < 2; ++j) {
-      LaunchGeometry c = launchGeometryOf(mul->getOperand(j));
-      LaunchGeometry n = launchGeometryOf(mul->getOperand(1 - j));
-      if (c.Kind == LaunchValue::BlockIndex &&
-          n.Kind == LaunchValue::BlockDim && c.Axis == t.Axis &&
-          n.Axis == t.Axis) {
-        axis = t.Axis;
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-// Tighten bound[axis] to `ub` when `idx` is the global thread index of `axis`.
-static bool boundGlobalThreadIndex(const Value *idx, uint64_t ub,
-                                   uint64_t bound[3]) {
-  int axis = -1;
-  if (!isGlobalThreadIndex(idx, axis))
-    return false;
-  if (!bound[axis] || ub < bound[axis])
-    bound[axis] = ub;
-  return true;
-}
-
-// Fold a condition known to hold into exclusive upper bounds on the global
-// thread index of each axis; false if any leaf is not such a bound, so a store
-// gated by anything else is never mistaken for a dense rectangle.
-static bool collectIndexBounds(const Value *cond, bool holds, uint64_t bound[3],
-                               unsigned depth = 0) {
-  if (depth > 8)
-    return false;
-  if (const auto *BO = dyn_cast<BinaryOperator>(cond)) {
-    if ((BO->getOpcode() == Instruction::Or && !holds) ||
-        (BO->getOpcode() == Instruction::And && holds))
-      return collectIndexBounds(BO->getOperand(0), holds, bound, depth + 1) &&
-             collectIndexBounds(BO->getOperand(1), holds, bound, depth + 1);
-    return false;
-  }
-  const auto *IC = dyn_cast<ICmpInst>(cond);
-  if (!IC)
-    return false;
-  CmpInst::Predicate P = holds ? IC->getPredicate() : IC->getInversePredicate();
-  const Value *idx = IC->getOperand(0);
-  const auto *cst = dyn_cast<ConstantInt>(IC->getOperand(1));
-  if (!cst) {
-    cst = dyn_cast<ConstantInt>(IC->getOperand(0));
-    if (!cst)
-      return false;
-    idx = IC->getOperand(1);
-    P = CmpInst::getSwappedPredicate(P);
-  }
-  if (cst->getValue().isNegative() || cst->getValue().getActiveBits() > 31)
-    return false;
-  uint64_t ub;
-  switch (P) {
-  case CmpInst::ICMP_SLT:
-  case CmpInst::ICMP_ULT:
-    ub = cst->getZExtValue();
-    break;
-  case CmpInst::ICMP_SLE:
-  case CmpInst::ICMP_ULE:
-    ub = cst->getZExtValue() + 1;
-    break;
-  default:
-    return false;
-  }
-  if (ub == 0)
-    return false;
-  // (a | b) u< 2^n is how (a u< 2^n) && (b u< 2^n) folds.
-  if (const auto *Or = dyn_cast<BinaryOperator>(idx);
-      Or && Or->getOpcode() == Instruction::Or && CmpInst::isUnsigned(P) &&
-      isPowerOf2_64(ub))
-    return boundGlobalThreadIndex(Or->getOperand(0), ub, bound) &&
-           boundGlobalThreadIndex(Or->getOperand(1), ub, bound);
-  return boundGlobalThreadIndex(idx, ub, bound);
-}
-
 // The exclusive upper bound that the conditions gating the C store (outside the
 // reduction loop) put on the global thread index of each axis, 0 for an axis
 // they leave unbounded; none when one of them is not such a bound.
-static std::optional<std::array<uint64_t, 3>>
+static std::optional<ThreadIndexBounds>
 storeGuardBounds(Function &F, const AbstractMatmul &m,
                  const StoreInst *cStore) {
   DominatorTree DT(F);
   const BasicBlock *SB = cStore->getParent();
-  std::array<uint64_t, 3> bound = {0, 0, 0};
+  ThreadIndexBounds bound;
   for (BasicBlock &BB : F) {
     if (m.scalarLoop.blocks.count(&BB))
       continue;
@@ -203,7 +110,7 @@ storeGuardBounds(Function &F, const AbstractMatmul &m,
         continue;
       Value *Cond = nullptr;
       if (!match(T, m_Br(m_Value(Cond), m_BasicBlock(), m_BasicBlock())) ||
-          !collectIndexBounds(Cond, /*holds=*/i == 0, bound.data()))
+          !collectThreadIndexBounds(Cond, /*holds=*/i == 0, bound))
         return std::nullopt;
     }
   }
@@ -262,16 +169,19 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
   const ScalarLoopHandle &h = m.scalarLoop;
   int64_t K = (int64_t)m.K;
   if (m.K == ~0u || K <= 0)
-    return false;
+    return refuse("the reduction length is not known");
   if (h.aStrideByte != 8)
-    return false; // FP64 element + A contiguous along K (A row-major)
+    return refuse("A is not a row-major matrix of doubles");
   bool bColMajor;
   if (h.bStrideByte == 8)
     bColMajor = true;
   else if (h.bStrideByte == K * 8)
     bColMajor = false;
   else
-    return false;
+    return refuse("B steps by " + Twine(h.bStrideByte) +
+                  " bytes along the reduction, neither one double nor a row "
+                  "of " +
+                  Twine(K));
   std::optional<unsigned> axM = tidAxisIndex(h.aRow.fast);
   std::optional<unsigned> axN = tidAxisIndex(h.bCol.fast);
   if (!axM || !axN || *axM == *axN)
@@ -285,7 +195,7 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
   note.bParam = bRoot.param;
   note.bOffset = bRoot.offset;
   if (note.aParam < 0 || note.bParam < 0)
-    return false;
+    return refuse("an operand is not read through a pointer parameter");
 
   // The body is standalone iff it has exactly one argument-rooted store.
   int storeCount = 0;
@@ -303,12 +213,12 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
   if (!cStore && storeCount == 1)
     cStore = lastArgStore;
   if (!cStore)
-    return false;
+    return refuse("no store of the product into a pointer parameter");
   LaunchRef cRoot = tracePointerRoot(cStore->getPointerOperand());
   note.cParam = cRoot.param;
   note.cOffset = cRoot.offset;
   if (note.cParam < 0)
-    return false;
+    return refuse("the product is not stored through a pointer parameter");
 
   // Host dispatch supports only a pure GEMM body: a self-overwriting library
   // dispatch cannot represent a fused epilogue that may read its own output, so
@@ -322,11 +232,12 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
     }
     const auto *svI = dyn_cast<Instruction>(sv);
     if (!svI || !m.scalarLoop.blocks.count(svI->getParent()))
-      return false;
+      return refuse("the value stored to C is not the product alone but an "
+                    "expression of it computed after the loop");
   }
 
-  std::optional<std::array<uint64_t, 3>> bound = storeGuardBounds(F, m, cStore);
-  if (!bound)
+  std::optional<ThreadIndexBounds> guard = storeGuardBounds(F, m, cStore);
+  if (!guard)
     return refuse("a condition gating the GEMM store is not a thread-index "
                   "bound");
 
@@ -346,9 +257,9 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
       // Before refusing, recover the true deploy extents from the kernel's own
       // index guard: exact, already at deploy scale, and intersected with the
       // launch geometry by the host stub, min(crop, gridDim * blockDim).
-      if ((*bound)[*axM] && (*bound)[*axN]) {
-        gM = (unsigned)(*bound)[*axM];
-        gNcols = (unsigned)(*bound)[*axN];
+      if (guard->ub[*axM] && guard->ub[*axN]) {
+        gM = (unsigned)guard->ub[*axM];
+        gNcols = (unsigned)guard->ub[*axN];
         note.launchCrop = true;
         note.cropMAxis = (int)*axM;
         note.cropNAxis = (int)*axN;
@@ -393,14 +304,14 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
     gNcols = m.globalN;
   }
   if (!note.launchCrop) {
-    if ((*bound)[*axM] && (*bound)[*axM] < gM)
+    if (guard->ub[*axM] && guard->ub[*axM] < gM)
       return refuse("the GEMM store is gated by row < " +
-                    Twine((*bound)[*axM]) + ", which drops rows of the " +
+                    Twine(guard->ub[*axM]) + ", which drops rows of the " +
                     Twine(gM) + " x " + Twine(gNcols) +
                     " product the library call writes");
-    if ((*bound)[*axN] && (*bound)[*axN] < gNcols)
+    if (guard->ub[*axN] && guard->ub[*axN] < gNcols)
       return refuse("the GEMM store is gated by column < " +
-                    Twine((*bound)[*axN]) + ", which drops columns of the " +
+                    Twine(guard->ub[*axN]) + ", which drops columns of the " +
                     Twine(gM) + " x " + Twine(gNcols) +
                     " product the library call writes");
   }

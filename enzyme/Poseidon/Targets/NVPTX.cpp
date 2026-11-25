@@ -195,6 +195,10 @@ Value *emitThreadIndex(IRBuilderBase &B, Module *M, unsigned axis) {
   return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[0][axis]));
 }
 
+Value *emitBlockIndex(IRBuilderBase &B, Module *M, unsigned axis) {
+  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[1][axis]));
+}
+
 Value *emitBlockDim(IRBuilderBase &B, Module *M, unsigned axis) {
   return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[2][axis]));
 }

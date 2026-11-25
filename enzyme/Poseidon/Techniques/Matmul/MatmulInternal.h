@@ -116,6 +116,14 @@ inline InKernelLayout inKernelLayout(const AbstractMatmul &m,
   return L;
 }
 
+// Folds `cond` into `bound` as the fact that it holds (`holds`) or fails: an
+// `and` that holds or an `or` that fails of compares of a global thread index
+// against a constant, a compare `(a | b) u< 2^n` of two of them included.
+// False when a leaf is not such a bound, so that a condition of any other form
+// is never taken for one.
+bool collectThreadIndexBounds(const llvm::Value *cond, bool holds,
+                              ThreadIndexBounds &bound);
+
 // Emit the tensor-core code of the in-kernel direct or split scheme in place
 // of a scalar-loop matmul; aborts on any precondition violation.
 void materializeInKernelRaise(const AbstractMatmul &m,
