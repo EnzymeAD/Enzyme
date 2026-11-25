@@ -212,7 +212,9 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
-/// Position order: declaration (VI, NumPyro parity) or `selection` as given.
+/// Support info for the top-level addresses in `selection`. Positions follow
+/// `all_addresses` order when `positionDeclarationOrder` is set, else
+/// `selection` order.
 static SmallVector<impulse::SupportInfo>
 collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
                                ArrayAttr selection, ArrayAttr allAddresses,
@@ -228,7 +230,6 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
     llvm::SmallDenseSet<Attribute, 4> selectedTopLevel;
     for (auto addr : selection) {
       auto address = cast<ArrayAttr>(addr);
-      // TODO: Handle nested cases
       if (address.empty() || address.size() != 1)
         continue;
       selectedTopLevel.insert(address[0]);
@@ -342,10 +343,11 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
 }
 
 namespace {
-/// Declaration-order VI layout, matching NumPyro's per-site RNG draw order.
+/// VI positions in `all_addresses` (declaration) order, so per-site draws
+/// consume the RNG in program order; `argSlices` are in `selection` order.
 struct RegionVILayout {
   SmallVector<impulse::SupportInfo> supports;
-  SmallVector<std::pair<int64_t, int64_t>> argSlices; // selection order
+  SmallVector<std::pair<int64_t, int64_t>> argSlices;
   int64_t positionSize = 0;
 };
 } // namespace
@@ -1350,7 +1352,6 @@ struct ExpandImpulsePass
       auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
       auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
 
-      // Algorithm-specific configuration
       Value trajectoryLength;
       Value maxDeltaEnergy;
       int64_t maxTreeDepth = 0;
@@ -1639,14 +1640,11 @@ struct ExpandImpulsePass
                         DenseElementsAttr::get(i64TensorType,
                                                rewriter.getI64IntegerAttr(0)));
 
-          // Warmup loop carries by default:
-          // [q, grad, U, rng, stepSize, invMass, massMatrixSqrt, daState(5),
-          // welfordState(3)?, windowIdx]
           SmallVector<Type> warmupLoopTypes = {positionType,
                                                positionType,
                                                scalarType,
                                                currentRng.getType(),
-                                               scalarType, // stepSize
+                                               scalarType,
                                                adaptedInvMass.getType(),
                                                adaptedMassMatrixSqrt.getType()};
           for (Type t : daState.getTypes())
@@ -1655,7 +1653,7 @@ struct ExpandImpulsePass
             for (Type t : welfordState.getTypes())
               warmupLoopTypes.push_back(t);
           }
-          warmupLoopTypes.push_back(i64TensorType); // windowIdx
+          warmupLoopTypes.push_back(i64TensorType);
 
           SmallVector<Value> warmupInitArgs = {currentQ,
                                                currentGrad,
@@ -1677,7 +1675,7 @@ struct ExpandImpulsePass
                                      numWarmupConst, c1, warmupInitArgs);
 
           Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
-          warmupBody->addArgument(i64TensorType, loc); // iteration index t
+          warmupBody->addArgument(i64TensorType, loc);
           for (Type t : warmupLoopTypes)
             warmupBody->addArgument(t, loc);
 
@@ -1717,7 +1715,6 @@ struct ExpandImpulsePass
               rewriter, loc, qLoop, gradLoop, uLoop, rngLoop, stepSizeLoop,
               invMassLoop, massMatrixSqrtLoop);
 
-          // Update dual averaging state
           DualAveragingConfig daConfig;
           DualAveragingState updatedDaState;
           Value currentStepSizeFromDA;
@@ -1736,7 +1733,6 @@ struct ExpandImpulsePass
             finalStepSizeFromDA = stepSizeLoop;
           }
 
-          // Use log_step_size_avg at last iteration
           auto isLastIter =
               arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
                                     iterTGlobal, lastIterConst);
@@ -1771,7 +1767,6 @@ struct ExpandImpulsePass
           auto isMiddleWindow = arith::AndIOp::create(
               rewriter, loc, windowIdxGtZero, windowIdxLtLast);
 
-          // Conditionally update Welford
           WelfordState conditionalWelford;
           if (adaptMassMatrix) {
             auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
@@ -2003,7 +1998,6 @@ struct ExpandImpulsePass
         auto samplesBufferType = RankedTensorType::get(
             {collectionSize, constrainedPositionSize}, elemType);
         auto diagnosticsBufferType =
-            // Diagnostics buffer has two columns: [is_accepted, is_divergent]
             RankedTensorType::get({collectionSize, 2}, rewriter.getI1Type());
         auto logDensityBufferType =
             RankedTensorType::get({collectionSize}, elemType);
@@ -2053,8 +2047,6 @@ struct ExpandImpulsePass
           finalDiagnosticsBuffer = diagnosticsBuffer;
           finalLogDensityBuffer = logDensityBuffer;
         } else {
-          // Loop carries: [q, grad, U, rng, samplesBuffer, diagnosticsBuffer,
-          // logDensityBuffer]
           SmallVector<Type> loopResultTypes = {
               positionType,         positionType,      scalarType,
               currentRng.getType(), samplesBufferType, diagnosticsBufferType,
@@ -2065,15 +2057,9 @@ struct ExpandImpulsePass
                          samplesBuffer, diagnosticsBuffer, logDensityBuffer});
 
           Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
-          loopBody->addArgument(i64TensorType, loc); // i (iteration index)
-          loopBody->addArgument(positionType, loc);  // q
-          loopBody->addArgument(positionType, loc);  // grad
-          loopBody->addArgument(scalarType, loc);    // U
-          loopBody->addArgument(currentRng.getType(), loc); // rng
-          loopBody->addArgument(samplesBufferType, loc);    // samplesBuffer
-          loopBody->addArgument(diagnosticsBufferType,
-                                loc);                       // diagnosticsBuffer
-          loopBody->addArgument(logDensityBufferType, loc); // logDensityBuffer
+          loopBody->addArgument(i64TensorType, loc);
+          for (Type t : loopResultTypes)
+            loopBody->addArgument(t, loc);
 
           rewriter.setInsertionPointToStart(loopBody);
           Value iterIdx = loopBody->getArgument(0);
@@ -2090,14 +2076,11 @@ struct ExpandImpulsePass
           auto qConstrained =
               impulse::constrainPosition(rewriter, loc, sample.q, supports);
 
-          // Storage index: idx = (i - start_idx) / thinning
           auto iMinusStart =
               arith::SubIOp::create(rewriter, loc, iterIdx, startIdxConst);
           auto storageIdx =
               arith::DivSIOp::create(rewriter, loc, iMinusStart, thinningConst);
 
-          // Store condition:
-          // (i >= start_idx) && ((i - start_idx) % thinning == 0)
           auto geStartIdx = arith::CmpIOp::create(
               rewriter, loc, arith::CmpIPredicate::sge, iterIdx, startIdxConst);
           auto modThinning =
@@ -2223,7 +2206,8 @@ struct ExpandImpulsePass
         return success();
       }
 
-      // As NumPyro's MCMC.run: split the key per chain, or reuse saved keys.
+      // One key per chain: split the input key, or on resume reuse the keys
+      // saved in the `rng` slot.
       Value rngSlotIn = stateInSlot(mcmcOp, state_slot::kRng);
       impulse::RandomSplitOp splitOp;
       if (!rngSlotIn) {
