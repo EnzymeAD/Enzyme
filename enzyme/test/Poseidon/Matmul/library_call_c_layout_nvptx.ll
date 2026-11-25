@@ -11,6 +11,7 @@
 ; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/nt_body.fpprofile
 ; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/nn_col_c_body.fpprofile
 ; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/fused_c_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/row_skip_b_body.fpprofile
 ; RUN: %{opt} -poseidon-cache=%t/c -poseidon-unit=layout -poseidon-tau=1e-12 -o /dev/null 2>&1 | FileCheck %s
 ; RUN: cat %t/c/launches_*.json | FileCheck --check-prefix=DESC %s
 ; RUN: sed 's/ozaki_stub\.cu/layout.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/nt.ll
@@ -28,10 +29,14 @@
 ; CHECK-DAG: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 ; CHECK-DAG: [poseidon] wrote descriptor for _Z13matmul_kernccPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 ; CHECK-DAG: [poseidon] preprocess_fused_c_body: the product's store address is not a row-major or column-major element of C
+; CHECK-DAG: [poseidon] wrote descriptor for _Z13matmul_kernrsPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 ; CHECK-NOT: wrote descriptor for _Z13matmul_kernfcPKdS0_PdS1_
 
 ; DESC-DAG: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 1 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; DESC-DAG: "_Z13matmul_kernccPKdS0_PdS1_ 2 0 1 1 12 0 0 1 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
+; row_skip_b_body reads B[2k] of rows of 8 doubles, B[16k + tx]: B's leading
+; dimension is 16, the step along the reduction, not the row type's 8.
+; DESC-DAG: "_Z13matmul_kernrsPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 
 ; HOST-NT: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
 ; HOST-NT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
@@ -146,6 +151,39 @@ exit:
   ret void
 }
 
+define dso_local void @row_skip_b_body(ptr noundef readonly captures(none) %A, ptr noundef readonly captures(none) %B, ptr noundef writeonly captures(none) %C) #0 {
+entry:
+  %tx = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+  %ty = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.y()
+  %row = shl nuw nsw i32 %ty, 4
+  br label %loop
+
+loop:
+  %k = phi i32 [ 0, %entry ], [ %k.next, %loop ]
+  %acc = phi double [ 0.000000e+00, %entry ], [ %fma, %loop ]
+  %aidx = add nuw nsw i32 %k, %row
+  %aidx64 = zext nneg i32 %aidx to i64
+  %aaddr = getelementptr inbounds nuw [8 x i8], ptr %A, i64 %aidx64
+  %a = load double, ptr %aaddr, align 8
+  %k2 = shl nuw nsw i32 %k, 1
+  %k64 = zext nneg i32 %k2 to i64
+  %brow = getelementptr inbounds [64 x i8], ptr %B, i64 %k64
+  %tx64 = zext nneg i32 %tx to i64
+  %baddr = getelementptr inbounds [8 x i8], ptr %brow, i64 %tx64
+  %b = load double, ptr %baddr, align 8
+  %fma = tail call double @llvm.fmuladd.f64(double %a, double %b, double %acc)
+  %k.next = add nuw nsw i32 %k, 1
+  %done = icmp eq i32 %k.next, 16
+  br i1 %done, label %exit, label %loop
+
+exit:
+  %cidx = add nuw nsw i32 %row, %tx
+  %cidx64 = zext nneg i32 %cidx to i64
+  %caddr = getelementptr inbounds nuw [8 x i8], ptr %C, i64 %cidx64
+  store double %fma, ptr %caddr, align 8
+  ret void
+}
+
 define dso_local ptx_kernel void @_Z13matmul_kernelPKdS0_PdS1_(ptr noundef %A, ptr noundef %B, ptr noundef %C, ptr noundef %dC) #1 {
   %const = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_const to ptr), align 4
   %dup = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr), align 4
@@ -164,6 +202,13 @@ define dso_local ptx_kernel void @_Z13matmul_kernfcPKdS0_PdS1_(ptr noundef %A, p
   %const = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_const to ptr), align 4
   %dup = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr), align 4
   tail call void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef nonnull @fused_c_body, i32 noundef %const, ptr noundef %A, i32 noundef %const, ptr noundef %B, i32 noundef %dup, ptr noundef %C, ptr noundef %dC) #2
+  ret void
+}
+
+define dso_local ptx_kernel void @_Z13matmul_kernrsPKdS0_PdS1_(ptr noundef %A, ptr noundef %B, ptr noundef %C, ptr noundef %dC) #1 {
+  %const = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_const to ptr), align 4
+  %dup = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr), align 4
+  tail call void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef nonnull @row_skip_b_body, i32 noundef %const, ptr noundef %A, i32 noundef %const, ptr noundef %B, i32 noundef %dup, ptr noundef %C, ptr noundef %dC) #2
   ret void
 }
 

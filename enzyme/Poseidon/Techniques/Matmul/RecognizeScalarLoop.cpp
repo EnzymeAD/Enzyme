@@ -503,7 +503,6 @@ scalarLoopHandle(Loop *L, const ReductionCycle &rc, ScalarEvolution &SE,
   int64_t aLdByte = (aRowUnit > 0)
                         ? aRowUnit
                         : extractLeadingDimByte(DL, aLoad, srcByteSize * trip);
-  int64_t bLdByte = extractLeadingDimByte(DL, bLoad, srcByteSize * trip);
 
   // A fused index steps the operand by `unitByte` per unit of the fused index;
   // that must be the stride the single-axis path uses, or the block-base
@@ -511,11 +510,14 @@ scalarLoopHandle(Loop *L, const ReductionCycle &rc, ScalarEvolution &SE,
   if (aRow.fused() && aRowUnit != aLdByte)
     return refuse("A's fused row index does not step by A's leading "
                   "dimension");
-  // B's per-column step is the element size when B is K-strided (row-major)
-  // and its leading dimension when B is K-contiguous (col-major).
+  // B's leading dimension is its step along the reduction when B is
+  // K-strided (row-major), whatever row type its address is computed in, and
+  // its per-column step when B is K-contiguous (col-major).
   bool bIsRowMajor = (bStrideByte != srcByteSize);
-  if (!bIsRowMajor && bColUnit > 0)
-    bLdByte = bColUnit;
+  int64_t bLdByte = bIsRowMajor ? bStrideByte
+                    : bColUnit > 0
+                        ? bColUnit
+                        : extractLeadingDimByte(DL, bLoad, srcByteSize * trip);
   if (bCol.fused() && bColUnit != (bIsRowMajor ? srcByteSize : bLdByte))
     return refuse("B's fused column index does not step by B's column "
                   "stride");

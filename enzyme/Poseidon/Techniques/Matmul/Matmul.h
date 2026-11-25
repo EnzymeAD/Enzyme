@@ -166,9 +166,9 @@ struct ScalarLoopHandle {
   /// without one, the element size of A's outermost GEP when that is above one
   /// element, else K elements.
   int64_t aLeadingDimByte = 0;
-  /// B's leading dimension in bytes: the byte step per unit of B's column index
-  /// when B is K-contiguous; otherwise as for A, from B's outermost GEP or K
-  /// elements.
+  /// B's leading dimension in bytes: bStrideByte when B is K-strided; the byte
+  /// step per unit of B's column index when B is K-contiguous, without one as
+  /// for A, from B's outermost GEP or K elements.
   int64_t bLeadingDimByte = 0;
 };
 
