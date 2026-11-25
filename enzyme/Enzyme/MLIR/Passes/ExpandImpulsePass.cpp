@@ -1793,6 +1793,51 @@ static SmallVector<Value> sliceTraceValues(OpBuilder &builder, Location loc,
   return values;
 }
 
+/// Returns the distance between consecutive `columns`, at least two, when it
+/// is the same positive one throughout, else nothing.
+static std::optional<int64_t> getEvenStride(ArrayRef<int64_t> columns) {
+  int64_t stride = columns[1] - columns[0];
+  if (stride < 1)
+    return std::nullopt;
+  for (size_t k = 2; k < columns.size(); ++k)
+    if (columns[k] - columns[k - 1] != stride)
+      return std::nullopt;
+  return stride;
+}
+
+/// Gathers row 0 of the rank-2 `trace` at `columns` into a vector of type
+/// `vecType`: with one strided slice when the columns are evenly spaced, else
+/// one cell per column.
+static Value gatherColumns(OpBuilder &b, Location loc, Value trace,
+                           ArrayRef<int64_t> columns,
+                           RankedTensorType vecType) {
+  Type elemType = cast<RankedTensorType>(trace.getType()).getElementType();
+  if (std::optional<int64_t> stride = getEvenStride(columns)) {
+    auto rowType =
+        RankedTensorType::get({1, (int64_t)columns.size()}, elemType);
+    return impulse::ReshapeOp::create(
+        b, loc, vecType,
+        emitColumnSlice(b, loc, rowType, trace, columns.front(), *stride));
+  }
+  auto cellType = RankedTensorType::get({1, 1}, elemType);
+  SmallVector<Value> cells;
+  for (int64_t column : columns)
+    cells.push_back(emitColumnSlice(b, loc, cellType, trace, column));
+  return packScalars(b, loc, vecType, cells);
+}
+
+/// Writes entry `k` of the `1 x n` `row` into row 0 of the rank-2 `trace` at
+/// `columns[k]`, one cell at a time.
+static Value scatterRow(OpBuilder &b, Location loc, Value trace, Value row,
+                        ArrayRef<int64_t> columns) {
+  auto cellType = RankedTensorType::get(
+      {1, 1}, cast<RankedTensorType>(row.getType()).getElementType());
+  for (auto [k, column] : llvm::enumerate(columns))
+    trace = updateColumns(b, loc, trace,
+                          emitColumnSlice(b, loc, cellType, row, k), column);
+  return trace;
+}
+
 /// Returns replacements for the results of `site`: its rng input, then its
 /// values read from row 0 of `source` starting at column `offset`. Fails on a
 /// dynamically shaped value.
@@ -2904,32 +2949,20 @@ findSlotLayout(MutableArrayRef<MHMove> moves, ArrayRef<MHProposal> proposals) {
 static void emitSlotVectors(OpBuilder &b, Location loc, Value trace0,
                             ArrayRef<MHProposal> proposals, SlotLayout &slots,
                             RankedTensorType vecType) {
-  unsigned numMoves = proposals.size();
-  Type elemType = cast<RankedTensorType>(trace0.getType()).getElementType();
-  auto rowType = RankedTensorType::get({1, (int64_t)numMoves}, elemType);
-  auto cellType = RankedTensorType::get({1, 1}, elemType);
+  auto cellType = RankedTensorType::get(
+      {1, 1}, cast<RankedTensorType>(trace0.getType()).getElementType());
   ArrayRef<SmallVector<int64_t>> columns = slots.columns;
   for (size_t s = 0, e = columns.front().size(); s < e; ++s) {
     SmallVector<Value> proposed;
-    for (unsigned k = 0; k < numMoves; ++k)
+    SmallVector<int64_t> slotColumns;
+    for (auto [proposal, moveColumns] : llvm::zip(proposals, columns)) {
       proposed.push_back(
-          emitColumnSlice(b, loc, cellType, proposals[k].trace, columns[k][s]));
-    slots.proposedAt.push_back(packScalars(b, loc, vecType, proposed));
-    int64_t stride = columns[1][s] - columns[0][s];
-    bool even = stride >= 1;
-    for (unsigned k = 1; k < numMoves && even; ++k)
-      even = columns[k][s] - columns[k - 1][s] == stride;
-    if (even) {
-      slots.currentAt.push_back(impulse::ReshapeOp::create(
-          b, loc, vecType,
-          emitColumnSlice(b, loc, rowType, trace0, columns[0][s], stride)));
-      continue;
+          emitColumnSlice(b, loc, cellType, proposal.trace, moveColumns[s]));
+      slotColumns.push_back(moveColumns[s]);
     }
-    SmallVector<Value> current;
-    for (unsigned k = 0; k < numMoves; ++k)
-      current.push_back(
-          emitColumnSlice(b, loc, cellType, trace0, columns[k][s]));
-    slots.currentAt.push_back(packScalars(b, loc, vecType, current));
+    slots.proposedAt.push_back(packScalars(b, loc, vecType, proposed));
+    slots.currentAt.push_back(
+        gatherColumns(b, loc, trace0, slotColumns, vecType));
   }
 }
 
@@ -3029,13 +3062,13 @@ static Value writeBackAccepted(OpBuilder &b, Location loc, Value trace0,
   auto strided = findStrideGroups(*slots, traceType.getShape()[1]);
   if (!strided) {
     auto rowType = RankedTensorType::get({1, numMoves}, elemType);
-    auto cellType = RankedTensorType::get({1, 1}, elemType);
     for (auto [s, result] : llvm::enumerate(resultAt)) {
       Value row = impulse::ReshapeOp::create(b, loc, rowType, result);
-      for (int64_t k = 0; k < numMoves; ++k) {
-        Value cell = emitColumnSlice(b, loc, cellType, row, k);
-        trace = updateColumns(b, loc, trace, cell, columns[k][s]);
-      }
+      SmallVector<int64_t> slotColumns =
+          llvm::map_to_vector(columns, [&](ArrayRef<int64_t> moveColumns) {
+            return moveColumns[s];
+          });
+      trace = scatterRow(b, loc, trace, row, slotColumns);
     }
     return trace;
   }
@@ -3195,6 +3228,327 @@ static void batchMHRuns(Operation *root) {
   }
   for (MHBatch &batch : batches)
     emitBatchedRun(batch);
+}
+
+//===----------------------------------------------------------------------===//
+// Enumerative Gibbs over scalar BERNOULLI sites
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// The values a Gibbs sweep carries.
+struct GibbsState {
+  Value trace;
+  Value weight;
+  Value rng;
+};
+
+/// A constrained site in a branch: its trace columns and where its observed
+/// values start in the constraint.
+struct ObservedColumns {
+  int64_t traceColumn;
+  int64_t constraintOffset;
+  int64_t size;
+};
+
+/// Emits the sweeps of an enumerative Gibbs `impulse.infer_region` over scalar
+/// BERNOULLI sites: a selected site becomes 1 when a uniform draw falls below
+/// logistic(s1 - s0), with s_v the log density of the terms the site affects
+/// at value v. The batched sweep updates all selected sites at once; it is
+/// sound only when each per-site yield depends on at most one selected site
+/// and no site's parameters depend on another.
+class GibbsSweepEmitter {
+public:
+  /// Checks the regions, trace and sites of `op` and analyses its logpdf
+  /// region. Fails after emitting on `op`.
+  static FailureOr<GibbsSweepEmitter> analyze(impulse::InferRegionOp op);
+  /// Emits one sweep over the selected sites from `state`.
+  GibbsState emitSweep(OpBuilder &b, GibbsState state) {
+    return batched ? emitBatched(b, state) : emitSequential(b, state);
+  }
+
+private:
+  explicit GibbsSweepEmitter(impulse::InferRegionOp op)
+      : op(op), loc(op.getLoc()) {}
+
+  /// Finds the selected site each per-site yield depends on and decides
+  /// whether the sweep can be batched.
+  void analyzeBatching(const RegionTraceLayout &layout);
+  GibbsState emitBatched(OpBuilder &b, GibbsState state);
+  GibbsState emitSequential(OpBuilder &b, GibbsState state);
+  /// Writes `value`, flattened, into row 0 of `trace` from `column` on.
+  Value writeValue(OpBuilder &b, Value trace, int64_t column, Value value);
+  /// Writes the observed values of the constrained sites in branches into
+  /// `trace`, whose readers take those sites from it.
+  Value writeObserved(OpBuilder &b, Value trace);
+
+  impulse::InferRegionOp op;
+  Location loc;
+  RankedTensorType traceType;
+  RankedTensorType weightType;
+  int64_t positionSize = 0;
+  bool hasScoreTail = false;
+  unsigned numYields = 0;
+  /// The trace column of each selected site.
+  SmallVector<int64_t> selectedCols;
+  SmallVector<ObservedColumns> observed;
+  /// For each selected site, whether each per-site yield depends on it.
+  SmallVector<SmallVector<bool>> dirtyOf;
+  /// The selected site each per-site yield depends on, or -1 for none.
+  SmallVector<int> siteOfYield;
+  bool batched = false;
+};
+} // namespace
+
+FailureOr<GibbsSweepEmitter>
+GibbsSweepEmitter::analyze(impulse::InferRegionOp op) {
+  if (op.getSampling().empty() || op.getLogpdf().empty())
+    return op.emitError("Impulse Gibbs: infer_region requires sampler and "
+                        "constructed logpdf regions (run sicm first)");
+  if (op.getStateIn().size() != 1 || op.getInputs().empty() ||
+      !op.getOriginalTrace())
+    return op.emitError("Impulse Gibbs: expects the rng input, a trace and a "
+                        "single `weight` state_in slot");
+  GibbsSweepEmitter emitter(op);
+  Block &samplerEntry = op.getSampling().front();
+  Block &lpBlock = op.getLogpdf().front();
+  emitter.numYields = lpBlock.getTerminator()->getNumOperands() - 1;
+  ArrayAttr selection = op.getSelectionAttr();
+
+  FailureOr<RegionTraceLayout> layout =
+      getRegionTraceLayout(op, /*topLevelOnly=*/false);
+  if (failed(layout))
+    return op.emitError("Impulse Gibbs: all_addresses entry without a site");
+  emitter.positionSize = layout->positionSize;
+  emitter.traceType = cast<RankedTensorType>(op.getOriginalTrace().getType());
+  emitter.weightType = cast<RankedTensorType>(op.getStateIn()[0].getType());
+  int64_t width = emitter.traceType.getShape()[1];
+  emitter.hasScoreTail = width > emitter.positionSize;
+  if (emitter.hasScoreTail &&
+      width != emitter.positionSize + (int64_t)emitter.numYields)
+    return op.emitError("Impulse Gibbs: score-tail width does not match the "
+                        "logpdf region's per-site yields");
+  if (lpBlock.getNumArguments() != selection.size())
+    return op.emitError("Impulse Gibbs: one position argument per selected "
+                        "site expected");
+  for (auto [k, addr] : llvm::enumerate(selection)) {
+    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
+    impulse::DistAttr dist = site ? site.getDistAttr() : nullptr;
+    if (!site || site->getBlock() != &samplerEntry || !dist ||
+        dist.getBase() != impulse::DistBaseKind::BERNOULLI ||
+        (dist.getTransforms() && !dist.getTransforms().empty()) ||
+        site.getNumResults() != 2 ||
+        cast<RankedTensorType>(lpBlock.getArgument(k).getType())
+                .getNumElements() != 1)
+      return op.emitError("Impulse Gibbs: every selected site must be a "
+                          "top-level scalar BERNOULLI site");
+    emitter.selectedCols.push_back(layout->columnOf.lookup(addr));
+  }
+  if (op.getConstraint()) {
+    int64_t offset = 0;
+    for (Attribute addr : op.getConstrainedAddressesAttr()) {
+      impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
+      if (!site)
+        return op.emitError(
+            "Impulse Gibbs: constrained address without a site");
+      if (site->getBlock() != &samplerEntry)
+        emitter.observed.push_back(
+            {layout->columnOf.lookup(addr), offset, sampleRegionSize(site)});
+      offset += sampleRegionSize(site);
+    }
+  }
+  for (unsigned k = 0; k < selection.size(); ++k)
+    emitter.dirtyOf.push_back(
+        taintedSiteYields(lpBlock, ValueRange{lpBlock.getArgument(k)}));
+  emitter.analyzeBatching(*layout);
+  return emitter;
+}
+
+void GibbsSweepEmitter::analyzeBatching(const RegionTraceLayout &layout) {
+  Block &lpBlock = op.getLogpdf().front();
+  Operation *lpTerm = lpBlock.getTerminator();
+  ArrayAttr selection = op.getSelectionAttr();
+  unsigned numSites = selection.size();
+  siteOfYield.assign(numYields, -1);
+  batched = numSites >= 2;
+  if (!batched)
+    return;
+  SiteDependence lpDep(numSites);
+  for (unsigned k = 0; k < numSites; ++k)
+    lpDep.seed(lpBlock.getArgument(k), k);
+  lpDep.run(lpBlock);
+  for (unsigned j = 0; j < numYields; ++j) {
+    llvm::BitVector s = lpDep.get(lpTerm->getOperand(1 + j));
+    if (s.count() > 1) {
+      batched = false;
+      return;
+    }
+    if (s.any())
+      siteOfYield[j] = s.find_first();
+  }
+  SiteDependence samplerDep(numSites);
+  SmallVector<impulse::SampleRegionOp> selectedSites;
+  for (auto [k, addr] : llvm::enumerate(selection)) {
+    impulse::SampleRegionOp site = layout.siteByAddress.lookup(addr);
+    selectedSites.push_back(site);
+    samplerDep.seed(site.getResult(1), k);
+  }
+  samplerDep.run(op.getSampling().front());
+  for (impulse::SampleRegionOp site : selectedSites)
+    for (Value param : llvm::drop_begin(site->getOperands()))
+      if (samplerDep.get(param).any())
+        batched = false;
+}
+
+GibbsState GibbsSweepEmitter::emitBatched(OpBuilder &b, GibbsState state) {
+  Block &lpBlock = op.getLogpdf().front();
+  int64_t n = selectedCols.size();
+  Type elemType = traceType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+  auto vecType = RankedTensorType::get({n}, elemType);
+  auto rowType = RankedTensorType::get({1, n}, elemType);
+  std::optional<int64_t> stride = getEvenStride(selectedCols);
+  Value curVec;
+  if (stride) {
+    curVec = gatherColumns(b, loc, state.trace, selectedCols, vecType);
+  } else {
+    SmallVector<Value> cur;
+    for (int64_t col : selectedCols)
+      cur.push_back(scalarAt(b, loc, state.trace, {0, col}));
+    curVec = packScalars(b, loc, vecType, cur);
+  }
+
+  // All sites at v at once: each yield sees at most one selected site.
+  SmallVector<Value> yieldsAt[2];
+  for (int v = 0; v < 2; ++v) {
+    SmallVector<Value> positions;
+    for (BlockArgument arg : lpBlock.getArguments())
+      positions.push_back(emitSplatConstant(
+          b, loc, cast<RankedTensorType>(arg.getType()), (double)v));
+    llvm::append_range(
+        yieldsAt[v], llvm::drop_begin(cloneLogpdfBody(b, lpBlock, positions)));
+  }
+  SmallVector<Value> logOdds(n);
+  for (unsigned j = 0; j < numYields; ++j) {
+    int k = siteOfYield[j];
+    if (k < 0)
+      continue;
+    accumulate(b, loc, logOdds[k],
+               arith::SubFOp::create(b, loc, yieldsAt[1][j], yieldsAt[0][j]));
+  }
+  for (Value &l : logOdds)
+    l = sumOrZero(b, loc, l, scalarType);
+  Value lVec = packScalars(b, loc, vecType, logOdds);
+
+  Value p1 = impulse::LogisticOp::create(b, loc, vecType, lVec);
+  Value uniform = emitUniformDraw(b, loc, state.rng, vecType);
+  Value take1 =
+      arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, uniform, p1);
+  Value curIs1 =
+      arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, curVec,
+                            emitSplatConstant(b, loc, vecType, 0.5));
+  Value zeros = emitSplatConstant(b, loc, vecType, 0.0);
+  Value newVals = arith::SelectOp::create(
+      b, loc, take1, emitSplatConstant(b, loc, vecType, 1.0), zeros);
+
+  // +L_k on a 0 -> 1 flip, -L_k on 1 -> 0, else 0.
+  Value negL = arith::NegFOp::create(b, loc, lVec);
+  Value toOne = arith::SelectOp::create(b, loc, curIs1, zeros, lVec);
+  Value toZero = arith::SelectOp::create(b, loc, curIs1, negL, zeros);
+  Value delta = arith::SelectOp::create(b, loc, take1, toOne, toZero);
+  for (int64_t k = 0; k < n; ++k)
+    state.weight = arith::AddFOp::create(b, loc, state.weight,
+                                         takeLeading(b, loc, delta, k));
+
+  Value newRow = impulse::ReshapeOp::create(b, loc, rowType, newVals);
+  if (stride == 1)
+    state.trace = updateColumns(b, loc, state.trace, newRow, selectedCols[0]);
+  else
+    state.trace = scatterRow(b, loc, state.trace, newRow, selectedCols);
+  if (hasScoreTail)
+    for (unsigned j = 0; j < numYields; ++j)
+      if (siteOfYield[j] >= 0)
+        state.trace =
+            writeValue(b, state.trace, positionSize + j,
+                       arith::SelectOp::create(
+                           b, loc, takeLeading(b, loc, take1, siteOfYield[j]),
+                           yieldsAt[1][j], yieldsAt[0][j]));
+  state.trace = writeObserved(b, state.trace);
+  return state;
+}
+
+GibbsState GibbsSweepEmitter::emitSequential(OpBuilder &b, GibbsState state) {
+  Block &lpBlock = op.getLogpdf().front();
+  SmallVector<Value> cur;
+  for (auto [k, col] : llvm::enumerate(selectedCols))
+    cur.push_back(sliceTraceValue(
+        b, loc, state.trace, col,
+        cast<RankedTensorType>(lpBlock.getArgument(k).getType())));
+  auto scalarType = RankedTensorType::get({}, traceType.getElementType());
+  for (unsigned k = 0; k < selectedCols.size(); ++k) {
+    auto argType = cast<RankedTensorType>(lpBlock.getArgument(k).getType());
+    SmallVector<Value> yieldsAt[2];
+    Value scoreAt[2];
+    for (int v = 0; v < 2; ++v) {
+      SmallVector<Value> positions(cur);
+      positions[k] = emitSplatConstant(b, loc, argType, (double)v);
+      SmallVector<Value> yields = cloneLogpdfBody(b, lpBlock, positions);
+      for (unsigned j = 0; j < numYields; ++j) {
+        Value y = yields[1 + j];
+        yieldsAt[v].push_back(y);
+        if (dirtyOf[k][j])
+          accumulate(b, loc, scoreAt[v], y);
+      }
+      scoreAt[v] = sumOrZero(b, loc, scoreAt[v], scalarType);
+    }
+    Value diff = arith::SubFOp::create(b, loc, scoreAt[1], scoreAt[0]);
+    Value p1 = impulse::LogisticOp::create(b, loc, diff.getType(), diff);
+    Value uniform = emitUniformDraw(b, loc, state.rng, weightType);
+    Value take1 =
+        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, uniform, p1);
+    Value curScalar = impulse::ReshapeOp::create(b, loc, scalarType, cur[k]);
+    Value curIs1 =
+        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, curScalar,
+                              emitSplatConstant(b, loc, scalarType, 0.5));
+    Value sNew = arith::SelectOp::create(b, loc, take1, scoreAt[1], scoreAt[0]);
+    Value sCur =
+        arith::SelectOp::create(b, loc, curIs1, scoreAt[1], scoreAt[0]);
+    state.weight = arith::AddFOp::create(
+        b, loc, state.weight, arith::SubFOp::create(b, loc, sNew, sCur));
+    Value oneArg = emitSplatConstant(b, loc, argType, 1.0);
+    Value zeroArg = emitSplatConstant(b, loc, argType, 0.0);
+    Value newVal = arith::SelectOp::create(b, loc, take1, oneArg, zeroArg);
+    cur[k] = newVal;
+    state.trace = writeValue(b, state.trace, selectedCols[k], newVal);
+    if (hasScoreTail)
+      for (unsigned j = 0; j < numYields; ++j)
+        if (dirtyOf[k][j])
+          state.trace =
+              writeValue(b, state.trace, positionSize + j,
+                         arith::SelectOp::create(b, loc, take1, yieldsAt[1][j],
+                                                 yieldsAt[0][j]));
+  }
+  state.trace = writeObserved(b, state.trace);
+  return state;
+}
+
+Value GibbsSweepEmitter::writeValue(OpBuilder &b, Value trace, int64_t column,
+                                    Value value) {
+  auto valueType = cast<RankedTensorType>(value.getType());
+  auto flatType = RankedTensorType::get({1, valueType.getNumElements()},
+                                        traceType.getElementType());
+  Value flat = impulse::ReshapeOp::create(b, loc, flatType, value);
+  return updateColumns(b, loc, trace, flat, column);
+}
+
+Value GibbsSweepEmitter::writeObserved(OpBuilder &b, Value trace) {
+  for (const ObservedColumns &columns : observed) {
+    Value observedValues = emitColumnSlice(
+        b, loc,
+        RankedTensorType::get({1, columns.size}, traceType.getElementType()),
+        op.getConstraint(), columns.constraintOffset);
+    trace = writeValue(b, trace, columns.traceColumn, observedValues);
+  }
+  return trace;
 }
 
 //===----------------------------------------------------------------------===//
@@ -4337,9 +4691,8 @@ struct ExpandImpulsePass
     }
   };
 
-  /// Enumerative Gibbs over scalar BERNOULLI sites: new = u < logistic(s1 -
-  /// s0). The batched sweep is sound only when each per-site yield depends on
-  /// at most one selected site and no site's parameters depend on another.
+  /// Lowers a Gibbs `impulse.infer_region` to `num_samples` sweeps of a
+  /// `GibbsSweepEmitter`.
   struct LowerGibbsRegionPattern
       : public mlir::OpRewritePattern<impulse::InferRegionOp> {
     using mlir::OpRewritePattern<impulse::InferRegionOp>::OpRewritePattern;
@@ -4348,295 +4701,17 @@ struct ExpandImpulsePass
                                   PatternRewriter &rewriter) const override {
       if (!op.getGibbsConfig().has_value())
         return rewriter.notifyMatchFailure(op, "no gibbs_config");
+      FailureOr<GibbsSweepEmitter> emitter = GibbsSweepEmitter::analyze(op);
+      if (failed(emitter))
+        return failure();
       Location loc = op.getLoc();
-      if (op.getSampling().empty() || op.getLogpdf().empty()) {
-        op.emitError("Impulse Gibbs: infer_region requires sampler and "
-                     "constructed logpdf regions (run sicm first)");
-        return failure();
-      }
-      if (op.getStateIn().size() != 1 || op.getInputs().empty() ||
-          !op.getOriginalTrace()) {
-        op.emitError("Impulse Gibbs: expects the rng input, a trace and a "
-                     "single `weight` state_in slot");
-        return failure();
-      }
-      Block &samplerEntry = op.getSampling().front();
-      Block &lpBlock = op.getLogpdf().front();
-      Operation *lpTerm = lpBlock.getTerminator();
-      unsigned numYields = lpTerm->getNumOperands() - 1;
-      ArrayAttr selection = op.getSelectionAttr();
-
-      FailureOr<RegionTraceLayout> layout =
-          getRegionTraceLayout(op, /*topLevelOnly=*/false);
-      if (failed(layout)) {
-        op.emitError("Impulse Gibbs: all_addresses entry without a site");
-        return failure();
-      }
-      DenseMap<Attribute, impulse::SampleRegionOp> &siteByAddress =
-          layout->siteByAddress;
-      int64_t positionSize = layout->positionSize;
-      Value initTrace = op.getOriginalTrace();
-      Value initWeight = op.getStateIn()[0];
-      Value initRng = op.getInputs()[0];
-      auto traceType = cast<RankedTensorType>(initTrace.getType());
-      auto weightType = cast<RankedTensorType>(initWeight.getType());
-      int64_t width = traceType.getShape()[1];
-      bool hasScoreTail = width > positionSize;
-      if (hasScoreTail && width != positionSize + (int64_t)numYields) {
-        op.emitError("Impulse Gibbs: score-tail width does not match the "
-                     "logpdf region's per-site yields");
-        return failure();
-      }
-      if (lpBlock.getNumArguments() != selection.size()) {
-        op.emitError("Impulse Gibbs: one position argument per selected "
-                     "site expected");
-        return failure();
-      }
-      SmallVector<int64_t> selectedCols;
-      for (auto [k, addr] : llvm::enumerate(selection)) {
-        impulse::SampleRegionOp site = siteByAddress.lookup(addr);
-        impulse::DistAttr dist = site ? site.getDistAttr() : nullptr;
-        if (!site || site->getBlock() != &samplerEntry || !dist ||
-            dist.getBase() != impulse::DistBaseKind::BERNOULLI ||
-            (dist.getTransforms() && !dist.getTransforms().empty()) ||
-            site.getNumResults() != 2 ||
-            cast<RankedTensorType>(lpBlock.getArgument(k).getType())
-                    .getNumElements() != 1) {
-          op.emitError("Impulse Gibbs: every selected site must be a "
-                       "top-level scalar BERNOULLI site");
-          return failure();
-        }
-        selectedCols.push_back(layout->columnOf.lookup(addr));
-      }
-      // (trace col, constraint offset, size) of constrained branch-local sites.
-      SmallVector<std::tuple<int64_t, int64_t, int64_t>> observedBranchCols;
-      if (Value constraint = op.getConstraint()) {
-        int64_t off = 0;
-        for (Attribute addr : op.getConstrainedAddressesAttr()) {
-          impulse::SampleRegionOp site = siteByAddress.lookup(addr);
-          if (!site) {
-            op.emitError("Impulse Gibbs: constrained address without a site");
-            return failure();
-          }
-          if (site->getBlock() != &samplerEntry)
-            observedBranchCols.push_back(
-                {layout->columnOf.lookup(addr), off, sampleRegionSize(site)});
-          off += sampleRegionSize(site);
-        }
-      }
-      SmallVector<SmallVector<bool>> dirtyOf;
-      for (unsigned k = 0; k < selection.size(); ++k)
-        dirtyOf.push_back(
-            taintedSiteYields(lpBlock, ValueRange{lpBlock.getArgument(k)}));
-
-      // siteOfYield[j]: the selected site yield j depends on, or -1 for none.
-      unsigned numSites = selection.size();
-      SmallVector<int> siteOfYield(numYields, -1);
-      bool batched = numSites >= 2;
-      if (batched) {
-        SiteDependence lpDep(numSites);
-        for (unsigned k = 0; k < numSites; ++k)
-          lpDep.seed(lpBlock.getArgument(k), k);
-        lpDep.run(lpBlock);
-        for (unsigned j = 0; j < numYields && batched; ++j) {
-          llvm::BitVector s = lpDep.get(lpTerm->getOperand(1 + j));
-          if (s.count() > 1)
-            batched = false;
-          else if (s.any())
-            siteOfYield[j] = s.find_first();
-        }
-      }
-      if (batched) {
-        SiteDependence samplerDep(numSites);
-        SmallVector<impulse::SampleRegionOp> selectedSites;
-        for (auto [k, addr] : llvm::enumerate(selection)) {
-          impulse::SampleRegionOp site = siteByAddress.lookup(addr);
-          selectedSites.push_back(site);
-          samplerDep.seed(site.getResult(1), k);
-        }
-        samplerDep.run(samplerEntry);
-        for (auto [k, site] : llvm::enumerate(selectedSites))
-          for (Value param : llvm::drop_begin(site->getOperands()))
-            if (samplerDep.get(param).any())
-              batched = false;
-      }
-
-      auto writeCols = [&](OpBuilder &b, Value trace, int64_t col,
-                           Value value) -> Value {
-        auto vt = cast<RankedTensorType>(value.getType());
-        auto flatType = RankedTensorType::get({1, vt.getNumElements()},
-                                              traceType.getElementType());
-        Value flat = impulse::ReshapeOp::create(b, loc, flatType, value);
-        return updateColumns(b, loc, trace, flat, col);
-      };
-
-      // Readers of the trace take constrained branch-local sites from it, so
-      // it holds their observed values.
-      auto writeObserved = [&](OpBuilder &b, Value trace) -> Value {
-        Value constraint = op.getConstraint();
-        for (auto [col, off, n] : observedBranchCols) {
-          Value obs = emitColumnSlice(
-              b, loc, RankedTensorType::get({1, n}, traceType.getElementType()),
-              constraint, off);
-          trace = writeCols(b, trace, col, obs);
-        }
-        return trace;
-      };
-
-      auto batchedSweep = [&](OpBuilder &b, Value trace, Value weight,
-                              Value rng) -> std::array<Value, 3> {
-        int64_t n = numSites;
-        Type elemType = traceType.getElementType();
-        auto scalarType = RankedTensorType::get({}, elemType);
-        auto vecType = RankedTensorType::get({n}, elemType);
-        auto rowType = RankedTensorType::get({1, n}, elemType);
-        auto colType = RankedTensorType::get({1, 1}, elemType);
-        int64_t stride = n > 1 ? selectedCols[1] - selectedCols[0] : 1;
-        bool evenlySpaced = stride >= 1;
-        for (int64_t k = 1; k < n && evenlySpaced; ++k)
-          evenlySpaced = selectedCols[k] - selectedCols[k - 1] == stride;
-
-        Value curVec;
-        if (evenlySpaced) {
-          Value row =
-              emitColumnSlice(b, loc, rowType, trace, selectedCols[0], stride);
-          curVec = impulse::ReshapeOp::create(b, loc, vecType, row);
-        } else {
-          SmallVector<Value> cur;
-          for (int64_t col : selectedCols)
-            cur.push_back(scalarAt(b, loc, trace, {0, col}));
-          curVec = packScalars(b, loc, vecType, cur);
-        }
-
-        // All sites at v at once: each yield sees at most one selected site.
-        SmallVector<Value> yieldsAt[2];
-        for (int v = 0; v < 2; ++v) {
-          SmallVector<Value> positions;
-          for (BlockArgument arg : lpBlock.getArguments())
-            positions.push_back(emitSplatConstant(
-                b, loc, cast<RankedTensorType>(arg.getType()), (double)v));
-          llvm::append_range(yieldsAt[v], llvm::drop_begin(cloneLogpdfBody(
-                                              b, lpBlock, positions)));
-        }
-        SmallVector<Value> logOdds(n);
-        for (unsigned j = 0; j < numYields; ++j) {
-          int k = siteOfYield[j];
-          if (k < 0)
-            continue;
-          accumulate(
-              b, loc, logOdds[k],
-              arith::SubFOp::create(b, loc, yieldsAt[1][j], yieldsAt[0][j]));
-        }
-        for (Value &l : logOdds)
-          l = sumOrZero(b, loc, l, scalarType);
-        Value lVec = packScalars(b, loc, vecType, logOdds);
-
-        Value p1 = impulse::LogisticOp::create(b, loc, vecType, lVec);
-        Value uniform = emitUniformDraw(b, loc, rng, vecType);
-        Value take1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
-                                            uniform, p1);
-        Value curIs1 =
-            arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, curVec,
-                                  emitSplatConstant(b, loc, vecType, 0.5));
-        Value zeros = emitSplatConstant(b, loc, vecType, 0.0);
-        Value newVals = arith::SelectOp::create(
-            b, loc, take1, emitSplatConstant(b, loc, vecType, 1.0), zeros);
-
-        // +L_k on a 0 -> 1 flip, -L_k on 1 -> 0, else 0.
-        Value negL = arith::NegFOp::create(b, loc, lVec);
-        Value toOne = arith::SelectOp::create(b, loc, curIs1, zeros, lVec);
-        Value toZero = arith::SelectOp::create(b, loc, curIs1, negL, zeros);
-        Value delta = arith::SelectOp::create(b, loc, take1, toOne, toZero);
-        for (int64_t k = 0; k < n; ++k)
-          weight = arith::AddFOp::create(b, loc, weight,
-                                         takeLeading(b, loc, delta, k));
-
-        Value newRow = impulse::ReshapeOp::create(b, loc, rowType, newVals);
-        if (evenlySpaced && stride == 1) {
-          trace = updateColumns(b, loc, trace, newRow, selectedCols[0]);
-        } else {
-          for (auto [k, col] : llvm::enumerate(selectedCols)) {
-            Value colSlice = emitColumnSlice(b, loc, colType, newRow, k);
-            trace = updateColumns(b, loc, trace, colSlice, col);
-          }
-        }
-        if (hasScoreTail)
-          for (unsigned j = 0; j < numYields; ++j)
-            if (siteOfYield[j] >= 0)
-              trace = writeCols(b, trace, positionSize + j,
-                                arith::SelectOp::create(
-                                    b, loc,
-                                    takeLeading(b, loc, take1, siteOfYield[j]),
-                                    yieldsAt[1][j], yieldsAt[0][j]));
-        return {writeObserved(b, trace), weight, rng};
-      };
-
-      auto oneSweep = [&](OpBuilder &b, Value trace, Value weight,
-                          Value rng) -> std::array<Value, 3> {
-        if (batched)
-          return batchedSweep(b, trace, weight, rng);
-        SmallVector<Value> cur;
-        for (auto [k, col] : llvm::enumerate(selectedCols))
-          cur.push_back(sliceTraceValue(
-              b, loc, trace, col,
-              cast<RankedTensorType>(lpBlock.getArgument(k).getType())));
-        auto scalarType = RankedTensorType::get({}, traceType.getElementType());
-        for (unsigned k = 0; k < selectedCols.size(); ++k) {
-          auto argType =
-              cast<RankedTensorType>(lpBlock.getArgument(k).getType());
-          SmallVector<Value> yieldsAt[2];
-          Value scoreAt[2];
-          for (int v = 0; v < 2; ++v) {
-            SmallVector<Value> positions(cur);
-            positions[k] = emitSplatConstant(b, loc, argType, (double)v);
-            SmallVector<Value> yields = cloneLogpdfBody(b, lpBlock, positions);
-            for (unsigned j = 0; j < numYields; ++j) {
-              Value y = yields[1 + j];
-              yieldsAt[v].push_back(y);
-              if (dirtyOf[k][j])
-                accumulate(b, loc, scoreAt[v], y);
-            }
-            scoreAt[v] = sumOrZero(b, loc, scoreAt[v], scalarType);
-          }
-          Value diff = arith::SubFOp::create(b, loc, scoreAt[1], scoreAt[0]);
-          Value p1 = impulse::LogisticOp::create(b, loc, diff.getType(), diff);
-          Value uniform = emitUniformDraw(b, loc, rng, weightType);
-          Value take1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
-                                              uniform, p1);
-          Value curScalar =
-              impulse::ReshapeOp::create(b, loc, scalarType, cur[k]);
-          Value curIs1 = arith::CmpFOp::create(
-              b, loc, arith::CmpFPredicate::OGT, curScalar,
-              emitSplatConstant(b, loc, scalarType, 0.5));
-          Value sNew =
-              arith::SelectOp::create(b, loc, take1, scoreAt[1], scoreAt[0]);
-          Value sCur =
-              arith::SelectOp::create(b, loc, curIs1, scoreAt[1], scoreAt[0]);
-          weight = arith::AddFOp::create(
-              b, loc, weight, arith::SubFOp::create(b, loc, sNew, sCur));
-          Value oneArg = emitSplatConstant(b, loc, argType, 1.0);
-          Value zeroArg = emitSplatConstant(b, loc, argType, 0.0);
-          Value newVal =
-              arith::SelectOp::create(b, loc, take1, oneArg, zeroArg);
-          cur[k] = newVal;
-          trace = writeCols(b, trace, selectedCols[k], newVal);
-          if (hasScoreTail)
-            for (unsigned j = 0; j < numYields; ++j)
-              if (dirtyOf[k][j])
-                trace = writeCols(b, trace, positionSize + j,
-                                  arith::SelectOp::create(b, loc, take1,
-                                                          yieldsAt[1][j],
-                                                          yieldsAt[0][j]));
-        }
-        return {writeObserved(b, trace), weight, rng};
-      };
-
       SmallVector<Value> out = emitRepeated(
-          rewriter, loc, op.getNumSamples(), {initTrace, initWeight, initRng},
+          rewriter, loc, op.getNumSamples(),
+          {op.getOriginalTrace(), op.getStateIn()[0], op.getInputs()[0]},
           /*loopInit=*/nullptr, [&](ValueRange carried) {
-            std::array<Value, 3> r =
-                oneSweep(rewriter, carried[0], carried[1], carried[2]);
-            return SmallVector<Value>(r.begin(), r.end());
+            GibbsState state = emitter->emitSweep(
+                rewriter, {carried[0], carried[1], carried[2]});
+            return SmallVector<Value>{state.trace, state.weight, state.rng};
           });
 
       // Gibbs always accepts; `log_densities` is a zero placeholder.
