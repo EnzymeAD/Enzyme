@@ -398,7 +398,9 @@ struct DualAveragingConfig {
   double target_accept_prob = 0.8;
 };
 
-/// Initialize dual averaging state from initial step size.
+/// Initialize dual averaging state from initial step size. The prox center is
+/// log(10 * stepSize) if `logOfProduct`, else log(10) + log(stepSize); the two
+/// round differently.
 DualAveragingState initDualAveraging(OpBuilder &builder, Location loc,
                                      Value stepSize, bool logOfProduct = false);
 

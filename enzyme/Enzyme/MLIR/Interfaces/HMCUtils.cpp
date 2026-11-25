@@ -1597,7 +1597,6 @@ DualAveragingState impulse::initDualAveraging(OpBuilder &builder, Location loc,
   auto scalarType = RankedTensorType::get({}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  // The two forms round differently; each call site matches NumPyro bitwise.
   Value proxCenter;
   if (logOfProduct) {
     auto tenConst = arith::ConstantOp::create(
