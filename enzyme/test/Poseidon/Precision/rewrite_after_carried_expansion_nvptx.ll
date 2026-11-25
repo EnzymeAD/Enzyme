@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/rewrite_after_carried_expansion/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=PT0=All FP64(0%%) + Expansion2(100%%),R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2))" -poseidon-cache=%t/expansion-first -S -o %t/expansion-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=PT0=All FP64(0%%) + Expansion2(100%%),R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2))" -poseidon-cache=%t/expansion-first -S -o %t/expansion-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/expansion-first.ll
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/rewrite_after_carried_expansion/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),PT0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=APPLY2 %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),PT0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=APPLY2 %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/rewrite-first.ll
 
 ; APPLY: !!! Applying solution (2 step(s)) ... !!!
@@ -38,15 +38,37 @@
 
 ; A two-component expansion of one FP subgraph and a rewrite of another that
 ; reads the FP64 accumulator the expansion carries as a pair. In the loop of
-; carried_body (Inputs/rewrite_after_carried_expansion/carried.cu) the
-; accumulator %13 feeds the subgraph {%22 %23} that updates it (PT0) and the
+; carried_body the accumulator %13 feeds the subgraph {%22 %23} that updates it (PT0) and the
 ; subgraph {%14 %15 %16} that stores (acc - y) * (y + acc) (R2, Herbie's answer
 ; canned next to the profile). PT0 carries %13 as two float PHIs, its users
 ; reading the pair joined back to binary64; the rewrite reads that same value as
 ; v1. Applied in either order, the two steps emit one program up to value names.
 ; The module: clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -S -emit-llvm carried.cu. Profile: the same source through
-; poseidon-clang++ -poseidon-profile-generate.
+; -ffp-contract=on -S -emit-llvm carried.cu, with carried.cu
+;   template <typename R, typename... T>
+;   __device__ R __poseidon_fp_optimize(void *, T...);
+;   __device__ int enzyme_const;
+;   __device__ int enzyme_dup;
+;   constexpr int K = 16;
+;   extern "C" __device__ __attribute__((noinline)) void
+;   carried_body(const double *x, double y, double *out) {
+;     unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+;     double acc = 0.0;
+;   #pragma unroll 1
+;     for (int k = 0; k < K; ++k) {
+;       out[i * K + k] = (acc - y) * (acc + y);
+;       double xi = x[i * K + k];
+;       acc = acc * 0.5 + xi * xi;
+;     }
+;   }
+;   __global__ void carried_kernel(const double *x, double y, double *out,
+;                                  double *dout) {
+;     __poseidon_fp_optimize<void>((void *)carried_body, enzyme_const, x,
+;                                  enzyme_const, y, enzyme_dup, out, dout);
+;   }
+; Profile: the same source through poseidon-clang++ -poseidon-profile-generate,
+; launched as carried_kernel<<<2, 64>>>(x, 0.75, out, dout) on
+; x[i] = 0.25 + (i % 61) / 64.0, with dout set to 1.0.
 
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"

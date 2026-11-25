@@ -21,10 +21,11 @@
 // RUN:   | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt | FileCheck --check-prefix=OPT %s
 
-// deferred_jvp_site.cu with the site written as a call: the body is one
-// __enzyme_fwddiff request, so the call is a deferred site, profiled and solved
-// by the late run on the tangent code Enzyme generated for it. Its pointers
-// point into local objects of the kernel, whose shadows the pass makes. The
+// A site whose body is one __enzyme_fwddiff request, written as a call
+// (jvp_call) and as the explicit form with its shadows written by hand
+// (jvp_explicit): each is a deferred site, profiled and solved by the late run
+// on the tangent code Enzyme generated for it. The call's pointers point into
+// local objects of the kernel, whose shadows the pass makes. The
 // optimizing compile loads Enzyme's plugin itself, as poseidon-clang++ loads it
 // only to generate a profile.
 

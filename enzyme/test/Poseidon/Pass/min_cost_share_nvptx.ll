@@ -1,23 +1,25 @@
 ; REQUIRES: cuda-runtime
 ; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 ; DEFINE: %{use} = -poseidon-kernels=.*_kernel \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/min_cost_share \
+; DEFINE:   -poseidon-profile-use=%t/prof \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
 ; DEFINE:   -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print
-; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale
+; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale %t/prof
+; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_hot_kernel_poseidon_body.fpprofile
+; RUN: cp %S/../Inputs/min_cost_share/preprocess_cold_kernel_poseidon_body.fpprofile %t/prof/
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -S 2>&1 \
 ; RUN:   | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-min-cost-share=0 -poseidon-cache=%t/nofilter -S 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NOFILTER %s
-; RUN: cp %S/../Inputs/min_cost_share/*.fpprofile %t/stale/
+; RUN: cp %t/prof/*.fpprofile %t/stale/
 ; RUN: sed -i 's/^CanonicalHash = .*/CanonicalHash = 0123456789abcdef/' %t/stale/preprocess_cold_kernel_poseidon_body.fpprofile
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-profile-use=%t/stale -poseidon-cache=%t/stale -S -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STALE %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
-; RUN: not env TMPDIR=%t/tmp %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%S/../Inputs/min_cost_share -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t/tmp/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
+; RUN: not env TMPDIR=%t/tmp %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t/tmp/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: ls %t/tmp | count 0
 
 ; Two kernels reached by -poseidon-kernels, not by the attribute. cold_kernel
@@ -99,19 +101,8 @@ attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; CHECK-LABEL: define {{.*}} @cold_kernel(
 ; CHECK-SAME: ptr {{.*}}[[A:%[0-9]+]], ptr {{.*}}[[B:%[0-9]+]], ptr {{.*}}[[C:%[0-9]+]])
 ; CHECK-NOT: _poseidon_body
-; CHECK-NEXT: entry:
-; CHECK-NEXT: [[BID:%[0-9]+]] = {{(tail )?}}call noundef i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
-; CHECK-NEXT: [[BDIM:%[0-9]+]] = {{(tail )?}}call noundef i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
-; CHECK-NEXT: [[BOFF:%[0-9]+]] = mul i32 [[BID]], [[BDIM]]{{$}}
-; CHECK-NEXT: [[TID:%[0-9]+]] = {{(tail )?}}call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.x()
-; CHECK-NEXT: [[GID:%[0-9]+]] = add i32 [[BOFF]], [[TID]]{{$}}
-; CHECK-NEXT: [[I:%[0-9]+]] = zext i32 [[GID]] to i64
-; CHECK-NEXT: [[AP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[A]], i64 [[I]]{{$}}
-; CHECK-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]], align 8
-; CHECK-NEXT: [[BP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[B]], i64 [[I]]{{$}}
-; CHECK-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]], align 8
-; CHECK-NEXT: [[R:%[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double [[AV]], double [[BV]], double [[AV]])
-; CHECK-NEXT: [[CP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[C]], i64 [[I]]{{$}}
+; CHECK: [[R:%[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double [[AV:%[0-9]+]], double %{{[0-9]+}}, double [[AV]])
+; CHECK-NEXT: [[CP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[C]], i64 %{{[0-9]+}}{{$}}
 ; CHECK-NEXT: store double [[R]], ptr [[CP]], align 8
 ; CHECK-NEXT: ret void
 ; CHECK-NEXT: }

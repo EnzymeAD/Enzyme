@@ -39,18 +39,8 @@
 
 ; KEPT-LABEL: define dso_local void @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; KEPT: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
-; KEPT: call i32 @__cudaPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; KEPT: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
 ; KEPT-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
 ; KEPT-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; KEPT-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[GC:[0-9]+]], ptr align 8 %[[GRID]], i64 12, i1 false)
-; KEPT-NEXT: %[[GXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 0
-; KEPT-NEXT: %[[GXY:[0-9]+]] = load i64, ptr %[[GXYP]], align 8
-; KEPT-NEXT: %[[GZP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 1
-; KEPT-NEXT: %[[GZ:[0-9]+]] = load i32, ptr %[[GZP]], align 8
-; KEPT-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[BC:[0-9]+]], ptr align 8 %[[BLOCK]], i64 12, i1 false)
-; KEPT-NEXT: %[[BXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 0
-; KEPT-NEXT: %[[BXY:[0-9]+]] = load i64, ptr %[[BXYP]], align 8
-; KEPT-NEXT: %[[BZP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 1
-; KEPT-NEXT: %[[BZ:[0-9]+]] = load i32, ptr %[[BZP]], align 8
-; KEPT-NEXT: %{{[0-9]+}} = call noundef i32 @cudaLaunchKernel(ptr noundef @_Z28__device_stub__matmul_kernelPKdS0_PdS1_, i64 %[[GXY]], i32 %[[GZ]], i64 %[[BXY]], i32 %[[BZ]], ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
+; KEPT: call noundef i32 @cudaLaunchKernel(ptr noundef @_Z28__device_stub__matmul_kernelPKdS0_PdS1_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
 

@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE: %{opt} = %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
@@ -36,27 +36,6 @@
 ; count searched before is read from the cache in any list. Unset, nothing is
 ; passed and the cache key is the one UNSET pins. A Herbie that does not take
 ; the option stops the compile.
-
-define double @tester(double %x, double %y) #0 {
-entry:
-  %xx = fmul double %x, %x
-  %yy = fmul double %y, %y
-  %s = fadd double %xx, %yy
-  %r = call double @llvm.sqrt.f64(double %s)
-  %d = fsub double %r, %x
-  ret double %d
-}
-
-define double @test_opt(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester, double %x, double %y)
-  ret double %0
-}
-
-declare double @llvm.sqrt.f64(double)
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }
 
 ; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 2 Taylor terms: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout {{.*}}, key [[KEY2:[0-9A-F]+]]
 ; SEARCH24: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY2]].txt

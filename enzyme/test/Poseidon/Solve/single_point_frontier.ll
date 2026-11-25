@@ -1,10 +1,12 @@
-; RUN: rm -rf %t && mkdir -p %t/joint
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/regime_split %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-arm-search-factor=1024 -poseidon-cache=%t/noop -S -o /dev/null 2>&1 | FileCheck --check-prefix=NOOP --implicit-check-not=NOTE: %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/one_rewrite_per_output %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/step -S -o /dev/null 2>&1 | FileCheck --check-prefix=STEP --implicit-check-not=NOTE: %s
+; RUN: rm -rf %t && mkdir -p %t/joint %t/jprof
+; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/jprof/preprocess_tester_a.fpprofile
+; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/jprof/preprocess_tester_b.fpprofile
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/regime_split %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-arm-search-factor=1024 -poseidon-cache=%t/noop -S -o /dev/null 2>&1 | FileCheck --check-prefix=NOOP --implicit-check-not=NOTE: %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/one_rewrite_per_output %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/step -S -o /dev/null 2>&1 | FileCheck --check-prefix=STEP --implicit-check-not=NOTE: %s
 ; RUN: sed 's/^fma,double,512$/fma,double,448/' %cost_models/cm_sm_120_synthetic.csv > %t/joint/cm_sm_120_fma.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/joint/cm_sm_120_fma.herbie.rkt
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/joint/cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt
-; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/joint -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cache=%t/joint -S -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT --implicit-check-not=NOTE: %s
+; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/jprof -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cache=%t/joint -S -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT --implicit-check-not=NOTE: %s
 
 ; A DP frontier of one point is either the code as written, which no
 ; candidate improves on, or a solution that is no costlier and no less
@@ -29,24 +31,3 @@
 ; JOINT: JOINT DP table contains 1 entries; cost range [[[C:-[.e0-9-]+]], [[C]]]{{$}}
 ; JOINT-NEXT: [poseidon] NOTE: the only frontier point is a solution of 2 step(s) from the 4 candidate(s); it is no costlier and no less accurate than the code as written and every other combination.{{$}}
 ; JOINT-NEXT: JOINT: minimum accuracy cost within budget: {{-[.e0-9-]+}}; computation cost used: [[C]]{{$}}
-
-define double @tester(double %x, double %y) #0 {
-entry:
-  %xx = fmul double %x, %x
-  %yy = fmul double %y, %y
-  %s = fadd double %xx, %yy
-  %r = call double @llvm.sqrt.f64(double %s)
-  %d = fsub double %r, %x
-  ret double %d
-}
-
-define double @test_opt(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester, double %x, double %y)
-  ret double %0
-}
-
-declare double @llvm.sqrt.f64(double)
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }

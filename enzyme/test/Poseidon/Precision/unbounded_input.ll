@@ -14,8 +14,13 @@
 ; Under a tolerance the profile of @tester_nan, which carries no sensitivity,
 ; is an error of its own.
 ;
-; Profiles: this module through the host profiler with
-; Inputs/unbounded_input/driver.c.
+; Profiles: this module through the host profiler, driven by
+;   for (int i = 0; i < 64; ++i) {
+;     double x = 1.0 + i, y = 0.5 + (i % 7) * 0.25, o, d = 1.0;
+;     site(i == 0 ? INFINITY : x, y, &o, &d);
+;     d = 1.0;
+;     site_nan(-x, y, &o, &d);
+;   }
 
 ; IR-LABEL: define void @tester(double %x, double %y, ptr %o)
 ; IR-NEXT: entry:

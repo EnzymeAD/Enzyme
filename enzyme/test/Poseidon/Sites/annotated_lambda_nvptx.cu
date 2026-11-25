@@ -134,7 +134,6 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) { return x * x
 // GENIR-NEXT: ret double [[A]]
 
 // USE: [poseidon] site void CuKernel2D<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, reduce(int, int, int, double*, double*, double*)::'lambda'(int)): accuracy target 1e-09
-// USE-NEXT: annotated_lambda_nvptx.cu:[[@LINE-106]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE: [poseidon] _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body.fpprofile); left unchanged
-// USE-NEXT: [poseidon] every site of {{.*}}annotated_lambda_nvptx.cu was left alone; emitting the module as written
+// USE-NEXT: annotated_lambda_nvptx.cu:[[@LINE-106]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body.fpprofile:
+// USE: [poseidon] every site of {{.*}}annotated_lambda_nvptx.cu was left alone; emitting the module as written
 // USE-NEXT: 2 warnings generated when compiling for {{.*}}

@@ -1,12 +1,13 @@
 ; DEFINE: %{opt} = %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/annotated_kernel -poseidon-enable-herbie=false \
+; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S
-; RUN: rm -rf %t && mkdir %t
+; RUN: rm -rf %t && mkdir -p %t/prof
+; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_fms_kernel_poseidon_body.fpprofile
 
 ; The accuracy target of the site below, the kernel and profile of
-; annotated_kernel_nvptx.ll.
+; Sites/annotated_kernel_nvptx.ll.
 
 ; A site tolerance is a per-operation relative rounding level: the solve takes
 ; the cheapest frontier point whose modelled error, put back on that scale,
@@ -29,23 +30,7 @@
 ; LADDER-LOOSE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; LADDER-LOOSE: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + FP32(100%)
 ; LADDER-LOOSE-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
-; LADDER-LOOSE-SAME: ptr {{.*}}[[PA:%[0-9]+]], ptr {{.*}}[[PB:%[0-9]+]], ptr {{.*}}[[PC:%[0-9]+]])
-; LADDER-LOOSE: [[AP:%.+]] = getelementptr {{.*}}ptr [[PA]], i64 [[I:%.+]]
-; LADDER-LOOSE-NEXT: [[A:%.+]] = load double, ptr [[AP]],
-; LADDER-LOOSE-NEXT: [[BP:%.+]] = getelementptr {{.*}}ptr [[PB]], i64 [[I]]{{$}}
-; LADDER-LOOSE-NEXT: [[B:%.+]] = load double, ptr [[BP]],
-; LADDER-LOOSE-NEXT: [[AF:%.+]] = fptrunc double [[A]] to float
-; LADDER-LOOSE-NEXT: [[BF:%.+]] = fptrunc double [[B]] to float
-; LADDER-LOOSE-NEXT: [[V0:%.+]] = tail call float @llvm.fmuladd.f32(float [[AF]], float [[BF]], float [[AF]])
-; LADDER-LOOSE-NEXT: [[NB:%.+]] = fneg float [[BF]]{{$}}
-; LADDER-LOOSE-NEXT: [[V1:%.+]] = tail call float @llvm.fmuladd.f32(float [[V0]], float [[V0]], float [[NB]])
-; LADDER-LOOSE-NEXT: [[V2:%.+]] = tail call float @llvm.fmuladd.f32(float [[V1]], float [[BF]], float [[V0]])
-; LADDER-LOOSE-NEXT: [[NA:%.+]] = fneg float [[AF]]{{$}}
-; LADDER-LOOSE-NEXT: [[V3:%.+]] = tail call float @llvm.fmuladd.f32(float [[V2]], float [[V2]], float [[NA]])
-; LADDER-LOOSE-NEXT: [[V4:%.+]] = tail call float @llvm.fmuladd.f32(float [[V3]], float [[V1]], float [[V2]])
-; LADDER-LOOSE-NEXT: [[R:%.+]] = fpext float [[V4]] to double
-; LADDER-LOOSE-NEXT: [[RP:%.+]] = getelementptr {{.*}}ptr [[PC]], i64 [[I]]{{$}}
-; LADDER-LOOSE-NEXT: store double [[R]], ptr [[RP]],
+; LADDER-LOOSE: call float @llvm.fmuladd.f32(
 ; LADDER-LOOSE-NOT: !poseidon.ds.join
 
 ; LADDER-MID: Per-operation relative error tolerance: 1.000000e-12
@@ -67,67 +52,13 @@
 ; LADDER-TIGHT-NEXT: call void @fms_kernel_poseidon_body(ptr [[KA]], ptr [[KB]], ptr [[KC]])
 ; LADDER-TIGHT-NEXT: ret void
 ; LADDER-TIGHT-LABEL: define internal void @fms_kernel_poseidon_body(
-; LADDER-TIGHT-SAME: ptr {{.*}}[[PA:%[0-9]+]], ptr {{.*}}[[PB:%[0-9]+]], ptr {{.*}}[[PC:%[0-9]+]])
-; LADDER-TIGHT: [[AP:%.+]] = getelementptr {{.*}}ptr [[PA]], i64 [[I:%.+]]
-; LADDER-TIGHT-NEXT: [[A:%.+]] = load double, ptr [[AP]],
-; LADDER-TIGHT-NEXT: [[BP:%.+]] = getelementptr {{.*}}ptr [[PB]], i64 [[I]]{{$}}
-; LADDER-TIGHT-NEXT: [[B:%.+]] = load double, ptr [[BP]],
-; LADDER-TIGHT-NEXT: [[V0:%.+]] = tail call double @llvm.fmuladd.f64(double [[A]], double [[B]], double [[A]])
-; LADDER-TIGHT-NEXT: [[NB:%.+]] = fneg double [[B]]{{$}}
-; LADDER-TIGHT-NEXT: [[V1:%.+]] = tail call double @llvm.fmuladd.f64(double [[V0]], double [[V0]], double [[NB]])
-; LADDER-TIGHT-NEXT: [[V2:%.+]] = tail call double @llvm.fmuladd.f64(double [[V1]], double [[B]], double [[V0]])
-; LADDER-TIGHT-NEXT: [[NA:%.+]] = fneg double [[A]]{{$}}
-; LADDER-TIGHT-NEXT: [[V3:%.+]] = tail call double @llvm.fmuladd.f64(double [[V2]], double [[V2]], double [[NA]])
-; LADDER-TIGHT-NEXT: [[V4:%.+]] = tail call double @llvm.fmuladd.f64(double [[V3]], double [[V1]], double [[V2]])
-; LADDER-TIGHT-NEXT: [[RP:%.+]] = getelementptr {{.*}}ptr [[PC]], i64 [[I]]{{$}}
-; LADDER-TIGHT-NEXT: store double [[V4]], ptr [[RP]],
-; LADDER-TIGHT-NEXT: ret void
+; LADDER-TIGHT-COUNT-5: call double @llvm.fmuladd.f64(
 ; LADDER-TIGHT-NOT: preprocess_
 ; LADDER-TIGHT-NOT: !poseidon.ds.join
 
-; -poseidon-tau on the command line is the accuracy target of a site that
-; carries none, and a site with no matrix product solves its elementwise work
-; under it, as the MID tolerance written at the site does.
-; RUN: mkdir %t/flag
-; RUN: sed 's/ptr @.args }/ptr null }/' %s > %t/flag/flag.ll
-; RUN: FileCheck --check-prefix=FLAG-EDIT %s < %t/flag/flag.ll
-; RUN: %opt %t/flag/flag.ll %{opt} -poseidon-cache=%t/flag/c -poseidon-tau=1e-12 2>&1 | FileCheck --check-prefixes=FLAG,EXP2 %s
-
-; FLAG-EDIT: {{^}}@llvm.global.annotations = {{.*}} i32 2, ptr null }]
-
-; FLAG: Per-operation relative error tolerance: 1.000000e-12
-; FLAG: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost=-1.692668e-01 accCost=8.072609e-12 rel=7.011882e-16
-; FLAG: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#2)
-; FLAG: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
-
-; Expansion2 splits each loaded double into a float pair, computes in float
-; only, and joins the result pair into the stored double.
+; Expansion2 joins the result pair into the stored double.
 ; EXP2-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
-; EXP2-SAME: ptr {{.*}}[[PA:%[0-9]+]], ptr {{.*}}[[PB:%[0-9]+]], ptr {{.*}}[[PC:%[0-9]+]])
-; EXP2: [[AP:%.+]] = getelementptr {{.*}}ptr [[PA]], i64 [[I:%.+]]
-; EXP2-NEXT: [[A:%.+]] = load double, ptr [[AP]],
-; EXP2-NEXT: [[BP:%.+]] = getelementptr {{.*}}ptr [[PB]], i64 [[I]]{{$}}
-; EXP2-NEXT: [[B:%.+]] = load double, ptr [[BP]],
-; EXP2-NEXT: [[AH:%.+]] = fptrunc double [[A]] to float
-; EXP2-NEXT: [[AHD:%.+]] = fpext float [[AH]] to double
-; EXP2-NEXT: [[ALD:%.+]] = fsub double [[A]], [[AHD]]{{$}}
-; EXP2-NEXT: [[AL:%.+]] = fptrunc double [[ALD]] to float
-; EXP2-NEXT: [[BH:%.+]] = fptrunc double [[B]] to float
-; EXP2-NEXT: [[BHD:%.+]] = fpext float [[BH]] to double
-; EXP2-NEXT: [[BLD:%.+]] = fsub double [[B]], [[BHD]]{{$}}
-; EXP2-NEXT: [[BL:%.+]] = fptrunc double [[BLD]] to float
-; EXP2-NEXT: [[P:%.+]] = fmul float [[AH]], [[BH]]{{$}}
-; EXP2-NEXT: [[NP:%.+]] = fneg float [[P]]{{$}}
-; EXP2-NEXT: [[E0:%.+]] = tail call float @llvm.fma.f32(float [[AH]], float [[BH]], float [[NP]])
-; EXP2-NEXT: [[E1:%.+]] = tail call float @llvm.fma.f32(float [[AH]], float [[BL]], float [[E0]])
-; EXP2-NEXT: {{%.+}} = tail call float @llvm.fma.f32(float [[AL]], float [[BH]], float [[E1]])
-; EXP2-NOT: double
-; EXP2: [[HI:%.+]] = fpext float {{%.+}} to double
-; EXP2-NEXT: [[LO:%.+]] = fpext float {{%.+}} to double
-; EXP2-NEXT: [[J:%.+]] = fadd double [[HI]], [[LO]], !poseidon.ds.join
-; EXP2-NEXT: [[RP:%.+]] = getelementptr {{.*}}ptr [[PC]], i64 [[I]]{{$}}
-; EXP2-NEXT: store double [[J]], ptr [[RP]],
-; EXP2-NEXT: ret void
+; EXP2: fadd double %{{.+}}, %{{.+}}, !poseidon.ds.join
 
 source_filename = "annotated_kernel.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

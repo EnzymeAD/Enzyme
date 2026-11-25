@@ -1,6 +1,7 @@
-// An opt pass plugin for expansion_reference_identity.cpp and
-// expansion_model_identity.cpp, loaded after the Poseidon plugin, whose
-// expansion emitters, materializer and accuracy model it calls.
+// An opt pass plugin for expansion_reference_identity.cpp,
+// expansion_model_identity.cpp and expansion_fast_flags.cpp, loaded after the
+// Poseidon plugin, whose expansion emitters, materializer and accuracy model it
+// calls.
 //
 // expansion-match-raw writes, for n = 2, 3, 4 components, raw-component
 // functions p<n>_<op>(ptr a, [ptr b, [ptr c,]] ptr out) through the emitters,
@@ -16,6 +17,10 @@
 // raw.bin (the raw-component cases and the model's results for them),
 // app.bin (the points and the model's results for each function) and
 // fns.inc (the functions, for the harness).
+//
+// apply-expansion materializes every FP64 instruction of each function named
+// ex<n>_* as an n-component FP32 expansion, with no candidate selection in
+// between.
 #include "Core/ExpansionModel.h"
 #include "IR/Utils.h"
 #include "Model/Evaluators.h"
@@ -26,6 +31,7 @@
 #include "Techniques/Precision.h"
 
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
@@ -446,16 +452,20 @@ void modelApplied(std::vector<AppFn> &fns) {
   fclose(inc);
 }
 
+// Materializes `ops` as one n-component expansion change.
+void expand(Session &S, unsigned n, ArrayRef<Instruction *> ops) {
+  SmallPtrSet<Instruction *, 16> all(ops.begin(), ops.end());
+  DenseMap<Value *, Value *> restored;
+  if (n == 2)
+    applyExpansion(S, ops, all, &restored);
+  else
+    applyExpansion(S, n, ops, all, &restored);
+}
+
 void materialize(Session &S, std::vector<AppFn> &fns) {
   for (AppFn &a : fns)
-    for (auto &ch : a.changes) {
-      SmallPtrSet<Instruction *, 16> all(ch.begin(), ch.end());
-      DenseMap<Value *, Value *> restored;
-      if (a.n == 2)
-        applyExpansion(S, ch, all, &restored);
-      else
-        applyExpansion(S, a.n, ch, all, &restored);
-    }
+    for (auto &ch : a.changes)
+      expand(S, a.n, ch);
 }
 
 struct EmitRaw : PassParent<EmitRaw> {
@@ -476,6 +486,24 @@ struct EmitModel : PassParent<EmitModel> {
   }
 };
 
+struct ApplyExpansion : PassParent<ApplyExpansion> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    Session &S = sessionOf(M, MAM);
+    for (Function &F : M) {
+      StringRef name = F.getName();
+      if (F.isDeclaration() || !name.starts_with("ex") || name.size() < 4 ||
+          name[3] != '_')
+        continue;
+      SmallVector<Instruction *, 16> ops;
+      for (Instruction &I : instructions(F))
+        if (I.getType()->isDoubleTy())
+          ops.push_back(&I);
+      expand(S, name[2] - '0', ops);
+    }
+    return PreservedAnalyses::none();
+  }
+};
+
 } // namespace
 
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
@@ -489,6 +517,10 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
                   }
                   if (name == "expansion-match-model") {
                     MPM.addPass(EmitModel());
+                    return true;
+                  }
+                  if (name == "apply-expansion") {
+                    MPM.addPass(ApplyExpansion());
                     return true;
                   }
                   return false;

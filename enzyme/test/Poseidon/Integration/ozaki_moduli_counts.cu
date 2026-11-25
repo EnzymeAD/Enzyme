@@ -6,7 +6,11 @@
 // arm); the rectangular arm at 20 x 24 x 1100, whose strided operands take
 // the chunked sum of squares; and the square entry at N = 48. Rows and columns
 // of the operands span 2^-30..2^30, with every 17th element of a row of A
-// 10^6 times larger.
+// 10^6 times larger. The same on the operands the accuracy model samples, on
+// the tile it simulates (16 x 16 with K = 2048, which the runtime's own choice
+// of arm sends to the rectangular one), both row-major, elements log-uniform
+// over the 40 binades below the largest (the tolerance path) or uniform (the
+// budget path), at every modulus count the compiler proposes.
 //
 // REQUIRES: cuda-runtime
 // RUN: rm -rf %t && mkdir %t
@@ -24,6 +28,8 @@
 // CHECK-NEXT: square 37x50x61: 8 layouts, 177600 products, 0 differ
 // CHECK-NEXT: rect 20x24x1100: 8 layouts, 46080 products, 0 differ
 // CHECK-NEXT: entry 48x48x48: 1 layouts, 27648 products, 0 differ
+// CHECK-NEXT: model 16x16x2048 log40: 7 moduli, 1792 products, 0 differ
+// CHECK-NEXT: model 16x16x2048 uniform: 7 moduli, 1792 products, 0 differ
 
 #include "MatmulSimulation.h"
 
@@ -184,6 +190,61 @@ size_t run(const char *name, Arm arm, int M, int N, int K) {
   return differ;
 }
 
+uint64_t g_state = 0x2545f4914f6cdd1dull;
+double uniform() { // [0, 1), 53 bits
+  g_state = g_state * 6364136223846793005ull + 1442695040888963407ull;
+  return (double)(g_state >> 11) * 0x1.0p-53;
+}
+
+// A row-major rows x cols operand as the accuracy model samples it, with
+// largest magnitude about `scale`.
+std::vector<double> sampled(int rows, int cols, bool log40, double scale) {
+  std::vector<double> v((size_t)rows * cols);
+  for (double &x : v) {
+    double mag =
+        log40 ? scale * std::exp2(-40.0 * uniform()) : scale * uniform();
+    x = uniform() < 0.5 ? -mag : mag;
+  }
+  return v;
+}
+
+// The number of products that differ over both distributions, at the modulus
+// counts the compiler proposes, with the runtime choosing the arm.
+size_t runSampled(int M, int N, int K) {
+  __poseidon_ozaki_set_path(0);
+  size_t differ = 0;
+  for (bool log40 : {true, false}) {
+    std::vector<double> A = sampled(M, K, log40, 0.5);
+    std::vector<double> B = sampled(K, N, log40, 2.0);
+    double *dA, *dB, *dC;
+    cudaMalloc(&dA, A.size() * 8);
+    cudaMalloc(&dB, B.size() * 8);
+    cudaMalloc(&dC, (size_t)M * N * 8);
+    cudaMemcpy(dA, A.data(), A.size() * 8, cudaMemcpyHostToDevice);
+    cudaMemcpy(dB, B.data(), B.size() * 8, cudaMemcpyHostToDevice);
+    std::vector<double> C((size_t)M * N), P((size_t)M * N);
+    size_t products = 0, d = 0;
+    int counts = 0;
+    for (unsigned nm = 8; nm <= 14; ++nm, ++counts) {
+      __poseidon_ozaki_dgemm_ex(dC, dA, dB, M, N, K, K, N, N, 0, 0, 0, 1.0, 0.0,
+                                nullptr, nm);
+      cudaMemcpy(C.data(), dC, C.size() * 8, cudaMemcpyDeviceToHost);
+      simulateOzakiIIDgemm(nm, {A.data(), (unsigned)K, (unsigned)M, true},
+                           {B.data(), (unsigned)N, (unsigned)N, false},
+                           (unsigned)K, P.data());
+      for (size_t i = 0; i < C.size(); ++i, ++products)
+        d += !sameBits(C[i], P[i]);
+    }
+    printf("model %dx%dx%d %s: %d moduli, %zu products, %zu differ\n", M, N, K,
+           log40 ? "log40" : "uniform", counts, products, d);
+    cudaFree(dA);
+    cudaFree(dB);
+    cudaFree(dC);
+    differ += d;
+  }
+  return differ;
+}
+
 } // namespace
 
 int main() {
@@ -191,5 +252,6 @@ int main() {
   differ += run("square", Square, 37, 50, 61);
   differ += run("rect", Rect, 20, 24, 1100);
   differ += run("entry", Entry, 48, 48, 48);
+  differ += runSampled(16, 16, 2048);
   return differ != 0;
 }

@@ -5,13 +5,9 @@
 // named metadata as a Herbie expression without variables and prints it with
 // its value from the MPFR reference (getMPFRValues at 53 bits, as the accuracy
 // model takes it) and from the binary64 evaluation (getFPValues).
-//
-// precision-change-types prints, for each format that is an LLVM type, its
-// type (getLLVMFPType) and the format getPrecisionChangeType gives that type.
 #include "IR/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
-#include "Model/FPFormat.h"
 #include "Model/FPNode.h"
 
 #include "llvm/IR/Metadata.h"
@@ -53,21 +49,6 @@ struct EvaluateFPCore : PassParent<EvaluateFPCore> {
   }
 };
 
-struct PrecisionChangeTypes : PassParent<PrecisionChangeTypes> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    for (PrecisionChangeType T :
-         {PrecisionChangeType::BF16, PrecisionChangeType::FP16,
-          PrecisionChangeType::FP32, PrecisionChangeType::FP64,
-          PrecisionChangeType::FP80, PrecisionChangeType::FP128}) {
-      Type *Ty = getLLVMFPType(T, M.getContext());
-      outs() << getPrecisionChangeTypeString(T) << ": " << *Ty << " -> "
-             << getPrecisionChangeTypeString(getPrecisionChangeType(Ty))
-             << '\n';
-    }
-    return PreservedAnalyses::all();
-  }
-};
-
 } // namespace
 
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
@@ -78,10 +59,6 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
                    ArrayRef<PassBuilder::PipelineElement>) {
                   if (Name == "evaluate-fpcore") {
                     MPM.addPass(EvaluateFPCore());
-                    return true;
-                  }
-                  if (Name == "precision-change-types") {
-                    MPM.addPass(PrecisionChangeTypes());
                     return true;
                   }
                   return false;

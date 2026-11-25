@@ -1,0 +1,1 @@
+{"tests": [{"bits": 64, "name": "0", "status": "imp-start", "prec": "binary64", "output": "(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64))", "cost-accuracy": [[2.0, 1.0], [3.0, 1.0, "(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64))"], []]}]}

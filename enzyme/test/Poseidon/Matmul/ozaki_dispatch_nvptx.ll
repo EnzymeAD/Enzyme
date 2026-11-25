@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt %s %loadPoseidon \
+; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-raise-wmma \
@@ -87,81 +87,18 @@
 ; OFF-NOT: wrote descriptor
 
 ; Ozaki-II host dispatch selected by a tolerance: the scalar FP64 product of
-; raise_scalar_tcec_nvptx.ll (same IR and profile) priced against the in-kernel
-; raises and the host-dispatch families of cm_sm_120_synthetic_dispatch.csv. The
-; cheapest candidate whose modelled domain error clears tau wins, so the
-; Ozaki-II moduli count rises as tau tightens. The device compile writes the
-; dispatch descriptor into the unit's manifest (tenth field 0 = Ozaki-II, sixth
-; field = nm), and the host compile of the kernel's launch stub
-; (Inputs/ozaki_dispatch/ozaki_stub_host.ll, from ozaki_stub.cu via clang -x cuda
-; --cuda-host-only -O0 -S -emit-llvm, renamed to this module's source and
-; compiled as the same unit) calls __poseidon_ozaki_dgemm with that nm; nm = 0
-; is the native cuBLAS DGEMM arm.
-
-; ModuleID = 'tcec_matmul.cu'
-source_filename = "tcec_matmul.cu"
-target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
-target triple = "nvptx64-nvidia-cuda"
-
-@enzyme_const = dso_local addrspace(1) externally_initialized global i32 0, align 4
-@enzyme_dup = dso_local addrspace(1) externally_initialized global i32 0, align 4
-@llvm.compiler.used = appending global [2 x ptr] [ptr addrspacecast (ptr addrspace(1) @enzyme_const to ptr), ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr)], section "llvm.metadata"
-
-define dso_local void @matmul_body(ptr noundef readonly captures(none) %0, ptr noundef readonly captures(none) %1, ptr noundef writeonly captures(none) %2) #0 {
-  %4 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.x()
-  %5 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.y()
-  %6 = shl nuw nsw i32 %5, 4
-  br label %11
-
-7:                                                ; preds = %11
-  %8 = add nuw nsw i32 %6, %4
-  %9 = zext nneg i32 %8 to i64
-  %10 = getelementptr inbounds nuw [8 x i8], ptr %2, i64 %9
-  store double %23, ptr %10, align 8
-  ret void
-
-11:                                               ; preds = %3, %11
-  %12 = phi i32 [ 0, %3 ], [ %24, %11 ]
-  %13 = phi double [ 0.000000e+00, %3 ], [ %23, %11 ]
-  %14 = add nuw nsw i32 %12, %6
-  %15 = zext nneg i32 %14 to i64
-  %16 = getelementptr inbounds nuw [8 x i8], ptr %0, i64 %15
-  %17 = load double, ptr %16, align 8
-  %18 = shl nuw nsw i32 %12, 4
-  %19 = add nuw nsw i32 %18, %4
-  %20 = zext nneg i32 %19 to i64
-  %21 = getelementptr inbounds nuw [8 x i8], ptr %1, i64 %20
-  %22 = load double, ptr %21, align 8
-  %23 = tail call double @llvm.fmuladd.f64(double %17, double %22, double %13)
-  %24 = add nuw nsw i32 %12, 1
-  %25 = icmp eq i32 %24, 16
-  br i1 %25, label %7, label %11
-}
-
-declare double @llvm.fmuladd.f64(double, double, double) #1
-
-define dso_local ptx_kernel void @_Z13matmul_kernelPKdS0_PdS1_(ptr noundef %0, ptr noundef %1, ptr noundef %2, ptr noundef %3) local_unnamed_addr #2 {
-  %5 = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_const to ptr), align 4
-  %6 = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr), align 4
-  tail call void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef nonnull @matmul_body, i32 noundef %5, ptr noundef %0, i32 noundef %5, ptr noundef %1, i32 noundef %6, ptr noundef %2, ptr noundef %3) #5
-  ret void
-}
-
-declare dso_local void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, ptr noundef) local_unnamed_addr #3
-
-declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
-
-declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.y() #4
-
-attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
-attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
-attributes #2 = { convergent mustprogress noinline norecurse nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
-attributes #3 = { convergent nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
-attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
-attributes #5 = { convergent nounwind "uniform-work-group-size" }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}
+; raise_scalar_tcec_nvptx.ll (Inputs/stale_cache/matmul_device.ll, same
+; profile) priced against the in-kernel raises and the host-dispatch families
+; of cm_sm_120_synthetic_dispatch.csv. The cheapest candidate whose modelled
+; domain error clears tau wins, so the Ozaki-II moduli count rises as tau
+; tightens. The device compile writes the dispatch descriptor into the unit's
+; manifest (tenth field 0 = Ozaki-II, sixth field = nm), and the host compile
+; of the kernel's launch stub (Inputs/ozaki_dispatch/ozaki_stub_host.ll, clang
+; -x cuda --cuda-host-only -O0 -S -emit-llvm of
+;   __global__ void matmul_kernel(const double *A, const double *B, double *D,
+;                                 double *dD) {}
+;   void launch(const double *A, const double *B, double *D, double *dD) {
+;     matmul_kernel<<<1, dim3(16, 16)>>>(A, B, D, dD);
+;   }
+; renamed to this module's source and compiled as the same unit) calls
+; __poseidon_ozaki_dgemm with that nm; nm = 0 is the native cuBLAS DGEMM arm.

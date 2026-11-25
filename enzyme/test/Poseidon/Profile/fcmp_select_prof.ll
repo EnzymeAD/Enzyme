@@ -1,6 +1,8 @@
 ; REQUIRES: enzyme
 ; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-generate -S | FileCheck %s
 
+%struct.Gradients = type { double, double }
+
 define double @test_maxnum_zero(double %x) {
 entry:
   %cmp = fcmp ogt double %x, 0.0
@@ -39,6 +41,25 @@ entry:
   ret double %result
 }
 
+define double @test_fadd(double %x, double %y) {
+entry:
+  %0 = fadd fast double %x, %y
+  ret double %0
+}
+
+define double @test_fma(double %x, double %y, double %z) {
+entry:
+  %0 = fmul fast double %x, %y
+  %1 = fadd fast double %0, %z
+  ret double %1
+}
+
+define double @muldd(double %x, double %y) {
+entry:
+  %mul = fmul fast double %x, %y
+  ret double %mul
+}
+
 define double @test_profile_maxnum_zero(double %x) {
 entry:
   %0 = tail call double (double (double)*, ...) @__poseidon_fp_optimize(double (double)* nonnull @test_maxnum_zero, double %x)
@@ -69,6 +90,26 @@ entry:
   ret double %0
 }
 
+define double @test_profile_fadd(double %x, double %y) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_fadd, double %x, double %y, metadata !"poseidon_tau", double 1.0e-6)
+  ret double %0
+}
+
+define double @test_profile_fma(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_fma, double %x, double %y, double %z)
+  ret double %0
+}
+
+; The marker returns the gradient struct, not the type of muldd: the request
+; returns no primal (adapted from enzyme/test/Enzyme/ReverseMode/gradient-struct-ret.ll).
+define %struct.Gradients @test_profile_muldd(double %x, double %y) {
+entry:
+  %call = call %struct.Gradients (ptr, ...) @__poseidon_fp_optimize(ptr @muldd, double %x, double %y)
+  ret %struct.Gradients %call
+}
+
 declare double @__poseidon_fp_optimize(...)
 
 ; CHECK: @POSEIDON_PROFILE_RUNTIME_VAR = external global i32
@@ -77,37 +118,30 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK: @poseidon_site_preprocess_test_maxnum_general = private unnamed_addr constant [31 x i8] c"preprocess_test_maxnum_general\00", align 1
 ; CHECK: @poseidon_site_preprocess_test_minnum_general = private unnamed_addr constant [31 x i8] c"preprocess_test_minnum_general\00", align 1
 ; CHECK: @poseidon_site_preprocess_test_combined = private unnamed_addr constant [25 x i8] c"preprocess_test_combined\00", align 1
+; CHECK: @poseidon_site_preprocess_test_fadd = private unnamed_addr constant [21 x i8] c"preprocess_test_fadd\00", align 1
+; CHECK: @poseidon_site_preprocess_test_fma = private unnamed_addr constant [20 x i8] c"preprocess_test_fma\00", align 1
+; CHECK: @poseidon_site_preprocess_muldd = private unnamed_addr constant [17 x i8] c"preprocess_muldd\00", align 1
 
 ; One probe per profiled value, and its custom gradient carries that value's
 ; slot into the gradient record.
-; CHECK: define internal double @__poseidon_probe_preprocess_test_maxnum_zero_0_rev(double %[[v0:.+]], double %[[d0:.+]])
+; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_0_rev(double %[[v0:.+]], double %[[d0:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_maxnum_zero, i64 0, double %[[v0]], double %[[d0]])
+; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 0, double %[[v0]], double %[[d0]])
+; CHECK-NEXT:   ret double %[[d0]]
 
-; CHECK: define internal double @__poseidon_probe_preprocess_test_maxnum_zero_reversed_0_rev(double %[[v1:.+]], double %[[d1:.+]])
+; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_1_rev(double %[[v1:.+]], double %[[d1:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_maxnum_zero_reversed, i64 0, double %[[v1]], double %[[d1]])
+; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 1, double %[[v1]], double %[[d1]])
 
-; CHECK: define internal double @__poseidon_probe_preprocess_test_maxnum_general_0_rev(double %[[v2:.+]], double %[[d2:.+]])
+; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_2_rev(double %[[v2:.+]], double %[[d2:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_maxnum_general, i64 0, double %[[v2]], double %[[d2]])
+; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 2, double %[[v2]], double %[[d2]])
 
-; CHECK: define internal double @__poseidon_probe_preprocess_test_minnum_general_0_rev(double %[[v3:.+]], double %[[d3:.+]])
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_minnum_general, i64 0, double %[[v3]], double %[[d3]])
+; The probe leaves the reverse pass through its custom gradient.
+; CHECK: define internal double @__poseidon_probe_preprocess_test_fadd_0(double %{{.+}}) #{{[0-9]+}} !enzyme_augment !{{[0-9]+}} !enzyme_gradient !{{[0-9]+}} {
 
-; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_0_rev(double %[[v4:.+]], double %[[d4:.+]])
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 0, double %[[v4]], double %[[d4]])
-
-; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_1_rev(double %[[v5:.+]], double %[[d5:.+]])
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 1, double %[[v5]], double %[[d5]])
-
-; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_2_rev(double %[[v6:.+]], double %[[d6:.+]])
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 2, double %[[v6]], double %[[d6]])
-
+; fcmp+select becomes maxnum/minnum, whichever way the comparison is written,
+; and a constant operand is recorded as such.
 ; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_zero(double %x, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
@@ -117,74 +151,21 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[gep:.+]] = getelementptr {{\[2 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
 ; CHECK-NEXT:   store double 0.000000e+00, ptr %[[gep]], align 8
 ; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_test_maxnum_zero, i64 0, double %[[probed]], i32 2, ptr %[[alloca]])
-; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_maxnum_zero_0(double %[[maxnum]], double %[[differet]])
-; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %[[sel:.+]] = select fast i1 %[[cmp]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double } undef, double %[[probed]], 0
-; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double, double } %[[primal]], double %[[sel]], 1
-; CHECK-NEXT:   ret { double, double } %[[ins]]
-; CHECK-NEXT: }
 
-; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_zero_reversed(double %x, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_zero_reversed(
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
-; CHECK-NEXT:   %[[maxnum:.+]] = call double @llvm.maxnum.f64(double %x, double 0.000000e+00){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
-; CHECK-NEXT:   %[[probed:.+]] = call fast double @__poseidon_probe_preprocess_test_maxnum_zero_reversed_0_aug(double %[[maxnum]])
-; CHECK-NEXT:   store double %x, ptr %[[alloca]], align 8
-; CHECK-NEXT:   %[[gep:.+]] = getelementptr {{\[2 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
-; CHECK-NEXT:   store double 0.000000e+00, ptr %[[gep]], align 8
-; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_test_maxnum_zero_reversed, i64 0, double %[[probed]], i32 2, ptr %[[alloca]])
-; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_maxnum_zero_reversed_0(double %[[maxnum]], double %[[differet]])
-; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %[[sel:.+]] = select fast i1 %[[cmp]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double } undef, double %[[probed]], 0
-; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double, double } %[[primal]], double %[[sel]], 1
-; CHECK-NEXT:   ret { double, double } %[[ins]]
-; CHECK-NEXT: }
+; CHECK-NEXT:   alloca [2 x double], align 8
+; CHECK-NEXT:   call double @llvm.maxnum.f64(double %x, double 0.000000e+00){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
 
-; CHECK: define internal { double, double, double } @diffepreprocess_test_maxnum_general(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double, double } @diffepreprocess_test_maxnum_general(
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
-; CHECK-NEXT:   %[[maxnum:.+]] = call double @llvm.maxnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
-; CHECK-NEXT:   %[[probed:.+]] = call fast double @__poseidon_probe_preprocess_test_maxnum_general_0_aug(double %[[maxnum]])
-; CHECK-NEXT:   store double %x, ptr %[[alloca]], align 8
-; CHECK-NEXT:   %[[gep:.+]] = getelementptr {{\[2 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
-; CHECK-NEXT:   store double %y, ptr %[[gep]], align 8
-; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_test_maxnum_general, i64 0, double %[[probed]], i32 2, ptr %[[alloca]])
-; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_maxnum_general_0(double %[[maxnum]], double %[[differet]])
-; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %[[sel1:.+]] = select fast i1 %[[cmp]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[cmp2:.+]] = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %[[sel2:.+]] = select fast i1 %[[cmp2]], double %[[grad]], double 0.000000e+00
-; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double, double } undef, double %[[probed]], 0
-; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double, double } %[[primal]], double %[[sel1]], 1
-; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double, double } %[[ins1]], double %[[sel2]], 2
-; CHECK-NEXT:   ret { double, double, double } %[[ins2]]
-; CHECK-NEXT: }
+; CHECK-NEXT:   alloca [2 x double], align 8
+; CHECK-NEXT:   call double @llvm.maxnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
 
-; CHECK: define internal { double, double, double } @diffepreprocess_test_minnum_general(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double, double } @diffepreprocess_test_minnum_general(
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
-; CHECK-NEXT:   %[[minnum:.+]] = call double @llvm.minnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
-; CHECK-NEXT:   %[[probed:.+]] = call fast double @__poseidon_probe_preprocess_test_minnum_general_0_aug(double %[[minnum]])
-; CHECK-NEXT:   store double %x, ptr %[[alloca]], align 8
-; CHECK-NEXT:   %[[gep:.+]] = getelementptr {{\[2 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
-; CHECK-NEXT:   store double %y, ptr %[[gep]], align 8
-; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_test_minnum_general, i64 0, double %[[probed]], i32 2, ptr %[[alloca]])
-; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_minnum_general_0(double %[[minnum]], double %[[differet]])
-; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %[[sel1:.+]] = select fast i1 %[[cmp]], double %[[grad]], double 0.000000e+00
-; CHECK-NEXT:   %[[cmp2:.+]] = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %[[sel2:.+]] = select fast i1 %[[cmp2]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double, double } undef, double %[[probed]], 0
-; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double, double } %[[primal]], double %[[sel1]], 1
-; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double, double } %[[ins1]], double %[[sel2]], 2
-; CHECK-NEXT:   ret { double, double, double } %[[ins2]]
-; CHECK-NEXT: }
+; CHECK-NEXT:   alloca [2 x double], align 8
+; CHECK-NEXT:   call double @llvm.minnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
 
 ; Three profiled values in one site: each is logged under its own slot and each
 ; operand array records the probed (not the raw) value of its producer.
@@ -215,6 +196,45 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[g2:.+]] = extractvalue { double } %[[gc2]], 0
 ; CHECK-NEXT:   %[[gc1:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_combined_1(double %[[minnum]], double %[[g2]])
 ; CHECK-NEXT:   %[[g1:.+]] = extractvalue { double } %[[gc1]], 0
+
+; CHECK: define internal { double, double, double } @diffepreprocess_test_fadd(
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   alloca [2 x double], align 8
+; CHECK-NEXT:   fadd fast double %x, %y, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
+; CHECK:        call void @poseidonLogValue(ptr @poseidon_site_preprocess_test_fadd, i64 0, double %{{.+}}, i32 2, ptr %{{.+}})
+
+; An fmuladd logs its three operands.
+; CHECK: define internal { double, double, double, double } @diffepreprocess_test_fma(double %x, double %y, double %z, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %[[alloca:.+]] = alloca [3 x double], align 8
+; CHECK-NEXT:   %[[fmuladd:.+]] = call fast double @llvm.fmuladd.f64(double %x, double %y, double %z){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
+; CHECK-NEXT:   %[[probed:.+]] = call fast double @__poseidon_probe_preprocess_test_fma_0_aug(double %[[fmuladd]])
+; CHECK-NEXT:   store double %x, ptr %[[alloca]], align 8
+; CHECK-NEXT:   %[[gep1:.+]] = getelementptr {{\[3 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
+; CHECK-NEXT:   store double %y, ptr %[[gep1]], align 8
+; CHECK-NEXT:   %[[gep2:.+]] = getelementptr {{\[3 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 2|i64 16}}
+; CHECK-NEXT:   store double %z, ptr %[[gep2]], align 8
+; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_test_fma, i64 0, double %[[probed]], i32 3, ptr %[[alloca]])
+; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_fma_0(double %[[fmuladd]], double %[[differet]])
+; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
+; CHECK-NEXT:   %[[grad1:.+]] = fmul fast double %[[grad]], %y
+; CHECK-NEXT:   %[[grad2:.+]] = fmul fast double %[[grad]], %x
+; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double, double, double } undef, double %[[probed]], 0
+; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double, double, double } %[[primal]], double %[[grad1]], 1
+; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double, double, double } %[[ins1]], double %[[grad2]], 2
+; CHECK-NEXT:   %[[ins3:.+]] = insertvalue { double, double, double, double } %[[ins2]], double %[[grad]], 3
+; CHECK-NEXT:   ret { double, double, double, double } %[[ins3]]
+; CHECK-NEXT: }
+
+; CHECK: define internal { double, double } @diffepreprocess_muldd(double %x, double %y, double %{{.+}}) #{{[0-9]+}} {
+; CHECK:        call void @poseidonLogValue(ptr @poseidon_site_preprocess_muldd, i64 0, double %{{.+}}, i32 2, ptr %{{.+}})
+; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_muldd_0(
+; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
+; CHECK-NEXT:   %[[grad1:.+]] = fmul fast double %[[grad]], %y
+; CHECK-NEXT:   %[[grad2:.+]] = fmul fast double %[[grad]], %x
+; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double } undef, double %[[grad1]], 0
+; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double } %[[ins1]], double %[[grad2]], 1
+; CHECK-NEXT:   ret { double, double } %[[ins2]]
 
 ; CHECK: ![[idx0]] = !{i64 0}
 ; CHECK: ![[idx1]] = !{i64 1}

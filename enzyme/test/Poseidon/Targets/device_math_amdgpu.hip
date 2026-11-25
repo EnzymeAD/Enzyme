@@ -1,4 +1,4 @@
-// REQUIRES: enzyme, amdgpu-registered-target, rocm
+// REQUIRES: amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.s
@@ -8,15 +8,15 @@
 // RUN: diff %t/as_written.site.s %t/header.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.nosite.s
 // RUN: diff %t/as_written.s %t/use.nosite.s
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
-// RUN: FileCheck --check-prefix=CALLS %s < %t/gen.ll
+// RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll %}
+// RUN: %if enzyme %{ FileCheck --check-prefix=CALLS %s < %t/gen.ll %}
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.s
 // RUN: diff %t/as_written.s %t/use.s
-// RUN: mkdir -p %t/prof
-// RUN: sed -n 's/^@fpprofile_static_preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/preprocess__Z4wavePdPKdi_poseidon_body.fpprofile
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.s 2>&1 | FileCheck --check-prefix=PROFILED %s
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.arch.s
-// RUN: diff %t/as_written.arch.s %t/use.profiled.s
+// RUN: %if enzyme %{ mkdir -p %t/prof %}
+// RUN: %if enzyme %{ sed -n 's/^@fpprofile_static_preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/preprocess__Z4wavePdPKdi_poseidon_body.fpprofile %}
+// RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.s 2>&1 | FileCheck --check-prefix=PROFILED %s %}
+// RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.arch.s %}
+// RUN: %if enzyme %{ diff %t/as_written.arch.s %t/use.profiled.s %}
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.90a.s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.90a.s
 // RUN: diff %t/as_written.90a.s %t/plain.90a.s

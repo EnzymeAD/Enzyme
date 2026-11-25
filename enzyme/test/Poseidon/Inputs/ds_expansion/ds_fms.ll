@@ -1,5 +1,5 @@
-; The IR of ds_fms.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120), as in
-; ds_expansion_nvptx.ll, for tests that derive variants of it.
+; The IR of Expansion/ds_expansion_nvptx.ll (its comment gives the source and
+; the compile), for tests that derive variants of it.
 
 ; ModuleID = 'ds_fms.cu'
 source_filename = "ds_fms.cu"

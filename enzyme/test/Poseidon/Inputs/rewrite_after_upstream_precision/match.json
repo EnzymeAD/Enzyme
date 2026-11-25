@@ -1,0 +1,1 @@
+{"tests":[{"bits":64,"name":"0","status":"ex-start","time":1.0,"start":0.5,"end":0.25,"output":"(fma.f64 v2 v1 (+.f64 v2 v0))","cost-accuracy":[[1.0,0.5],[0.75,0.25],[]]}]}

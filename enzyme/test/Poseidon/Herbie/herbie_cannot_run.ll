@@ -1,9 +1,14 @@
-; RUN: rm -rf %t && mkdir %t
-; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=ENABLED %s
-; RUN: mkdir -p %t/tmp && not env TMPDIR=%t/tmp %clang -O1 -c -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/regime_split/profiles -mllvm -poseidon-enable-herbie=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-pt=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; DEFINE: %{opt} = %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon \
+; DEFINE:   -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
+; DEFINE:   -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
+; DEFINE:   -poseidon-cost-budget=1e9 -S -o /dev/null
+; RUN: rm -rf %t && mkdir -p %t/tmp %t/used %t/none %t/sig && touch %t/file
+; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=ENABLED %s
+; RUN: not env TMPDIR=%t/tmp %clang -O1 -c -x ir %S/../Inputs/regime_split/tester.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/regime_split/profiles -mllvm -poseidon-enable-herbie=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-pt=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: not ls %t/site.o
 ; RUN: ls %t/tmp | count 0
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=false -poseidon-herbie-binary=%t/no-herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=DISABLED --implicit-check-not=Herbie %s
+; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=DISABLED --implicit-check-not=Herbie %s
 
 ; A subgraph whose Herbie answer is not in the cache needs Herbie: when Herbie
 ; cannot be started the compile stops, naming the search, the cache and the
@@ -11,28 +16,55 @@
 ; 1, no object and none of clang's crash reporting. With algebraic rewriting
 ; off nothing asks Herbie, and the site is solved without it.
 
-define double @tester(double %x, double %y) #0 {
-entry:
-  %xx = fmul double %x, %x
-  %yy = fmul double %y, %y
-  %s = fadd double %xx, %yy
-  %r = call double @llvm.sqrt.f64(double %s)
-  %d = fsub double %r, %x
-  ret double %d
-}
-
-define double @test_opt(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester, double %x, double %y)
-  ret double %0
-}
-
-declare double @llvm.sqrt.f64(double)
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }
-
 ; ENABLED: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
 ; ENABLED: error: {{.*}}Poseidon: the cache {{.*}}c holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at {{.*}}no-herbie cannot run ({{.+}}). Point -poseidon-herbie-binary at a Herbie, or turn algebraic rewriting off with -poseidon-enable-herbie=0.
 
 ; DISABLED: Solving the DP for preprocess_tester.
+
+; A Herbie that exits with a nonzero status is not a crash. When it wrote a
+; usable results.json, the compile says so once and uses and caches the
+; results; when it wrote none, the compile stops.
+; RUN: printf '#!/bin/sh\n%S/../Inputs/fake-herbie.sh "$@"\nexit 1\n' > %t/herbie.sh && chmod +x %t/herbie.sh
+; RUN: printf '#!/bin/sh\nexit 3\n' > %t/no-results.sh && chmod +x %t/no-results.sh
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/used 2>&1 | FileCheck --check-prefix=USED --implicit-check-not=crash %s
+; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-results.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NONE --implicit-check-not=crashed %s
+
+; USED: [poseidon] Warning: Herbie subgraph 0 of preprocess_tester exited with status 1 but wrote a usable results.json; using it.
+; USED: Saved Herbie output to cache file
+; USED: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
+
+; NONE: error: {{.*}}Poseidon: the cache {{.*}}none holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at {{.*}}no-results.sh cannot run (it exited with status 3 and wrote no usable results.json (platform {{.*}}); its own diagnostics are on stderr above)
+
+; A Herbie process that dies from a signal (here SIGKILL, as the OOM killer
+; sends) well inside its wall budget crashed; it did not time out. The compile
+; says so, leaves the subgraph without algebraic candidates and keeps the body
+; as written; under -poseidon-strict-mode the crash is fatal. Neither compile
+; caches anything, so the next compile runs Herbie again.
+; RUN: printf '#!/bin/sh\n[ -z "$FAKE_HERBIE_SIGNAL" ] || kill -KILL $$\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/signal.sh && chmod +x %t/signal.sh
+; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig 2>&1 | FileCheck --check-prefix=SIGNAL --implicit-check-not="KILLED after" --implicit-check-not="Saved Herbie output" %s
+; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=STRICT %s
+; RUN: ls %t/sig | FileCheck --allow-empty --check-prefix=FILES %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig 2>&1 | FileCheck --check-prefix=RETRY %s
+
+; SIGNAL: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key {{[0-9A-F]+$}}
+; SIGNAL-NEXT: [poseidon] Herbie subgraph 0 of preprocess_tester: crashed (signal: {{.+}}) after {{[0-9.e+-]+}} s. No algebraic candidates for this subgraph in this compile; nothing is cached, so the next compile runs Herbie again.{{$}}
+; SIGNAL: DP table contains 1 entries.
+; SIGNAL-NOT: Applying solution
+; SIGNAL: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
+
+; STRICT: error: {{.*}}Poseidon: strict mode: Herbie crashed (signal: {{.+}}) on subgraph 0 of preprocess_tester
+
+; FILES-NOT: cachedHerbie
+
+; RETRY-NOT: cached TIMEOUT
+; RETRY: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key [[KEY:[0-9A-F]+]]{{$}}
+; RETRY: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY]].txt{{$}}
+; RETRY-NEXT: [poseidon] Herbie subgraph 0 of preprocess_tester: completed in {{[0-9.e+-]+}} s, a fresh answer of the Herbie with digest {{[0-9A-F]+}}{{$}}
+; RETRY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; RETRY: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}
+
+; A Herbie answer that cannot be cached, here because the cache directory is
+; under a regular file, stops the compile naming the path.
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE %s
+
+; UNWRITABLE: error: {{.*}}preprocess_tester{{.*}}: Poseidon: cannot create the Herbie cache directory {{.*}}file/c: Not a directory. Herbie's answers are kept in the -poseidon-cache directory, which has to be writable.

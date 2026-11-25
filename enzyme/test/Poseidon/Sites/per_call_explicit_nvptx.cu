@@ -113,20 +113,13 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN: {{^}}}
 
 // USE: [poseidon] site spread(double const*) at its call in third(double const*): accuracy target 1e-07
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-59]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z5norm2PKd: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile); left unchanged
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-53]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z6spreadPKd.poseidon._Z5thirdPKd.0: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile); left unchanged
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-51]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z3sumPKdi: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile); left unchanged
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-53]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z3sumPKdi: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile); left unchanged
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-55]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z5norm2PKd: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile); left unchanged
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-57]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5scalePKdPdi.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z5scalePKdPdi: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z5scalePKdPdi.fpprofile); left unchanged
-// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-59]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-DAG: [poseidon] _Z6spreadPKd.poseidon._Z5thirdPKd.0: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile); left unchanged
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-59]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile:
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-52]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-49]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile:
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-50]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile:
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-51]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile:
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-52]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5scalePKdPdi.fpprofile:
+// USE-DAG: per_call_explicit_nvptx.cu:[[@LINE-53]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
 // USE: [poseidon] every site of {{.*}}per_call_explicit_nvptx.cu was left alone; emitting the module as written
 // USE-NEXT: 7 warnings generated when compiling for {{.*}}
 

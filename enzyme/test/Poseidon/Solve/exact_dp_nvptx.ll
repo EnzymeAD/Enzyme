@@ -57,14 +57,16 @@
 ; site's binary32 rewrite reaches the joint frontier. The exact frontier is the
 ; sum of the two sites' own: both binary32 rewrites, one of each kind, or both
 ; binary64 ones.
-; RUN: mkdir %t/joint %t/joint/prune %t/joint/exact
+; RUN: mkdir %t/joint %t/joint/prune %t/joint/exact %t/joint/prof
+; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/joint/prof/preprocess_tester_a.fpprofile
+; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/joint/prof/preprocess_tester_b.fpprofile
 ; RUN: sed 's/^fma,double,512$/fma,double,448/' %cost_models/cm_sm_120_synthetic.csv > %t/joint/cm_sm_120_fma.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/joint/cm_sm_120_fma.herbie.rkt
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/joint/prune/cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt
 ; RUN: cp %t/joint/prune/cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt %t/joint/exact/
-; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/joint %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
+; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
 ; RUN: FileCheck --check-prefix=JOINT-PRUNE-BUDGETS %s < %t/joint/prune/budgets.txt
-; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/joint %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-EXACT %s
+; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-EXACT %s
 ; RUN: FileCheck --check-prefix=JOINT-EXACT-BUDGETS %s < %t/joint/exact/budgets.txt
 
 ; JOINT-PRUNE: JOINT DP table contains 1 entries

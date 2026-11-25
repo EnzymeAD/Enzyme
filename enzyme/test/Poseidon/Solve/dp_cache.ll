@@ -13,15 +13,20 @@
 ; Solved under profile A and then, against the same cache, under profile B of
 ; the same canonical form (Inputs/pow_term/out0, recorded with only the first
 ; output seeded), the site is solved again with the reason, and picks what a
-; solve under B in an empty cache picks; a third compile reads the table back.
+; solve under B in an empty cache picks, and budgets.txt, which lists the
+; breakpoints of the last table solved into the cache, is the one that solve
+; writes; a third compile reads the table back.
 ; A flag the table depends on (-poseidon-num-samples) re-solves too; one that
 ; only selects from the table (the budget, -poseidon-tau-cheapest) does not. A
 ; table in another cache format, or one that does not parse, is reported,
 ; solved again and overwritten.
 ; RUN: mkdir %t/key %t/key/old %t/key/bad
 ; RUN: %opt %t/noscale.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/key/c 2>&1 | FileCheck --check-prefix=KEY-A %s
+; RUN: cp %t/key/c/budgets.txt %t/key/budgets-a.txt
 ; RUN: %opt %t/noscale.ll %{pass} %{out0} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/key/c 2>&1 | FileCheck --check-prefixes=KEY-B,KEY-PICK-B %s
 ; RUN: %opt %t/noscale.ll %{pass} %{out0} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/key/fresh 2>&1 | FileCheck --check-prefix=KEY-PICK-B %s
+; RUN: not diff %t/key/budgets-a.txt %t/key/fresh/budgets.txt
+; RUN: diff %t/key/fresh/budgets.txt %t/key/c/budgets.txt
 ; RUN: %opt %t/noscale.ll %{pass} %{out0} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/key/c 2>&1 | FileCheck --check-prefixes=KEY-HIT,KEY-PICK-B %s
 ; RUN: %opt %t/noscale.ll %{pass} %{out0} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/key/c -poseidon-num-samples=512 2>&1 | FileCheck --check-prefix=KEY-SAMPLES %s
 ; RUN: %opt %t/noscale.ll %{pass} %{out0} %{cm} -poseidon-cost-budget=-0.4 -poseidon-cache=%t/key/c -poseidon-num-samples=512 -poseidon-tau-cheapest=false 2>&1 | FileCheck --check-prefix=KEY-HIT %s

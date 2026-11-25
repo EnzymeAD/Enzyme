@@ -4,6 +4,9 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null 2> %t/gen.err
 // RUN: FileCheck --check-prefix=NEVER %s < %t/prof/preprocess__Z7skippedPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=RAN %s < %t/prof/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile
+// RUN: grep -E '^[0-9]+$' %t/prof/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile > %t/idx
+// RUN: FileCheck --check-prefix=ORDER %s < %t/idx
+// RUN: sort -n -c %t/idx
 // RUN: FileCheck --check-prefix=NOPROBE --allow-empty %s < %t/gen.err
 // RUN: env POSEIDON_PROFILE_DIR=%t/flush %t/gen flush > /dev/null
 // RUN: FileCheck --check-prefix=NEVER %s < %t/flush/preprocess__Z7skippedPKdPdi_poseidon_body.fpprofile
@@ -14,7 +17,9 @@
 // not: one the run never executed gets its header and a line saying so, at
 // exit and from ProfilerWrite alike, and profile use leaves it as written with
 // a note. A site that never ran is no site for the condition-number probe,
-// which needs two.
+// which needs two. The records of a site that ran are in slot order, whatever
+// order the run first reached them in: the profile's bytes are part of the key
+// of the site's cached DP table.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -27,7 +32,7 @@ extern "C" void ProfilerWrite();
 
 POSEIDON_OPTIMIZE void ran(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
-    y[i] = std::exp(-0.5 * x[i] * x[i]) * std::cos(4.0 * x[i]);
+    y[i] = std::exp(-0.5 * x[i] * x[i]) * std::cos(4.0 * x[i]) + 1.0;
 }
 
 POSEIDON_OPTIMIZE void skipped(const double *x, double *y, int n) {
@@ -60,6 +65,10 @@ int main(int argc, char **argv) {
 // RAN: CanonicalHash = {{[0-9a-f]+}}
 // RAN-NOT: Executed
 // RAN: MinRes =
+
+// ORDER: {{^}}0{{$}}
+// ORDER-NEXT: {{^}}1{{$}}
+// ORDER-NEXT: {{^}}2{{$}}
 
 // NOPROBE-NOT: [probe]
 

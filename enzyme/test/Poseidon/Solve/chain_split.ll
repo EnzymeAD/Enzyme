@@ -30,18 +30,7 @@
 ; SPLIT-NEXT: %c = fmul double %b, %b
 ; SPLIT-NEXT: %b = fadd double %a, %x
 ; SPLIT-NEXT: %a = fmul double %x, %y
-; SPLIT: === Splitting subgraph at bottleneck:   %t = fsub double %c, %y
-; SPLIT-NEXT: New subgraph:
-; SPLIT-NEXT: Inputs (2):
-; SPLIT: Operations (4):
-; SPLIT: Outputs (1):
-; SPLIT-NEXT: %t = fsub double %c, %y
-; SPLIT-NEXT: Remaining subgraph:
-; SPLIT-NEXT: Inputs (3):
-; SPLIT: Operations (5):
-; SPLIT: Outputs (2):
-; SPLIT: Final subgraphs after splitting: 2
-; SPLIT-NEXT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
+; SPLIT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
 ; SPLIT: Initial AccuracyCost: 5.730790e-11
 ; SPLIT-NEXT: Initial ComputationCost: 1.600000e+01
 ; SPLIT: Initial AccuracyCost: 2.614053e-11
@@ -62,7 +51,12 @@
 ; compositions).
 ; Profile: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked
-; with libposeidon_profile.a and Inputs/chain_split/split_driver.c).
+; with libposeidon_profile.a), driven by
+;   for (int i = 0; i < 64; ++i) {
+;     double x = 1.0 + i * 0.125, y = 0.5 + (i % 7) * 0.25;
+;     double o1, o2, d1 = 1.0, d2 = 1.0;
+;     site(x, y, &o1, &d1, &o2, &d2);
+;   }
 
 define void @tester(double %x, double %y, ptr %o1, ptr %o2) #0 {
 entry:

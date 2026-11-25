@@ -1,5 +1,5 @@
 ; fast.ll in functions that carry every fast-math attribute, for
-; expansion_fast_math_attributes.cpp.
+; expansion_fast_flags.cpp.
 
 define double @ex2_add(double %a, double %b) #0 {
   %r = fadd fast double %a, %b

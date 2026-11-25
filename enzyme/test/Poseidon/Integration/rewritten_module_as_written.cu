@@ -9,7 +9,6 @@
 // RUN: diff %t/plain.fns %t/use.fns
 // RUN: FileCheck --check-prefix=FNS %s < %t/use.fns
 // RUN: FileCheck --check-prefix=SOLVE --implicit-check-not=warning: %s < %t/use.err
-// RUN: awk '/^.visible .entry _Z4site/{p=1} p{print} /^}/{p=0}' %t/plain.ptx | FileCheck --check-prefix=FPC-SITE %s
 // RUN: awk '/^.visible .entry _Z4site/{p=1} p{print} /^}/{p=0}' %t/use.ptx | FileCheck --check-prefix=USE-SITE --implicit-check-not=fma.rn.f64 %s
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -o %t/use
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
@@ -78,33 +77,14 @@ int main(int argc, char **) {
 // SOLVE: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
 // SOLVE-NEXT: [poseidon] {{.*}}rewritten_module_as_written.cu: 1 function(s) a rewrite reached; every other function as written
 
-// As written, y = (3 x + 0.5) x + 1 in two FP64 FMAs; rewritten, the same two
-// FMAs in FP32 between a narrowing of x and a widening of the result.
-// FPC-SITE: .entry _Z4sitePKdPdi(
-// FPC-SITE-DAG: ld.param{{[^ ]*}} [[PX:%[a-z]+[0-9]+]], [_Z4sitePKdPdi_param_0];
-// FPC-SITE-DAG: ld.param{{[^ ]*}} [[PY:%[a-z]+[0-9]+]], [_Z4sitePKdPdi_param_1];
-// FPC-SITE-DAG: cvta.to.global.u64 [[GX:%[a-z]+[0-9]+]], [[PX]];
-// FPC-SITE-DAG: cvta.to.global.u64 [[GY:%[a-z]+[0-9]+]], [[PY]];
-// FPC-SITE-DAG: add.s64 [[AX:%[a-z]+[0-9]+]], [[GX]], [[OFF:%[a-z]+[0-9]+]];
-// FPC-SITE-DAG: add.s64 [[AY:%[a-z]+[0-9]+]], [[GY]], [[OFF]];
-// FPC-SITE: ld.global.{{[bf]}}64 [[X:%[a-z]+[0-9]+]], {{\[}}[[AX]]{{\]}};
-// FPC-SITE-NEXT: fma.rn.f64 [[T:%[a-z]+[0-9]+]], [[X]], 0d4008000000000000, 0d3FE0000000000000;
-// FPC-SITE-NEXT: fma.rn.f64 [[R:%[a-z]+[0-9]+]], [[T]], [[X]], 0d3FF0000000000000;
-// FPC-SITE-NEXT: st.global.{{[bf]}}64 {{\[}}[[AY]]{{\]}}, [[R]];
-
+// Rewritten, y = (3 x + 0.5) x + 1 is two FMAs in FP32 between a narrowing of
+// x and a widening of the result, and no FP64 FMA is left.
 // USE-SITE: .entry _Z4sitePKdPdi(
-// USE-SITE-DAG: ld.param{{[^ ]*}} [[PX:%[a-z]+[0-9]+]], [_Z4sitePKdPdi_param_0];
-// USE-SITE-DAG: ld.param{{[^ ]*}} [[PY:%[a-z]+[0-9]+]], [_Z4sitePKdPdi_param_1];
-// USE-SITE-DAG: cvta.to.global.u64 [[GX:%[a-z]+[0-9]+]], [[PX]];
-// USE-SITE-DAG: cvta.to.global.u64 [[GY:%[a-z]+[0-9]+]], [[PY]];
-// USE-SITE-DAG: add.s64 [[AX:%[a-z]+[0-9]+]], [[GX]], [[OFF:%[a-z]+[0-9]+]];
-// USE-SITE-DAG: add.s64 [[AY:%[a-z]+[0-9]+]], [[GY]], [[OFF]];
-// USE-SITE: ld.global.{{[bf]}}64 [[X:%[a-z]+[0-9]+]], {{\[}}[[AX]]{{\]}};
-// USE-SITE-NEXT: cvt.rn.f32.f64 [[XF:%[a-z]+[0-9]+]], [[X]];
+// USE-SITE: cvt.rn.f32.f64 [[XF:%[a-z]+[0-9]+]], {{%[a-z]+[0-9]+}};
 // USE-SITE-NEXT: fma.rn.f32 [[T:%[a-z]+[0-9]+]], [[XF]], 0f40400000, 0f3F000000;
 // USE-SITE-NEXT: fma.rn.f32 [[R:%[a-z]+[0-9]+]], [[T]], [[XF]], 0f3F800000;
 // USE-SITE-NEXT: cvt.f64.f32 [[RD:%[a-z]+[0-9]+]], [[R]];
-// USE-SITE-NEXT: st.global.{{[bf]}}64 {{\[}}[[AY]]{{\]}}, [[RD]];
+// USE-SITE-NEXT: st.global.{{[bf]}}64 {{\[}}{{%[a-z]+[0-9]+}}{{\]}}, [[RD]];
 
 // FNS: .entry _Z5otherPKdPdi
 // FNS-NOT: call

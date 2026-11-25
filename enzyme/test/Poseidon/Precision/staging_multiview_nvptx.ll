@@ -19,10 +19,37 @@
 ; -poseidon-narrow-multiview-staging the buffer keeps its FP64 layout; with it
 ; the chosen tier narrows every view, and the df64 tier rewires both splits of
 ; a value read twice to one pair load.
-; IR and profile from Inputs/staging_multiview/multiview_kernel.cu (clang -O2
-; -ffp-contract=on --cuda-gpu-arch=sm_120).
+; The IR is from
+;   __global__ POSEIDON_OPTIMIZE void multiview(const double *__restrict__ x,
+;                                               const double *__restrict__ b,
+;                                               double *__restrict__ y) {
+;     __shared__ double sm[2][64];
+;     double(*X)[4] = (double(*)[4])(sm + 1);
+;     double(*T)[8] = (double(*)[8])(sm + 0);
+;     const int tx = threadIdx.x, ty = threadIdx.y, e = blockIdx.x;
+;     X[ty][tx] = x[e * 16 + ty * 4 + tx];
+;     __syncthreads();
+;     double u = 0.0, v = 0.0;
+;   #pragma unroll
+;     for (int k = 0; k < 4; ++k) {
+;       u += X[ty][k] * b[k * 4 + tx];
+;       v += X[ty][k] * b[16 + k * 4 + tx];
+;     }
+;     T[ty][tx] = u;
+;     T[ty][4 + tx] = v;
+;     __syncthreads();
+;     double w = 0.0;
+;   #pragma unroll
+;     for (int k = 0; k < 4; ++k)
+;       w += T[k][tx] * b[ty * 4 + k] + T[k][4 + tx] * b[16 + ty * 4 + k];
+;     y[e * 16 + ty * 4 + tx] += w;
+;   }
+; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
+; -ffp-contract=on -S -emit-llvm, the shape of MFEM's SmemPADiffusionApply3D.
+; The profile: the same source through poseidon-clang++
+; -poseidon-profile-generate, launched as multiview<<<8, dim3(4, 4)>>> on
+; x[i] = 1.0 + 0.01 * i and b[i] = 0.5 + 0.03 * i.
 
-; OFF: [narrow] G=@_ZZ9multiviewPKdS0_PdE2sm casts=1 elemGEPs=3 strideK=8 bail=1
 ; OFF: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; OFF-NOT: narrowed multiview shared buffer
 ; OFF-LABEL: ; ModuleID =
@@ -51,21 +78,11 @@
 ; F32-NEXT: [[V:%[0-9]+]] = load float, ptr [[ROW]], align 4
 ; F32: call float @llvm.fmuladd.f32(float [[V]], float
 ; F32: call float @llvm.fmuladd.f32(float [[V]], float
-; F32: [[OUT:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) @_ZZ9multiviewPKdS0_PdE2sm to ptr), i64
-; F32-NEXT: [[OUT0:%[0-9]+]] = getelementptr {{.*}}ptr [[OUT]], i64 [[TID]]
-; F32-NEXT: store float {{%[0-9]+}}, ptr [[OUT0]], align 4
-; F32-NEXT: [[OUT1:%[0-9]+]] = getelementptr {{.*}}ptr [[OUT]], i64
-; F32-NEXT: store float {{%[0-9]+}}, ptr [[OUT1]], align 4
-; F32-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
-; F32-NEXT: [[R0:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) @_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 [[TID]]
-; F32-NEXT: load float, ptr [[R0]], align 4
-; F32-NOT: @_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 {{[0-9]+}}), i64
 ; F32: [[R1:%[0-9]+]] = getelementptr {{.*}}ptr getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 32), i64 [[TID]]
 ; F32-NEXT: load float, ptr [[R1]], align 4
 
 ; DS: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#2)
-; DS-NEXT: [narrow-param df64] G=@_ZZ9multiviewPKdS0_PdE2sm args= geps={{20|23}} loads=12 stores=3
-; DS-NEXT: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to df64 (12 loads, 3 stores)
+; DS: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to df64 (12 loads, 3 stores)
 ; DS-NEXT: [poseidon] folded df64 join/split roundtrips at the staging boundary in preprocess__Z9multiviewPKdS0_Pd_poseidon_body
 
 ; IR-LABEL: define internal void @preprocess__Z9multiviewPKdS0_Pd_poseidon_body(

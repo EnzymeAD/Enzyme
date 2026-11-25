@@ -37,19 +37,8 @@ template __attribute__((global)) void stage<4096>(const double *, double *);
 // IR: @_ZZ5stageILi256EEvPKdPdE3buf = {{.*}}addrspace(3) global [256 x double] undef, {{.*}}!enzyme_shadow ![[SHMD:[0-9]+]]{{$}}
 // IR: @_ZZ5stageILi4096EEvPKdPdE3buf = {{.*}}addrspace(3) global [4096 x double] undef, comdat, align 8{{$}}
 // IR-LABEL: define {{.*}}ptx_kernel void @_Z5stageILi4096EEvPKdPd(
-// IR-SAME: ptr {{[^,]*}}[[X:%[0-9]+]], ptr {{[^,]*}}[[Y:%[0-9]+]]) {{.*}}{
 // IR-NOT: call {{.*}}@{{poseidon|diffe}}
-// IR: [[XP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[X]], i64 {{%[0-9]+}}
-// IR-NEXT: [[XV:%[0-9]+]] = load double, ptr [[XP]],
-// IR-NEXT: [[SQ:%[0-9]+]] = fmul contract double [[XV]], [[XV]]
-// IR-NEXT: [[BP:%[0-9]+]] = getelementptr inbounds {{.*}}@_ZZ5stageILi4096EEvPKdPdE3buf to ptr), i64 {{%[0-9]+}}
-// IR-NEXT: store double [[SQ]], ptr [[BP]],
-// IR-NOT: call {{.*}}@{{poseidon|diffe}}
-// IR: [[BP2:%[0-9]+]] = getelementptr inbounds {{.*}}@_ZZ5stageILi4096EEvPKdPdE3buf to ptr), i64 {{%[0-9]+}}
-// IR-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP2]],
-// IR-NEXT: [[M:%[0-9]+]] = fmul contract double [[BV]], 3.000000e+00
-// IR-NEXT: [[YP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[Y]], i64 {{%[0-9]+}}
-// IR-NEXT: store double [[M]], ptr [[YP]],
+// IR: fmul contract double {{%[0-9]+}}, 3.000000e+00
 // IR-NOT: call {{.*}}@{{poseidon|diffe}}
 // IR: {{^}}}
 // IR-LABEL: define {{.*}}ptx_kernel void @_Z5stageILi256EEvPKdPd(

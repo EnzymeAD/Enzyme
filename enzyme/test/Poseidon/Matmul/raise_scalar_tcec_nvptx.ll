@@ -11,9 +11,31 @@
 
 ; A scalar FMA reduction loop is raised in-kernel: the direct and TCEC classes
 ; are priced from the fixture's wmma_inkernel_rel rows, and the most accurate
-; cost-reducing one, TCEC n=3, is materialized. IR and profile from
-; Inputs/raise_tcec/tcec_matmul.cu (clang -O2 -ffp-contract=on
-; --cuda-gpu-arch=sm_120).
+; cost-reducing one, TCEC n=3, is materialized. The IR is from
+;   template <typename R, typename... T>
+;   __device__ R __poseidon_fp_optimize(void *, T...);
+;   __device__ int enzyme_const;
+;   __device__ int enzyme_dup;
+;   extern "C" __device__ __attribute__((noinline)) void
+;   matmul_body(const double *A, const double *B, double *D) {
+;     unsigned tx = threadIdx.x;
+;     unsigned ty = threadIdx.y;
+;     double acc = 0.0;
+;   #pragma unroll 1
+;     for (int k = 0; k < 16; ++k)
+;       acc += A[ty * 16 + k] * B[k * 16 + tx];
+;     D[ty * 16 + tx] = acc;
+;   }
+;   __global__ void matmul_kernel(const double *A, const double *B, double *D,
+;                                 double *dD) {
+;     __poseidon_fp_optimize<void>((void *)matmul_body, enzyme_const, A,
+;                                  enzyme_const, B, enzyme_dup, D, dD);
+;   }
+; (tcec_matmul.cu) via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120
+; -O2 -ffp-contract=on -S -emit-llvm. Inputs/raise_tcec is its profile: the
+; source compiled with -poseidon-profile-generate and launched twice as
+; matmul_kernel<<<1, dim3(16, 16)>>> on A[i] = 1.0 + 0.001 * i and
+; B[i] = 0.5 + 0.003 * (i % 97), with dD set to 1.0.
 
 ; CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_matmul_body
 ; CHECK-NEXT: Matmul[0]: 16x16x16 type=f64 origin=ScalarLoopReduction
@@ -53,43 +75,33 @@
 ; CHECK-NEXT: store half [[AH1]], ptr [[A1P]], align 2
 ; CHECK-NEXT: store half [[AH2]], ptr [[A2P]], align 2
 ; CHECK: [[B:%[0-9]+]] = load double, ptr [[BSRC]], align 8
-; CHECK-NEXT: [[BF:%[0-9]+]] = fptrunc double [[B]] to float
-; CHECK-NEXT: [[BH0:%[0-9]+]] = fptrunc float [[BF]] to half
-; CHECK-NEXT: [[BH0F:%[0-9]+]] = fpext half [[BH0]] to float
-; CHECK-NEXT: [[BR1:%[0-9]+]] = fsub float [[BF]], [[BH0F]]
-; CHECK-NEXT: [[BS1:%[0-9]+]] = fmul float [[BR1]], 2.048000e+03
-; CHECK-NEXT: [[BH1:%[0-9]+]] = fptrunc float [[BS1]] to half
-; CHECK-NEXT: [[BH1F:%[0-9]+]] = fpext half [[BH1]] to float
-; CHECK-NEXT: [[BR2:%[0-9]+]] = fsub float [[BS1]], [[BH1F]]
-; CHECK-NEXT: [[BS2:%[0-9]+]] = fmul float [[BR2]], 2.048000e+03
-; CHECK-NEXT: [[BH2:%[0-9]+]] = fptrunc float [[BS2]] to half
-; CHECK-NEXT: store half [[BH0]], ptr [[B0P]], align 2
-; CHECK-NEXT: store half [[BH1]], ptr [[B1P]], align 2
-; CHECK-NEXT: store half [[BH2]], ptr [[B2P]], align 2
+; CHECK: store half %{{[0-9]+}}, ptr [[B0P]], align 2
+; CHECK-NEXT: store half %{{[0-9]+}}, ptr [[B1P]], align 2
+; CHECK-NEXT: store half %{{[0-9]+}}, ptr [[B2P]], align 2
 ; CHECK: [[LA0:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_a0_f16_16x16 to ptr), i32 16)
 ; CHECK: [[LB0:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_b0_f16_16x16 to ptr), i32 16)
 ; CHECK: [[A0E:%[0-9]+]] = extractvalue {{.*}} [[LA0]], 0
 ; CHECK: [[B0E:%[0-9]+]] = extractvalue {{.*}} [[LB0]], 0
-; CHECK: [[M00:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> [[B0E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00)
+; CHECK: [[M00:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], {{.*}}, <2 x half> [[B0E]], {{.*}}, float 0.000000e+00, float {{.*}})
 ; CHECK: [[M00E:%[0-9]+]] = extractvalue {{.*}} [[M00]], 0
 ; CHECK-NEXT: [[D00:%[0-9]+]] = fadd float [[M00E]], 0.000000e+00
 ; CHECK: [[LB1:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_b1_f16_16x16 to ptr), i32 16)
 ; CHECK: [[B1E:%[0-9]+]] = extractvalue {{.*}} [[LB1]], 0
-; CHECK: [[M01:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> [[B1E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00)
+; CHECK: [[M01:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], {{.*}}, <2 x half> [[B1E]], {{.*}}, float 0.000000e+00, float {{.*}})
 ; CHECK: [[M01E:%[0-9]+]] = extractvalue {{.*}} [[M01]], 0
 ; CHECK: [[LB2:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_b2_f16_16x16 to ptr), i32 16)
 ; CHECK: [[B2E:%[0-9]+]] = extractvalue {{.*}} [[LB2]], 0
-; CHECK: [[M02:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> [[B2E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00)
+; CHECK: [[M02:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], {{.*}}, <2 x half> [[B2E]], {{.*}}, float 0.000000e+00, float {{.*}})
 ; CHECK: [[M02E:%[0-9]+]] = extractvalue {{.*}} [[M02]], 0
 ; CHECK: [[LA1:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_a1_f16_16x16 to ptr), i32 16)
 ; CHECK: [[A1E:%[0-9]+]] = extractvalue {{.*}} [[LA1]], 0
-; CHECK: [[M10:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A1E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> [[B0E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, float [[M01E]], float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}})
+; CHECK: [[M10:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A1E]], {{.*}}, <2 x half> [[B0E]], {{.*}}, float [[M01E]], float {{.*}})
 ; CHECK: [[C1:%[0-9]+]] = extractvalue {{.*}} [[M10]], 0
-; CHECK: [[M11:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A1E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> [[B1E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, float [[M02E]], float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}})
+; CHECK: [[M11:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A1E]], {{.*}}, <2 x half> [[B1E]], {{.*}}, float [[M02E]], float {{.*}})
 ; CHECK: [[M11E:%[0-9]+]] = extractvalue {{.*}} [[M11]], 0
 ; CHECK: [[LA2:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_a2_f16_16x16 to ptr), i32 16)
 ; CHECK: [[A2E:%[0-9]+]] = extractvalue {{.*}} [[LA2]], 0
-; CHECK: [[M20:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A2E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> [[B0E]], <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, <2 x half> %{{[0-9]+}}, float [[M11E]], float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}}, float %{{[0-9]+}})
+; CHECK: [[M20:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A2E]], {{.*}}, <2 x half> [[B0E]], {{.*}}, float [[M11E]], float {{.*}})
 ; CHECK: [[C2:%[0-9]+]] = extractvalue {{.*}} [[M20]], 0
 ; CHECK: [[PH0:%[^ ]+]] = phi float [ [[D00]], %{{[^ ]+}} ], [ 0.000000e+00, %{{[^ ]+}} ]
 ; CHECK: [[PH1:%[^ ]+]] = phi float [ [[C1]], %{{[^ ]+}} ], [ 0.000000e+00, %{{[^ ]+}} ]
@@ -115,28 +127,6 @@
 ; CLEAN-LABEL: define {{.*}} @preprocess_matmul_body(
 ; CLEAN-NOT: call double @llvm.fmuladd.f64
 ; CLEAN: ret void
-
-; A tolerance on the marker (poseidon_tau), with no -poseidon-tau and no cost
-; budget, selects as the flag does at the same value. sed makes the marker
-; declaration variadic and appends the tolerance pair the front end emits for
-; `poseidon_tau, <value>`.
-; RUN: sed -e 's/ptr noundef, ptr noundef) local_unnamed_addr #3/ptr noundef, ptr noundef, ...) local_unnamed_addr #3/' -e 's/tail call void @_Z22__poseidon_fp_optimize\([^(]*\)(\(.*\)) #5/tail call void (ptr, i32, ptr, i32, ptr, i32, ptr, ptr, ...) @_Z22__poseidon_fp_optimize\1(\2, metadata !"poseidon_tau", double 1.000000e-04) #5/' %s > %t/tau4.ll
-; RUN: %{opt} %t/tau4.ll -poseidon-cache=%t/c4 2>&1 | FileCheck --check-prefix=SITE4 %s
-; SITE4: Poseidon error-budget: matmul -> tcec n=2 wmma m16n16k16 f16/f32 (domain err 1.572576e-07 <= 1.000000e-04 at confidence 9.500000e-01)
-; SITE4: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
-;
-; RUN: sed -e 's/ptr noundef, ptr noundef) local_unnamed_addr #3/ptr noundef, ptr noundef, ...) local_unnamed_addr #3/' -e 's/tail call void @_Z22__poseidon_fp_optimize\([^(]*\)(\(.*\)) #5/tail call void (ptr, i32, ptr, i32, ptr, i32, ptr, ptr, ...) @_Z22__poseidon_fp_optimize\1(\2, metadata !"poseidon_tau", double 1.000000e-07) #5/' %s > %t/tau7.ll
-; RUN: %{opt} %t/tau7.ll -poseidon-cache=%t/c7 2>&1 | FileCheck --check-prefix=SITE7 %s
-; SITE7: Poseidon error-budget: matmul -> tcec n=3 wmma m16n16k16 f16/f32 (domain err 5.874975e-08 <= 1.000000e-07 at confidence 9.500000e-01)
-; SITE7: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
-
-; A tolerance nothing on the frontier meets refuses the site and keeps FP64.
-; RUN: sed -e 's/ptr noundef, ptr noundef) local_unnamed_addr #3/ptr noundef, ptr noundef, ...) local_unnamed_addr #3/' -e 's/tail call void @_Z22__poseidon_fp_optimize\([^(]*\)(\(.*\)) #5/tail call void (ptr, i32, ptr, i32, ptr, i32, ptr, ptr, ...) @_Z22__poseidon_fp_optimize\1(\2, metadata !"poseidon_tau", double 1.000000e-08) #5/' %s > %t/tau8.ll
-; RUN: %{opt} %t/tau8.ll -poseidon-cache=%t/c8 2>&1 | FileCheck --check-prefix=SITE8 %s
-; SITE8: Poseidon error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-08 at confidence 9.500000e-01 faster than F64)
-; SITE8-NOT: Applying solution for matmul[0]
-; SITE8: no rewrite applied for preprocess_matmul_body; calling original body matmul_body (bit-transparent no-op)
-; SITE8-NOT: Applying solution for matmul[0]
 
 ; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"

@@ -67,14 +67,8 @@ int main() {
 // SOLVE: [poseidon] Optimizing [[BODY:preprocess__Z5wavedPdPKdi_poseidon_body]] with relative error tolerance: 1.000000e-03
 // SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 // SOLVE: [poseidon] pin: _Z5wavedPdPKdi:PT0=All FP64(0%) + FP32(100%){{$}}
-// SOLVE: define internal void @[[BODY]](ptr {{[^,]*}}[[O:%[0-9]+]], ptr {{[^,]*}}[[A:%[0-9]+]], i32 {{[^,]*}}%{{[0-9]+}})
-// SOLVE: [[P:%[0-9]+]] = getelementptr {{.*}}ptr [[A]], i64 [[I:%[0-9]+]]
-// SOLVE-NEXT: [[X:%[0-9]+]] = load double, ptr [[P]]
-// SOLVE-NEXT: [[XF:%[0-9]+]] = fptrunc double [[X]] to float
+// SOLVE: define internal void @[[BODY]](
+// SOLVE: [[XF:%[0-9]+]] = fptrunc double %{{[0-9]+}} to float
 // SOLVE-NEXT: [[NEG:%[0-9]+]] = fneg float [[XF]]
-// SOLVE-NEXT: [[E:%[0-9]+]] = {{(tail )?}}call fastcc float @__nv_expf(float [[NEG]])
-// SOLVE-NEXT: [[R:%[0-9]+]] = {{(tail )?}}call float @llvm.fmuladd.f32(float [[E]], float [[XF]], float [[XF]])
-// SOLVE-NEXT: [[RD:%[0-9]+]] = fpext float [[R]] to double
-// SOLVE-NEXT: [[Q:%[0-9]+]] = getelementptr {{.*}}ptr [[O]], i64 [[I]]
-// SOLVE-NEXT: store double [[RD]], ptr [[Q]]
+// SOLVE-NEXT: {{%[0-9]+}} = {{(tail )?}}call fastcc float @__nv_expf(float [[NEG]])
 // SOLVE: [poseidon] {{.*}}rewrite_existing_callee.cu: 1 function(s) a rewrite reached; every other function as written

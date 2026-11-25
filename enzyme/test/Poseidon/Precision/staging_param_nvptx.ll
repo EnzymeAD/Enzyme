@@ -47,8 +47,44 @@
 ; keeps its FP64 layout; with them, the contractions join one optimization unit
 ; priced per loop depth, and the chosen tier narrows the buffer through the
 ; parameter.
-; IR and profile from Inputs/staging_param/staged_body.cu (clang -O2
-; -ffp-contract=on --cuda-gpu-arch=sm_120).
+; The IR is from
+;   template <typename R, typename... T>
+;   __device__ R __poseidon_fp_optimize(void *, T...);
+;   __device__ int enzyme_const;
+;   __device__ int enzyme_dup;
+;   extern "C" __device__ __attribute__((noinline)) void
+;   staged_body(double *__restrict__ S, const double *__restrict__ A,
+;               const double *__restrict__ B, double *__restrict__ D) {
+;     unsigned tx = threadIdx.x;
+;     unsigned ty = threadIdx.y;
+;     double acc = 0.0;
+;   #pragma unroll 1
+;     for (int k = 0; k < 16; ++k)
+;       acc += A[ty * 16 + k] * B[k * 16 + tx];
+;     S[ty * 16 + tx] = acc;
+;     __syncthreads();
+;     double acc2 = 0.0;
+;   #pragma unroll 1
+;     for (int k = 0; k < 16; ++k)
+;       acc2 += A[ty * 16 + k] * S[k * 16 + tx];
+;     D[ty * 16 + tx] += acc2;
+;   }
+;   __global__ void staged_kernel(const double *A, const double *B, double *D,
+;                                 double *dD) {
+;     __shared__ double s[256];
+;     __shared__ double ds[256];
+;     ds[threadIdx.y * 16 + threadIdx.x] = 0.0;
+;     __syncthreads();
+;     __poseidon_fp_optimize<void>((void *)staged_body, enzyme_dup, s, ds,
+;                                  enzyme_const, A, enzyme_const, B, enzyme_dup,
+;                                  D, dD);
+;   }
+; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
+; -ffp-contract=on -S -emit-llvm, the shape of MFEM's partial-assembly
+; diffusion apply. The profile: the same source compiled with
+; -poseidon-profile-generate and launched twice as
+; staged_kernel<<<1, dim3(16, 16)>>> on A[i] = 1.0 + 0.001 * i and
+; B[i] = 0.5 + 0.003 * (i % 97), with dD[i] = 1.0 + 0.01 * (i % 7).
 
 ; ModuleID = 'Inputs/staging_param/staged_body.cu'
 source_filename = "Inputs/staging_param/staged_body.cu"

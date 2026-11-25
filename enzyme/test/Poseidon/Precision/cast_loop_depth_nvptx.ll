@@ -12,11 +12,27 @@
 ; result after both loops is scaled to once per thread (64 * 64 / 8192). A
 ; conversion at any depth shallower than the deepest loop of the candidate
 ; was scaled alike, here the conversion of a[i*n+j] by 1/128.
-; The IR is the kernel of Inputs/cast_loop_depth/cast_depth.cu via clang -x cuda
-; --cuda-device-only --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on
-; -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -I<enzyme>/include
-; -S -emit-llvm, then llvm-extract of the kernel and its annotation. Profile:
-; the same source through poseidon-clang++ -poseidon-profile-generate, run once.
+; The IR is the kernel
+;   POSEIDON_OPTIMIZE __global__ void cast_depth(int n, int m, const double *a,
+;                                                const double *b, double *out) {
+;     const int i = blockIdx.x * blockDim.x + threadIdx.x;
+;     double acc = 0.0;
+;     int j = 0;
+;     do {
+;       const double s = a[i * n + j] * a[i * n + j];
+;       int k = 0;
+;       do
+;         acc += s * b[j * m + k];
+;       while (++k < m);
+;     } while (++j < n);
+;     out[i] = acc;
+;   }
+; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
+; -ffp-contract=on -fno-unroll-loops -fno-vectorize -fno-slp-vectorize
+; -I<enzyme>/include -S -emit-llvm, then llvm-extract of the kernel and its
+; annotation. Profile: the same source through poseidon-clang++
+; -poseidon-profile-generate, launched once as cast_depth<<<1, 64>>>(8, 16, a,
+; b, o) with a[i] = 0.5 + 0.001 * (i % 17) and b[i] = 1.0 + 0.01 * (i % 7).
 
 ; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.024000e+03 cand=1.305000e+02
 

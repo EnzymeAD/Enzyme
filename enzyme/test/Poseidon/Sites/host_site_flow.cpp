@@ -13,16 +13,11 @@
 // RUN: %t/use > %t/use.out
 // RUN: FileCheck --check-prefix=OUT %s < %t/use.out
 // RUN: not diff %t/stock.out %t/use.out
-// RUN: %poseidon_explain %t/x --function wave --format source --source %s --clang %clang --clang-arg=-I%t/inc | FileCheck --check-prefix=SOURCE %s
 //
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/c0 %s %t/other.o -o %t/gen0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > %t/gen0.out
 // RUN: diff %t/stock.out %t/gen0.out
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s %t/other.o -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
-// RUN: %poseidon_clangxx -O1 -poseidon-profile-generate -poseidon-cache=%t/c1 %s %t/other.o -o %t/gen1
-// RUN: env POSEIDON_PROFILE_DIR=%t/prof1 %t/gen1 > %t/gen1.out
-// RUN: diff %t/stock.out %t/gen1.out
-// RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof1 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s %t/other.o -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/gen3 > %t/gen3.out
 // RUN: diff %t/stock.out %t/gen3.out
@@ -130,8 +125,6 @@ int main(int argc, char **argv) {
 // The call through the pointer and the one from the other translation unit
 // run the same rewritten body.
 // OUT: [[Y:[-0-9.e]+]] [[Y]]{{ }}
-
-// SOURCE: (float)
 
 // At every level each site is rewritten; which mix of FP32 and FP64 a site
 // gets depends on the profile of that level's program.

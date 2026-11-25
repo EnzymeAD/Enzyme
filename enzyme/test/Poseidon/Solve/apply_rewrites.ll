@@ -1,4 +1,4 @@
-; DEFINE: %{regime} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/regime.ll \
+; DEFINE: %{regime} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/regime_split/tester.ll \
 ; DEFINE:   %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false \
@@ -146,24 +146,6 @@
 ; SITES-JOINT-SOLVE: [poseidon] pin: {{$}}
 ; SITES-JOINT-SOLVE: [poseidon] pin: tester_b:PT0=All FP64(70%) + FP32(30%){{$}}
 
-;--- regime.ll
-define double @tester(double %x, double %y) #0 {
-entry:
-  %xx = fmul double %x, %x
-  %yy = fmul double %y, %y
-  %s = fadd double %xx, %yy
-  %r = call double @llvm.sqrt.f64(double %s)
-  %d = fsub double %r, %x
-  ret double %d
-}
-define double @test_opt(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester, double %x, double %y)
-  ret double %0
-}
-declare double @llvm.sqrt.f64(double)
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-attributes #0 = { "target-cpu"="x86-64" }
 ;--- sites.ll
 define double @tester_a(double %x, double %y) #0 {
 entry:

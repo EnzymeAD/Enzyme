@@ -82,9 +82,7 @@ POSEIDON_OPTIMIZE __attribute__((global)) void copy(double *y,
 // EMPTY: 1 warning generated when compiling for {{.*}}
 
 // USE: annotated_lambda_callee_nvptx.cu:[[@LINE-37]]:{{[0-9]+}}: warning: Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
-// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-38]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z4deepPdi_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE-NEXT: [poseidon] _Z4deepPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z4deepPdi_poseidon_body.fpprofile); left unchanged
-// USE-NEXT: annotated_lambda_callee_nvptx.cu:[[@LINE-35]]:{{[0-9]+}}: warning: Poseidon: _Z4copyPdPKd_poseidon_body holds no floating-point operation the pass rewrites; leaving the site unchanged
-// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-64]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// USE: [poseidon] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body.fpprofile); left unchanged
-// USE-NEXT: 4 warnings generated when compiling for {{.*}}
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-38]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z4deepPdi_poseidon_body.fpprofile:
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-34]]:{{[0-9]+}}: warning: Poseidon: _Z4copyPdPKd_poseidon_body holds no floating-point operation the pass rewrites; leaving the site unchanged
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-63]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body.fpprofile:
+// USE: 4 warnings generated when compiling for {{.*}}

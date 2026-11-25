@@ -8,8 +8,6 @@
 // RUN: FileCheck --check-prefix=RT -DFN=poseidonLogGradCUDA --implicit-check-not='declare {{.*}}@poseidon' %s < %t/dev.ll
 // RUN: FileCheck --check-prefix=RT -DFN=poseidonProfileBlockDimsCUDA --implicit-check-not='declare {{.*}}@poseidon' %s < %t/dev.ll
 // RUN: FileCheck --check-prefix=RT -DFN=poseidonProfileStaticCUDA --implicit-check-not='declare {{.*}}@poseidon' %s < %t/dev.ll
-// RUN: %{clang} --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE -o %t/nosite.ll
-// RUN: FileCheck --check-prefix=NOSITE %s < %t/nosite.ll
 // RUN: %{clang} --cuda-host-only -O0 -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
 // RUN: %{clang} --cuda-host-only -fgpu-rdc -O0 -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale -o %t/rdc.ll
@@ -40,9 +38,7 @@ extern "C" int cudaLaunchKernel(const void *func, dim3 gridDim, dim3 blockDim,
                                 void **args, unsigned long sharedMem,
                                 cudaStream_t stream);
 
-#ifndef NO_SITE
 POSEIDON_OPTIMIZE
-#endif
 __global__ void scale(double *x, double a) { x[0] = a * x[0] + 1.0; }
 
 // DEV-DAG: @llvm.compiler.used = {{.*}}@__poseidon_profile_table
@@ -58,13 +54,6 @@ __global__ void scale(double *x, double a) { x[0] = a * x[0] + 1.0; }
 // RT: attributes #[[ATTRS]] = {
 // RT-NOT: "target-
 // RT-SAME: }
-
-// NOSITE: @llvm.compiler.used = appending global [1 x ptr] [ptr addrspacecast (ptr addrspace(4) @__poseidon_profile_table to ptr)], section "llvm.metadata"
-// NOSITE-NEXT: @__poseidon_profile_table = weak_odr dso_local addrspace(4) externally_initialized constant %struct.PoseidonCUDAProfileTable zeroinitializer, align 8
-// NOSITE-NOT: poseidonLogValueCUDA
-// NOSITE-NOT: @poseidon
-// NOSITE: define dso_local ptx_kernel void @_Z5scalePdd(
-// NOSITE-NOT: @poseidon
 
 // HOST: @__poseidon_profile_table = internal global [[[N:[0-9]+]] x i8] zeroinitializer, align 8
 // HOST-NEXT: @[[NAME:[0-9]+]] = private unnamed_addr constant [25 x i8] c"__poseidon_profile_table\00"

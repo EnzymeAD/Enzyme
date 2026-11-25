@@ -1,4 +1,5 @@
-; Device IR of Inputs/raise_tcec/tcec_matmul.cu, as in raise_scalar_tcec_nvptx.ll.
+; The device IR of Matmul/raise_scalar_tcec_nvptx.ll (its comment gives the
+; source).
 
 ; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"

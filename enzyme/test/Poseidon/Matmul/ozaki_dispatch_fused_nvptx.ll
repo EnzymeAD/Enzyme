@@ -1,6 +1,7 @@
-; RUN: rm -rf %t && mkdir %t
+; RUN: rm -rf %t && mkdir -p %t/prof
+; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_two_store_body.fpprofile
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
-; RUN:   -poseidon-profile-use=%S/../Inputs/ozaki_dispatch_fused \
+; RUN:   -poseidon-profile-use=%t/prof \
 ; RUN:   -poseidon-cache=%t/cache -poseidon-enable-herbie=false \
 ; RUN:   -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-tau=1e-12 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \

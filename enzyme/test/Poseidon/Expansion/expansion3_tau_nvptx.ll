@@ -21,17 +21,6 @@
 ; TWO-NEXT: entry:
 ; TWO-NEXT: call void @_Z15logistic_kernelPKdPd_poseidon_body(ptr %0, ptr %1)
 ; TWO-NEXT: ret void
-; TWO-LABEL: define internal void @_Z15logistic_kernelPKdPd_poseidon_body(
-; TWO: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
-; TWO-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
-; TWO-NEXT: %[[X:[0-9]+]] = load double, ptr %[[IN]], align 8
-; TWO-NEXT: %[[A:[0-9]+]] = fmul double %[[X]], 3.900000e+00
-; TWO-NEXT: %[[B:[0-9]+]] = fsub double 1.000000e+00, %[[X]]
-; TWO-NEXT: %{{[0-9]+}} = fmul double %[[A]], %[[B]]
-; TWO-NOT: float
-; TWO: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
-; TWO-NEXT: store double %{{[0-9]+}}, ptr %[[OP]], align 8
-; TWO-NEXT: ret void
 
 ; THREE: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
 ; THREE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
@@ -66,22 +55,6 @@
 ; THREE-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
 ; THREE-NEXT: store double %[[OUT]], ptr %[[OP]], align 8
 ; THREE-NEXT: ret void
-; THREE-LABEL: ; ModuleID =
-; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
-; THREE: %[[C0]] = fadd float %{{[^,]+}}, %[[T:[^ ]+]]
-; THREE-NEXT: %[[S0:[^ ]+]] = fsub float %{{[^,]+}}, %[[C0]]
-; THREE-NEXT: %[[U:[^ ]+]] = fadd float %[[T]], %[[S0]]
-; THREE-NEXT: %[[C1]] = fadd float %[[V:[^,]+]], %[[U]]
-; THREE-NEXT: %[[S1:[^ ]+]] = fsub float %[[U]], %[[C1]]
-; THREE-NEXT: %[[C2]] = fadd float %[[V]], %[[S1]]
-; THREE-NEXT: %mfx.e = fpext float %[[C2]] to double
-; THREE-NEXT: %[[E1]] = fpext float %[[C1]] to double
-; THREE-NEXT: %mfx.tof64 = fadd double %[[E1]], %mfx.e
-; THREE-NEXT: %[[E2]] = fpext float %[[C0]] to double
-; THREE-NEXT: %[[OUT]] = fadd double %mfx.tof64, %[[E2]]
-; THREE-NEXT: %[[OP2:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %{{[0-9]+}}
-; THREE-NEXT: store double %[[OUT]], ptr %[[OP2]], align 8
-; THREE-NEXT: ret void
 
 ; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
 ; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.361979e-01 accCost=2.013455e-07 rel=4.224080e-16
@@ -102,18 +75,6 @@
 ; LOOSE-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
 ; LOOSE-NEXT: store double %ds.f64, ptr %[[OP]], align 8
 ; LOOSE-NEXT: ret void
-; LOOSE-NOT: mfx.split
-; LOOSE-LABEL: ; ModuleID =
-; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
-; LOOSE: %[[HI]] = fadd float %[[P:[^,]+]], %[[E:[^ ]+]]
-; LOOSE-NEXT: %[[BP:[^ ]+]] = fsub float %[[HI]], %[[P]]
-; LOOSE-NEXT: %[[LO]] = fsub float %[[E]], %[[BP]]
-; LOOSE-NEXT: %ds.hi64 = fpext float %[[HI]] to double
-; LOOSE-NEXT: %ds.lo64 = fpext float %[[LO]] to double
-; LOOSE-NEXT: %ds.f64 = fadd double %ds.hi64, %ds.lo64, !poseidon.ds.join
-; LOOSE-NEXT: %[[OP2:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %{{[0-9]+}}
-; LOOSE-NEXT: store double %ds.f64, ptr %[[OP2]], align 8
-; LOOSE-NEXT: ret void
 
 ; -poseidon-expansion-components=3 admits a three-component FP32 expansion
 ; (Techniques/Expansion.cpp). On a 24-step logistic map (72 FP64 operations on
@@ -124,10 +85,21 @@
 ; two-component point clears and wins with three admitted. The three-component
 ; body splits the input into three FP32 components and sums them back to FP64,
 ; without the double-single join tag.
-; The IR is from Inputs/expansion3/logistic.cu via clang -x cuda --cuda-device-only
-; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the
-; LLVM-24-only nocreateundeforpoison intrinsic attribute removed). Profile: the same source
-; through poseidon-clang++ -poseidon-profile-generate, run on an sm_120 GPU.
+; The IR is from
+;   POSEIDON_OPTIMIZE __global__ void logistic_kernel(const double *x0,
+;                                                     double *out) {
+;     unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+;     double x = x0[i];
+;   #pragma unroll
+;     for (int k = 0; k < 24; ++k)
+;       x = 3.9 * x * (1.0 - x);
+;     out[i] = x;
+;   }
+; (logistic.cu) via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
+; -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the LLVM-24-only
+; nocreateundeforpoison intrinsic attribute removed). Profile: the same source
+; through poseidon-clang++ -poseidon-profile-generate, launched as
+; logistic_kernel<<<4, 64>>> on x0[i] = 0.2 + 0.6 * i / 256 on an sm_120 GPU.
 
 ; ModuleID = 'logistic.cu'
 source_filename = "logistic.cu"

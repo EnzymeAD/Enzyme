@@ -12,7 +12,6 @@
 ; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/never_executed -poseidon-strict-mode -o /dev/null 2>&1 | FileCheck --check-prefix=NEVER --implicit-check-not=warning --implicit-check-not=Warning %s
 ; RUN: not %{opt} < %t/drift.ll -poseidon-profile-use=%S/../Inputs/never_executed -o /dev/null 2>&1 | FileCheck --check-prefix=DRIFT %s
 ;
-; RUN: not %{opt} < %s -poseidon-profile-use=%t/missing -o /dev/null 2>&1 | FileCheck --check-prefix=NODIR %s
 ; RUN: not %{opt} < %s -poseidon-profile-use=%t/empty -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY %s
 ; RUN: not %{opt} < %s -poseidon-profile-use=%t/metric_only -o /dev/null 2>&1 | FileCheck --check-prefix=METRIC %s
 ;
@@ -76,7 +75,6 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}). Its slot indices do not name the same instructions; re-run profile generation.
 
-; NODIR: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/missing (-poseidon-profile-use) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; METRIC: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/metric_only (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 

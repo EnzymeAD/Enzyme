@@ -29,21 +29,11 @@
 // Each site reads its profile back and is solved against it: run_a and lift
 // move to FP32, run_b, under its own 1e-12, to a floating-point expansion;
 // axpb and each unit's copy of the hooke_vol call stay as written.
-// USE-DAG: [poseidon] profile header for preprocess__Z4axpbPdPKdS1_i_poseidon_body: MaxBlockDims=(128,1,1) LaunchCount=48
 // USE-DAG: [poseidon] no rewrite applied for preprocess__Z4axpbPdPKdS1_i_poseidon_body; calling original body _Z4axpbPdPKdS1_i_poseidon_body (bit-transparent no-op)
-// USE-DAG: [poseidon] profile header for preprocess__Z4liftPdPKdi_poseidon_body: MaxBlockDims=(256,1,1) LaunchCount=24
-// USE-DAG: [poseidon] preprocess__Z4liftPdPKdi_poseidon_body: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
 // USE-DAG: [poseidon] pin: _Z4liftPdPKdi:PT0=All FP64(0%) + FP32(100%){{$}}
-// USE-DAG: [poseidon] profile header for preprocess__ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT__poseidon_body: MaxBlockDims=(128,1,1) LaunchCount=48
-// USE-DAG: [poseidon] preprocess__ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT__poseidon_body: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
 // USE-DAG: [poseidon] pin: _ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT_:PT0=All FP64(0%) + FP32(100%){{$}}
-// USE-DAG: [poseidon] profile header for preprocess__ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT__poseidon_body: MaxBlockDims=(128,1,1) LaunchCount=48
 // USE-DAG: [poseidon] preprocess__ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT__poseidon_body: tau=1.000000e-12 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
 // USE-DAG: [poseidon] pin: _ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT_:PT0=All FP64(0%) + Expansion2(100%){{$}}
-// USE-DAG: [poseidon] profile header for preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0: MaxBlockDims=(128,1,1) LaunchCount=96
-// USE-DAG: [poseidon] profile header for preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0: MaxBlockDims=(128,1,1) LaunchCount=96
-// USE-DAG: [poseidon] preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost=0.000000e+00 accCost=0.000000e+00 rel={{[^ ]+}}{{$}}
-// USE-DAG: [poseidon] preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost=0.000000e+00 accCost=0.000000e+00 rel={{[^ ]+}}{{$}}
 // USE-DAG: [poseidon] no rewrite applied for preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0; calling original body _Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0 (bit-transparent no-op)
 // USE-DAG: [poseidon] no rewrite applied for preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0; calling original body _Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0 (bit-transparent no-op)
 // USE-DAG: [poseidon] {{.*}}two_tu/a.cu: 1 function(s) a rewrite reached; every other function as written

@@ -8,8 +8,16 @@
 ; profiled nor rewritten, and its result is an input of the operations that use
 ; it.
 ;
-; Profiles: this module through the host profiler with
-; Inputs/unmodelled_operand/driver.c.
+; Profiles: this module through the host profiler, driven by
+;   for (int i = 0; i < 64; ++i) {
+;     double x = 0.5 + i * 0.25, y = 0.5 + (i % 7) * 0.25;
+;     double o, d = 1.0, u, du = 0.0;
+;     site_undef(x, y, &o, &d, &u, &du);
+;     d = 1.0;
+;     site_ce(x, y, &o, &d);
+;     d = 1.0;
+;     site_powi(x, y, 1 + i % 3, &o, &d);
+;   }
 
 @g = global i64 0
 
@@ -72,20 +80,13 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; SOLVE: [poseidon] Optimizing preprocess_tester_undef
-; SOLVE: Registered FPLLValue for non-isOptimizable instruction:   %p = call double @llvm.pow.f64(double %b, double undef)
 ; SOLVE: Found a subgraph with 4 operations and 2 inputs and 2 outputs
 ; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; SOLVE: [poseidon] Optimizing preprocess_tester_ce
-; SOLVE: Registered FPLLValue for non-isOptimizable instruction:   %p = fmul double %b, bitcast (i64 ptrtoint (ptr @g to i64) to double)
 ; SOLVE: Found a subgraph with 2 operations and 3 inputs and 1 outputs
-; SOLVE-NEXT: Inputs:
-; SOLVE-NEXT: %p = fmul double %b, bitcast (i64 ptrtoint (ptr @g to i64) to double)
 ; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; SOLVE: [poseidon] Optimizing preprocess_tester_powi
-; SOLVE: Registered FPLLValue for non-isOptimizable instruction:   %p = call double @llvm.powi.f64.i32(double %b, i32 %n)
 ; SOLVE: Found a subgraph with 2 operations and 3 inputs and 1 outputs
-; SOLVE-NEXT: Inputs:
-; SOLVE-NEXT: %p = call double @llvm.powi.f64.i32(double %b, i32 %n)
 ; SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%)
 
 ; IR-LABEL: define void @preprocess_tester_undef(

@@ -41,14 +41,10 @@ __attribute__((global)) void k(double *x) {
   x[11] = c;
 }
 
-// CHECK-DAG: per_call_nvptx.cu:[[@LINE-12]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z2sqd.poseidon._Z1kPd.0.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// CHECK-DAG: per_call_nvptx.cu:[[@LINE-13]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z5scalePKdPd.poseidon._Z1kPd.1.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// CHECK-DAG: per_call_nvptx.cu:[[@LINE-14]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z5scalePKdPd.poseidon._Z1kPd.2.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// CHECK-DAG: per_call_nvptx.cu:[[@LINE-15]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z5weighRK6holderPKdPd.poseidon._Z1kPd.3.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z1kPd.0: the profiled program did not contain this site (no profile at {{.*}}Inputs/other_sites/preprocess__Z2sqd.poseidon._Z1kPd.0.fpprofile); left unchanged
-// CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.1: the profiled program did not contain this site (no profile at {{.*}}Inputs/other_sites/preprocess__Z5scalePKdPd.poseidon._Z1kPd.1.fpprofile); left unchanged
-// CHECK-DAG: [poseidon] _Z5weighRK6holderPKdPd.poseidon._Z1kPd.3: the profiled program did not contain this site (no profile at {{.*}}Inputs/other_sites/preprocess__Z5weighRK6holderPKdPd.poseidon._Z1kPd.3.fpprofile); left unchanged
-// CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.2: the profiled program did not contain this site (no profile at {{.*}}Inputs/other_sites/preprocess__Z5scalePKdPd.poseidon._Z1kPd.2.fpprofile); left unchanged
+// CHECK-DAG: per_call_nvptx.cu:[[@LINE-12]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z2sqd.poseidon._Z1kPd.0.fpprofile:
+// CHECK-DAG: per_call_nvptx.cu:[[@LINE-13]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z5scalePKdPd.poseidon._Z1kPd.1.fpprofile:
+// CHECK-DAG: per_call_nvptx.cu:[[@LINE-14]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z5scalePKdPd.poseidon._Z1kPd.2.fpprofile:
+// CHECK-DAG: per_call_nvptx.cu:[[@LINE-15]]:30: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z5weighRK6holderPKdPd.poseidon._Z1kPd.3.fpprofile:
 // CHECK-NOT: cannot be a Poseidon site
 // CHECK: {{^}}4 warnings generated when compiling for {{.+}}.{{$}}
 // IR-LABEL: define {{.*}} @_Z1kPd(

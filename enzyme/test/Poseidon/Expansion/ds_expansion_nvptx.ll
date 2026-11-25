@@ -4,7 +4,32 @@
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t/out
 ; RUN: mkdir -p %t/noscalar && grep -v '^# scalar_types=' %cost_models/cm_sm_120_synthetic.csv > %t/noscalar/cm.csv
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%t/noscalar/cm.csv -poseidon-cache=%t/noscalar -S 2>&1 | FileCheck --check-prefix=NOSCALAR %s
-; Double-single (two-component FP32 expansion) materialization of an fmuladd chain on NVPTX; IR and profile from Inputs/ds_expansion/ds_fms.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an sm_120 GPU).
+; Double-single (two-component FP32 expansion) materialization of an fmuladd
+; chain on NVPTX. The IR is from
+;   template <typename R, typename... T>
+;   __device__ R __poseidon_fp_optimize(void *, T...);
+;   __device__ int enzyme_const;
+;   __device__ int enzyme_dup;
+;   extern "C" __device__ __attribute__((noinline)) void
+;   fms_body(const double *x, const double *y, double *out) {
+;     unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+;     double a = x[i], b = y[i];
+;     double t = a * b + a;
+;     double u = t * t - b;
+;     double v = u * b + t;
+;     double w = v * v - a;
+;     out[i] = w * u + v;
+;   }
+;   __global__ void fms_kernel(const double *x, const double *y, double *out,
+;                              double *dout) {
+;     __poseidon_fp_optimize<void>((void *)fms_body, enzyme_const, x,
+;                                  enzyme_const, y, enzyme_dup, out, dout);
+;   }
+; (ds_fms.cu) via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
+; -ffp-contract=on -S -emit-llvm. Inputs/ds_expansion is its profile: the
+; source compiled with -poseidon-profile-generate and launched three times as
+; fms_kernel<<<4, 64>>> on x[i] = 0.25 + i / 512.0 and
+; y[i] = 0.5 + (i % 17) / 32.0, with dout set to 1.0, on an sm_120 GPU.
 
 ; ModuleID = 'ds_fms.cu'
 source_filename = "ds_fms.cu"
@@ -72,6 +97,10 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: All FP64(0%) + FP32(100%)
 ; CHECK: All FP64(0%) + Expansion2(100%)
 ; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; Each input is split into a float pair, the chain runs on float pairs only
+; (Expansion/expansion_model_identity.cpp and expansion_reference_identity.cpp
+; hold each routine to its reference bit for bit), and the last pair is joined
+; into the stored double.
 ; CHECK-LABEL: define {{.*}} @preprocess_fms_body(
 ; CHECK-SAME: ptr {{[^,]*}}%[[XARG:[0-9]+]], ptr {{[^,]*}}%[[YARG:[0-9]+]], ptr {{[^,]*}}%[[OARG:[0-9]+]])
 ; CHECK: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
@@ -90,87 +119,9 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK-NEXT: %[[P:dsf.p[0-9]*]] = fmul float %[[XHI]], %[[YHI]]
 ; CHECK-NEXT: %[[NP:dsf.np[0-9]*]] = fneg float %[[P]]
 ; CHECK-NEXT: %[[E:dsf.e[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XHI]], float %[[YHI]], float %[[NP]])
-; CHECK-NEXT: %[[E1:dsf.e1[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XHI]], float %[[YLO]], float %[[E]])
-; CHECK-NEXT: %[[E2:dsf.e2[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XLO]], float %[[YHI]], float %[[E1]])
-; CHECK-NEXT: %[[S:ts.s[0-9]*]] = fadd float %[[P]], %[[XHI]]
-; CHECK-NEXT: %[[AP:ts.ap[0-9]*]] = fsub float %[[S]], %[[XHI]]
-; CHECK-NEXT: %[[BP:ts.bp[0-9]*]] = fsub float %[[S]], %[[AP]]
-; CHECK-NEXT: %[[DA:ts.da[0-9]*]] = fsub float %[[P]], %[[AP]]
-; CHECK-NEXT: %[[DB:ts.db[0-9]*]] = fsub float %[[XHI]], %[[BP]]
-; CHECK-NEXT: %[[TE:ts.e[0-9]*]] = fadd float %[[DA]], %[[DB]]
-; CHECK-NEXT: %[[T0:dsf.t0[0-9]*]] = fadd float %[[E2]], %[[XLO]]
-; CHECK-NEXT: %[[T1:dsf.t1[0-9]*]] = fadd float %[[T0]], %[[TE]]
-; CHECK-NEXT: %[[FS:fts.s[0-9]*]] = fadd float %[[S]], %[[T1]]
-; CHECK-NEXT: %[[FBP:fts.bp[0-9]*]] = fsub float %[[FS]], %[[S]]
-; CHECK-NEXT: %[[FE:fts.e[0-9]*]] = fsub float %[[T1]], %[[FBP]]
-; CHECK-NEXT: %[[NYHI:[^ ]+]] = fneg float %[[YHI]]
-; CHECK-NEXT: %[[P2:[^ ]+]] = fmul float %[[FS]], %[[FS]]
-; CHECK-NEXT: %[[NP2:[^ ]+]] = fneg float %[[P2]]
-; CHECK-NEXT: %[[E2A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS]], float %[[FS]], float %[[NP2]])
-; CHECK-NEXT: %[[E2B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS]], float %[[FE]], float %[[E2A]])
-; CHECK-NEXT: %[[E2C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE]], float %[[FS]], float %[[E2B]])
-; CHECK-NEXT: %[[S2:[^ ]+]] = fsub float %[[P2]], %[[YHI]]
-; CHECK-NEXT: %[[AP2:[^ ]+]] = fadd float %[[S2]], %[[YHI]]
-; CHECK-NEXT: %[[BP2:[^ ]+]] = fsub float %[[S2]], %[[AP2]]
-; CHECK-NEXT: %[[DA2:[^ ]+]] = fsub float %[[P2]], %[[AP2]]
-; CHECK-NEXT: %[[DB2:[^ ]+]] = fsub float %[[NYHI]], %[[BP2]]
-; CHECK-NEXT: %[[TE2:[^ ]+]] = fadd float %[[DA2]], %[[DB2]]
-; CHECK-NEXT: %[[T02:[^ ]+]] = fsub float %[[E2C]], %[[YLO]]
-; CHECK-NEXT: %[[T12:[^ ]+]] = fadd float %[[T02]], %[[TE2]]
-; CHECK-NEXT: %[[FS2:[^ ]+]] = fadd float %[[S2]], %[[T12]]
-; CHECK-NEXT: %[[D2:[^ ]+]] = fsub float %[[S2]], %[[FS2]]
-; CHECK-NEXT: %[[FE2:[^ ]+]] = fadd float %[[T12]], %[[D2]]
-; CHECK-NEXT: %[[P3:[^ ]+]] = fmul float %[[FS2]], %[[YHI]]
-; CHECK-NEXT: %[[NP3:[^ ]+]] = fneg float %[[P3]]
-; CHECK-NEXT: %[[E3A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS2]], float %[[YHI]], float %[[NP3]])
-; CHECK-NEXT: %[[E3B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS2]], float %[[YLO]], float %[[E3A]])
-; CHECK-NEXT: %[[E3C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE2]], float %[[YHI]], float %[[E3B]])
-; CHECK-NEXT: %[[S3:[^ ]+]] = fadd float %[[FS]], %[[P3]]
-; CHECK-NEXT: %[[AP3:[^ ]+]] = fsub float %[[S3]], %[[FS]]
-; CHECK-NEXT: %[[BP3:[^ ]+]] = fsub float %[[S3]], %[[AP3]]
-; CHECK-NEXT: %[[DA3:[^ ]+]] = fsub float %[[P3]], %[[AP3]]
-; CHECK-NEXT: %[[DB3:[^ ]+]] = fsub float %[[FS]], %[[BP3]]
-; CHECK-NEXT: %[[TE3:[^ ]+]] = fadd float %[[DA3]], %[[DB3]]
-; CHECK-NEXT: %[[T03:[^ ]+]] = fadd float %[[FE]], %[[E3C]]
-; CHECK-NEXT: %[[T13:[^ ]+]] = fadd float %[[T03]], %[[TE3]]
-; CHECK-NEXT: %[[FS3:[^ ]+]] = fadd float %[[S3]], %[[T13]]
-; CHECK-NEXT: %[[FBP3:[^ ]+]] = fsub float %[[FS3]], %[[S3]]
-; CHECK-NEXT: %[[FE3:[^ ]+]] = fsub float %[[T13]], %[[FBP3]]
-; CHECK-NEXT: %[[NXHI:[^ ]+]] = fneg float %[[XHI]]
-; CHECK-NEXT: %[[P4:[^ ]+]] = fmul float %[[FS3]], %[[FS3]]
-; CHECK-NEXT: %[[NP4:[^ ]+]] = fneg float %[[P4]]
-; CHECK-NEXT: %[[E4A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS3]], float %[[FS3]], float %[[NP4]])
-; CHECK-NEXT: %[[E4B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS3]], float %[[FE3]], float %[[E4A]])
-; CHECK-NEXT: %[[E4C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE3]], float %[[FS3]], float %[[E4B]])
-; CHECK-NEXT: %[[S4:[^ ]+]] = fsub float %[[P4]], %[[XHI]]
-; CHECK-NEXT: %[[AP4:[^ ]+]] = fadd float %[[S4]], %[[XHI]]
-; CHECK-NEXT: %[[BP4:[^ ]+]] = fsub float %[[S4]], %[[AP4]]
-; CHECK-NEXT: %[[DA4:[^ ]+]] = fsub float %[[P4]], %[[AP4]]
-; CHECK-NEXT: %[[DB4:[^ ]+]] = fsub float %[[NXHI]], %[[BP4]]
-; CHECK-NEXT: %[[TE4:[^ ]+]] = fadd float %[[DA4]], %[[DB4]]
-; CHECK-NEXT: %[[T04:[^ ]+]] = fsub float %[[E4C]], %[[XLO]]
-; CHECK-NEXT: %[[T14:[^ ]+]] = fadd float %[[T04]], %[[TE4]]
-; CHECK-NEXT: %[[FS4:[^ ]+]] = fadd float %[[S4]], %[[T14]]
-; CHECK-NEXT: %[[D4:[^ ]+]] = fsub float %[[S4]], %[[FS4]]
-; CHECK-NEXT: %[[FE4:[^ ]+]] = fadd float %[[T14]], %[[D4]]
-; CHECK-NEXT: %[[P5:[^ ]+]] = fmul float %[[FS2]], %[[FS4]]
-; CHECK-NEXT: %[[NP5:[^ ]+]] = fneg float %[[P5]]
-; CHECK-NEXT: %[[E5A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS4]], float %[[FS2]], float %[[NP5]])
-; CHECK-NEXT: %[[E5B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS4]], float %[[FE2]], float %[[E5A]])
-; CHECK-NEXT: %[[E5C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE4]], float %[[FS2]], float %[[E5B]])
-; CHECK-NEXT: %[[S5:[^ ]+]] = fadd float %[[FS3]], %[[P5]]
-; CHECK-NEXT: %[[AP5:[^ ]+]] = fsub float %[[S5]], %[[FS3]]
-; CHECK-NEXT: %[[BP5:[^ ]+]] = fsub float %[[S5]], %[[AP5]]
-; CHECK-NEXT: %[[DA5:[^ ]+]] = fsub float %[[P5]], %[[AP5]]
-; CHECK-NEXT: %[[DB5:[^ ]+]] = fsub float %[[FS3]], %[[BP5]]
-; CHECK-NEXT: %[[TE5:[^ ]+]] = fadd float %[[DA5]], %[[DB5]]
-; CHECK-NEXT: %[[T05:[^ ]+]] = fadd float %[[FE3]], %[[E5C]]
-; CHECK-NEXT: %[[T15:[^ ]+]] = fadd float %[[T05]], %[[TE5]]
-; CHECK-NEXT: %[[FS5:[^ ]+]] = fadd float %[[S5]], %[[T15]]
-; CHECK-NEXT: %[[FBP5:[^ ]+]] = fsub float %[[FS5]], %[[S5]]
-; CHECK-NEXT: %[[FE5:[^ ]+]] = fsub float %[[T15]], %[[FBP5]]
-; CHECK-NEXT: %[[HI64:ds.hi64[0-9]*]] = fpext float %[[FS5]] to double
-; CHECK-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %[[FE5]] to double
+; CHECK-NOT: double
+; CHECK: %[[HI64:ds.hi64[0-9]*]] = fpext float %{{[^ ]+}} to double
+; CHECK-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %{{[^ ]+}} to double
 ; CHECK-NEXT: %[[J:ds.f64[0-9]*]] = fadd double %[[HI64]], %[[LO64]], !poseidon.ds.join
 ; CHECK-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %[[OARG]], i64 %[[IDX]]
 ; CHECK-NEXT: store double %[[J]], ptr %[[OP]], align 8

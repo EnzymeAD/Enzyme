@@ -4,8 +4,7 @@
 // DEFINE:   -mllvm -poseidon-cache=%t/c
 // RUN: rm -rf %t && mkdir %t
 // RUN: %{clang} -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -mllvm -poseidon-unit=scale %s -o %t/dev.ll
-// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=scale -mllvm -poseidon-print %s -o %t/host.ll 2>&1 \
-// RUN:   | FileCheck --check-prefix=MSG %s
+// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=scale %s -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
 // RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=main -DMAIN_ONLY %s -o %t/main.ll
 // RUN: FileCheck --check-prefix=INIT %s < %t/main.ll
@@ -34,9 +33,6 @@ void launch(double *x) { scale<<<1, 1>>>(x, 2.0); }
 #endif
 
 int main() { return 0; }
-
-// MSG: [poseidon-profgen] launch of _Z5scalePdd now allocates and seeds 1 shadow buffer(s)
-// MSG: [poseidon] FP profiler CUDA registration injected at main
 
 // HOST: @_Z5scalePdd = {{.*}}constant ptr @_Z20__device_stub__scalePdd, align 8
 // HOST: @poseidon.ptr._Z5scalePdd = private unnamed_addr constant [1 x i32] zeroinitializer

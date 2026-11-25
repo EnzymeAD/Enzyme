@@ -1,7 +1,7 @@
-// Runs the expanded ex2_add and ex2_mul of expansion_fast_flags.cpp and
-// expansion_fast_math_attributes.cpp on the host against MultiFloats.jl's
-// two-limb addition and multiplication (mfadd and mfmul at Val{2},
-// ../expansion_match/multifloats_subset.h); compile without contraction.
+// Runs the expanded ex2_add and ex2_mul of expansion_fast_flags.cpp on the
+// host against MultiFloats.jl's two-limb addition and multiplication (mfadd
+// and mfmul at Val{2}, ../expansion_match/multifloats_subset.h); compile
+// without contraction.
 #include "../expansion_match/multifloats_subset.h"
 
 #include <cmath>

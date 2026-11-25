@@ -13,7 +13,11 @@
 //   direct: each reduced-precision mode is held to the a priori bound of a
 //           product of operands rounded once (unit roundoff u) accumulated in
 //           FP32: (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|. DGEMM
-//           (mode 0) is held to gamma_K in FP64.
+//           (mode 0) is held to gamma_K in FP64. On cuBLAS, the FP32 mode
+//           (mode 4) is also held to bit exactness against cublasSgemm of the
+//           operands narrowed to FP32 with the FP64 alpha and beta applied
+//           after, for the general entry and the square one, and differs from
+//           TF32 (mode 3).
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -260,8 +264,117 @@ double inputRoundoff(int mode) {
   }
 }
 
+#ifndef __HIP__
+__global__ void narrow(float *dst, const double *src, size_t n) {
+  size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+  if (i < n)
+    dst[i] = (float)src[i];
+}
+
+__global__ void widen(double *C, const float *src, size_t n, double alpha,
+                      double beta) {
+  size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+  if (i < n)
+    C[i] = alpha * (double)src[i] + (beta == 0.0 ? 0.0 : beta * C[i]);
+}
+
+// cublasSgemm of row-major operands narrowed to FP32, in the operand order a
+// row-major C needs ((A@B)^T = B^T@A^T), then the FP64 alpha and beta.
+void sgemmReference(double *C, const double *A, const double *B, int M,
+                    int Ncols, int K, double alpha, double beta) {
+  static cublasHandle_t h = nullptr;
+  if (!h)
+    CB(cublasCreate(&h));
+  float *Af, *Bf, *Cf;
+  CK(cudaMalloc(&Af, (size_t)M * K * sizeof(float)));
+  CK(cudaMalloc(&Bf, (size_t)K * Ncols * sizeof(float)));
+  CK(cudaMalloc(&Cf, (size_t)M * Ncols * sizeof(float)));
+  narrow<<<((size_t)M * K + 255) / 256, 256>>>(Af, A, (size_t)M * K);
+  narrow<<<((size_t)K * Ncols + 255) / 256, 256>>>(Bf, B, (size_t)K * Ncols);
+  const float one = 1.0f, zero = 0.0f;
+  CB(cublasSgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, Ncols, M, K, &one, Bf, Ncols, Af,
+                 K, &zero, Cf, Ncols));
+  widen<<<((size_t)M * Ncols + 255) / 256, 256>>>(C, Cf, (size_t)M * Ncols,
+                                                  alpha, beta);
+  CK(cudaDeviceSynchronize());
+  CK(cudaFree(Af));
+  CK(cudaFree(Bf));
+  CK(cudaFree(Cf));
+}
+
+std::vector<double> filled(size_t n, unsigned seed) {
+  std::vector<double> v(n);
+  srand(seed);
+  for (double &x : v)
+    x = ((double)rand() / RAND_MAX) * 2.0 - 1.0;
+  return v;
+}
+
+// Mode 4 on row-major operands, the general entry with alpha 2.5 and beta 0.5
+// and the square one, against sgemmReference bit for bit, and the square one
+// against mode 3.
+int sgemm() {
+  struct {
+    const char *name;
+    bool square;
+    int M, Ncols, K;
+    double alpha, beta;
+  } const cases[] = {{"ex97x64x129", false, 97, 64, 129, 2.5, 0.5},
+                     {"square128", true, 128, 128, 128, 1.0, 0.0}};
+  int failed = 0;
+  unsigned seed = 1;
+  for (const auto &c : cases) {
+    const std::vector<double> A = filled((size_t)c.M * c.K, seed++),
+                              B = filled((size_t)c.K * c.Ncols, seed++),
+                              C0 = filled((size_t)c.M * c.Ncols, seed++);
+    double *dA, *dB, *dC, *dR;
+    CK(cudaMalloc(&dA, A.size() * 8));
+    CK(cudaMalloc(&dB, B.size() * 8));
+    CK(cudaMalloc(&dC, C0.size() * 8));
+    CK(cudaMalloc(&dR, C0.size() * 8));
+    CK(cudaMemcpy(dA, A.data(), A.size() * 8, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(dB, B.data(), B.size() * 8, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(dC, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(dR, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice));
+    if (c.square)
+      __poseidon_direct_dgemm(dC, dA, dB, c.M, c.M, c.M, c.M, 0, 0, c.alpha,
+                              c.beta, nullptr, 4);
+    else
+      __poseidon_direct_dgemm_ex(dC, dA, dB, c.M, c.Ncols, c.K, c.K, c.Ncols,
+                                 c.Ncols, 0, 0, 0, c.alpha, c.beta, nullptr, 4);
+    CK(cudaDeviceSynchronize());
+    sgemmReference(dR, dA, dB, c.M, c.Ncols, c.K, c.alpha, c.beta);
+    std::vector<double> out(C0.size()), ref(C0.size());
+    CK(cudaMemcpy(out.data(), dC, out.size() * 8, cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(ref.data(), dR, ref.size() * 8, cudaMemcpyDeviceToHost));
+    const bool exact = !std::memcmp(out.data(), ref.data(), out.size() * 8);
+    printf("sgemm %s mode=4 %s\n", c.name, exact ? "BITEXACT" : "MISMATCH");
+    failed |= !exact;
+    if (c.square) {
+      // TF32 keeps 10 explicit significand bits, so mode 3 cannot agree.
+      __poseidon_direct_dgemm(dR, dA, dB, c.M, c.M, c.M, c.M, 0, 0, c.alpha,
+                              c.beta, nullptr, 3);
+      CK(cudaDeviceSynchronize());
+      CK(cudaMemcpy(ref.data(), dR, ref.size() * 8, cudaMemcpyDeviceToHost));
+      const bool same = !std::memcmp(out.data(), ref.data(), out.size() * 8);
+      printf("sgemm %s mode=4 vs mode=3 %s\n", c.name,
+             same ? "SAME" : "DIFFERENT");
+      failed |= same;
+    }
+    CK(cudaFree(dA));
+    CK(cudaFree(dB));
+    CK(cudaFree(dC));
+    CK(cudaFree(dR));
+  }
+  return failed;
+}
+#endif
+
 int direct() {
   int failed = 0;
+#ifndef __HIP__
+  failed |= sgemm();
+#endif
   for (const Shape &s : kShapes) {
     Problem p(s);
     for (int mode : {0, 1, 2, 4}) {
@@ -321,6 +434,10 @@ int main(int argc, char **argv) {
 // OZAKI-NEXT: ozaki pad300 nm=10 digest=841e6a1178e31414 BITS-MATCH err={{.*}} ok
 // OZAKI-NEXT: ozaki pad300 nm=13 digest=d9ca278be0ec57e8 BITS-MATCH err={{.*}} ok
 // OZAKI-NEXT: PASS
+
+// SGEMM: sgemm ex97x64x129 mode=4 BITEXACT
+// SGEMM-NEXT: sgemm square128 mode=4 BITEXACT
+// SGEMM-NEXT: sgemm square128 mode=4 vs mode=3 DIFFERENT
 
 // DIRECT-COUNT-12: direct {{.*}} ok
 // DIRECT-NEXT: PASS

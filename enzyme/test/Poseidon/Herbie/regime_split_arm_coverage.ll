@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE: %{opt} = %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
 ; DEFINE:   -poseidon-enable-herbie=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false \
@@ -16,27 +16,6 @@
 ; the other arm is the exact rationalised form. The arm covers 1e-4 of the
 ; profiled box, so none of the 1024 base samples reaches it and, priced on the
 ; base samples alone, the split looks more accurate than the original.
-
-define double @tester(double %x, double %y) #0 {
-entry:
-  %xx = fmul double %x, %x
-  %yy = fmul double %y, %y
-  %s = fadd double %xx, %yy
-  %r = call double @llvm.sqrt.f64(double %s)
-  %d = fsub double %r, %x
-  ret double %d
-}
-
-define double @test_opt(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester, double %x, double %y)
-  ret double %0
-}
-
-declare double @llvm.sqrt.f64(double)
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }
 
 ; LEGACY-NOT: regime-split candidate
 ; LEGACY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (if.f64

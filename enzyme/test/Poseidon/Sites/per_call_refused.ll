@@ -1,18 +1,22 @@
 ; RUN: rm -rf %t && split-file %s %t
+; RUN: sed 's/^target triple = .*/target triple = "nvptx64-nvidia-cuda"/' %t/host.ll > %t/nvptx.ll
+; RUN: sed 's/^target triple = .*/target triple = "amdgcn-amd-amdhsa"/' %t/host.ll > %t/amdgpu.ll
 ; RUN: not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/c -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/nvptx.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/nvptx -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/amdgpu.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/amdgpu -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
 ; RUN: %if enzyme %{ not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s %}
-; RUN: %opt %t/host.ll %loadPoseidon -passes=poseidon -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF --implicit-check-not=warning: %s
+; RUN: %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -S -emit-llvm -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=OFFIR %s < %t/off.ll
 ; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE --implicit-check-not=error: %s
-
 ; A call through __poseidon_optimize that cannot be a site is an error in a
 ; compile that generates or uses a profile, and the call runs as written with
 ; a warning in any other: the identity's argument is no function, or the
-; function is variadic, has no body here or is called with another signature.
-; In device code the copy made for the call is reached through an invoke.
-; The opt of LLVM 21 and 22 exits at its first error, so the compile with
-; several refused calls runs through clang, which reports every error of a
-; compile once, although it lowers these calls at the start of the pipeline
+; function is variadic, has no body here or is called with another signature;
+; so is an identity with more than one use. In device code the copy made for
+; the call is reached through an invoke. The opt of LLVM 21 and 22 exits at its
+; first error, so the compiles with several refused calls run through clang,
+; which reports every error and warning of a compile once, for a host or a
+; device triple, although it lowers these calls at the start of the pipeline
 ; and again before the optimizer.
 
 ; INVOKE: error: <unknown>:0:0: in function k void (ptr): Poseidon: vol at call 0 in k is reached through an invoke, so this call cannot be a Poseidon site
@@ -54,7 +58,6 @@ define double @indirect(ptr %fp, double %x) {
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
-; ERR: 4 errors generated.
 ; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call is not a Poseidon site. The call runs as written.
 ; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call is not a Poseidon site. The call runs as written.
 ; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call is not a Poseidon site. The call runs as written.
@@ -67,6 +70,21 @@ define double @refused(double %x) {
   %r2 = call double %h2(float 1.0)
   %s = fadd double %r1, %r2
   ret double %s
+}
+
+; ERR: error: <unknown>:0:0: in function two_calls double (double): Poseidon: __poseidon_optimize needs a function name and a call of it
+; ERR: 5 errors generated.
+; OFF: warning: <unknown>:0:0: in function two_calls double (double): Poseidon: __poseidon_optimize needs a function name and a call of it; the call runs as written
+; OFF: 5 warnings generated.
+; OFFIR-LABEL: define double @two_calls(double %x)
+; OFFIR-NEXT: %a = call double @sq(double %x)
+; OFFIR-NEXT: %b = call double @sq(double %a)
+; OFFIR-NEXT: ret double %b
+define double @two_calls(double %x) {
+  %h = call ptr @__poseidon_site(ptr @sq)
+  %a = call double %h(double %x)
+  %b = call double %h(double %a)
+  ret double %b
 }
 
 declare ptr @__poseidon_site(ptr)

@@ -24,6 +24,8 @@
 ; RUN:   -enable-nontrivial-unswitch -S -o /dev/null 2> %t/forced.log
 ; RUN: grep '^CS candidate' %t/forced.log | sed 's/ [^ ]*acc=.*//' > %t/priced-forced
 ; RUN: diff %t/priced %t/priced-forced
+; RUN: %opt %s -passes='default<O3>' -S \
+; RUN:   | FileCheck --check-prefix=KEPT --implicit-check-not=.us %s
 
 ; CHECK-NOT: cand=0.000000e+00
 ; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02 exec=1024
@@ -46,22 +48,46 @@
 ; IR-NOT: [[GUARD]]{{[^0-9]}}
 ; IR: {{^}}[[EXIT]]:
 ; IR-NEXT: ret void
+; KEPT-LABEL: define {{.*}} @_Z12setup_kerneliPKdS0_Pd(
+; KEPT: [[TIDX:%[0-9]+]] = tail call {{.*}}i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+; KEPT: [[GUARD:%[0-9]+]] = icmp {{.*}}ult i32 [[TIDX]], %0
+; KEPT: br label %[[OUTER:[0-9]+]]
+; KEPT: {{^}}[[OUTER]]:
+; KEPT-NEXT: phi i32
+; KEPT-NEXT: br i1 [[GUARD]], label %[[INNER:[0-9]+]], label
+; KEPT: fdiv double
 
 ; Precision candidates of a kernel whose loops are strided by thread index up
 ; to a bound the kernel is given. The guard of the inner loop (threadIdx.x < Q)
 ; is loop invariant in the outer loop. The emitted site is cleaned up by the O3
 ; simplification pipeline without a target, where non-trivial unswitching
 ; versions the outer loop on the guard and deletes the version that never
-; enters the inner loop (IR). The clone each candidate is priced on keeps the
-; guard; forced to unswitch it too (-enable-nontrivial-unswitch), the walk
+; enters the inner loop (IR). The clone each candidate is priced on is cleaned
+; up by the pipeline of the compile, whose target has divergent branches and so
+; is not unswitched: the guard stays in the outer loop (KEPT, the compile's O3
+; pipeline on the kernel), and the clone keeps one copy of the body; forced to unswitch it too (-enable-nontrivial-unswitch), the walk
 ; starts from the copy of the body the other version keeps, and every
 ; candidate has the price it has when no loop is unswitched
 ; (-unswitch-threshold=0): none at 0, and at 1e-6 the cheapest candidate that
 ; meets the target, FP32, is applied.
-; The IR is the kernel of Inputs/unswitched_loop/unswitched_loop.cu via clang
-; -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on
-; -I<enzyme>/include -S -emit-llvm. Profile: the same source through
-; poseidon-clang++ -poseidon-profile-generate, run with argument 4.
+; The IR is the kernel
+;   POSEIDON_OPTIMIZE __global__ void setup_kernel(int Q, const double *W,
+;                                                  const double *J, double *D) {
+;     const int e = blockIdx.x;
+;     for (int qy = threadIdx.y; qy < Q; qy += blockDim.y)
+;       for (int qx = threadIdx.x; qx < Q; qx += blockDim.x) {
+;         const int q = qx + Q * qy;
+;         const double *j = J + 4 * (q + Q * Q * e);
+;         const double det = j[0] * j[3] - j[1] * j[2];
+;         D[q + Q * Q * e] = W[q] * (j[0] * j[0] + j[1] * j[1]) / det;
+;       }
+;   }
+; (unswitched_loop/unswitched_loop.cu) via clang -x cuda --cuda-device-only
+; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on -I<enzyme>/include -S -emit-llvm.
+; Profile: the same source through poseidon-clang++ -poseidon-profile-generate,
+; launched as setup_kernel<<<64, dim3(4, 4)>>>(4, W, J, D) on
+; W[q] = 0.1 + 0.01 * q and
+; J[4 * i + k] = (k % 3 == 0 ? 1.0 : 0.0) + 0.001 * ((7 * i + k) % 13).
 
 ; ModuleID = 'unswitched_loop/unswitched_loop.cu'
 source_filename = "unswitched_loop/unswitched_loop.cu"

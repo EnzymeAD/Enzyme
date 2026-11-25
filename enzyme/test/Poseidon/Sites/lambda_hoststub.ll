@@ -1,10 +1,34 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub/launches_*.json %t/
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@cudaLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm_ex' %s
-; The launch stub of a kernel that takes a lambda by value
-; (Inputs/lambda_stub/lambda_stub.cu, clang --cuda-host-only -O0): the
-; descriptors name pointers and sizes as fields of the lambda, which only the
-; launch's own argument array holds in every host ABI. The profiling launch
+; The launch stub of a kernel that takes a lambda by value, host IR from
+; clang -x cuda --cuda-host-only -O0 -S -emit-llvm of
+;   template <int D> struct DeviceTensor {
+;     int capacity;
+;     double *data;
+;     int sizes[D];
+;   };
+;   template <typename BODY> __global__ static void CuKernel2D(int N, BODY body) {
+;     int k = blockIdx.x * blockDim.z + threadIdx.z;
+;     if (k < N)
+;       body(k);
+;   }
+;   void reduce(int nq, int ne, int nd, double *Q, double *G, double *y) {
+;     DeviceTensor<2> QR{nq * ne, Q, {nq, ne}};
+;     DeviceTensor<2> GR{nq * nd, G, {nq, nd}};
+;     DeviceTensor<2> Y{nd * ne, y, {nd, ne}};
+;     auto body = [=] __host__ __device__(int e) {
+;       for (int i = threadIdx.y; i < nd; i += blockDim.y) {
+;         double sum = 0.0;
+;         for (int p = 0; p < nq; ++p)
+;           sum += QR.data[p + QR.sizes[0] * e] * GR.data[p + GR.sizes[0] * i];
+;         Y.data[i + Y.sizes[0] * e] += sum;
+;       }
+;     };
+;     CuKernel2D<<<ne, dim3(1, nd, 1)>>>(ne, body);
+;   }
+; The descriptors name pointers and sizes as fields of the lambda, which only
+; the launch's own argument array holds in every host ABI. The profiling launch
 ; passes the runtime that array and each pointer's offset; the kernel's
 ; device-side name carries the -fgpu-rdc postfix of an internal kernel. The
 ; dispatch reads its operands and extents from the same array and runs only
@@ -26,20 +50,10 @@
 ; USE: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm_ex (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
 ; USE-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; USE: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
-; USE: call i32 @__cudaPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; USE: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
 ; USE-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
 ; USE-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; USE-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[GC:[0-9]+]], ptr align 8 %[[GRID]], i64 12, i1 false)
-; USE-NEXT: %[[GXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 0
-; USE-NEXT: %[[GXY:[0-9]+]] = load i64, ptr %[[GXYP]], align 8
-; USE-NEXT: %[[GZP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 1
-; USE-NEXT: %[[GZ:[0-9]+]] = load i32, ptr %[[GZP]], align 8
-; USE-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[BC:[0-9]+]], ptr align 8 %[[BLOCK]], i64 12, i1 false)
-; USE-NEXT: %[[BXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 0
-; USE-NEXT: %[[BXY:[0-9]+]] = load i64, ptr %[[BXYP]], align 8
-; USE-NEXT: %[[BZP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 1
-; USE-NEXT: %[[BZ:[0-9]+]] = load i32, ptr %[[BZP]], align 8
-; USE-NEXT: %[[S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE: %[[S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; USE-NEXT: %[[L:[0-9]+]] = load ptr, ptr %[[S]], align 8
 ; USE-NEXT: %[[F:[0-9]+]] = getelementptr inbounds i8, ptr %[[L]], i64 64{{$}}
 ; USE-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[F]], align 8
@@ -100,7 +114,7 @@
 ; USE-NEXT: call void @__poseidon_ozaki_dgemm_ex(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)
 ; USE-NEXT: br label %[[JOIN:[0-9]+]]
 ; USE: [[LAUNCH]]:
-; USE-NEXT: %{{[0-9]+}} = call noundef i32 @cudaLaunchKernel(ptr noundef @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i64 %[[GXY]], i32 %[[GZ]], i64 %[[BXY]], i32 %[[BZ]], ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
+; USE-NEXT: %{{[0-9]+}} = call noundef i32 @cudaLaunchKernel(ptr noundef @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
 ; USE-NEXT: br label %[[JOIN]]
 ; USE: [[JOIN]]:
 ; USE: ret void

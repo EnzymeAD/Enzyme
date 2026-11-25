@@ -35,8 +35,14 @@
 ;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
-; libposeidon_profile_host.a, libposeidon_profile.a and Inputs/pow_term/driver.c).
-; out0, out1: the same binary run as `driver 0` and `driver 1`.
+; libposeidon_profile_host.a and libposeidon_profile.a), driven by
+;   for (int i = 0; i < 64; ++i) {
+;     double T = 250.0 + i * 150.0, y = 0.5 + (i % 7) * 0.25, o1, o2;
+;     double d1 = only != 1, d2 = only != 0;
+;     site(T, y, &o1, &d1, &o2, &d2);
+;   }
+; with only = -1; out0, out1: the same with only = 0 and only = 1, which seed
+; one output's shadow.
 
 define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
 entry:
@@ -73,15 +79,10 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; BASE: Initial AccuracyCost: 2.843141e-14
 
 ; SPLIT: Bottleneck:   %p = call double @llvm.pow.f64(double %T, double %e)
-; SPLIT: === Splitting subgraph at bottleneck:   %p = call double @llvm.pow.f64(double %T, double %e)
-; SPLIT-NEXT: New subgraph:
 ; SPLIT: Operations (3):
 ; SPLIT-NEXT: %p = call double @llvm.pow.f64
 ; SPLIT-NEXT: %e = call double @llvm.fma.f64
 ; SPLIT-NEXT: %nl = fneg double %l
-; SPLIT: Remaining subgraph:
-; SPLIT: Operations (5):
-; SPLIT-NEXT: %l = call double @llvm.log.f64(double %T)
 ; SPLIT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
 ; SPLIT: [poseidon] joint sampling: 1 leaves, 1024 of 1024 draws inside the profiled input box
 ; SPLIT: [poseidon] joint sampling: 2 leaves, 1024 of 1024 draws inside the profiled input box

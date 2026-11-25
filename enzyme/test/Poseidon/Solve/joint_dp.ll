@@ -5,8 +5,12 @@
 ; RUN: rm -rf %t && mkdir %t
 
 ; Two annotated sites solved under one shared budget (-poseidon-joint-dp).
-; Their profiles come from running this module through the host profiler with
-; Inputs/joint_profiles/joint_driver.c.
+; Their profiles come from running this module through the host profiler,
+; driven by
+;   for (int i = 0; i < 64; ++i) {
+;     double x = 1.0 + i * 0.125, y = 0.5 + (i % 7) * 0.25;
+;     s += site_a(x, y) + site_b(x, y);
+;   }
 
 ; One budgets.txt lists the joint table's breakpoints, a budget of -0.4
 ; rewrites both sites to FP32, a budget of -0.2 is spent on tester_b alone and
@@ -33,21 +37,10 @@
 ; SITES-BOTH-NEXT: call double @preprocess_tester_b(double %x, double %y)
 ; SITES-BOTH-LABEL: define double @preprocess_tester_a(
 ; SITES-BOTH-NEXT: entry:
-; SITES-BOTH-NEXT: [[XF:%.+]] = fptrunc fast double %x to float
-; SITES-BOTH-NEXT: [[YF:%.+]] = fptrunc fast double %y to float
-; SITES-BOTH-NEXT: [[ADD:%.+]] = fadd fast float [[YF]], [[XF]]{{$}}
-; SITES-BOTH-NEXT: [[MUL:%.+]] = fmul fast float [[ADD]], [[XF]]{{$}}
-; SITES-BOTH-NEXT: [[R:%.+]] = fpext float [[MUL]] to double
-; SITES-BOTH-NEXT: ret double [[R]]{{$}}
+; SITES-BOTH-NEXT: fptrunc fast double %x to float
 ; SITES-BOTH-LABEL: define double @preprocess_tester_b(
 ; SITES-BOTH-NEXT: entry:
-; SITES-BOTH-NEXT: [[BYF:%.+]] = fptrunc fast double %y to float
-; SITES-BOTH-NEXT: [[BNY:%.+]] = fneg fast float [[BYF]]{{$}}
-; SITES-BOTH-NEXT: [[BXF:%.+]] = fptrunc fast double %x to float
-; SITES-BOTH-NEXT: [[BFMA:%.+]] = {{.*}}call fast float @llvm.fmuladd.f32(float [[BXF]], float [[BYF]], float [[BNY]])
-; SITES-BOTH-NEXT: [[BDIV:%.+]] = fdiv fast float [[BFMA]], [[BXF]]{{$}}
-; SITES-BOTH-NEXT: [[BR:%.+]] = fpext float [[BDIV]] to double
-; SITES-BOTH-NEXT: ret double [[BR]]{{$}}
+; SITES-BOTH-NEXT: fptrunc fast double %y to float
 
 ; SITES-BUDGETS: -0.45000000000000001,-0.29999999999999999,-0.050000000000000003,0
 

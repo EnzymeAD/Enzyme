@@ -91,10 +91,8 @@
 ; USE-NEXT: call void @scale(ptr @table, ptr %out)
 ; USE-NEXT: %d = call double @dot(ptr %buf, double 2.000000e+00, i32 4)
 ; USE-NEXT: ret double %d
-; USE-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess_scale_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-; USE-ERR: [poseidon] scale_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess_scale_poseidon_body.fpprofile); left unchanged
-; USE-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess_dot_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
-; USE-ERR: [poseidon] dot_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess_dot_poseidon_body.fpprofile); left unchanged
+; USE-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess_scale_poseidon_body.fpprofile:
+; USE-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess_dot_poseidon_body.fpprofile:
 
 ; Without a profile action the module is the one written.
 ; OFF: define void @scale(ptr %x, ptr %out)

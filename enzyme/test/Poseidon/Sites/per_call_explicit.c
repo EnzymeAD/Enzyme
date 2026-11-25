@@ -12,11 +12,15 @@
 // the marker the program declares, under either of its names, and reads as
 // it reads in C++: with activity markers it is a site over the function, and
 // an automatic list with a pointer is a per-call site. Its value is the
-// function's, in the profiling run too.
+// function's, in the profiling run too. A per-call form returns the call's
+// value, C's argument conversions apply (a float and an int reach a function of
+// doubles), and its target may be a macro.
 
 #include "poseidon/poseidon.h"
 #include <math.h>
 #include <stdio.h>
+
+#define LOOSE 1e-3
 
 int enzyme_dup, enzyme_const;
 void __poseidon_fp_optimize(void *, ...);
@@ -33,6 +37,8 @@ void scale(const double *x, double *y, int n) {
 }
 
 double sq(double x, double y) { return x * x + y * y; }
+
+double damp(double x, double t) { return exp(-x * t) * cos(x); }
 
 int main(void) {
   enum { n = 256 };
@@ -52,13 +58,20 @@ int main(void) {
   __poseidon_optimize(wave, enzyme_const, x, enzyme_dup, y1, dy, n);
   // MACRO: 1 error generated.
 #endif
-  printf("%d %d %d\n", y1[100] == y2[100], y3[100] == y4[100],
-         s == sq(x[3], x[7]));
+  double a = 0, b = 0;
+  for (int i = 0; i < n; ++i) {
+    float f = 0.01f * (float)i;
+    a += __poseidon_optimize_tau(LOOSE, damp, f, 2);
+    b += damp(f, 2);
+  }
+  printf("%d %d %d %d\n", y1[100] == y2[100], y3[100] == y4[100],
+         s == sq(x[3], x[7]), a == b);
   return 0;
 }
 
-// SAME: 1 1 1
-// PROFILES: preprocess_scale.poseidon.main.0.fpprofile
+// SAME: 1 1 1 1
+// PROFILES: preprocess_damp.poseidon.main.1.fpprofile
+// PROFILES-NEXT: preprocess_scale.poseidon.main.0.fpprofile
 // PROFILES-NEXT: preprocess_sq.fpprofile
 // PROFILES-NEXT: preprocess_wave.fpprofile
 // Each site is rewritten, and the rewritten calls differ from the functions run
@@ -69,4 +82,6 @@ int main(void) {
 // USE-DAG: [poseidon] pin: scale.poseidon.main.0:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_sq: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: sq:PT0=All FP64(0%) + FP32(100%)
-// RUNS: 0 0 0
+// USE-DAG: [poseidon] preprocess_damp.poseidon.main.1: tau=1.000000e-03
+// USE-DAG: [poseidon] pin: damp.poseidon.main.1:PT0=All FP64(0%) + FP32(100%)
+// RUNS: 0 0 0 0

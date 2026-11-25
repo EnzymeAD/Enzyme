@@ -37,47 +37,12 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 }
 
 // CHECK: .visible .func jvp_body(
-
-// The kernel passes its locals to the copy and stores what the copy wrote.
 // CHECK-LABEL: .entry _Z3jvpPKdS0_PdS1_(
-// CHECK-DAG: ld.param{{.*}} [[XG:%rd[0-9]+]], [_Z3jvpPKdS0_PdS1__param_0];
-// CHECK-DAG: ld.param{{.*}} [[DXG:%rd[0-9]+]], [_Z3jvpPKdS0_PdS1__param_1];
-// CHECK-DAG: ld.param{{.*}} [[Y:%rd[0-9]+]], [_Z3jvpPKdS0_PdS1__param_2];
-// CHECK-DAG: ld.param{{.*}} [[DYG:%rd[0-9]+]], [_Z3jvpPKdS0_PdS1__param_3];
-// CHECK-DAG: cvta.to.global.u64 [[X:%rd[0-9]+]], [[XG]];
-// CHECK-DAG: cvta.to.global.u64 [[DX:%rd[0-9]+]], [[DXG]];
-// CHECK-DAG: cvta.to.global.u64 [[DY:%rd[0-9]+]], [[DYG]];
-// CHECK-DAG: add.u64 [[XO:%rd[0-9]+]], %SPL, 0;
-// CHECK-DAG: cvta.local.u64 [[XA:%rd[0-9]+]], [[XO]];
-// CHECK-DAG: add.u64 [[DXO:%rd[0-9]+]], %SPL, 8;
-// CHECK-DAG: cvta.local.u64 [[DXA:%rd[0-9]+]], [[DXO]];
-// CHECK-DAG: add.u64 [[DYO:%rd[0-9]+]], %SPL, 16;
-// CHECK-DAG: cvta.local.u64 [[DYA:%rd[0-9]+]], [[DYO]];
-// CHECK-DAG: ld.global{{.*}} [[XV:%[a-z]+[0-9]+]], {{\[}}[[X]]{{\]}};
-// CHECK-DAG: st.local{{.*}} [%SPL], [[XV]];
-// CHECK-DAG: ld.global{{.*}} [[DXV:%[a-z]+[0-9]+]], {{\[}}[[DX]]{{\]}};
-// CHECK-DAG: st.local{{.*}} [%SPL+8], [[DXV]];
-// CHECK-DAG: st.param{{.*}} [param0], [[XA]];
-// CHECK-DAG: st.param{{.*}} [param1], [[DXA]];
-// CHECK-DAG: st.param{{.*}} [param2], [[Y]];
-// CHECK-DAG: st.param{{.*}} [param3], [[DYA]];
 // CHECK: call.uni fwddiffeqf_$_left, (param0, param1, param2, param3);
-// CHECK: ld.local{{.*}} [[DYV:%[a-z]+[0-9]+]], [%SPL+16];
-// CHECK-NEXT: st.global{{.*}} {{\[}}[[DY]]{{\]}}, [[DYV]];
-// CHECK-NEXT: ret;
+// CHECK: ret;
 
-// The copy is defined in this module and computes y = x * x + 1 and
-// dy = 2 * dx * x.
+// The copy is defined in this module (Sites/lto_prelink_deferred_site_nvptx.cu
+// checks what it computes).
 // CHECK-LABEL: .func fwddiffeqf_$_left(
-// CHECK-DAG: ld.param{{.*}} [[QX:%rd[0-9]+]], [fwddiffeqf_$_left_param_0];
-// CHECK-DAG: ld.param{{.*}} [[QDX:%rd[0-9]+]], [fwddiffeqf_$_left_param_1];
-// CHECK-DAG: ld.param{{.*}} [[QY:%rd[0-9]+]], [fwddiffeqf_$_left_param_2];
-// CHECK-DAG: ld.param{{.*}} [[QDY:%rd[0-9]+]], [fwddiffeqf_$_left_param_3];
-// CHECK-DAG: ld{{(\.[a-z0-9]+)*}} [[QXV:%[a-z]+[0-9]+]], {{\[}}[[QX]]{{\]}};
-// CHECK-DAG: ld{{(\.[a-z0-9]+)*}} [[QDXV:%[a-z]+[0-9]+]], {{\[}}[[QDX]]{{\]}};
-// CHECK-DAG: add.f64 [[T:%[a-z]+[0-9]+]], [[QXV]], [[QXV]];
-// CHECK-DAG: mul.f64 [[QDYV:%[a-z]+[0-9]+]], [[QDXV]], [[T]];
-// CHECK-DAG: fma.rn.f64 [[QYV:%[a-z]+[0-9]+]], [[QXV]], [[QXV]], 0d3FF0000000000000;
-// CHECK-DAG: st{{(\.[a-z0-9]+)*}} {{\[}}[[QDY]]{{\]}}, [[QDYV]];
-// CHECK-DAG: st{{(\.[a-z0-9]+)*}} {{\[}}[[QY]]{{\]}}, [[QYV]];
+// CHECK: fma.rn.f64 {{.*}}, 0d3FF0000000000000;
 // CHECK: ret;

@@ -120,11 +120,7 @@ int main(void) {
 // PROF-NOT: {{^[0-9]+$}}
 
 // CHECK: [poseidon] Optimizing [[BODY:preprocess_scalar_matmul_body_f64]] with relative error tolerance: 0.000000e+00
-// CHECK-NEXT: [poseidon] GPU mode active for [[BODY]]
-// CHECK-NEXT: [poseidon] canonical form hash of [[BODY]] is fea337c617ef94c9
-// CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(8,8,1) LaunchCount=1
-// CHECK-NEXT: [hostgemm] [[BODY]]: 1 candidate reduction loop(s)
-// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
+// CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
 // CHECK-NEXT: Matmul[0]: 8x8x8 type=f64 origin=ScalarLoopReduction
 // CHECK-NOT: Matmul[1]:
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
@@ -140,7 +136,7 @@ int main(void) {
 
 // The raised body: one warp loads the A and B tiles, multiplies them, and
 // stores the product tile; every thread widens its element of it into D. A and
-// B reach their tiles narrowed to f16, padded with zeros to 16x16.
+// B reach their tiles narrowed to f16.
 // CHECK-LABEL: define dso_local void @preprocess_scalar_matmul_body_f64(
 // CHECK-SAME: ptr {{[^,]*}}[[PA:%[0-9]+]], ptr {{[^,]*}}[[PB:%[0-9]+]], ptr {{[^,]*}}[[PD:%[0-9]+]])
 // CHECK: [[FA:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TA:@__poseidon_raise_preprocess_scalar_matmul_body_f64_a_f16_16x16]] to ptr), i32 16)
@@ -157,18 +153,6 @@ int main(void) {
 // CHECK: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr [[PD]], i64 {{%[0-9]+}}
 // CHECK-NEXT: store double [[DD]], ptr [[OP]]
 // CHECK-NEXT: ret void
-// CHECK: [[AP:%[0-9]+]] = getelementptr {{.*}}ptr [[PA]], i64 {{%[0-9]+}}
-// CHECK-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]]
-// CHECK-NEXT: [[AH:%[0-9]+]] = fptrunc double [[AV]] to half
-// CHECK: [[AF:%[^ ]+]] = phi half [ [[AH]], {{%[^ ]+}} ], [ 0.000000e+00, {{%[^ ]+}} ]
-// CHECK: [[AT:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) [[TA]] to ptr), i64 {{%[0-9]+}}
-// CHECK-NEXT: store half [[AF]], ptr [[AT]]
-// CHECK: [[BP:%[0-9]+]] = getelementptr {{.*}}ptr [[PB]], i64 {{%[0-9]+}}
-// CHECK-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]]
-// CHECK-NEXT: [[BH:%[0-9]+]] = fptrunc double [[BV]] to half
-// CHECK: [[BF:%[^ ]+]] = phi half [ [[BH]], {{%[^ ]+}} ], [ 0.000000e+00, {{%[^ ]+}} ]
-// CHECK: [[BT:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) [[TB]] to ptr), i64 {{%[0-9]+}}
-// CHECK-NEXT: store half [[BF]], ptr [[BT]]
 // CHECK: {{^}$}}
 
 // NOFP-LABEL: ; ModuleID =

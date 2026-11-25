@@ -47,15 +47,10 @@
     {
       "alternatives": [
         {
-          "approx": true,
           "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
           "c": "fma(-0.041666666666666664, x[i] * x[i], 0.5)",
           "cost_delta": -0.9656455768680218,
           "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) (fma.f64 #s(literal -1/24 binary64) (*.f64 v0 v0) #s(literal 1/2 binary64)))",
-          "herbie_error_bits": {
-            "after": 0,
-            "before": 38.102
-          },
           "id": "R0_0",
           "kind": "algebraic",
           "modelled_error": 2.1273352908378104e-25,
@@ -68,15 +63,10 @@
           "summary": "Herbie rewrite searched at binary64, series approximation"
         },
         {
-          "approx": true,
           "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
           "c": "0.5",
           "cost_delta": -1.0,
           "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
-          "herbie_error_bits": {
-            "after": 9.786000000000001,
-            "before": 38.102
-          },
           "id": "R0_1",
           "kind": "algebraic",
           "modelled_error": 1.1607706226323944e-16,
@@ -89,15 +79,10 @@
           "summary": "Herbie rewrite searched at binary64, series approximation"
         },
         {
-          "approx": true,
           "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
           "c": "(double)0.5f",
           "cost_delta": -1.0,
           "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary32))",
-          "herbie_error_bits": {
-            "after": 0,
-            "before": 29.977
-          },
           "id": "R1_0",
           "kind": "algebraic",
           "modelled_error": 1.1607706226323944e-16,
@@ -108,75 +93,10 @@
           "reason": "the selected R0_1 rewrites the same output",
           "status": "rejected",
           "summary": "Herbie rewrite searched at binary32, series approximation"
-        },
-        {
-          "c": "(double)((1.0f - cosf((float)x[i])) / ((float)x[i] * (float)x[i]))",
-          "changes": [
-            {
-              "from": "FP64",
-              "ops": [
-                1,
-                2,
-                3,
-                0
-              ],
-              "to": "FP32"
-            }
-          ],
-          "cost_delta": -0.777841397079874,
-          "id": "PT0_0",
-          "kind": "precision",
-          "modelled_error": 4.999999998839222e-07,
-          "outputs": [
-            0
-          ],
-          "reason": "dominated by R0_1, which costs no more and is at least as accurate",
-          "status": "rejected",
-          "summary": "All FP64(0%) + FP32(100%): '-' (15:19), '*' (15:45), '/' (15:37) and cos (15:21) in float (4 of 4 operations)"
-        },
-        {
-          "c": "(double)((1.0f - (float)cos(x[i])) / ((float)x[i] * (float)x[i]))",
-          "changes": [
-            {
-              "from": "FP64",
-              "ops": [
-                1,
-                2,
-                3
-              ],
-              "to": "FP32"
-            }
-          ],
-          "cost_delta": 0.047809905525336385,
-          "id": "PT0_1",
-          "kind": "precision",
-          "modelled_error": 4.999999998839222e-07,
-          "outputs": [
-            0
-          ],
-          "reason": "neither cheaper nor more accurate than as written",
-          "status": "rejected",
-          "summary": "All FP64(30%) + FP32(70%): '-' (15:19), '*' (15:45) and '/' (15:37) in float (3 of 4 operations)"
         }
       ],
       "cost": 1.0,
       "executions": 1024,
-      "herbie": [
-        {
-          "candidates": 2,
-          "error_bits": 38.102,
-          "id": "R0",
-          "precision": "binary64",
-          "status": "imp-start"
-        },
-        {
-          "candidates": 1,
-          "error_bits": 29.977,
-          "id": "R1",
-          "precision": "binary32",
-          "status": "imp-start"
-        }
-      ],
       "id": "S0",
       "inputs": [
         {
@@ -188,7 +108,6 @@
           "max": 0.0001,
           "min": 1e-08,
           "name": "x[i]",
-          "type": "double",
           "var": "v0"
         }
       ],
@@ -201,7 +120,6 @@
       "ops": [
         {
           "executions": 1024,
-          "gradient": -5.603690685911234e+17,
           "loc": {
             "col": 21,
             "file": "explain_formatter.cpp",
@@ -209,13 +127,10 @@
           },
           "max": 1,
           "min": 0.999999995,
-          "opcode": "cos",
-          "sensitivity": 5.603690685911228e+17,
-          "type": "double"
+          "opcode": "cos"
         },
         {
           "executions": 1024,
-          "gradient": 5.603690685911234e+17,
           "loc": {
             "col": 19,
             "file": "explain_formatter.cpp",
@@ -223,13 +138,10 @@
           },
           "max": 4.999999969612645e-09,
           "min": 0,
-          "opcode": "-",
-          "sensitivity": 516.7888834210416,
-          "type": "double"
+          "opcode": "-"
         },
         {
           "executions": 1024,
-          "gradient": -3.116510561052433e+17,
           "loc": {
             "col": 45,
             "file": "explain_formatter.cpp",
@@ -237,13 +149,10 @@
           },
           "max": 1e-08,
           "min": 1.0000000000000001e-16,
-          "opcode": "*",
-          "sensitivity": 516.7888834210416,
-          "type": "double"
+          "opcode": "*"
         },
         {
           "executions": 1024,
-          "gradient": 560369068591.1234,
           "loc": {
             "col": 37,
             "file": "explain_formatter.cpp",
@@ -251,9 +160,7 @@
           },
           "max": 0.9965277771349845,
           "min": 0,
-          "opcode": "/",
-          "sensitivity": 516.7888834210418,
-          "type": "double"
+          "opcode": "/"
         }
       ],
       "original": {
@@ -278,8 +185,7 @@
             1,
             2,
             3
-          ],
-          "type": "double"
+          ]
         }
       ]
     }

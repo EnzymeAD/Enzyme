@@ -12,11 +12,11 @@
 ; The device compile of tcec_matmul.cu as unit u writes the manifest of the
 ; unit, named after the source, with the descriptor of the dispatched product.
 ; A later device compile of the unit that dispatches nothing (raising off)
-; removes it, and a device compile of a module without a site, under profile
-; use and under profile generation, creates neither a manifest nor the cache.
-; A host compile whose unit has no manifest in the cache, under profile use and
-; under profile generation, says nothing, keeps the launch and creates no
-; cache.
+; removes it, so that the host compile of the unit keeps the launch; and a
+; device compile of a module without a site, under profile use and under
+; profile generation, creates neither a manifest nor the cache. A host compile
+; whose unit has no manifest in the cache, under profile use and under profile
+; generation, says nothing, keeps the launch and creates no cache.
 ; RUN: mkdir %t/write
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/write/host.ll
 ; RUN: %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/write/c -poseidon-unit=u 2>&1 | FileCheck --check-prefix=WRITE-WROTE %s
@@ -24,6 +24,7 @@
 ; RUN: cat %t/write/c/launches_*.json | FileCheck --check-prefix=WRITE-FULL %s
 ; RUN: %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/write/c -poseidon-unit=u 2>&1 | FileCheck --check-prefix=WRITE-NONE %s
 ; RUN: ls %t/write/c | FileCheck --allow-empty --check-prefix=WRITE-AFTER %s
+; RUN: %clang -O0 -Wno-override-module -x ir %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/write/c -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: grep -v __poseidon_fp_optimize %{dev} > %t/write/siteless.ll
 ; RUN: %opt %t/write/siteless.ll %{pass} -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/write/fresh -S -o /dev/null
 ; RUN: not ls %t/write/fresh
@@ -60,20 +61,28 @@
 
 ; LAUNCH-LABEL: define dso_local void @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; LAUNCH: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
-; LAUNCH: call i32 @__cudaPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; LAUNCH: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
 ; LAUNCH-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
 ; LAUNCH-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; LAUNCH-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[GC:[0-9]+]], ptr align 8 %[[GRID]], i64 12, i1 false)
-; LAUNCH-NEXT: %[[GXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 0
-; LAUNCH-NEXT: %[[GXY:[0-9]+]] = load i64, ptr %[[GXYP]], align 8
-; LAUNCH-NEXT: %[[GZP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 1
-; LAUNCH-NEXT: %[[GZ:[0-9]+]] = load i32, ptr %[[GZP]], align 8
-; LAUNCH-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[BC:[0-9]+]], ptr align 8 %[[BLOCK]], i64 12, i1 false)
-; LAUNCH-NEXT: %[[BXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 0
-; LAUNCH-NEXT: %[[BXY:[0-9]+]] = load i64, ptr %[[BXYP]], align 8
-; LAUNCH-NEXT: %[[BZP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 1
-; LAUNCH-NEXT: %[[BZ:[0-9]+]] = load i32, ptr %[[BZP]], align 8
-; LAUNCH-NEXT: %{{[0-9]+}} = call noundef i32 @cudaLaunchKernel(ptr noundef @_Z28__device_stub__matmul_kernelPKdS0_PdS1_, i64 %[[GXY]], i32 %[[GZ]], i64 %[[BXY]], i32 %[[BZ]], ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
+; LAUNCH: call noundef i32 @cudaLaunchKernel(ptr noundef @_Z28__device_stub__matmul_kernelPKdS0_PdS1_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
+
+; The same for the descriptor a profile-generation compile of the annotated
+; kernel writes: after the annotation is removed, a device compile into the
+; same cache removes the manifest, and the host compile launches the kernel as
+; written instead of with shadow buffers it no longer takes. Profile generation
+; for an NVPTX kernel needs Enzyme and the NVPTX device profiler.
+; RUN: %if enzyme && nvptx-device-profiler %{ grep -v llvm.global.annotations %S/../Inputs/stale_cache/matmul_annotated_device.ll > %t/write/plain.ll %}
+; RUN: %if enzyme && nvptx-device-profiler %{ %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/write/gen -S -o /dev/null %}
+; RUN: %if enzyme && nvptx-device-profiler %{ cat %t/write/gen/launches_*.json | FileCheck --check-prefix=WRITE-GEN %s %}
+; RUN: %if enzyme && nvptx-device-profiler %{ %opt %t/write/plain.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/write/gen -S -o /dev/null %}
+; RUN: %if enzyme && nvptx-device-profiler %{ ls %t/write/gen | FileCheck --allow-empty --check-prefix=WRITE-AFTER %s %}
+; RUN: %if enzyme && nvptx-device-profiler %{ %clang -O0 -Wno-override-module -x ir %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/write/gen -S -emit-llvm -o %t/write/gen-after.ll %}
+; RUN: %if enzyme && nvptx-device-profiler %{ FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s < %t/write/gen-after.ll %}
+
+; WRITE-GEN:      "host dispatch": [],
+; WRITE-GEN-NEXT: "profile generation": [
+; WRITE-GEN-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 0 4 4 0 1 2 3 0 0 8 0"
+; WRITE-GEN-NEXT: ],
 
 ; Without -poseidon-unit, the two halves of a compile name their unit by the
 ; values of every Poseidon flag, so a host compile with the device compile's

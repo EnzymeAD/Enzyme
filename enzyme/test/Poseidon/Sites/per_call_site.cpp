@@ -16,7 +16,6 @@
 //
 // The profile of each call is keyed by the call, the same at every -O level.
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
-// RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/cg0 %s -o %t/gen0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > /dev/null

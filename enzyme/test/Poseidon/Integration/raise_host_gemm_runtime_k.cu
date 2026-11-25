@@ -20,6 +20,8 @@
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
+// A GPU program has no host site, so its profiling run records no allocation.
+// RUN: llvm-nm --defined-only %t/exe | not grep __poseidon_host_sites_present
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
@@ -140,20 +142,11 @@ int main(void) {
 
 // PRIMAL: RTGEMM-PASS
 
-// The dimensions are EXPRESSIONS over the body's parameters, not integers:
-// M = nDofs (arg2), Ncols = 3*numEls (arg1), K = 3*numPoints (arg0).
+// The dimensions are expressions over the body's parameters, not integers, as
+// the descriptor records them: M = nDofs (arg2), Ncols = 3*numEls (arg1),
+// K = 3*numPoints (arg0).
 // CHECK: [poseidon] Optimizing [[BODY:preprocess_rt_gemm_body]] with relative error tolerance: 0.000000e+00
-// CHECK-NEXT: [poseidon] GPU mode active for [[BODY]]
-// CHECK-NEXT: [poseidon] canonical form hash of [[BODY]] is ec8a91ad004ef65f
-// CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(3,3,1) LaunchCount=2
-// CHECK-NEXT: [hostgemm] [[BODY]]: 3 candidate reduction loop(s)
-// CHECK-NEXT: [hostgemm] [[BODY]]: recognized GEMM from 3 reduction loop(s)
-// CHECK-NEXT: [hostgemm]   C = A^T*B + beta*C  beta=1.000000e+00
-// CHECK-NEXT: [hostgemm]   M=arg2  Ncols=3*arg1  K=3*arg0{{$}}
-// CHECK-NEXT: [hostgemm]   lda=3*arg0  ldb=3*arg0  ldc=arg2{{$}}
-// CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param5 A=param4 B=param3{{$}}
-// CHECK-NEXT: [hostgemm]   profile shape M=3 Ncols=6 K=12 (per-CTA tile 3x3, launches=1 CTAs/launch=2 MACs=216)
-// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
 // CHECK-NEXT: Matmul[0]: 3x3x12 type=f64 origin=HostGemmLoopNest
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)

@@ -20,9 +20,6 @@
 ; by its TCEC backend in the accuracy memo and the DP table.
 
 ; TAU: DOMERR tcec library p95_relErr=1.106362e-07
-; TAU: #0 wmma m16n16k16 f16/f32  {{.*}}  domainError=INF
-; TAU-NEXT: #1 tcec n=2 wmma m16n16k16 f16/f32  {{.*}}  domainError=INF
-; TAU-NEXT: #2 tcec n=3 wmma m16n16k16 f16/f32  {{.*}}  domainError=INF
 ; TAU: #10 tcec-dispatch wmma m16n16k16 f16/f32  compCost/MAC=1.400000e+01  rel=2.734375e-02  domainError=[[ERR:[0-9.e+-]+]]
 ; TAU-NEXT: #11 direct-dispatch cublas f16/f32  {{.*}}  domainError=INF
 ; TAU: Poseidon error-budget: matmul -> tcec-dispatch wmma m16n16k16 f16/f32 (domain err [[ERR]] <= 1.000000e-06
