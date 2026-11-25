@@ -36,6 +36,16 @@ static bool fnBodyHasSamples(FunctionOpInterface fn) {
       .wasInterrupted();
 }
 
+/// Returns the function `symbol` names from `from` when its body is a single
+/// block, else null.
+static FunctionOpInterface
+lookupSingleBlockFn(SymbolTableCollection &symbolTable, Operation *from,
+                    SymbolRefAttr symbol) {
+  auto fn =
+      symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(from, symbol);
+  return llvm::hasSingleElement(fn.getFunctionBody()) ? fn : nullptr;
+}
+
 /// Returns false when the model shape is unsupported in region form.
 static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
                                       ArrayRef<Attribute> prefix,
@@ -86,18 +96,15 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
       continue;
     }
 
-    auto callee = dyn_cast_or_null<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(root, sampleOp.getFnAttr()));
-    if (!callee || callee.getFunctionBody().empty() ||
-        !llvm::hasSingleElement(callee.getFunctionBody()))
+    FunctionOpInterface callee =
+        lookupSingleBlockFn(symbolTable, root, sampleOp.getFnAttr());
+    if (!callee)
       return false;
 
     if (sampleOp.getLogpdfFnAttr()) {
-      auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(root,
-                                              sampleOp.getLogpdfFnAttr()));
-      if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
-          !llvm::hasSingleElement(logpdfFn.getFunctionBody()))
+      FunctionOpInterface logpdfFn =
+          lookupSingleBlockFn(symbolTable, root, sampleOp.getLogpdfFnAttr());
+      if (!logpdfFn)
         return false;
       if (fnBodyHasSamples(callee))
         return false;
@@ -119,24 +126,28 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
 }
 
 /// Copies the entry block of `fn` into a new block of `targetRegion`, with
-/// the function's return turned into an `impulse.yield`. Each other op is
-/// handed to `cloneOp`, which by default clones it.
+/// the function's return turned into an `impulse.yield`. The trailing
+/// arguments of `fn` read `boundTrailingArgs`; the others become the
+/// arguments of the new block. Each other op is handed to `cloneOp`, which by
+/// default clones it.
 static void inlineFunctionIntoRegion(
     OpBuilder &builder, FunctionOpInterface fn, Region &targetRegion,
+    ValueRange boundTrailingArgs = {},
     function_ref<void(Operation &, IRMapping &)> cloneOp = nullptr) {
   OpBuilder::InsertionGuard insertionGuard(builder);
-  Block *block = builder.createBlock(&targetRegion);
   Block &fnEntry = fn.getFunctionBody().front();
-
-  for (auto arg : fnEntry.getArguments())
-    block->addArgument(arg.getType(), arg.getLoc());
-
-  builder.setInsertionPointToStart(block);
+  ArrayRef<BlockArgument> blockArgs =
+      fnEntry.getArguments().drop_back(boundTrailingArgs.size());
+  SmallVector<Type> argTypes = llvm::map_to_vector(
+      blockArgs, [](BlockArgument arg) { return arg.getType(); });
+  SmallVector<Location> argLocs = llvm::map_to_vector(
+      blockArgs, [](BlockArgument arg) { return arg.getLoc(); });
+  Block *block = builder.createBlock(&targetRegion, {}, argTypes, argLocs);
 
   IRMapping fnMapper;
-  for (auto [fnArg, blockArg] :
-       llvm::zip(fnEntry.getArguments(), block->getArguments()))
-    fnMapper.map(fnArg, blockArg);
+  fnMapper.map(blockArgs, block->getArguments());
+  fnMapper.map(fnEntry.getArguments().take_back(boundTrailingArgs.size()),
+               boundTrailingArgs);
 
   for (Operation &op : fnEntry.getOperations()) {
     if (op.hasTrait<OpTrait::ReturnLike>()) {
@@ -159,10 +170,10 @@ static void emitDistSamplerIntoRegion(OpBuilder &builder,
                                       impulse::SampleOp sampleOp,
                                       impulse::DistAttr dist, Region &region) {
   OpBuilder::InsertionGuard guard(builder);
-  Block *block = builder.createBlock(&region);
-  for (Value input : sampleOp.getInputs())
-    block->addArgument(input.getType(), input.getLoc());
-  builder.setInsertionPointToStart(block);
+  ValueRange inputs = sampleOp.getInputs();
+  SmallVector<Location> locs =
+      llvm::map_to_vector(inputs, [](Value input) { return input.getLoc(); });
+  Block *block = builder.createBlock(&region, {}, inputs.getTypes(), locs);
 
   Value rng = block->getArgument(0);
   SmallVector<Value> distArgs(std::next(block->args_begin()),
@@ -179,12 +190,14 @@ static void emitDistLogpdfIntoRegion(OpBuilder &builder,
                                      impulse::SampleOp sampleOp,
                                      impulse::DistAttr dist, Region &region) {
   OpBuilder::InsertionGuard guard(builder);
-  Block *block = builder.createBlock(&region);
   auto sampleType = cast<RankedTensorType>(sampleOp.getResult(1).getType());
-  block->addArgument(sampleType, sampleOp.getLoc());
-  for (Value input : llvm::drop_begin(sampleOp.getInputs()))
-    block->addArgument(input.getType(), input.getLoc());
-  builder.setInsertionPointToStart(block);
+  SmallVector<Type> types{sampleType};
+  SmallVector<Location> locs{sampleOp.getLoc()};
+  for (Value input : llvm::drop_begin(sampleOp.getInputs())) {
+    types.push_back(input.getType());
+    locs.push_back(input.getLoc());
+  }
+  Block *block = builder.createBlock(&region, {}, types, locs);
 
   Value observed = block->getArgument(0);
   SmallVector<Value> distArgs(std::next(block->args_begin()),
@@ -347,9 +360,8 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
       return failure();
 
     SymbolTableCollection symbolTable;
-    auto fn = dyn_cast_or_null<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(inferOp, fnAttr));
-    if (!fn || fn.getFunctionBody().empty())
+    FunctionOpInterface fn = lookupSingleBlockFn(symbolTable, inferOp, fnAttr);
+    if (!fn)
       return failure();
 
     SmallVector<Attribute> reachable;
@@ -382,7 +394,7 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
 
     impulse::InferRegionOp regionOp = createInferRegion(rewriter, inferOp);
     inlineFunctionIntoRegion(
-        rewriter, fn, regionOp.getSampling(),
+        rewriter, fn, regionOp.getSampling(), /*boundTrailingArgs=*/{},
         [&](Operation &op, IRMapping &mapper) {
           if (auto sampleOp = dyn_cast<impulse::SampleOp>(&op)) {
             convertSampleToSampleRegion(rewriter, sampleOp, mapper,
@@ -435,25 +447,17 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
       return failure();
 
     SymbolTableCollection symbolTable;
-    auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(inferOp, logpdfFnAttr));
-    if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
-        !llvm::hasSingleElement(logpdfFn.getFunctionBody()))
+    FunctionOpInterface logpdfFn =
+        lookupSingleBlockFn(symbolTable, inferOp, logpdfFnAttr);
+    if (!logpdfFn)
       return failure();
     // logpdf_fn takes (position, inputs[1:]...): the position replaces the rng.
     if (logpdfFn.getNumArguments() != inferOp.getInputs().size())
       return failure();
 
     impulse::InferRegionOp regionOp = createInferRegion(rewriter, inferOp);
-
-    inlineFunctionIntoRegion(rewriter, logpdfFn, regionOp.getLogpdf());
-
-    Block &logpdfBlock = regionOp.getLogpdf().front();
-    auto inputs = inferOp.getInputs();
-    for (int64_t i = logpdfBlock.getNumArguments() - 1; i >= 1; --i) {
-      rewriter.replaceAllUsesWith(logpdfBlock.getArgument(i), inputs[i]);
-      logpdfBlock.eraseArgument(i);
-    }
+    inlineFunctionIntoRegion(rewriter, logpdfFn, regionOp.getLogpdf(),
+                             inferOp.getInputs().drop_front());
 
     // The sampler region stays empty: the density is the user logpdf.
     rewriter.replaceOp(inferOp, regionOp.getResults());
