@@ -31,6 +31,7 @@ SmallVector<XformAttr> bijectorFor(MLIRContext *ctx, SupportAttr support);
 /// forward: unconstrained z -> constrained y.
 Value emitBijectorForward(OpBuilder &builder, Location loc, XformAttr xform,
                           SupportAttr support, Value z);
+/// inverse: constrained y -> unconstrained z.
 Value emitBijectorInverse(OpBuilder &builder, Location loc, XformAttr xform,
                           SupportAttr support, Value y);
 /// log|det d(forward)/dz| summed over the event, evaluated at unconstrained z.
@@ -41,12 +42,17 @@ Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
 int64_t bijectorForwardSize(int64_t unconstrainedSize, SupportAttr support);
 int64_t bijectorInverseSize(int64_t constrainedSize, SupportAttr support);
 
+/// True when log|det J| of `kind` does not depend on its input.
 bool isConstantJacobian(XformKind kind);
 
+/// Elementwise log(x / (1 - x)).
 Value emitLogit(OpBuilder &builder, Location loc, Value x);
+/// Elementwise log(sigmoid(x)), stable for large |x|.
 Value emitLogSigmoid(OpBuilder &builder, Location loc, Value x);
 
+/// Elementwise log1p(exp(x)).
 Value emitSoftplus(OpBuilder &builder, Location loc, Value x);
+/// Elementwise log(exp(x) - 1), the inverse of emitSoftplus.
 Value emitSoftplusInv(OpBuilder &builder, Location loc, Value x);
 
 struct ScaledUnitLowerCholeskyResult {
