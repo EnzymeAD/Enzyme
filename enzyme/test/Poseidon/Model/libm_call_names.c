@@ -28,6 +28,5 @@ int main(void) {
 
 // CHECK: :name "0" (+ v0 (erf v0)))
 // CHECK: Initial ComputationCost: 1.200000e+01
-// CHECK-NEXT: Initial HerbieCost:
 // CHECK-NEXT: Initial HerbieAccuracy:
 // CHECK-NEXT: Initial Expression: (+ v0 (erf v0))
