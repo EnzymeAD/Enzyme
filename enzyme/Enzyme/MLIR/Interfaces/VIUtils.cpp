@@ -63,29 +63,15 @@ static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
   return result;
 }
 
-static Value sumVector1xD(OpBuilder &builder, Location loc, Value v,
-                          RankedTensorType positionType) {
-  auto scalarType = RankedTensorType::get({}, positionType.getElementType());
-  auto ones = scalarConst(builder, loc, positionType, 1.0);
-  return impulse::DotOp::create(
-      builder, loc, scalarType, v, ones,
-      /*lhs_contract=*/builder.getDenseI64ArrayAttr({0, 1}),
-      /*rhs_contract=*/builder.getDenseI64ArrayAttr({0, 1}));
-}
-
+/// Sums all elements of `tensor` into a rank-0 tensor with a dot against ones.
 static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
   auto tensorType = cast<RankedTensorType>(tensor.getType());
-  auto elemType = tensorType.getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto ones = arith::ConstantOp::create(
-      builder, loc, tensorType,
-      DenseElementsAttr::get(tensorType, builder.getFloatAttr(elemType, 1.0)));
-  SmallVector<int64_t> allDims;
-  for (int64_t i = 0; i < tensorType.getRank(); ++i)
-    allDims.push_back(i);
-  return impulse::DotOp::create(builder, loc, scalarType, tensor, ones,
-                                builder.getDenseI64ArrayAttr(allDims),
-                                builder.getDenseI64ArrayAttr(allDims));
+  auto scalarType = RankedTensorType::get({}, tensorType.getElementType());
+  Value ones = scalarConst(builder, loc, tensorType, 1.0);
+  DenseI64ArrayAttr allDims = builder.getDenseI64ArrayAttr(
+      llvm::to_vector(llvm::seq<int64_t>(0, tensorType.getRank())));
+  return impulse::DotOp::create(builder, loc, scalarType, tensor, ones, allDims,
+                                allDims);
 }
 
 /// Sum as canary: a NaN/Inf gradient element makes its sum non-finite.
@@ -112,11 +98,10 @@ static Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
 static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
                               Value sumLogScale, Value eps,
                               const VIContext &ctx) {
-  auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
   Value epsSq = arith::MulFOp::create(builder, loc, eps, eps);
-  Value sumEpsSq = sumVector1xD(builder, loc, epsSq, positionType);
+  Value sumEpsSq = sumAllElements(builder, loc, epsSq);
   Value halfSumEpsSq = arith::MulFOp::create(
       builder, loc, sumEpsSq, scalarConst(builder, loc, scalarType, 0.5));
   Value log2piTerm = scalarConst(builder, loc, scalarType,
@@ -348,8 +333,7 @@ emitSingleParticleELBO(OpBuilder &builder, Location loc, Value locParam,
                                    "VI: zConstrained", ctx.debugDump);
 
     Value logScale = math::LogOp::create(builder, loc, scaleDumped);
-    Value sumLogScale =
-        sumVector1xD(builder, loc, logScale, ctx.getPositionType());
+    Value sumLogScale = sumAllElements(builder, loc, logScale);
     Value logQUnc = emitGaussianLogQ(builder, loc, sumLogScale, eps, ctx);
     logQUnc =
         conditionalDump(builder, loc, logQUnc, "VI: logQUnc", ctx.debugDump);
