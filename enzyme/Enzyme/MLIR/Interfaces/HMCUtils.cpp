@@ -79,66 +79,52 @@ static bool isDiagonalMass(RankedTensorType t) {
          (t.getRank() == 2 && t.getShape()[0] == 1 && t.getShape()[1] != 1);
 }
 
-/// Creates a 2D identity matrix of the specified type.
-static Value createIdentityMatrix(OpBuilder &builder, Location loc,
-                                  RankedTensorType matrixType) {
+/// Creates a constant square matrix holding 1 where `isOne(row, col)` and 0
+/// elsewhere.
+static Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
+                                 RankedTensorType matrixType,
+                                 function_ref<bool(int64_t, int64_t)> isOne) {
   assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
   assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
          "Expected square matrix type");
 
   int64_t size = matrixType.getShape()[0];
-  auto elemType = matrixType.getElementType();
+  Type elemType = matrixType.getElementType();
 
   SmallVector<Attribute> values;
   values.reserve(size * size);
-  for (int64_t i = 0; i < size; ++i) {
-    for (int64_t j = 0; j < size; ++j) {
-      double val = (i == j) ? 1.0 : 0.0;
-      values.push_back(builder.getFloatAttr(elemType, val));
-    }
-  }
+  for (int64_t i = 0; i < size; ++i)
+    for (int64_t j = 0; j < size; ++j)
+      values.push_back(builder.getFloatAttr(elemType, isOne(i, j) ? 1.0 : 0.0));
 
   auto denseAttr = DenseElementsAttr::get(matrixType, values);
   return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
 }
 
-/// Creates a permutation matrix of size n x n.
-static Value createPermutationMatrix(OpBuilder &builder, Location loc,
-                                     RankedTensorType matrixType) {
-  assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
-  assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
-         "Expected square matrix type");
-
-  int64_t size = matrixType.getShape()[0];
-  auto elemType = matrixType.getElementType();
-
-  SmallVector<Attribute> values;
-  values.reserve(size * size);
-  for (int64_t i = 0; i < size; ++i) {
-    for (int64_t j = 0; j < size; ++j) {
-      double val = (j == size - 1 - i) ? 1.0 : 0.0;
-      values.push_back(builder.getFloatAttr(elemType, val));
-    }
-  }
-
-  auto denseAttr = DenseElementsAttr::get(matrixType, values);
-  return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
+/// Creates a 2D identity matrix of the specified type.
+static Value createIdentityMatrix(OpBuilder &builder, Location loc,
+                                  RankedTensorType matrixType) {
+  return emitIndicatorMatrix(builder, loc, matrixType,
+                             [](int64_t i, int64_t j) { return i == j; });
 }
 
 /// Computes A[::-1, ::-1] using permutation matrix through P @ A @ P.
 static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
                                    Value matrix) {
   auto matrixType = cast<RankedTensorType>(matrix.getType());
-  auto P = createPermutationMatrix(builder, loc, matrixType);
+  int64_t size = matrixType.getShape()[0];
+  Value permutation = emitIndicatorMatrix(
+      builder, loc, matrixType,
+      [size](int64_t i, int64_t j) { return j == size - 1 - i; });
 
   // PA = P @ A
   auto rowsReversed = impulse::DotOp::create(
-      builder, loc, matrixType, P, matrix, builder.getDenseI64ArrayAttr({1}),
-      builder.getDenseI64ArrayAttr({0}));
+      builder, loc, matrixType, permutation, matrix,
+      builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
 
   // PAP = PA @ P
-  return impulse::DotOp::create(builder, loc, matrixType, rowsReversed, P,
-                                builder.getDenseI64ArrayAttr({1}),
+  return impulse::DotOp::create(builder, loc, matrixType, rowsReversed,
+                                permutation, builder.getDenseI64ArrayAttr({1}),
                                 builder.getDenseI64ArrayAttr({0}));
 }
 
