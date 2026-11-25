@@ -46,7 +46,7 @@
 ; RUN: ls %t/sig | FileCheck --allow-empty --check-prefix=FILES %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=RETRY %s
 
-; SIGNAL: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key {{[0-9A-F]+$}}
+; SIGNAL: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 1 worker(s), per-core timeout 1800 s, wall budget 3840 s, key {{[0-9A-F]+$}}
 ; SIGNAL-NEXT: warning: {{.*}}preprocess_tester{{.*}}: Poseidon: Herbie subgraph 0 of preprocess_tester crashed (signal: {{.+}}) after {{[0-9.e+-]+}} s, so the subgraph has no algebraic candidates in this compile; nothing is cached, so the next compile runs Herbie again{{$}}
 ; SIGNAL: DP table contains 1 entries.
 ; SIGNAL-NOT: Applying solution
@@ -56,7 +56,7 @@
 
 ; FILES-NOT: cachedHerbie
 
-; RETRY: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout 1800 s, wall budget 2040 s, key [[KEY:[0-9A-F]+]]{{$}}
+; RETRY: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 1 worker(s), per-core timeout 1800 s, wall budget 3840 s, key [[KEY:[0-9A-F]+]]{{$}}
 ; RETRY: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_[[KEY]].json{{$}}
 ; RETRY-NEXT: [poseidon] Herbie subgraph 0 of preprocess_tester: completed in {{[0-9.e+-]+}} s, a fresh answer of the Herbie with digest {{[0-9A-F]+}}{{$}}
 ; RETRY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}

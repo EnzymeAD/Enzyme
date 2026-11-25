@@ -259,8 +259,15 @@ POSEIDON_HERBIE_OPTION(
     "the host half takes the launch descriptors the device half of the same "
     "source and unit wrote (poseidon-clang passes one to both halves of each "
     "compile)")
-POSEIDON_HERBIE_OPTION(HerbieNumThreads, Int, 8, "poseidon-herbie-threads",
-                       Hidden, Other, "", "Threads Herbie runs on")
+// Herbie reseeds and resets its search for every FPCore, so how the cores are
+// split across workers and processes decides how soon they are answered, and
+// so whether a per-core timeout fires, but not a completed answer.
+POSEIDON_HERBIE_OPTION(
+    HerbieNumThreads, Int, 1, "poseidon-herbie-threads", Hidden, Other, "",
+    "Herbie workers one FP subgraph's FPCores are searched on, each its own "
+    "Herbie process unless -poseidon-herbie-processes says otherwise; every "
+    "process holds a Racket heap, so a compile's memory and CPU use grow with "
+    "this count, and a parallel build runs that many per compile job")
 POSEIDON_HERBIE_OPTION(HerbieTimeout, Unsigned, 0, "poseidon-herbie-timeout",
                        Hidden, Other, "",
                        "Herbie's --timeout, in seconds, for each FPCore; 0 "

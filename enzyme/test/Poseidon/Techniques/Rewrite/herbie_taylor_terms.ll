@@ -38,9 +38,9 @@
 ; passed and the cache key is the one UNSET pins. A Herbie that does not take
 ; the option stops the compile.
 
-; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 2 Taylor terms: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout {{.*}}, key [[KEY2:[0-9A-F]+]]
+; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 2 Taylor terms: 2 FPCore(s) in 1 process(es) of 1 worker(s), per-core timeout {{.*}}, key [[KEY2:[0-9A-F]+]]
 ; SEARCH24: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_[[KEY2]].json
-; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 4 Taylor terms: 2 FPCore(s) in 1 process(es) of 2 worker(s), per-core timeout {{.*}}, key [[KEY4:[0-9A-F]+]]
+; SEARCH24: [poseidon] Herbie subgraph 0 of preprocess_tester at 4 Taylor terms: 2 FPCore(s) in 1 process(es) of 1 worker(s), per-core timeout {{.*}}, key [[KEY4:[0-9A-F]+]]
 ; SEARCH24: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_[[KEY4]].json
 
 ; CALLS24: {{^}}fake-herbie: report {{.*}} --enable reduce:dag-cost --num-taylor-terms 2 {{[^ ]+}} {{[^ ]+$}}

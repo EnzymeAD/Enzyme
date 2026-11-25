@@ -21,8 +21,10 @@
 ; search's results and the first table. Herbie's timeouts and worker count
 ; are not part of the key, so changing them reads both caches. Another Herbie
 ; binary searches again, and its answers, the same, read the table back: the
-; table depends on the answers, not on which Herbie gave them.
+; table depends on the answers, not on which Herbie gave them. Without
+; -poseidon-herbie-threads a search runs one Herbie process of one worker.
 
+; FIRST: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in 1 process(es) of 1 worker(s),
 ; FIRST: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_{{[0-9A-F]+}}.json
 ; FIRST-NOT: DP cache entry
 ; FIRST: Solving the DP for preprocess_tester.
