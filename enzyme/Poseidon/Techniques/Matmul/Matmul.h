@@ -14,7 +14,6 @@
 #include "Profile/ProfileRead.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Techniques/Unit.h"
-#include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
@@ -222,12 +221,6 @@ struct GemmBodyNote {
   /// Byte offsets of the three operand pointers inside their parameter, when
   /// the parameter is a by-value aggregate; -1 when it is the pointer itself.
   int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  /// The selected variant's scheme, which names the host runtime entry, and
-  /// its descriptorModulusField.
-  Scheme scheme = Scheme::OzakiII;
-  /// The descriptor's modulus field for `scheme` (descriptorModulusField); its
-  /// default means nothing until a library call is applied.
-  unsigned numModuli = kOzakiIIMaxModuli;
   bool standalone = false; // body is a pure GEMM (only the C store)
   /// M x Ncols x K and the leading dimensions (in elements) at deploy scale,
   /// indexed by GemmDim. The host stub evaluates a dimension with factors from
@@ -355,6 +348,16 @@ void collectScalarLoopReductionTrips(
     const Options &O, llvm::Function &F,
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
 
+/// The library call the solve chose for a body: the product's descriptor and
+/// the variant whose scheme names the runtime entry and whose
+/// descriptorModulusField is the entry's last argument.
+struct ChosenLibraryCall {
+  /// The descriptor the recognizer derived for the product.
+  GemmBodyNote note;
+  /// The variant the solve chose.
+  SchemeVariant variant;
+};
+
 /// A site of a joint solve whose library-call descriptor is written after
 /// materialization: the kernel it is launched through and how the body's
 /// parameters map to that kernel's arguments.
@@ -376,8 +379,9 @@ struct WmmaTarget {
 
 /// What the matrix-product pipeline records over a compile.
 struct MatmulState {
-  /// The GEMM note of each optimized body clone, keyed by the clone.
-  std::map<const llvm::Function *, GemmBodyNote> GemmBodies;
+  /// The library call chosen for each optimized body clone, keyed by the
+  /// clone.
+  std::map<const llvm::Function *, ChosenLibraryCall> GemmBodies;
   /// In the order the sites were split, so that of two sites of one wrapper the
   /// same one is recorded last in every compile.
   llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;

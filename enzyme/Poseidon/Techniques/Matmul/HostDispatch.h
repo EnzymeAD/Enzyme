@@ -35,7 +35,7 @@ class Session;
 /// wrapper's host dispatch descriptor.
 void writeGemmDescriptor(Session &S, llvm::Function &wrapper,
                          llvm::ArrayRef<llvm::Value *> primalArgs,
-                         const GemmBodyNote &n);
+                         const ChosenLibraryCall &call);
 
 /// For a joint solve, whose notes exist only after materialization:
 /// addPendingGemmDispatch records the body-parameter to wrapper-argument map

@@ -205,13 +205,11 @@ Expected<std::optional<GemmBodyNote>> libraryCallNote(const Session &S,
   return note;
 }
 
-Error applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
-                       const SchemeVariant &v) {
+Error applyLibraryCall(Session &S, const AbstractMatmul &m,
+                       const GemmBodyNote &note, const SchemeVariant &v) {
   assert(S.Opts.Matmul.OzakiHostDispatch &&
          "library calls are proposed only under -poseidon-ozaki-host-dispatch");
   Function *F = const_cast<Function *>(anchorOf(m).getFunction());
-  note.scheme = v.scheme;
-  note.numModuli = descriptorModulusField(v);
   // One descriptor per body: the host replaces or precedes its kernel's launch
   // with one library call, and the solve chooses for the body's products
   // independently.
@@ -221,14 +219,16 @@ Error applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
                          " was selected to run as a library call, and a "
                          "kernel's launch takes one; leave out "
                          "-poseidon-ozaki-host-dispatch for this body.");
-  S.Matmul.GemmBodies[F] = note;
+  S.Matmul.GemmBodies[F] = {note, v};
   if (!note.standalone)
     fissionGemmForDispatch(S.Opts, *F, m);
   return Error::success();
 }
 
 static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
-                           int aArg, int bArg, const GemmBodyNote &n) {
+                           int aArg, int bArg, const GemmBodyNote &n,
+                           const SchemeVariant &v) {
+  const unsigned modulusField = descriptorModulusField(v);
   std::string message;
   raw_string_ostream msg(message);
   msg << "[poseidon] wrote descriptor for " << wrapperName
@@ -237,7 +237,7 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
       << " B=" << launchRefString({bArg, n.bOffset}, "arg") << ' '
       << runtimeDimString(n.dims[DimM]) << 'x'
       << runtimeDimString(n.dims[DimNcols]) << 'x'
-      << runtimeDimString(n.dims[DimK]) << " nm=" << n.numModuli
+      << runtimeDimString(n.dims[DimK]) << " nm=" << modulusField
       << (n.standalone ? " (standalone)" : " (fused)");
   for (const auto &[x, y] : n.assumedEqual)
     msg << ", if " << launchRefString(x, "arg")
@@ -247,9 +247,9 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
       S.Launches, LaunchKind::HostDispatch, wrapperName,
       [&](raw_ostream &os) {
         os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' '
-           << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' '
+           << (n.standalone ? 1 : 0) << ' ' << modulusField << ' '
            << (n.aColMajor ? 1 : 0) << ' ' << (n.bColMajor ? 1 : 0) << ' '
-           << (n.cColMajor ? 1 : 0) << ' ' << (unsigned)n.scheme;
+           << (n.cColMajor ? 1 : 0) << ' ' << (unsigned)v.scheme;
         // Per dimension the factor count, each factor's argument and offset,
         // mul and add.
         os << " rd";
@@ -280,8 +280,9 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
 // flush: map C/A/B and the dimensions through `paramToArg` (body parameter to
 // wrapper launch argument), which libraryCallNote checked.
 static void emitMappedDescriptor(Session &S, Function &wrapper,
-                                 const GemmBodyNote &n,
+                                 const ChosenLibraryCall &call,
                                  ArrayRef<int> paramToArg) {
+  const GemmBodyNote &n = call.note;
   auto mapParam = [&](int bp) -> int {
     if (bp < 0 || (size_t)bp >= paramToArg.size())
       return -1;
@@ -304,12 +305,13 @@ static void emitMappedDescriptor(Session &S, Function &wrapper,
   }
   assert(onlyCallsItsSite(wrapper) &&
          "a library call is proposed only for a kernel that does nothing else");
-  emitDescriptor(S, wrapper.getName(), cArg, aArg, bArg, mapped);
+  emitDescriptor(S, wrapper.getName(), cArg, aArg, bArg, mapped, call.variant);
 }
 
 void writeGemmDescriptor(Session &S, Function &wrapper,
-                         ArrayRef<Value *> primalArgs, const GemmBodyNote &n) {
-  emitMappedDescriptor(S, wrapper, n, launchArgsOf(primalArgs));
+                         ArrayRef<Value *> primalArgs,
+                         const ChosenLibraryCall &call) {
+  emitMappedDescriptor(S, wrapper, call, launchArgsOf(primalArgs));
 }
 
 void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
@@ -332,6 +334,9 @@ namespace {
 // factors naming launch arguments of `kernel`.
 struct LaunchDesc : GemmBodyNote {
   std::string kernel;
+  /// The runtime entry and its last argument, as the descriptor records them.
+  Scheme scheme;
+  unsigned modulusField;
 };
 } // namespace
 
@@ -409,10 +414,10 @@ static Error readDispatchDescriptors(const Options &O, Module &M,
         d.aParam = Cursor.integer<int>("A argument");
         d.bParam = Cursor.integer<int>("B argument");
         d.standalone = Cursor.integer<int>("standalone flag") != 0;
-        d.numModuli = Cursor.integer<unsigned>("modulus field");
-        if (d.numModuli > kOzakiIIMaxModuli)
-          Cursor.fail("its modulus field " + Twine(d.numModuli) + " is above " +
-                      Twine(kOzakiIIMaxModuli));
+        d.modulusField = Cursor.integer<unsigned>("modulus field");
+        if (d.modulusField > kOzakiIIMaxModuli)
+          Cursor.fail("its modulus field " + Twine(d.modulusField) +
+                      " is above " + Twine(kOzakiIIMaxModuli));
         d.aColMajor = Cursor.integer<int>("A layout") != 0;
         d.bColMajor = Cursor.integer<int>("B layout") != 0;
         d.cColMajor = Cursor.integer<int>("C layout") != 0;
@@ -600,7 +605,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
   a.stream = launchStreamHandle(B, *launch);
   SmallVector<Value *, 16> args = a.values();
   if (dispatchHasMode(d.scheme))
-    args.push_back(I32(d.numModuli));
+    args.push_back(I32(d.modulusField));
   Value *holds = nullptr;
   for (const auto &[x, y] : d.assumedEqual) {
     Value *lhs = value(x, i32);

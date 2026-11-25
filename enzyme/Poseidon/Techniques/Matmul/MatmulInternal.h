@@ -121,7 +121,7 @@ libraryCallNote(const Session &S, const AbstractMatmul &m);
 /// rewrites the launch from, fissioning a fused constant-trip body. A second
 /// library call selected for one body is an error: a launch takes one.
 llvm::Error applyLibraryCall(Session &S, const AbstractMatmul &m,
-                             GemmBodyNote note, const SchemeVariant &v);
+                             const GemmBodyNote &note, const SchemeVariant &v);
 
 /// The shared-memory layout of an in-kernel raise: each extent of the product
 /// padded to whole tiles, and per slice (one for the direct scheme) an A tile
