@@ -31,6 +31,31 @@ using namespace mlir::enzyme;
 using namespace mlir::impulse;
 using namespace mlir::impulse::VI;
 
+namespace {
+/// The model and configuration of one VI inference op.
+struct VIContext : public ModelContext {
+  Value learningRate;
+  /// Number of optimizer steps.
+  int64_t numSteps = 0;
+  GuideKind guideKind;
+  OptimizerKind optimizerKind;
+  int64_t numParticles = 1;
+  double initScale = 0.1;
+  double adamB1 = 0.9;
+  double adamB2 = 0.999;
+  double adamEps = 1.0e-8;
+  /// Per-element gradient clip of CLIPPED_ADAM.
+  double clipNorm = 10.0;
+  /// Half-width of the uniform initial location used without `init_position`.
+  double initRadius = 2.0;
+  double momentumMass = 0.9;
+  double rmspropGamma = 0.9;
+  double rmspropEps = 1.0e-8;
+  /// Skip steps whose ELBO or gradient is not finite; the key still advances.
+  bool stableUpdate = false;
+};
+} // namespace
+
 /// Sums all elements of `tensor` into a rank-0 tensor with a dot against ones.
 static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
   auto tensorType = cast<RankedTensorType>(tensor.getType());
@@ -119,7 +144,7 @@ struct SVILoopResult {
 static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
                                  const VIContext &ctx) {
   Block &lpBlock = ctx.logpdfRegion->front();
-  auto elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
 
   IRMapping mapping;
   for (auto [arg, slice] :
@@ -196,7 +221,7 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
 
   auto seedSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, pkey);
@@ -313,7 +338,7 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
   int64_t d = ctx.positionSize;
 
   auto seedSplit = impulse::RandomSplitOp::create(
@@ -597,33 +622,36 @@ static ParamState applyOptimizer(OpBuilder &builder, Location loc,
   switch (ctx.optimizerKind) {
   case OptimizerKind::ADAM:
     return applyAdamUpdate(builder, loc, param, gradElbo, m, v, step,
-                           ctx.stepSize, ctx.adamB1, ctx.adamB2, ctx.adamEps,
+                           ctx.learningRate, ctx.adamB1, ctx.adamB2,
+                           ctx.adamEps,
                            /*clipNorm=*/0.0);
   case OptimizerKind::CLIPPED_ADAM:
     return applyAdamUpdate(builder, loc, param, gradElbo, m, v, step,
-                           ctx.stepSize, ctx.adamB1, ctx.adamB2, ctx.adamEps,
-                           ctx.clipNorm);
+                           ctx.learningRate, ctx.adamB1, ctx.adamB2,
+                           ctx.adamEps, ctx.clipNorm);
   case OptimizerKind::MOMENTUM:
     return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                               ctx.stepSize, ctx.momentumMass);
+                               ctx.learningRate, ctx.momentumMass);
   case OptimizerKind::RMSPROP:
-    return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
-                              ctx.rmspropGamma, ctx.rmspropEps,
+    return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
+                              ctx.learningRate, ctx.rmspropGamma,
+                              ctx.rmspropEps,
                               /*momentumMass=*/std::nullopt);
   case OptimizerKind::ADAGRAD:
-    return applyAdagradUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
-                              ctx.momentumMass);
+    return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
+                              ctx.learningRate, ctx.momentumMass);
   case OptimizerKind::RMSPROP_MOMENTUM:
-    return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
-                              ctx.rmspropGamma, ctx.rmspropEps,
-                              ctx.momentumMass);
+    return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
+                              ctx.learningRate, ctx.rmspropGamma,
+                              ctx.rmspropEps, ctx.momentumMass);
   case OptimizerKind::SGD:
-    return applySGDUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize);
+    return applySGDUpdate(builder, loc, param, gradElbo, m, v,
+                          ctx.learningRate);
   }
   llvm_unreachable("unknown VI optimizer kind");
 }
 
-/// Emits `ctx.numSamples` SVI steps over the guide parameters `params0`. Null
+/// Emits `ctx.numSteps` SVI steps over the guide parameters `params0`. Null
 /// optimizer slots start at zero and a null `initStepCount` at step 0. Each
 /// step records its ELBO and the first parameter, constrained when
 /// `recordConstrained` is set.
@@ -632,17 +660,17 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
                                  Value initStepCount, const VIContext &ctx,
                                  ParticleEmitter emitParticle,
                                  bool recordConstrained) {
-  auto elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
   auto scalarType = ctx.getScalarType();
   auto traceBufType =
-      RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
-  auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
+      RankedTensorType::get({ctx.numSteps, ctx.positionSize}, elemType);
+  auto elboBufType = RankedTensorType::get({ctx.numSteps}, elemType);
   auto i64Type = RankedTensorType::get({}, builder.getI64Type());
   size_t numParams = params0.size();
 
   Value c0i = emitI64ScalarConstant(builder, loc, 0);
   Value c1i = emitI64ScalarConstant(builder, loc, 1);
-  Value cNi = emitI64ScalarConstant(builder, loc, ctx.numSamples);
+  Value cNi = emitI64ScalarConstant(builder, loc, ctx.numSteps);
   Value traceInit = emitSplatConstant(builder, loc, traceBufType, 0.0);
   Value elboInit = emitSplatConstant(builder, loc, elboBufType, 0.0);
   Value elboFinalSeed = emitSplatConstant(builder, loc, scalarType, 0.0);
@@ -742,7 +770,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
 
   builder.setInsertionPointAfter(forOp);
 
-  Value numSamplesI64 = emitI64ScalarConstant(builder, loc, ctx.numSamples);
+  Value numStepsI64 = emitI64ScalarConstant(builder, loc, ctx.numSteps);
   SVILoopResult result;
   result.traceBuf = forOp.getResult(numParams + 1);
   result.elboBuf = forOp.getResult(numParams + 2);
@@ -752,14 +780,45 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
                              forOp.getResult(numParams + 4 + 2 * i),
                              forOp.getResult(numParams + 5 + 2 * i)});
   result.stepCount =
-      arith::AddIOp::create(builder, loc, initStepCount, numSamplesI64);
+      arith::AddIOp::create(builder, loc, initStepCount, numStepsI64);
   return result;
+}
+
+/// Configures VI over `model` from the `vi_config`, `num_samples` and
+/// `init_step_size` of `op`.
+template <typename OpT>
+static VIContext makeVIContext(OpT op, ModelContext model) {
+  VIConfigAttr config = *op.getViConfig();
+  VIContext ctx{std::move(model)};
+  ctx.learningRate = op.getInitStepSize();
+  ctx.elementType =
+      cast<RankedTensorType>(ctx.learningRate.getType()).getElementType();
+  ctx.numSteps = op.getNumSamples();
+  ctx.guideKind = config.getGuideKind();
+  ctx.optimizerKind = config.getOptimizerKind();
+  ctx.numParticles = config.getNumParticles();
+  auto readIfSet = [](double &field, FloatAttr attr) {
+    if (attr)
+      field = attr.getValueAsDouble();
+  };
+  readIfSet(ctx.initScale, config.getInitScale());
+  readIfSet(ctx.adamB1, config.getAdamB1());
+  readIfSet(ctx.adamB2, config.getAdamB2());
+  readIfSet(ctx.adamEps, config.getAdamEps());
+  readIfSet(ctx.clipNorm, config.getClipNorm());
+  readIfSet(ctx.initRadius, config.getInitRadius());
+  readIfSet(ctx.momentumMass, config.getMomentumMass());
+  readIfSet(ctx.rmspropGamma, config.getRmspropGamma());
+  readIfSet(ctx.rmspropEps, config.getRmspropEps());
+  ctx.stableUpdate = config.getStableUpdate();
+  return ctx;
 }
 
 template <typename OpT>
 LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
-                                         VIContext ctx) {
+                                         ModelContext model) {
   Location loc = op.getLoc();
+  VIContext ctx = makeVIContext(op, std::move(model));
 
   if (ctx.numParticles <= 0) {
     op.emitError("Impulse VI: num_particles must be > 0");
@@ -772,7 +831,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
 
   rewriter.setInsertionPoint(op);
 
-  auto elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
   auto positionType = ctx.getPositionType();
 
   ValueRange stateIn = op.getStateIn();
@@ -937,6 +996,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
 
 template LogicalResult
 mlir::impulse::VI::lowerVI<impulse::InferOp>(PatternRewriter &,
-                                             impulse::InferOp, VIContext);
+                                             impulse::InferOp, ModelContext);
 template LogicalResult mlir::impulse::VI::lowerVI<impulse::InferRegionOp>(
-    PatternRewriter &, impulse::InferRegionOp, VIContext);
+    PatternRewriter &, impulse::InferRegionOp, ModelContext);

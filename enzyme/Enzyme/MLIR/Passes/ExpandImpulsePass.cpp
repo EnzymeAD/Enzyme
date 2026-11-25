@@ -558,35 +558,13 @@ struct ChainResult {
   }
 };
 
-/// Operands and position layout that the HMC, NUTS and VI lowerings read from
-/// an inference op.
-struct InferModel {
-  /// The traced model and the custom log-density; at most one is set.
-  FlatSymbolRefAttr fn;
-  FlatSymbolRefAttr logpdfFn;
-  SmallVector<Value> fnInputs;
-  SmallVector<Type> fnResultTypes;
-  Value originalTrace;
-  ArrayAttr selection;
-  ArrayAttr allAddresses;
-  SmallVector<impulse::SupportInfo> supports;
-  /// The `logpdf` region of an `impulse.infer_region`.
-  Region *logpdfRegion = nullptr;
-  DictionaryAttr autodiffAttrs;
-  int64_t positionSize = 0;
-  /// Width of one collected HMC/NUTS sample; differs from `positionSize` only
-  /// for SIMPLEX sites.
-  int64_t constrainedPositionSize = 0;
-};
-
 /// Emits the HMC/NUTS chains of one `impulse.infer` or `impulse.infer_region`.
 /// The constructor reads what all chains share and creates the kernel's
 /// constant operands; `emitChains` then emits the chains one after another.
 class MCMCChainEmitter {
 public:
   template <typename OpT>
-  MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
-                   bool debugDump);
+  MCMCChainEmitter(OpBuilder &builder, OpT op, ModelContext model);
 
   /// Emits every chain. Several chains each start from their own key: the
   /// input key split once per chain, or on resume the keys saved in the `rng`
@@ -613,8 +591,11 @@ private:
   /// Takes element `chainIdx` of the leading dimension of `value`.
   Value sliceChain(Value value, int64_t chainIdx);
 
+  /// The HMC context of `model` with the given mass matrix and step size.
   HMCContext makeHMCContext(Value invMass, Value massMatrixSqrt,
                             Value stepSize) const;
+  /// The NUTS context of `model` with the given mass matrix and step size,
+  /// for a transition from potential energy `potentialEnergy`.
   NUTSContext makeNUTSContext(Value invMass, Value massMatrixSqrt,
                               Value stepSize, Value potentialEnergy) const;
   /// One HMC or NUTS transition from `state`.
@@ -654,8 +635,7 @@ private:
 
   OpBuilder &builder;
   Location loc;
-  InferModel model;
-  bool debugDump;
+  ModelContext model;
 
   int64_t numWarmup;
   int64_t totalWarmup;
@@ -753,32 +733,60 @@ static SmallVector<Value> stackChainResults(OpBuilder &builder, Location loc,
 }
 
 /// Reads the operands that the HMC, NUTS and VI lowerings share; the caller
-/// fills in the supports and position sizes.
-template <typename OpT> static InferModel readInferModel(OpT op) {
-  InferModel model;
+/// lays out the position.
+template <typename OpT>
+static ModelContext readInferModel(OpT op, bool debugDump) {
+  ModelContext model;
   model.logpdfFn = op.getLogpdfFnAttr();
   if (!model.logpdfFn) {
     model.fn = op.getFnAttr();
     model.originalTrace = op.getOriginalTrace();
   }
   model.fnInputs = llvm::to_vector(op.getInputs().drop_front());
-  model.selection = op.getSelectionAttr();
   model.allAddresses = op.getAllAddressesAttr();
   model.autodiffAttrs = op.getAutodiffAttrsAttr();
+  model.debugDump = debugDump;
   if constexpr (std::is_same_v<OpT, impulse::InferRegionOp>)
     model.logpdfRegion = &op.getLogpdf();
   return model;
 }
 
+/// Lays out the top-level sites in the `selection` of `op` in
+/// `model.supports`, in `all_addresses` order if `positionDeclarationOrder`,
+/// else in `selection` order, and reads the result types of the model `fn` of
+/// `op`. Returns the number of values the selected sites hold; fails when
+/// there is none or a site cannot be laid out.
 template <typename OpT>
-MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
-                                   bool debugDump)
+static FailureOr<int64_t>
+resolveFlatModel(OpT op, bool positionDeclarationOrder,
+                 SymbolTableCollection &symbolTable, ModelContext &model) {
+  auto fn = cast<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+  ArrayAttr selection = op.getSelectionAttr();
+  int64_t numValues =
+      computePositionSizeForSelection(op, fn, selection, symbolTable);
+  if (numValues <= 0)
+    return failure();
+  if (failed(verifySelectedSupports(op, fn, selection)))
+    return failure();
+  model.supports =
+      collectSupportInfoForSelection(op, fn, selection, model.allAddresses,
+                                     symbolTable, positionDeclarationOrder);
+  auto fnType = cast<FunctionType>(fn.getFunctionType());
+  model.fnResultTypes.assign(fnType.getResults().begin(),
+                             fnType.getResults().end());
+  return numValues;
+}
+
+template <typename OpT>
+MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op,
+                                   ModelContext model)
     : builder(builder), loc(op.getLoc()), model(std::move(model)),
-      debugDump(debugDump), numWarmup(op.getNumWarmup()),
-      totalWarmup(op.getNumWarmup()), numSamples(op.getNumSamples()),
-      thinning(op.getThinning()), numChains(op.getNumChains()),
-      schema(op.getStateSchemaAttr()), stateIn(op.getStateIn()),
-      initPosition(op.getInitPosition()), initStepSize(op.getInitStepSize()),
+      numWarmup(op.getNumWarmup()), totalWarmup(op.getNumWarmup()),
+      numSamples(op.getNumSamples()), thinning(op.getThinning()),
+      numChains(op.getNumChains()), schema(op.getStateSchemaAttr()),
+      stateIn(op.getStateIn()), initPosition(op.getInitPosition()),
+      initStepSize(op.getInitStepSize()),
       initInvMass(op.getInitInverseMassMatrix()),
       isHMC(op.getHmcConfig().has_value()),
       isNUTS(op.getNutsConfig().has_value()) {
@@ -802,6 +810,7 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
   }
 
   elemType = cast<RankedTensorType>(initStepSize.getType()).getElementType();
+  this->model.elementType = elemType;
   positionType = RankedTensorType::get({1, this->model.positionSize}, elemType);
   scalarType = RankedTensorType::get({}, elemType);
   i64TensorType = RankedTensorType::get({}, builder.getI64Type());
@@ -889,13 +898,13 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
     state = warmedUp.chain;
     invMass = warmedUp.invMass;
     massMatrixSqrt = warmedUp.massMatrixSqrt;
-    stepSize =
-        conditionalDump(builder, loc, warmedUp.stepSize,
-                        "MCMC: adapted step size after warmup", debugDump);
+    stepSize = conditionalDump(builder, loc, warmedUp.stepSize,
+                               "MCMC: adapted step size after warmup",
+                               model.debugDump);
     if (adaptMassMatrix) {
       invMass = conditionalDump(
           builder, loc, invMass,
-          "MCMC: adapted inverse mass matrix after warmup", debugDump);
+          "MCMC: adapted inverse mass matrix after warmup", model.debugDump);
     }
     if (exposeAdaptation)
       finalAdaptation = AdaptationState{
@@ -911,7 +920,7 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
 
   ChainResult result = emitSampling(state, stepSize, invMass, massMatrixSqrt);
   result.trace = conditionalDump(builder, loc, result.trace,
-                                 "MCMC: collected samples", debugDump);
+                                 "MCMC: collected samples", model.debugDump);
   if (schema && !schema.empty())
     result.stateOut =
         packStateOut(state, stepSize, invMass, finalAdaptation, chainIdx);
@@ -950,38 +959,16 @@ Value MCMCChainEmitter::sliceChain(Value value, int64_t chainIdx) {
 
 HMCContext MCMCChainEmitter::makeHMCContext(Value invMass, Value massMatrixSqrt,
                                             Value stepSize) const {
-  HMCContext ctx =
-      model.logpdfFn
-          ? HMCContext(model.logpdfFn, model.fnInputs, invMass, massMatrixSqrt,
-                       stepSize, trajectoryLength, model.positionSize,
-                       model.autodiffAttrs)
-          : HMCContext(model.fn, model.fnInputs, model.fnResultTypes,
-                       model.originalTrace, model.selection, model.allAddresses,
-                       invMass, massMatrixSqrt, stepSize, trajectoryLength,
-                       model.positionSize, model.supports, model.autodiffAttrs);
-  ctx.numSteps = numSteps;
-  ctx.logpdfRegion = model.logpdfRegion;
-  ctx.debugDump = debugDump;
-  return ctx;
+  return HMCContext{model,          stepSize,         invMass,
+                    massMatrixSqrt, trajectoryLength, numSteps};
 }
 
 NUTSContext MCMCChainEmitter::makeNUTSContext(Value invMass,
                                               Value massMatrixSqrt,
                                               Value stepSize,
                                               Value potentialEnergy) const {
-  NUTSContext ctx =
-      model.logpdfFn
-          ? NUTSContext(model.logpdfFn, model.fnInputs, invMass, massMatrixSqrt,
-                        stepSize, model.positionSize, potentialEnergy,
-                        maxDeltaEnergy, maxTreeDepth, model.autodiffAttrs)
-          : NUTSContext(model.fn, model.fnInputs, model.fnResultTypes,
-                        model.originalTrace, model.selection,
-                        model.allAddresses, invMass, massMatrixSqrt, stepSize,
-                        model.positionSize, model.supports, potentialEnergy,
-                        maxDeltaEnergy, maxTreeDepth, model.autodiffAttrs);
-  ctx.logpdfRegion = model.logpdfRegion;
-  ctx.debugDump = debugDump;
-  return ctx;
+  return NUTSContext{makeHMCContext(invMass, massMatrixSqrt, stepSize),
+                     potentialEnergy, maxDeltaEnergy, maxTreeDepth};
 }
 
 MCMCKernelResult MCMCChainEmitter::runKernel(const ChainState &state,
@@ -1052,7 +1039,7 @@ MCMCChainEmitter::emitWarmup(const ChainState &start, Value stepSize,
 
   Value initialStepSize =
       conditionalDump(builder, loc, stepSize,
-                      "MCMC: initial step size before warmup", debugDump);
+                      "MCMC: initial step size before warmup", model.debugDump);
   AdaptationState adaptation =
       loadOrInitAdaptation(initialStepSize, adaptMassMatrix, saved);
 
@@ -1258,7 +1245,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
   int64_t startIdx = numSamples % thinning;
 
   auto samplesBufferType = RankedTensorType::get(
-      {collectionSize, model.constrainedPositionSize}, elemType);
+      {collectionSize, model.getConstrainedPositionSize()}, elemType);
   auto diagnosticsBufferType =
       RankedTensorType::get({collectionSize, 2}, builder.getI1Type());
   auto logDensityBufferType = RankedTensorType::get({collectionSize}, elemType);
@@ -3186,8 +3173,8 @@ struct ExpandImpulsePass
 
     /// Reads the model of an HMC/NUTS op. Reports a match failure for other
     /// inference configs and emits an error for a malformed op.
-    FailureOr<InferModel> resolveModel(MCMCOpT mcmcOp,
-                                       PatternRewriter &rewriter) const {
+    FailureOr<ModelContext> resolveModel(MCMCOpT mcmcOp,
+                                         PatternRewriter &rewriter) const {
       SymbolTableCollection symbolTable;
 
       bool hasLogpdfFn = static_cast<bool>(mcmcOp.getLogpdfFnAttr());
@@ -3232,14 +3219,12 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      InferModel model = readInferModel(mcmcOp);
-      auto sizesFromSupports = [&]() {
-        model.constrainedPositionSize = 0;
-        model.positionSize = 0;
-        for (const auto &info : model.supports) {
-          model.constrainedPositionSize += info.constrainedSize;
-          model.positionSize += info.unconstrainedSize;
-        }
+      ModelContext model = readInferModel(mcmcOp, debugDump);
+      auto unconstrainedSizeOf = [](ArrayRef<impulse::SupportInfo> supports) {
+        int64_t size = 0;
+        for (const impulse::SupportInfo &info : supports)
+          size += info.unconstrainedSize;
+        return size;
       };
 
       if (hasLogpdfFn) {
@@ -3248,7 +3233,6 @@ struct ExpandImpulsePass
         // `init_position` is `1xN` or chain-major `Cx1xN`; N is per chain.
         model.positionSize =
             initPosType.getNumElements() / mcmcOp.getNumChains();
-        model.constrainedPositionSize = model.positionSize;
       } else if constexpr (isRegionForm) {
         if (failed(verifySelectedSupports(mcmcOp)))
           return failure();
@@ -3258,11 +3242,11 @@ struct ExpandImpulsePass
                            "from the infer_region sampler");
           return failure();
         }
-        sizesFromSupports();
+        model.positionSize = unconstrainedSizeOf(model.supports);
         if (model.positionSize <= 0)
           return failure();
       } else {
-        for (Attribute address : model.selection) {
+        for (Attribute address : mcmcOp.getSelectionAttr()) {
           if (cast<ArrayAttr>(address).size() > 1) {
             mcmcOp.emitError("Impulse: HMC and NUTS on a model take only "
                              "top-level addresses in `selection`, not ")
@@ -3270,33 +3254,21 @@ struct ExpandImpulsePass
             return failure();
           }
         }
-        auto fn = cast<FunctionOpInterface>(
-            symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
-        if (computePositionSizeForSelection(mcmcOp, fn, model.selection,
-                                            symbolTable) <= 0)
+        if (failed(resolveFlatModel(mcmcOp, /*positionDeclarationOrder=*/false,
+                                    symbolTable, model)))
           return failure();
-        if (failed(verifySelectedSupports(mcmcOp, fn, model.selection)))
-          return failure();
-
-        model.supports = collectSupportInfoForSelection(
-            mcmcOp, fn, model.selection, model.allAddresses, symbolTable,
-            /*positionDeclarationOrder=*/false);
-        sizesFromSupports();
-
-        auto fnType = cast<FunctionType>(fn.getFunctionType());
-        model.fnResultTypes.assign(fnType.getResults().begin(),
-                                   fnType.getResults().end());
+        model.positionSize = unconstrainedSizeOf(model.supports);
       }
       return model;
     }
 
     LogicalResult matchAndRewrite(MCMCOpT mcmcOp,
                                   PatternRewriter &rewriter) const override {
-      FailureOr<InferModel> model = resolveModel(mcmcOp, rewriter);
+      FailureOr<ModelContext> model = resolveModel(mcmcOp, rewriter);
       if (failed(model))
         return failure();
 
-      MCMCChainEmitter emitter(rewriter, mcmcOp, std::move(*model), debugDump);
+      MCMCChainEmitter emitter(rewriter, mcmcOp, std::move(*model));
       SmallVector<ChainResult> chains =
           emitter.emitChains(mcmcOp.getInputs().front());
       if (chains.size() == 1) {
@@ -3336,16 +3308,13 @@ struct ExpandImpulsePass
         op.emitError("Impulse VI: requires init_step_size (learning rate)");
         return failure();
       }
-      Value stepSize = op.getInitStepSize();
 
       if (op.getInputs().empty()) {
         op.emitError("Impulse VI: requires at least rng_state input");
         return failure();
       }
 
-      InferModel model = readInferModel(op);
-      RegionVILayout regionLayout;
-
+      ModelContext model = readInferModel(op, debugDump);
       if constexpr (isRegionForm) {
         if (hasLogpdfFn) {
           op.emitError("Impulse VI: custom-logpdf mode is not supported in "
@@ -3359,12 +3328,14 @@ struct ExpandImpulsePass
         }
         if (failed(verifySelectedSupports(op)))
           return failure();
+        RegionVILayout regionLayout;
         if (!collectRegionVILayout(op, regionLayout)) {
           op.emitError("Impulse VI: failed to derive position layout from the "
                        "infer_region sampler");
           return failure();
         }
-        model.supports = regionLayout.supports;
+        model.supports = std::move(regionLayout.supports);
+        model.logpdfArgSlices = std::move(regionLayout.argSlices);
         model.positionSize = regionLayout.positionSize;
         if (model.positionSize <= 0)
           return failure();
@@ -3373,53 +3344,14 @@ struct ExpandImpulsePass
             cast<RankedTensorType>(op.getInitPosition().getType())
                 .getNumElements();
       } else {
-        auto fn = cast<FunctionOpInterface>(
-            symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
-        model.positionSize = computePositionSizeForSelection(
-            op, fn, model.selection, symbolTable);
-        if (model.positionSize <= 0)
+        FailureOr<int64_t> numValues = resolveFlatModel(
+            op, /*positionDeclarationOrder=*/true, symbolTable, model);
+        if (failed(numValues))
           return failure();
-        if (failed(verifySelectedSupports(op, fn, model.selection)))
-          return failure();
-
-        model.supports = collectSupportInfoForSelection(
-            op, fn, model.selection, model.allAddresses, symbolTable,
-            /*positionDeclarationOrder=*/true);
-
-        auto fnType = cast<FunctionType>(fn.getFunctionType());
-        model.fnResultTypes.assign(fnType.getResults().begin(),
-                                   fnType.getResults().end());
+        model.positionSize = *numValues;
       }
 
-      auto viConfig = op.getViConfig().value();
-      auto floatOr = [](FloatAttr attr, double fallback) {
-        return attr ? attr.getValueAsDouble() : fallback;
-      };
-
-      VI::VIContext viCtx(
-          model.fn, model.fnInputs, model.fnResultTypes, model.originalTrace,
-          model.allAddresses, stepSize, model.positionSize, op.getNumSamples(),
-          model.supports, viConfig.getGuideKind(), viConfig.getOptimizerKind(),
-          viConfig.getNumParticles(), floatOr(viConfig.getInitScale(), 0.1),
-          floatOr(viConfig.getAdamB1(), 0.9),
-          floatOr(viConfig.getAdamB2(), 0.999),
-          floatOr(viConfig.getAdamEps(), 1.0e-8));
-      viCtx.logpdfFn = model.logpdfFn;
-      viCtx.autodiffAttrs = model.autodiffAttrs;
-      viCtx.debugDump = debugDump;
-      viCtx.clipNorm = floatOr(viConfig.getClipNorm(), viCtx.clipNorm);
-      viCtx.initRadius = floatOr(viConfig.getInitRadius(), viCtx.initRadius);
-      viCtx.momentumMass =
-          floatOr(viConfig.getMomentumMass(), viCtx.momentumMass);
-      viCtx.rmspropGamma =
-          floatOr(viConfig.getRmspropGamma(), viCtx.rmspropGamma);
-      viCtx.rmspropEps = floatOr(viConfig.getRmspropEps(), viCtx.rmspropEps);
-      viCtx.stableUpdate = viConfig.getStableUpdate();
-      viCtx.logpdfRegion = model.logpdfRegion;
-      if constexpr (isRegionForm)
-        viCtx.logpdfArgSlices = regionLayout.argSlices;
-
-      return VI::lowerVI(rewriter, op, viCtx);
+      return VI::lowerVI(rewriter, op, std::move(model));
     }
   };
 

@@ -260,12 +260,8 @@ static Value copySiteColumns(OpBuilder &builder, Location loc, Value src,
 
 static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
-  // Constrained width, which differs from positionSize for SIMPLEX.
-  int64_t constrainedSize = 0;
-  for (const auto &info : ctx.supports)
-    constrainedSize += info.constrainedSize;
-  auto positionType2d =
-      RankedTensorType::get({1, constrainedSize}, ctx.getElementType());
+  auto positionType2d = RankedTensorType::get(
+      {1, ctx.getConstrainedPositionSize()}, ctx.elementType);
   Value zeroIndex = emitI64ScalarConstant(builder, loc, 0);
   Value position = emitSplatConstant(builder, loc, positionType2d, 0.0);
   return copySiteColumns(builder, loc, fullTrace, position, zeroIndex,
@@ -282,7 +278,7 @@ GenerateOp impulse::emitGenerateAt(OpBuilder &builder, Location loc,
   SmallVector<Value> inputs{rng};
   llvm::append_range(inputs, ctx.fnInputs);
   SmallVector<Type> resultTypes{
-      RankedTensorType::get({1, ctx.getFullTraceSize()}, ctx.getElementType()),
+      RankedTensorType::get({1, ctx.getFullTraceSize()}, ctx.elementType),
       ctx.getScalarType()};
   llvm::append_range(resultTypes, ctx.fnResultTypes);
   return impulse::GenerateOp::create(
@@ -296,7 +292,7 @@ GenerateOp impulse::emitGenerateAt(OpBuilder &builder, Location loc,
 static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
                                  Value qConstrained, const HMCContext &ctx) {
   Block &lpBlock = ctx.logpdfRegion->front();
-  Type elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
 
   IRMapping mapping;
   int64_t offset = 0;
@@ -369,8 +365,7 @@ static bool usesLogpdfSymbol(const HMCContext &ctx) {
 /// Reshapes a `1xN` position to the `tensor<N>` argument of the logpdf symbol.
 static Value flattenPosition(OpBuilder &builder, Location loc, Value position,
                              const HMCContext &ctx) {
-  auto flatType =
-      RankedTensorType::get({ctx.positionSize}, ctx.getElementType());
+  auto flatType = RankedTensorType::get({ctx.positionSize}, ctx.elementType);
   return impulse::ReshapeOp::create(builder, loc, flatType, position);
 }
 
@@ -384,9 +379,8 @@ static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
   RankedTensorType positionType = ctx.getPositionType();
   bool useSymbol = usesLogpdfSymbol(ctx);
   RankedTensorType autodiffType =
-      useSymbol
-          ? RankedTensorType::get({ctx.positionSize}, ctx.getElementType())
-          : positionType;
+      useSymbol ? RankedTensorType::get({ctx.positionSize}, ctx.elementType)
+                : positionType;
 
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{ctx.getScalarType(), rng.getType(), autodiffType},
@@ -1126,7 +1120,7 @@ SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
 NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
                                  const NUTSTreeState &initialTree,
                                  const NUTSContext &ctx) {
-  Type elemType = ctx.getElementType();
+  Type elemType = ctx.elementType;
   RankedTensorType scalarType = ctx.getScalarType();
 
   Value trueConst = emitI1ScalarConstant(builder, loc, true);

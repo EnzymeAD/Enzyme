@@ -108,25 +108,30 @@ struct IntegratorState {
 /// The density an MCMC or VI lowering targets: the model `fn` evaluated on
 /// `originalTrace` with the position written into the columns of `supports`,
 /// or the log density `logpdfFn` of the position, or the `logpdfRegion` of an
-/// `impulse.infer_region`. The element type is that of `stepSize`.
+/// `impulse.infer_region`.
 struct ModelContext {
   FlatSymbolRefAttr fn;
-  ArrayRef<Value> fnInputs;
-  SmallVector<Type> fnResultTypes;
-  Value originalTrace;
-  ArrayAttr allAddresses;
-  Value stepSize;
-  int64_t positionSize;
-  SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
-  DictionaryAttr autodiffAttrs;
-  /// Whether the lowering dumps intermediate values for debugging.
-  bool debugDump = false;
-
   /// When set, the log density is cloned from this region, whose block
   /// arguments take slices of the constrained position, instead of evaluated
   /// through `fn`.
   Region *logpdfRegion = nullptr;
+  /// Block argument k of `logpdfRegion` binds to the (offset, size) slice
+  /// `logpdfArgSlices[k]` of the position; set by the VI lowering.
+  SmallVector<std::pair<int64_t, int64_t>> logpdfArgSlices;
+  /// The operands of `fn` or `logpdfFn` after the RNG state or the position.
+  SmallVector<Value> fnInputs;
+  SmallVector<Type> fnResultTypes;
+  Value originalTrace;
+  ArrayAttr allAddresses;
+  SmallVector<SupportInfo> supports;
+  /// Attributes added to every `enzyme.autodiff_region` of the lowering.
+  DictionaryAttr autodiffAttrs;
+  /// Number of elements of the position the inference moves.
+  int64_t positionSize = 0;
+  Type elementType;
+  /// Whether the lowering dumps intermediate values for debugging.
+  bool debugDump = false;
 
   bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
 
@@ -137,70 +142,34 @@ struct ModelContext {
     return traceType.getShape()[1];
   }
 
-  Type getElementType() const {
-    return cast<RankedTensorType>(stepSize.getType()).getElementType();
+  /// Number of elements of the position mapped onto the supports of the
+  /// sites, which differs from `positionSize` only for SIMPLEX.
+  int64_t getConstrainedPositionSize() const {
+    if (supports.empty())
+      return positionSize;
+    int64_t size = 0;
+    for (const SupportInfo &info : supports)
+      size += info.constrainedSize;
+    return size;
   }
 
   RankedTensorType getPositionType() const {
-    return RankedTensorType::get({1, positionSize}, getElementType());
+    return RankedTensorType::get({1, positionSize}, elementType);
   }
 
   RankedTensorType getScalarType() const {
-    return RankedTensorType::get({}, getElementType());
+    return RankedTensorType::get({}, elementType);
   }
 };
 
+/// The model and parameters of an HMC or NUTS transition.
 struct HMCContext : public ModelContext {
-  ArrayAttr selection;
+  Value stepSize;
   Value invMass;
   Value massMatrixSqrt;
+  /// Sets the number of leapfrog steps of HMC unless `numSteps` is positive.
   Value trajectoryLength;
-  // 0 derives the step count from trajectoryLength.
   int64_t numSteps = 0;
-
-  HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-             ArrayRef<Type> fnResultTypes, Value originalTrace,
-             ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
-             Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
-             int64_t positionSize, ArrayRef<SupportInfo> supports,
-             DictionaryAttr autodiffAttrs = {})
-      : ModelContext{fn,
-                     fnInputs,
-                     SmallVector<Type>(fnResultTypes),
-                     originalTrace,
-                     allAddresses,
-                     stepSize,
-                     positionSize,
-                     SmallVector<SupportInfo>(supports),
-                     /*logpdfFn=*/{},
-                     autodiffAttrs},
-        selection(selection), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
-        trajectoryLength(trajectoryLength) {}
-
-  HMCContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
-             Value invMass, Value massMatrixSqrt, Value stepSize,
-             Value trajectoryLength, int64_t positionSize,
-             DictionaryAttr autodiffAttrs = {})
-      : ModelContext{/*fn=*/{},
-                     fnInputs,
-                     /*fnResultTypes=*/{},
-                     /*originalTrace=*/{},
-                     /*allAddresses=*/{},
-                     stepSize,
-                     positionSize,
-                     /*supports=*/{},
-                     logpdfFn,
-                     autodiffAttrs},
-        invMass(invMass), massMatrixSqrt(massMatrixSqrt),
-        trajectoryLength(trajectoryLength) {}
-
-  bool hasConstrainedSupports() const {
-    for (const auto &info : supports) {
-      if (info.support && info.support.getKind() != impulse::SupportKind::REAL)
-        return true;
-    }
-    return false;
-  }
 
   HMCContext withStepSize(Value newStepSize) const {
     HMCContext copy = *this;
@@ -209,31 +178,12 @@ struct HMCContext : public ModelContext {
   }
 };
 
+/// The model and parameters of a NUTS transition.
 struct NUTSContext : public HMCContext {
+  /// The Hamiltonian at the start of the transition.
   Value H0;
   Value maxDeltaEnergy;
-  int64_t maxTreeDepth;
-
-  NUTSContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-              ArrayRef<Type> fnResultTypes, Value originalTrace,
-              ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
-              Value massMatrixSqrt, Value stepSize, int64_t positionSize,
-              ArrayRef<SupportInfo> supports, Value H0, Value maxDeltaEnergy,
-              int64_t maxTreeDepth, DictionaryAttr autodiffAttrs = {})
-      : HMCContext(fn, fnInputs, fnResultTypes, originalTrace, selection,
-                   allAddresses, invMass, massMatrixSqrt, stepSize,
-                   /* Unused trajectoryLength */ Value(), positionSize,
-                   supports, autodiffAttrs),
-        H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
-
-  NUTSContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
-              Value invMass, Value massMatrixSqrt, Value stepSize,
-              int64_t positionSize, Value H0, Value maxDeltaEnergy,
-              int64_t maxTreeDepth, DictionaryAttr autodiffAttrs = {})
-      : HMCContext(logpdfFn, fnInputs, invMass, massMatrixSqrt, stepSize,
-                   /* Unused trajectoryLength */ Value(), positionSize,
-                   autodiffAttrs),
-        H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
+  int64_t maxTreeDepth = 0;
 
   NUTSContext withH0(Value newH0) const {
     NUTSContext copy = *this;
