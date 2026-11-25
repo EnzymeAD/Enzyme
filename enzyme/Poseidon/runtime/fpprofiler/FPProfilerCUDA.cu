@@ -31,18 +31,19 @@
 #include <iomanip>
 #include <limits>
 #include <map>
-#include <set>
 #include <string>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include "FPProfileName.h"
 #include "FPProfilerCUDA.h"
+#include "ShadowTable.h"
 #include "poseidon/poseidon.h"
 
-static std::string profileDir = POSEIDON_DEFAULT_PROFILE_DIR;
+using namespace poseidon;
+
+static std::string profileDir;
 static GPUProfileSlot *g_devSlots = nullptr;
 static size_t g_slotCount = 0;
 // Host-side handles on the device-allocated registry, read back at exit.
@@ -63,27 +64,22 @@ static std::vector<const void *> &poseidonModuleTables() {
   return *v;
 }
 
-// A device-side profiler abort (__trap) poisons the CUDA context without
-// failing the process, so both atexit writers check the context first and exit
-// nonzero. Every CUDA call in the registration path is checked: an ignored
-// failure leaves a sticky error on the context that the next caller of
-// cudaGetLastError() reports as its own.
+// Every GPU runtime call is checked: an ignored failure leaves a sticky error
+// on the context that the next caller of cudaGetLastError() reports as its
+// own, or a profile that is wrong.
 #define POSEIDON_CUDA_OK(call)                                                 \
   do {                                                                         \
     cudaError_t _e = (call);                                                   \
     if (_e != cudaSuccess) {                                                   \
-      fprintf(                                                                 \
-          stderr,                                                              \
-          "Poseidon FPProfiler: %s failed during registration (%s).\n"         \
-          "  The profiler registers from a static constructor, so this is  \
-the\n"   \
-          "  usual symptom of the device module not being registered yet "     \
-          "in a\n  multi-translation-unit binary.\n",                          \
-          #call, cudaGetErrorString(_e));                                      \
+      fflush(stdout);                                                          \
+      fprintf(stderr, "Poseidon FPProfiler: %s failed (%s).\n", #call,         \
+              cudaGetErrorString(_e));                                         \
       abort();                                                                 \
     }                                                                          \
   } while (0)
 
+// A device-side profiler abort (__trap) poisons the context without failing
+// the process, so the exit writer checks the context first and exits nonzero.
 static void poseidonProfileExitCheck() {
   cudaError_t st = cudaDeviceSynchronize();
   if (st == cudaSuccess)
@@ -99,50 +95,6 @@ static void poseidonProfileExitCheck() {
   _exit(1);
 }
 
-// `mkdir -p`: a missing intermediate component must not surface as an ignored
-// "could not open" warning.
-static void poseidonMkdirP(const std::string &dir) {
-  if (dir.empty())
-    return;
-  std::string acc;
-  size_t i = 0;
-  if (dir[0] == '/') {
-    acc = "/";
-    i = 1;
-  }
-  while (i <= dir.size()) {
-    size_t j = dir.find('/', i);
-    if (j == std::string::npos)
-      j = dir.size();
-    if (j > i) {
-      acc += dir.substr(i, j - i);
-      struct stat st = {0};
-      if (stat(acc.c_str(), &st) == -1)
-        mkdir(acc.c_str(), 0755);
-      acc += "/";
-    }
-    i = j + 1;
-  }
-}
-
-// A profile that cannot be written is a profile the solve will not find;
-// refuse rather than warn.
-static void poseidonProfileOpenFatal(const std::string &path,
-                                     const char *funcName) {
-  fflush(stdout);
-  fprintf(stderr,
-          "Poseidon FPProfiler: could not open profile file for writing:\n"
-          "  %s\n"
-          "  (%s; path component is %zu bytes)\n"
-          "  function: %s\n"
-          "The profile is LOST, and a solve run against this directory would "
-          "silently skip the site. Aborting.\n",
-          path.c_str(), strerror(errno),
-          path.size() - path.find_last_of('/') - 1, funcName);
-  fflush(stderr);
-  _exit(1);
-}
-
 // Tells the host profiler which kernels this writer wrote a profile for. Weak:
 // a program without the host profiler registers no kernel.
 extern "C" void poseidonProfileWritten(const char *funcName)
@@ -150,51 +102,45 @@ extern "C" void poseidonProfileWritten(const char *funcName)
 
 // The canonical form a record was taken against, from its static header lines.
 static std::string poseidonCanonicalHash(const char *text) {
-  const char *p = strstr(text, "CanonicalHash = ");
+  const char *p =
+      strstr(text, (std::string(kProfileKeyCanonicalHash) + " = ").c_str());
   if (!p)
     return "";
   const char *e = strchr(p, '\n');
   return std::string(p, e ? (size_t)(e - p) : strlen(p));
 }
 
+// The n elements at the device address `from`.
+template <typename T>
+static std::vector<T> poseidonReadBack(const T *from, size_t n) {
+  std::vector<T> to(n);
+  POSEIDON_CUDA_OK(
+      cudaMemcpy(to.data(), from, n * sizeof(T), cudaMemcpyDeviceToHost));
+  return to;
+}
+
 static void writeAllCUDAProfiles() {
   poseidonProfileExitCheck();
-  if (!g_devSlots || !g_devFuncNames)
+  // A probe run, or a program that profiled no kernel, has no tables.
+  if (!g_devSlots)
     return;
-  const size_t nameBytes = (size_t)g_maxFuncs * POSEIDON_FUNCNAME_MAXLEN;
-  char *h_names = new char[nameBytes];
-  if (cudaMemcpy(h_names, g_devFuncNames, nameBytes, cudaMemcpyDeviceToHost) !=
-      cudaSuccess) {
-    delete[] h_names;
-    return;
-  }
-
-  size_t total = (size_t)g_maxFuncs * g_slotCount;
-  GPUProfileSlot *h_slots = new GPUProfileSlot[total];
-  if (cudaMemcpy(h_slots, g_devSlots, total * sizeof(GPUProfileSlot),
-                 cudaMemcpyDeviceToHost) != cudaSuccess) {
-    delete[] h_slots;
-    delete[] h_names;
-    return;
-  }
-
-  const size_t staticBytes =
-      (size_t)g_maxFuncs * POSEIDON_PROFILE_STATIC_MAXLEN;
-  char *h_static = new char[staticBytes];
-  if (cudaMemcpy(h_static, g_devStaticByFunc, staticBytes,
-                 cudaMemcpyDeviceToHost) != cudaSuccess)
-    memset(h_static, 0, staticBytes);
-
-  uint32_t *h_gridByFunc = new uint32_t[(size_t)g_maxFuncs * 3];
-  uint32_t *h_blockByFunc = new uint32_t[(size_t)g_maxFuncs * 3];
-  unsigned long long *h_launchByFunc = new unsigned long long[g_maxFuncs];
-  cudaMemcpy(h_gridByFunc, g_devGridByFunc,
-             (size_t)g_maxFuncs * 3 * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-  cudaMemcpy(h_blockByFunc, g_devBlockByFunc,
-             (size_t)g_maxFuncs * 3 * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-  cudaMemcpy(h_launchByFunc, g_devLaunchByFunc,
-             (size_t)g_maxFuncs * sizeof(unsigned long long),
-             cudaMemcpyDeviceToHost);
+  std::vector<char> names = poseidonReadBack(
+      g_devFuncNames, (size_t)g_maxFuncs * POSEIDON_FUNCNAME_MAXLEN);
+  std::vector<GPUProfileSlot> slots =
+      poseidonReadBack(g_devSlots, (size_t)g_maxFuncs * g_slotCount);
+  std::vector<char> statics = poseidonReadBack(
+      g_devStaticByFunc, (size_t)g_maxFuncs * POSEIDON_PROFILE_STATIC_MAXLEN);
+  std::vector<uint32_t> gridByFunc =
+      poseidonReadBack(g_devGridByFunc, (size_t)g_maxFuncs * 3);
+  std::vector<uint32_t> blockByFunc =
+      poseidonReadBack(g_devBlockByFunc, (size_t)g_maxFuncs * 3);
+  std::vector<unsigned long long> launchByFunc =
+      poseidonReadBack(g_devLaunchByFunc, (size_t)g_maxFuncs);
+  char *h_names = names.data(), *h_static = statics.data();
+  GPUProfileSlot *h_slots = slots.data();
+  uint32_t *h_gridByFunc = gridByFunc.data(),
+           *h_blockByFunc = blockByFunc.data();
+  unsigned long long *h_launchByFunc = launchByFunc.data();
 
   // A function compiled into several device modules (an inline device function
   // called from kernels of two translation units) has one entry per module
@@ -257,7 +203,7 @@ static void writeAllCUDAProfiles() {
     name[0] = '\0';
   }
 
-  poseidonMkdirP(profileDir);
+  profileMkdirP(profileDir);
 
   for (int fi = 0; fi < g_maxFuncs; ++fi) {
     const char *h_funcName = h_names + (size_t)fi * POSEIDON_FUNCNAME_MAXLEN;
@@ -265,14 +211,11 @@ static void writeAllCUDAProfiles() {
       continue;
     GPUProfileSlot *base = h_slots + (size_t)fi * g_slotCount;
 
-    std::string path =
-        profileDir + "/" +
-        poseidon::profileNameStem(h_funcName, strlen(h_funcName)) +
-        ".fpprofile";
+    std::string path = profileDir + "/" + profileFileName(h_funcName);
     errno = 0;
     std::ofstream out(path);
     if (!out.is_open())
-      poseidonProfileOpenFatal(path, h_funcName);
+      profileOpenFatal(path, h_funcName);
     out << std::scientific
         << std::setprecision(std::numeric_limits<double>::max_digits10);
 
@@ -314,12 +257,6 @@ static void writeAllCUDAProfiles() {
     if (poseidonProfileWritten)
       poseidonProfileWritten(h_funcName);
   }
-  delete[] h_slots;
-  delete[] h_names;
-  delete[] h_static;
-  delete[] h_gridByFunc;
-  delete[] h_blockByFunc;
-  delete[] h_launchByFunc;
 }
 
 // Reads a positive integer environment override, aborting (never silently
@@ -425,8 +362,7 @@ extern "C" void __poseidon_profile_init_cuda() {
     return;
   g_cudaInitDone = true;
 
-  if (const char *envPath = getenv("POSEIDON_PROFILE_DIR"))
-    profileDir = envPath;
+  profileDir = profileDirectory();
 
   size_t count =
       readPositiveEnv("POSEIDON_PROFILE_MAX_SLOTS", POSEIDON_DEFAULT_MAX_SLOTS);
@@ -448,8 +384,7 @@ extern "C" void __poseidon_profile_init_cuda() {
 
   // A run of the condition-number measurement reports only the metric, and
   // the tables would cost each of the runs sharing the device their memory.
-  const char *probeRequest = getenv("POSEIDON_PROBE");
-  g_table.metricOnly = probeRequest && !strcmp(probeRequest, "child");
+  g_table.metricOnly = profileIsProbeChild();
   if (!g_table.metricOnly)
     allocateTables(nfuncs, count);
 
@@ -489,7 +424,7 @@ extern "C" void __poseidon_profile_init_cuda() {
 
   for (const void *table : poseidonModuleTables())
     poseidonBindModule(table);
-  cudaDeviceSynchronize();
+  POSEIDON_CUDA_OK(cudaDeviceSynchronize());
   // atexit handlers run in reverse registration order, and the CUDA runtime
   // registers its own teardown when it is first initialized above, so this
   // dump runs before the driver shuts down.
@@ -503,37 +438,32 @@ extern "C" void __poseidon_profile_init_cuda() {
 // argument; __poseidon_launch_profiled sizes, allocates and seeds them.
 // ---------------------------------------------------------------------------
 
-__global__ void poseidonSeedShadowF64(double *p, size_t n) {
+template <typename T> __global__ void poseidonSeedShadow(T *p, size_t n) {
   size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n)
-    p[i] = 1.0;
-}
-__global__ void poseidonSeedShadowF32(float *p, size_t n) {
-  size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n)
-    p[i] = 1.0f;
+    p[i] = T(1);
 }
 
-// A zero adjoint propagates zero through the whole reverse pass, so the seed is
-// one on the site's outputs.
-static void poseidonSeedShadow(void *p, size_t bytes, int width) {
-  if (width == 8) {
-    size_t n = bytes / sizeof(double);
-    if (n)
-      poseidonSeedShadowF64<<<(unsigned)((n + 255) / 256), 256>>>((double *)p,
-                                                                  n);
-  } else if (width == 4) {
-    size_t n = bytes / sizeof(float);
-    if (n)
-      poseidonSeedShadowF32<<<(unsigned)((n + 255) / 256), 256>>>((float *)p,
-                                                                  n);
-  } else {
-    fprintf(stderr,
-            "Poseidon FPProfiler: no seed rule for a %d-byte output element.\n",
-            width);
-    abort();
+namespace {
+struct DeviceShadowOps {
+  static void *allocZeroed(size_t bytes, const char *) {
+    void *p = nullptr;
+    POSEIDON_CUDA_OK(cudaMalloc(&p, bytes));
+    POSEIDON_CUDA_OK(cudaMemset(p, 0, bytes));
+    return p;
   }
-}
+  static void free(void *p) { POSEIDON_CUDA_OK(cudaFree(p)); }
+  // A run that ended with a device error exits from the profile writer, which
+  // runs after this, with the message that names it.
+  static void freeAtExit(void *p) { (void)cudaFree(p); }
+  // A zero adjoint propagates zero through the whole reverse pass, so the seed
+  // is one on the site's outputs.
+  template <typename T> static void fillOnes(T *p, size_t n) {
+    if (n)
+      poseidonSeedShadow<<<(unsigned)((n + 255) / 256), 256>>>(p, n);
+  }
+};
+} // namespace
 
 // The allocation a device pointer points into. Taken through the driver entry
 // point rather than by linking libcuda, so a profile-generation build needs no
@@ -583,50 +513,13 @@ static void poseidonAllocRange(void *p, void *&base, size_t &size) {
 #endif
 }
 
-namespace {
-struct PoseidonShadow {
-  void *p = nullptr;
-  size_t bytes = 0;
-  // The sites whose outputs this shadow already carries the seed for. A
-  // profiled launch runs its own reverse pass immediately, in forward order, so
-  // the first site that writes a buffer consumes its adjoint and leaves zero
-  // behind for the sites that write it later; each site's outputs carry the
-  // seed once.
-  std::set<int> seeded;
-};
-} // namespace
-
-// Keyed by the base address of the device allocation: the adjoint is a
-// property of the buffer, so every site and launch that passes a pointer into
-// it must see the same shadow at the same offset. The shadow starts zeroed and
-// accumulates for the rest of the run: a per-launch reseed would report a
-// different gradient for a site that reads its own output.
-static std::map<void *, PoseidonShadow> &poseidonShadows() {
-  // Never destroyed: the atexit handler that frees the buffers is registered
-  // before the map is first touched, so it runs after the map's own destructor
-  // would have.
-  static auto *m = new std::map<void *, PoseidonShadow>();
-  return *m;
-}
-
-static void poseidonFreeShadows() {
-  for (auto &kv : poseidonShadows())
-    if (kv.second.p)
-      cudaFree(kv.second.p);
-  poseidonShadows().clear();
-}
-
+// A profiled kernel's launch with the shadows of its pointer arguments
+// (ShadowTable).
 extern "C" void
 __poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
                            const unsigned *block, size_t shmem, void *stream,
                            int nargs, void **args, int nptr, const int *ptrIdx,
                            const int *ptrOff, const int *seedWidth) {
-  static bool freeRegistered = false;
-  if (!freeRegistered) {
-    freeRegistered = true;
-    std::atexit(poseidonFreeShadows);
-  }
-
   std::vector<void *> full(args, args + nargs);
   std::vector<void *> shadow((size_t)nptr, nullptr);
   std::vector<void *> base((size_t)nptr, nullptr);
@@ -646,23 +539,11 @@ __poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
     w = std::max(w, seedWidth[k]);
   }
   for (int k = 0; k < nptr; ++k) {
-    if (base[k]) {
-      PoseidonShadow &sb = poseidonShadows()[base[k]];
-      // A base seen with a different extent is a reused address, not the same
-      // buffer: the previous allocation was freed and its shadow is stale.
-      if (!sb.p || sb.bytes != size[k]) {
-        if (sb.p)
-          POSEIDON_CUDA_OK(cudaFree(sb.p));
-        POSEIDON_CUDA_OK(cudaMalloc(&sb.p, size[k]));
-        sb.bytes = size[k];
-        POSEIDON_CUDA_OK(cudaMemset(sb.p, 0, size[k]));
-        sb.seeded.clear();
-      }
-      if (int w = width[base[k]])
-        if (sb.seeded.insert(site).second)
-          poseidonSeedShadow(sb.p, size[k], w);
-      shadow[k] = (char *)sb.p + off[k];
-    }
+    if (base[k])
+      shadow[k] = (char *)ShadowTable<DeviceShadowOps>::get().shadowOf(
+                      (uintptr_t)base[k], size[k], site, width[base[k]],
+                      "a profiled kernel") +
+                  off[k];
     full.push_back(&shadow[k]);
   }
 
@@ -685,12 +566,4 @@ __poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
     fflush(stderr);
     _exit(1);
   }
-}
-
-// The symbol exists so that a translation unit referencing it pulls this
-// runtime in.
-static int RegisterFPProfileCUDARuntime() { return 0; }
-
-extern "C" {
-int POSEIDON_PROFILE_CUDA_RUNTIME_VAR = RegisterFPProfileCUDARuntime();
 }

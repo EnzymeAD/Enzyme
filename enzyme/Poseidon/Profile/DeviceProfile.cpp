@@ -8,10 +8,10 @@
 
 #include "DeviceProfile.h"
 
-#include "FPProfilerCUDA.h"
 #include "IR/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "runtime/fpprofiler/FPProfilerCUDA.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"

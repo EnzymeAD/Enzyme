@@ -10,24 +10,15 @@
 //   row 2 = 0: C = 0.
 //
 // REQUIRES: cuda-runtime
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
+// RUN:     %s -x none \
 // RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
+#include "GemmDispatch.h"
 #include <cmath>
 #include <cstdio>
-#ifdef __HIP__
-#include "hip_as_cuda.h"
-#else
-#include <cuda_runtime.h>
-#endif
-
-extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
-                                       const double *B, int N, int lda, int ldb,
-                                       int ldc, int transA, int transB,
-                                       double alpha, double beta,
-                                       cudaStream_t stream, int num_moduli);
 
 int main() {
   constexpr int N = 16;
@@ -43,7 +34,8 @@ int main() {
   cudaMalloc(&dC, sizeof C);
   cudaMemcpy(dA, A, sizeof A, cudaMemcpyHostToDevice);
   cudaMemcpy(dB, B, sizeof B, cudaMemcpyHostToDevice);
-  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, 0, 0, 1.0, 0.0, 0, 10);
+  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
+                         10);
   if (cudaMemcpy(C, dC, sizeof C, cudaMemcpyDeviceToHost) != cudaSuccess)
     return 1;
   bool row1 = true, rest = true;

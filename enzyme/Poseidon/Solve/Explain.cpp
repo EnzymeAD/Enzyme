@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "Explain.h"
-#include "FPProfileName.h"
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
@@ -17,6 +16,7 @@
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"

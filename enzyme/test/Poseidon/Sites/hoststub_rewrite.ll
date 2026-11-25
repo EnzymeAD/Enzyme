@@ -217,7 +217,7 @@ attributes #5 = { "uniform-work-group-size" }
 !4 = !{i32 7, !"frame-pointer", i32 2}
 
 ; CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z26__device_stub__gemm_kernelPKdS0_Pd with __poseidon_direct_dgemm (C=arg2 A=arg0 B=arg1){{$}}
-; CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi with __poseidon_tcec_dgemm_ex (C=arg2 A=arg0 B=arg1){{$}}
+; CHECK: [ozaki-host-dispatch] replaced the launch in stub _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi with __poseidon_tcec_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; CHECK-LABEL: define {{.*}} @_Z26__device_stub__gemm_kernelPKdS0_Pd(
 ; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 3
 ; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
@@ -229,7 +229,7 @@ attributes #5 = { "uniform-work-group-size" }
 ; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
 ; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; CHECK-NEXT: call void @__poseidon_direct_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 512, i32 512, i32 512, i32 512, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 1)
+; CHECK-NEXT: call void @__poseidon_direct_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 512, i32 512, i32 512, i32 512, i32 512, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 1)
 ; CHECK-NEXT: br label
 ; CHECK-LABEL: define {{.*}} @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(
 ; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
@@ -242,5 +242,5 @@ attributes #5 = { "uniform-work-group-size" }
 ; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
 ; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; CHECK-NEXT: call void @__poseidon_tcec_dgemm_ex(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 128, i32 512, i32 256, i32 256, i32 256, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 3)
+; CHECK-NEXT: call void @__poseidon_tcec_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 128, i32 512, i32 256, i32 256, i32 256, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 3)
 ; CHECK-NEXT: br label

@@ -1,5 +1,5 @@
 // The residue arithmetic of the Ozaki-II runtime
-// (runtime/ozaki/ozaki_residue.h) on the host, against plain remainders, for
+// (runtime/ozaki/OzakiII.h) on the host, against plain remainders, for
 // every modulus. The runtime's HIP build computes it with this code; its CUDA
 // build differs only in taking each four-byte dot product from __dp4a.
 //   weights: byte k of the weight words is 2^(8k) mod p, k = 0..7, by repeated
@@ -14,7 +14,7 @@
 // The representatives are [-(p-1)/2, (p-1)/2] for odd p and [-128, 127] for
 // p = 256, which the CRT constants assume.
 //
-// RUN: %clang++ -std=c++17 -O2 -I%S/../../../Poseidon/runtime/ozaki %s -o %t
+// RUN: %clang++ -std=c++17 -O2 -I%poseidon_runtime_inc %s -o %t
 // RUN: %t | FileCheck %s
 
 // CHECK: p=256 weights ok sums 0 differ int64 0 differ int32 0 differ
@@ -32,7 +32,7 @@
 // CHECK-NEXT: p=211 weights ok sums 0 differ int64 0 differ int32 0 differ
 // CHECK-NEXT: p=199 weights ok sums 0 differ int64 0 differ int32 0 differ
 
-#include "ozaki_residue.h"
+#include "ozaki/OzakiII.h"
 
 #include <cstdint>
 #include <cstdio>

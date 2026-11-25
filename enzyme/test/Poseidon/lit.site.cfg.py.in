@@ -8,11 +8,10 @@ config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
 config.llvm_libs_dir = "@LLVM_LIBRARY_DIR@"
 config.poseidon_obj_root = "@CMAKE_CURRENT_BINARY_DIR@"
-config.target_triple = "@LLVM_HOST_TRIPLE@"
 config.llvm_shlib_ext = "@CMAKE_SHARED_MODULE_SUFFIX@"
 
 poseidon_plugin = "@POSEIDON_BINARY_DIR@/lib/Poseidon-@LLVM_VERSION_MAJOR@" + config.llvm_shlib_ext
-enzyme_clang_plugin = "@POSEIDON_ENZYME_CLANG_PLUGIN@"
+enzyme_clang_plugin = "@POSEIDON_ENZYME_PLUGIN@"
 enzyme_opt_plugin = "@POSEIDON_ENZYME_OPT_PLUGIN@"
 
 # Before LLVM 22 clang parses -mllvm before loading -fpass-plugin, so the

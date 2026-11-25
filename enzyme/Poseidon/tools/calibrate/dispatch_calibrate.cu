@@ -30,38 +30,11 @@
 #define POSEIDON_TCEC 0
 #endif
 
+#include "../../runtime/GemmDispatch.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#ifdef __HIP__
-#include "../../runtime/hip_as_cuda.h"
-#else
-#include <cuda_runtime.h>
-#endif
-
-// Square host dispatch (the entry a square GEMM is dispatched to).
-extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
-                                       const double *B, int N, int lda, int ldb,
-                                       int ldc, int transA, int transB,
-                                       double alpha, double beta,
-                                       cudaStream_t stream, int num_moduli);
-// Rectangular host dispatch (the entry the host-GEMM recognizer emits).
-extern "C" void __poseidon_ozaki_dgemm_ex(
-    double *C, const double *A, const double *B, int M, int Ncols, int K,
-    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
-    double alpha, double beta, cudaStream_t stream, int num_moduli);
-extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
-                                        const double *B, int N, int lda,
-                                        int ldb, int ldc, int transA,
-                                        int transB, double alpha, double beta,
-                                        cudaStream_t stream, int mode);
-#if POSEIDON_TCEC
-extern "C" void __poseidon_tcec_dgemm(double *C, const double *A,
-                                      const double *B, int N, int lda, int ldb,
-                                      int ldc, int transA, int transB,
-                                      double alpha, double beta,
-                                      cudaStream_t stream, int mode);
-#endif
 
 #define CK(x)                                                                  \
   do {                                                                         \
@@ -87,7 +60,8 @@ __global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
 }
 
 // The reference shape, the timed repetitions, and the modulus count or mode
-// the dispatch under test runs with.
+// the dispatch under test runs with. The square products are row-major with
+// leading dimensions N, as the pass dispatches a square GEMM.
 static int N = 2048, REPS = 30, ARG = 0;
 static double *dA, *dB, *dC;
 
@@ -96,14 +70,20 @@ static void run_ref() {
   ref_gemm<<<g, b>>>(dC, dA, dB, N);
 }
 static void run_oz() {
-  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, 0, 0, 1.0, 0.0, 0, ARG);
+  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
+                         ARG);
+}
+static void run_native() {
+  __poseidon_native_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0);
 }
 static void run_dr() {
-  __poseidon_direct_dgemm(dC, dA, dB, N, N, N, N, 0, 0, 1.0, 0.0, 0, ARG);
+  __poseidon_direct_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
+                          ARG);
 }
 #if POSEIDON_TCEC
 static void run_tc() {
-  __poseidon_tcec_dgemm(dC, dA, dB, N, N, N, N, 0, 0, 1.0, 0.0, 0, 1);
+  __poseidon_tcec_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
+                        kTcecFp16Tcec);
 }
 #endif
 
@@ -135,7 +115,7 @@ static double *rand_dev(size_t n) {
   return d;
 }
 
-// The rectangular arm of __poseidon_ozaki_dgemm_ex, which a host GEMM takes
+// The rectangular arm of __poseidon_ozaki_dgemm, which a host GEMM takes
 // when padding it to a square would waste work. Its cost is linear in the
 // column count, so its rows are keyed by (M, K) alone and measured at a large
 // column count. The operands are laid out as the recognizer dispatches a
@@ -144,18 +124,23 @@ static int RM, RN, RK;
 static double *rA, *rB, *rC;
 
 static void run_rect() {
-  __poseidon_ozaki_dgemm_ex(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
-                            /*ldc=*/RM, /*aColMajor=*/0, /*bColMajor=*/1,
-                            /*cColMajor=*/1, 1.0, 1.0, 0, ARG);
+  __poseidon_ozaki_dgemm(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
+                         /*ldc=*/RM, /*aColMajor=*/0, /*bColMajor=*/1,
+                         /*cColMajor=*/1, 1.0, 1.0, 0, ARG);
+}
+static void run_rect_native() {
+  __poseidon_native_dgemm(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
+                          /*ldc=*/RM, /*aColMajor=*/0, /*bColMajor=*/1,
+                          /*cColMajor=*/1, 1.0, 1.0, 0);
 }
 
-// Dispatch time per MAC at `cols` columns and the current modulus count.
-static double rect_per_mac(int cols) {
+// Time per MAC of `fn` at `cols` columns.
+static double rect_per_mac(void (*fn)(), int cols) {
   RN = cols;
   rB = rand_dev((size_t)RK * cols);
   CK(cudaMalloc(&rC, (size_t)RM * cols * 8));
   CK(cudaMemset(rC, 0, (size_t)RM * cols * 8));
-  float t = timeit(run_rect, REPS);
+  float t = timeit(fn, REPS);
   CK(cudaFree(rB));
   CK(cudaFree(rC));
   return (double)t / ((double)RM * cols * RK);
@@ -168,7 +153,7 @@ static void rect_rows(int M, int K, float t_ref) {
   rA = rand_dev((size_t)M * K);
   for (unsigned nm : kOzIIModuliCounts) {
     ARG = nm;
-    double rel = rect_per_mac(12288) / ref_per_mac;
+    double rel = rect_per_mac(run_rect, 12288) / ref_per_mac;
     fprintf(stderr,
             "[dispatch_calibrate] rect nm=%2u M=%d Ncols=12288 K=%d  rel = "
             "%.6f\n",
@@ -178,16 +163,15 @@ static void rect_rows(int M, int K, float t_ref) {
   CK(cudaFree(rA));
 }
 
-// The native DGEMM through the same entry (nm = 0) at a product's own extents:
-// a DGEMM with few columns runs far below its rate at many, so a call whose
-// extents are constants of its compile is priced from this row, keyed by them.
+// The native DGEMM at a product's own extents: a DGEMM with few columns runs
+// far below its rate at many, so a call whose extents are constants of its
+// compile is priced from this row, keyed by them.
 static void full_row(int M, int Ncols, int K, float t_ref) {
   const double ref_per_mac = (double)t_ref / ((double)N * N * N);
   RM = M;
   RK = K;
   rA = rand_dev((size_t)M * K);
-  ARG = 0;
-  double rel = rect_per_mac(Ncols) / ref_per_mac;
+  double rel = rect_per_mac(run_rect_native, Ncols) / ref_per_mac;
   fprintf(stderr,
           "[dispatch_calibrate] rect dgemm M=%d Ncols=%d K=%d  rel = %.6f\n", M,
           Ncols, K, rel);
@@ -235,10 +219,9 @@ static int ozaki(int argc, char **argv, float t_ref) {
     snprintf(key, sizeof(key), "nm%u", nm);
     row("ozaki_dispatch_rel", key, run_oz, t_ref);
   }
-  // The native DGEMM through the same dispatch entry (nm = 0), what the native
-  // DGEMM candidate runs; the warmup call amortizes the handle creation.
-  ARG = 0;
-  row("ozaki_dispatch_rel", "dgemm", run_oz, t_ref);
+  // What the native DGEMM candidate runs; the warmup call amortizes the handle
+  // creation.
+  row("ozaki_dispatch_rel", "dgemm", run_native, t_ref);
   return 0;
 }
 
@@ -247,12 +230,12 @@ static int direct(float t_ref) {
   static const struct {
     int Mode;
     const char *Class;
-  } Classes[] = {{1, "f16_f32"},
-                 {2, "bf16_f32"},
+  } Classes[] = {{kDirectFp16, "f16_f32"},
+                 {kDirectBf16, "bf16_f32"},
 #ifndef __HIP__
-                 {3, "tf32_f32"},
+                 {kDirectTf32, "tf32_f32"},
 #endif
-                 {4, "f32_f32"}};
+                 {kDirectFp32, "f32_f32"}};
   for (const auto &C : Classes) {
     ARG = C.Mode;
     row("direct_dispatch_rel", C.Class, run_dr, t_ref);

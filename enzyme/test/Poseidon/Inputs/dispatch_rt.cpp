@@ -12,49 +12,22 @@
 //           the reference is held to twice what that run measured.
 //   direct: each reduced-precision mode is held to the a priori bound of a
 //           product of operands rounded once (unit roundoff u) accumulated in
-//           FP32: (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|. DGEMM
-//           (mode 0) is held to gamma_K in FP64. On cuBLAS, the FP32 mode
-//           (mode 4) is also held to bit exactness against cublasSgemm of the
-//           operands narrowed to FP32 with the FP64 alpha and beta applied
-//           after, for the general entry and the square one, and differs from
-//           TF32 (mode 3).
+//           FP32: (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|. The
+//           native DGEMM (mode 0 here) is held to gamma_K in FP64. On cuBLAS,
+//           the FP32 mode (mode 4) is also held to bit exactness against
+//           cublasSgemm of the operands narrowed to FP32 with the FP64 alpha
+//           and beta applied after, for a general call and a square row-major
+//           one, and differs from TF32 (mode 3).
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
-#ifdef __HIP__
-#include "hip_as_cuda.h"
-#else
+#include "GemmDispatch.h"
+#ifndef __HIP__
 #include <cublas_v2.h>
-#include <cuda_runtime.h>
 #endif
-
-extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
-                                       const double *B, int N, int lda, int ldb,
-                                       int ldc, int transA, int transB,
-                                       double alpha, double beta,
-                                       cudaStream_t stream, int num_moduli);
-extern "C" void __poseidon_ozaki_dgemm_ex(double *C, const double *A,
-                                          const double *B, int M, int Ncols,
-                                          int K, int lda, int ldb, int ldc,
-                                          int aColMajor, int bColMajor,
-                                          int cColMajor, double alpha,
-                                          double beta, cudaStream_t stream,
-                                          int num_moduli);
-extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
-                                        const double *B, int N, int lda,
-                                        int ldb, int ldc, int transA,
-                                        int transB, double alpha, double beta,
-                                        cudaStream_t stream, int mode);
-extern "C" void __poseidon_direct_dgemm_ex(double *C, const double *A,
-                                           const double *B, int M, int Ncols,
-                                           int K, int lda, int ldb, int ldc,
-                                           int aColMajor, int bColMajor,
-                                           int cColMajor, double alpha,
-                                           double beta, cudaStream_t stream,
-                                           int mode);
 
 #define CK(x)                                                                  \
   do {                                                                         \
@@ -75,19 +48,19 @@ namespace {
 
 struct Shape {
   const char *name;
-  bool square; // the square entry: row-major, leading dimension N
   int M, Ncols, K, aColMajor, bColMajor, cColMajor;
   double beta;
 };
 
-// Square N = 256; the elasticity reduce's layout (A row-major, B and C
+// Square N = 256, row-major, which runs the square pipeline in place; the
+// elasticity reduce's layout (A row-major, B and C
 // column-major, accumulating into C) at a skinny shape, which takes the
 // rectangular arm; a nearly square shape with the opposite layouts, which takes
 // the square arm with padding (S = 304).
 const Shape kShapes[] = {
-    {"square256", true, 256, 256, 256, 0, 0, 0, 0.0},
-    {"rect343x192x1536", false, 343, 192, 1536, 0, 1, 1, 1.0},
-    {"pad300", false, 300, 300, 300, 1, 0, 0, 0.0},
+    {"square256", 256, 256, 256, 0, 0, 0, 0.0},
+    {"rect343x192x1536", 343, 192, 1536, 0, 1, 1, 1.0},
+    {"pad300", 300, 300, 300, 1, 0, 0, 0.0},
 };
 
 uint64_t g_state = 0x9e3779b97f4a7c15ull;
@@ -224,13 +197,9 @@ int ozaki(bool record) {
       if (oc.shape != si)
         continue;
       p.reset(p.dC);
-      if (s.square)
-        __poseidon_ozaki_dgemm(p.dC, p.dA, p.dB, s.M, s.M, s.M, s.M, 0, 0, 1.0,
-                               s.beta, nullptr, oc.nm);
-      else
-        __poseidon_ozaki_dgemm_ex(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda,
-                                  p.ldb, p.ldc, s.aColMajor, s.bColMajor,
-                                  s.cColMajor, 1.0, s.beta, nullptr, oc.nm);
+      __poseidon_ozaki_dgemm(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda, p.ldb,
+                             p.ldc, s.aColMajor, s.bColMajor, s.cColMajor, 1.0,
+                             s.beta, nullptr, oc.nm);
       CK(cudaDeviceSynchronize());
       std::vector<double> out;
       double e = p.error(out);
@@ -310,8 +279,8 @@ std::vector<double> filled(size_t n, unsigned seed) {
   return v;
 }
 
-// Mode 4 on row-major operands, the general entry with alpha 2.5 and beta 0.5
-// and the square one, against sgemmReference bit for bit, and the square one
+// Mode 4 on row-major operands, a general call with alpha 2.5 and beta 0.5
+// and a square one, against sgemmReference bit for bit, and the square one
 // against mode 3.
 int sgemm() {
   struct {
@@ -337,11 +306,11 @@ int sgemm() {
     CK(cudaMemcpy(dC, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dR, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice));
     if (c.square)
-      __poseidon_direct_dgemm(dC, dA, dB, c.M, c.M, c.M, c.M, 0, 0, c.alpha,
-                              c.beta, nullptr, 4);
+      __poseidon_direct_dgemm(dC, dA, dB, c.M, c.M, c.M, c.M, c.M, c.M, 0, 0, 0,
+                              c.alpha, c.beta, nullptr, 4);
     else
-      __poseidon_direct_dgemm_ex(dC, dA, dB, c.M, c.Ncols, c.K, c.K, c.Ncols,
-                                 c.Ncols, 0, 0, 0, c.alpha, c.beta, nullptr, 4);
+      __poseidon_direct_dgemm(dC, dA, dB, c.M, c.Ncols, c.K, c.K, c.Ncols,
+                              c.Ncols, 0, 0, 0, c.alpha, c.beta, nullptr, 4);
     CK(cudaDeviceSynchronize());
     sgemmReference(dR, dA, dB, c.M, c.Ncols, c.K, c.alpha, c.beta);
     std::vector<double> out(C0.size()), ref(C0.size());
@@ -352,8 +321,8 @@ int sgemm() {
     failed |= !exact;
     if (c.square) {
       // TF32 keeps 10 explicit significand bits, so mode 3 cannot agree.
-      __poseidon_direct_dgemm(dR, dA, dB, c.M, c.M, c.M, c.M, 0, 0, c.alpha,
-                              c.beta, nullptr, 3);
+      __poseidon_direct_dgemm(dR, dA, dB, c.M, c.M, c.M, c.M, c.M, c.M, 0, 0, 0,
+                              c.alpha, c.beta, nullptr, 3);
       CK(cudaDeviceSynchronize());
       CK(cudaMemcpy(ref.data(), dR, ref.size() * 8, cudaMemcpyDeviceToHost));
       const bool same = !std::memcmp(out.data(), ref.data(), out.size() * 8);
@@ -379,13 +348,14 @@ int direct() {
     Problem p(s);
     for (int mode : {0, 1, 2, 4}) {
       p.reset(p.dC);
-      if (s.square)
-        __poseidon_direct_dgemm(p.dC, p.dA, p.dB, s.M, s.M, s.M, s.M, 0, 0, 1.0,
-                                s.beta, nullptr, mode);
+      if (mode == 0)
+        __poseidon_native_dgemm(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda,
+                                p.ldb, p.ldc, s.aColMajor, s.bColMajor,
+                                s.cColMajor, 1.0, s.beta, nullptr);
       else
-        __poseidon_direct_dgemm_ex(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda,
-                                   p.ldb, p.ldc, s.aColMajor, s.bColMajor,
-                                   s.cColMajor, 1.0, s.beta, nullptr, mode);
+        __poseidon_direct_dgemm(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda,
+                                p.ldb, p.ldc, s.aColMajor, s.bColMajor,
+                                s.cColMajor, 1.0, s.beta, nullptr, mode);
       CK(cudaDeviceSynchronize());
       std::vector<double> out;
       double e = p.error(out);

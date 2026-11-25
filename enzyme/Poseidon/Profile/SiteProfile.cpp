@@ -20,6 +20,7 @@
 #include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -75,10 +76,11 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   std::string staticData;
   {
     raw_string_ostream os(staticData);
-    os << "SiteId = " << siteId << '\n';
+    os << kProfileKeySiteId << " = " << siteId << '\n';
     for (const auto &kv : trips)
       os << "RedTrip = " << kv.first << ' ' << kv.second << '\n';
-    os << "CanonicalHash = " << canonicalFormHash(*clone) << '\n';
+    os << kProfileKeyCanonicalHash << " = " << canonicalFormHash(*clone)
+       << '\n';
   }
   emitProfileStaticData(*clone, staticData);
   if (staticOut)

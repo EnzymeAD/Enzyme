@@ -79,7 +79,7 @@ struct MatmulAccuracyQuery {
     // operands' smallest magnitude has to lie in the range of exponentPrec
     // (Invalid = inputPrec).
     Rounded,
-    // __poseidon_tcec_dgemm in compute mode 1 (FP16TCEC), on cuMpSGEMM.
+    // __poseidon_tcec_dgemm in compute mode kTcecFp16Tcec, on cuMpSGEMM.
     TcecLibrary,
     // __poseidon_ozaki_dgemm with `moduli` moduli.
     OzakiII,

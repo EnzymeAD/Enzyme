@@ -7,16 +7,17 @@
 //   tiny:     2^-66 A times 2^-100 B (entries around 1e-20 and 1e-30) gives
 //             2^-166 times the product of A and B bit for bit, and so the
 //             accuracy against the FP64 product that ordinary operands get.
-//   ordinary: random operands through the square entry (beta 0, and alpha
+//   ordinary: random operands, square and row-major (beta 0, and alpha
 //             0.75 with beta -1.25, which takes the epilogue's fused
-//             multiply-add) and the general entry (A row-major, B and C
+//             multiply-add) and a general call (A row-major, B and C
 //             column-major, beta 1), each within 2^-21 of the FP64 result
 //             relative to |alpha||A||B| + |beta C|, about four times the
 //             error FP16TCEC has there. cuMpSGEMM's products differ call to
 //             call for some shapes, so their bits are not compared.
 //
 // REQUIRES: cuda-runtime, tcec-cumpsgemm
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
+// RUN:     %s -x none \
 // RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
@@ -30,18 +31,7 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-extern "C" void __poseidon_tcec_dgemm(double *C, const double *A,
-                                      const double *B, int N, int lda, int ldb,
-                                      int ldc, int transA, int transB,
-                                      double alpha, double beta,
-                                      cudaStream_t stream, int mode);
-extern "C" void __poseidon_tcec_dgemm_ex(double *C, const double *A,
-                                         const double *B, int M, int Ncols,
-                                         int K, int lda, int ldb, int ldc,
-                                         int aColMajor, int bColMajor,
-                                         int cColMajor, double alpha,
-                                         double beta, cudaStream_t stream,
-                                         int mode);
+#include "GemmDispatch.h"
 
 #define CK(x)                                                                  \
   do {                                                                         \
@@ -116,8 +106,8 @@ int grid() {
     d.put(d.A, A);
     d.put(d.B, B);
     d.put(d.C, C0);
-    __poseidon_tcec_dgemm(d.C, d.A, d.B, N, N, N, N, 0, 0, 1.0, 0.0, nullptr,
-                          1);
+    __poseidon_tcec_dgemm(d.C, d.A, d.B, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0,
+                          nullptr, 1);
     const double got = d.getC(N * N)[0];
     const double want = std::ldexp(1.875, eA + eB);
     // 1.875 * 2^e has four significant bits, the last at 2^(e - 3).
@@ -179,11 +169,13 @@ int tiny() {
   }
   d.put(d.A, A);
   d.put(d.B, B);
-  __poseidon_tcec_dgemm(d.C, d.A, d.B, N, N, N, N, 0, 0, 1.0, 0.0, nullptr, 1);
+  __poseidon_tcec_dgemm(d.C, d.A, d.B, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0,
+                        nullptr, 1);
   const std::vector<double> C = d.getC(N * N);
   d.put(d.A, At);
   d.put(d.B, Bt);
-  __poseidon_tcec_dgemm(d.C, d.A, d.B, N, N, N, N, 0, 0, 1.0, 0.0, nullptr, 1);
+  __poseidon_tcec_dgemm(d.C, d.A, d.B, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0,
+                        nullptr, 1);
   const std::vector<double> Ct = d.getC(N * N);
   long same = 0;
   double maxA = 0.0, maxB = 0.0;
@@ -227,10 +219,10 @@ int ordinary() {
     d.put(d.B, B);
     d.put(d.C, C0);
     if (oc.square)
-      __poseidon_tcec_dgemm(d.C, d.A, d.B, oc.M, oc.M, oc.M, oc.M, 0, 0,
-                            oc.alpha, oc.beta, nullptr, 1);
+      __poseidon_tcec_dgemm(d.C, d.A, d.B, oc.M, oc.M, oc.M, oc.M, oc.M, oc.M,
+                            0, 0, 0, oc.alpha, oc.beta, nullptr, 1);
     else
-      __poseidon_tcec_dgemm_ex(
+      __poseidon_tcec_dgemm(
           d.C, d.A, d.B, oc.M, oc.Ncols, oc.K, oc.aColMajor ? oc.M : oc.K,
           oc.bColMajor ? oc.K : oc.Ncols, oc.cColMajor ? oc.M : oc.Ncols,
           oc.aColMajor, oc.bColMajor, oc.cColMajor, oc.alpha, oc.beta, nullptr,

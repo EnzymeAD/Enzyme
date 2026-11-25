@@ -15,7 +15,6 @@
 #include "MatmulSimulation.h"
 
 #include "runtime/ozaki/OzakiII.h"
-#include "runtime/tcec/tcec_scale.h"
 
 #include <algorithm>
 #include <cassert>
@@ -27,7 +26,10 @@
 #include <vector>
 
 // The Ozaki-II shifts are rounded upward and downward, as the runtime's are.
+// GCC has no such pragma and takes -frounding-math (CMakeLists.txt) instead.
+#ifdef __clang__
 #pragma STDC FENV_ACCESS ON
+#endif
 
 namespace poseidon {
 
@@ -113,16 +115,6 @@ void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
 }
 
 namespace {
-// What runtime/ozaki/ozaki_rt.cu computes once per modulus count
-// (pozComputeConsts): -P as a double-double, 1/P, and the CRT weights
-// q_i = (P/p_i)((P/p_i)^-1 mod p_i) split at one granularity.
-struct OzakiIIConstants {
-  unsigned nm = 0;
-  float log2P = 0.f;
-  double qhi[kOzakiIIMaxModuli], qlo[kOzakiIIMaxModuli];
-  double pHi = 0.0, pLo = 0.0, invP = 0.0;
-};
-
 // Restores the rounding mode on scope exit.
 class RoundingScope {
   int saved;
@@ -134,87 +126,6 @@ public:
   ~RoundingScope() { std::fesetround(saved); }
 };
 } // namespace
-
-static long modInverse(long a, long m) {
-  long r0 = ((a % m) + m) % m, r = m, s0 = 1, s = 0;
-  while (r) {
-    long q = r0 / r, t = r0 - q * r;
-    r0 = r;
-    r = t;
-    t = s0 - q * s;
-    s0 = s;
-    s = t;
-  }
-  return ((s0 % m) + m) % m;
-}
-
-static int bitLength(__int128 v) {
-  int n = 0;
-  for (; v; v >>= 1)
-    ++n;
-  return n;
-}
-
-// 1/P rounded to nearest even, by long division.
-static double reciprocalNearest(__int128 P) {
-  __int128 r = 1;
-  int e = 0;
-  for (; r < P; r <<= 1)
-    ++e;
-  uint64_t q = 0; // floor(2^(e+53) / P), 54 bits
-  for (int i = 0; i < 54; ++i) {
-    q <<= 1;
-    if (r >= P) {
-      r -= P;
-      q |= 1;
-    }
-    r <<= 1;
-  }
-  bool round = q & 1, sticky = r != 0;
-  q >>= 1;
-  if (round && (sticky || (q & 1)))
-    ++q;
-  return std::ldexp((double)q, -(e + 52));
-}
-
-static OzakiIIConstants ozakiIIConstants(unsigned nm) {
-  OzakiIIConstants c;
-  c.nm = nm;
-  __int128 P = 1;
-  int rho = 0; // bound on the sum of the residue magnitudes
-  for (unsigned i = 0; i < nm; ++i) {
-    P *= kOzakiIIModuli[i];
-    rho += kOzakiIIModuli[i] / 2;
-  }
-  double pHi = (double)P;
-  c.pHi = -pHi;
-  c.pLo = -(double)(P - (__int128)pHi);
-  c.invP = reciprocalNearest(P);
-  c.log2P = kOzakiIILog2P[nm];
-  // The high parts keep 53 - ceil(log2 rho) bits below bitlen(P), so their
-  // sum weighted by the residues is exact.
-  int G = bitLength(P) - (53 - bitLength(rho - 1));
-  for (unsigned i = 0; i < nm; ++i) {
-    long p = kOzakiIIModuli[i];
-    __int128 Mi = P / p;
-    __int128 e = (Mi * modInverse((long)(Mi % p), p)) % P;
-    if (nm <= kOzakiIIPIsDouble) {
-      c.qhi[i] = (double)e;
-      c.qlo[i] = 0.0;
-    } else {
-      __int128 hi = (e >> G) << G;
-      c.qhi[i] = (double)hi;
-      c.qlo[i] = (double)(e - hi);
-    }
-  }
-  return c;
-}
-
-// The sums-of-squares reduction of ozaki_rt.cu (poz_shifts): its block shapes
-// decide which partial sums are rounded.
-constexpr unsigned kNormThreads = 256; // POZ_NRM_THREADS
-constexpr unsigned kNormSplitK = 1024; // POZ_NRM_SPLIT_K
-constexpr unsigned kNormChunk = 256;   // POZ_NRM_KCHUNK
 
 // poz_warpSumRU: lane 0's sum of 32 lanes, each step rounded upward.
 static double warpSumUp(double *lane) {
@@ -236,10 +147,10 @@ static double sumOfSquaresUp(const OzakiIIOperand &X, unsigned r, unsigned K) {
   double lane[32];
   if (X.contiguous) {
     double warps[32] = {};
-    for (unsigned w = 0; w < kNormThreads / 32; ++w) {
+    for (unsigned w = 0; w < kOzakiIINormThreads / 32; ++w) {
       for (unsigned l = 0; l < 32; ++l) {
         double s = 0.0;
-        for (unsigned k = 32 * w + l; k < K; k += kNormThreads)
+        for (unsigned k = 32 * w + l; k < K; k += kOzakiIINormThreads)
           s = std::fma(at(k), at(k), s);
         lane[l] = s;
       }
@@ -257,11 +168,12 @@ static double sumOfSquaresUp(const OzakiIIOperand &X, unsigned r, unsigned K) {
     }
     return warpSumUp(lane);
   };
-  if (K < kNormSplitK)
+  constexpr unsigned chunk = kOzakiIINormChunk;
+  if (K < (unsigned)kOzakiIINormSplitK)
     return tile(0, K);
-  std::vector<double> part((K + kNormChunk - 1) / kNormChunk);
+  std::vector<double> part((K + chunk - 1) / chunk);
   for (unsigned c = 0; c < part.size(); ++c)
-    part[c] = tile(c * kNormChunk, std::min(K, (c + 1) * kNormChunk));
+    part[c] = tile(c * chunk, std::min(K, (c + 1) * chunk));
   for (unsigned x = 0; x < 32; ++x) {
     double s = 0.0;
     for (size_t c = x; c < part.size(); c += 32)
@@ -306,16 +218,10 @@ static int shiftOf(double s, float log2P) {
 // operand residues whose products the runtime sums.
 static double crtRecombine(const OzakiIIConstants &c, __int128 v) {
   double x = 0.0, y = 0.0;
+  const unsigned __int128 mag = v < 0 ? -(unsigned __int128)v : v;
   for (unsigned i = 0; i < c.nm; ++i) {
-    int p = kOzakiIIModuli[i], h = p / 2;
-    int r = (int)(v % p);
-    if (r > h)
-      r -= p;
-    else if (r < -h)
-      r += p;
-    if ((p & 1) == 0 && r == h)
-      r -= p;
-    double d = (double)r;
+    const uint32_t p = (uint32_t)kOzakiIIModuli[i];
+    double d = (double)poz_symmetric((uint32_t)(mag % p), v < 0, p);
     if (i == 0) {
       x = c.qhi[0] * d;
       y = c.qlo[0] * d;
@@ -361,8 +267,8 @@ void simulateOzakiIIDgemm(unsigned nm, const OzakiIIOperand &A,
                           const OzakiIIOperand &B, unsigned K, double *P) {
   // The runtime's INT32 residue products hold K * 2^14; the exact sum below
   // holds K * 2^110.
-  assert(nm >= kOzakiIIMinModuli && nm <= kOzakiIIMaxModuli && K < 131072 &&
-         "outside the runtime's domain");
+  assert(nm >= kOzakiIIMinModuli && nm <= kOzakiIIMaxModuli &&
+         K < (unsigned)kOzakiIIMaxK && "outside the runtime's domain");
   const OzakiIIConstants c = ozakiIIConstants(nm);
   const QuantizedOperand a(c, A, K), b(c, B, K);
   for (unsigned i = 0; i < A.R; ++i)

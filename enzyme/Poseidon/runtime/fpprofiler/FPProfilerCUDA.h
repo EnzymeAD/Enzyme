@@ -19,10 +19,12 @@
 #include <cstdint>
 #include <cstring>
 
+#ifndef POSEIDON_HD
 #if defined(__CUDACC__) || defined(__HIP__)
 #define POSEIDON_HD __host__ __device__
 #else
 #define POSEIDON_HD
+#endif
 #endif
 
 // Per-function slot count: bounds the static count of profiled instructions

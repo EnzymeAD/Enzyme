@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
 // CHECK: [poseidon] pin: [[KERNEL:_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_]]:M0=ozaki-ii nm=12 wmma m16n16k16 s8/s32{{$}}
 // CHECK: [ozaki-host-dispatch] wrote descriptor for [[KERNEL]]: C=arg1[+80] A=arg1[+48] B=arg1[+16] arg1[+0]xarg0x3*arg1[+4] nm=12 (standalone), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 // CHECK-NEXT: [poseidon] {{.*}}annotated_lambda_host_gemm.cu: 1 function(s) a rewrite reached; every other function as written
-// CHECK: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ with __poseidon_ozaki_dgemm_ex (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
+// CHECK: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ with __poseidon_ozaki_dgemm (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 
 // OPT: DENSE: rel err ok
 // OPT-NEXT: PADDED: rel err ok

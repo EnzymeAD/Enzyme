@@ -515,12 +515,10 @@ static void proposeInKernelSplit(const Product &P, const InKernelSite &K,
 // the scheme's runtime needs to extrapolate that row to this shape.
 //===----------------------------------------------------------------------===//
 
-constexpr unsigned kModularTile = 16;
-
 namespace {
 struct LibrarySite {
   bool dispatchable = false;
-  // S^3 / (M*N*K), the zero padding __poseidon_ozaki_dgemm_ex pays to reach a
+  // S^3 / (M*N*K), the zero padding __poseidon_ozaki_dgemm pays to reach a
   // square of side S.
   double padWaste = 1.0;
   // Keys the rectangular modular row "ozaki_dispatch_rect_rel,nmNN_m<M>k<K>".
@@ -590,10 +588,11 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
   return opt;
 }
 
-// The rectangular row supersedes the square one when present: above padWaste
-// 1.05 the runtime takes its rectangular path, whose cost is linear in the
-// column count, so no padding ratio is applied on top of that row. It is keyed
-// by (M, K) only, since its per-MAC cost does not depend on the column count.
+// The rectangular row supersedes the square one when present: from padWaste
+// kOzakiIIRectMinWaste on the runtime takes its rectangular path, whose cost is
+// linear in the column count, so no padding ratio is applied on top of that
+// row. It is keyed by (M, K) only, since its per-MAC cost does not depend on
+// the column count.
 static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
   if (!L.dispatchable)
@@ -623,17 +622,19 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     double shapeRatio = L.padWaste;
     if (relRect > 0.0) {
       shapeRatio = 1.0; // the measurement already is this shape
-    } else if (L.padWaste >= 1.05) {
+    } else if (L.padWaste >= kOzakiIIRectMinWaste) {
       if (P.S.Matmul.WarnedRectangularRows.insert((const void *)&m).second)
         llvm::errs()
             << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x'
             << m.N << 'x' << m.K << ": padWaste=" << L.padWaste
-            << " >= 1.05 with no measured 'ozaki_dispatch_rect_rel," << rectKey
+            << " takes the rectangular pipeline, with no measured "
+               "'ozaki_dispatch_rect_rel,"
+            << rectKey
             << "' row, so this candidate is priced from the square row times "
                "the padding ratio.\n";
     }
     MatmulUnit::Option opt =
-        libraryOption(v, kModularTile, kModularTile, kModularTile);
+        libraryOption(v, kOzakiIIPadTile, kOzakiIIPadTile, kOzakiIIPadTile);
     opt.compCost = P.baselinePerMac * rel * shapeRatio;
     cm.candidates.push_back(opt);
   }
@@ -756,7 +757,7 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                           "poseidon-calibrate.");
     const double padWaste =
         isStatic ? cubePaddingRatio(L.staticM, L.staticN, L.staticK) : 1.0;
-    if (padWaste >= 1.05 &&
+    if (padWaste >= kOzakiIIRectMinWaste &&
         P.S.Matmul.WarnedSquareNativeRows.insert((const void *)&m).second)
       llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M
                    << 'x' << m.N << 'x' << m.K << ": the native DGEMM runs at "

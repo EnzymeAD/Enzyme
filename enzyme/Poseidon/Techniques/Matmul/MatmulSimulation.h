@@ -19,14 +19,14 @@
 namespace poseidon {
 
 // C = A * B as __poseidon_tcec_dgemm (runtime/tcec/tcec_rt.cu) returns it in
-// mode 1, cuMpSGEMM's FP16TCEC, for A (M x K), B (K x N) and C (M x N)
-// row-major. No source specifies how a tensor-core MMA adds its products; it
+// mode kTcecFp16Tcec, cuMpSGEMM's FP16TCEC, for A (M x K), B (K x N) and C (M x
+// N) row-major. No source specifies how a tensor-core MMA adds its products; it
 // is taken to round the exact sum of its 16 products and the accumulator
 // toward zero to FP32.
 void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
                        unsigned K, double *C);
 
-// One operand of __poseidon_ozaki_dgemm(_ex) as runtime/ozaki/ozaki_rt.cu
+// One operand of __poseidon_ozaki_dgemm as runtime/ozaki/ozaki_rt.cu
 // scales it: R vectors of K elements, element k of vector r at src[r * ld + k]
 // when `contiguous` and at src[k * ld + r] otherwise. The layout decides the
 // order in which the runtime sums a vector's squares.
@@ -38,7 +38,7 @@ struct OzakiIIOperand {
 };
 
 // P (A.R x B.R, row-major): the product of each vector of A with each vector
-// of B as __poseidon_ozaki_dgemm(_ex) returns it with nm moduli before its
+// of B as __poseidon_ozaki_dgemm returns it with nm moduli before its
 // alpha/beta epilogue, which is GEMMul8's fast mode, bit for bit wherever the
 // host's log2 and the device's __log2f put a scaling shift on the same side of
 // an integer. A vector whose sum of squares is not finite is outside the fast

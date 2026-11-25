@@ -131,9 +131,6 @@ struct RuntimeDim {
     return d;
   }
   bool isConst() const { return factors.empty(); }
-  bool operator==(const RuntimeDim &o) const {
-    return factors == o.factors && mul == o.mul && add == o.add;
-  }
 };
 
 std::string runtimeDimString(const RuntimeDim &d);
@@ -161,7 +158,7 @@ struct RuntimeGemmHandle {
   // to it. The dispatch checks each pair at the launch and runs the kernel as
   // written when one fails.
   llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
-  // Layout in the convention __poseidon_ozaki_dgemm_ex takes: "colMajor" means
+  // Layout in the convention __poseidon_ozaki_dgemm takes: "colMajor" means
   // the operand's reduction index (A, B) or row index (C) is the contiguous
   // one.
   bool aColMajor = false, bColMajor = true, cColMajor = true;
@@ -238,7 +235,7 @@ void collectScalarLoopReductionTrips(
     const Options &O, llvm::Function &F,
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
 
-// The dimensions of a GEMM, in the order the _ex entries take them.
+// The dimensions of a GEMM, in the order the dispatch entries take them.
 enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
 constexpr unsigned kNumGemmDims = 6;
 

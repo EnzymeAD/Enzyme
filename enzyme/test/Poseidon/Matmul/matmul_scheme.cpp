@@ -21,6 +21,8 @@ static const char *name(DispatchScheme s) {
     return "Tcec";
   case DispatchScheme::Direct:
     return "Direct";
+  case DispatchScheme::Native:
+    return "Native";
   }
   return "?";
 }
@@ -60,7 +62,7 @@ int main() {
 // CHECK-NEXT: library ozaki-ii [nm=12] s8/s32: descriptor OzakiII 12
 // CHECK-NEXT: library ozaki-ii [nm=13] s8/s32: descriptor OzakiII 13
 // CHECK-NEXT: library ozaki-ii [nm=14] s8/s32: descriptor OzakiII 14
-// CHECK-NEXT: library native-dgemm [] f64/f64: descriptor OzakiII 0
+// CHECK-NEXT: library native-dgemm [] f64/f64: descriptor Native 0
 // CHECK-NEXT: library tcec [n=2] f16/f32: descriptor Tcec 1
 // CHECK-NEXT: library direct [] f16/f32: descriptor Direct 1
 // CHECK-NEXT: library direct [] bf16/f32: descriptor Direct 2

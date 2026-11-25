@@ -10,6 +10,7 @@
 #include "poseidon/poseidon.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -27,9 +28,7 @@
 #include <mutex>
 #include <set>
 #include <string>
-#include <sys/stat.h>
 #include <sys/wait.h>
-#include <tuple>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -78,31 +77,7 @@ public:
   }
 };
 
-// `mkdir -p`: a missing intermediate component must not surface as an ignored
-// "could not open" warning.
-static void mkdirP(const std::string &dir) {
-  if (dir.empty())
-    return;
-  std::string acc;
-  size_t i = 0;
-  if (dir[0] == '/') {
-    acc = "/";
-    i = 1;
-  }
-  while (i <= dir.size()) {
-    size_t j = dir.find('/', i);
-    if (j == std::string::npos)
-      j = dir.size();
-    if (j > i) {
-      acc += dir.substr(i, j - i);
-      struct stat st = {0};
-      if (stat(acc.c_str(), &st) == -1)
-        mkdir(acc.c_str(), 0755);
-      acc += "/";
-    }
-    i = j + 1;
-  }
-}
+using namespace poseidon;
 
 // Compile-time static data of each site, registered before main. A
 // function-local static: a namespace-scope map could be constructed after the
@@ -128,9 +103,8 @@ static bool g_metricOnly = false;
 static std::chrono::steady_clock::time_point g_runtimeStart;
 
 // The file names of the profiles this process wrote, the sites of this run
-// the condition-number probe may measure. Never destroyed: a ProfilerWrite
-// call during main would otherwise register its destructor after the exit
-// handler that reads it, which then runs first.
+// the condition-number probe may measure. Never destroyed: the exit handler
+// that reads it is registered before it is first used.
 static std::set<std::string> &writtenThisRun() {
   static auto *s = new std::set<std::string>();
   return *s;
@@ -152,7 +126,7 @@ public:
   static const std::string &outputDir() { return dir; }
 
   std::string getOutputPath() const {
-    return dir + "/" + poseidon::profileNameStem(functionName) + ".fpprofile";
+    return dir + "/" + profileFileName(functionName);
   }
 
   void updateValue(size_t idx, double res, size_t numOperands,
@@ -169,20 +143,12 @@ public:
   void write() const {
     std::string outputPath = getOutputPath();
 
-    mkdirP(dir);
+    profileMkdirP(dir);
 
+    errno = 0;
     std::ofstream out(outputPath);
-    // A profile that cannot be written is a profile the solve will not
-    // find. Refuse rather than warn.
-    if (!out.is_open()) {
-      std::cerr << "Poseidon FPProfiler: could not open profile file for "
-                   "writing:\n  "
-                << outputPath << "\n  function: " << functionName
-                << "\nThe profile is LOST, and a solve run against this "
-                   "directory would silently skip the site. Aborting."
-                << std::endl;
-      std::abort();
-    }
+    if (!out.is_open())
+      profileOpenFatal(outputPath, functionName.c_str());
 
     out << std::scientific
         << std::setprecision(std::numeric_limits<double>::max_digits10);
@@ -193,7 +159,7 @@ public:
     // Lets profile use tell a site this run never executed from one the
     // profiled program did not contain, which leaves no file at all.
     if (profileInfo.empty())
-      out << "Executed = 0\n";
+      out << kProfileNeverExecuted << "\n";
 
     for (const auto &pair : profileInfo) {
       const auto i = pair.first;
@@ -214,16 +180,24 @@ public:
 
     out << "\n";
     out.close();
-    writtenThisRun().insert(poseidon::profileNameStem(functionName) +
-                            ".fpprofile");
+    writtenThisRun().insert(profileFileName(functionName));
   }
 };
 
-std::string FPProfiler::dir = POSEIDON_DEFAULT_PROFILE_DIR;
+std::string FPProfiler::dir;
 
 static std::unordered_map<std::string, std::unique_ptr<FPProfiler>>
     profilerRegistry;
 static std::mutex registryMutex;
+
+// The profiler of the function funcName, created on its first record. Called
+// with registryMutex held.
+static FPProfiler &profilerFor(const char *funcName) {
+  std::unique_ptr<FPProfiler> &p = profilerRegistry[funcName];
+  if (!p)
+    p = std::make_unique<FPProfiler>(funcName);
+  return *p;
+}
 
 // The registered sites whose profile the device profiler of this process
 // wrote. Never destroyed: that writer first uses it during exit, and a
@@ -238,7 +212,7 @@ static void writeMetric() {
   if (!g_metricSet)
     return;
   const std::string dir = FPProfiler::outputDir();
-  mkdirP(dir);
+  profileMkdirP(dir);
   const std::string path = dir + "/metric.txt";
   std::ofstream out(path);
   if (!out.is_open()) {
@@ -394,15 +368,10 @@ static int probeRun(const std::string &dir,
 // clean one says where the site breaks without discarding the clean
 // measurement.
 static void probeDecide(const std::vector<ProbeRun> &ladder, double &kappa,
-                        std::string &mark, double &divergesAbove,
-                        bool &hasDiverge) {
+                        std::string &mark, bool &hasDiverge) {
   hasDiverge = false;
-  divergesAbove = 0.0;
   for (const ProbeRun &r : ladder)
-    if (r.diverged && !hasDiverge) {
-      hasDiverge = true;
-      divergesAbove = r.eps;
-    }
+    hasDiverge |= r.diverged;
   if (ladder.empty() || ladder.front().diverged) {
     kappa = std::numeric_limits<double>::infinity();
     mark = "diverged";
@@ -442,7 +411,7 @@ static void probeReplaceKappa(const std::string &path,
   }
   std::vector<std::string> kept;
   for (const std::string &l : lines)
-    if (l.compare(0, 5, "Kappa") != 0)
+    if (l.compare(0, strlen(kProfileKeyKappa), kProfileKeyKappa) != 0)
       kept.push_back(l);
   size_t at = 0;
   for (size_t i = 0; i < kept.size(); ++i) {
@@ -450,7 +419,8 @@ static void probeReplaceKappa(const std::string &path,
         kept[i].find_first_not_of("0123456789") == std::string::npos)
       break;
     at = i + 1;
-    if (kept[i].compare(0, 13, "CanonicalHash") == 0)
+    if (kept[i].compare(0, strlen(kProfileKeyCanonicalHash),
+                        kProfileKeyCanonicalHash) == 0)
       break;
   }
   kept.insert(kept.begin() + at, hdr.begin(), hdr.end());
@@ -460,19 +430,11 @@ static void probeReplaceKappa(const std::string &path,
 }
 
 static void probeWriteKappa(const std::string &path, double kappa,
-                            const std::string &mark, bool hasDiverge,
-                            double divergesAbove) {
+                            const std::string &mark) {
   char buf[128];
-  std::vector<std::string> hdr;
-  std::snprintf(buf, sizeof(buf), "Kappa = %.17g", kappa);
-  hdr.push_back(buf);
-  hdr.push_back("KappaMark = " + mark);
-  if (hasDiverge) {
-    std::snprintf(buf, sizeof(buf), "KappaDivergesAbove = %.17g",
-                  divergesAbove);
-    hdr.push_back(buf);
-  }
-  probeReplaceKappa(path, hdr);
+  std::snprintf(buf, sizeof(buf), "%s = %.17g", kProfileKeyKappa, kappa);
+  probeReplaceKappa(path,
+                    {buf, std::string(kProfileKeyKappaMark) + " = " + mark});
 }
 
 static void probeRemoveDir(const std::string &dir) {
@@ -490,7 +452,7 @@ static void poseidonProbeDriver() {
       std::chrono::steady_clock::now() - g_runtimeStart;
   // A run the driver started, or one armed by hand, is a measurement.
   const char *request = getenv("POSEIDON_PROBE");
-  if (getenv("POSEIDON_PROBE_SITE") || (request && !strcmp(request, "child")))
+  if (getenv("POSEIDON_PROBE_SITE") || profileIsProbeChild())
     return;
   if (!g_metricSet)
     return;
@@ -498,7 +460,7 @@ static void poseidonProbeDriver() {
   const std::string pdir = FPProfiler::outputDir();
   // The device profiler's profiles are this run's too.
   for (const std::string &name : writtenElsewhere())
-    writtenThisRun().insert(poseidon::profileNameStem(name) + ".fpprofile");
+    writtenThisRun().insert(profileFileName(name));
   std::map<int, std::string> sites;
   if (DIR *d = opendir(pdir.c_str())) {
     std::vector<std::string> names;
@@ -515,14 +477,16 @@ static void poseidonProbeDriver() {
       // it would cost a run of the workload per ladder step.
       std::ifstream in(pdir + "/" + n);
       std::string line;
+      const std::string siteIdFormat =
+          std::string(" ") + kProfileKeySiteId + " = %d";
       int id = -1;
       bool executed = true;
       while (std::getline(in, line)) {
         if (!line.empty() &&
             line.find_first_not_of("0123456789") == std::string::npos)
           break;
-        executed &= line != "Executed = 0";
-        std::sscanf(line.c_str(), " SiteId = %d", &id);
+        executed &= line != kProfileNeverExecuted;
+        std::sscanf(line.c_str(), siteIdFormat.c_str(), &id);
       }
       if (id >= 0 && executed)
         sites.emplace(id, pdir + "/" + n);
@@ -557,7 +521,8 @@ static void poseidonProbeDriver() {
   // Until a measurement replaces it, so that profile use can tell a declared
   // metric left unmeasured from none.
   for (const auto &kv : sites)
-    probeReplaceKappa(kv.second, {"KappaMark = unmeasured"});
+    probeReplaceKappa(kv.second, {std::string(kProfileKeyKappaMark) + " = " +
+                                  kProfileKappaUnmeasured});
 
   if (!request || strcmp(request, "1")) {
     fprintf(
@@ -601,7 +566,7 @@ static void poseidonProbeDriver() {
 
   const auto measureStart = std::chrono::steady_clock::now();
   const std::string base2 = std::string(tmp) + "/baseline2";
-  mkdirP(base2);
+  profileMkdirP(base2);
   std::cerr << "[probe] baseline run 2 -> noise floor" << std::endl;
   double m2 = 0.0;
   int rc = probeRun(base2, childEnv(base2));
@@ -614,7 +579,7 @@ static void poseidonProbeDriver() {
   fprintf(stderr, "[probe] metric %s = %.17g and %.17g; noise floor %.6e\n",
           metricName().c_str(), m0, m2, noise);
 
-  std::map<int, std::tuple<double, std::string, bool, double>> result;
+  std::map<int, std::pair<double, std::string>> result;
   for (const auto &kv : sites) {
     const int sid = kv.first;
     fprintf(stderr, "[probe] site %d (%s)\n", sid, kv.second.c_str());
@@ -624,7 +589,7 @@ static void poseidonProbeDriver() {
       char dbuf[64];
       std::snprintf(dbuf, sizeof(dbuf), "%s/site%d_eps%g", tmp, sid, eps);
       const std::string d = dbuf;
-      mkdirP(d);
+      profileMkdirP(d);
       auto env = childEnv(d);
       env.push_back("POSEIDON_PROBE_SITE=" + std::to_string(sid));
       char ebuf[64];
@@ -648,12 +613,12 @@ static void poseidonProbeDriver() {
       runs.push_back({eps, kappa, false});
       responded |= over;
     }
-    double kappa = 0.0, above = 0.0;
+    double kappa = 0.0;
     std::string mark = "below-noise";
     bool hasDiverge = false;
     if (responded)
-      probeDecide(runs, kappa, mark, above, hasDiverge);
-    result[sid] = {kappa, mark, hasDiverge, above};
+      probeDecide(runs, kappa, mark, hasDiverge);
+    result[sid] = {kappa, mark};
     fprintf(stderr, "    -> Kappa = %.6e  (%s)%s\n", kappa, mark.c_str(),
             hasDiverge ? "  diverges above" : "");
   }
@@ -661,8 +626,8 @@ static void poseidonProbeDriver() {
   std::cerr << "[probe] site  kappa            mark          profile"
             << std::endl;
   for (const auto &kv : sites) {
-    auto [kappa, mark, hasDiverge, above] = result[kv.first];
-    probeWriteKappa(kv.second, kappa, mark, hasDiverge, above);
+    auto [kappa, mark] = result[kv.first];
+    probeWriteKappa(kv.second, kappa, mark);
     fprintf(stderr, "[probe] %-5d %-16.6e %-13s %s\n", kv.first, kappa,
             mark.c_str(), kv.second.c_str());
   }
@@ -726,12 +691,8 @@ static void writeAllProfilesAtExit() {
 
 static int RegisterFPProfileRuntime() {
   g_runtimeStart = std::chrono::steady_clock::now();
-  const char *request = getenv("POSEIDON_PROBE");
-  g_metricOnly = request && !strcmp(request, "child");
-  if (const char *envPath = getenv("POSEIDON_PROFILE_DIR"))
-    FPProfiler::setOutputDir(envPath);
-  else
-    FPProfiler::setOutputDir(POSEIDON_DEFAULT_PROFILE_DIR);
+  g_metricOnly = profileIsProbeChild();
+  FPProfiler::setOutputDir(profileDirectory());
 
   captureProbeArgv();
   std::atexit(writeAllProfilesAtExit);
@@ -739,14 +700,11 @@ static int RegisterFPProfileRuntime() {
   return 0;
 }
 
-extern "C" int POSEIDON_PROFILE_RUNTIME_VAR = RegisterFPProfileRuntime();
+extern "C" {
+int POSEIDON_PROFILE_RUNTIME_VAR = RegisterFPProfileRuntime();
+}
 
 extern "C" {
-
-void ProfilerWrite() {
-  std::lock_guard<std::mutex> lock(registryMutex);
-  writeAllProfiles();
-}
 
 void poseidon_metric(const char *name, double value) {
   if (!name)
@@ -777,14 +735,7 @@ void poseidonLogGrad(const char *funcName, size_t idx, double value,
     return;
 
   std::lock_guard<std::mutex> lock(registryMutex);
-
-  auto it = profilerRegistry.find(funcName);
-  if (it == profilerRegistry.end()) {
-    profilerRegistry[funcName] = std::make_unique<FPProfiler>(funcName);
-    it = profilerRegistry.find(funcName);
-  }
-
-  it->second->updateGradient(idx, value, grad);
+  profilerFor(funcName).updateGradient(idx, value, grad);
 }
 
 void poseidonLogValue(const char *funcName, size_t idx, double res,
@@ -793,14 +744,7 @@ void poseidonLogValue(const char *funcName, size_t idx, double res,
     return;
 
   std::lock_guard<std::mutex> lock(registryMutex);
-
-  auto it = profilerRegistry.find(funcName);
-  if (it == profilerRegistry.end()) {
-    profilerRegistry[funcName] = std::make_unique<FPProfiler>(funcName);
-    it = profilerRegistry.find(funcName);
-  }
-
-  it->second->updateValue(idx, res, numOperands, operands);
+  profilerFor(funcName).updateValue(idx, res, numOperands, operands);
 }
 
 } // extern "C"

@@ -11,8 +11,8 @@
 
 // The accuracy model's Ozaki-II product (simulateOzakiIIDgemm), run on the
 // host, returns the digests Inputs/dispatch_rt.cpp records for the runtime
-// (operands generated the same way): the square entry at N = 256, the
-// rectangular arm (A row-major, B and C column-major, beta = 1), and the
+// (operands generated the same way): the in-place square pipeline at N = 256,
+// the rectangular arm (A row-major, B and C column-major, beta = 1), and the
 // padded square arm, at 8, 10, 13 and 14 moduli. Each operand is laid out as
 // the runtime's arm reads it, since that fixes the order of its sum of
 // squares.
@@ -114,7 +114,7 @@ std::vector<double> product(const Shape &s, int nm,
     return C;
   }
   // The square pipeline on row-major operands, repacked and zero-padded to
-  // S x S by the _ex entry (poz_pack, poz_crop): rows of A contiguous,
+  // S x S by __poseidon_ozaki_dgemm (poz_pack, poz_crop): rows of A contiguous,
   // columns of B strided.
   int N = s.square ? s.M : S;
   std::vector<double> As((size_t)N * N, 0.0), Bs((size_t)N * N, 0.0);

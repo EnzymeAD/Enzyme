@@ -6,9 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// direct_rt.cu: Poseidon host-dispatch runtime for the direct
-// reduced-precision GEMM, the library realization of the in-kernel direct
-// tensor-core raise.
+// The direct reduced-precision GEMM, the library realization of the in-kernel
+// direct tensor-core raise.
 //
 // This runtime performs no operand scaling: each FP64 operand is rounded once
 // to the target input format, the product runs as one cublasGemmEx with an
@@ -20,90 +19,29 @@
 // applied in the widen kernel, so C = alpha*(A@B) + beta*C keeps FP64 scalar
 // semantics.
 //
-// mode takes the Ozaki entry's num_moduli slot so all three dispatch entries
-// share one calling convention:
-//   0 = native cuBLAS DGEMM
-//   1 = FP16 inputs, FP32 accumulator   (CUDA_R_16F,  CUBLAS_COMPUTE_32F)
-//   2 = BF16 inputs, FP32 accumulator   (CUDA_R_16BF, CUBLAS_COMPUTE_32F)
-//   3 = TF32 inputs, FP32 accumulator   (CUDA_R_32F,
-//                                        CUBLAS_COMPUTE_32F_FAST_TF32)
-//   4 = FP32 inputs, FP32 accumulator   (CUDA_R_32F,  CUBLAS_COMPUTE_32F)
-// Mode 4 is cuBLAS's SGEMM, not a tensor-core GEMM; it shares the narrow, the
-// FP32 accumulator and the widen with the other modes.
-// Out-of-range values abort rather than silently substituting a precision.
-//
 // Compiled as HIP (POSEIDON_ROCM_PATH) the same entries run on hipBLAS, every
 // mode but TF32, which has no hipBLAS compute type.
 //
 //===----------------------------------------------------------------------===//
 
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#ifdef __HIP__
-#include "../hip_as_cuda.h"
-#else
-#include <cublas_v2.h>
+#ifndef __HIP__
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
-#include <cuda_runtime.h>
 #endif
 
-#define PDR_CK(x)                                                              \
-  do {                                                                         \
-    cudaError_t e_ = (x);                                                      \
-    if (e_ != cudaSuccess) {                                                   \
-      fprintf(stderr, "poseidon_direct_rt FATAL CUDA %s:%d %s\n", __FILE__,    \
-              __LINE__, cudaGetErrorString(e_));                               \
-      abort();                                                                 \
-    }                                                                          \
-  } while (0)
-
-#define PDR_CB(x)                                                              \
-  do {                                                                         \
-    cublasStatus_t s_ = (x);                                                   \
-    if (s_ != CUBLAS_STATUS_SUCCESS) {                                         \
-      fprintf(stderr, "poseidon_direct_rt FATAL cuBLAS %s:%d status %d\n",     \
-              __FILE__, __LINE__, (int)s_);                                    \
-      abort();                                                                 \
-    }                                                                          \
-  } while (0)
+#include "../GemmRuntime.h"
+#include "../ozaki/OzakiII.h"
 
 namespace {
 
-cublasHandle_t pdr_cublas() {
-  static cublasHandle_t h = nullptr;
-  if (!h)
-    PDR_CB(cublasCreate(&h));
-  return h;
-}
-
 // Widest element the operand buffers ever hold is a float (the TF32 and FP32
-// modes), so one byte-capacity pair per operand serves every mode.
+// modes), so one byte capacity per buffer serves every mode.
 struct PdrScratch {
-  size_t capA = 0, capB = 0, capC = 0; // capA/capB in bytes, capC in floats
-  void *A = nullptr, *B = nullptr;
-  float *C = nullptr;
+  size_t capA = 0, capB = 0, capC = 0; // bytes
+  void *A = nullptr, *B = nullptr, *C = nullptr;
 };
 PdrScratch g;
-
-void pdr_reserve_bytes(void **p, size_t *cap, size_t need) {
-  if (*cap >= need)
-    return;
-  if (*p)
-    PDR_CK(cudaFree(*p));
-  PDR_CK(cudaMalloc(p, need));
-  *cap = need;
-}
-
-void pdr_reserve_f32(float **p, size_t *cap, size_t need) {
-  if (*cap >= need)
-    return;
-  if (*p)
-    PDR_CK(cudaFree(*p));
-  PDR_CK(cudaMalloc(p, need * sizeof(float)));
-  *cap = need;
-}
 
 // One rounding step, FP64 -> the tensor-core input format. Rounding through an
 // intermediate FP32 would double-round; these are the same primitives the
@@ -115,7 +53,7 @@ __device__ __forceinline__ void pdr_round(__nv_bfloat16 *d, double v) {
   *d = __double2bfloat16(v);
 }
 __device__ __forceinline__ void pdr_round(float *d, double v) {
-  *d = (float)v; // mode 4 stops here; mode 3's TF32 truncation is in the core
+  *d = (float)v; // FP32 stops here; TF32's truncation is in the core
 }
 
 // Narrow a layout-aware FP64 source into a contiguous buffer that keeps the
@@ -211,92 +149,67 @@ struct PdrFormat {
 
 PdrFormat pdr_format(int mode) {
   switch (mode) {
-  case 1:
+  case kDirectFp16:
     return {CUDA_R_16F, CUBLAS_COMPUTE_32F, sizeof(__half)};
-  case 2:
+  case kDirectBf16:
     return {CUDA_R_16BF, CUBLAS_COMPUTE_32F, sizeof(__nv_bfloat16)};
 #ifndef __HIP__
-  case 3:
+  case kDirectTf32:
     return {CUDA_R_32F, CUBLAS_COMPUTE_32F_FAST_TF32, sizeof(float)};
 #endif
-  case 4:
+  case kDirectFp32:
     return {CUDA_R_32F, CUBLAS_COMPUTE_32F, sizeof(float)};
   }
+#ifdef __HIP__
+  const char *modes = "1, 2 or 4 (hipBLAS has no TF32)";
+#else
+  const char *modes = "1 to 4";
+#endif
+  fflush(stdout);
   fprintf(stderr,
-          "poseidon_direct_rt FATAL: unsupported mode %d (0=dgemm, 1=FP16/F32, "
-          "2=BF16/F32, 3=TF32/F32, 4=FP32/F32). Refusing to substitute a "
-          "different precision.\n",
-          mode);
+          "Poseidon GEMM runtime: __poseidon_direct_dgemm with mode %d: this "
+          "build takes a PoseidonDirectMode, %s\n",
+          mode, modes);
   abort();
 }
 
-// Layout-aware native DGEMM (mode == 0): every {a,b,c}ColMajor combination is
-// one call.
-void pdr_native_dgemm(double *C, const double *A, const double *B, int M,
-                      int Ncols, int K, int lda, int ldb, int ldc,
-                      int aColMajor, int bColMajor, int cColMajor, double alpha,
-                      double beta, cudaStream_t stream) {
-  cublasHandle_t h = pdr_cublas();
-  PDR_CB(cublasSetStream(h, stream));
-  if (cColMajor) {
-    PDR_CB(cublasDgemm(h, aColMajor ? CUBLAS_OP_N : CUBLAS_OP_T,
-                       bColMajor ? CUBLAS_OP_N : CUBLAS_OP_T, M, Ncols, K,
-                       &alpha, A, lda, B, ldb, &beta, C, ldc));
-  } else {
-    PDR_CB(cublasDgemm(h, bColMajor ? CUBLAS_OP_T : CUBLAS_OP_N,
-                       aColMajor ? CUBLAS_OP_T : CUBLAS_OP_N, Ncols, M, K,
-                       &alpha, B, ldb, A, lda, &beta, C, ldc));
-  }
+// Narrow a rows x cols operand into dst, in the element type of `mode`: flat
+// when its leading dimension is its packed extent, strided otherwise.
+void pdr_launchNarrow(int mode, void *dst, const double *src, int rows,
+                      int cols, int ld, int colMajor, cudaStream_t stream) {
+  auto launch = [&](auto *typed) {
+    if (ld == (colMajor ? rows : cols)) {
+      const size_t n = (size_t)rows * cols;
+      pdr_narrow_flat<<<(unsigned)((n + 255) / 256), 256, 0, stream>>>(typed,
+                                                                       src, n);
+      return;
+    }
+    dim3 grid(colMajor ? (rows + 15) / 16 : (cols + 15) / 16,
+              colMajor ? (cols + 15) / 16 : (rows + 15) / 16);
+    pdr_narrow<<<grid, dim3(16, 16), 0, stream>>>(typed, src, rows, cols, ld,
+                                                  colMajor);
+  };
+  if (mode == kDirectFp16)
+    launch((__half *)dst);
+  else if (mode == kDirectBf16)
+    launch((__nv_bfloat16 *)dst);
+  else
+    launch((float *)dst);
 }
 
 // Narrow -> one cublasGemmEx -> widen.
 void pdr_run(double *C, const double *A, const double *B, int M, int Ncols,
              int K, int lda, int ldb, int ldc, int aColMajor, int bColMajor,
              int cColMajor, double alpha, double beta, cudaStream_t stream,
-             int mode) {
-  const PdrFormat f = pdr_format(mode);
-  pdr_reserve_bytes(&g.A, &g.capA, (size_t)M * K * f.elemBytes);
-  pdr_reserve_bytes(&g.B, &g.capB, (size_t)K * Ncols * f.elemBytes);
-  pdr_reserve_f32(&g.C, &g.capC, (size_t)M * Ncols);
+             int mode, const PdrFormat &f) {
+  poseidonReserve(&g.A, &g.capA, (size_t)M * K * f.elemBytes);
+  poseidonReserve(&g.B, &g.capB, (size_t)K * Ncols * f.elemBytes);
+  poseidonReserve(&g.C, &g.capC, (size_t)M * Ncols * sizeof(float));
+  float *wide = (float *)g.C;
 
   dim3 b(16, 16);
-  auto launchNarrow = [&](void *dst, const double *src, int rows, int cols,
-                          int ld, int colMajor) {
-    if (ld == (colMajor ? rows : cols)) {
-      const size_t n = (size_t)rows * cols;
-      const unsigned g = (unsigned)((n + 255) / 256);
-      switch (mode) {
-      case 1:
-        pdr_narrow_flat<<<g, 256, 0, stream>>>((__half *)dst, src, n);
-        break;
-      case 2:
-        pdr_narrow_flat<<<g, 256, 0, stream>>>((__nv_bfloat16 *)dst, src, n);
-        break;
-      default:
-        pdr_narrow_flat<<<g, 256, 0, stream>>>((float *)dst, src, n);
-        break;
-      }
-      return;
-    }
-    dim3 grid(colMajor ? (rows + 15) / 16 : (cols + 15) / 16,
-              colMajor ? (cols + 15) / 16 : (rows + 15) / 16);
-    switch (mode) {
-    case 1:
-      pdr_narrow<<<grid, b, 0, stream>>>((__half *)dst, src, rows, cols, ld,
-                                         colMajor);
-      break;
-    case 2:
-      pdr_narrow<<<grid, b, 0, stream>>>((__nv_bfloat16 *)dst, src, rows, cols,
-                                         ld, colMajor);
-      break;
-    default:
-      pdr_narrow<<<grid, b, 0, stream>>>((float *)dst, src, rows, cols, ld,
-                                         colMajor);
-      break;
-    }
-  };
-  launchNarrow(g.A, A, M, K, lda, aColMajor);
-  launchNarrow(g.B, B, K, Ncols, ldb, bColMajor);
+  pdr_launchNarrow(mode, g.A, A, M, K, lda, aColMajor, stream);
+  pdr_launchNarrow(mode, g.B, B, K, Ncols, ldb, bColMajor, stream);
 
   // The packed A buffer is a column-major M x K matrix (ld = M) when the source
   // was column-major, and a column-major K x M matrix (ld = K) otherwise, so
@@ -312,16 +225,17 @@ void pdr_run(double *C, const double *A, const double *B, int M, int Ncols,
   };
 
   const float one = 1.0f, zero = 0.0f;
-  cublasHandle_t h = pdr_cublas();
-  PDR_CB(cublasSetStream(h, stream));
+  cublasHandle_t h = poseidonCublas();
+  POSEIDON_GEMM_CB(cublasSetStream(h, stream));
   if (cColMajor) {
-    PDR_CB(cublasGemmEx(h, opA, opB, M, Ncols, K, &one, g.A, f.dt, packLdA, g.B,
-                        f.dt, packLdB, &zero, g.C, CUDA_R_32F, M, f.ct,
-                        CUBLAS_GEMM_DEFAULT));
+    POSEIDON_GEMM_CB(cublasGemmEx(h, opA, opB, M, Ncols, K, &one, g.A, f.dt,
+                                  packLdA, g.B, f.dt, packLdB, &zero, wide,
+                                  CUDA_R_32F, M, f.ct, CUBLAS_GEMM_DEFAULT));
   } else {
-    PDR_CB(cublasGemmEx(h, flip(opB), flip(opA), Ncols, M, K, &one, g.B, f.dt,
-                        packLdB, g.A, f.dt, packLdA, &zero, g.C, CUDA_R_32F,
-                        Ncols, f.ct, CUBLAS_GEMM_DEFAULT));
+    POSEIDON_GEMM_CB(cublasGemmEx(h, flip(opB), flip(opA), Ncols, M, K, &one,
+                                  g.B, f.dt, packLdB, g.A, f.dt, packLdA, &zero,
+                                  wide, CUDA_R_32F, Ncols, f.ct,
+                                  CUBLAS_GEMM_DEFAULT));
   }
 
   const bool acc = (beta != 0.0);
@@ -329,65 +243,33 @@ void pdr_run(double *C, const double *A, const double *B, int M, int Ncols,
     const size_t n = (size_t)M * Ncols;
     const unsigned wg = (unsigned)((n + 255) / 256);
     if (acc)
-      pdr_widen_flat<true><<<wg, 256, 0, stream>>>(C, g.C, n, alpha, beta);
+      pdr_widen_flat<true><<<wg, 256, 0, stream>>>(C, wide, n, alpha, beta);
     else
-      pdr_widen_flat<false><<<wg, 256, 0, stream>>>(C, g.C, n, alpha, beta);
+      pdr_widen_flat<false><<<wg, 256, 0, stream>>>(C, wide, n, alpha, beta);
   } else {
     dim3 wgrid(cColMajor ? (M + 15) / 16 : (Ncols + 15) / 16,
                cColMajor ? (Ncols + 15) / 16 : (M + 15) / 16);
     if (acc)
-      pdr_widen<true><<<wgrid, b, 0, stream>>>(C, g.C, M, Ncols, ldc, cColMajor,
-                                               alpha, beta);
+      pdr_widen<true><<<wgrid, b, 0, stream>>>(C, wide, M, Ncols, ldc,
+                                               cColMajor, alpha, beta);
     else
-      pdr_widen<false><<<wgrid, b, 0, stream>>>(C, g.C, M, Ncols, ldc,
+      pdr_widen<false><<<wgrid, b, 0, stream>>>(C, wide, M, Ncols, ldc,
                                                 cColMajor, alpha, beta);
   }
 }
 
 } // namespace
 
-// Square entry: same ABI and same accepted-shape set as
-// __poseidon_ozaki_dgemm and __poseidon_tcec_dgemm (row-major, leading dim N,
-// no transpose).
-extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
-                                        const double *B, int N, int lda,
-                                        int ldb, int ldc, int transA,
-                                        int transB, double alpha, double beta,
-                                        cudaStream_t stream, int mode) {
-  if (N <= 0)
-    return;
-  if (transA || transB || (lda && lda != N) || (ldb && ldb != N) ||
-      (ldc && ldc != N)) {
-    fprintf(
-        stderr,
-        "poseidon_direct_rt FATAL: unsupported square GEMM shape (transA=%d "
-        "transB=%d lda=%d ldb=%d ldc=%d N=%d)\n",
-        transA, transB, lda, ldb, ldc, N);
-    abort();
-  }
-  if (mode == 0) {
-    pdr_native_dgemm(C, A, B, N, N, N, N, N, N, /*aColMajor=*/0,
-                     /*bColMajor=*/0, /*cColMajor=*/0, alpha, beta, stream);
-    return;
-  }
-  pdr_run(C, A, B, N, N, N, N, N, N, /*aColMajor=*/0, /*bColMajor=*/0,
-          /*cColMajor=*/0, alpha, beta, stream, mode);
-}
-
-// General M x Ncols x K entry: the operands are repacked during the narrow, so
-// any shape and layout combination is one library call, without the Ozaki _ex
-// path's square padding.
-extern "C" void __poseidon_direct_dgemm_ex(
+// The operands are repacked during the narrow, so any shape and layout
+// combination is one library call.
+extern "C" void __poseidon_direct_dgemm(
     double *C, const double *A, const double *B, int M, int Ncols, int K,
     int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
     double alpha, double beta, cudaStream_t stream, int mode) {
+  const PdrFormat f = pdr_format(mode);
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
-  if (mode == 0) {
-    pdr_native_dgemm(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor,
-                     cColMajor, alpha, beta, stream);
-    return;
-  }
   pdr_run(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor, cColMajor,
-          alpha, beta, stream, mode);
+          alpha, beta, stream, mode, f);
+  POSEIDON_GEMM_CK(cudaGetLastError());
 }

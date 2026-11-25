@@ -2,7 +2,7 @@
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -I%poseidon_runtime_inc %s -o %t/tcec_scale
 // RUN: %t/tcec_scale | FileCheck %s
 
-// The TCEC runtime's power-of-two operand scaling (runtime/tcec/tcec_scale.h),
+// The TCEC runtime's power-of-two operand scaling (runtime/ozaki/OzakiII.h),
 // run on the host over the whole exponent range.
 //
 // ldexp: ptc_ldexp(x, n) is x * 2^n rounded once, against the C library's
@@ -19,7 +19,7 @@
 // unscaling factor 1.f / (sA * sB)) is finite and nonzero, the exponents give
 // the same scales and the same unscaling bit for bit.
 
-#include "tcec/tcec_scale.h"
+#include "ozaki/OzakiII.h"
 
 #include <cmath>
 #include <cstdint>

@@ -18,6 +18,7 @@
 #define POSEIDON_MATMUL_SCHEME_H
 
 #include "Core/FPKind.h"
+#include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -123,12 +124,12 @@ inline constexpr bool kHaveTcecDispatch = true;
 inline constexpr bool kHaveTcecDispatch = false;
 #endif
 
-// __poseidon_tcec_dgemm's compute mode: mode 1 is cuMpSGEMM's FP16TCEC, a
-// two-slice FP16 split with an FP32 accumulator.
-inline unsigned splitLibraryComputeMode(const SchemeVariant &v) {
+// __poseidon_tcec_dgemm's compute mode: cuMpSGEMM's FP16TCEC is a two-slice
+// FP16 split with an FP32 accumulator.
+inline PoseidonTcecMode splitLibraryComputeMode(const SchemeVariant &v) {
   if (v.scheme == Scheme::Split && v.operand == FPKind::F16 &&
       v.accumulator == FPKind::F32 && v.slices == 2)
-    return 1;
+    return kTcecFp16Tcec;
   llvm::report_fatal_error(
       "no __poseidon_tcec_dgemm compute mode realizes this split");
 }
@@ -136,17 +137,17 @@ inline unsigned splitLibraryComputeMode(const SchemeVariant &v) {
 // __poseidon_direct_dgemm's operand format (runtime/direct/direct_rt.cu), all
 // with an FP32 accumulator; FP32 operands are cuBLAS's SGEMM rather than a
 // tensor-core product.
-inline unsigned directLibraryOperandFormat(const SchemeVariant &v) {
+inline PoseidonDirectMode directLibraryOperandFormat(const SchemeVariant &v) {
   if (v.scheme == Scheme::Direct && v.accumulator == FPKind::F32) {
     switch (v.operand) {
     case FPKind::F16:
-      return 1;
+      return kDirectFp16;
     case FPKind::BF16:
-      return 2;
+      return kDirectBf16;
     case FPKind::TF32:
-      return 3;
+      return kDirectTf32;
     case FPKind::F32:
-      return 4;
+      return kDirectFp32;
     default:
       break;
     }
@@ -155,22 +156,23 @@ inline unsigned directLibraryOperandFormat(const SchemeVariant &v) {
       "no __poseidon_direct_dgemm operand format realizes this product");
 }
 
-// The host runtime a library call goes to. All of them take the identical
-// calling convention, so it selects only the callee name:
-//   OzakiII -> __poseidon_ozaki_dgemm(_ex): INT8 residue/CRT, accuracy set by
-//              num_moduli; num_moduli = 0 is cuBLAS's DGEMM;
-//   Tcec    -> __poseidon_tcec_dgemm(_ex): FP16 tensor cores + error
-//              correction, F32-class;
-//   Direct  -> __poseidon_direct_dgemm(_ex): one rounding of each operand to
-//              FP16/BF16/TF32/FP32, FP32 accumulator.
-enum class DispatchScheme { OzakiII, Tcec, Direct };
+// The host runtime a library call goes to (runtime/GemmDispatch.h):
+//   OzakiII -> __poseidon_ozaki_dgemm: INT8 residue/CRT, accuracy set by
+//              num_moduli;
+//   Tcec    -> __poseidon_tcec_dgemm: FP16 tensor cores + error correction,
+//              F32-class;
+//   Direct  -> __poseidon_direct_dgemm: one rounding of each operand to
+//              FP16/BF16/TF32/FP32, FP32 accumulator;
+//   Native  -> __poseidon_native_dgemm: the library's DGEMM.
+enum class DispatchScheme { OzakiII, Tcec, Direct, Native };
 
 // The scheme a launch descriptor names for a library call of `v`.
 inline DispatchScheme descriptorScheme(const SchemeVariant &v) {
   switch (v.scheme) {
   case Scheme::Modular:
-  case Scheme::Native:
     return DispatchScheme::OzakiII;
+  case Scheme::Native:
+    return DispatchScheme::Native;
   case Scheme::Split:
     return DispatchScheme::Tcec;
   case Scheme::Direct:
@@ -179,10 +181,9 @@ inline DispatchScheme descriptorScheme(const SchemeVariant &v) {
   llvm_unreachable("unknown Scheme");
 }
 
-// The launch descriptor's num_moduli field for a library call of `v`, which
-// each runtime reads as its own parameter: the modulus count (0 selects the
-// native product on the same entry), the TCEC compute mode, or the direct
-// operand format.
+// The launch descriptor's num_moduli field for a library call of `v`, the last
+// argument of its entry point: the modulus count, the TCEC compute mode, or
+// the direct operand format. The native entry has none, and the field is 0.
 inline unsigned descriptorModulusField(const SchemeVariant &v) {
   switch (v.scheme) {
   case Scheme::Modular:

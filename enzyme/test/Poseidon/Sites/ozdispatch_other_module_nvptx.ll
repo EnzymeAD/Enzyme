@@ -30,7 +30,7 @@
 ; SAME-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; SAME-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
 ; SAME-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; SAME-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; SAME-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
 ; SAME-NEXT: br label
 ; SAME-NOT: call {{.*}}@cudaLaunchKernel(
 

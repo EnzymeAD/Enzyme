@@ -19,7 +19,7 @@
 #include <cstdlib>
 
 // The profile file name rule, shared with both FP profiler runtimes.
-#include "FPProfileName.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 using namespace llvm;
 
@@ -49,7 +49,7 @@ static std::string siteProfileStem(const Session &S, const Function &clone) {
 }
 
 std::string siteProfileFile(const Session &S, const Function &clone) {
-  return siteProfileStem(S, clone) + ".fpprofile";
+  return siteProfileStem(S, clone) + kProfileFileSuffix;
 }
 
 std::string siteKeyOfBody(const Function &body) {

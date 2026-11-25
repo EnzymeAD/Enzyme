@@ -14,6 +14,7 @@
 #ifndef POSEIDON_PROFILE_READ_H
 #define POSEIDON_PROFILE_READ_H
 
+#include "runtime/fpprofiler/FPProfileName.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -87,7 +88,7 @@ struct FunctionProfileHeader {
   std::string kappaMark;
 };
 
-inline constexpr llvm::StringLiteral kKappaUnmeasured = "unmeasured";
+inline constexpr llvm::StringLiteral kKappaUnmeasured = kProfileKappaUnmeasured;
 
 // The records of the profile at `profilePath`, and with `header` its header
 // lines. A profile that does not parse is an error at the site `F`.

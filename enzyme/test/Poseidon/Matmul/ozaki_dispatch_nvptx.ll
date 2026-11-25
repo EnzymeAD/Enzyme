@@ -49,7 +49,7 @@
 ; HOST12-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; HOST12-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
 ; HOST12-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; HOST12-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; HOST12-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
 ; HOST12-NEXT: br label
 ; HOST12-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
@@ -65,7 +65,7 @@
 ; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
 ; TAU16: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
-; HOST16: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; HOST16: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_native_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; HOST16-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; HOST16: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
 ; HOST16: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
@@ -77,7 +77,7 @@
 ; HOST16-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; HOST16-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
 ; HOST16-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; HOST16-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
+; HOST16-NEXT: call void @__poseidon_native_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null)
 ; HOST16-NEXT: br label
 ; HOST16-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
@@ -101,4 +101,5 @@
 ;     matmul_kernel<<<1, dim3(16, 16)>>>(A, B, D, dD);
 ;   }
 ; renamed to this module's source and compiled as the same unit) calls
-; __poseidon_ozaki_dgemm with that nm; nm = 0 is the native cuBLAS DGEMM arm.
+; __poseidon_ozaki_dgemm with that nm, or __poseidon_native_dgemm for the
+; native DGEMM.

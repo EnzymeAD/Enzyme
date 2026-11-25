@@ -9,7 +9,7 @@
 #include "Report.h"
 #include "Pass/Session.h"
 
-#include "FPProfileName.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

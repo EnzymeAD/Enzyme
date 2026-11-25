@@ -8,27 +8,19 @@
 // RUN: FileCheck --check-prefix=ORDER %s < %t/idx
 // RUN: sort -n -c %t/idx
 // RUN: FileCheck --check-prefix=NOPROBE --allow-empty %s < %t/gen.err
-// RUN: env POSEIDON_PROFILE_DIR=%t/flush %t/gen flush > /dev/null
-// RUN: FileCheck --check-prefix=NEVER %s < %t/flush/preprocess__Z7skippedPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=RAN %s < %t/flush/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
 
 // The profiling runtime writes a profile for every site it instrumented, run or
-// not: one the run never executed gets its header and a line saying so, at
-// exit and from ProfilerWrite alike, and profile use leaves it as written with
-// a note. A site that never ran is no site for the condition-number probe,
-// which needs two. The records of a site that ran are in slot order, whatever
-// order the run first reached them in: the profile's bytes are part of the key
-// of the site's cached DP table.
+// not: one the run never executed gets its header and a line saying so, and
+// profile use leaves it as written with a note. A site that never ran is no
+// site for the condition-number probe, which needs two. The records of a site
+// that ran are in slot order, whatever order the run first reached them in:
+// the profile's bytes are part of the key of the site's cached DP table.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
 #include <cstdio>
-#include <cstring>
-#include <unistd.h>
 #include <vector>
-
-extern "C" void ProfilerWrite();
 
 POSEIDON_OPTIMIZE void ran(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
@@ -50,10 +42,6 @@ int main(int argc, char **argv) {
     skipped(x.data(), y.data(), n);
   poseidon_metric("y", y[n / 3]);
   printf("%.17g\n", y[n / 3]);
-  if (argc > 1 && !strcmp(argv[1], "flush")) {
-    ProfilerWrite();
-    _exit(0);
-  }
 }
 
 // NEVER: SiteId = {{[0-9]+}}

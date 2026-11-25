@@ -17,8 +17,7 @@
 #include <cstdio>
 
 #ifdef __HIP__
-#include <hip/hip_runtime.h>
-#define __trap __builtin_trap
+#include "../hip_as_cuda.h"
 // The derivative a probed site runs keeps its caches in memory it mallocs and
 // frees, and HIP defines its device malloc and free only where a source calls
 // them: referenced here, they are defined for every module linking this one.
@@ -110,6 +109,22 @@ __device__ inline int poseidonFuncIdx(const char *fn) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
   return poseidonRegisterIdx(T.funcReg, T.funcNames, T.maxFuncs, fn, "value",
                              "POSEIDON_PROFILE_MAX_FUNCS");
+}
+
+// The slot of probe idx of the function funcName, whose registry index goes to
+// fi. A probe index past the table is a hard error.
+__device__ inline GPUProfileSlot *poseidonSlot(const char *funcName, size_t idx,
+                                               int &fi) {
+  const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
+  if (T.funcReg && idx >= T.slotCount) {
+    printf("Poseidon FPProfiler: probe idx %llu >= "
+           "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
+           "Consider increasing POSEIDON_PROFILE_MAX_SLOTS.\n",
+           (unsigned long long)idx, (unsigned long long)T.slotCount);
+    __trap();
+  }
+  fi = poseidonFuncIdx(funcName);
+  return &T.slots[(size_t)fi * T.slotCount + idx];
 }
 
 // A device call site whose arguments reach overlapping memory, one of them
@@ -242,16 +257,8 @@ poseidonLogValueCUDA(const char *funcName, size_t idx, double res,
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
   if (T.metricOnly)
     return;
-  if (T.funcReg && idx >= T.slotCount) {
-    printf("Poseidon FPProfiler: probe idx %llu >= "
-           "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
-           "Consider increasing POSEIDON_PROFILE_MAX_SLOTS.\n",
-           (unsigned long long)idx, (unsigned long long)T.slotCount);
-    __trap();
-  }
-
-  int fi = poseidonFuncIdx(funcName);
-  GPUProfileSlot *slot = &T.slots[(size_t)fi * T.slotCount + idx];
+  int fi;
+  GPUProfileSlot *slot = poseidonSlot(funcName, idx, fi);
 
   // Idempotent: gridDim is fixed per launch.
   atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 0], gridDim.x);
@@ -279,16 +286,8 @@ poseidonLogGradCUDA(const char *funcName, size_t idx, double value,
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
   if (T.metricOnly)
     return;
-  if (T.funcReg && idx >= T.slotCount) {
-    printf("Poseidon FPProfiler: probe idx %llu >= "
-           "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
-           "Consider increasing POSEIDON_PROFILE_MAX_SLOTS.\n",
-           (unsigned long long)idx, (unsigned long long)T.slotCount);
-    __trap();
-  }
-
-  int fi = poseidonFuncIdx(funcName);
-  GPUProfileSlot *slot = &T.slots[(size_t)fi * T.slotCount + idx];
+  int fi;
+  GPUProfileSlot *slot = poseidonSlot(funcName, idx, fi);
 
   if (!isnan(grad) && !isinf(grad) && !isnan(value) && !isinf(value)) {
     atomicAddFinite(&slot->sumGrad, grad);

@@ -586,34 +586,35 @@ struct LaunchDesc : GemmBodyNote {
 };
 } // namespace
 
-// All host runtimes share one calling convention, so the scheme picks only the
-// symbol.
-static const char *dispatchSym(DispatchScheme s, bool square) {
-  if (s == DispatchScheme::Tcec)
-    return square ? "__poseidon_tcec_dgemm" : "__poseidon_tcec_dgemm_ex";
-  if (s == DispatchScheme::Direct)
-    return square ? "__poseidon_direct_dgemm" : "__poseidon_direct_dgemm_ex";
-  return square ? "__poseidon_ozaki_dgemm" : "__poseidon_ozaki_dgemm_ex";
+// The entry points of runtime/GemmDispatch.h.
+static const char *dispatchSym(DispatchScheme s) {
+  switch (s) {
+  case DispatchScheme::OzakiII:
+    return "__poseidon_ozaki_dgemm";
+  case DispatchScheme::Tcec:
+    return "__poseidon_tcec_dgemm";
+  case DispatchScheme::Direct:
+    return "__poseidon_direct_dgemm";
+  case DispatchScheme::Native:
+    return "__poseidon_native_dgemm";
+  }
+  llvm_unreachable("unknown DispatchScheme");
 }
 
-static FunctionCallee getDispatchCallee(Module &M, DispatchScheme scheme,
-                                        bool square) {
+// void(C,A,B, M,Ncols,K, lda,ldb,ldc, aColMajor,bColMajor,cColMajor,
+//      alpha,beta, stream[, the descriptor's num_moduli field])
+static FunctionCallee getDispatchCallee(Module &M, DispatchScheme scheme) {
   LLVMContext &C = M.getContext();
   Type *ptr = PointerType::get(C, 0);
   Type *i32 = Type::getInt32Ty(C);
   Type *dbl = Type::getDoubleTy(C);
-  // void(C,A,B, N,lda,ldb,ldc, transA,transB, alpha,beta, stream, num_moduli)
-  Type *squareParams[] = {ptr, ptr, ptr, i32, i32, i32, i32,
-                          i32, i32, dbl, dbl, ptr, i32};
-  // void(C,A,B, M,Ncols,K, lda,ldb,ldc, aColMajor,bColMajor,cColMajor,
-  //      alpha,beta, stream, num_moduli)
-  Type *exParams[] = {ptr, ptr, ptr, i32, i32, i32, i32, i32,
-                      i32, i32, i32, i32, dbl, dbl, ptr, i32};
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
-                                       square ? ArrayRef<Type *>(squareParams)
-                                              : ArrayRef<Type *>(exParams),
-                                       false);
-  return M.getOrInsertFunction(dispatchSym(scheme, square), FT);
+  SmallVector<Type *, 16> params = {ptr, ptr, ptr, i32, i32, i32, i32, i32,
+                                    i32, i32, i32, i32, dbl, dbl, ptr};
+  if (scheme != DispatchScheme::Native)
+    params.push_back(i32);
+  return M.getOrInsertFunction(
+      dispatchSym(scheme),
+      FunctionType::get(Type::getVoidTy(C), params, false));
 }
 
 static bool readDispatchDescriptors(const Options &O, Module &M,
@@ -635,9 +636,9 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
         d.bColMajor = Cursor.integer<int>("B layout") != 0;
         d.cColMajor = Cursor.integer<int>("C layout") != 0;
         unsigned scheme = Cursor.integer<unsigned>("scheme");
-        if (scheme > (unsigned)DispatchScheme::Direct)
+        if (scheme > (unsigned)DispatchScheme::Native)
           Cursor.fail("its scheme " + Twine(scheme) + " is above " +
-                      Twine((unsigned)DispatchScheme::Direct));
+                      Twine((unsigned)DispatchScheme::Native));
         d.scheme = (DispatchScheme)scheme;
         // Keyword blocks (see emitDescriptor), of which rd is required.
         bool haveDims = false;
@@ -696,16 +697,6 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
   return !descs.empty();
 }
 
-// The square entry takes one N for every dimension: it serves a row-major NN
-// GEMM whose six dimensions are the same constant and that is not
-// launch-cropped. Everything else takes the layout-aware _ex entry.
-static bool takesSquareEntry(const LaunchDesc &d) {
-  const RuntimeDim &k = d.dims[DimK];
-  return !d.launchCrop && !d.aColMajor && !d.bColMajor && !d.cColMajor &&
-         k.isConst() &&
-         llvm::all_of(d.dims, [&](const RuntimeDim &x) { return x == k; });
-}
-
 // Kernel argument `r.param` lives where entry r.param of the launch's argument
 // array points, as the CUDA runtime reads it; a field of an aggregate argument
 // is at its offset from there in every host ABI, which the stub's own
@@ -750,9 +741,8 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   Type *dbl = Type::getDoubleTy(C);
   auto I32 = [&](int64_t v) { return ConstantInt::get(i32, (uint64_t)v); };
   Value *argArray = launchArguments(*launch);
-  const bool squareRM = takesSquareEntry(d);
   // Resolved per descriptor: the scheme is a per-site solver decision.
-  FunctionCallee callee = getDispatchCallee(M, d.scheme, squareRM);
+  FunctionCallee callee = getDispatchCallee(M, d.scheme);
 
   IRBuilder<> B(launch);
   auto value = [&](const LaunchRef &r, Type *T) {
@@ -788,31 +778,25 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   Value *beta = ConstantFP::get(dbl, d.beta);
   Value *one = ConstantFP::get(dbl, 1.0);
   Value *stream = ConstantPointerNull::get(cast<PointerType>(ptr));
-  Value *nm = I32(d.numModuli);
-  SmallVector<Value *, 16> args;
-  if (squareRM) {
-    Value *N = I32(d.dims[DimK].add);
-    args = {Cp, Ap, Bp, N, N, N, N, I32(0), I32(0), one, beta, stream, nm};
-  } else {
-    args = {Cp,
-            Ap,
-            Bp,
-            d.launchCrop ? cropDim(d.cropMAxis, d.dims[DimM])
-                         : dim(d.dims[DimM]),
-            d.launchCrop ? cropDim(d.cropNAxis, d.dims[DimNcols])
-                         : dim(d.dims[DimNcols]),
-            dim(d.dims[DimK]),
-            dim(d.dims[DimLda]),
-            dim(d.dims[DimLdb]),
-            dim(d.dims[DimLdc]),
-            I32(d.aColMajor ? 1 : 0),
-            I32(d.bColMajor ? 1 : 0),
-            I32(d.cColMajor ? 1 : 0),
-            one,
-            beta,
-            stream,
-            nm};
-  }
+  SmallVector<Value *, 16> args = {
+      Cp,
+      Ap,
+      Bp,
+      d.launchCrop ? cropDim(d.cropMAxis, d.dims[DimM]) : dim(d.dims[DimM]),
+      d.launchCrop ? cropDim(d.cropNAxis, d.dims[DimNcols])
+                   : dim(d.dims[DimNcols]),
+      dim(d.dims[DimK]),
+      dim(d.dims[DimLda]),
+      dim(d.dims[DimLdb]),
+      dim(d.dims[DimLdc]),
+      I32(d.aColMajor ? 1 : 0),
+      I32(d.bColMajor ? 1 : 0),
+      I32(d.cColMajor ? 1 : 0),
+      one,
+      beta,
+      stream};
+  if (d.scheme != DispatchScheme::Native)
+    args.push_back(I32(d.numModuli));
   Value *holds = nullptr;
   for (const auto &[x, y] : d.assumedEqual) {
     Value *lhs = value(x, i32);
@@ -844,7 +828,7 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   }
   errs() << "[ozaki-host-dispatch] "
          << (d.standalone ? "replaced" : "prepended") << " the launch in stub "
-         << F.getName() << " with " << dispatchSym(d.scheme, squareRM)
+         << F.getName() << " with " << dispatchSym(d.scheme)
          << " (C=" << launchRefString({d.cParam, d.cOffset}, "arg")
          << " A=" << launchRefString({d.aParam, d.aOffset}, "arg")
          << " B=" << launchRefString({d.bParam, d.bOffset}, "arg") << ')';

@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// tcec_rt.cu: Poseidon host-dispatch runtime for tensor-core error
-// correction (TCEC), the F32-accuracy-class sibling of ozaki_rt.cu. The
+// Tensor-core error correction (TCEC), the F32-accuracy-class sibling of
+// ozaki_rt.cu. The
 // product is cuMpSGEMM's, the published implementation of the scheme
 // (Ootomo and Yokota): its error correction accumulates outside the tensor
 // cores with round-to-nearest, which a GEMM library accumulating inside them
@@ -20,82 +20,34 @@
 // TCEC is not exact: the FP64->FP32 narrowing (~6e-8 relative) composes with
 // the FP16+correction product error, giving F32-class results.
 //
-// mode takes the Ozaki entry's num_moduli slot so the two entries share one
-// calling convention:
-//   0 = native cuBLAS DGEMM
-//   1 = FP16TCEC (default)
-//   2 = TF32TCEC
-//   3 = FP16TC  (no correction)
-//   4 = TF32TC  (no correction)
-// Out-of-range values abort rather than silently substituting a precision.
-//
 //===----------------------------------------------------------------------===//
 
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cublas_v2.h>
-#include <cuda_runtime.h>
 #include <cumpsgemm/cumpsgemm.hpp>
 
-#include "tcec_scale.h"
-
-#define PTC_CK(x)                                                              \
-  do {                                                                         \
-    cudaError_t e_ = (x);                                                      \
-    if (e_ != cudaSuccess) {                                                   \
-      fprintf(stderr, "poseidon_tcec_rt FATAL CUDA %s:%d %s\n", __FILE__,      \
-              __LINE__, cudaGetErrorString(e_));                               \
-      abort();                                                                 \
-    }                                                                          \
-  } while (0)
-
-#define PTC_CB(x)                                                              \
-  do {                                                                         \
-    cublasStatus_t s_ = (x);                                                   \
-    if (s_ != CUBLAS_STATUS_SUCCESS) {                                         \
-      fprintf(stderr, "poseidon_tcec_rt FATAL cuBLAS %s:%d status %d\n",       \
-              __FILE__, __LINE__, (int)s_);                                    \
-      abort();                                                                 \
-    }                                                                          \
-  } while (0)
+#include "../GemmRuntime.h"
+#include "../ozaki/OzakiII.h"
 
 namespace {
 
-cublasHandle_t ptc_cublas() {
-  static cublasHandle_t h = nullptr;
-  if (!h)
-    PTC_CB(cublasCreate(&h));
-  return h;
-}
 cuMpSGEMM_handle_t ptc_cumps() {
-  static cuMpSGEMM_handle_t h = nullptr;
-  static bool init = false;
-  if (!init) {
-    cumpsgemm::create(h);
-    init = true;
-  }
+  static cuMpSGEMM_handle_t h = [] {
+    cuMpSGEMM_handle_t created;
+    POSEIDON_GEMM_CB(cuMpSGEMM_create(&created));
+    return created;
+  }();
   return h;
 }
 
 struct PtcScratch {
-  size_t capA = 0, capB = 0, capC = 0;
-  float *A = nullptr, *B = nullptr, *C = nullptr;
+  size_t capA = 0, capB = 0, capC = 0; // bytes
+  void *A = nullptr, *B = nullptr, *C = nullptr;
   // Exponents of the power-of-two scales: [0] of A, [1] of B, [2] of the
   // result, which undoes both.
   int *scaleExp = nullptr;
   unsigned long long *absmax = nullptr; // [0]=max|A| bits, [1]=max|B| bits
 };
 PtcScratch g;
-
-void ptc_reserve(float **p, size_t *cap, size_t need) {
-  if (*cap >= need)
-    return;
-  if (*p)
-    PTC_CK(cudaFree(*p));
-  PTC_CK(cudaMalloc(p, need * sizeof(float)));
-  *cap = need;
-}
 
 // FP16 spans only ~4 decades, so an FP32 operand outside that window splits
 // into Inf/NaN limbs. One power-of-two scale per operand suffices (exact in
@@ -206,40 +158,21 @@ __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
 
 cuMpSGEMM_compute_mode_t ptc_mode(int mode) {
   switch (mode) {
-  case 1:
+  case kTcecFp16Tcec:
     return CUMPSGEMM_FP16TCEC;
-  case 2:
+  case kTcecTf32Tcec:
     return CUMPSGEMM_TF32TCEC;
-  case 3:
+  case kTcecFp16Tc:
     return CUMPSGEMM_FP16TC;
-  case 4:
+  case kTcecTf32Tc:
     return CUMPSGEMM_TF32TC;
   }
+  fflush(stdout);
   fprintf(stderr,
-          "poseidon_tcec_rt FATAL: unsupported mode %d (0=dgemm, 1=FP16TCEC, "
-          "2=TF32TCEC, 3=FP16TC, 4=TF32TC). Refusing to substitute a "
-          "different precision.\n",
+          "Poseidon GEMM runtime: __poseidon_tcec_dgemm with mode %d: it takes "
+          "a PoseidonTcecMode, 1 to 4\n",
           mode);
   abort();
-}
-
-// Layout-aware native DGEMM (mode == 0): every {a,b,c}ColMajor combination is
-// one call.
-void ptc_native_dgemm(double *C, const double *A, const double *B, int M,
-                      int Ncols, int K, int lda, int ldb, int ldc,
-                      int aColMajor, int bColMajor, int cColMajor, double alpha,
-                      double beta, cudaStream_t stream) {
-  cublasHandle_t h = ptc_cublas();
-  PTC_CB(cublasSetStream(h, stream));
-  if (cColMajor) {
-    PTC_CB(cublasDgemm(h, aColMajor ? CUBLAS_OP_N : CUBLAS_OP_T,
-                       bColMajor ? CUBLAS_OP_N : CUBLAS_OP_T, M, Ncols, K,
-                       &alpha, A, lda, B, ldb, &beta, C, ldc));
-  } else {
-    PTC_CB(cublasDgemm(h, bColMajor ? CUBLAS_OP_T : CUBLAS_OP_N,
-                       aColMajor ? CUBLAS_OP_T : CUBLAS_OP_N, Ncols, M, K,
-                       &alpha, B, ldb, A, lda, &beta, C, ldc));
-  }
 }
 
 // Narrow -> cuMpSGEMM (alpha=1,beta=0) -> widen.
@@ -247,82 +180,55 @@ void ptc_native_dgemm(double *C, const double *A, const double *B, int M,
 void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
              int K, int lda, int ldb, int ldc, int aColMajor, int bColMajor,
              int cColMajor, double alpha, double beta, cudaStream_t stream,
-             int mode) {
-  ptc_reserve(&g.A, &g.capA, (size_t)M * K);
-  ptc_reserve(&g.B, &g.capB, (size_t)K * Ncols);
-  ptc_reserve(&g.C, &g.capC, (size_t)M * Ncols);
+             cuMpSGEMM_compute_mode_t mode) {
+  poseidonReserve(&g.A, &g.capA, (size_t)M * K * sizeof(float));
+  poseidonReserve(&g.B, &g.capB, (size_t)K * Ncols * sizeof(float));
+  poseidonReserve(&g.C, &g.capC, (size_t)M * Ncols * sizeof(float));
   if (!g.scaleExp) {
-    PTC_CK(cudaMalloc(&g.scaleExp, 3 * sizeof(int)));
-    PTC_CK(cudaMalloc(&g.absmax, 2 * sizeof(unsigned long long)));
+    POSEIDON_GEMM_CK(cudaMalloc(&g.scaleExp, 3 * sizeof(int)));
+    POSEIDON_GEMM_CK(cudaMalloc(&g.absmax, 2 * sizeof(unsigned long long)));
   }
 
   // Range normalization must see the operands as laid out, but only their
   // magnitudes, so it can stream them flat regardless of layout.
-  PTC_CK(cudaMemsetAsync(g.absmax, 0, 2 * sizeof(unsigned long long), stream));
+  POSEIDON_GEMM_CK(
+      cudaMemsetAsync(g.absmax, 0, 2 * sizeof(unsigned long long), stream));
   ptc_launchAbsmax(A, g.absmax, 0, M, K, lda, aColMajor, stream);
   ptc_launchAbsmax(B, g.absmax, 1, K, Ncols, ldb, bColMajor, stream);
   dim3 b(16, 16);
   ptc_scales<<<1, 1, 0, stream>>>(g.absmax, g.scaleExp);
 
+  float *nA = (float *)g.A, *nB = (float *)g.B, *nC = (float *)g.C;
   ptc_narrow<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      g.A, A, M, K, lda, aColMajor, g.scaleExp, 0);
+      nA, A, M, K, lda, aColMajor, g.scaleExp, 0);
   ptc_narrow<<<dim3((Ncols + 15) / 16, (K + 15) / 16), b, 0, stream>>>(
-      g.B, B, K, Ncols, ldb, bColMajor, g.scaleExp, 1);
+      nB, B, K, Ncols, ldb, bColMajor, g.scaleExp, 1);
 
   const float one = 1.0f, zero = 0.0f;
   cuMpSGEMM_handle_t h = ptc_cumps();
-  cumpsgemm::set_stream(h, stream);
-  cumpsgemm::gemm<float>(h, CUBLAS_OP_N, CUBLAS_OP_N, (uint64_t)M,
-                         (uint64_t)Ncols, (uint64_t)K, &one, g.A, (uint64_t)M,
-                         g.B, (uint64_t)K, &zero, g.C, (uint64_t)M,
-                         ptc_mode(mode));
+  POSEIDON_GEMM_CB(cuMpSGEMM_set_stream(h, stream));
+  POSEIDON_GEMM_CB(cumpsgemm::gemm<float>(
+      h, CUBLAS_OP_N, CUBLAS_OP_N, (uint64_t)M, (uint64_t)Ncols, (uint64_t)K,
+      &one, nA, (uint64_t)M, nB, (uint64_t)K, &zero, nC, (uint64_t)M, mode));
 
   ptc_widen<<<dim3((Ncols + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      C, g.C, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp);
+      C, nC, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp);
 }
 
 } // namespace
 
-// Square entry: same ABI and same accepted-shape set as
-// __poseidon_ozaki_dgemm (row-major, leading dim N, no transpose).
+// Operands are repacked column-major during the narrow, so any shape and
+// layout combination is one library call.
 extern "C" void __poseidon_tcec_dgemm(double *C, const double *A,
-                                      const double *B, int N, int lda, int ldb,
-                                      int ldc, int transA, int transB,
+                                      const double *B, int M, int Ncols, int K,
+                                      int lda, int ldb, int ldc, int aColMajor,
+                                      int bColMajor, int cColMajor,
                                       double alpha, double beta,
                                       cudaStream_t stream, int mode) {
-  if (N <= 0)
-    return;
-  if (transA || transB || (lda && lda != N) || (ldb && ldb != N) ||
-      (ldc && ldc != N)) {
-    fprintf(stderr,
-            "poseidon_tcec_rt FATAL: unsupported square GEMM shape (transA=%d "
-            "transB=%d lda=%d ldb=%d ldc=%d N=%d)\n",
-            transA, transB, lda, ldb, ldc, N);
-    abort();
-  }
-  if (mode == 0) {
-    ptc_native_dgemm(C, A, B, N, N, N, N, N, N, /*aColMajor=*/0,
-                     /*bColMajor=*/0, /*cColMajor=*/0, alpha, beta, stream);
-    return;
-  }
-  ptc_run(C, A, B, N, N, N, N, N, N, /*aColMajor=*/0, /*bColMajor=*/0,
-          /*cColMajor=*/0, alpha, beta, stream, mode);
-}
-
-// General M x Ncols x K entry: operands are repacked column-major during the
-// narrow, so any shape and layout combination is one library call, without
-// the Ozaki _ex path's square padding.
-extern "C" void __poseidon_tcec_dgemm_ex(
-    double *C, const double *A, const double *B, int M, int Ncols, int K,
-    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
-    double alpha, double beta, cudaStream_t stream, int mode) {
+  const cuMpSGEMM_compute_mode_t computeMode = ptc_mode(mode);
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
-  if (mode == 0) {
-    ptc_native_dgemm(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor,
-                     cColMajor, alpha, beta, stream);
-    return;
-  }
   ptc_run(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor, cColMajor,
-          alpha, beta, stream, mode);
+          alpha, beta, stream, computeMode);
+  POSEIDON_GEMM_CK(cudaGetLastError());
 }

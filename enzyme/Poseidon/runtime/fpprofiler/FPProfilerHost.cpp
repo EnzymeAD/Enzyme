@@ -17,6 +17,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ShadowTable.h"
+
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -25,7 +27,6 @@
 #include <map>
 #include <mutex>
 #include <new>
-#include <set>
 #include <unistd.h>
 #include <vector>
 
@@ -205,49 +206,28 @@ void *valloc(size_t bytes) {
 #endif
 
 namespace {
-
-struct Shadow {
-  void *p = nullptr;
-  size_t bytes = 0;
-  // The sites whose outputs this shadow already carries the seed for (see
-  // __poseidon_launch_profiled).
-  std::set<int> seeded;
+struct HostShadowOps {
+  static void *allocZeroed(size_t bytes, const char *site) {
+    void *p = calloc(bytes ? bytes : 1, 1);
+    if (!p) {
+      fprintf(stderr,
+              "Poseidon FPProfiler: cannot allocate a %zu-byte shadow for "
+              "%s.\n",
+              bytes, site);
+      abort();
+    }
+    return p;
+  }
+  static void free(void *p) { ::free(p); }
+  static void freeAtExit(void *p) { ::free(p); }
+  template <typename T> static void fillOnes(T *p, size_t n) {
+    for (size_t i = 0; i < n; ++i)
+      p[i] = T(1);
+  }
 };
-
 } // namespace
 
 static std::mutex shadowLock;
-
-static std::map<uintptr_t, Shadow> &shadows() {
-  static auto *m = new std::map<uintptr_t, Shadow>();
-  return *m;
-}
-
-static void freeShadows() {
-  for (auto &kv : shadows())
-    free(kv.second.p);
-  shadows().clear();
-}
-
-template <typename T> static void fill(void *p, size_t bytes) {
-  T *e = (T *)p;
-  for (size_t i = 0, n = bytes / sizeof(T); i < n; ++i)
-    e[i] = T(1);
-}
-
-// The seed is one on the site's outputs, as for a kernel.
-static void seed(void *p, size_t bytes, int width) {
-  if (width == 8)
-    fill<double>(p, bytes);
-  else if (width == 4)
-    fill<float>(p, bytes);
-  else {
-    fprintf(stderr,
-            "Poseidon FPProfiler: no seed rule for a %d-byte output element.\n",
-            width);
-    abort();
-  }
-}
 
 extern "C" void __poseidon_stack_push(void *base, uint64_t bytes) {
   if (!stackArrays) {
@@ -281,11 +261,9 @@ extern "C" void __poseidon_register_globals(const void *table, uint64_t n) {
   inRegistry = false;
 }
 
-// One call of a host site: the shadow of each pointer argument, by the rules
-// of __poseidon_launch_profiled. Keyed by the base of the allocation, created
-// zeroed on first sight and replaced when that base comes back with another
-// extent; an allocation the call writes through any argument is seeded once
-// per site.
+// One call of a host site: the shadow of each pointer argument (ShadowTable).
+// An allocation the call writes through any argument is an output of the
+// call.
 extern "C" void __poseidon_host_shadows(const char *fn, int site, int nptr,
                                         void *const *ptrs, const int *param,
                                         const int *seedWidth,
@@ -318,32 +296,13 @@ extern "C" void __poseidon_host_shadows(const char *fn, int site, int nptr,
   }
 
   std::lock_guard<std::mutex> g(shadowLock);
-  static bool freeRegistered = false;
-  if (!freeRegistered) {
-    freeRegistered = true;
-    atexit(freeShadows);
-  }
+  auto &shadows = poseidon::ShadowTable<HostShadowOps>::get();
   for (int k = 0; k < nptr; ++k) {
     out[k] = nullptr;
     if (!ptrs[k])
       continue;
-    Shadow &sb = shadows()[ext[k].base];
-    if (!sb.p || sb.bytes != ext[k].bytes) {
-      free(sb.p);
-      sb.p = calloc(ext[k].bytes ? ext[k].bytes : 1, 1);
-      if (!sb.p) {
-        fprintf(stderr,
-                "Poseidon FPProfiler: cannot allocate a %zu-byte shadow for "
-                "%s.\n",
-                ext[k].bytes, fn);
-        abort();
-      }
-      sb.bytes = ext[k].bytes;
-      sb.seeded.clear();
-    }
-    if (int w = width[ext[k].base])
-      if (sb.seeded.insert(site).second)
-        seed(sb.p, sb.bytes, w);
-    out[k] = (char *)sb.p + ((uintptr_t)ptrs[k] - ext[k].base);
+    void *sp = shadows.shadowOf(ext[k].base, ext[k].bytes, site,
+                                width[ext[k].base], fn);
+    out[k] = (char *)sp + ((uintptr_t)ptrs[k] - ext[k].base);
   }
 }

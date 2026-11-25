@@ -8,10 +8,10 @@
 
 #include "LaunchDescriptors.h"
 #include "Core/CacheKey.h"
-#include "FPProfileName.h"
 #include "IR/Utils.h"
 #include "Pass/Session.h"
 #include "Targets/OffloadRuntime.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"

@@ -8,10 +8,10 @@
 
 #include "Canonicalize.h"
 
-#include "FPProfileName.h"
 #include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"

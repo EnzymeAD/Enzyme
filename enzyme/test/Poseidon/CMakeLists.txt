@@ -1,20 +1,12 @@
 set(POSEIDON_TEST_GPU_ARCH ""
     CACHE
       STRING
-      "CUDA architecture (sm_XY) the integration tests compile for; empty = detect with nvidia-smi")
+      "CUDA architecture (sm_XY) the integration tests compile for; empty = the CUDA runtimes' first, else sm_120")
 set(POSEIDON_TEST_GPU_ARCH_RESOLVED "${POSEIDON_TEST_GPU_ARCH}")
 if(NOT POSEIDON_TEST_GPU_ARCH_RESOLVED)
   set(POSEIDON_TEST_GPU_ARCH_RESOLVED "sm_120")
-  find_program(POSEIDON_NVIDIA_SMI nvidia-smi)
-  if(POSEIDON_NVIDIA_SMI)
-    execute_process(
-      COMMAND
-        ${POSEIDON_NVIDIA_SMI} --query-gpu=compute_cap --format=csv,noheader
-      OUTPUT_VARIABLE _cc
-      RESULT_VARIABLE _cc_rc OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(_cc_rc EQUAL 0 AND _cc MATCHES "^([0-9]+)\\.([0-9]+)")
-      set(POSEIDON_TEST_GPU_ARCH_RESOLVED "sm_${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
-    endif()
+  if(CMAKE_CUDA_COMPILER AND POSEIDON_CUDA_ARCH)
+    set(POSEIDON_TEST_GPU_ARCH_RESOLVED "${POSEIDON_CUDA_ARCH}")
   endif()
 endif()
 message(
@@ -79,7 +71,9 @@ set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 llvm_map_components_to_libnames(POSEIDON_TEST_PROGRAM_LLVM_LIBS support)
 
 function(poseidon_configure_test_program name)
-  target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
+  target_include_directories(
+    ${name}
+    PRIVATE ${POSEIDON_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
   target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
   set_target_properties(
     ${name}
@@ -114,13 +108,8 @@ add_custom_target(poseidon-test-programs DEPENDS ${POSEIDON_TEST_PROGRAMS})
 
 # The Enzyme plugin comes in two builds: ClangEnzyme for -fpass-plugin and
 # LLVMEnzyme for opt's -load-pass-plugin.
-set(POSEIDON_ENZYME_CLANG_PLUGIN "")
 set(POSEIDON_ENZYME_OPT_PLUGIN
     "${ENZYME_BINARY_DIR}/Enzyme/LLVMEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}")
-if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
-  set(POSEIDON_ENZYME_CLANG_PLUGIN
-      "${ENZYME_BINARY_DIR}/Enzyme/ClangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}")
-endif()
 
 if(CMAKE_CUDA_COMPILER)
   set(POSEIDON_TEST_HAS_CUDA True)
@@ -140,20 +129,13 @@ if(TARGET poseidon_rt_hip)
 else()
   set(POSEIDON_TEST_HAS_HIP False)
 endif()
-# A test that links poseidon_rt links what the runtime links, in the
-# runtime's order: cuMpSGEMM defines cuBLAS's GEMM entry points, and comes
-# after cuBLAS so that a call of cuBLAS reaches cuBLAS.
+# A test that links poseidon_rt links what the runtime links, in its order.
 set(POSEIDON_TEST_RT_LINK "")
-if(TARGET poseidon_rt)
-  get_target_property(_rt_libs poseidon_rt INTERFACE_LINK_LIBRARIES)
-  foreach(_lib ${_rt_libs})
-    if(TARGET ${_lib})
-      get_target_property(_lib ${_lib} LOCATION)
-    endif()
-    get_filename_component(_dir ${_lib} DIRECTORY)
-    string(APPEND POSEIDON_TEST_RT_LINK " ${_lib} -Wl,-rpath,${_dir}")
-  endforeach()
-endif()
+poseidon_rt_link_files(_rt_libs TOOLKIT)
+foreach(_lib ${_rt_libs})
+  get_filename_component(_dir ${_lib} DIRECTORY)
+  string(APPEND POSEIDON_TEST_RT_LINK " ${_lib} -Wl,-rpath,${_dir}")
+endforeach()
 if(POSEIDON_TCEC_USE_CUMPSGEMM)
   set(POSEIDON_TEST_TCEC_CUMPSGEMM True)
 else()

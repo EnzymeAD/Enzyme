@@ -32,7 +32,6 @@ for var in ('CUDA_VISIBLE_DEVICES', 'HOME'):
 config.environment['XDG_CACHE_HOME'] = os.path.join(config.test_exec_root,
                                                     'xdg-cache')
 
-config.available_features.add('poseidon')
 # Up to LLVM 23 the code generator of a -ffp-contract=fast unit fuses
 # floating-point operations that carry no 'contract' flag as well.
 if int(config.llvm_ver) < 24:

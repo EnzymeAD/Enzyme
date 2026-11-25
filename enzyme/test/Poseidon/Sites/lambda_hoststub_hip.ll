@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm_ex' %s
+; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel (its source, with
 ; hip/hip_runtime.h, through clang -x hip --offload-arch=gfx942
 ; --cuda-host-only -O0 -S -emit-llvm): HIP pops the configuration with
@@ -20,7 +20,7 @@
 ; GEN: call void @__poseidon_launch_profiled(ptr @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 3, ptr @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd, ptr @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd, ptr @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd)
 ; GEN-NOT: call {{.*}}@hipLaunchKernel(
 
-; USE: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm_ex (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
+; USE: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
 ; USE-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; USE: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
 ; USE: call i32 @__hipPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
@@ -84,7 +84,7 @@
 ; USE-NEXT: %[[OK:[0-9]+]] = and i1 %[[EQ0]], %[[EQ1]]
 ; USE-NEXT: br i1 %[[OK]], label %[[DISPATCH:[0-9]+]], label %[[LAUNCH:[0-9]+]]
 ; USE: [[DISPATCH]]:
-; USE-NEXT: call void @__poseidon_ozaki_dgemm_ex(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)
+; USE-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)
 ; USE-NEXT: br label %[[JOIN:[0-9]+]]
 ; USE: [[LAUNCH]]:
 ; USE-NEXT: %{{[0-9]+}} = call noundef i32 @hipLaunchKernel(ptr noundef @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
