@@ -436,10 +436,6 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
       logpdfBlock.eraseArgument(i);
     }
 
-    regionOp.setNumPositionArgsAttr(rewriter.getI64IntegerAttr(1));
-    regionOp.setPositionSizeAttr(
-        rewriter.getI64IntegerAttr(initialPosType.getNumElements()));
-
     // The sampler region stays empty: the density is the user logpdf.
     rewriter.replaceOp(inferOp, regionOp.getResults());
     return success();

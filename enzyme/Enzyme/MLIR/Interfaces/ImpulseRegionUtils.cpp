@@ -252,7 +252,6 @@ bool impulse::constructLogpdfRegion(
   IRMapping map;
 
   // Position args in selection order (the flat lowering's position layout).
-  int64_t positionSize = 0;
   for (Attribute addr : selection) {
     SampleRegionOp site = siteByAddress.lookup(addr);
     for (unsigned i = 1, e = site.getNumResults(); i < e; ++i) {
@@ -260,10 +259,8 @@ bool impulse::constructLogpdfRegion(
       BlockArgument arg =
           lpBlock->addArgument(result.getType(), result.getLoc());
       map.map(result, arg);
-      positionSize += cast<RankedTensorType>(result.getType()).getNumElements();
     }
   }
-  int64_t numPositionArgs = lpBlock->getNumArguments();
 
   // An MH move leaves unselected columns intact, so pins may skip past it.
   if (hasUnselected) {
@@ -335,9 +332,6 @@ bool impulse::constructLogpdfRegion(
     if (&op != terminator && op.use_empty() &&
         (isMemoryEffectFree(&op) || isa<RandomOp, RandomSplitOp>(op)))
       op.erase();
-
-  regionOp.setNumPositionArgsAttr(builder.getI64IntegerAttr(numPositionArgs));
-  regionOp.setPositionSizeAttr(builder.getI64IntegerAttr(positionSize));
 
   for (auto &entry : siteByAddress) {
     Region &siteLogpdf = entry.second.getLogpdf();

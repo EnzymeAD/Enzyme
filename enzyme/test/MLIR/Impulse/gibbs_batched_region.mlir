@@ -94,7 +94,7 @@ module {
       %j3 = arith.addf %j2, %lpz2 : tensor<f64>
       %tot = arith.addf %j3, %b2#3 : tensor<f64>
       impulse.yield %tot, %lpa, %lpz1, %b1#1, %b1#2, %lpz2, %b2#1, %b2#2 : tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>
-    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>], [#impulse.symbol<5>], [#impulse.symbol<6>], [#impulse.symbol<7>]], constrained_addresses = [[#impulse.symbol<3>], [#impulse.symbol<4>], [#impulse.symbol<6>], [#impulse.symbol<7>]], gibbs_config = #impulse.gibbs_config, num_position_args = 2 : i64, num_samples = 1 : i64, position_size = 2 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<5>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x7xf64>, tensor<1x4xf64>) -> (tensor<1x7xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>], [#impulse.symbol<5>], [#impulse.symbol<6>], [#impulse.symbol<7>]], constrained_addresses = [[#impulse.symbol<3>], [#impulse.symbol<4>], [#impulse.symbol<6>], [#impulse.symbol<7>]], gibbs_config = #impulse.gibbs_config, num_samples = 1 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<5>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x7xf64>, tensor<1x4xf64>) -> (tensor<1x7xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %orng, %wout : tensor<1x7xf64>, tensor<2xui64>, tensor<f64>
   }
 
@@ -130,7 +130,7 @@ module {
       %j1 = arith.addf %lpa, %lpz1 : tensor<f64>
       %tot = arith.addf %j1, %lpz2 : tensor<f64>
       impulse.yield %tot, %lpa, %lpz1, %lpz2 : tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>
-    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>]], gibbs_config = #impulse.gibbs_config, num_position_args = 2 : i64, num_samples = 1 : i64, position_size = 2 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x6xf64>) -> (tensor<1x6xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>]], gibbs_config = #impulse.gibbs_config, num_samples = 1 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x6xf64>) -> (tensor<1x6xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %orng, %wout : tensor<1x6xf64>, tensor<2xui64>, tensor<f64>
   }
 
@@ -178,7 +178,7 @@ module {
       %j2 = arith.addf %j1, %lpz2 : tensor<f64>
       %tot = arith.addf %j2, %lpy : tensor<f64>
       impulse.yield %tot, %lpa, %lpz1, %lpz2, %lpy : tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>
-    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]], gibbs_config = #impulse.gibbs_config, num_position_args = 2 : i64, num_samples = 1 : i64, position_size = 2 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]], gibbs_config = #impulse.gibbs_config, num_samples = 1 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %orng, %wout : tensor<1x4xf64>, tensor<2xui64>, tensor<f64>
   }
 
@@ -227,7 +227,7 @@ module {
       %j2 = arith.addf %j1, %lpz2 : tensor<f64>
       %tot = arith.addf %j2, %lpy : tensor<f64>
       impulse.yield %tot, %lpa, %lpz1, %lpz2, %lpy : tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>
-    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]], gibbs_config = #impulse.gibbs_config, num_position_args = 2 : i64, num_samples = 1 : i64, position_size = 2 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]], gibbs_config = #impulse.gibbs_config, num_samples = 1 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %orng, %wout : tensor<1x4xf64>, tensor<2xui64>, tensor<f64>
   }
 
@@ -275,7 +275,7 @@ module {
       %j2 = arith.addf %j1, %lpz2 : tensor<f64>
       %tot = arith.addf %j2, %lpy : tensor<f64>
       impulse.yield %tot, %lpa, %lpz1, %lpz2, %lpy : tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<f64>
-    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]], gibbs_config = #impulse.gibbs_config, num_position_args = 2 : i64, num_samples = 1 : i64, position_size = 2 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    } <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]], gibbs_config = #impulse.gibbs_config, num_samples = 1 : i64, selection = [[#impulse.symbol<2>], [#impulse.symbol<3>]], state_schema = ["weight"]}> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<i1>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %orng, %wout : tensor<1x4xf64>, tensor<2xui64>, tensor<f64>
   }
 }

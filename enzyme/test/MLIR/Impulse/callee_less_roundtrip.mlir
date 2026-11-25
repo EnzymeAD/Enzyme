@@ -50,7 +50,7 @@ module {
   // CHECK-NEXT: %[[QB:.+]] = arith.mulf %[[Q]], %[[B]] : tensor<2xf64>
   // CHECK-NEXT: %[[D:.+]] = impulse.dot %[[QB]], %[[QB]] <{{.+}}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
   // CHECK-NEXT: impulse.yield %[[D]] : tensor<f64>
-  // CHECK-NEXT: } <selection = [], all_addresses = [], nuts_config = <max_tree_depth = 3>, num_position_args = 1, position_size = 2> : (tensor<2xui64>, tensor<2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
+  // CHECK-NEXT: } <selection = [], all_addresses = [], nuts_config = <max_tree_depth = 3>> : (tensor<2xui64>, tensor<2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
   func.func @custom_logpdf_infer_region(%rng : tensor<2xui64>, %B : tensor<2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<0.0> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -62,7 +62,7 @@ module {
       impulse.yield %d : tensor<f64>
     } <{
       nuts_config = #impulse.nuts_config<max_tree_depth = 3>,
-      selection = [], all_addresses = [], num_samples = 1, num_position_args = 1, position_size = 2
+      selection = [], all_addresses = [], num_samples = 1
     }> : (tensor<2xui64>, tensor<2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }

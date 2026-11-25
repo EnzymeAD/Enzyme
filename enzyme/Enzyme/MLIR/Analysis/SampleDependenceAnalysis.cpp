@@ -12,8 +12,7 @@ SampleDependenceAnalysis::SampleDependenceAnalysis(InferRegionOp regionOp,
                                                    AnalysisTarget target)
     : regionOp(regionOp), target(target),
       builtSelection(regionOp.getSelectionAttr()),
-      builtLogpdfFn(regionOp.getLogpdfFnAttr()),
-      builtNumPositionArgs(regionOp.getNumPositionArgs()) {
+      builtLogpdfFn(regionOp.getLogpdfFnAttr()) {
   if (target == AnalysisTarget::Logpdf)
     runLogpdfAnalysis();
   else
@@ -99,12 +98,8 @@ void SampleDependenceAnalysis::runLogpdfAnalysis() {
   if (logpdf.empty())
     return;
 
-  Block &entry = logpdf.front();
-  int64_t numPositionArgs = regionOp.getNumPositionArgs();
-
-  for (int64_t i = 0;
-       i < numPositionArgs && i < (int64_t)entry.getNumArguments(); ++i)
-    markSampleDependent(entry.getArgument(i));
+  for (BlockArgument arg : logpdf.getArguments())
+    markSampleDependent(arg);
 
   propagateDependence(logpdf);
 }
@@ -222,8 +217,7 @@ void SampleDependenceAnalysis::notifyBlockErased(Block *block) {
 
 bool SampleDependenceAnalysis::sourcesChanged() {
   return regionOp.getSelectionAttr() != builtSelection ||
-         regionOp.getLogpdfFnAttr() != builtLogpdfFn ||
-         regionOp.getNumPositionArgs() != builtNumPositionArgs;
+         regionOp.getLogpdfFnAttr() != builtLogpdfFn;
 }
 
 static bool checkOperandDominance(IRMapping &regionToOuter, DominanceInfo &dom,

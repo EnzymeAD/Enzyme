@@ -413,15 +413,9 @@ def InferRegionOp : Impulse_Op<"infer_region",
     the position and it yields the value of `logpdf_fn`. Every other value
     that `logpdf` uses is defined outside the op. An empty `logpdf` stands for
     the density that `sampling` defines.
-
-    `num_position_args` is the number of leading `logpdf` block arguments
-    that form the position, and `position_size` the number of their elements.
   }];
 
-  let arguments = !con(args, (ins
-    DefaultValuedAttr<I64Attr, "0">:$num_position_args,
-    DefaultValuedAttr<I64Attr, "0">:$position_size
-  ));
+  let arguments = args;
 
   let results = outputs;
 

@@ -19,8 +19,7 @@ module {
   // CHECK-NEXT: %[[SCALED:.+]] = arith.mulf %[[POS]], %[[B]] : tensor<8xf64>
   // CHECK-NEXT: %[[SQ:.+]] = impulse.dot %[[SCALED]], %[[SCALED]]
   // CHECK: impulse.yield %{{.+}} : tensor<f64>
-  // CHECK: num_position_args = 1
-  // CHECK-SAME: position_size = 8
+  // CHECK-NEXT: } <selection = [], all_addresses = [], nuts_config = <max_tree_depth = 3, max_delta_energy = 1.000000e+03 : f64, adapt_step_size = false, adapt_mass_matrix = false>> : (tensor<2xui64>, tensor<8xf64>, tensor<8xf64>, tensor<f64>, tensor<1x8xf64>) -> (tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
   // CHECK-NOT: impulse.infer(
   func.func @main(%rng : tensor<2xui64>,
                   %B : tensor<8xf64>)

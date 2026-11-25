@@ -53,7 +53,6 @@ private:
 
   Attribute builtSelection;
   Attribute builtLogpdfFn;
-  uint64_t builtNumPositionArgs = 0;
 
   SmallVector<Value> raisedWorklist;
 
