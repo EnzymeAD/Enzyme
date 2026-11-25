@@ -1241,15 +1241,17 @@ struct ExpandImpulsePass
 
       auto rngInput = inputs[0];
 
+      FlatSymbolRefAttr logpdfFnAttr = mcmcOp.getLogpdfFnAttr();
+      SmallVector<Value> fnInputs = llvm::to_vector(inputs.drop_front());
+      ArrayAttr selection = mcmcOp.getSelectionAttr();
+      ArrayAttr allAddresses = mcmcOp.getAllAddressesAttr();
+      Value originalTrace = hasLogpdfFn ? Value() : mcmcOp.getOriginalTrace();
+      SmallVector<Type> fnResultTypes;
+      SmallVector<SupportInfo> supports;
+
       // Unconstrained and constrained widths; they differ only for SIMPLEX.
       int64_t positionSize;
       int64_t constrainedPositionSize;
-      SmallVector<Value> fnInputs;
-      SmallVector<Type> fnResultTypes;
-      Value originalTrace;
-      ArrayAttr selection, allAddresses;
-      SmallVector<SupportInfo> supports;
-      FlatSymbolRefAttr logpdfFnAttr;
 
       auto sizesFromSupports = [&]() {
         constrainedPositionSize = 0;
@@ -1261,21 +1263,12 @@ struct ExpandImpulsePass
       };
 
       if (hasLogpdfFn) {
-        logpdfFnAttr = mcmcOp.getLogpdfFnAttr();
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = mcmcOp.getInitPosition();
         auto initPosType = cast<RankedTensorType>(initialPos.getType());
         // `init_position` is `1xN` or chain-major `Cx1xN`; N is per chain.
         positionSize = initPosType.getNumElements() / mcmcOp.getNumChains();
         constrainedPositionSize = positionSize;
-        selection = mcmcOp.getSelectionAttr();
-        allAddresses = mcmcOp.getAllAddressesAttr();
       } else if constexpr (isRegionForm) {
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
-        originalTrace = mcmcOp.getOriginalTrace();
-        selection = mcmcOp.getSelectionAttr();
-        allAddresses = mcmcOp.getAllAddressesAttr();
-
         supports = collectSupportInfoForRegion(mcmcOp);
         if (supports.empty()) {
           mcmcOp.emitError("Impulse: failed to collect per-site support info "
@@ -1286,11 +1279,6 @@ struct ExpandImpulsePass
         if (positionSize <= 0)
           return failure();
       } else {
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
-        originalTrace = mcmcOp.getOriginalTrace();
-        selection = mcmcOp.getSelectionAttr();
-        allAddresses = mcmcOp.getAllAddressesAttr();
-
         auto fn = cast<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
         int64_t constrainedFallback =
@@ -2334,13 +2322,14 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      int64_t positionSize;
-      SmallVector<Value> fnInputs;
+      FlatSymbolRefAttr logpdfFnAttr = op.getLogpdfFnAttr();
+      SmallVector<Value> fnInputs = llvm::to_vector(inputs.drop_front());
+      ArrayAttr selection = op.getSelectionAttr();
+      ArrayAttr allAddresses = op.getAllAddressesAttr();
+      Value originalTrace = hasLogpdfFn ? Value() : op.getOriginalTrace();
       SmallVector<Type> fnResultTypes;
-      Value originalTrace;
-      ArrayAttr selection, allAddresses;
       SmallVector<SupportInfo> supports;
-      FlatSymbolRefAttr logpdfFnAttr;
+      int64_t positionSize;
       RegionVILayout regionLayout;
 
       if constexpr (isRegionForm) {
@@ -2354,10 +2343,6 @@ struct ExpandImpulsePass
                        "region (run sicm first)");
           return failure();
         }
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
-        originalTrace = op.getOriginalTrace();
-        selection = op.getSelectionAttr();
-        allAddresses = op.getAllAddressesAttr();
         if (!collectRegionVILayout(op, regionLayout)) {
           op.emitError("Impulse VI: failed to derive position layout from the "
                        "infer_region sampler");
@@ -2368,19 +2353,10 @@ struct ExpandImpulsePass
         if (positionSize <= 0)
           return failure();
       } else if (hasLogpdfFn) {
-        logpdfFnAttr = op.getLogpdfFnAttr();
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = op.getInitPosition();
         positionSize =
             cast<RankedTensorType>(initialPos.getType()).getNumElements();
-        selection = op.getSelectionAttr();
-        allAddresses = op.getAllAddressesAttr();
       } else {
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
-        originalTrace = op.getOriginalTrace();
-        selection = op.getSelectionAttr();
-        allAddresses = op.getAllAddressesAttr();
-
         auto fn = cast<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
         positionSize =
@@ -2401,15 +2377,6 @@ struct ExpandImpulsePass
       auto floatOr = [](FloatAttr a, double d) {
         return a ? a.getValueAsDouble() : d;
       };
-      double initScaleVal = floatOr(viConfig.getInitScale(), 0.1);
-      double adamB1Val = floatOr(viConfig.getAdamB1(), 0.9);
-      double adamB2Val = floatOr(viConfig.getAdamB2(), 0.999);
-      double adamEpsVal = floatOr(viConfig.getAdamEps(), 1.0e-8);
-      double clipNormVal = floatOr(viConfig.getClipNorm(), 10.0);
-      double initRadiusVal = floatOr(viConfig.getInitRadius(), 2.0);
-      double momentumMassVal = floatOr(viConfig.getMomentumMass(), 0.9);
-      double rmspropGammaVal = floatOr(viConfig.getRmspropGamma(), 0.9);
-      double rmspropEpsVal = floatOr(viConfig.getRmspropEps(), 1.0e-8);
 
       VI::VIContext viCtx(
           hasLogpdfFn ? FlatSymbolRefAttr() : op.getFnAttr(), fnInputs,
@@ -2417,16 +2384,20 @@ struct ExpandImpulsePass
           positionSize, op.getNumSamples(), supports,
           viConfig.getGuideKind().getValue(),
           viConfig.getOptimizerKind().getValue(), viConfig.getNumParticles(),
-          initScaleVal, adamB1Val, adamB2Val, adamEpsVal);
-      if (hasLogpdfFn)
-        viCtx.logpdfFn = logpdfFnAttr;
+          floatOr(viConfig.getInitScale(), 0.1),
+          floatOr(viConfig.getAdamB1(), 0.9),
+          floatOr(viConfig.getAdamB2(), 0.999),
+          floatOr(viConfig.getAdamEps(), 1.0e-8));
+      viCtx.logpdfFn = logpdfFnAttr;
       viCtx.autodiffAttrs = op.getAutodiffAttrsAttr();
       viCtx.debugDump = debugDump;
-      viCtx.clipNorm = clipNormVal;
-      viCtx.initRadius = initRadiusVal;
-      viCtx.momentumMass = momentumMassVal;
-      viCtx.rmspropGamma = rmspropGammaVal;
-      viCtx.rmspropEps = rmspropEpsVal;
+      viCtx.clipNorm = floatOr(viConfig.getClipNorm(), viCtx.clipNorm);
+      viCtx.initRadius = floatOr(viConfig.getInitRadius(), viCtx.initRadius);
+      viCtx.momentumMass =
+          floatOr(viConfig.getMomentumMass(), viCtx.momentumMass);
+      viCtx.rmspropGamma =
+          floatOr(viConfig.getRmspropGamma(), viCtx.rmspropGamma);
+      viCtx.rmspropEps = floatOr(viConfig.getRmspropEps(), viCtx.rmspropEps);
       viCtx.stableUpdate = viConfig.getStableUpdate();
 
       if constexpr (isRegionForm) {
