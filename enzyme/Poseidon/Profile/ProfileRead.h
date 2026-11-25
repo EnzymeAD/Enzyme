@@ -14,7 +14,6 @@
 #ifndef POSEIDON_PROFILE_READ_H
 #define POSEIDON_PROFILE_READ_H
 
-#include "runtime/fpprofiler/FPProfileName.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -49,9 +48,6 @@ struct ProfileInfo {
   /// Per operand; minMagOperands is the smallest nonzero |operand|, 0 if the
   /// operand was never nonzero.
   llvm::SmallVector<double, 2> minOperands, maxOperands, minMagOperands;
-
-  /// The accuracy weight of the instruction, its summed |gradient|.
-  double weight() const { return sumAbsGrad; }
 };
 
 /// A site's profile records by slot index, iterated in slot order: what is
@@ -90,9 +86,6 @@ struct FunctionProfileHeader {
   /// False for a site the profiling run instrumented and never executed.
   bool executed = true;
 };
-
-/// The word a KappaMark line spells KappaMark::Unmeasured with.
-inline constexpr llvm::StringLiteral kKappaUnmeasured = kProfileKappaUnmeasured;
 
 /// The word a profile's KappaMark line spells `M` with.
 llvm::StringRef kappaMarkName(KappaMark M);

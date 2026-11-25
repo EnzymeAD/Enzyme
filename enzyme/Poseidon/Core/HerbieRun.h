@@ -42,8 +42,11 @@ struct HerbiePlatform {
 
 /// How to run Herbie.
 struct HerbieRunOptions {
-  /// The Herbie binary; a path that names no file only reads the cache.
+  /// The Herbie binary, empty in a build without Herbie.
   std::string Program;
+  /// Program names no file, so only the cache can answer, with the answer any
+  /// Herbie gave.
+  bool CacheOnly = false;
   /// The platform the search runs against.
   HerbiePlatform Platform;
 
@@ -137,10 +140,10 @@ struct HerbieRunResult {
 
 /// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache: the
 /// answer this Herbie gave, else a run, whose answer replaces the cached one.
-/// When `Opts.Program` names no file, the cached answer is the one any Herbie
-/// gave, and a question the cache does not answer is an error naming its cache
-/// file. `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". A
-/// cache that cannot be written is an error that names the path.
+/// With `Opts.CacheOnly`, the cached answer is the one any Herbie gave, and a
+/// question the cache does not answer is an error naming its cache file.
+/// `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". A cache
+/// that cannot be written is an error that names the path.
 llvm::Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                                           const HerbieRunOptions &Opts,
                                           llvm::StringRef Label,

@@ -131,6 +131,7 @@ static Expected<HerbieRunOptions> herbieRunOptions(Session &S,
   Opts.Program = O.Herbie.HerbieBinary.empty()
                      ? std::string(POSEIDON_HERBIE_DEFAULT_BINARY)
                      : O.Herbie.HerbieBinary;
+  Opts.CacheOnly = !sys::fs::exists(Opts.Program);
   Expected<const HerbiePlatform *> Platform = herbiePlatform(S, F);
   if (!Platform)
     return Platform.takeError();

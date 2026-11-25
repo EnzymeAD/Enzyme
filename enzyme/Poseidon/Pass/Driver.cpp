@@ -23,6 +23,7 @@
 #include "Solve/Optimize.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"

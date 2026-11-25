@@ -138,17 +138,6 @@ CallInst *findLaunchCall(Function &F) {
   return nullptr;
 }
 
-FunctionCallee popCallConfiguration(Module &M) {
-  LLVMContext &C = M.getContext();
-  Type *ptr = getInt8PtrTy(C);
-  FunctionType *FT =
-      FunctionType::get(Type::getInt32Ty(C), {ptr, ptr, ptr, ptr}, false);
-  return M.getOrInsertFunction(M.getFunction("__hipPopCallConfiguration")
-                                   ? "__hipPopCallConfiguration"
-                                   : "__cudaPopCallConfiguration",
-                               FT);
-}
-
 Value *poppedGrid(CallBase &pop) { return pop.getArgOperand(0); }
 Value *poppedBlock(CallBase &pop) { return pop.getArgOperand(1); }
 

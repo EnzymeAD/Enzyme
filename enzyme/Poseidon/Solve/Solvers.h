@@ -64,7 +64,7 @@ struct SolveRecord {
   /// The sites of a joint solve.
   std::vector<std::string> sites;
   /// The cost of the point applied; none when nothing was applied.
-  std::optional<int64_t> selected;
+  std::optional<DPCost> selected;
 };
 
 /// A site's DP table in the cache: the key of what it is solved from, the file

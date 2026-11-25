@@ -76,8 +76,6 @@ bool isLaunchKernel(llvm::StringRef name);
 llvm::CallInst *findPopConfig(llvm::Function &F);
 /// The launch a CUDA or HIP stub ends in, or null.
 llvm::CallInst *findLaunchCall(llvm::Function &F);
-/// The pop of the runtime `M` declares one of, CUDA's otherwise.
-llvm::FunctionCallee popCallConfiguration(llvm::Module &M);
 /// The grid dimensions the configuration pop `pop` writes.
 llvm::Value *poppedGrid(llvm::CallBase &pop);
 /// The block dimensions the configuration pop `pop` writes.

@@ -8,6 +8,7 @@
 
 #include "ProfileRead.h"
 #include "IR/Utils.h"
+#include "runtime/fpprofiler/FPProfileName.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -68,7 +69,7 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     // The weight multiplies an absolute error, so the gradient a sensitivity
     // floor implies scales with 1 / the value's magnitude.
     const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
-    if (p.weight() < floorW) {
+    if (p.sumAbsGrad < floorW) {
       p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
       p.sumAbsGrad = floorW;
       ++floored;
@@ -121,7 +122,7 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                        " that the site's profile does not; both must come "
                        "from the same profiling binary.");
       const ProfileInfo &p = kv.second;
-      grad[kv.first] = std::max(grad[kv.first], p.weight() / total);
+      grad[kv.first] = std::max(grad[kv.first], p.sumAbsGrad / total);
       sens[kv.first] = std::max(sens[kv.first], p.sumSens / total);
     }
   }
@@ -280,12 +281,12 @@ Error ProfileParser::header(StringRef Key, StringRef Value,
                            .Case("below-noise", KappaMark::BelowNoise)
                            .Case("nonlinear", KappaMark::Nonlinear)
                            .Case("diverged", KappaMark::Diverged)
-                           .Case(kKappaUnmeasured, KappaMark::Unmeasured)
+                           .Case(kProfileKappaUnmeasured, KappaMark::Unmeasured)
                            .Default(KappaMark::None);
     if (Header.kappaMark == KappaMark::None)
       return refusal(Twine(Key) + " " + Value +
                      " is not ok, below-noise, nonlinear, diverged or " +
-                     kKappaUnmeasured);
+                     kProfileKappaUnmeasured);
   } else if (Key == kProfileKeyExecuted) {
     if (Value != "0")
       return refusal(Twine(Key) + " " + Value + " is not 0");
@@ -413,7 +414,7 @@ StringRef kappaMarkName(KappaMark M) {
   case KappaMark::Diverged:
     return "diverged";
   case KappaMark::Unmeasured:
-    return kKappaUnmeasured;
+    return kProfileKappaUnmeasured;
   }
   llvm_unreachable("every KappaMark has a word");
 }

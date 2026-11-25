@@ -506,7 +506,9 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
   const ShardPlan plan = planShards(Cores.size(), Opts);
   const SmallVector<std::string> command = herbieCommand(Opts, plan);
   const std::string keyDigest = questionDigest(Cores, Opts);
-  const std::string binaryDigest = herbieBinaryDigest(Opts.Program, Digests);
+  const std::string binaryDigest =
+      Opts.CacheOnly ? std::string()
+                     : herbieBinaryDigest(Opts.Program, Digests);
   const AnswerCache cache = answerCache(Opts, keyDigest, binaryDigest);
   if (!Opts.CacheDir.empty()) {
     Expected<std::optional<HerbieRunResult>> cached =
