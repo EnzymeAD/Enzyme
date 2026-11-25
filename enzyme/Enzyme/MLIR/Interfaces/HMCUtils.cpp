@@ -26,34 +26,97 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::impulse;
 
+namespace {
+/// The leapfrog state after one integration step and the RNG state after it.
+struct IntegrationResult {
+  Value q;
+  Value p;
+  Value grad;
+  Value potentialEnergy;
+  Value rng;
+};
+
+/// The potential energy at a position, its gradient and the RNG state after
+/// computing them.
+struct GradientResult {
+  Value potentialEnergy; // U(q) = -log p(q)
+  Value grad;            // dU/dq
+  Value rng;             // Updated RNG state
+};
+
+/// A point of a leapfrog trajectory.
+struct IntegratorState {
+  Value q;
+  Value p;
+  Value grad;
+};
+
+/// A NUTS tree: its leftmost and rightmost leaves, its proposal and the
+/// statistics of its leaves. toValues and fromValues list the fields in
+/// declaration order.
+struct NUTSTreeState {
+  static constexpr unsigned kNumValues = 18;
+
+  Value qLeft, pLeft, gradLeft;
+  Value qRight, pRight, gradRight;
+  Value qProposal, gradProposal, potentialEnergyProposal, hamiltonianProposal;
+  Value depth, weight, turning, diverging;
+  Value sumAcceptProbs, numProposals, pSum;
+  Value rng;
+
+  SmallVector<Value> toValues() const;
+  static NUTSTreeState fromValues(ValueRange values);
+  SmallVector<Type> getTypes() const;
+};
+
+/// A subtree and the momentum checkpoints of its iterative U-turn check.
+struct SubtreeBuildResult {
+  NUTSTreeState tree;
+  Value pCkpts;
+  Value pSumCkpts;
+};
+} // namespace
+
 SmallVector<Value> NUTSTreeState::toValues() const {
-  return {q_left,        p_left,        grad_left,
-          q_right,       p_right,       grad_right,
-          q_proposal,    grad_proposal, U_proposal,
-          H_proposal,    depth,         weight,
-          turning,       diverging,     sum_accept_probs,
-          num_proposals, p_sum,         rng};
+  return {qLeft,
+          pLeft,
+          gradLeft,
+          qRight,
+          pRight,
+          gradRight,
+          qProposal,
+          gradProposal,
+          potentialEnergyProposal,
+          hamiltonianProposal,
+          depth,
+          weight,
+          turning,
+          diverging,
+          sumAcceptProbs,
+          numProposals,
+          pSum,
+          rng};
 }
 
-NUTSTreeState NUTSTreeState::fromValues(ArrayRef<Value> values) {
-  assert(values.size() == 18 && "Expected 18 NUTSTreeState fields");
-  return {.q_left = values[0],
-          .p_left = values[1],
-          .grad_left = values[2],
-          .q_right = values[3],
-          .p_right = values[4],
-          .grad_right = values[5],
-          .q_proposal = values[6],
-          .grad_proposal = values[7],
-          .U_proposal = values[8],
-          .H_proposal = values[9],
+NUTSTreeState NUTSTreeState::fromValues(ValueRange values) {
+  assert(values.size() == kNumValues && "Expected 18 NUTSTreeState fields");
+  return {.qLeft = values[0],
+          .pLeft = values[1],
+          .gradLeft = values[2],
+          .qRight = values[3],
+          .pRight = values[4],
+          .gradRight = values[5],
+          .qProposal = values[6],
+          .gradProposal = values[7],
+          .potentialEnergyProposal = values[8],
+          .hamiltonianProposal = values[9],
           .depth = values[10],
           .weight = values[11],
           .turning = values[12],
           .diverging = values[13],
-          .sum_accept_probs = values[14],
-          .num_proposals = values[15],
-          .p_sum = values[16],
+          .sumAcceptProbs = values[14],
+          .numProposals = values[15],
+          .pSum = values[16],
           .rng = values[17]};
 }
 
@@ -100,9 +163,13 @@ static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
                                 builder.getDenseI64ArrayAttr({0}));
 }
 
-Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
-                                      Value invMass, Value momentum,
-                                      RankedTensorType positionType) {
+/// Computes `v = M^-1 @ p`
+/// If `invMass` is nullptr, returns `momentum` unchanged (assumes identity)
+/// If `invMass` is a diagonal matrix, computes `v = invMass * momentum`
+/// If `invMass` is a dense matrix, computes `v = invMass @ momentum`
+static Value applyInverseMassMatrix(OpBuilder &builder, Location loc,
+                                    Value invMass, Value momentum,
+                                    RankedTensorType positionType) {
   if (!invMass) {
     return momentum;
   }
@@ -126,9 +193,10 @@ Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
   return nullptr;
 }
 
-Value impulse::computeKineticEnergy(OpBuilder &builder, Location loc,
-                                    Value momentum, Value invMass,
-                                    RankedTensorType positionType) {
+/// Computes `K = 0.5 * p^T @ M^-1 @ p`
+static Value computeKineticEnergy(OpBuilder &builder, Location loc,
+                                  Value momentum, Value invMass,
+                                  RankedTensorType positionType) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
@@ -185,9 +253,11 @@ Value impulse::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
   }
 }
 
-Value impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
-                              Value invMass, Value massMatrixSqrt,
-                              RankedTensorType positionType, bool debugDump) {
+/// Samples momentum from `N(0, M)` where M is the mass matrix, drawing from
+/// `rng`.
+static Value sampleMomentum(OpBuilder &builder, Location loc, Value rng,
+                            Value invMass, Value massMatrixSqrt,
+                            RankedTensorType positionType, bool debugDump) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
@@ -249,6 +319,8 @@ static Value copySiteColumns(OpBuilder &builder, Location loc, Value src,
   return result;
 }
 
+/// Reads the constrained position, the values of the sites in `ctx.supports`,
+/// from row 0 of `fullTrace`.
 static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
   auto positionType2d = RankedTensorType::get(
@@ -374,10 +446,11 @@ static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
   return {potential.value, grad, rng};
 }
 
-GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
-                                                    Location loc,
-                                                    Value position, Value rng,
-                                                    const HMCContext &ctx) {
+/// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
+static GradientResult computePotentialAndGradient(OpBuilder &builder,
+                                                  Location loc, Value position,
+                                                  Value rng,
+                                                  const HMCContext &ctx) {
   Value gradSeed = emitSplatConstant(builder, loc, ctx.getScalarType(), 1.0);
   Value autodiffPosition = usesLogpdfSymbol(ctx)
                                ? flattenPosition(builder, loc, position, ctx)
@@ -386,11 +459,17 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                ctx);
 }
 
-IntegrationResult impulse::computeIntegrationStep(OpBuilder &builder,
-                                                  Location loc,
-                                                  const IntegratorState &leaf,
-                                                  Value rng, Value direction,
-                                                  const HMCContext &ctx) {
+/// Computes a single leapfrog integration step.
+/// Specifically:
+///   - `p_half = p - (eps/2) * grad`
+///   - `q_new = q + eps * M^-1 * p_half`
+///   - `grad_new = dU/dq(q_new)`
+///   - `p_new = p_half - (eps/2) * grad_new`
+static IntegrationResult computeIntegrationStep(OpBuilder &builder,
+                                                Location loc,
+                                                const IntegratorState &leaf,
+                                                Value rng, Value direction,
+                                                const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
@@ -426,11 +505,14 @@ IntegrationResult impulse::computeIntegrationStep(OpBuilder &builder,
       arith::MulFOp::create(builder, loc, halfStepBroadcast, gradResult.grad);
   Value pNew = arith::SubFOp::create(builder, loc, pHalf, deltaP2);
 
-  return {qNew, pNew, gradResult.grad, gradResult.U, gradResult.rng};
+  return {qNew, pNew, gradResult.grad, gradResult.potentialEnergy,
+          gradResult.rng};
 }
 
-Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
-                            Value pRight, Value pSum, const NUTSContext &ctx) {
+/// U-turn termination criterion.
+/// Returns `true` if U-turn detected in the trajectory.
+static Value checkTurning(OpBuilder &builder, Location loc, Value pLeft,
+                          Value pRight, Value pSum, const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
@@ -469,18 +551,23 @@ Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
   return arith::OrIOp::create(builder, loc, leftNeg, rightNeg);
 }
 
-Value impulse::computeUniformTransitionProb(OpBuilder &builder, Location loc,
-                                            Value currentWeight,
-                                            Value newWeight) {
+/// Computes the uniform transition probability for subtree combination.
+/// Specifically: `sigmoid(new_weight - current_weight)`.
+static Value computeUniformTransitionProb(OpBuilder &builder, Location loc,
+                                          Value currentWeight,
+                                          Value newWeight) {
   Value weightDiff =
       arith::SubFOp::create(builder, loc, newWeight, currentWeight);
   return impulse::LogisticOp::create(builder, loc, weightDiff.getType(),
                                      weightDiff);
 }
 
-Value impulse::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
-                                           Value currentWeight, Value newWeight,
-                                           Value turning, Value diverging) {
+/// Computes the biased transition probability for main tree combination.
+/// Specifically: `min(1, exp(new_weight - current_weight))`, zeroed if
+/// turning or diverging.
+static Value computeBiasedTransitionProb(OpBuilder &builder, Location loc,
+                                         Value currentWeight, Value newWeight,
+                                         Value turning, Value diverging) {
   auto resultType = cast<RankedTensorType>(currentWeight.getType());
 
   Value zeroConst = emitSplatConstant(builder, loc, resultType, 0.0);
@@ -497,11 +584,27 @@ Value impulse::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
                                  zeroConst, clippedProb);
 }
 
-NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
-                                    const NUTSTreeState &tree,
-                                    const NUTSTreeState &subTree,
-                                    Value direction, Value rng, bool biased,
-                                    const NUTSContext &ctx) {
+/// Combines a tree with a newly-built subtree during NUTS doubling process.
+///
+/// The `subtree` is merged into `tree` based on `direction`:
+///   - If going right (`direction` is true), then we keep `tree`'s left
+///   boundary, takes `subtree`'s right boundary
+///   - If going left (`direction` is false), then we take `subtree`'s left
+///   boundary, keeps `tree`'s right boundary
+///
+/// Proposal selection has two options:
+///   - Biased kernel (`biased` is true):
+///     `prob = min(1, exp(subtree.weight - tree.weight))`,
+///     zeroed if `turning` or `diverging`
+///   - Uniform kernel (`biased` is false):
+///     `prob = sigmoid(subtree.weight - tree.weight)`
+///
+/// Also checks the U-turn criterion on the combined momentum sum.
+static NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
+                                  const NUTSTreeState &tree,
+                                  const NUTSTreeState &subTree, Value direction,
+                                  Value rng, bool biased,
+                                  const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
@@ -509,18 +612,17 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
   Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
   auto qLeft = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.q_left, subTree.q_left);
+                                         tree.qLeft, subTree.qLeft);
   auto pLeft = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.p_left, subTree.p_left);
+                                         tree.pLeft, subTree.pLeft);
   auto gradLeft = impulse::SelectOp::create(
-      builder, loc, positionType, direction, tree.grad_left, subTree.grad_left);
+      builder, loc, positionType, direction, tree.gradLeft, subTree.gradLeft);
   auto qRight = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                          subTree.q_right, tree.q_right);
+                                          subTree.qRight, tree.qRight);
   auto pRight = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                          subTree.p_right, tree.p_right);
-  auto gradRight =
-      impulse::SelectOp::create(builder, loc, positionType, direction,
-                                subTree.grad_right, tree.grad_right);
+                                          subTree.pRight, tree.pRight);
+  auto gradRight = impulse::SelectOp::create(
+      builder, loc, positionType, direction, subTree.gradRight, tree.gradRight);
 
   auto combinedWeight =
       impulse::emitLogAddExp(builder, loc, tree.weight, subTree.weight);
@@ -547,16 +649,17 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
   auto acceptNew = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, uniformSample, transitionProb);
 
-  auto qProposal =
-      impulse::SelectOp::create(builder, loc, positionType, acceptNew,
-                                subTree.q_proposal, tree.q_proposal);
+  auto qProposal = impulse::SelectOp::create(
+      builder, loc, positionType, acceptNew, subTree.qProposal, tree.qProposal);
   auto gradProposal =
       impulse::SelectOp::create(builder, loc, positionType, acceptNew,
-                                subTree.grad_proposal, tree.grad_proposal);
+                                subTree.gradProposal, tree.gradProposal);
   auto UProposal = impulse::SelectOp::create(
-      builder, loc, scalarType, acceptNew, subTree.U_proposal, tree.U_proposal);
+      builder, loc, scalarType, acceptNew, subTree.potentialEnergyProposal,
+      tree.potentialEnergyProposal);
   auto HProposal = impulse::SelectOp::create(
-      builder, loc, scalarType, acceptNew, subTree.H_proposal, tree.H_proposal);
+      builder, loc, scalarType, acceptNew, subTree.hamiltonianProposal,
+      tree.hamiltonianProposal);
 
   Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   auto combinedDepth = arith::AddIOp::create(builder, loc, tree.depth, oneI64);
@@ -565,7 +668,7 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
   if (biased) {
     auto turningCheck = checkTurning(
         builder, loc, pLeft, pRight,
-        arith::AddFOp::create(builder, loc, tree.p_sum, subTree.p_sum), ctx);
+        arith::AddFOp::create(builder, loc, tree.pSum, subTree.pSum), ctx);
     combinedTurning =
         arith::OrIOp::create(builder, loc, subTree.turning, turningCheck);
   } else {
@@ -574,30 +677,102 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
 
   auto combinedDiverging =
       arith::OrIOp::create(builder, loc, tree.diverging, subTree.diverging);
-  auto sumAcceptProbs = arith::AddFOp::create(
-      builder, loc, tree.sum_accept_probs, subTree.sum_accept_probs);
-  auto numProposals = arith::AddIOp::create(builder, loc, tree.num_proposals,
-                                            subTree.num_proposals);
-  auto pSum = arith::AddFOp::create(builder, loc, tree.p_sum, subTree.p_sum);
+  auto sumAcceptProbs = arith::AddFOp::create(builder, loc, tree.sumAcceptProbs,
+                                              subTree.sumAcceptProbs);
+  auto numProposals = arith::AddIOp::create(builder, loc, tree.numProposals,
+                                            subTree.numProposals);
+  auto pSum = arith::AddFOp::create(builder, loc, tree.pSum, subTree.pSum);
 
-  return {.q_left = qLeft,
-          .p_left = pLeft,
-          .grad_left = gradLeft,
-          .q_right = qRight,
-          .p_right = pRight,
-          .grad_right = gradRight,
-          .q_proposal = qProposal,
-          .grad_proposal = gradProposal,
-          .U_proposal = UProposal,
-          .H_proposal = HProposal,
+  return {.qLeft = qLeft,
+          .pLeft = pLeft,
+          .gradLeft = gradLeft,
+          .qRight = qRight,
+          .pRight = pRight,
+          .gradRight = gradRight,
+          .qProposal = qProposal,
+          .gradProposal = gradProposal,
+          .potentialEnergyProposal = UProposal,
+          .hamiltonianProposal = HProposal,
           .depth = combinedDepth,
           .weight = combinedWeight,
           .turning = combinedTurning,
           .diverging = combinedDiverging,
-          .sum_accept_probs = sumAcceptProbs,
-          .num_proposals = numProposals,
-          .p_sum = pSum,
+          .sumAcceptProbs = sumAcceptProbs,
+          .numProposals = numProposals,
+          .pSum = pSum,
           .rng = rngOut};
+}
+
+/// Whether the site's support is not all of R, so that its values are mapped
+/// onto it.
+static bool isConstrainedSite(const SupportInfo &info) {
+  return info.support && info.support.getKind() != impulse::SupportKind::REAL;
+}
+
+/// Maps a `1xN` position site by site from constrained to unconstrained
+/// coordinates or back. Returns `position` itself when no site is constrained.
+static Value transformPosition(OpBuilder &builder, Location loc, Value position,
+                               ArrayRef<SupportInfo> supports,
+                               bool toUnconstrained) {
+  if (llvm::none_of(supports, isConstrainedSite))
+    return position;
+
+  auto inputType = cast<RankedTensorType>(position.getType());
+  Type elemType = inputType.getElementType();
+  int64_t inSize = inputType.getShape()[1];
+  int64_t outSize = 0;
+  for (const SupportInfo &info : supports)
+    outSize += toUnconstrained ? info.unconstrainedSize : info.constrainedSize;
+
+  auto positionType1D = RankedTensorType::get({inSize}, elemType);
+  Value position1D =
+      impulse::ReshapeOp::create(builder, loc, positionType1D, position);
+
+  SmallVector<Value> slices;
+  for (const SupportInfo &info : supports) {
+    int64_t offset =
+        toUnconstrained ? info.constrainedOffset : info.unconstrainedOffset;
+    int64_t size =
+        toUnconstrained ? info.constrainedSize : info.unconstrainedSize;
+    auto sliceType = RankedTensorType::get({size}, elemType);
+    Value slice =
+        impulse::SliceOp::create(builder, loc, sliceType, position1D,
+                                 builder.getDenseI64ArrayAttr({offset}),
+                                 builder.getDenseI64ArrayAttr({offset + size}),
+                                 builder.getDenseI64ArrayAttr({1}));
+    if (isConstrainedSite(info))
+      slice = toUnconstrained
+                  ? emitUnconstrain(builder, loc, info.support, slice)
+                  : emitConstrain(builder, loc, info.support, slice);
+    slices.push_back(slice);
+  }
+
+  Value result1D = slices.front();
+  if (slices.size() > 1) {
+    auto resultType1D = RankedTensorType::get({outSize}, elemType);
+    result1D = emitSplatConstant(builder, loc, resultType1D, 0.0);
+
+    // The slices tile [0, outSize) exactly, so the zero init is never read.
+    int64_t offset = 0;
+    for (Value slice : slices) {
+      Value resultIdx = emitI64ScalarConstant(builder, loc, offset);
+      result1D = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, resultType1D, result1D, slice, ValueRange{resultIdx});
+      offset += cast<RankedTensorType>(slice.getType()).getShape()[0];
+    }
+  }
+
+  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
+  return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
+}
+
+/// Transform an entire position vector from constrained to unconstrained space
+/// based on the support information.
+static Value unconstrainPosition(OpBuilder &builder, Location loc,
+                                 Value constrained,
+                                 ArrayRef<SupportInfo> supports) {
+  return transformPosition(builder, loc, constrained, supports,
+                           /*toUnconstrained=*/true);
 }
 
 ChainPoint impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
@@ -737,7 +912,8 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc,
                                      adjustedCtx);
 
   impulse::YieldOp::create(
-      builder, loc, ValueRange{step.q, step.p, step.grad, step.U, step.rng});
+      builder, loc,
+      ValueRange{step.q, step.p, step.grad, step.potentialEnergy, step.rng});
 
   builder.setInsertionPointAfter(forLoopOp);
   auto qProposal = forLoopOp.getResult(0);
@@ -784,63 +960,10 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc,
           accProb};
 }
 
-MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc,
-                                     const ChainPoint &start,
-                                     const NUTSContext &ctx) {
-  auto scalarType = ctx.getScalarType();
-
-  Value rngNext = start.rng;
-  auto [rngTree, p0, initialHamiltonian] =
-      startTransition(builder, loc, start.potentialEnergy, rngNext, ctx);
-
-  auto iterCtx = ctx.withH0(initialHamiltonian);
-
-  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
-  Value falseConst = emitI1ScalarConstant(builder, loc, false);
-  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
-
-  NUTSTreeState initialTree = {.q_left = start.q,
-                               .p_left = p0,
-                               .grad_left = start.grad,
-                               .q_right = start.q,
-                               .p_right = p0,
-                               .grad_right = start.grad,
-                               .q_proposal = start.q,
-                               .grad_proposal = start.grad,
-                               .U_proposal = start.potentialEnergy,
-                               .H_proposal = initialHamiltonian,
-                               .depth = zeroI64,
-                               .weight = zeroConst,
-                               .turning = falseConst,
-                               .diverging = falseConst,
-                               .sum_accept_probs = zeroConst,
-                               .num_proposals = zeroI64,
-                               .p_sum = p0,
-                               .rng = rngTree};
-
-  auto finalTree = buildTree(builder, loc, initialTree, iterCtx);
-
-  // The tree itself selects the proposal, so the transition always accepts.
-  Value trueConst = emitI1ScalarConstant(builder, loc, true);
-
-  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
-  auto numProposalsClamped =
-      arith::MaxSIOp::create(builder, loc, finalTree.num_proposals, oneI64);
-  auto numProposalsFloat =
-      arith::SIToFPOp::create(builder, loc, scalarType, numProposalsClamped);
-  auto meanAcceptProb = arith::DivFOp::create(
-      builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
-
-  return {{finalTree.q_proposal, finalTree.grad_proposal, finalTree.U_proposal,
-           rngNext},
-          trueConst,
-          finalTree.diverging,
-          meanAcceptProb};
-}
-
-NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
-                                     const IntegratorState &leaf, Value rng,
-                                     Value direction, const NUTSContext &ctx) {
+/// Builds a base tree (leaf node) by taking one leapfrog step.
+static NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
+                                   const IntegratorState &leaf, Value rng,
+                                   Value direction, const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
@@ -855,13 +978,14 @@ NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
   auto qNew = leap.q;
   auto pNew = leap.p;
   auto gradNew = leap.grad;
-  auto UNew = leap.U;
+  auto potentialEnergyNew = leap.potentialEnergy;
   auto rngOut = leap.rng;
 
   auto KNew =
       computeKineticEnergy(builder, loc, pNew, ctx.invMass, positionType);
-  auto HNew = arith::AddFOp::create(builder, loc, UNew, KNew);
-  Value deltaH = arith::SubFOp::create(builder, loc, HNew, ctx.H0);
+  auto hamiltonianNew =
+      arith::AddFOp::create(builder, loc, potentialEnergyNew, KNew);
+  Value deltaH = arith::SubFOp::create(builder, loc, hamiltonianNew, ctx.H0);
 
   // NaN check
   auto isNan = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::UNE,
@@ -882,307 +1006,45 @@ NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
   auto acceptProb =
       arith::MinimumFOp::create(builder, loc, oneConst, expNegDelta);
 
-  return {.q_left = qNew,
-          .p_left = pNew,
-          .grad_left = gradNew,
-          .q_right = qNew,
-          .p_right = pNew,
-          .grad_right = gradNew,
-          .q_proposal = qNew,
-          .grad_proposal = gradNew,
-          .U_proposal = UNew,
-          .H_proposal = HNew,
+  return {.qLeft = qNew,
+          .pLeft = pNew,
+          .gradLeft = gradNew,
+          .qRight = qNew,
+          .pRight = pNew,
+          .gradRight = gradNew,
+          .qProposal = qNew,
+          .gradProposal = gradNew,
+          .potentialEnergyProposal = potentialEnergyNew,
+          .hamiltonianProposal = hamiltonianNew,
           .depth = zeroI64,
           .weight = treeWeight,
           .turning = falseConst,
           .diverging = diverging,
-          .sum_accept_probs = acceptProb,
-          .num_proposals = oneI64,
-          .p_sum = pNew,
+          .sumAcceptProbs = acceptProb,
+          .numProposals = oneI64,
+          .pSum = pNew,
           .rng = rngOut};
 }
 
-IntegratorState impulse::getLeafFromTree(OpBuilder &builder, Location loc,
-                                         const NUTSTreeState &tree,
-                                         Value direction,
-                                         const NUTSContext &ctx) {
+/// Extracts an appropriate leaf based on direction.
+static IntegratorState getLeafFromTree(OpBuilder &builder, Location loc,
+                                       const NUTSTreeState &tree,
+                                       Value direction,
+                                       const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
 
   auto leafQ = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.q_right, tree.q_left);
+                                         tree.qRight, tree.qLeft);
   auto leafP = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.p_right, tree.p_left);
+                                         tree.pRight, tree.pLeft);
   auto leafGrad = impulse::SelectOp::create(
-      builder, loc, positionType, direction, tree.grad_right, tree.grad_left);
+      builder, loc, positionType, direction, tree.gradRight, tree.gradLeft);
   return {leafQ, leafP, leafGrad};
 }
 
-SubtreeBuildResult impulse::buildIterativeSubtree(
-    OpBuilder &builder, Location loc, const NUTSTreeState &initialTree,
-    Value direction, Value pCkpts, Value pSumCkpts, const NUTSContext &ctx) {
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
-  Value trueConst = emitI1ScalarConstant(builder, loc, true);
-  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
-  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
-
-  // 2 ^ (initialTree.depth)
-  auto maxNumProposals =
-      arith::ShLIOp::create(builder, loc, oneI64, initialTree.depth);
-
-  SmallVector<Type> whileTypes = initialTree.getTypes();
-  whileTypes.push_back(pCkptsType);
-  whileTypes.push_back(pCkptsType);
-  whileTypes.push_back(i64TensorType);
-
-  SmallVector<Value> whileInitVals = initialTree.toValues();
-  whileInitVals[15] = zeroI64; // zero `num_proposals`
-  whileInitVals.push_back(pCkpts);
-  whileInitVals.push_back(pSumCkpts);
-  whileInitVals.push_back(zeroI64);
-
-  auto whileOp =
-      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
-
-  // Check: num_proposals < max_num_proposals && !turning && !diverging
-  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
-  for (auto type : whileTypes)
-    condBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(condBlock);
-  SmallVector<Value> condTreeArgs(condBlock->getArguments().begin(),
-                                  condBlock->getArguments().begin() + 18);
-  NUTSTreeState condTree = NUTSTreeState::fromValues(condTreeArgs);
-
-  auto numProposalsCheck =
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
-                            condTree.num_proposals, maxNumProposals);
-  auto notTurning =
-      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
-  auto notDiverging =
-      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
-  auto continueCond = arith::AndIOp::create(
-      builder, loc,
-      arith::AndIOp::create(builder, loc, numProposalsCheck, notTurning),
-      notDiverging);
-
-  // Yield continue condition
-  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
-
-  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
-  for (auto type : whileTypes)
-    bodyBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(bodyBlock);
-
-  SmallVector<Value> bodyTreeArgs(bodyBlock->getArguments().begin(),
-                                  bodyBlock->getArguments().begin() + 18);
-  NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyTreeArgs);
-  auto bodyPCkpts = bodyBlock->getArgument(18);
-  auto bodyPSumCkpts = bodyBlock->getArgument(19);
-  auto bodyLeafIdx = bodyBlock->getArgument(20);
-
-  // Extract leaf based on direction
-  IntegratorState leaf =
-      getLeafFromTree(builder, loc, bodyTree, direction, ctx);
-
-  auto rngSplit2 = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType()},
-      bodyTree.rng);
-  auto rngNext = rngSplit2.getResult(0);
-  auto rngCombine = rngSplit2.getResult(1);
-
-  // Build base tree
-  NUTSTreeState newLeaf =
-      buildBaseTree(builder, loc, leaf, rngNext, direction, ctx);
-
-  // First leaf check
-  auto isFirstLeaf = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::eq, bodyTree.num_proposals, zeroI64);
-
-  SmallVector<Type> treeTypes = newLeaf.getTypes();
-  auto ifOp = impulse::IfOp::create(builder, loc, treeTypes, isFirstLeaf);
-  {
-    Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
-    builder.setInsertionPointToStart(trueBranch);
-    impulse::YieldOp::create(builder, loc, newLeaf.toValues());
-  }
-  {
-    Block *falseBranch = builder.createBlock(&ifOp.getFalseBranch());
-    builder.setInsertionPointToStart(falseBranch);
-    NUTSTreeState combinedTree =
-        combineTrees(builder, loc, bodyTree, newLeaf, direction, rngCombine,
-                     /*biased=*/false, ctx);
-    impulse::YieldOp::create(builder, loc, combinedTree.toValues());
-  }
-
-  builder.setInsertionPointAfter(ifOp);
-  NUTSTreeState updatedTree = NUTSTreeState::fromValues(
-      SmallVector<Value>(ifOp.getResults().begin(), ifOp.getResults().end()));
-  updatedTree.rng = rngNext;
-
-  // Update and check iterative turning
-  auto [ckptIdxMin, ckptIdxMax] =
-      leafIdxToCheckpointIdxs(builder, loc, bodyLeafIdx);
-  auto [updatedPCkpts, updatedPSumCkpts] =
-      updateCheckpoints(builder, loc, bodyLeafIdx, ckptIdxMax, newLeaf.p_right,
-                        updatedTree.p_sum, bodyPCkpts, bodyPSumCkpts);
-  auto iterativeTurning = checkIterativeTurning(
-      builder, loc, newLeaf.p_right, updatedTree.p_sum, updatedPCkpts,
-      updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx);
-
-  updatedTree.turning =
-      impulse::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
-                                newLeaf.turning, iterativeTurning);
-
-  auto nextLeafIdx = arith::AddIOp::create(builder, loc, bodyLeafIdx, oneI64);
-
-  SmallVector<Value> yieldVals = updatedTree.toValues();
-  yieldVals.push_back(updatedPCkpts);
-  yieldVals.push_back(updatedPSumCkpts);
-  yieldVals.push_back(nextLeafIdx);
-  impulse::YieldOp::create(builder, loc, yieldVals);
-
-  builder.setInsertionPointAfter(whileOp);
-
-  SmallVector<Value> resultTreeArgs(whileOp.getResults().begin(),
-                                    whileOp.getResults().begin() + 18);
-  NUTSTreeState resultTree = NUTSTreeState::fromValues(resultTreeArgs);
-  auto resultPCkpts = whileOp.getResult(18);
-  auto resultPSumCkpts = whileOp.getResult(19);
-
-  // `combineTrees` increments depth at each leaf building step; we need to
-  // restore to target depth here
-  resultTree.depth = initialTree.depth;
-
-  return {resultTree, resultPCkpts, resultPSumCkpts};
-}
-
-SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
-                                       const NUTSTreeState &tree,
-                                       Value direction, Value pCkpts,
-                                       Value pSumCkpts,
-                                       const NUTSContext &ctx) {
-  auto rngSplit2 = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{tree.rng.getType(), tree.rng.getType()},
-      tree.rng);
-  auto rngSubtree = rngSplit2.getResult(0);
-  auto rngTransition = rngSplit2.getResult(1);
-
-  NUTSTreeState subTreeInit = tree;
-  subTreeInit.rng = rngSubtree;
-  auto subtreeResult = buildIterativeSubtree(builder, loc, subTreeInit,
-                                             direction, pCkpts, pSumCkpts, ctx);
-
-  // Tree combine using *biased* transition kernel
-  NUTSTreeState combinedTree =
-      combineTrees(builder, loc, tree, subtreeResult.tree, direction,
-                   rngTransition, /*biased=*/true, ctx);
-
-  return {combinedTree, subtreeResult.pCkpts, subtreeResult.pSumCkpts};
-}
-
-NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
-                                 const NUTSTreeState &initialTree,
-                                 const NUTSContext &ctx) {
-  Type elemType = ctx.elementType;
-  RankedTensorType scalarType = ctx.getScalarType();
-
-  Value trueConst = emitI1ScalarConstant(builder, loc, true);
-  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
-  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
-  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
-
-  Value maxTreeDepth = emitI64ScalarConstant(builder, loc, ctx.maxTreeDepth);
-
-  auto checkpointType =
-      RankedTensorType::get({ctx.maxTreeDepth, ctx.positionSize}, elemType);
-
-  SmallVector<Type> whileTypes = initialTree.getTypes();
-  SmallVector<Value> whileInitVals = initialTree.toValues();
-
-  auto whileOp =
-      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
-
-  // Check: (depth < maxTreeDepth) && !turning && !diverging
-  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
-  for (auto type : whileTypes)
-    condBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(condBlock);
-
-  SmallVector<Value> condArgs(condBlock->getArguments().begin(),
-                              condBlock->getArguments().end());
-  NUTSTreeState condTree = NUTSTreeState::fromValues(condArgs);
-
-  auto depthCheck = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::slt, condTree.depth, maxTreeDepth);
-  auto notTurning =
-      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
-  auto notDiverging =
-      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
-
-  // Yield continue condition
-  auto continueCond = arith::AndIOp::create(
-      builder, loc, arith::AndIOp::create(builder, loc, depthCheck, notTurning),
-      notDiverging);
-
-  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
-
-  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
-  for (auto type : whileTypes)
-    bodyBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(bodyBlock);
-
-  SmallVector<Value> bodyArgs(bodyBlock->getArguments().begin(),
-                              bodyBlock->getArguments().end());
-  NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyArgs);
-
-  // Create fresh checkpoint tensors
-  Value zeroCkpts = emitSplatConstant(builder, loc, checkpointType, 0.0);
-  Value bodyPCkpts = zeroCkpts;
-  Value bodyPSumCkpts = zeroCkpts;
-
-  auto rngSplit3 = impulse::RandomSplitOp::create(
-      builder, loc,
-      TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType(),
-                bodyTree.rng.getType()},
-      bodyTree.rng);
-  auto rngNext = rngSplit3.getResult(0);
-  auto rngDir = rngSplit3.getResult(1);
-  auto rngDbl = rngSplit3.getResult(2);
-
-  auto directionRandom = impulse::RandomOp::create(
-      builder, loc, TypeRange{rngDir.getType(), scalarType}, rngDir, zeroConst,
-      oneConst,
-      impulse::RngDistributionAttr::get(builder.getContext(),
-                                        impulse::RngDistribution::UNIFORM));
-  auto direction =
-      arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLT,
-                            directionRandom.getResult(), halfConst);
-
-  // Double the tree
-  NUTSTreeState treeToDouble = bodyTree;
-  treeToDouble.rng = rngDbl;
-  auto doubleResult = doubleTree(builder, loc, treeToDouble, direction,
-                                 bodyPCkpts, bodyPSumCkpts, ctx);
-
-  NUTSTreeState treeToYield = doubleResult.tree;
-  treeToYield.rng = rngNext;
-  impulse::YieldOp::create(builder, loc, treeToYield.toValues());
-
-  builder.setInsertionPointAfter(whileOp);
-
-  SmallVector<Value> results(whileOp.getResults().begin(),
-                             whileOp.getResults().end());
-  return NUTSTreeState::fromValues(results);
-}
-
-std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
-                                                         Location loc,
-                                                         Value leafIdx) {
+/// Computes checkpoint indices from leaf index for iterative turning check.
+static std::pair<Value, Value>
+leafIdxToCheckpointIdxs(OpBuilder &builder, Location loc, Value leafIdx) {
 
   Value oneConst = emitI64ScalarConstant(builder, loc, 1);
 
@@ -1210,10 +1072,11 @@ std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
   return {idxMin, idxMax};
 }
 
-Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
-                                     Value pSum, Value pCkpts, Value pSumCkpts,
-                                     Value idxMin, Value idxMax,
-                                     const NUTSContext &ctx) {
+/// Checkpoint-based iterative turning check.
+static Value checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
+                                   Value pSum, Value pCkpts, Value pSumCkpts,
+                                   Value idxMin, Value idxMax,
+                                   const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
@@ -1271,11 +1134,12 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   return whileOp.getResult(1);
 }
 
-std::pair<Value, Value> impulse::updateCheckpoints(OpBuilder &builder,
-                                                   Location loc, Value leafIdx,
-                                                   Value ckptIdxMax, Value p,
-                                                   Value pSum, Value pCkpts,
-                                                   Value pSumCkpts) {
+/// Update checkpoint arrays at even leaf indices.
+static std::pair<Value, Value> updateCheckpoints(OpBuilder &builder,
+                                                 Location loc, Value leafIdx,
+                                                 Value ckptIdxMax, Value p,
+                                                 Value pSum, Value pCkpts,
+                                                 Value pSumCkpts) {
   Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
 
@@ -1314,6 +1178,323 @@ std::pair<Value, Value> impulse::updateCheckpoints(OpBuilder &builder,
   Value finalPSumCkpts = ifOp.getResult(1);
 
   return {finalPCkpts, finalPSumCkpts};
+}
+
+/// Builds a subtree iteratively by appending leaves one at a time.
+static SubtreeBuildResult
+buildIterativeSubtree(OpBuilder &builder, Location loc,
+                      const NUTSTreeState &initialTree, Value direction,
+                      Value pCkpts, Value pSumCkpts, const NUTSContext &ctx) {
+  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+  auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+
+  // 2 ^ (initialTree.depth)
+  auto maxNumProposals =
+      arith::ShLIOp::create(builder, loc, oneI64, initialTree.depth);
+
+  // The loop carries the tree, then these.
+  enum : unsigned {
+    kPCkpts = NUTSTreeState::kNumValues,
+    kPSumCkpts,
+    kLeafIdx,
+  };
+  SmallVector<Type> whileTypes = initialTree.getTypes();
+  whileTypes.push_back(pCkptsType);
+  whileTypes.push_back(pCkptsType);
+  whileTypes.push_back(i64TensorType);
+
+  NUTSTreeState startTree = initialTree;
+  startTree.numProposals = zeroI64;
+  SmallVector<Value> whileInitVals = startTree.toValues();
+  whileInitVals.push_back(pCkpts);
+  whileInitVals.push_back(pSumCkpts);
+  whileInitVals.push_back(zeroI64);
+
+  auto whileOp =
+      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
+
+  // Check: num_proposals < max_num_proposals && !turning && !diverging
+  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
+  for (auto type : whileTypes)
+    condBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(condBlock);
+  NUTSTreeState condTree = NUTSTreeState::fromValues(
+      condBlock->getArguments().take_front(NUTSTreeState::kNumValues));
+
+  auto numProposalsCheck =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
+                            condTree.numProposals, maxNumProposals);
+  auto notTurning =
+      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
+  auto notDiverging =
+      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
+  auto continueCond = arith::AndIOp::create(
+      builder, loc,
+      arith::AndIOp::create(builder, loc, numProposalsCheck, notTurning),
+      notDiverging);
+
+  // Yield continue condition
+  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
+
+  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
+  for (auto type : whileTypes)
+    bodyBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(bodyBlock);
+
+  NUTSTreeState bodyTree = NUTSTreeState::fromValues(
+      bodyBlock->getArguments().take_front(NUTSTreeState::kNumValues));
+  Value bodyPCkpts = bodyBlock->getArgument(kPCkpts);
+  Value bodyPSumCkpts = bodyBlock->getArgument(kPSumCkpts);
+  Value bodyLeafIdx = bodyBlock->getArgument(kLeafIdx);
+
+  // Extract leaf based on direction
+  IntegratorState leaf =
+      getLeafFromTree(builder, loc, bodyTree, direction, ctx);
+
+  auto rngSplit2 = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType()},
+      bodyTree.rng);
+  auto rngNext = rngSplit2.getResult(0);
+  auto rngCombine = rngSplit2.getResult(1);
+
+  // Build base tree
+  NUTSTreeState newLeaf =
+      buildBaseTree(builder, loc, leaf, rngNext, direction, ctx);
+
+  // First leaf check
+  auto isFirstLeaf = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::eq, bodyTree.numProposals, zeroI64);
+
+  SmallVector<Type> treeTypes = newLeaf.getTypes();
+  auto ifOp = impulse::IfOp::create(builder, loc, treeTypes, isFirstLeaf);
+  {
+    Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
+    builder.setInsertionPointToStart(trueBranch);
+    impulse::YieldOp::create(builder, loc, newLeaf.toValues());
+  }
+  {
+    Block *falseBranch = builder.createBlock(&ifOp.getFalseBranch());
+    builder.setInsertionPointToStart(falseBranch);
+    NUTSTreeState combinedTree =
+        combineTrees(builder, loc, bodyTree, newLeaf, direction, rngCombine,
+                     /*biased=*/false, ctx);
+    impulse::YieldOp::create(builder, loc, combinedTree.toValues());
+  }
+
+  builder.setInsertionPointAfter(ifOp);
+  NUTSTreeState updatedTree = NUTSTreeState::fromValues(ifOp.getResults());
+  updatedTree.rng = rngNext;
+
+  // Update and check iterative turning
+  auto [ckptIdxMin, ckptIdxMax] =
+      leafIdxToCheckpointIdxs(builder, loc, bodyLeafIdx);
+  auto [updatedPCkpts, updatedPSumCkpts] =
+      updateCheckpoints(builder, loc, bodyLeafIdx, ckptIdxMax, newLeaf.pRight,
+                        updatedTree.pSum, bodyPCkpts, bodyPSumCkpts);
+  auto iterativeTurning = checkIterativeTurning(
+      builder, loc, newLeaf.pRight, updatedTree.pSum, updatedPCkpts,
+      updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx);
+
+  updatedTree.turning =
+      impulse::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
+                                newLeaf.turning, iterativeTurning);
+
+  auto nextLeafIdx = arith::AddIOp::create(builder, loc, bodyLeafIdx, oneI64);
+
+  SmallVector<Value> yieldVals = updatedTree.toValues();
+  yieldVals.push_back(updatedPCkpts);
+  yieldVals.push_back(updatedPSumCkpts);
+  yieldVals.push_back(nextLeafIdx);
+  impulse::YieldOp::create(builder, loc, yieldVals);
+
+  builder.setInsertionPointAfter(whileOp);
+
+  NUTSTreeState resultTree = NUTSTreeState::fromValues(
+      whileOp.getResults().take_front(NUTSTreeState::kNumValues));
+  Value resultPCkpts = whileOp.getResult(kPCkpts);
+  Value resultPSumCkpts = whileOp.getResult(kPSumCkpts);
+
+  // `combineTrees` increments depth at each leaf building step; we need to
+  // restore to target depth here
+  resultTree.depth = initialTree.depth;
+
+  return {resultTree, resultPCkpts, resultPSumCkpts};
+}
+
+/// Tree doubling by building a subtree of same depth and combining.
+static SubtreeBuildResult doubleTree(OpBuilder &builder, Location loc,
+                                     const NUTSTreeState &tree, Value direction,
+                                     Value pCkpts, Value pSumCkpts,
+                                     const NUTSContext &ctx) {
+  auto rngSplit2 = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{tree.rng.getType(), tree.rng.getType()},
+      tree.rng);
+  auto rngSubtree = rngSplit2.getResult(0);
+  auto rngTransition = rngSplit2.getResult(1);
+
+  NUTSTreeState subTreeInit = tree;
+  subTreeInit.rng = rngSubtree;
+  auto subtreeResult = buildIterativeSubtree(builder, loc, subTreeInit,
+                                             direction, pCkpts, pSumCkpts, ctx);
+
+  // Tree combine using *biased* transition kernel
+  NUTSTreeState combinedTree =
+      combineTrees(builder, loc, tree, subtreeResult.tree, direction,
+                   rngTransition, /*biased=*/true, ctx);
+
+  return {combinedTree, subtreeResult.pCkpts, subtreeResult.pSumCkpts};
+}
+
+/// Main NUTS tree building loop.
+static NUTSTreeState buildTree(OpBuilder &builder, Location loc,
+                               const NUTSTreeState &initialTree,
+                               const NUTSContext &ctx) {
+  Type elemType = ctx.elementType;
+  RankedTensorType scalarType = ctx.getScalarType();
+
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
+
+  Value maxTreeDepth = emitI64ScalarConstant(builder, loc, ctx.maxTreeDepth);
+
+  auto checkpointType =
+      RankedTensorType::get({ctx.maxTreeDepth, ctx.positionSize}, elemType);
+
+  SmallVector<Type> whileTypes = initialTree.getTypes();
+  SmallVector<Value> whileInitVals = initialTree.toValues();
+
+  auto whileOp =
+      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
+
+  // Check: (depth < maxTreeDepth) && !turning && !diverging
+  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
+  for (auto type : whileTypes)
+    condBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(condBlock);
+
+  NUTSTreeState condTree = NUTSTreeState::fromValues(condBlock->getArguments());
+
+  auto depthCheck = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::slt, condTree.depth, maxTreeDepth);
+  auto notTurning =
+      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
+  auto notDiverging =
+      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
+
+  // Yield continue condition
+  auto continueCond = arith::AndIOp::create(
+      builder, loc, arith::AndIOp::create(builder, loc, depthCheck, notTurning),
+      notDiverging);
+
+  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
+
+  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
+  for (auto type : whileTypes)
+    bodyBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(bodyBlock);
+
+  NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyBlock->getArguments());
+
+  // Create fresh checkpoint tensors
+  Value zeroCkpts = emitSplatConstant(builder, loc, checkpointType, 0.0);
+  Value bodyPCkpts = zeroCkpts;
+  Value bodyPSumCkpts = zeroCkpts;
+
+  auto rngSplit3 = impulse::RandomSplitOp::create(
+      builder, loc,
+      TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType(),
+                bodyTree.rng.getType()},
+      bodyTree.rng);
+  auto rngNext = rngSplit3.getResult(0);
+  auto rngDir = rngSplit3.getResult(1);
+  auto rngDbl = rngSplit3.getResult(2);
+
+  auto directionRandom = impulse::RandomOp::create(
+      builder, loc, TypeRange{rngDir.getType(), scalarType}, rngDir, zeroConst,
+      oneConst,
+      impulse::RngDistributionAttr::get(builder.getContext(),
+                                        impulse::RngDistribution::UNIFORM));
+  auto direction =
+      arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLT,
+                            directionRandom.getResult(), halfConst);
+
+  // Double the tree
+  NUTSTreeState treeToDouble = bodyTree;
+  treeToDouble.rng = rngDbl;
+  auto doubleResult = doubleTree(builder, loc, treeToDouble, direction,
+                                 bodyPCkpts, bodyPSumCkpts, ctx);
+
+  NUTSTreeState treeToYield = doubleResult.tree;
+  treeToYield.rng = rngNext;
+  impulse::YieldOp::create(builder, loc, treeToYield.toValues());
+
+  builder.setInsertionPointAfter(whileOp);
+
+  return NUTSTreeState::fromValues(whileOp.getResults());
+}
+
+MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc,
+                                     const ChainPoint &start,
+                                     const NUTSContext &ctx) {
+  auto scalarType = ctx.getScalarType();
+
+  Value rngNext = start.rng;
+  auto [rngTree, p0, initialHamiltonian] =
+      startTransition(builder, loc, start.potentialEnergy, rngNext, ctx);
+
+  auto iterCtx = ctx.withH0(initialHamiltonian);
+
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+
+  NUTSTreeState initialTree = {.qLeft = start.q,
+                               .pLeft = p0,
+                               .gradLeft = start.grad,
+                               .qRight = start.q,
+                               .pRight = p0,
+                               .gradRight = start.grad,
+                               .qProposal = start.q,
+                               .gradProposal = start.grad,
+                               .potentialEnergyProposal = start.potentialEnergy,
+                               .hamiltonianProposal = initialHamiltonian,
+                               .depth = zeroI64,
+                               .weight = zeroConst,
+                               .turning = falseConst,
+                               .diverging = falseConst,
+                               .sumAcceptProbs = zeroConst,
+                               .numProposals = zeroI64,
+                               .pSum = p0,
+                               .rng = rngTree};
+
+  auto finalTree = buildTree(builder, loc, initialTree, iterCtx);
+
+  // The tree itself selects the proposal, so the transition always accepts.
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  auto numProposalsClamped =
+      arith::MaxSIOp::create(builder, loc, finalTree.numProposals, oneI64);
+  auto numProposalsFloat =
+      arith::SIToFPOp::create(builder, loc, scalarType, numProposalsClamped);
+  auto meanAcceptProb = arith::DivFOp::create(
+      builder, loc, finalTree.sumAcceptProbs, numProposalsFloat);
+
+  return {{finalTree.qProposal, finalTree.gradProposal,
+           finalTree.potentialEnergyProposal, rngNext},
+          trueConst,
+          finalTree.diverging,
+          meanAcceptProb};
 }
 
 DualAveragingState impulse::initDualAveraging(OpBuilder &builder, Location loc,
@@ -1603,76 +1784,6 @@ SmallVector<AdaptWindow> impulse::buildAdaptationSchedule(int64_t numSteps) {
   schedule.push_back({endWindowStart, numSteps - 1});
 
   return schedule;
-}
-
-/// Whether the site's support is not all of R, so that its values are mapped
-/// onto it.
-static bool isConstrainedSite(const SupportInfo &info) {
-  return info.support && info.support.getKind() != impulse::SupportKind::REAL;
-}
-
-/// Maps a `1xN` position site by site from constrained to unconstrained
-/// coordinates or back. Returns `position` itself when no site is constrained.
-static Value transformPosition(OpBuilder &builder, Location loc, Value position,
-                               ArrayRef<SupportInfo> supports,
-                               bool toUnconstrained) {
-  if (llvm::none_of(supports, isConstrainedSite))
-    return position;
-
-  auto inputType = cast<RankedTensorType>(position.getType());
-  Type elemType = inputType.getElementType();
-  int64_t inSize = inputType.getShape()[1];
-  int64_t outSize = 0;
-  for (const SupportInfo &info : supports)
-    outSize += toUnconstrained ? info.unconstrainedSize : info.constrainedSize;
-
-  auto positionType1D = RankedTensorType::get({inSize}, elemType);
-  Value position1D =
-      impulse::ReshapeOp::create(builder, loc, positionType1D, position);
-
-  SmallVector<Value> slices;
-  for (const SupportInfo &info : supports) {
-    int64_t offset =
-        toUnconstrained ? info.constrainedOffset : info.unconstrainedOffset;
-    int64_t size =
-        toUnconstrained ? info.constrainedSize : info.unconstrainedSize;
-    auto sliceType = RankedTensorType::get({size}, elemType);
-    Value slice =
-        impulse::SliceOp::create(builder, loc, sliceType, position1D,
-                                 builder.getDenseI64ArrayAttr({offset}),
-                                 builder.getDenseI64ArrayAttr({offset + size}),
-                                 builder.getDenseI64ArrayAttr({1}));
-    if (isConstrainedSite(info))
-      slice = toUnconstrained
-                  ? emitUnconstrain(builder, loc, info.support, slice)
-                  : emitConstrain(builder, loc, info.support, slice);
-    slices.push_back(slice);
-  }
-
-  Value result1D = slices.front();
-  if (slices.size() > 1) {
-    auto resultType1D = RankedTensorType::get({outSize}, elemType);
-    result1D = emitSplatConstant(builder, loc, resultType1D, 0.0);
-
-    // The slices tile [0, outSize) exactly, so the zero init is never read.
-    int64_t offset = 0;
-    for (Value slice : slices) {
-      Value resultIdx = emitI64ScalarConstant(builder, loc, offset);
-      result1D = impulse::DynamicUpdateSliceOp::create(
-          builder, loc, resultType1D, result1D, slice, ValueRange{resultIdx});
-      offset += cast<RankedTensorType>(slice.getType()).getShape()[0];
-    }
-  }
-
-  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
-  return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
-}
-
-Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
-                                   Value constrained,
-                                   ArrayRef<SupportInfo> supports) {
-  return transformPosition(builder, loc, constrained, supports,
-                           /*toUnconstrained=*/true);
 }
 
 Value impulse::constrainPosition(OpBuilder &builder, Location loc,

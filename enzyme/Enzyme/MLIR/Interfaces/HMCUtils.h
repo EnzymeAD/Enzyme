@@ -46,20 +46,6 @@ struct SupportInfo {
         unconstrainedSize(unconstrainedSize), support(support) {}
 };
 
-struct IntegrationResult {
-  Value q;
-  Value p;
-  Value grad;
-  Value U;
-  Value rng;
-};
-
-struct GradientResult {
-  Value U;    // U(q) = -log p(q)
-  Value grad; // dU/dq
-  Value rng;  // Updated RNG state
-};
-
 /// The state of an HMC or NUTS chain between two transitions: the `1xN`
 /// position, the gradient and the potential energy there, and the RNG state
 /// the next transition draws from.
@@ -102,12 +88,6 @@ struct DualAveragingState {
             gradient_avg.getType(), step_count.getType(),
             prox_center.getType()};
   }
-};
-
-struct IntegratorState {
-  Value q;
-  Value p;
-  Value grad;
 };
 
 /// The density an MCMC or VI lowering targets: the model `fn` evaluated on
@@ -196,50 +176,9 @@ struct NUTSContext : public HMCContext {
   }
 };
 
-struct NUTSTreeState {
-  Value q_left, p_left, grad_left;
-  Value q_right, p_right, grad_right;
-  Value q_proposal, grad_proposal, U_proposal, H_proposal;
-  Value depth, weight, turning, diverging;
-  Value sum_accept_probs, num_proposals, p_sum;
-  Value rng;
-
-  SmallVector<Value> toValues() const;
-  static NUTSTreeState fromValues(ArrayRef<Value> values);
-  SmallVector<Type> getTypes() const;
-
-  IntegratorState getLeftLeaf() const { return {q_left, p_left, grad_left}; }
-  IntegratorState getRightLeaf() const {
-    return {q_right, p_right, grad_right};
-  }
-};
-
-struct SubtreeBuildResult {
-  NUTSTreeState tree;
-  Value pCkpts;
-  Value pSumCkpts;
-};
-
-/// Computes `v = M^-1 @ p`
-/// If `invMass` is nullptr, returns `momentum` unchanged (assumes identity)
-/// If `invMass` is a diagonal matrix, computes `v = invMass * momentum`
-/// If `invMass` is a dense matrix, computes `v = invMass @ momentum`
-Value applyInverseMassMatrix(OpBuilder &builder, Location loc, Value invMass,
-                             Value momentum, RankedTensorType positionType);
-
-/// Computes `K = 0.5 * p^T @ M^-1 @ p`
-Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
-                           Value invMass, RankedTensorType positionType);
-
 /// Computes the square root of the mass matrix from the inverse mass matrix.
 Value computeMassMatrixSqrt(OpBuilder &builder, Location loc, Value invMass,
                             RankedTensorType positionType);
-
-/// Samples momentum from `N(0, M)` where M is the mass matrix, drawing from
-/// `rng`.
-Value sampleMomentum(OpBuilder &builder, Location loc, Value rng, Value invMass,
-                     Value massMatrixSqrt, RankedTensorType positionType,
-                     bool debugDump);
 
 /// Returns the log density of the model at the constrained `1xN` position
 /// `qConstrained`: the logpdf region of `ctx` cloned at the insertion point
@@ -249,60 +188,6 @@ Value sampleMomentum(OpBuilder &builder, Location loc, Value rng, Value invMass,
 /// leave it as it is.
 Value emitModelLogDensity(OpBuilder &builder, Location loc, Value qConstrained,
                           Value &rng, const ModelContext &ctx);
-
-/// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
-GradientResult computePotentialAndGradient(OpBuilder &builder, Location loc,
-                                           Value position, Value rng,
-                                           const HMCContext &ctx);
-
-/// Computes a single leapfrog integration step.
-/// Specifically:
-///   - `p_half = p - (eps/2) * grad`
-///   - `q_new = q + eps * M^-1 * p_half`
-///   - `grad_new = dU/dq(q_new)`
-///   - `p_new = p_half - (eps/2) * grad_new`
-IntegrationResult computeIntegrationStep(OpBuilder &builder, Location loc,
-                                         const IntegratorState &leaf, Value rng,
-                                         Value direction,
-                                         const HMCContext &ctx);
-
-/// U-turn termination criterion.
-/// Returns `true` if U-turn detected in the trajectory.
-Value checkTurning(OpBuilder &builder, Location loc, Value pLeft, Value pRight,
-                   Value pSum, const NUTSContext &ctx);
-
-/// Computes the uniform transition probability for subtree combination.
-/// Specifically: `sigmoid(new_weight - current_weight)`.
-Value computeUniformTransitionProb(OpBuilder &builder, Location loc,
-                                   Value currentWeight, Value newWeight);
-
-/// Computes the biased transition probability for main tree combination.
-/// Specifically: `min(1, exp(new_weight - current_weight))`, zeroed if
-/// turning or diverging.
-Value computeBiasedTransitionProb(OpBuilder &builder, Location loc,
-                                  Value currentWeight, Value newWeight,
-                                  Value turning, Value diverging);
-
-/// Combines a tree with a newly-built subtree during NUTS doubling process.
-///
-/// The `subtree` is merged into `tree` based on `direction`:
-///   - If going right (`direction` is true), then we keep `tree`'s left
-///   boundary, takes `subtree`'s right boundary
-///   - If going left (`direction` is false), then we take `subtree`'s left
-///   boundary, keeps `tree`'s right boundary
-///
-/// Proposal selection has two options:
-///   - Biased kernel (`biased` is true):
-///     `prob = min(1, exp(subtree.weight - tree.weight))`,
-///     zeroed if `turning` or `diverging`
-///   - Uniform kernel (`biased` is false):
-///     `prob = sigmoid(subtree.weight - tree.weight)`
-///
-/// Also checks the U-turn criterion on the combined momentum sum.
-NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
-                           const NUTSTreeState &tree,
-                           const NUTSTreeState &subTree, Value direction,
-                           Value rng, bool biased, const NUTSContext &ctx);
 
 /// Returns the starting position, its potential energy and gradient, and the
 /// key for the first transition. The position is `initialPosition` with a
@@ -317,49 +202,6 @@ MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc,
 /// Single NUTS iteration: momentum sampling + tree building
 MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc,
                             const ChainPoint &start, const NUTSContext &ctx);
-
-/// Builds a base tree (leaf node) by taking one leapfrog step.
-NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
-                            const IntegratorState &leaf, Value rng,
-                            Value direction, const NUTSContext &ctx);
-
-/// Extracts an appropriate leaf based on direction.
-IntegratorState getLeafFromTree(OpBuilder &builder, Location loc,
-                                const NUTSTreeState &tree, Value direction,
-                                const NUTSContext &ctx);
-
-/// Builds a subtree iteratively by appending leaves one at a time.
-SubtreeBuildResult buildIterativeSubtree(OpBuilder &builder, Location loc,
-                                         const NUTSTreeState &initialTree,
-                                         Value direction, Value pCkpts,
-                                         Value pSumCkpts,
-                                         const NUTSContext &ctx);
-
-/// Tree doubling by building a subtree of same depth and combining.
-SubtreeBuildResult doubleTree(OpBuilder &builder, Location loc,
-                              const NUTSTreeState &tree, Value direction,
-                              Value pCkpts, Value pSumCkpts,
-                              const NUTSContext &ctx);
-
-/// Main NUTS tree building loop.
-NUTSTreeState buildTree(OpBuilder &builder, Location loc,
-                        const NUTSTreeState &initialTree,
-                        const NUTSContext &ctx);
-
-/// Computes checkpoint indices from leaf index for iterative turning check.
-std::pair<Value, Value> leafIdxToCheckpointIdxs(OpBuilder &builder,
-                                                Location loc, Value leafIdx);
-
-/// Checkpoint-based iterative turning check.
-Value checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
-                            Value pSum, Value pCkpts, Value pSumCkpts,
-                            Value idxMin, Value idxMax, const NUTSContext &ctx);
-
-/// Update checkpoint arrays at even leaf indices.
-std::pair<Value, Value> updateCheckpoints(OpBuilder &builder, Location loc,
-                                          Value leafIdx, Value ckptIdxMax,
-                                          Value p, Value pSum, Value pCkpts,
-                                          Value pSumCkpts);
 
 // TODO: Proper customization
 struct DualAveragingConfig {
@@ -433,11 +275,6 @@ struct AdaptWindow {
 /// Build warmup adaptation schedule.
 /// TODO: Make customizable
 SmallVector<AdaptWindow> buildAdaptationSchedule(int64_t numSteps);
-
-/// Transform an entire position vector from constrained to unconstrained space
-/// based on the support information.
-Value unconstrainPosition(OpBuilder &builder, Location loc, Value constrained,
-                          ArrayRef<SupportInfo> supports);
 
 /// Transform an entire position vector from unconstrained to constrained space.
 /// based on the support information.
