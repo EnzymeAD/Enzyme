@@ -13,6 +13,7 @@
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/DistBuilder.h"
+#include "Interfaces/ImpulseUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -519,11 +520,7 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                                     Location loc,
                                                     Value position, Value rng,
                                                     const HMCContext &ctx) {
-  RankedTensorType scalarType = ctx.getScalarType();
-  auto gradSeed = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(ctx.getElementType(), 1.0)));
+  Value gradSeed = emitSplatConstant(builder, loc, ctx.getScalarType(), 1.0);
   Value autodiffPosition = usesLogpdfSymbol(ctx)
                                ? flattenPosition(builder, loc, position, ctx)
                                : position;
@@ -808,10 +805,7 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   }
 
   Value autodiffQ0 = useSymbol ? flattenPosition(builder, loc, q0, ctx) : q0;
-  auto gradSeed = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(ctx.getElementType(), 1.0)));
+  Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
   GradientResult gradient = emitPotentialGradient(
       builder, loc, autodiffQ0, gradSeed, rngForAutodiff, ctx);
 
@@ -869,10 +863,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   // adjusted_step_size = trajectory_length / num_steps
   Value numSteps, adjustedStepSize;
   if (ctx.numSteps > 0) {
-    numSteps = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(ctx.numSteps)));
+    numSteps = emitI64ScalarConstant(builder, loc, ctx.numSteps);
     adjustedStepSize = ctx.stepSize;
   } else {
     auto trajDivStep =
@@ -1977,13 +1968,9 @@ static Value transformPosition(OpBuilder &builder, Location loc, Value position,
                                builder.getFloatAttr(elemType, 0.0)));
 
     // The slices tile [0, outSize) exactly, so the zero init is never read.
-    auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
     int64_t offset = 0;
     for (Value slice : slices) {
-      auto resultIdx = arith::ConstantOp::create(
-          builder, loc, i64ScalarType,
-          DenseElementsAttr::get(i64ScalarType,
-                                 builder.getI64IntegerAttr(offset)));
+      Value resultIdx = emitI64ScalarConstant(builder, loc, offset);
       result1D = impulse::DynamicUpdateSliceOp::create(
           builder, loc, resultType1D, result1D, slice, ValueRange{resultIdx});
       offset += cast<RankedTensorType>(slice.getType()).getShape()[0];

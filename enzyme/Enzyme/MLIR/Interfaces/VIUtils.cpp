@@ -10,6 +10,7 @@
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/DistBuilder.h"
+#include "Interfaces/ImpulseUtils.h"
 #include "Passes/InferStateLayout.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -22,49 +23,24 @@ using namespace mlir::enzyme;
 using namespace mlir::impulse;
 using namespace mlir::impulse::VI;
 
-/// Splat constant of type `ty` with every element equal to `v`.
-static Value scalarConst(OpBuilder &builder, Location loc, RankedTensorType ty,
-                         double v) {
-  auto elem = ty.getElementType();
-  return arith::ConstantOp::create(
-      builder, loc, ty,
-      DenseElementsAttr::get(ty, builder.getFloatAttr(elem, v)));
-}
-
-/// Rank-0 i64 tensor constant `v`.
-static Value i64Const(OpBuilder &builder, Location loc, int64_t v) {
-  auto ty = RankedTensorType::get({}, builder.getI64Type());
-  return arith::ConstantOp::create(
-      builder, loc, ty,
-      DenseElementsAttr::get(ty, builder.getI64IntegerAttr(v)));
-}
-
-/// Broadcasts the rank-0 tensor `scalar` to `targetType`.
-static Value broadcastScalar(OpBuilder &builder, Location loc, Value scalar,
-                             RankedTensorType targetType) {
-  return enzyme::BroadcastOp::create(
-      builder, loc, targetType, scalar,
-      builder.getDenseI64ArrayAttr(targetType.getShape()));
-}
-
 /// Writes each site's slice of `position2d` into its columns of `fullTrace`.
 static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
                                     Value position2d, Value fullTrace,
                                     const VIContext &ctx) {
   auto elemType = ctx.getElementType();
   auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-  auto c0 = i64Const(builder, loc, 0);
+  auto c0 = emitI64ScalarConstant(builder, loc, 0);
 
   Value result = fullTrace;
   for (const auto &info : ctx.supports) {
     auto sliceType = RankedTensorType::get({1, info.size}, elemType);
-    auto posOffset = i64Const(builder, loc, info.offset);
+    auto posOffset = emitI64ScalarConstant(builder, loc, info.offset);
     SmallVector<Value> extractIdx{c0, posOffset};
     auto slice = impulse::DynamicSliceOp::create(
         builder, loc, sliceType, position2d, extractIdx,
         builder.getDenseI64ArrayAttr({1, info.size}));
 
-    auto traceOffset = i64Const(builder, loc, info.traceOffset);
+    auto traceOffset = emitI64ScalarConstant(builder, loc, info.traceOffset);
     SmallVector<Value> updateIdx{c0, traceOffset};
     result = impulse::DynamicUpdateSliceOp::create(builder, loc, traceType,
                                                    result, slice, updateIdx);
@@ -76,7 +52,7 @@ static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
 static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
   auto tensorType = cast<RankedTensorType>(tensor.getType());
   auto scalarType = RankedTensorType::get({}, tensorType.getElementType());
-  Value ones = scalarConst(builder, loc, tensorType, 1.0);
+  Value ones = emitSplatConstant(builder, loc, tensorType, 1.0);
   DenseI64ArrayAttr allDims = builder.getDenseI64ArrayAttr(
       llvm::to_vector(llvm::seq<int64_t>(0, tensorType.getRank())));
   return impulse::DotOp::create(builder, loc, scalarType, tensor, ones, allDims,
@@ -106,10 +82,10 @@ static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
   Value epsSq = arith::MulFOp::create(builder, loc, eps, eps);
   Value sumEpsSq = sumAllElements(builder, loc, epsSq);
   Value halfSumEpsSq = arith::MulFOp::create(
-      builder, loc, sumEpsSq, scalarConst(builder, loc, scalarType, 0.5));
-  Value log2piTerm = scalarConst(builder, loc, scalarType,
-                                 static_cast<double>(ctx.positionSize) *
-                                     (0.5 * std::log(2.0 * M_PI)));
+      builder, loc, sumEpsSq, emitSplatConstant(builder, loc, scalarType, 0.5));
+  Value log2piTerm = emitSplatConstant(builder, loc, scalarType,
+                                       static_cast<double>(ctx.positionSize) *
+                                           (0.5 * std::log(2.0 * M_PI)));
 
   Value negSumLogScale = arith::NegFOp::create(builder, loc, sumLogScale);
   Value logQPart =
@@ -247,7 +223,7 @@ emitELBOGradient(OpBuilder &builder, Location loc, ValueRange params,
                  Type rngType, const VIContext &ctx,
                  function_ref<ParticleELBO(ValueRange paramArgs)> emitELBO) {
   RankedTensorType scalarType = ctx.getScalarType();
-  Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
+  Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
   SmallVector<Value> adInputs = llvm::to_vector(params);
   adInputs.push_back(gradSeed);
   SmallVector<Type> resultTypes{scalarType, rngType};
@@ -290,11 +266,11 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
 
   // eps is drawn outside the autodiff region so that the primal and the shadow
   // see the same sample; each site draws from its own key.
-  auto zeroScalar = scalarConst(builder, loc, scalarType, 0.0);
-  auto oneScalar = scalarConst(builder, loc, scalarType, 1.0);
-  Value c0i64 = i64Const(builder, loc, 0);
+  auto zeroScalar = emitSplatConstant(builder, loc, scalarType, 0.0);
+  auto oneScalar = emitSplatConstant(builder, loc, scalarType, 1.0);
+  Value c0i64 = emitI64ScalarConstant(builder, loc, 0);
 
-  Value eps = scalarConst(builder, loc, positionType, 0.0);
+  Value eps = emitSplatConstant(builder, loc, positionType, 0.0);
   Value chain = guideSeed;
   for (const auto &info : ctx.supports) {
     auto siteSplit = impulse::RandomSplitOp::create(
@@ -308,7 +284,7 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         impulse::RngDistributionAttr::get(builder.getContext(),
                                           impulse::RngDistribution::NORMAL));
     Value siteEps = randOp.getResult();
-    Value offsetI64 = i64Const(builder, loc, info.offset);
+    Value offsetI64 = emitI64ScalarConstant(builder, loc, info.offset);
     eps = impulse::DynamicUpdateSliceOp::create(
         builder, loc, positionType, eps, siteEps, ValueRange{c0i64, offsetI64});
   }
@@ -409,8 +385,8 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
       builder, loc, TypeRange{rngType, rngType}, guideSeed);
   Value siteKey = siteSplit.getResult(1);
 
-  auto zeroScalar = scalarConst(builder, loc, scalarType, 0.0);
-  auto oneScalar = scalarConst(builder, loc, scalarType, 1.0);
+  auto zeroScalar = emitSplatConstant(builder, loc, scalarType, 0.0);
+  auto oneScalar = emitSplatConstant(builder, loc, scalarType, 1.0);
   auto randOp = impulse::RandomOp::create(
       builder, loc, TypeRange{rngType, positionType}, siteKey, zeroScalar,
       oneScalar,
@@ -462,10 +438,10 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
   auto keys = impulse::RandomSplitOp::create(builder, loc, keyTypes, rngStep);
 
   RankedTensorType scalarType = ctx.getScalarType();
-  Value elboSum = scalarConst(builder, loc, scalarType, 0.0);
+  Value elboSum = emitSplatConstant(builder, loc, scalarType, 0.0);
   SmallVector<Value> gradSums;
   for (Value param : params)
-    gradSums.push_back(scalarConst(
+    gradSums.push_back(emitSplatConstant(
         builder, loc, cast<RankedTensorType>(param.getType()), 0.0));
 
   for (Value pkey : keys.getResults()) {
@@ -475,13 +451,13 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
       sum = arith::AddFOp::create(builder, loc, sum, grad);
   }
 
-  Value count =
-      scalarConst(builder, loc, scalarType, static_cast<double>(numParticles));
+  Value count = emitSplatConstant(builder, loc, scalarType,
+                                  static_cast<double>(numParticles));
   DenseMap<Type, Value> countSplats;
   for (Value param : params) {
     auto type = cast<RankedTensorType>(param.getType());
     if (!countSplats.contains(type))
-      countSplats[type] = broadcastScalar(builder, loc, count, type);
+      countSplats[type] = emitBroadcastScalar(builder, loc, count, type);
   }
   ELBOGradient mean;
   mean.elbo = arith::DivFOp::create(builder, loc, elboSum, count);
@@ -496,7 +472,7 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
 static ParamState applySGDUpdate(OpBuilder &builder, Location loc, Value param,
                                  Value gradElbo, Value m, Value v, Value lr) {
   auto ty = cast<RankedTensorType>(param.getType());
-  Value lrBcast = broadcastScalar(builder, loc, lr, ty);
+  Value lrBcast = emitBroadcastScalar(builder, loc, lr, ty);
   Value scaledGrad = arith::MulFOp::create(builder, loc, lrBcast, gradElbo);
   Value paramNew = arith::AddFOp::create(builder, loc, param, scaledGrad);
   return {paramNew, m, v};
@@ -516,25 +492,27 @@ static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
 
   if (clipNorm > 0.0) {
-    auto negClip = scalarConst(builder, loc, scalarType, -clipNorm);
-    auto posClip = scalarConst(builder, loc, scalarType, clipNorm);
-    Value negClipBcast = broadcastScalar(builder, loc, negClip, paramType);
-    Value posClipBcast = broadcastScalar(builder, loc, posClip, paramType);
+    auto negClip = emitSplatConstant(builder, loc, scalarType, -clipNorm);
+    auto posClip = emitSplatConstant(builder, loc, scalarType, clipNorm);
+    Value negClipBcast = emitBroadcastScalar(builder, loc, negClip, paramType);
+    Value posClipBcast = emitBroadcastScalar(builder, loc, posClip, paramType);
     g = arith::MaximumFOp::create(builder, loc, g, negClipBcast);
     g = arith::MinimumFOp::create(builder, loc, g, posClipBcast);
   }
 
-  auto b1Const = scalarConst(builder, loc, scalarType, b1);
-  auto oneMinusB1 = scalarConst(builder, loc, scalarType, 1.0 - b1);
-  auto b2Const = scalarConst(builder, loc, scalarType, b2);
-  auto oneMinusB2 = scalarConst(builder, loc, scalarType, 1.0 - b2);
-  auto epsConst = scalarConst(builder, loc, scalarType, eps);
-  auto oneConst = scalarConst(builder, loc, scalarType, 1.0);
+  auto b1Const = emitSplatConstant(builder, loc, scalarType, b1);
+  auto oneMinusB1 = emitSplatConstant(builder, loc, scalarType, 1.0 - b1);
+  auto b2Const = emitSplatConstant(builder, loc, scalarType, b2);
+  auto oneMinusB2 = emitSplatConstant(builder, loc, scalarType, 1.0 - b2);
+  auto epsConst = emitSplatConstant(builder, loc, scalarType, eps);
+  auto oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
-  Value b1Bcast = broadcastScalar(builder, loc, b1Const, paramType);
-  Value oneMinusB1Bcast = broadcastScalar(builder, loc, oneMinusB1, paramType);
-  Value b2Bcast = broadcastScalar(builder, loc, b2Const, paramType);
-  Value oneMinusB2Bcast = broadcastScalar(builder, loc, oneMinusB2, paramType);
+  Value b1Bcast = emitBroadcastScalar(builder, loc, b1Const, paramType);
+  Value oneMinusB1Bcast =
+      emitBroadcastScalar(builder, loc, oneMinusB1, paramType);
+  Value b2Bcast = emitBroadcastScalar(builder, loc, b2Const, paramType);
+  Value oneMinusB2Bcast =
+      emitBroadcastScalar(builder, loc, oneMinusB2, paramType);
 
   Value oneMinusB1G = arith::MulFOp::create(builder, loc, oneMinusB1Bcast, g);
   Value b1M = arith::MulFOp::create(builder, loc, b1Bcast, m);
@@ -546,7 +524,7 @@ static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
   Value b2V = arith::MulFOp::create(builder, loc, b2Bcast, v);
   Value vNew = arith::AddFOp::create(builder, loc, oneMinusB2GSq, b2V);
 
-  Value oneI64 = i64Const(builder, loc, 1);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value stepPlus1 = arith::AddIOp::create(builder, loc, stepIdx, oneI64);
   Value stepFloat =
       arith::SIToFPOp::create(builder, loc, scalarType, stepPlus1);
@@ -556,18 +534,18 @@ static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
   Value oneMinusB1Pow = arith::SubFOp::create(builder, loc, oneConst, b1PowS);
   Value oneMinusB2Pow = arith::SubFOp::create(builder, loc, oneConst, b2PowS);
   Value oneMinusB1PowBcast =
-      broadcastScalar(builder, loc, oneMinusB1Pow, paramType);
+      emitBroadcastScalar(builder, loc, oneMinusB1Pow, paramType);
   Value oneMinusB2PowBcast =
-      broadcastScalar(builder, loc, oneMinusB2Pow, paramType);
+      emitBroadcastScalar(builder, loc, oneMinusB2Pow, paramType);
 
   Value mhat = arith::DivFOp::create(builder, loc, mNew, oneMinusB1PowBcast);
   Value vhat = arith::DivFOp::create(builder, loc, vNew, oneMinusB2PowBcast);
 
   Value sqrtVhat = math::SqrtOp::create(builder, loc, vhat);
-  Value epsBcast = broadcastScalar(builder, loc, epsConst, paramType);
+  Value epsBcast = emitBroadcastScalar(builder, loc, epsConst, paramType);
   Value denom = arith::AddFOp::create(builder, loc, sqrtVhat, epsBcast);
   Value mhatOverDenom = arith::DivFOp::create(builder, loc, mhat, denom);
-  Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
+  Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
   Value update = arith::MulFOp::create(builder, loc, lrBcast, mhatOverDenom);
   Value paramNew = arith::SubFOp::create(builder, loc, param, update);
 
@@ -583,11 +561,12 @@ static ParamState applyMomentumUpdate(OpBuilder &builder, Location loc,
   auto scalarType = RankedTensorType::get({}, elemType);
 
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
-  Value massBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, mass), paramType);
+  Value massBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, mass),
+      paramType);
   Value mScaled = arith::MulFOp::create(builder, loc, massBcast, m);
   Value mNew = arith::AddFOp::create(builder, loc, mScaled, g);
-  Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
+  Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
   Value scaledM = arith::MulFOp::create(builder, loc, lrBcast, mNew);
   Value paramNew = arith::SubFOp::create(builder, loc, param, scaledM);
   return {paramNew, mNew, v};
@@ -605,13 +584,15 @@ static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
 
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
 
-  Value gammaBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, gamma), paramType);
-  Value oneMinusGammaBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, 1.0 - gamma),
+  Value gammaBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, gamma),
       paramType);
-  Value epsBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, eps), paramType);
+  Value oneMinusGammaBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, 1.0 - gamma),
+      paramType);
+  Value epsBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, eps),
+      paramType);
 
   Value gSq = arith::MulFOp::create(builder, loc, g, g);
   Value oneMinusGammaGSq =
@@ -623,7 +604,7 @@ static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
   Value avgPlusEps = arith::AddFOp::create(builder, loc, avgNew, epsBcast);
   Value sqrtAvgPlusEps = math::SqrtOp::create(builder, loc, avgPlusEps);
   Value gOverSqrt = arith::DivFOp::create(builder, loc, g, sqrtAvgPlusEps);
-  Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
+  Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
   Value update = arith::MulFOp::create(builder, loc, lrBcast, gOverSqrt);
   Value paramNew = arith::SubFOp::create(builder, loc, param, update);
   return {paramNew, avgNew, v};
@@ -645,23 +626,24 @@ static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
 
   // g is 0 wherever g_sq is 0; select 0 there, as g * 1/sqrt(0) is NaN.
   Value sqrtGSq = math::SqrtOp::create(builder, loc, gSqNew);
-  Value zeroBcast = scalarConst(builder, loc, paramType, 0.0);
+  Value zeroBcast = emitSplatConstant(builder, loc, paramType, 0.0);
   Value isPositive = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OGT, gSqNew, zeroBcast);
-  Value oneBcast = scalarConst(builder, loc, paramType, 1.0);
+  Value oneBcast = emitSplatConstant(builder, loc, paramType, 1.0);
   Value invSqrt = arith::DivFOp::create(builder, loc, oneBcast, sqrtGSq);
   Value gSqInvSqrt =
       arith::SelectOp::create(builder, loc, isPositive, invSqrt, zeroBcast);
 
-  Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
+  Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
   Value gTimesInv = arith::MulFOp::create(builder, loc, g, gSqInvSqrt);
   Value lrG = arith::MulFOp::create(builder, loc, lrBcast, gTimesInv);
   Value dx = arith::NegFOp::create(builder, loc, lrG);
 
-  Value momBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, momentum), paramType);
-  Value oneMinusMomBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, 1.0 - momentum),
+  Value momBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, momentum),
+      paramType);
+  Value oneMinusMomBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, 1.0 - momentum),
       paramType);
   Value oneMinusMomDx =
       arith::MulFOp::create(builder, loc, oneMinusMomBcast, dx);
@@ -685,15 +667,17 @@ static ParamState applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
 
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
 
-  Value gammaBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, gamma), paramType);
-  Value oneMinusGammaBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, 1.0 - gamma),
+  Value gammaBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, gamma),
       paramType);
-  Value epsBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, eps), paramType);
-  Value momBcast = broadcastScalar(
-      builder, loc, scalarConst(builder, loc, scalarType, momentumMass),
+  Value oneMinusGammaBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, 1.0 - gamma),
+      paramType);
+  Value epsBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, eps),
+      paramType);
+  Value momBcast = emitBroadcastScalar(
+      builder, loc, emitSplatConstant(builder, loc, scalarType, momentumMass),
       paramType);
 
   Value gSq = arith::MulFOp::create(builder, loc, g, g);
@@ -706,7 +690,7 @@ static ParamState applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
   Value avgPlusEps = arith::AddFOp::create(builder, loc, avgNew, epsBcast);
   Value sqrtAvgPlusEps = math::SqrtOp::create(builder, loc, avgPlusEps);
   Value gOverSqrt = arith::DivFOp::create(builder, loc, g, sqrtAvgPlusEps);
-  Value lrBcast = broadcastScalar(builder, loc, lr, paramType);
+  Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
   Value lrGOverSqrt = arith::MulFOp::create(builder, loc, lrBcast, gOverSqrt);
   Value momTimesMom = arith::MulFOp::create(builder, loc, momBcast, v);
   Value momNew = arith::AddFOp::create(builder, loc, momTimesMom, lrGOverSqrt);
@@ -765,20 +749,20 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
   auto i64Type = RankedTensorType::get({}, builder.getI64Type());
   size_t numParams = params0.size();
 
-  Value c0i = i64Const(builder, loc, 0);
-  Value c1i = i64Const(builder, loc, 1);
-  Value cNi = i64Const(builder, loc, ctx.numSamples);
-  Value traceInit = scalarConst(builder, loc, traceBufType, 0.0);
-  Value elboInit = scalarConst(builder, loc, elboBufType, 0.0);
-  Value elboFinalSeed = scalarConst(builder, loc, scalarType, 0.0);
+  Value c0i = emitI64ScalarConstant(builder, loc, 0);
+  Value c1i = emitI64ScalarConstant(builder, loc, 1);
+  Value cNi = emitI64ScalarConstant(builder, loc, ctx.numSamples);
+  Value traceInit = emitSplatConstant(builder, loc, traceBufType, 0.0);
+  Value elboInit = emitSplatConstant(builder, loc, elboBufType, 0.0);
+  Value elboFinalSeed = emitSplatConstant(builder, loc, scalarType, 0.0);
   DenseMap<Type, Value> zeroSlots;
   for (const ParamState &p : params0) {
     auto type = cast<RankedTensorType>(p.param.getType());
     if (!zeroSlots.contains(type))
-      zeroSlots[type] = scalarConst(builder, loc, type, 0.0);
+      zeroSlots[type] = emitSplatConstant(builder, loc, type, 0.0);
   }
   if (!initStepCount)
-    initStepCount = i64Const(builder, loc, 0);
+    initStepCount = emitI64ScalarConstant(builder, loc, 0);
 
   // Iteration arguments: params, rng, trace, ELBO trace, last ELBO, then the
   // (m, v) slots of each param.
@@ -867,7 +851,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
 
   builder.setInsertionPointAfter(forOp);
 
-  Value numSamplesI64 = i64Const(builder, loc, ctx.numSamples);
+  Value numSamplesI64 = emitI64ScalarConstant(builder, loc, ctx.numSamples);
   SVILoopResult result;
   result.traceBuf = forOp.getResult(numParams + 1);
   result.elboBuf = forOp.getResult(numParams + 2);
@@ -946,13 +930,15 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   } else {
     // Each site starts uniform in [-initRadius, initRadius], from its own key.
     RankedTensorType scalarType = ctx.getScalarType();
-    Value c0i64 = i64Const(rewriter, loc, 0);
-    Value negRadius = scalarConst(rewriter, loc, scalarType, -ctx.initRadius);
-    Value posRadius = scalarConst(rewriter, loc, scalarType, ctx.initRadius);
+    Value c0i64 = emitI64ScalarConstant(rewriter, loc, 0);
+    Value negRadius =
+        emitSplatConstant(rewriter, loc, scalarType, -ctx.initRadius);
+    Value posRadius =
+        emitSplatConstant(rewriter, loc, scalarType, ctx.initRadius);
     auto uniformAttr = impulse::RngDistributionAttr::get(
         rewriter.getContext(), impulse::RngDistribution::UNIFORM);
 
-    loc0 = scalarConst(rewriter, loc, positionType, 0.0);
+    loc0 = emitSplatConstant(rewriter, loc, positionType, 0.0);
     auto preSplit = impulse::RandomSplitOp::create(
         rewriter, loc, TypeRange{rngType, rngType}, guideInitSeed);
     Value chain = preSplit.getResult(1);
@@ -971,7 +957,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       auto sliceType = RankedTensorType::get({1, info.size}, elemType);
       Value initDraw2D =
           impulse::ReshapeOp::create(rewriter, loc, sliceType, initDraw);
-      Value offsetIdx = i64Const(rewriter, loc, info.offset);
+      Value offsetIdx = emitI64ScalarConstant(rewriter, loc, info.offset);
       loc0 = impulse::DynamicUpdateSliceOp::create(
           rewriter, loc, positionType, loc0, initDraw2D,
           ValueRange{c0i64, offsetIdx});
@@ -998,7 +984,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       scale0 = impulse::emitSoftplusInv(rewriter, loc, initScale);
     } else {
       double initScaleU = std::log(std::expm1(ctx.initScale));
-      scale0 = scalarConst(rewriter, loc, positionType, initScaleU);
+      scale0 = emitSplatConstant(rewriter, loc, positionType, initScaleU);
     }
     ParamState scaleState{scale0, slotIn("opt_m_scale"), slotIn("opt_v_scale")};
     loopRes = emitSVILoop(rewriter, loc, {locState, scaleState}, rng0,

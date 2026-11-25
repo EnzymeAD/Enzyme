@@ -637,14 +637,7 @@ private:
 static SmallVector<Value> stackChainResults(OpBuilder &builder, Location loc,
                                             ArrayRef<ChainResult> chains,
                                             bool hasStateSchema) {
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto indexConst = [&](int64_t value) -> Value {
-    return arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(value)));
-  };
-  Value zeroIdx = indexConst(0);
+  Value zeroIdx = emitI64ScalarConstant(builder, loc, 0);
   int64_t numChains = chains.size();
 
   auto stack = [&](function_ref<Value(const ChainResult &)> pick,
@@ -669,7 +662,8 @@ static SmallVector<Value> stackChainResults(OpBuilder &builder, Location loc,
     for (auto [chainIdx, chain] : llvm::enumerate(chains)) {
       Value reshaped =
           impulse::ReshapeOp::create(builder, loc, oneType, pick(chain));
-      SmallVector<Value> indices = {indexConst(chainIdx)};
+      SmallVector<Value> indices = {
+          emitI64ScalarConstant(builder, loc, chainIdx)};
       indices.append(type.getRank(), zeroIdx);
       buffer = impulse::DynamicUpdateSliceOp::create(builder, loc, stackedType,
                                                      buffer, reshaped, indices);
@@ -756,10 +750,9 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
   if (isHMC) {
     auto hmcConfig = op.getHmcConfig().value();
     numSteps = hmcConfig.getNumSteps();
-    double length = hmcConfig.getTrajectoryLength().getValueAsDouble();
-    trajectoryLength = arith::ConstantOp::create(
-        builder, loc, f64TensorType,
-        DenseElementsAttr::get(f64TensorType, builder.getF64FloatAttr(length)));
+    trajectoryLength =
+        emitSplatConstant(builder, loc, f64TensorType,
+                          hmcConfig.getTrajectoryLength().getValueAsDouble());
     adaptStepSize = hmcConfig.getAdaptStepSize();
     adaptMassMatrix = hmcConfig.getAdaptMassMatrix();
   } else {
@@ -771,10 +764,8 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
         nutsConfig.getMaxDeltaEnergy()
             ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
             : 1000.0;
-    maxDeltaEnergy = arith::ConstantOp::create(
-        builder, loc, f64TensorType,
-        DenseElementsAttr::get(f64TensorType,
-                               builder.getF64FloatAttr(maxDeltaEnergyVal)));
+    maxDeltaEnergy =
+        emitSplatConstant(builder, loc, f64TensorType, maxDeltaEnergyVal);
   }
 
   if (initInvMass)
@@ -827,14 +818,8 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
       initChainState(rng, chainIdx, stepSize, invMass, massMatrixSqrt);
 
   if (!invMass) {
-    invMass = arith::ConstantOp::create(
-        builder, loc, positionType,
-        DenseElementsAttr::get(positionType,
-                               builder.getFloatAttr(elemType, 1.0)));
-    massMatrixSqrt = arith::ConstantOp::create(
-        builder, loc, positionType,
-        DenseElementsAttr::get(positionType,
-                               builder.getFloatAttr(elemType, 1.0)));
+    invMass = emitSplatConstant(builder, loc, positionType, 1.0);
+    massMatrixSqrt = emitSplatConstant(builder, loc, positionType, 1.0);
   }
 
   std::optional<AdaptationState> finalAdaptation;
@@ -982,9 +967,7 @@ AdaptationState MCMCChainEmitter::loadOrInitAdaptation(
       initDualAveraging(builder, loc, stepSize, /*logOfProduct=*/true);
   if (withWelford)
     fresh.welford = initWelford(builder, loc, model.positionSize, diagonal);
-  fresh.windowIdx = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  fresh.windowIdx = emitI64ScalarConstant(builder, loc, 0);
   return fresh;
 }
 
@@ -994,33 +977,17 @@ MCMCChainEmitter::emitWarmup(const ChainState &start, Value stepSize,
                              const std::optional<AdaptationState> &saved,
                              int64_t chainIdx) {
   WarmupSchedule schedule;
-  schedule.zero = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  schedule.one = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto numWarmupConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(numWarmup)));
+  schedule.zero = emitI64ScalarConstant(builder, loc, 0);
+  schedule.one = emitI64ScalarConstant(builder, loc, 1);
+  Value numWarmupConst = emitI64ScalarConstant(builder, loc, numWarmup);
 
   SmallVector<AdaptWindow> windows = buildAdaptationSchedule(totalWarmup);
   int64_t numWindows = static_cast<int64_t>(windows.size());
-  for (const auto &window : windows) {
-    schedule.windowEnds.push_back(arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(window.end))));
-  }
-  schedule.lastWindow = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(numWindows - 1)));
-  schedule.lastIteration = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(totalWarmup - 1)));
+  for (const auto &window : windows)
+    schedule.windowEnds.push_back(
+        emitI64ScalarConstant(builder, loc, window.end));
+  schedule.lastWindow = emitI64ScalarConstant(builder, loc, numWindows - 1);
+  schedule.lastIteration = emitI64ScalarConstant(builder, loc, totalWarmup - 1);
 
   Value initialStepSize =
       conditionalDump(builder, loc, stepSize,
@@ -1145,10 +1112,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
   for (auto [window, windowEnd] : llvm::enumerate(schedule.windowEnds)) {
     auto inWindow = arith::CmpIOp::create(
         builder, loc, arith::CmpIPredicate::eq, carry.windowIdx,
-        arith::ConstantOp::create(
-            builder, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   builder.getI64IntegerAttr(window))));
+        emitI64ScalarConstant(builder, loc, window));
     auto atEnd = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
                                        iteration, windowEnd);
     auto matchesThisWindow =
@@ -1240,37 +1204,19 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
       RankedTensorType::get({collectionSize, 2}, builder.getI1Type());
   auto logDensityBufferType = RankedTensorType::get({collectionSize}, elemType);
 
-  auto samplesBuffer = arith::ConstantOp::create(
-      builder, loc, samplesBufferType,
-      DenseElementsAttr::get(samplesBufferType,
-                             builder.getFloatAttr(elemType, 0.0)));
+  Value samplesBuffer = emitSplatConstant(builder, loc, samplesBufferType, 0.0);
   auto diagnosticsBuffer = arith::ConstantOp::create(
       builder, loc, diagnosticsBufferType,
       DenseElementsAttr::get(diagnosticsBufferType,
                              builder.getBoolAttr(isNUTS)));
-  auto logDensityBuffer = arith::ConstantOp::create(
-      builder, loc, logDensityBufferType,
-      DenseElementsAttr::get(logDensityBufferType,
-                             builder.getFloatAttr(elemType, 0.0)));
+  Value logDensityBuffer =
+      emitSplatConstant(builder, loc, logDensityBufferType, 0.0);
 
-  auto zero = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto one = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto numSamplesConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(numSamples)));
-  auto startIdxConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(startIdx)));
-  auto thinningConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(thinning)));
+  Value zero = emitI64ScalarConstant(builder, loc, 0);
+  Value one = emitI64ScalarConstant(builder, loc, 1);
+  Value numSamplesConst = emitI64ScalarConstant(builder, loc, numSamples);
+  Value startIdxConst = emitI64ScalarConstant(builder, loc, startIdx);
+  Value thinningConst = emitI64ScalarConstant(builder, loc, thinning);
 
   if (collectionSize == 0)
     return {samplesBuffer, diagnosticsBuffer, logDensityBuffer, state.rng, {}};
@@ -1314,9 +1260,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
                                          modThinning, zero);
   auto shouldStore = arith::AndIOp::create(builder, loc, geStartIdx, modIsZero);
 
-  auto zeroCol = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value zeroCol = emitI64ScalarConstant(builder, loc, 0);
   auto updatedSamplesBuffer = impulse::DynamicUpdateSliceOp::create(
       builder, loc, samplesBufferType, samplesBufferLoop, qConstrained,
       ValueRange{storageIdx, zeroCol});
@@ -1324,9 +1268,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
       impulse::SelectOp::create(builder, loc, samplesBufferType, shouldStore,
                                 updatedSamplesBuffer, samplesBufferLoop);
 
-  auto oneCol = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneCol = emitI64ScalarConstant(builder, loc, 1);
   auto accepted1x1 = impulse::ReshapeOp::create(
       builder, loc, RankedTensorType::get({1, 1}, builder.getI1Type()),
       sample.accepted);
@@ -1374,15 +1316,10 @@ SmallVector<Value> MCMCChainEmitter::packStateOut(
     const std::optional<AdaptationState> &adaptation, int64_t chainIdx) {
   Value warmupOffsetIn = chainStateInSlot(state_slot::kWarmupOffset, chainIdx);
   if (!warmupOffsetIn)
-    warmupOffsetIn = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  Value warmupOffsetOut = arith::AddIOp::create(
-      builder, loc, warmupOffsetIn,
-      arith::ConstantOp::create(
-          builder, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 builder.getI64IntegerAttr(numWarmup))));
+    warmupOffsetIn = emitI64ScalarConstant(builder, loc, 0);
+  Value warmupOffsetOut =
+      arith::AddIOp::create(builder, loc, warmupOffsetIn,
+                            emitI64ScalarConstant(builder, loc, numWarmup));
 
   SmallVector<Value> adaptationOut;
   if (adaptation)
@@ -1563,22 +1500,6 @@ static LogicalResult processImpulseBlock(Block &block,
   return success();
 }
 
-/// Creates a rank-0 `i64` tensor constant.
-static Value i64Const(OpBuilder &builder, Location loc, int64_t value) {
-  auto type = RankedTensorType::get({}, builder.getI64Type());
-  return arith::ConstantOp::create(
-      builder, loc, type,
-      DenseElementsAttr::get(type, builder.getI64IntegerAttr(value)));
-}
-
-/// Creates a constant of the f64 tensor type `type` with every element
-/// `value`.
-static Value f64Const(OpBuilder &builder, Location loc, RankedTensorType type,
-                      double value) {
-  return arith::ConstantOp::create(builder, loc, type,
-                                   DenseElementsAttr::get(type, value));
-}
-
 /// Returns entry `index` of `vec` along its leading dimension, with that
 /// dimension dropped.
 static Value takeLeading(OpBuilder &builder, Location loc, Value vec,
@@ -1602,12 +1523,12 @@ static Value takeLeading(OpBuilder &builder, Location loc, Value vec,
 static Value packScalars(OpBuilder &builder, Location loc,
                          RankedTensorType vecType, ArrayRef<Value> scalars) {
   auto cellType = RankedTensorType::get({1}, vecType.getElementType());
-  Value vec = f64Const(builder, loc, vecType, 0.0);
+  Value vec = emitSplatConstant(builder, loc, vecType, 0.0);
   for (auto [index, scalar] : llvm::enumerate(scalars)) {
     Value cell = impulse::ReshapeOp::create(builder, loc, cellType, scalar);
     vec = impulse::DynamicUpdateSliceOp::create(
         builder, loc, vecType, vec, cell,
-        ValueRange{i64Const(builder, loc, index)});
+        ValueRange{emitI64ScalarConstant(builder, loc, index)});
   }
   return vec;
 }
@@ -1616,8 +1537,8 @@ static Value packScalars(OpBuilder &builder, Location loc,
 /// `column`.
 static Value updateColumns(OpBuilder &builder, Location loc, Value tensor,
                            Value update, int64_t column) {
-  Value row = i64Const(builder, loc, 0);
-  Value col = i64Const(builder, loc, column);
+  Value row = emitI64ScalarConstant(builder, loc, 0);
+  Value col = emitI64ScalarConstant(builder, loc, column);
   return impulse::DynamicUpdateSliceOp::create(
       builder, loc, tensor.getType(), tensor, update, ValueRange{row, col});
 }
@@ -1766,15 +1687,16 @@ static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
                              ArrayRef<Value> siteScores, int64_t width) {
   auto fullType = RankedTensorType::get({1, width}, builder.getF64Type());
   auto cellType = RankedTensorType::get({1, 1}, builder.getF64Type());
-  Value zeroFull = f64Const(builder, loc, fullType, 0.0);
-  Value c0 = i64Const(builder, loc, 0);
+  Value zeroFull = emitSplatConstant(builder, loc, fullType, 0.0);
+  Value c0 = emitI64ScalarConstant(builder, loc, 0);
   Value trace = impulse::DynamicUpdateSliceOp::create(
       builder, loc, fullType, zeroFull, values, ValueRange{c0, c0});
   int64_t firstScoreColumn =
       cast<RankedTensorType>(values.getType()).getShape()[1];
   for (auto [i, score] : llvm::enumerate(siteScores)) {
     Value cell = impulse::ReshapeOp::create(builder, loc, cellType, score);
-    Value column = i64Const(builder, loc, firstScoreColumn + (int64_t)i);
+    Value column =
+        emitI64ScalarConstant(builder, loc, firstScoreColumn + (int64_t)i);
     trace = impulse::DynamicUpdateSliceOp::create(builder, loc, fullType, trace,
                                                   cell, ValueRange{c0, column});
   }
@@ -1787,11 +1709,11 @@ static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
                                 Value corr) {
   auto vecType = RankedTensorType::get({2}, b.getF64Type());
   auto oneType = RankedTensorType::get({1}, b.getF64Type());
-  Value acc = f64Const(b, loc, vecType, 0.0);
+  Value acc = emitSplatConstant(b, loc, vecType, 0.0);
   // Named array: a ValueRange over a braced list would dangle in the loop.
   Value parts[] = {weight, corr};
   for (auto [i, v] : llvm::enumerate(parts)) {
-    Value idx = i64Const(b, loc, i);
+    Value idx = emitI64ScalarConstant(b, loc, i);
     Value flat = impulse::ReshapeOp::create(b, loc, oneType, v);
     acc = impulse::DynamicUpdateSliceOp::create(b, loc, vecType, acc, flat,
                                                 ValueRange{idx});
@@ -1921,9 +1843,7 @@ struct MHStep {
 /// proposal is accepted when the log of a uniform draw from its rng falls
 /// below log alpha.
 static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
-                                 Type rngType, const MHProposal &proposal,
-                                 bool deltaWeight) {
-  auto weightType = cast<RankedTensorType>(weight.getType());
+                                 const MHProposal &proposal, bool deltaWeight) {
   Value jointRatio =
       deltaWeight ? proposal.weight
                   : arith::SubFOp::create(builder, loc, proposal.weight, weight)
@@ -1937,16 +1857,13 @@ static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
       deltaWeight ? arith::AddFOp::create(builder, loc, weight, proposal.weight)
                         .getResult()
                   : proposal.weight;
-  Value zero = f64Const(builder, loc, weightType, 0.0);
-  Value one = f64Const(builder, loc, weightType, 1.0);
-  auto draw = impulse::RandomOp::create(
-      builder, loc, TypeRange{rngType, weightType}, proposal.rng, zero, one,
-      impulse::RngDistributionAttr::get(builder.getContext(),
-                                        impulse::RngDistribution::UNIFORM));
-  Value logRand = math::LogOp::create(builder, loc, draw.getResult());
+  Value rng = proposal.rng;
+  Value uniform = emitUniformDraw(builder, loc, rng,
+                                  cast<RankedTensorType>(weight.getType()));
+  Value logRand = math::LogOp::create(builder, loc, uniform);
   Value accepted = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
-  return {accepted, acceptWeight, draw.getOutputRngState()};
+  return {accepted, acceptWeight, rng};
 }
 
 /// Returns the number of trace columns the values of `site` take.
@@ -2282,13 +2199,13 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
 
   // A trace wider than positionSize carries a per-site score tail.
   if (traceType.getShape()[1] > positionSize) {
-    Value row0 = i64Const(b, loc, 0);
+    Value row0 = emitI64ScalarConstant(b, loc, 0);
     auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
     for (unsigned j = 1, e = newYields.size(); j < e; ++j) {
       if (!dirty[j - 1])
         continue;
       Value flat = impulse::ReshapeOp::create(b, loc, cellType, newYields[j]);
-      Value col = i64Const(b, loc, positionSize + (int64_t)j - 1);
+      Value col = emitI64ScalarConstant(b, loc, positionSize + (int64_t)j - 1);
       newTrace = impulse::DynamicUpdateSliceOp::create(
                      b, loc, traceType, newTrace, flat, ValueRange{row0, col})
                      .getResult();
@@ -2343,13 +2260,13 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     if (splitRatio) {
       if (!ratio) {
         auto scalarType = RankedTensorType::get({}, b.getF64Type());
-        ratio = f64Const(b, loc, scalarType, 0.0);
+        ratio = emitSplatConstant(b, loc, scalarType, 0.0);
       }
       logRatio = ratio;
     }
     if (!sum) {
       auto scalarType = RankedTensorType::get({}, b.getF64Type());
-      sum = f64Const(b, loc, scalarType, 0.0);
+      sum = emitSplatConstant(b, loc, scalarType, 0.0);
     }
     newWeight = sum;
   }
@@ -2707,7 +2624,7 @@ struct MHRunBatcher {
     return true;
   }
 
-  static void emit(ArrayRef<Move> moves, MLIRContext *ctx) {
+  static void emit(ArrayRef<Move> moves) {
     unsigned numMoves = moves.size();
     impulse::InferRegionOp first = moves.front().op, last = moves.back().op;
     Location loc = last.getLoc();
@@ -2745,14 +2662,9 @@ struct MHRunBatcher {
         firstDraw.getRngDistributionAttr());
     auto vecType =
         RankedTensorType::get({(int64_t)numMoves}, weightType.getElementType());
-    Value zero = f64Const(b, loc, weightType, 0.0);
-    Value one = f64Const(b, loc, weightType, 1.0);
-    auto accepts =
-        impulse::RandomOp::create(b, loc, TypeRange{rngType, vecType},
-                                  proposals.getOutputRngState(), zero, one,
-                                  impulse::RngDistributionAttr::get(
-                                      ctx, impulse::RngDistribution::UNIFORM));
-    Value logRand = math::LogOp::create(b, loc, accepts.getResult());
+    Value rngOut = proposals.getOutputRngState();
+    Value uniform = emitUniformDraw(b, loc, rngOut, vecType);
+    Value logRand = math::LogOp::create(b, loc, uniform);
 
     SmallVector<Value> newTraces, deltaCells, corrCells;
     SmallVector<ColumnWindows> changed(numMoves);
@@ -2948,13 +2860,13 @@ struct MHRunBatcher {
             arith::ConstantOp::create(b, loc, b.getZeroAttr(ldType)));
     }
     last.getTrace().replaceAllUsesWith(trace);
-    last.getOutputRngState().replaceAllUsesWith(accepts.getOutputRngState());
+    last.getOutputRngState().replaceAllUsesWith(rngOut);
     last.getStateOut()[0].replaceAllUsesWith(weight);
     for (unsigned k = numMoves; k-- > 0;)
       moves[k].op->erase();
   }
 
-  static void run(Operation *root, MLIRContext *ctx) {
+  static void run(Operation *root) {
     SmallVector<SmallVector<Move>> chains;
     root->walk([&](Block *block) {
       SmallVector<Move> chain;
@@ -2993,7 +2905,7 @@ struct MHRunBatcher {
       }
     }
     for (auto &seg : segments)
-      emit(seg, ctx);
+      emit(seg);
   }
 };
 } // namespace
@@ -3104,11 +3016,13 @@ struct ExpandImpulsePass
                              putils->initializationBlock->begin());
       Location initLoc = putils->initializationBlock->begin()->getLoc();
       auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      Value zeroWeight = f64Const(entryBuilder, initLoc, scalarType, 0.0);
+      Value zeroWeight =
+          emitSplatConstant(entryBuilder, initLoc, scalarType, 0.0);
 
       auto traceType =
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
-      Value zeroTrace = f64Const(entryBuilder, initLoc, traceType, 0.0);
+      Value zeroTrace =
+          emitSplatConstant(entryBuilder, initLoc, traceType, 0.0);
 
       SmallVector<Operation *> toErase;
       BranchCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
@@ -3590,7 +3504,7 @@ struct ExpandImpulsePass
         else
           proposal = proposeFlatMove(b, loc, op, fnResultTypes, trace, rng);
         MHDecision decision =
-            emitMHDecision(b, loc, weight, rngType, proposal, deltaWeight);
+            emitMHDecision(b, loc, weight, proposal, deltaWeight);
         Value newTrace = writeBackMHWindows(b, loc, trace, proposal.trace,
                                             decision.accepted, changedColumns);
         Value newWeight = arith::SelectOp::create(
@@ -3608,9 +3522,9 @@ struct ExpandImpulsePass
         outRng = step.rng;
         outAccepted = step.accepted;
       } else {
-        Value c0 = i64Const(rewriter, loc, 0),
-              cN = i64Const(rewriter, loc, numSamples),
-              c1 = i64Const(rewriter, loc, 1);
+        Value c0 = emitI64ScalarConstant(rewriter, loc, 0),
+              cN = emitI64ScalarConstant(rewriter, loc, numSamples),
+              c1 = emitI64ScalarConstant(rewriter, loc, 1);
         Value falseC = arith::ConstantOp::create(
             rewriter, loc, i1TensorType,
             DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
@@ -3827,7 +3741,7 @@ struct ExpandImpulsePass
         for (int v = 0; v < 2; ++v) {
           SmallVector<Value> positions;
           for (BlockArgument arg : lpBlock.getArguments())
-            positions.push_back(f64Const(
+            positions.push_back(emitSplatConstant(
                 b, loc, cast<RankedTensorType>(arg.getType()), (double)v));
           llvm::append_range(yieldsAt[v], llvm::drop_begin(cloneLogpdfBody(
                                               b, lpBlock, positions)));
@@ -3846,24 +3760,19 @@ struct ExpandImpulsePass
         }
         for (Value &l : logOdds)
           if (!l)
-            l = f64Const(b, loc, scalarType, 0.0);
+            l = emitSplatConstant(b, loc, scalarType, 0.0);
         Value lVec = packScalars(b, loc, vecType, logOdds);
 
         Value p1 = impulse::LogisticOp::create(b, loc, vecType, lVec);
-        Value uLo = f64Const(b, loc, scalarType, 0.0);
-        Value uHi = f64Const(b, loc, scalarType, 1.0);
-        auto rnd = impulse::RandomOp::create(
-            b, loc, TypeRange{rngType, vecType}, rng, uLo, uHi,
-            impulse::RngDistributionAttr::get(
-                b.getContext(), impulse::RngDistribution::UNIFORM));
+        Value uniform = emitUniformDraw(b, loc, rng, vecType);
         Value take1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
-                                            rnd.getResult(), p1);
+                                            uniform, p1);
         Value curIs1 =
             arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, curVec,
-                                  f64Const(b, loc, vecType, 0.5));
-        Value zeros = f64Const(b, loc, vecType, 0.0);
+                                  emitSplatConstant(b, loc, vecType, 0.5));
+        Value zeros = emitSplatConstant(b, loc, vecType, 0.0);
         Value newVals = arith::SelectOp::create(
-            b, loc, take1, f64Const(b, loc, vecType, 1.0), zeros);
+            b, loc, take1, emitSplatConstant(b, loc, vecType, 1.0), zeros);
 
         // +L_k on a 0 -> 1 flip, -L_k on 1 -> 0, else 0.
         Value negL = arith::NegFOp::create(b, loc, lVec);
@@ -3895,7 +3804,7 @@ struct ExpandImpulsePass
                                     b, loc,
                                     takeLeading(b, loc, take1, siteOfYield[j]),
                                     yieldsAt[1][j], yieldsAt[0][j]));
-        return {writeObserved(b, trace), weight, rnd.getOutputRngState()};
+        return {writeObserved(b, trace), weight, rng};
       };
 
       auto oneSweep = [&](OpBuilder &b, Value trace, Value weight,
@@ -3915,7 +3824,7 @@ struct ExpandImpulsePass
           Value scoreAt[2];
           for (int v = 0; v < 2; ++v) {
             SmallVector<Value> positions(cur);
-            positions[k] = f64Const(b, loc, argType, (double)v);
+            positions[k] = emitSplatConstant(b, loc, argType, (double)v);
             SmallVector<Value> yields = cloneLogpdfBody(b, lpBlock, positions);
             for (unsigned j = 0; j < numYields; ++j) {
               Value y = yields[1 + j];
@@ -3928,32 +3837,26 @@ struct ExpandImpulsePass
                       : y;
             }
             if (!scoreAt[v])
-              scoreAt[v] = f64Const(b, loc, scalarType, 0.0);
+              scoreAt[v] = emitSplatConstant(b, loc, scalarType, 0.0);
           }
           Value diff = arith::SubFOp::create(b, loc, scoreAt[1], scoreAt[0]);
           Value p1 = impulse::LogisticOp::create(b, loc, diff.getType(), diff);
-          Value zero = f64Const(b, loc, weightType, 0.0);
-          Value one = f64Const(b, loc, weightType, 1.0);
-          auto rnd = impulse::RandomOp::create(
-              b, loc, TypeRange{rngType, weightType}, rng, zero, one,
-              impulse::RngDistributionAttr::get(
-                  b.getContext(), impulse::RngDistribution::UNIFORM));
-          rng = rnd.getOutputRngState();
+          Value uniform = emitUniformDraw(b, loc, rng, weightType);
           Value take1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
-                                              rnd.getResult(), p1);
+                                              uniform, p1);
           Value curScalar =
               impulse::ReshapeOp::create(b, loc, scalarType, cur[k]);
           Value curIs1 = arith::CmpFOp::create(
               b, loc, arith::CmpFPredicate::OGT, curScalar,
-              f64Const(b, loc, scalarType, 0.5));
+              emitSplatConstant(b, loc, scalarType, 0.5));
           Value sNew =
               arith::SelectOp::create(b, loc, take1, scoreAt[1], scoreAt[0]);
           Value sCur =
               arith::SelectOp::create(b, loc, curIs1, scoreAt[1], scoreAt[0]);
           weight = arith::AddFOp::create(
               b, loc, weight, arith::SubFOp::create(b, loc, sNew, sCur));
-          Value oneArg = f64Const(b, loc, argType, 1.0);
-          Value zeroArg = f64Const(b, loc, argType, 0.0);
+          Value oneArg = emitSplatConstant(b, loc, argType, 1.0);
+          Value zeroArg = emitSplatConstant(b, loc, argType, 0.0);
           Value newVal =
               arith::SelectOp::create(b, loc, take1, oneArg, zeroArg);
           cur[k] = newVal;
@@ -3977,9 +3880,9 @@ struct ExpandImpulsePass
         outWeight = r[1];
         outRng = r[2];
       } else {
-        Value c0 = i64Const(rewriter, loc, 0),
-              cN = i64Const(rewriter, loc, numSamples),
-              c1 = i64Const(rewriter, loc, 1);
+        Value c0 = emitI64ScalarConstant(rewriter, loc, 0),
+              cN = emitI64ScalarConstant(rewriter, loc, numSamples),
+              c1 = emitI64ScalarConstant(rewriter, loc, 1);
         SmallVector<Type> loopTypes{traceType, weightType, rngType};
         SmallVector<Value> initArgs{initTrace, initWeight, initRng};
         auto forOp = impulse::ForOp::create(rewriter, loc, loopTypes, c0, cN,
@@ -4053,7 +3956,6 @@ struct ExpandImpulsePass
       auto selection = mhOp.getSelectionAttr();
 
       auto traceType = oldTrace.getType();
-      auto rngStateType = inputs[0].getType();
 
       auto nameAttr = mhOp.getNameAttr();
       if (!nameAttr)
@@ -4086,8 +3988,8 @@ struct ExpandImpulsePass
           unpackHastingsWeight(rewriter, loc, regenerateOp.getWeight());
       proposal.rng = regenerateOp.getOutputs()[0];
 
-      MHDecision decision = emitMHDecision(rewriter, loc, oldWeight,
-                                           rngStateType, proposal, delta);
+      MHDecision decision =
+          emitMHDecision(rewriter, loc, oldWeight, proposal, delta);
       Value newTrace = writeBackMHWindows(
           rewriter, loc, oldTrace, proposal.trace, decision.accepted,
           mhChangedColumnsFlat(mhOp, fn, selection, regenerateAddresses,
@@ -4146,11 +4048,13 @@ struct ExpandImpulsePass
       Location initLoc = putils->initializationBlock->begin()->getLoc();
 
       auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      Value zeroWeight = f64Const(entryBuilder, initLoc, scalarType, 0.0);
+      Value zeroWeight =
+          emitSplatConstant(entryBuilder, initLoc, scalarType, 0.0);
 
       auto traceType =
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
-      Value zeroTrace = f64Const(entryBuilder, initLoc, traceType, 0.0);
+      Value zeroTrace =
+          emitSplatConstant(entryBuilder, initLoc, traceType, 0.0);
       Value constraint = NewF.getArgument(0);
 
       SmallVector<Operation *> toErase;
@@ -4256,8 +4160,8 @@ struct ExpandImpulsePass
                       {1, subConstraintOffset + subConstraintSize}),
                   rewriter.getDenseI64ArrayAttr({1, 1}));
             } else {
-              subConstraint =
-                  f64Const(rewriter, sampleOp.getLoc(), subConstraintType, 0.0);
+              subConstraint = emitSplatConstant(rewriter, sampleOp.getLoc(),
+                                                subConstraintType, 0.0);
             }
 
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
@@ -4391,12 +4295,14 @@ struct ExpandImpulsePass
       Location initLoc = putils->initializationBlock->begin()->getLoc();
 
       auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      Value zeroWeight = f64Const(entryBuilder, initLoc, scalarType, 0.0);
+      Value zeroWeight =
+          emitSplatConstant(entryBuilder, initLoc, scalarType, 0.0);
       Value initWeight = zeroWeight;
 
       auto traceType =
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
-      Value zeroTrace = f64Const(entryBuilder, initLoc, traceType, 0.0);
+      Value zeroTrace =
+          emitSplatConstant(entryBuilder, initLoc, traceType, 0.0);
       Value initTrace = zeroTrace;
 
       Value prevTrace = NewF.getArgument(0);
@@ -4455,7 +4361,7 @@ struct ExpandImpulsePass
           siteIndex[cast<ArrayAttr>(addr)[0]] = k;
         auto scoresType = RankedTensorType::get(
             {2, (int64_t)siteScoresAttr.size()}, entryBuilder.getF64Type());
-        initWeight = f64Const(entryBuilder, initLoc, scoresType, 0.0);
+        initWeight = emitSplatConstant(entryBuilder, initLoc, scoresType, 0.0);
       } else if (hastings && !deltaMode) {
         // Sites whose old density cannot be evaluated inline at the new state.
         hastingsTaint = computeRegenerateTaint(NewF, regenAddrs);
@@ -4514,21 +4420,23 @@ struct ExpandImpulsePass
       };
       auto oldLiveAt = [&](Location loc, int64_t k) -> Value {
         Value flag = scalarAt(rewriter, loc, oldInfo, {0, k});
-        Value half = f64Const(rewriter, loc, scalarType, 0.5);
+        Value half = emitSplatConstant(rewriter, loc, scalarType, 0.5);
         return arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OGT,
                                      flag, half);
       };
       auto recordSiteScore = [&](Location loc, Value acc, int64_t k,
                                  Value score) -> Value {
         auto t11 = RankedTensorType::get({1, 1}, rewriter.getF64Type());
-        Value one = f64Const(rewriter, loc, t11, 1.0);
+        Value one = emitSplatConstant(rewriter, loc, t11, 1.0);
         Value scoreRow = impulse::ReshapeOp::create(rewriter, loc, t11, score);
         acc = impulse::DynamicUpdateSliceOp::create(
             rewriter, loc, acc.getType(), acc, one,
-            ValueRange{i64Const(rewriter, loc, 0), i64Const(rewriter, loc, k)});
+            ValueRange{emitI64ScalarConstant(rewriter, loc, 0),
+                       emitI64ScalarConstant(rewriter, loc, k)});
         return impulse::DynamicUpdateSliceOp::create(
             rewriter, loc, acc.getType(), acc, scoreRow,
-            ValueRange{i64Const(rewriter, loc, 1), i64Const(rewriter, loc, k)});
+            ValueRange{emitI64ScalarConstant(rewriter, loc, 1),
+                       emitI64ScalarConstant(rewriter, loc, k)});
       };
 
       SmallVector<Operation *> toErase;
@@ -4864,7 +4772,7 @@ struct ExpandImpulsePass
 
 void ExpandImpulsePass::runOnOperation() {
   // Must run before the per-op MH patterns lower these moves.
-  MHRunBatcher::run(getOperation(), &getContext());
+  MHRunBatcher::run(getOperation());
 
   RewritePatternSet patterns(&getContext());
   patterns.add<LowerUntracedCallPattern, LowerSimulatePattern,
