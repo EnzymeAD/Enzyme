@@ -878,6 +878,44 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   return {q0, U0, grad0, rngForSampleKernel};
 }
 
+namespace {
+/// RNG states, momentum and Hamiltonian at the start of one MCMC transition.
+struct TransitionStart {
+  Value rngNext;
+  Value rngKernel;
+  Value momentum;
+  Value hamiltonian;
+};
+} // namespace
+
+/// Splits `rng`, samples a fresh momentum and adds its kinetic energy to
+/// `potentialEnergy`. `rngNext` seeds the next transition and `rngKernel` the
+/// trajectory of this one.
+static TransitionStart startTransition(OpBuilder &builder, Location loc,
+                                       Value potentialEnergy, Value rng,
+                                       const HMCContext &ctx, bool debugDump) {
+  RankedTensorType positionType = ctx.getPositionType();
+  auto split = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
+      rng);
+  Value rngMomentum = split.getResult(1);
+  // The logpdf mode draws the momentum from the unsplit key, as the reference
+  // implementation does.
+  if (!ctx.hasCustomLogpdf()) {
+    auto momentumSplit = impulse::RandomSplitOp::create(
+        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
+    rngMomentum = momentumSplit.getResult(0);
+  }
+  Value momentum = sampleMomentum(builder, loc, rngMomentum, ctx.invMass,
+                                  ctx.massMatrixSqrt, positionType, debugDump)
+                       .first;
+  Value kineticEnergy =
+      computeKineticEnergy(builder, loc, momentum, ctx.invMass, positionType);
+  Value hamiltonian =
+      arith::AddFOp::create(builder, loc, potentialEnergy, kineticEnergy);
+  return {split.getResult(0), split.getResult(2), momentum, hamiltonian};
+}
+
 MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                     Value grad, Value U, Value rng,
                                     const HMCContext &ctx, bool debugDump) {
@@ -887,7 +925,6 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  // 0. Compute num_steps and adjusted step_size
   // num_steps = ceil(trajectory_length / step_size)
   // adjusted_step_size = trajectory_length / num_steps
   Value numSteps, adjustedStepSize;
@@ -909,33 +946,10 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
 
   auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 
-  // 1. Split RNG: [rngNext, rngMomentum, rngTransition]
-  auto sampleKernelSplit = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
-      rng);
-  auto rngNext = sampleKernelSplit.getResult(0);
-  auto rngMomentum = sampleKernelSplit.getResult(1);
-  auto rngTransition = sampleKernelSplit.getResult(2);
+  auto [rngNext, rngTransition, p0, initialHamiltonian] =
+      startTransition(builder, loc, U, rng, ctx, debugDump);
 
-  // 2. Sample fresh momentum p ~ N(0, M)
-  Value rngForMomentum = rngMomentum;
-  // Logpdf mode skips this split for NumPyro RNG parity.
-  if (!ctx.hasCustomLogpdf()) {
-    auto momSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
-    rngForMomentum = momSplit.getResult(0);
-  }
-  auto [p0, rngAfterMomentum] =
-      sampleMomentum(builder, loc, rngForMomentum, ctx.invMass,
-                     ctx.massMatrixSqrt, positionType, debugDump);
-
-  // 3. Compute K0 = 0.5 * p^T * M^-1 * p
-  auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
-
-  // 4. Compute H0 = U + K0
-  auto H0 = arith::AddFOp::create(builder, loc, U, K0);
-
-  // 5. Leapfrog integration loop
+  // Leapfrog integration loop
   auto direction = arith::ConstantOp::create(
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
@@ -983,12 +997,12 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto UProposal = forLoopOp.getResult(3);
   auto rngAfterLeapfrog = forLoopOp.getResult(4);
 
-  // 6. Compute K1, H1 for proposal
+  // Compute K1, H1 for proposal
   auto K1 =
       computeKineticEnergy(builder, loc, pProposal, ctx.invMass, positionType);
   auto H1 = arith::AddFOp::create(builder, loc, UProposal, K1);
 
-  // 7. MH accept/reject
+  // MH accept/reject
   auto zeroConst = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
@@ -997,7 +1011,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
   // α = min(1, exp(H0 - H1))
-  auto dH = arith::SubFOp::create(builder, loc, H0, H1);
+  auto dH = arith::SubFOp::create(builder, loc, initialHamiltonian, H1);
   auto expDH = math::ExpOp::create(builder, loc, dH);
   auto accProb = arith::MinimumFOp::create(builder, loc, oneConst, expDH);
 
@@ -1018,7 +1032,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
 
-  // 8. Select between original and proposal
+  // Select between original and proposal
   auto qFinal = impulse::SelectOp::create(builder, loc, positionType,
                                           acceptedTensor, qProposal, q);
   auto gradFinal = impulse::SelectOp::create(
@@ -1033,40 +1047,16 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
 MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                      Value grad, Value U, Value rng,
                                      const NUTSContext &ctx, bool debugDump) {
-  auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  // 1. Split RNG: [rngNext, rngMomentum, rngTree]
-  auto sampleKernelSplit = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
-      rng);
-  auto rngNext = sampleKernelSplit.getResult(0);
-  auto rngMomentum = sampleKernelSplit.getResult(1);
-  auto rngTree = sampleKernelSplit.getResult(2);
+  auto [rngNext, rngTree, p0, initialHamiltonian] =
+      startTransition(builder, loc, U, rng, ctx, debugDump);
 
-  // 2. Sample fresh momentum p ~ N(0, M)
-  Value rngForMomentum = rngMomentum;
-  // Logpdf mode skips this split for NumPyro RNG parity.
-  if (!ctx.hasCustomLogpdf()) {
-    auto momSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
-    rngForMomentum = momSplit.getResult(0);
-  }
-  auto [p0, rngAfterMomentum] =
-      sampleMomentum(builder, loc, rngForMomentum, ctx.invMass,
-                     ctx.massMatrixSqrt, positionType, debugDump);
-
-  // 3. Compute K0 = 0.5 * p^T * M^-1 * p
-  auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
-
-  // 4. Compute H0 = U + K0
-  auto H0 = arith::AddFOp::create(builder, loc, U, K0);
-
-  // 5. Initialize NUTS tree state
-  auto iterCtx = ctx.withH0(H0);
+  // Initialize NUTS tree state
+  auto iterCtx = ctx.withH0(initialHamiltonian);
 
   auto zeroI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -1087,7 +1077,7 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                .q_proposal = q,
                                .grad_proposal = grad,
                                .U_proposal = U,
-                               .H_proposal = H0,
+                               .H_proposal = initialHamiltonian,
                                .depth = zeroI64,
                                .weight = zeroConst,
                                .turning = falseConst,
@@ -1097,15 +1087,15 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                .p_sum = p0,
                                .rng = rngTree};
 
-  // 6. Build NUTS tree
+  // Build NUTS tree
   auto finalTree = buildTree(builder, loc, initialTree, iterCtx, debugDump);
 
-  // 7. NUTS always accepts the proposal (implicit acceptance in the tree)
+  // NUTS always accepts the proposal (implicit acceptance in the tree)
   auto trueConst = arith::ConstantOp::create(
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
 
-  // 8. Compute mean acceptance probability for step size adaptation
+  // Compute mean acceptance probability for step size adaptation
   auto oneI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
       DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
