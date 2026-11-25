@@ -51,8 +51,6 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
-namespace {
-
 static int64_t computeTensorElementCount(RankedTensorType tensorType) {
   int64_t elemCount = 1;
   for (auto dim : tensorType.getShape()) {
@@ -343,12 +341,14 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
   return supports;
 }
 
+namespace {
 /// Declaration-order VI layout, matching NumPyro's per-site RNG draw order.
 struct RegionVILayout {
   SmallVector<impulse::SupportInfo> supports;
   SmallVector<std::pair<int64_t, int64_t>> argSlices; // selection order
   int64_t positionSize = 0;
 };
+} // namespace
 
 static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
                                   RegionVILayout &out) {
@@ -454,6 +454,7 @@ computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
+namespace {
 // `offset` advances over both `impulse.if` branches: disjoint trace columns.
 struct BranchCarry {
   Value currTrace;
@@ -461,6 +462,7 @@ struct BranchCarry {
   int64_t offset;
   Value corr = nullptr;
 };
+} // namespace
 
 using ProcessSampleFn =
     llvm::function_ref<WalkResult(impulse::SampleOp, BranchCarry &)>;
@@ -512,7 +514,7 @@ static std::pair<Value, Value> unpackHastingsWeight(OpBuilder &b, Location loc,
 // Per-window DUS, not select(acc, P, T): untouched columns stay T's for LICM.
 using ColumnWindows = SmallVector<std::pair<int64_t, int64_t>>;
 
-// Merges half-open [start, end) windows.
+/// Merges half-open [start, end) windows.
 static ColumnWindows mergeColumnWindows(ColumnWindows windows) {
   llvm::sort(windows);
   ColumnWindows merged;
@@ -556,7 +558,7 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
   return out;
 }
 
-// Bare traces also change at branch sites (liveness flips) and sub-calls.
+/// Bare traces also change at branch sites (liveness flips) and sub-calls.
 static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
                                           ArrayAttr layout,
                                           ArrayAttr regenerateAddresses,
@@ -597,14 +599,14 @@ processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
                     RankedTensorType traceType, ProcessSampleFn processSample,
                     SmallVectorImpl<Operation *> &toErase);
 
-// Branches start from the pre-if snapshot; untaken slots stay zero.
+/// Branches start from the pre-if snapshot; untaken slots stay zero.
 static LogicalResult processImpulseIf(impulse::IfOp ifOp,
                                       PatternRewriter &rewriter,
                                       BranchCarry &carry,
                                       RankedTensorType traceType,
                                       ProcessSampleFn processSample,
                                       SmallVectorImpl<Operation *> &toErase) {
-  auto loc = ifOp.getLoc();
+  Location loc = ifOp.getLoc();
 
   Value snapTrace = carry.currTrace;
   Value snapWeight = carry.weight;
@@ -704,6 +706,8 @@ processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
   return success();
 }
 
+namespace {
+
 struct ExpandImpulsePass
     : public enzyme::impl::ExpandImpulsePassBase<ExpandImpulsePass> {
   using ExpandImpulsePassBase::ExpandImpulsePassBase;
@@ -756,7 +760,7 @@ struct ExpandImpulsePass
               cast<RankedTensorType>(sampleOp.getResult(1).getType());
           SmallVector<Value> sampledValues = impulse::emitDistSampler(
               rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
-          sampleOp.replaceAllUsesWith(sampledValues);
+          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
         } else {
           auto distFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
@@ -764,7 +768,8 @@ struct ExpandImpulsePass
           auto distCall = func::CallOp::create(
               rewriter, sampleOp.getLoc(), distFn.getName(),
               distFn.getResultTypes(), sampleOp.getInputs());
-          sampleOp.replaceAllUsesWith(distCall);
+          rewriter.replaceAllUsesWith(sampleOp->getResults(),
+                                      distCall->getResults());
         }
 
         toErase.push_back(sampleOp);
@@ -917,7 +922,7 @@ struct ExpandImpulsePass
             }
           }
 
-          sampleOp.replaceAllUsesWith(sampledValues);
+          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
           return WalkResult::advance();
         }
@@ -1515,36 +1520,38 @@ struct ExpandImpulsePass
         }
 
         auto runSampleStepWithStepSize =
-            [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-                Value rng, Value currentStepSize) -> MCMCKernelResult {
+            [&](OpBuilder &builder, Location loc, Value q, Value grad,
+                Value potentialEnergy, Value rng,
+                Value currentStepSize) -> MCMCKernelResult {
           if (isHMC) {
             auto ctx = makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt,
                                       currentStepSize);
-            return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
-          } else {
-            auto nutsCtx = makeNUTSContext(
-                adaptedInvMass, adaptedMassMatrixSqrt, currentStepSize, U);
-            return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx,
-                              debugDump);
+            return SampleHMC(builder, loc, q, grad, potentialEnergy, rng, ctx,
+                             debugDump);
           }
+          auto nutsCtx = makeNUTSContext(adaptedInvMass, adaptedMassMatrixSqrt,
+                                         currentStepSize, potentialEnergy);
+          return SampleNUTS(builder, loc, q, grad, potentialEnergy, rng,
+                            nutsCtx, debugDump);
         };
 
         Value adaptedStepSize = chainStepSize;
 
         auto runSampleStepWithInvMass =
-            [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-                Value rng, Value currentStepSize, Value currentInvMass,
+            [&](OpBuilder &builder, Location loc, Value q, Value grad,
+                Value potentialEnergy, Value rng, Value currentStepSize,
+                Value currentInvMass,
                 Value currentMassMatrixSqrt) -> MCMCKernelResult {
           if (isHMC) {
             auto ctx = makeHMCContext(currentInvMass, currentMassMatrixSqrt,
                                       currentStepSize);
-            return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
-          } else {
-            auto nutsCtx = makeNUTSContext(
-                currentInvMass, currentMassMatrixSqrt, currentStepSize, U);
-            return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx,
-                              debugDump);
+            return SampleHMC(builder, loc, q, grad, potentialEnergy, rng, ctx,
+                             debugDump);
           }
+          auto nutsCtx = makeNUTSContext(currentInvMass, currentMassMatrixSqrt,
+                                         currentStepSize, potentialEnergy);
+          return SampleNUTS(builder, loc, q, grad, potentialEnergy, rng,
+                            nutsCtx, debugDump);
         };
 
         if (!adaptedInvMass) {
@@ -1699,7 +1706,7 @@ struct ExpandImpulsePass
                 arith::AddIOp::create(rewriter, loc, warmupOffset, iterT);
           Value qLoop = warmupBody->getArgument(1);
           Value gradLoop = warmupBody->getArgument(2);
-          Value ULoop = warmupBody->getArgument(3);
+          Value uLoop = warmupBody->getArgument(3);
           Value rngLoop = warmupBody->getArgument(4);
           Value stepSizeLoop = warmupBody->getArgument(5);
           Value invMassLoop = warmupBody->getArgument(6);
@@ -1723,7 +1730,7 @@ struct ExpandImpulsePass
           }
 
           auto sample = runSampleStepWithInvMass(
-              rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, stepSizeLoop,
+              rewriter, loc, qLoop, gradLoop, uLoop, rngLoop, stepSizeLoop,
               invMassLoop, massMatrixSqrtLoop);
 
           // Update dual averaging state
@@ -2088,15 +2095,15 @@ struct ExpandImpulsePass
           Value iterIdx = loopBody->getArgument(0);
           Value qLoop = loopBody->getArgument(1);
           Value gradLoop = loopBody->getArgument(2);
-          Value ULoop = loopBody->getArgument(3);
+          Value uLoop = loopBody->getArgument(3);
           Value rngLoop = loopBody->getArgument(4);
           Value samplesBufferLoop = loopBody->getArgument(5);
           Value diagnosticsBufferLoop = loopBody->getArgument(6);
           Value logDensityBufferLoop = loopBody->getArgument(7);
 
           auto sample = runSampleStepWithStepSize(
-              rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, adaptedStepSize);
-          auto q_constrained =
+              rewriter, loc, qLoop, gradLoop, uLoop, rngLoop, adaptedStepSize);
+          auto qConstrained =
               impulse::constrainPosition(rewriter, loc, sample.q, supports);
 
           // Storage index: idx = (i - start_idx) / thinning
@@ -2121,8 +2128,8 @@ struct ExpandImpulsePass
               DenseElementsAttr::get(i64TensorType,
                                      rewriter.getI64IntegerAttr(0)));
           auto updatedSamplesBuffer = impulse::DynamicUpdateSliceOp::create(
-              rewriter, loc, samplesBufferType, samplesBufferLoop,
-              q_constrained, ValueRange{storageIdx, zeroCol});
+              rewriter, loc, samplesBufferType, samplesBufferLoop, qConstrained,
+              ValueRange{storageIdx, zeroCol});
           auto selectedSamplesBuffer = impulse::SelectOp::create(
               rewriter, loc, samplesBufferType, shouldStore,
               updatedSamplesBuffer, samplesBufferLoop);
@@ -2563,7 +2570,7 @@ struct ExpandImpulsePass
     std::tuple<Value, Value, Value, Value>
     proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
                   ArrayAttr selection, ArrayAttr allAddresses, bool delta,
-                  ColumnWindows &changedColumns,
+                  SmallVectorImpl<std::pair<int64_t, int64_t>> &changedColumns,
                   const DenseMap<Operation *, Value> *drawOverride = nullptr,
                   Value *logRatioOut = nullptr) const {
       changedColumns.clear();
@@ -2796,7 +2803,7 @@ struct ExpandImpulsePass
       } else if (traceType.getShape()[1] > positionSize) {
         changedColumns.push_back({positionSize, traceType.getShape()[1]});
       }
-      changedColumns = mergeColumnWindows(changedColumns);
+      changedColumns = mergeColumnWindows(std::move(changedColumns));
 
       return {newTrace, newWeight, corr, curRng};
     }
@@ -3150,16 +3157,16 @@ struct ExpandImpulsePass
 
     static Between analyzeBetween(ArrayRef<Move> ms) {
       Between bt;
-      unsigned K = ms.size();
+      unsigned numMoves = ms.size();
       Block *block = ms.front().op->getBlock();
       Operation *first = ms.front().op, *last = ms.back().op;
       DenseSet<Operation *> moveOps;
       for (const Move &m : ms)
         moveOps.insert(m.op);
-      for (unsigned i = 0; i + 1 < K; ++i)
+      for (unsigned i = 0; i + 1 < numMoves; ++i)
         bt.intermediate[ms[i].op.getTrace()] = i;
       auto writtenBy = [&](int64_t c, unsigned from, unsigned to) {
-        llvm::BitVector s(K);
+        llvm::BitVector s(numMoves);
         for (unsigned i = from; i < to; ++i)
           for (auto [ws, we] : ms[i].windows)
             if (c >= ws && c < we)
@@ -3173,7 +3180,7 @@ struct ExpandImpulsePass
         if (moveOps.contains(o))
           continue;
         bool fromIntermediate = false, safe = true;
-        llvm::BitVector s(K);
+        llvm::BitVector s(numMoves);
         auto addValue = [&](Value v) {
           if (bt.intermediate.count(v)) {
             fromIntermediate = true;
@@ -3198,8 +3205,8 @@ struct ExpandImpulsePass
           unsigned i = bt.intermediate.lookup(slice.getOperand());
           fromIntermediate = true;
           for (int64_t c = st[1]; c < li[1]; c += sd[1]) {
-            s |= writtenBy(c, 0, K);
-            safe &= writtenBy(c, i + 1, K).none();
+            s |= writtenBy(c, 0, numMoves);
+            safe &= writtenBy(c, i + 1, numMoves).none();
           }
         } else {
           for (Value v : o->getOperands())
@@ -3223,7 +3230,7 @@ struct ExpandImpulsePass
         for (Value r : o->getResults())
           bt.outer[r] = s;
       }
-      for (unsigned i = 0; i + 1 < K; ++i)
+      for (unsigned i = 0; i + 1 < numMoves; ++i)
         for (OpOperand &u : ms[i].op.getTrace().getUses()) {
           if (u.getOwner() == ms[i + 1].op.getOperation() &&
               u.getOperandNumber() ==
@@ -3255,7 +3262,7 @@ struct ExpandImpulsePass
     }
 
     static bool batchable(ArrayRef<Move> ms) {
-      unsigned K = ms.size();
+      unsigned numMoves = ms.size();
       Block *block = ms.front().op->getBlock();
       Operation *last = ms.back().op;
       impulse::RandomOp d0 = ms.front().draw;
@@ -3286,7 +3293,7 @@ struct ExpandImpulsePass
         return false;
       DenseMap<Value, unsigned> &intermediate = bt.intermediate;
       DenseMap<Value, llvm::BitVector> &outer = bt.outer;
-      for (unsigned k = 0; k < K; ++k) {
+      for (unsigned k = 0; k < numMoves; ++k) {
         impulse::InferRegionOp op = ms[k].op;
         auto seedCaptured = [&](GibbsSiteDependence &dep, Region &r) {
           SetVector<Value> captured;
@@ -3300,7 +3307,7 @@ struct ExpandImpulsePass
           }
           return true;
         };
-        GibbsSiteDependence lpDep(K);
+        GibbsSiteDependence lpDep(numMoves);
         if (!seedCaptured(lpDep, op.getLogpdf()))
           return false;
         Block &lpBlock = op.getLogpdf().front();
@@ -3309,13 +3316,13 @@ struct ExpandImpulsePass
         for (Value y : llvm::drop_begin(lpBlock.getTerminator()->getOperands()))
           if (lpDep.get(y).count() > 1)
             return false;
-        GibbsSiteDependence sDep(K);
+        GibbsSiteDependence sDep(numMoves);
         if (!seedCaptured(sDep, op.getSampling()))
           return false;
         Block &sBlock = op.getSampling().front();
         for (Operation &o : sBlock)
           if (auto s = dyn_cast<impulse::SampleRegionOp>(&o))
-            for (unsigned j = 0; j < K; ++j)
+            for (unsigned j = 0; j < numMoves; ++j)
               if (s.getAddressAttr() == ms[j].address)
                 for (Value r : llvm::drop_begin(s.getResults()))
                   sDep.seed(r, j);
@@ -3331,7 +3338,7 @@ struct ExpandImpulsePass
     }
 
     static void emit(ArrayRef<Move> ms, MLIRContext *ctx) {
-      unsigned K = ms.size();
+      unsigned numMoves = ms.size();
       impulse::InferRegionOp first = ms.front().op, last = ms.back().op;
       Location loc = last.getLoc();
       Value trace0 = first.getOriginalTrace();
@@ -3346,7 +3353,7 @@ struct ExpandImpulsePass
         for (OpOperand &u : o->getOpOperands())
           if (bt.intermediate.count(u.get()))
             readsIntermediate[o].push_back(u.getOperandNumber());
-      for (unsigned i = 0; i + 1 < K; ++i)
+      for (unsigned i = 0; i + 1 < numMoves; ++i)
         ms[i].op.getTrace().replaceUsesWithIf(trace0, [&](OpOperand &u) {
           return !(
               u.getOwner() == ms[i + 1].op.getOperation() &&
@@ -3377,7 +3384,7 @@ struct ExpandImpulsePass
 
       impulse::RandomOp d0 = ms.front().draw;
       auto drawType = cast<RankedTensorType>(d0.getResult().getType());
-      SmallVector<int64_t> batchedShape{(int64_t)K};
+      SmallVector<int64_t> batchedShape{(int64_t)numMoves};
       batchedShape.append(drawType.getShape().begin(),
                           drawType.getShape().end());
       auto proposals = impulse::RandomOp::create(
@@ -3385,8 +3392,8 @@ struct ExpandImpulsePass
           TypeRange{rngType, RankedTensorType::get(batchedShape,
                                                    drawType.getElementType())},
           rng0, d0.getA(), d0.getB(), d0.getRngDistributionAttr());
-      auto vecType =
-          RankedTensorType::get({(int64_t)K}, weightType.getElementType());
+      auto vecType = RankedTensorType::get({(int64_t)numMoves},
+                                           weightType.getElementType());
       Value zero = arith::ConstantOp::create(
           b, loc, weightType, DenseElementsAttr::get(weightType, 0.0));
       Value one = arith::ConstantOp::create(
@@ -3400,10 +3407,10 @@ struct ExpandImpulsePass
 
       MHRegion mh(ctx);
       SmallVector<Value> newTraces, deltaCells, corrCells;
-      SmallVector<ColumnWindows> changed(K);
+      SmallVector<ColumnWindows> changed(numMoves);
       auto elemType = traceType.getElementType();
       auto oneType = RankedTensorType::get({1}, elemType);
-      auto rowType = RankedTensorType::get({1, (int64_t)K}, elemType);
+      auto rowType = RankedTensorType::get({1, (int64_t)numMoves}, elemType);
       auto colType = RankedTensorType::get({1, 1}, elemType);
       auto assembleVec = [&](ArrayRef<Value> cells) -> Value {
         Value v = arith::ConstantOp::create(
@@ -3420,7 +3427,7 @@ struct ExpandImpulsePass
             b, loc, colType, t, b.getDenseI64ArrayAttr({0, c}),
             b.getDenseI64ArrayAttr({1, c + 1}), b.getDenseI64ArrayAttr({1, 1}));
       };
-      for (unsigned k = 0; k < K; ++k) {
+      for (unsigned k = 0; k < numMoves; ++k) {
         DenseMap<Operation *, Value> override;
         override[ms[k].draw] = element(proposals.getResult(), k, drawType);
         auto [newTrace, delta, corr, stepRng] = mh.proposeRegion(
@@ -3432,38 +3439,38 @@ struct ExpandImpulsePass
         corrCells.push_back(corr);
       }
 
-      SmallVector<SmallVector<int64_t>> cols(K);
-      for (unsigned k = 0; k < K; ++k)
+      SmallVector<SmallVector<int64_t>> cols(numMoves);
+      for (unsigned k = 0; k < numMoves; ++k)
         for (auto [ws, we] : changed[k])
           for (int64_t c = ws; c < we; ++c)
             cols[k].push_back(c);
       // Slotted: all moves write the same column kinds, own score at one slot.
-      size_t S = cols.front().size();
+      size_t numCols = cols.front().size();
       int64_t ownSlot = -1;
       bool slotted = true;
-      for (unsigned k = 0; k < K && slotted; ++k) {
-        slotted = cols[k].size() == S;
-        for (size_t s = 0; s < S && slotted; ++s)
+      for (unsigned k = 0; k < numMoves && slotted; ++k) {
+        slotted = cols[k].size() == numCols;
+        for (size_t s = 0; s < numCols && slotted; ++s)
           slotted = (cols[k][s] >= ms[k].positionSize) ==
                     (cols[0][s] >= ms[0].positionSize);
         int64_t own = -1;
-        for (size_t s = 0; s < S && slotted; ++s)
+        for (size_t s = 0; s < numCols && slotted; ++s)
           if (cols[k][s] == ms[k].positionSize + ms[k].ordinal)
             own = s;
         slotted = slotted && own >= 0 && (k == 0 || own == ownSlot);
         ownSlot = own;
       }
-      SmallVector<Value> newOf(S), oldOf(S);
+      SmallVector<Value> newOf(numCols), oldOf(numCols);
       Value deltaVec, logAlphaVec;
       if (slotted) {
-        for (size_t s = 0; s < S; ++s) {
+        for (size_t s = 0; s < numCols; ++s) {
           SmallVector<Value> proposed;
-          for (unsigned k = 0; k < K; ++k)
+          for (unsigned k = 0; k < numMoves; ++k)
             proposed.push_back(unitSlice(newTraces[k], cols[k][s]));
           newOf[s] = assembleVec(proposed);
           int64_t stride = cols[1][s] - cols[0][s];
           bool even = stride >= 1;
-          for (unsigned k = 1; k < K && even; ++k)
+          for (unsigned k = 1; k < numMoves && even; ++k)
             even = cols[k][s] - cols[k - 1][s] == stride;
           if (even) {
             oldOf[s] = impulse::ReshapeOp::create(
@@ -3471,16 +3478,16 @@ struct ExpandImpulsePass
                 impulse::SliceOp::create(
                     b, loc, rowType, trace0,
                     b.getDenseI64ArrayAttr({0, cols[0][s]}),
-                    b.getDenseI64ArrayAttr({1, cols[K - 1][s] + 1}),
+                    b.getDenseI64ArrayAttr({1, cols[numMoves - 1][s] + 1}),
                     b.getDenseI64ArrayAttr({1, stride})));
           } else {
             SmallVector<Value> incoming;
-            for (unsigned k = 0; k < K; ++k)
+            for (unsigned k = 0; k < numMoves; ++k)
               incoming.push_back(unitSlice(trace0, cols[k][s]));
             oldOf[s] = assembleVec(incoming);
           }
         }
-        for (size_t s = 0; s < S; ++s) {
+        for (size_t s = 0; s < numCols; ++s) {
           if (cols[0][s] < ms[0].positionSize)
             continue;
           Value d = arith::SubFOp::create(b, loc, newOf[s], oldOf[s]);
@@ -3502,7 +3509,7 @@ struct ExpandImpulsePass
       Value trace = trace0, weight = weight0;
       SmallVector<Value> acceptedOf;
       // In sweep order, matching the sequential weight updates.
-      for (unsigned k = 0; k < K; ++k) {
+      for (unsigned k = 0; k < numMoves; ++k) {
         Value acc = element(accepted, k, i1S);
         acceptedOf.push_back(acc);
         Value acceptWeight = arith::AddFOp::create(
@@ -3511,50 +3518,56 @@ struct ExpandImpulsePass
       }
 
       if (!slotted) {
-        for (unsigned k = 0; k < K; ++k)
+        for (unsigned k = 0; k < numMoves; ++k)
           trace = writeBackMHWindows(b, loc, trace, newTraces[k], acceptedOf[k],
                                      changed[k]);
       } else {
-        SmallVector<Value> selOf(S);
-        for (size_t s = 0; s < S; ++s)
+        SmallVector<Value> selOf(numCols);
+        for (size_t s = 0; s < numCols; ++s)
           selOf[s] =
               arith::SelectOp::create(b, loc, accepted, newOf[s], oldOf[s]);
-        // Slots within D columns share a window, viewed as K rows of D columns.
-        int64_t D = cols[1][0] - cols[0][0];
-        bool strided = D >= 1;
-        for (size_t s = 0; s < S && strided; ++s)
-          for (unsigned k = 0; k < K && strided; ++k)
-            strided = cols[k][s] == cols[0][s] + (int64_t)k * D;
+        // Slots within moveStride columns share a window, viewed as numMoves
+        // rows of moveStride columns.
+        int64_t moveStride = cols[1][0] - cols[0][0];
+        bool strided = moveStride >= 1;
+        for (size_t s = 0; s < numCols && strided; ++s)
+          for (unsigned k = 0; k < numMoves && strided; ++k)
+            strided = cols[k][s] == cols[0][s] + (int64_t)k * moveStride;
         SmallVector<std::pair<int64_t, SmallVector<size_t>>> groups;
         if (strided) {
-          SmallVector<size_t> order(S);
-          for (size_t i = 0; i < S; ++i)
+          SmallVector<size_t> order(numCols);
+          for (size_t i = 0; i < numCols; ++i)
             order[i] = i;
           llvm::sort(order, [&](size_t x, size_t y) {
             return cols[0][x] < cols[0][y];
           });
           for (size_t s : order) {
-            if (!groups.empty() && cols[0][s] < groups.back().first + D)
+            if (!groups.empty() &&
+                cols[0][s] < groups.back().first + moveStride)
               groups.back().second.push_back(s);
             else
               groups.push_back({cols[0][s], {s}});
           }
           for (size_t i = 0; i < groups.size() && strided; ++i) {
-            int64_t end = groups[i].first + (int64_t)K * D;
+            int64_t end = groups[i].first + (int64_t)numMoves * moveStride;
             strided = end <= traceType.getShape()[1] &&
                       (i + 1 == groups.size() || end <= groups[i + 1].first);
           }
         }
         if (strided) {
-          auto blockType = RankedTensorType::get({(int64_t)K, D}, elemType);
-          auto blockColType = RankedTensorType::get({(int64_t)K, 1}, elemType);
-          auto winType = RankedTensorType::get({1, (int64_t)K * D}, elemType);
+          auto blockType =
+              RankedTensorType::get({(int64_t)numMoves, moveStride}, elemType);
+          auto blockColType =
+              RankedTensorType::get({(int64_t)numMoves, 1}, elemType);
+          auto winType = RankedTensorType::get(
+              {1, (int64_t)numMoves * moveStride}, elemType);
           for (auto &[g, slots] : groups) {
             Value block = impulse::ReshapeOp::create(
                 b, loc, blockType,
                 impulse::SliceOp::create(
                     b, loc, winType, trace0, b.getDenseI64ArrayAttr({0, g}),
-                    b.getDenseI64ArrayAttr({1, g + (int64_t)K * D}),
+                    b.getDenseI64ArrayAttr(
+                        {1, g + (int64_t)numMoves * moveStride}),
                     b.getDenseI64ArrayAttr({1, 1})));
             for (size_t s : slots) {
               Value slotCol =
@@ -3568,9 +3581,9 @@ struct ExpandImpulsePass
                 b, loc, traceType, trace, blockWin, ValueRange{idx(0), idx(g)});
           }
         } else {
-          for (size_t s = 0; s < S; ++s) {
+          for (size_t s = 0; s < numCols; ++s) {
             Value row = impulse::ReshapeOp::create(b, loc, rowType, selOf[s]);
-            for (unsigned k = 0; k < K; ++k) {
+            for (unsigned k = 0; k < numMoves; ++k) {
               Value unitCell = unitSlice(row, k);
               trace = impulse::DynamicUpdateSliceOp::create(
                   b, loc, traceType, trace, unitCell,
@@ -3597,7 +3610,7 @@ struct ExpandImpulsePass
         }
       }
 
-      for (unsigned k = 0; k < K; ++k) {
+      for (unsigned k = 0; k < numMoves; ++k) {
         impulse::InferRegionOp op = ms[k].op;
         op.getDiagnostics().replaceAllUsesWith(acceptedOf[k]);
         auto ldType = cast<ShapedType>(op.getLogDensities().getType());
@@ -3610,7 +3623,7 @@ struct ExpandImpulsePass
       last.getTrace().replaceAllUsesWith(trace);
       last.getOutputRngState().replaceAllUsesWith(accepts.getOutputRngState());
       last.getStateOut()[0].replaceAllUsesWith(weight);
-      for (unsigned k = K; k-- > 0;)
+      for (unsigned k = numMoves; k-- > 0;)
         ms[k].op->erase();
     }
 
@@ -4396,7 +4409,7 @@ struct ExpandImpulsePass
             }
           }
 
-          sampleOp.replaceAllUsesWith(sampledValues);
+          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
           return WalkResult::advance();
         }
@@ -5274,7 +5287,7 @@ struct ExpandImpulsePass
             }
           }
 
-          sampleOp.replaceAllUsesWith(sampledValues);
+          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
           return WalkResult::advance();
         }

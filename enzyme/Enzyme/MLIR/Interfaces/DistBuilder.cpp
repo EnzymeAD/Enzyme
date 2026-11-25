@@ -139,18 +139,16 @@ SmallVector<XformAttr> impulse::bijectorFor(MLIRContext *ctx,
   return {XformAttr::get(ctx, kind, /*components=*/ArrayAttr())};
 }
 
-namespace {
-
-Value scalarConst(OpBuilder &b, Location loc, Type elemType, double v) {
+static Value scalarConst(OpBuilder &b, Location loc, Type elemType, double v) {
   auto scalarType = RankedTensorType::get({}, elemType);
   return arith::ConstantOp::create(
       b, loc, scalarType,
       DenseElementsAttr::get(scalarType, b.getFloatAttr(elemType, v)));
 }
 
-// `v` must hold one element unless it already has `sampleType`.
-Value broadcastToSample(OpBuilder &b, Location loc, Value v,
-                        RankedTensorType sampleType) {
+/// `v` must hold one element unless it already has `sampleType`.
+static Value broadcastToSample(OpBuilder &b, Location loc, Value v,
+                               RankedTensorType sampleType) {
   auto vt = cast<RankedTensorType>(v.getType());
   if (vt == sampleType)
     return v;
@@ -164,7 +162,7 @@ Value broadcastToSample(OpBuilder &b, Location loc, Value v,
       b.getDenseI64ArrayAttr(sampleType.getShape()));
 }
 
-Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
+static Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
   auto vt = cast<RankedTensorType>(v.getType());
   Type elemType = vt.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -186,11 +184,11 @@ Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
                                 b.getDenseI64ArrayAttr({0}));
 }
 
-Value reduceLastAxis(OpBuilder &b, Location loc, Value v, int64_t M,
-                     int64_t K) {
+static Value reduceLastAxis(OpBuilder &b, Location loc, Value v,
+                            int64_t numRows, int64_t numCols) {
   Type elemType = cast<RankedTensorType>(v.getType()).getElementType();
-  auto vecType = RankedTensorType::get({M}, elemType);
-  auto onesType = RankedTensorType::get({K}, elemType);
+  auto vecType = RankedTensorType::get({numRows}, elemType);
+  auto onesType = RankedTensorType::get({numCols}, elemType);
   auto ones = arith::ConstantOp::create(
       b, loc, onesType,
       DenseElementsAttr::get(onesType, b.getFloatAttr(elemType, 1.0)));
@@ -199,8 +197,9 @@ Value reduceLastAxis(OpBuilder &b, Location loc, Value v, int64_t M,
                                 b.getDenseI64ArrayAttr({0}));
 }
 
-Value emitXformForward(OpBuilder &b, Location loc, XformAttr xform, Value z,
-                       ValueRange distArgs, RankedTensorType sampleType) {
+static Value emitXformForward(OpBuilder &b, Location loc, XformAttr xform,
+                              Value z, ValueRange distArgs,
+                              RankedTensorType sampleType) {
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
     return z;
@@ -235,8 +234,9 @@ Value emitXformForward(OpBuilder &b, Location loc, XformAttr xform, Value z,
   return z;
 }
 
-Value emitXformInverse(OpBuilder &b, Location loc, XformAttr xform, Value y,
-                       ValueRange distArgs, RankedTensorType sampleType) {
+static Value emitXformInverse(OpBuilder &b, Location loc, XformAttr xform,
+                              Value y, ValueRange distArgs,
+                              RankedTensorType sampleType) {
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
     return y;
@@ -271,10 +271,10 @@ Value emitXformInverse(OpBuilder &b, Location loc, XformAttr xform, Value y,
   return y;
 }
 
-// Evaluated at the forward map's input, summed over the event.
-Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
-                            Value forwardInput, ValueRange distArgs,
-                            RankedTensorType sampleType) {
+/// Evaluated at the forward map's input, summed over the event.
+static Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
+                                   Value forwardInput, ValueRange distArgs,
+                                   RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
@@ -312,8 +312,8 @@ Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
   return scalarConst(b, loc, elemType, 0.0);
 }
 
-Value emitUnitUniformLogpdf(OpBuilder &b, Location loc, Value z,
-                            RankedTensorType sampleType) {
+static Value emitUnitUniformLogpdf(OpBuilder &b, Location loc, Value z,
+                                   RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
   Value zero =
       broadcastToSample(b, loc, scalarConst(b, loc, elemType, 0.0), sampleType);
@@ -331,9 +331,9 @@ Value emitUnitUniformLogpdf(OpBuilder &b, Location loc, Value z,
   return reduceSumToScalar(b, loc, term);
 }
 
-// Standard normal logpdf, summed over the event.
-Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
-                     RankedTensorType sampleType) {
+/// Standard normal logpdf, summed over the event.
+static Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
+                            RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
   Value z2 = arith::MulFOp::create(b, loc, z, z);
   Value log2pi = broadcastToSample(
@@ -345,23 +345,25 @@ Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
   return reduceSumToScalar(b, loc, kernel);
 }
 
+namespace {
 // `lognorm` depends only on the parameters, so it can be hoisted.
 struct LogpdfSplit {
   Value unnormed;
   Value lognorm; // null when `unnormed` is already the whole log density
 };
+} // namespace
 
-Value splatSample(OpBuilder &b, Location loc, RankedTensorType sampleType,
-                  double v) {
+static Value splatSample(OpBuilder &b, Location loc,
+                         RankedTensorType sampleType, double v) {
   return arith::ConstantOp::create(
       b, loc, sampleType,
       DenseElementsAttr::get(sampleType,
                              b.getFloatAttr(sampleType.getElementType(), v)));
 }
 
-// Lowers to the same bits as Reactant's `rand`, matching the traced path.
-Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
-                      RankedTensorType sampleType) {
+/// Lowers to the same bits as Reactant's `rand`, matching the traced path.
+static Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
+                             RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
   Value zero = scalarConst(b, loc, elemType, 0.0);
   Value one = scalarConst(b, loc, elemType, 1.0);
@@ -373,16 +375,16 @@ Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
   return op.getResult();
 }
 
-// Op for op as Reactant's `randexp`.
-Value stdExpFromUniform(OpBuilder &b, Location loc, Value u) {
+/// Op for op as Reactant's `randexp`.
+static Value stdExpFromUniform(OpBuilder &b, Location loc, Value u) {
   Value negU = arith::NegFOp::create(b, loc, u);
   Value l1p = math::Log1pOp::create(b, loc, negU);
   return arith::NegFOp::create(b, loc, l1p);
 }
 
-Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
-                        Value &rng, ValueRange distArgs,
-                        RankedTensorType sampleType) {
+static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
+                               Value &rng, ValueRange distArgs,
+                               RankedTensorType sampleType) {
   auto bcast = [&](Value v) {
     return broadcastToSample(b, loc, v, sampleType);
   };
@@ -466,14 +468,14 @@ Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     rng = zop.getOutputRngState();
     Value z = zop.getResult();
     auto matType = cast<RankedTensorType>(sigma.getType());
-    Value U = impulse::CholeskyOp::create(b, loc, matType, sigma,
-                                          b.getBoolAttr(/*lower=*/false));
+    Value upperChol = impulse::CholeskyOp::create(
+        b, loc, matType, sigma, b.getBoolAttr(/*lower=*/false));
     auto vecType = RankedTensorType::get({n}, elemType);
     // Contract U's dim 0: a lower factor need not be bitwise U^T.
-    Value UTz = impulse::DotOp::create(b, loc, vecType, U, z,
-                                       b.getDenseI64ArrayAttr({0}),
-                                       b.getDenseI64ArrayAttr({0}));
-    return arith::AddFOp::create(b, loc, mu, UTz);
+    Value upperCholTz = impulse::DotOp::create(b, loc, vecType, upperChol, z,
+                                               b.getDenseI64ArrayAttr({0}),
+                                               b.getDenseI64ArrayAttr({0}));
+    return arith::AddFOp::create(b, loc, mu, upperCholTz);
   }
   case DistBaseKind::GUMBEL: {
     // Not bit-matched to jax.random.gumbel, which draws u on [tiny, 1).
@@ -494,9 +496,9 @@ Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
 
 // NumPyro StudentT.log_prob's parameter-only terms {z, coef}, in its order.
 // Single-element df and scale are computed once and broadcast: same bits.
-std::pair<Value, Value> emitStudentTParamTerms(OpBuilder &b, Location loc,
-                                               Value dfArg, Value scaleArg,
-                                               RankedTensorType sampleType) {
+static std::pair<Value, Value>
+emitStudentTParamTerms(OpBuilder &b, Location loc, Value dfArg, Value scaleArg,
+                       RankedTensorType sampleType) {
   auto numel = [](Value v) {
     int64_t n = 1;
     for (int64_t d : cast<RankedTensorType>(v.getType()).getShape())
@@ -539,8 +541,9 @@ std::pair<Value, Value> emitStudentTParamTerms(OpBuilder &b, Location loc,
   return {z, coef};
 }
 
-LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
-                                  Value observed, ValueRange distArgs) {
+static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
+                                         DistBaseKind base, Value observed,
+                                         ValueRange distArgs) {
   auto sampleType = cast<RankedTensorType>(observed.getType());
   Type elemType = sampleType.getElementType();
   auto bcast = [&](Value v) {
@@ -664,13 +667,13 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
   }
   case DistBaseKind::DIRICHLET: {
     // The event is the last axis; only lgamma(sum_K alpha) is summed per block.
-    int64_t K =
+    int64_t eventSize =
         sampleType.getShape().empty() ? 1 : sampleType.getShape().back();
     int64_t total = 1;
     for (int64_t dsz : sampleType.getShape())
       total *= dsz;
-    int64_t Mb = (K == 0) ? 0 : total / K;
-    auto twoDType = RankedTensorType::get({Mb, K}, elemType);
+    int64_t numBlocks = (eventSize == 0) ? 0 : total / eventSize;
+    auto twoDType = RankedTensorType::get({numBlocks, eventSize}, elemType);
     Value alpha = bcast(distArgs[0]);
     Value alpha2d = impulse::ReshapeOp::create(b, loc, twoDType, alpha);
     Value x2d = impulse::ReshapeOp::create(b, loc, twoDType, observed);
@@ -683,7 +686,7 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     Value lgAlpha =
         impulse::LgammaOp::create(b, loc, alpha2d.getType(), alpha2d);
     Value termA = reduce(lgAlpha);
-    Value sumKAlpha = reduceLastAxis(b, loc, alpha2d, Mb, K);
+    Value sumKAlpha = reduceLastAxis(b, loc, alpha2d, numBlocks, eventSize);
     Value lgSumK =
         impulse::LgammaOp::create(b, loc, sumKAlpha.getType(), sumKAlpha);
     Value termB = reduce(lgSumK);
@@ -702,11 +705,11 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     auto colType = RankedTensorType::get({n, 1}, elemType);
 
     Value diff = arith::SubFOp::create(b, loc, observed, mu);
-    Value U = impulse::CholeskyOp::create(b, loc, matType, sigma,
-                                          b.getBoolAttr(/*lower=*/false));
+    Value upperChol = impulse::CholeskyOp::create(
+        b, loc, matType, sigma, b.getBoolAttr(/*lower=*/false));
     Value diffCol = impulse::ReshapeOp::create(b, loc, colType, diff);
     Value wCol = impulse::TriangularSolveOp::create(
-        b, loc, colType, U, diffCol, /*left_side=*/b.getBoolAttr(true),
+        b, loc, colType, upperChol, diffCol, /*left_side=*/b.getBoolAttr(true),
         /*lower=*/b.getBoolAttr(false), /*unit_diagonal=*/b.getBoolAttr(false),
         impulse::TransposeAttr::get(b.getContext(),
                                     impulse::Transpose::TRANSPOSE));
@@ -722,14 +725,14 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     for (int64_t i = 0; i < n; ++i)
       for (int64_t j = 0; j < n; ++j)
         ident.push_back(i == j ? oneF : zeroF);
-    Value I = arith::ConstantOp::create(b, loc, matType,
-                                        DenseElementsAttr::get(matType, ident));
-    Value Umasked = arith::MulFOp::create(b, loc, U, I);
+    Value identity = arith::ConstantOp::create(
+        b, loc, matType, DenseElementsAttr::get(matType, ident));
+    Value upperCholMasked = arith::MulFOp::create(b, loc, upperChol, identity);
     auto onesN = arith::ConstantOp::create(
         b, loc, vecType,
         DenseElementsAttr::get(vecType, b.getFloatAttr(elemType, 1.0)));
-    Value diagU = impulse::DotOp::create(b, loc, vecType, Umasked, onesN,
-                                         b.getDenseI64ArrayAttr({0}),
+    Value diagU = impulse::DotOp::create(b, loc, vecType, upperCholMasked,
+                                         onesN, b.getDenseI64ArrayAttr({0}),
                                          b.getDenseI64ArrayAttr({0}));
     Value sumLogDiag = reduce(math::LogOp::create(b, loc, diagU));
     Value logDet = arith::MulFOp::create(
@@ -757,8 +760,6 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     llvm::report_fatal_error("emitNativeLogpdfSplit: unsupported base");
   }
 }
-
-} // namespace
 
 SmallVector<Value> impulse::emitDistSampler(OpBuilder &b, Location loc,
                                             DistAttr dist, Value rng,
@@ -872,23 +873,24 @@ Value impulse::emitLogSigmoid(OpBuilder &builder, Location loc, Value x) {
 }
 
 namespace {
-
-// m contiguous simplex blocks of K constrained (n = K - 1 free) entries.
+// m contiguous simplex blocks of eventSize constrained (n = eventSize - 1
+// free) entries.
 struct SimplexDims {
-  int64_t K;
+  int64_t eventSize;
   int64_t n;
   int64_t m;
 };
+} // namespace
 
-Value splatTensorConst(OpBuilder &builder, Location loc, RankedTensorType ty,
-                       double v) {
+static Value splatTensorConst(OpBuilder &builder, Location loc,
+                              RankedTensorType ty, double v) {
   return arith::ConstantOp::create(
       builder, loc, ty,
       DenseElementsAttr::get(ty, builder.getFloatAttr(ty.getElementType(), v)));
 }
 
-Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
-               ArrayRef<double> rowVals) {
+static Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
+                      ArrayRef<double> rowVals) {
   auto elemType = ty.getElementType();
   int64_t m = ty.getShape()[0], ncol = ty.getShape()[1];
   SmallVector<APFloat> vals;
@@ -901,8 +903,8 @@ Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
                                    DenseElementsAttr::get(ty, vals));
 }
 
-Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
-              Type elemType) {
+static Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
+                     Type elemType) {
   auto ty = RankedTensorType::get({n, n}, elemType);
   SmallVector<APFloat> vals;
   vals.reserve(n * n);
@@ -917,14 +919,14 @@ Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
                                    DenseElementsAttr::get(ty, vals));
 }
 
-Value prefixSum(OpBuilder &builder, Location loc, Value mat, Value tri) {
+static Value prefixSum(OpBuilder &builder, Location loc, Value mat, Value tri) {
   return impulse::DotOp::create(builder, loc, mat.getType(), mat, tri,
                                 builder.getDenseI64ArrayAttr({1}),
                                 builder.getDenseI64ArrayAttr({0}));
 }
 
-Value shiftMat(OpBuilder &builder, Location loc, const SimplexDims &d,
-               Type elemType) {
+static Value shiftMat(OpBuilder &builder, Location loc, const SimplexDims &d,
+                      Type elemType) {
   SmallVector<double> rowVals(d.n);
   for (int64_t c = 0; c < d.n; ++c)
     rowVals[c] = std::log((double)(d.n - c));
@@ -932,12 +934,12 @@ Value shiftMat(OpBuilder &builder, Location loc, const SimplexDims &d,
                   rowVals);
 }
 
-Value constrainSimplex(OpBuilder &builder, Location loc, Value unconstrained,
-                       const SimplexDims &d) {
+static Value constrainSimplex(OpBuilder &builder, Location loc,
+                              Value unconstrained, const SimplexDims &d) {
   auto elemType =
       cast<RankedTensorType>(unconstrained.getType()).getElementType();
   auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
-  auto yBufType = RankedTensorType::get({d.m, d.K}, elemType);
+  auto yBufType = RankedTensorType::get({d.m, d.eventSize}, elemType);
   auto colType = RankedTensorType::get({d.m, 1}, elemType);
 
   Value xmat =
@@ -951,8 +953,8 @@ Value constrainSimplex(OpBuilder &builder, Location loc, Value unconstrained,
   Value logPexcl =
       prefixSum(builder, loc, log1mZ,
                 triOnes(builder, loc, d.n, /*strict=*/true, elemType));
-  Value P = math::ExpOp::create(builder, loc, logPexcl);
-  Value ybody = arith::MulFOp::create(builder, loc, z, P);
+  Value pExcl = math::ExpOp::create(builder, loc, logPexcl);
+  Value ybody = arith::MulFOp::create(builder, loc, z, pExcl);
 
   auto onesCol = splatTensorConst(
       builder, loc, RankedTensorType::get({d.n, 1}, elemType), 1.0);
@@ -972,17 +974,17 @@ Value constrainSimplex(OpBuilder &builder, Location loc, Value unconstrained,
       builder, loc, yBufType, ybuf, ybody, ValueRange{idx(0), idx(0)});
   ybuf = impulse::DynamicUpdateSliceOp::create(
       builder, loc, yBufType, ybuf, remainder,
-      ValueRange{idx(0), idx(d.K - 1)});
+      ValueRange{idx(0), idx(d.eventSize - 1)});
 
   return impulse::ReshapeOp::create(
-      builder, loc, RankedTensorType::get({d.m * d.K}, elemType), ybuf);
+      builder, loc, RankedTensorType::get({d.m * d.eventSize}, elemType), ybuf);
 }
 
-Value unconstrainSimplex(OpBuilder &builder, Location loc, Value constrained,
-                         const SimplexDims &d) {
+static Value unconstrainSimplex(OpBuilder &builder, Location loc,
+                                Value constrained, const SimplexDims &d) {
   auto elemType =
       cast<RankedTensorType>(constrained.getType()).getElementType();
-  auto yMatType = RankedTensorType::get({d.m, d.K}, elemType);
+  auto yMatType = RankedTensorType::get({d.m, d.eventSize}, elemType);
   auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
 
   Value ymat = impulse::ReshapeOp::create(builder, loc, yMatType, constrained);
@@ -1005,8 +1007,8 @@ Value unconstrainSimplex(OpBuilder &builder, Location loc, Value constrained,
       builder, loc, RankedTensorType::get({d.m * d.n}, elemType), x);
 }
 
-Value logDetSimplex(OpBuilder &builder, Location loc, Value unconstrained,
-                    const SimplexDims &d) {
+static Value logDetSimplex(OpBuilder &builder, Location loc,
+                           Value unconstrained, const SimplexDims &d) {
   auto elemType =
       cast<RankedTensorType>(unconstrained.getType()).getElementType();
   auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
@@ -1033,28 +1035,26 @@ Value logDetSimplex(OpBuilder &builder, Location loc, Value unconstrained,
                                 builder.getDenseI64ArrayAttr({0}));
 }
 
-SimplexDims simplexDimsFromConstrained(SupportAttr support,
-                                       int64_t constrainedSize) {
-  int64_t K = support.getEventSize().getInt();
-  return {K, K - 1, constrainedSize / K};
+static SimplexDims simplexDimsFromConstrained(SupportAttr support,
+                                              int64_t constrainedSize) {
+  int64_t eventSize = support.getEventSize().getInt();
+  return {eventSize, eventSize - 1, constrainedSize / eventSize};
 }
 
-SimplexDims simplexDimsFromUnconstrained(SupportAttr support,
-                                         int64_t unconstrainedSize) {
-  int64_t K = support.getEventSize().getInt();
-  return {K, K - 1, unconstrainedSize / (K - 1)};
+static SimplexDims simplexDimsFromUnconstrained(SupportAttr support,
+                                                int64_t unconstrainedSize) {
+  int64_t eventSize = support.getEventSize().getInt();
+  return {eventSize, eventSize - 1, unconstrainedSize / (eventSize - 1)};
 }
-
-} // namespace
 
 int64_t impulse::bijectorForwardSize(int64_t unconstrainedSize,
                                      SupportAttr support) {
   if (!support)
     return unconstrainedSize;
   if (support.getKind() == SupportKind::SIMPLEX) {
-    int64_t K = support.getEventSize().getInt();
-    int64_t m = unconstrainedSize / (K - 1);
-    return m * K;
+    int64_t eventSize = support.getEventSize().getInt();
+    int64_t m = unconstrainedSize / (eventSize - 1);
+    return m * eventSize;
   }
   return unconstrainedSize;
 }
@@ -1064,9 +1064,9 @@ int64_t impulse::bijectorInverseSize(int64_t constrainedSize,
   if (!support)
     return constrainedSize;
   if (support.getKind() == SupportKind::SIMPLEX) {
-    int64_t K = support.getEventSize().getInt();
-    int64_t m = constrainedSize / K;
-    return m * (K - 1);
+    int64_t eventSize = support.getEventSize().getInt();
+    int64_t m = constrainedSize / eventSize;
+    return m * (eventSize - 1);
   }
   return constrainedSize;
 }
@@ -1339,7 +1339,7 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
       builder, loc, scalarTy, logDiag, onesD, builder.getDenseI64ArrayAttr({0}),
       builder.getDenseI64ArrayAttr({0}));
 
-  Value L = arith::ConstantOp::create(
+  Value scaleTril = arith::ConstantOp::create(
       builder, loc, matTy,
       DenseElementsAttr::get(matTy, builder.getFloatAttr(elemType, 0.0)));
 
@@ -1363,21 +1363,21 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
 
   int64_t k = 0;
   for (int64_t i = 0; i < d; ++i) {
-    Value diag_i = sliceScalar(diag, i);
+    Value diagElem = sliceScalar(diag, i);
     for (int64_t j = 0; j < i; ++j) {
-      Value off_k = sliceScalar(offDiag, k);
-      Value entry = arith::MulFOp::create(builder, loc, off_k, diag_i);
+      Value offElem = sliceScalar(offDiag, k);
+      Value entry = arith::MulFOp::create(builder, loc, offElem, diagElem);
       Value entry11 = reshapeTo11(entry);
-      L = impulse::DynamicUpdateSliceOp::create(
-          builder, loc, matTy, L, entry11,
+      scaleTril = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, matTy, scaleTril, entry11,
           ValueRange{i64Const(i), i64Const(j)});
       ++k;
     }
-    Value diag_i_11 = reshapeTo11(diag_i);
-    L = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, matTy, L, diag_i_11,
+    Value diagElem11 = reshapeTo11(diagElem);
+    scaleTril = impulse::DynamicUpdateSliceOp::create(
+        builder, loc, matTy, scaleTril, diagElem11,
         ValueRange{i64Const(i), i64Const(i)});
   }
 
-  return {L, sumLogDiag};
+  return {scaleTril, sumLogDiag};
 }

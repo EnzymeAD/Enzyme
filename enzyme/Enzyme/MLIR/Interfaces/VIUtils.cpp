@@ -18,32 +18,31 @@ using namespace mlir::enzyme;
 using namespace mlir::impulse;
 using namespace mlir::impulse::VI;
 
-namespace {
-
-Value scalarConst(OpBuilder &builder, Location loc, RankedTensorType ty,
-                  double v) {
+static Value scalarConst(OpBuilder &builder, Location loc, RankedTensorType ty,
+                         double v) {
   auto elem = ty.getElementType();
   return arith::ConstantOp::create(
       builder, loc, ty,
       DenseElementsAttr::get(ty, builder.getFloatAttr(elem, v)));
 }
 
-Value i64Const(OpBuilder &builder, Location loc, int64_t v) {
+static Value i64Const(OpBuilder &builder, Location loc, int64_t v) {
   auto ty = RankedTensorType::get({}, builder.getI64Type());
   return arith::ConstantOp::create(
       builder, loc, ty,
       DenseElementsAttr::get(ty, builder.getI64IntegerAttr(v)));
 }
 
-Value broadcastScalar(OpBuilder &builder, Location loc, Value scalar,
-                      RankedTensorType targetType) {
+static Value broadcastScalar(OpBuilder &builder, Location loc, Value scalar,
+                             RankedTensorType targetType) {
   return enzyme::BroadcastOp::create(
       builder, loc, targetType, scalar,
       builder.getDenseI64ArrayAttr(targetType.getShape()));
 }
 
-Value scatterPositionToTrace(OpBuilder &builder, Location loc, Value position2d,
-                             Value fullTrace, const VIContext &ctx) {
+static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
+                                    Value position2d, Value fullTrace,
+                                    const VIContext &ctx) {
   auto elemType = ctx.getElementType();
   auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
   auto c0 = i64Const(builder, loc, 0);
@@ -65,8 +64,8 @@ Value scatterPositionToTrace(OpBuilder &builder, Location loc, Value position2d,
   return result;
 }
 
-Value sumVector1xD(OpBuilder &builder, Location loc, Value v,
-                   RankedTensorType positionType) {
+static Value sumVector1xD(OpBuilder &builder, Location loc, Value v,
+                          RankedTensorType positionType) {
   auto scalarType = RankedTensorType::get({}, positionType.getElementType());
   auto ones = scalarConst(builder, loc, positionType, 1.0);
   return impulse::DotOp::create(
@@ -75,7 +74,7 @@ Value sumVector1xD(OpBuilder &builder, Location loc, Value v,
       /*rhs_contract=*/builder.getDenseI64ArrayAttr({0, 1}));
 }
 
-Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
+static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
   auto tensorType = cast<RankedTensorType>(tensor.getType());
   auto elemType = tensorType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -91,9 +90,9 @@ Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
 }
 
 /// Sum as canary: a NaN/Inf gradient element makes its sum non-finite.
-Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
-                                     Value elboScalar, Value gradLoc,
-                                     Value gradScale) {
+static Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
+                                            Value elboScalar, Value gradLoc,
+                                            Value gradScale) {
   Value isFinite = math::IsFiniteOp::create(builder, loc, elboScalar);
   if (gradLoc) {
     Value gradLocSum = sumAllElements(builder, loc, gradLoc);
@@ -110,8 +109,9 @@ Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
 }
 
 /// log N(loc + scale * eps; loc, scale), constant included as in NumPyro.
-Value computeAutoNormalLogQ(OpBuilder &builder, Location loc, Value scale,
-                            Value eps, const VIContext &ctx) {
+static Value computeAutoNormalLogQ(OpBuilder &builder, Location loc,
+                                   Value scale, Value eps,
+                                   const VIContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
@@ -134,10 +134,12 @@ Value computeAutoNormalLogQ(OpBuilder &builder, Location loc, Value scale,
   return logQ;
 }
 
+namespace {
 struct LogPResult {
   Value logP;
   Value rng;
 };
+} // namespace
 
 /// Values captured from above the region are referenced as-is.
 static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
@@ -165,8 +167,8 @@ static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
   return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
 }
 
-LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
-                             Value modelRng, const VIContext &ctx) {
+static LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
+                                    Value modelRng, const VIContext &ctx) {
   // The region consumes no RNG, so the model rng is returned unadvanced.
   if (ctx.hasLogpdfRegion())
     return {cloneVILogpdfRegion(builder, loc, z, ctx), modelRng};
@@ -196,26 +198,26 @@ LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
   return {genOp.getWeight(), rngAfter};
 }
 
+namespace {
 struct CholeskyTransformResult {
   Value scaleTril;
   Value sumLogDiag;
 };
+} // namespace
 
-CholeskyTransformResult applyScaledUnitLowerCholesky(OpBuilder &builder,
-                                                     Location loc, Value xFlat,
-                                                     int64_t d, Type elemType) {
+static CholeskyTransformResult
+applyScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
+                             int64_t d, Type elemType) {
   auto r =
       impulse::emitScaledUnitLowerCholesky(builder, loc, xFlat, d, elemType);
   return {r.scaleTril, r.sumLogDiag};
 }
 
-} // namespace
-
 mlir::impulse::VI::SingleParticleELBOResult
 mlir::impulse::VI::emitSingleParticleELBO(OpBuilder &builder, Location loc,
                                           Value locParam, Value scaleParam,
                                           Value pkey, const VIContext &ctx) {
-  auto rngType = pkey.getType();
+  Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
@@ -352,7 +354,7 @@ mlir::impulse::VI::SingleParticleAutoDeltaResult
 mlir::impulse::VI::emitSingleParticleAutoDelta(OpBuilder &builder, Location loc,
                                                Value locParam, Value pkey,
                                                const VIContext &ctx) {
-  auto rngType = pkey.getType();
+  Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
 
@@ -412,7 +414,7 @@ mlir::impulse::VI::SingleParticleMVNResult
 mlir::impulse::VI::emitSingleParticleMVNELBO(OpBuilder &builder, Location loc,
                                              Value locParam, Value xScaleTril,
                                              Value pkey, const VIContext &ctx) {
-  auto rngType = pkey.getType();
+  Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
@@ -482,10 +484,10 @@ mlir::impulse::VI::emitSingleParticleMVNELBO(OpBuilder &builder, Location loc,
     Value sumLogDiag = chol.sumLogDiag;
 
     // L @ eps in row-vector form: eps @ L^T.
-    Value Leps = impulse::DotOp::create(
+    Value scaledEps = impulse::DotOp::create(
         builder, loc, positionType, eps, scaleTril,
         builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
-    Value z = arith::AddFOp::create(builder, loc, locArg, Leps);
+    Value z = arith::AddFOp::create(builder, loc, locArg, scaledEps);
 
     Value epsSq = arith::MulFOp::create(builder, loc, eps, eps);
     Value sumEpsSq = sumVector1xD(builder, loc, epsSq, positionType);
@@ -515,15 +517,15 @@ mlir::impulse::VI::MultiParticleELBOResult
 mlir::impulse::VI::emitELBOStep(OpBuilder &builder, Location loc,
                                 Value locParam, Value scaleParam, Value rngStep,
                                 const VIContext &ctx) {
-  int64_t K = ctx.numParticles;
-  if (K == 1) {
+  int64_t numParticles = ctx.numParticles;
+  if (numParticles == 1) {
     auto r = emitSingleParticleELBO(builder, loc, locParam, scaleParam, rngStep,
                                     ctx);
     return {r.elbo, r.gradLoc, r.gradScale};
   }
 
-  auto rngType = rngStep.getType();
-  SmallVector<Type> splitResultTypes(K, rngType);
+  Type rngType = rngStep.getType();
+  SmallVector<Type> splitResultTypes(numParticles, rngType);
   auto splitK =
       impulse::RandomSplitOp::create(builder, loc, splitResultTypes, rngStep);
 
@@ -534,7 +536,7 @@ mlir::impulse::VI::emitELBOStep(OpBuilder &builder, Location loc,
   Value gradLocSum = scalarConst(builder, loc, positionType, 0.0);
   Value gradScaleSum = scalarConst(builder, loc, positionType, 0.0);
 
-  for (int64_t k = 0; k < K; ++k) {
+  for (int64_t k = 0; k < numParticles; ++k) {
     Value pkey = splitK.getResult(k);
     auto r =
         emitSingleParticleELBO(builder, loc, locParam, scaleParam, pkey, ctx);
@@ -544,12 +546,16 @@ mlir::impulse::VI::emitELBOStep(OpBuilder &builder, Location loc,
         arith::AddFOp::create(builder, loc, gradScaleSum, r.gradScale);
   }
 
-  auto Kf = scalarConst(builder, loc, scalarType, static_cast<double>(K));
-  Value KfBcast = broadcastScalar(builder, loc, Kf, positionType);
-  Value elboMean = arith::DivFOp::create(builder, loc, elboSum, Kf);
-  Value gradLocMean = arith::DivFOp::create(builder, loc, gradLocSum, KfBcast);
+  auto numParticlesScalar =
+      scalarConst(builder, loc, scalarType, static_cast<double>(numParticles));
+  Value numParticlesBcast =
+      broadcastScalar(builder, loc, numParticlesScalar, positionType);
+  Value elboMean =
+      arith::DivFOp::create(builder, loc, elboSum, numParticlesScalar);
+  Value gradLocMean =
+      arith::DivFOp::create(builder, loc, gradLocSum, numParticlesBcast);
   Value gradScaleMean =
-      arith::DivFOp::create(builder, loc, gradScaleSum, KfBcast);
+      arith::DivFOp::create(builder, loc, gradScaleSum, numParticlesBcast);
 
   return {elboMean, gradLocMean, gradScaleMean};
 }
@@ -605,10 +611,10 @@ mlir::impulse::VI::applyAdamUpdate(OpBuilder &builder, Location loc,
   Value vNew = arith::AddFOp::create(builder, loc, oneMinusB2GSq, b2V);
 
   auto i64Ty = RankedTensorType::get({}, builder.getI64Type());
-  Value one_i = arith::ConstantOp::create(
+  Value oneI64 = arith::ConstantOp::create(
       builder, loc, i64Ty,
       DenseElementsAttr::get(i64Ty, builder.getI64IntegerAttr(1)));
-  Value stepPlus1 = arith::AddIOp::create(builder, loc, stepIdx, one_i);
+  Value stepPlus1 = arith::AddIOp::create(builder, loc, stepIdx, oneI64);
   Value stepFloat =
       arith::SIToFPOp::create(builder, loc, scalarType, stepPlus1);
 
@@ -781,7 +787,7 @@ mlir::impulse::VI::emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto rngType = rng0.getType();
+  Type rngType = rng0.getType();
   auto traceBufType =
       RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
@@ -955,7 +961,7 @@ mlir::impulse::VI::emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto rngType = rng0.getType();
+  Type rngType = rng0.getType();
   auto traceBufType =
       RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
@@ -1009,27 +1015,31 @@ mlir::impulse::VI::emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
 
     // Particles are identical; the K-way split keeps NumPyro's RNG stream.
     Value elboMean, gradLocMean;
-    int64_t K = ctx.numParticles;
-    if (K == 1) {
+    int64_t numParticles = ctx.numParticles;
+    if (numParticles == 1) {
       auto r = emitSingleParticleAutoDelta(builder, loc, locIter, rngStep, ctx);
       elboMean = r.elbo;
       gradLocMean = r.gradLoc;
     } else {
-      SmallVector<Type> splitResultTypes(K, rngType);
+      SmallVector<Type> splitResultTypes(numParticles, rngType);
       auto splitK = impulse::RandomSplitOp::create(builder, loc,
                                                    splitResultTypes, rngStep);
       Value elboSum = scalarConst(builder, loc, scalarType, 0.0);
       Value gradLocSum = scalarConst(builder, loc, positionType, 0.0);
-      for (int64_t k = 0; k < K; ++k) {
+      for (int64_t k = 0; k < numParticles; ++k) {
         Value pkey = splitK.getResult(k);
         auto r = emitSingleParticleAutoDelta(builder, loc, locIter, pkey, ctx);
         elboSum = arith::AddFOp::create(builder, loc, elboSum, r.elbo);
         gradLocSum = arith::AddFOp::create(builder, loc, gradLocSum, r.gradLoc);
       }
-      auto Kf = scalarConst(builder, loc, scalarType, static_cast<double>(K));
-      Value KfBcast = broadcastScalar(builder, loc, Kf, positionType);
-      elboMean = arith::DivFOp::create(builder, loc, elboSum, Kf);
-      gradLocMean = arith::DivFOp::create(builder, loc, gradLocSum, KfBcast);
+      auto numParticlesScalar = scalarConst(builder, loc, scalarType,
+                                            static_cast<double>(numParticles));
+      Value numParticlesBcast =
+          broadcastScalar(builder, loc, numParticlesScalar, positionType);
+      elboMean =
+          arith::DivFOp::create(builder, loc, elboSum, numParticlesScalar);
+      gradLocMean =
+          arith::DivFOp::create(builder, loc, gradLocSum, numParticlesBcast);
     }
 
     Value effectiveStep =
@@ -1140,7 +1150,7 @@ mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto rngType = rng0.getType();
+  Type rngType = rng0.getType();
   int64_t d = ctx.positionSize;
   int64_t flatSize = d * (d + 1) / 2;
   auto flatXTy = RankedTensorType::get({flatSize}, elemType);
@@ -1201,22 +1211,22 @@ mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
     Value rngNext = updateSplit.getResult(0);
     Value rngStep = updateSplit.getResult(1);
 
-    int64_t K = ctx.numParticles;
+    int64_t numParticles = ctx.numParticles;
     Value elbo, gradLoc, gradX;
-    if (K == 1) {
+    if (numParticles == 1) {
       auto r =
           emitSingleParticleMVNELBO(builder, loc, locIter, xIter, rngStep, ctx);
       elbo = r.elbo;
       gradLoc = r.gradLoc;
       gradX = r.gradScaleTril;
     } else {
-      SmallVector<Type> splitTypes(K, rngType);
+      SmallVector<Type> splitTypes(numParticles, rngType);
       auto splitK =
           impulse::RandomSplitOp::create(builder, loc, splitTypes, rngStep);
       Value elboSum = scalarConst(builder, loc, scalarType, 0.0);
       Value gradLocSum = scalarConst(builder, loc, positionType, 0.0);
       Value gradXSum = scalarConst(builder, loc, flatXTy, 0.0);
-      for (int64_t k = 0; k < K; ++k) {
+      for (int64_t k = 0; k < numParticles; ++k) {
         Value pkey = splitK.getResult(k);
         auto r =
             emitSingleParticleMVNELBO(builder, loc, locIter, xIter, pkey, ctx);
@@ -1225,12 +1235,16 @@ mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
         gradXSum =
             arith::AddFOp::create(builder, loc, gradXSum, r.gradScaleTril);
       }
-      auto Kf = scalarConst(builder, loc, scalarType, static_cast<double>(K));
-      Value KfBcastP = broadcastScalar(builder, loc, Kf, positionType);
-      Value KfBcastX = broadcastScalar(builder, loc, Kf, flatXTy);
-      elbo = arith::DivFOp::create(builder, loc, elboSum, Kf);
-      gradLoc = arith::DivFOp::create(builder, loc, gradLocSum, KfBcastP);
-      gradX = arith::DivFOp::create(builder, loc, gradXSum, KfBcastX);
+      auto numParticlesScalar = scalarConst(builder, loc, scalarType,
+                                            static_cast<double>(numParticles));
+      Value numParticlesBcastPos =
+          broadcastScalar(builder, loc, numParticlesScalar, positionType);
+      Value numParticlesBcastX =
+          broadcastScalar(builder, loc, numParticlesScalar, flatXTy);
+      elbo = arith::DivFOp::create(builder, loc, elboSum, numParticlesScalar);
+      gradLoc =
+          arith::DivFOp::create(builder, loc, gradLocSum, numParticlesBcastPos);
+      gradX = arith::DivFOp::create(builder, loc, gradXSum, numParticlesBcastX);
     }
 
     Value effectiveStep =
@@ -1341,7 +1355,7 @@ mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
 template <typename OpT>
 LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
                                          VIContext ctx, bool debugDump) {
-  auto loc = op.getLoc();
+  Location loc = op.getLoc();
 
   if (ctx.guideKind != impulse::GuideKind::AUTO_NORMAL &&
       ctx.guideKind != impulse::GuideKind::AUTO_MULTIVARIATE_NORMAL &&
@@ -1389,7 +1403,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   // NumPyro SVI.init: rng_key, model_seed, guide_seed = split(key, 3).
   // A resumed run already holds the per-update rng_key, so it skips the split.
   Value rngInput = op.getInputs()[0];
-  auto rngType = rngInput.getType();
+  Type rngType = rngInput.getType();
   Value rng0;
   Value guideInitSeed;
   if (isResume) {

@@ -27,7 +27,7 @@ inline llvm::SmallVector<StateSlot>
 buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
                  mlir::RankedTensorType invMassType, int64_t numChains = 1,
                  mlir::RankedTensorType rngType = {}) {
-  auto *ctx = elemType.getContext();
+  mlir::MLIRContext *ctx = elemType.getContext();
   auto i64Scalar =
       mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
   auto f64 = mlir::Float64Type::get(ctx);
@@ -86,7 +86,7 @@ enum class VIGuide { None, AutoNormal, AutoDelta, AutoMVN };
 
 inline llvm::SmallVector<StateSlot>
 buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
-  auto *ctx = elemType.getContext();
+  mlir::MLIRContext *ctx = elemType.getContext();
   auto i64Scalar =
       mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
   auto vecType = mlir::RankedTensorType::get({1, positionSize}, elemType);

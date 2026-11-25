@@ -26,8 +26,6 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
-namespace {
-
 static bool fnBodyHasSamples(FunctionOpInterface fn) {
   return fn.getFunctionBody()
       .walk([](impulse::SampleOp) { return WalkResult::interrupt(); })
@@ -286,6 +284,8 @@ static bool dissolveSubmodelSites(impulse::InferRegionOp regionOp,
   return !submodels.empty();
 }
 
+namespace {
+
 struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
   using OpRewritePattern<impulse::InferOp>::OpRewritePattern;
 
@@ -455,7 +455,7 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
     Block &logpdfBlock = regionOp.getLogpdf().front();
     auto inputs = inferOp.getInputs();
     for (int64_t i = logpdfBlock.getNumArguments() - 1; i >= 1; --i) {
-      logpdfBlock.getArgument(i).replaceAllUsesWith(inputs[i]);
+      rewriter.replaceAllUsesWith(logpdfBlock.getArgument(i), inputs[i]);
       logpdfBlock.eraseArgument(i);
     }
 

@@ -82,11 +82,11 @@ public:
           llvm::errs() << "sicm-verify-incremental: UNSOUND after " << kind
                        << " of '" << op->getName() << "'";
           if (currentPattern)
-            llvm::errs() << " (rule " << patternName(*currentPattern) << ")";
+            llvm::errs() << " (rule " << patternName(*currentPattern) << ')';
           llvm::errs() << ": sample-dependent value not in the incremental "
                           "analysis: ";
           printValue(value);
-          llvm::errs() << "\n";
+          llvm::errs() << '\n';
         }
       }
       uint64_t stale = 0;
@@ -121,7 +121,7 @@ public:
                    << op->getName() << "' by "
                    << (currentPattern ? patternName(*currentPattern)
                                       : std::string("folding"))
-                   << "\n";
+                   << '\n';
     }
   }
 
@@ -158,7 +158,7 @@ public:
         llvm::errs() << "sicm-verify-incremental:   "
                      << (nowDependent ? "now dependent: " : "now invariant: ");
         printValue(value);
-        llvm::errs() << "\n";
+        llvm::errs() << '\n';
       }
     }
   }

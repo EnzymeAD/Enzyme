@@ -132,12 +132,12 @@ static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
   auto P = createPermutationMatrix(builder, loc, matrixType);
 
   // PA = P @ A
-  auto PA = impulse::DotOp::create(builder, loc, matrixType, P, matrix,
-                                   builder.getDenseI64ArrayAttr({1}),
-                                   builder.getDenseI64ArrayAttr({0}));
+  auto rowsReversed = impulse::DotOp::create(
+      builder, loc, matrixType, P, matrix, builder.getDenseI64ArrayAttr({1}),
+      builder.getDenseI64ArrayAttr({0}));
 
   // PAP = PA @ P
-  return impulse::DotOp::create(builder, loc, matrixType, PA, P,
+  return impulse::DotOp::create(builder, loc, matrixType, rowsReversed, P,
                                 builder.getDenseI64ArrayAttr({1}),
                                 builder.getDenseI64ArrayAttr({0}));
 }
@@ -459,19 +459,19 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
 
   if (ctx.hasLogpdfRegion()) {
     // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
-    Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    Value logDensity = cloneLogpdfRegionAt(builder, loc, q_constrained, ctx);
+    Value qConstrained = constrainPosition(builder, loc, qArg, ctx.supports);
+    Value logDensity = cloneLogpdfRegionAt(builder, loc, qConstrained, ctx);
     Value negWeight = arith::NegFOp::create(builder, loc, logDensity);
     Value jacobianCorrection =
         computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
-    Value U =
+    Value potentialEnergy =
         arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
-    enzyme::YieldOp::create(builder, loc, ValueRange{U, rng});
+    enzyme::YieldOp::create(builder, loc, ValueRange{potentialEnergy, rng});
   } else if (isCustomLogpdf) {
     Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
-    Value U = arith::NegFOp::create(builder, loc, logDensity);
+    Value potentialEnergy = arith::NegFOp::create(builder, loc, logDensity);
     // TODO(#2695): handle hybrid case
-    enzyme::YieldOp::create(builder, loc, {U, rng});
+    enzyme::YieldOp::create(builder, loc, {potentialEnergy, rng});
   } else {
     auto traceType =
         RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
@@ -779,8 +779,8 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   if (ctx.hasCustomLogpdf()) {
     q0 = initialPosition;
     if (ctx.hasLogpdfRegion()) {
-      Value q0_constrained = constrainPosition(builder, loc, q0, ctx.supports);
-      Value weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
+      Value q0Constrained = constrainPosition(builder, loc, q0, ctx.supports);
+      Value weight0 = cloneLogpdfRegionAt(builder, loc, q0Constrained, ctx);
       Value negWeight0 = arith::NegFOp::create(builder, loc, weight0);
       Value jacobian0 =
           computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
@@ -882,20 +882,23 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   auto q0Arg = autodiffInitBlock->getArgument(0);
 
   if (ctx.hasLogpdfRegion()) {
-    auto q0Arg_constrained =
+    auto q0ArgConstrained =
         constrainPosition(builder, loc, q0Arg, ctx.supports);
     Value logDensityInit =
-        cloneLogpdfRegionAt(builder, loc, q0Arg_constrained, ctx);
+        cloneLogpdfRegionAt(builder, loc, q0ArgConstrained, ctx);
     auto negWeightInit = arith::NegFOp::create(builder, loc, logDensityInit);
     auto jacobianInit =
         computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
-    auto U0_init =
+    auto potentialEnergyInit =
         arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
-    enzyme::YieldOp::create(builder, loc, ValueRange{U0_init, rngForAutodiff});
+    enzyme::YieldOp::create(builder, loc,
+                            ValueRange{potentialEnergyInit, rngForAutodiff});
   } else if (isCustomLogpdf) {
     Value logDensityInit = emitLogpdfFnInAutodiff(builder, loc, q0Arg, ctx);
-    auto U0_init = arith::NegFOp::create(builder, loc, logDensityInit);
-    enzyme::YieldOp::create(builder, loc, {U0_init, rngForAutodiff});
+    auto potentialEnergyInit =
+        arith::NegFOp::create(builder, loc, logDensityInit);
+    enzyme::YieldOp::create(builder, loc,
+                            {potentialEnergyInit, rngForAutodiff});
   } else {
     auto fullTraceType =
         RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
