@@ -7,8 +7,33 @@ endif()
 if(LLVM_VERSION_MAJOR LESS 21)
   message(FATAL_ERROR "ENZYME_POSEIDON needs LLVM 21 or newer")
 endif()
-if(NOT MPFR_LIB_PATH OR NOT HAS_MPFR_H)
-  message(FATAL_ERROR "ENZYME_POSEIDON needs MPFR (libmpfr and mpfr.h)")
+# MPFR's library is the one Enzyme found (MPFR_LIB_PATH). Its header, and
+# GMP's, which it includes, are looked for next to the libraries and then in
+# CMAKE_PREFIX_PATH, CMAKE_INCLUDE_PATH and the system: an MPFR or a GMP
+# outside /usr is often in its own prefix.
+get_filename_component(_poseidon_mpfr_libdir "${MPFR_LIB_PATH}" DIRECTORY)
+find_path(
+  POSEIDON_MPFR_INCLUDE_DIR mpfr.h
+  HINTS ${_poseidon_mpfr_libdir}/../include)
+find_library(POSEIDON_GMP_LIB gmp HINTS ${_poseidon_mpfr_libdir})
+get_filename_component(_poseidon_gmp_libdir "${POSEIDON_GMP_LIB}" DIRECTORY)
+find_path(
+  POSEIDON_GMP_INCLUDE_DIR gmp.h
+  HINTS ${_poseidon_gmp_libdir}/../include ${POSEIDON_MPFR_INCLUDE_DIR})
+set(_poseidon_missing)
+foreach(_found MPFR_LIB_PATH POSEIDON_MPFR_INCLUDE_DIR POSEIDON_GMP_LIB
+        POSEIDON_GMP_INCLUDE_DIR)
+  if(NOT ${_found})
+    list(APPEND _poseidon_missing ${_found})
+  endif()
+endforeach()
+if(_poseidon_missing)
+  string(REPLACE ";" ", " _poseidon_missing "${_poseidon_missing}")
+  message(
+    FATAL_ERROR
+      "ENZYME_POSEIDON needs MPFR and GMP, libraries and headers; not found: "
+      "${_poseidon_missing}. Add the installation prefix of each to "
+      "CMAKE_PREFIX_PATH.")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -135,7 +160,13 @@ target_include_directories(
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include
     ${ENZYME_SOURCE_DIR})
-target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE ${MPFR_LIB_PATH})
+target_include_directories(
+  ${POSEIDON_PLUGIN_TARGET}
+  SYSTEM
+  PRIVATE ${POSEIDON_MPFR_INCLUDE_DIR} ${POSEIDON_GMP_INCLUDE_DIR})
+target_link_libraries(
+  ${POSEIDON_PLUGIN_TARGET}
+  PRIVATE ${MPFR_LIB_PATH} ${POSEIDON_GMP_LIB})
 
 # What a cached result was computed by: Poseidon's sources. Hashed when they
 # change, not when the build is configured.

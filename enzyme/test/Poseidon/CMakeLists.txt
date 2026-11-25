@@ -101,6 +101,13 @@ poseidon_add_test_program(poseidon-test-matmul-scheme Matmul/matmul_scheme.cpp
 poseidon_add_test_plugin(poseidon-test-expansion-match
                          Inputs/expansion_match/emit.cpp)
 poseidon_add_test_plugin(poseidon-test-model Inputs/model/plugin.cpp)
+# Their sources include Model/Evaluators.h, which includes mpfr.h.
+foreach(_plugin poseidon-test-expansion-match poseidon-test-model)
+  target_include_directories(
+    ${_plugin}
+    SYSTEM
+    PRIVATE ${POSEIDON_MPFR_INCLUDE_DIR} ${POSEIDON_GMP_INCLUDE_DIR})
+endforeach()
 set(POSEIDON_TEST_PROGRAMS
     poseidon-test-round-to-prec poseidon-test-matmul-scheme
     poseidon-test-expansion-match poseidon-test-model)
