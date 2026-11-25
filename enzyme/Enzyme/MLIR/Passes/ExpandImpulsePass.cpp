@@ -53,6 +53,23 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
+/// Returns the function `fnAttr` that `op` calls, or fails after emitting on
+/// `op` when its body is empty: a distribution site needs a `logpdf_fn`, or
+/// `opName` would recurse into its sampler.
+static FailureOr<FunctionOpInterface>
+lookupModelBody(Operation *op, SymbolRefAttr fnAttr, StringRef opName,
+                SymbolTableCollection &symbolTable) {
+  auto fn =
+      symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(op, fnAttr);
+  if (!fn.getFunctionBody().empty())
+    return fn;
+  return op->emitError("Impulse: calling `")
+         << opName
+         << "` on an empty function; if this is a distribution function, its "
+            "sample op should have a `logpdf_fn` attribute to avoid recursive `"
+         << opName << "` calls which is intended for generative functions";
+}
+
 /// Sample sites by symbol.
 using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
 
@@ -118,8 +135,8 @@ static bool computePositionSizeForAddress(Operation *op,
       return false;
     }
 
-    auto genFn = cast<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+    auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        sampleOp, sampleOp.getFnAttr());
     if (genFn.getFunctionBody().empty()) {
       op->emitError("Cannot find generative function for nested address");
       return false;
@@ -1610,41 +1627,39 @@ static SmallVector<Value> emitSiteDraw(OpBuilder &builder,
     return impulse::emitDistSampler(
         builder, loc, dist, site.getInputs().front(), siteParams(site),
         cast<RankedTensorType>(site.getResult(1).getType()));
-  auto fn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(site, site.getFnAttr()));
+  auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      site, site.getFnAttr());
   auto call = func::CallOp::create(builder, loc, fn.getName(),
                                    fn.getResultTypes(), site.getInputs());
   return SmallVector<Value>(call.getResults());
 }
 
-/// Checks that the `logpdf_fn` function of `site`, if it has one, takes the
-/// `numValues` values of the site followed by its parameters. `call` names
-/// the call in the diagnostic.
-static LogicalResult verifySiteLogpdf(SymbolTableCollection &symbolTable,
-                                      impulse::SampleOp site, size_t numValues,
-                                      StringRef call = "logpdf call") {
+/// Returns the `logpdf_fn` function of `site`, or null for a site without
+/// one, after checking that it takes the `numValues` values of the site
+/// followed by its parameters. `call` names the call in the diagnostic.
+static FailureOr<FunctionOpInterface>
+verifySiteLogpdf(SymbolTableCollection &symbolTable, impulse::SampleOp site,
+                 size_t numValues, StringRef call = "logpdf call") {
   if (!site.getLogpdfFnAttr())
-    return success();
-  auto logpdfFn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfFnAttr()));
+    return FunctionOpInterface();
+  auto logpdfFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      site, site.getLogpdfFnAttr());
   if (numValues + siteParams(site).size() == logpdfFn.getNumArguments())
-    return success();
+    return logpdfFn;
   return site.emitError("Impulse: failed to construct ")
          << call << "; logpdf function has wrong number of arguments";
 }
 
 /// Emits the log density of `values` (the site's results after the rng) under
-/// `site`: from its distribution, or by calling its `logpdf_fn` function on the
-/// values followed by the site's parameters.
-static Value emitSiteLogpdf(OpBuilder &builder,
-                            SymbolTableCollection &symbolTable,
-                            impulse::SampleOp site, ValueRange values) {
+/// `site`: from its distribution, or by calling `logpdfFn`, the function
+/// `verifySiteLogpdf` returned, on the values followed by the site's
+/// parameters.
+static Value emitSiteLogpdf(OpBuilder &builder, impulse::SampleOp site,
+                            FunctionOpInterface logpdfFn, ValueRange values) {
   Location loc = site.getLoc();
   if (impulse::DistAttr dist = site.getDistAttr())
     return impulse::emitDistLogpdf(builder, loc, dist, values.front(),
                                    siteParams(site));
-  auto logpdfFn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfFnAttr()));
   SmallVector<Value> operands(values);
   llvm::append_range(operands, siteParams(site));
   return func::CallOp::create(builder, loc, logpdfFn.getName(),
@@ -2950,8 +2965,8 @@ struct ExpandImpulsePass
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+      auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+          op, op.getFnAttr());
 
       if (fn.getFunctionBody().empty()) {
         op.emitError("Impulse: trying to call an empty function");
@@ -2998,17 +3013,11 @@ struct ExpandImpulsePass
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        op.emitError(
-            "Impulse: calling `simulate` on an empty function; if this "
-            "is a distribution function, its sample op should have a "
-            "`logpdf_fn` attribute to avoid recursive `simulate` calls "
-            "which is intended for generative functions");
+      FailureOr<FunctionOpInterface> model =
+          lookupModelBody(op, op.getFnAttr(), "simulate", symbolTable);
+      if (failed(model))
         return failure();
-      }
+      FunctionOpInterface fn = *model;
 
       ArrayAttr allAddresses = op.getAllAddressesAttr();
       int64_t positionSize =
@@ -3049,10 +3058,11 @@ struct ExpandImpulsePass
         if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
           sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
-          if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
+          FailureOr<FunctionOpInterface> logpdfFn =
+              verifySiteLogpdf(symbolTable, sampleOp, values.size());
+          if (failed(logpdfFn))
             return failure();
-          Value logpdf =
-              emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
+          Value logpdf = emitSiteLogpdf(rewriter, sampleOp, *logpdfFn, values);
           branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                 branch.weight, logpdf);
           if (hasScoreTail)
@@ -3067,9 +3077,8 @@ struct ExpandImpulsePass
                                "nested generative sites");
             return failure();
           }
-          auto genFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
+          auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+              sampleOp, sampleOp.getFnAttr());
 
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
@@ -3439,8 +3448,8 @@ struct ExpandImpulsePass
       FunctionOpInterface fn;
       SmallVector<Type> fnResultTypes;
       if constexpr (!isRegionForm) {
-        fn = dyn_cast_or_null<FunctionOpInterface>(
-            symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+        fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+            op, op.getFnAttr());
         if (!fn || fn.getFunctionBody().empty()) {
           op.emitError("Impulse MH: `fn` must reference a non-empty funcOp");
           return failure();
@@ -3912,8 +3921,8 @@ struct ExpandImpulsePass
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(mhOp, mhOp.getFnAttr()));
+      auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+          mhOp, mhOp.getFnAttr());
 
       if (fn.getFunctionBody().empty()) {
         mhOp.emitError(
@@ -3991,17 +4000,11 @@ struct ExpandImpulsePass
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        op.emitError(
-            "Impulse: calling `generate` on an empty function; if this "
-            "is a distribution function, its sample op should have a "
-            "`logpdf_fn` attribute to avoid recursive `generate` calls "
-            "which is intended for generative functions");
+      FailureOr<FunctionOpInterface> model =
+          lookupModelBody(op, op.getFnAttr(), "generate", symbolTable);
+      if (failed(model))
         return failure();
-      }
+      FunctionOpInterface fn = *model;
 
       ArrayAttr allAddresses = op.getAllAddressesAttr();
       int64_t positionSize =
@@ -4070,13 +4073,13 @@ struct ExpandImpulsePass
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           }
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
-          if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size(),
-                                      isConstrained
-                                          ? "logpdf call for constrained sample"
-                                          : "logpdf call")))
+          FailureOr<FunctionOpInterface> logpdfFn = verifySiteLogpdf(
+              symbolTable, sampleOp, values.size(),
+              isConstrained ? "logpdf call for constrained sample"
+                            : "logpdf call");
+          if (failed(logpdfFn))
             return failure();
-          Value logpdf =
-              emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
+          Value logpdf = emitSiteLogpdf(rewriter, sampleOp, *logpdfFn, values);
           branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                 branch.weight, logpdf);
           if (hasScoreTail)
@@ -4091,9 +4094,8 @@ struct ExpandImpulsePass
                                "nested generative sites");
             return failure();
           }
-          auto genFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
+          auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+              sampleOp, sampleOp.getFnAttr());
 
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
@@ -4236,17 +4238,11 @@ struct ExpandImpulsePass
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        op.emitError(
-            "Impulse: calling `regenerate` on an empty function; if this "
-            "is a distribution function, its sample op should have a "
-            "`logpdf_fn` attribute to avoid recursive `regenerate` calls "
-            "which is intended for generative functions");
+      FailureOr<FunctionOpInterface> model =
+          lookupModelBody(op, op.getFnAttr(), "regenerate", symbolTable);
+      if (failed(model))
         return failure();
-      }
+      FunctionOpInterface fn = *model;
 
       ArrayAttr allAddresses = op.getAllAddressesAttr();
       int64_t positionSize =
@@ -4476,7 +4472,9 @@ struct ExpandImpulsePass
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
           if (hastings && !hasScoreTail && (isSelected || flipIdx >= 0))
             hastingsTaint.insert(values.begin(), values.end());
-          if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
+          FailureOr<FunctionOpInterface> logpdfFn =
+              verifySiteLogpdf(symbolTable, sampleOp, values.size());
+          if (failed(logpdfFn))
             return failure();
 
           bool termDirty =
@@ -4497,10 +4495,10 @@ struct ExpandImpulsePass
             if (it != siteIndex.end())
               branch.weight = recordSiteScore(
                   loc, branch.weight, it->second,
-                  emitSiteLogpdf(rewriter, symbolTable, sampleOp, values));
+                  emitSiteLogpdf(rewriter, sampleOp, *logpdfFn, values));
           } else if (!hasScoreTail || termDirty) {
             Value logpdf =
-                emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
+                emitSiteLogpdf(rewriter, sampleOp, *logpdfFn, values);
             Value contribution =
                 hasScoreTail
                     ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore)
@@ -4517,7 +4515,7 @@ struct ExpandImpulsePass
               if (!hasScoreTail && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
                 Value oldLogpdf = emitSiteLogpdf(
-                    rewriter, symbolTable, sampleOp,
+                    rewriter, sampleOp, *logpdfFn,
                     sliceTraceValues(
                         rewriter, loc, prevTrace, sampleOffset,
                         TypeRange(sampleOp->getResultTypes()).drop_front()));
@@ -4544,9 +4542,8 @@ struct ExpandImpulsePass
                                       /*write=*/!hasScoreTail || isSelected)))
             return failure();
         } else {
-          auto genFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
+          auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+              sampleOp, sampleOp.getFnAttr());
 
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
