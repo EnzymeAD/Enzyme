@@ -91,9 +91,3 @@ series = {SC '22}
 ```
 
 [Julia bindings](https://github.com/EnzymeAD/Enzyme.jl#readme), [Rust bindings](https://github.com/EnzymeAD/rust#readme), and [Fortran bindings](https://github.com/EnzymeAD/Enzyme/tree/main/enzyme/Fortran) are available for Enzyme.
-
-## Poseidon
-
-This repository also hosts [Poseidon](https://prontolab.github.io/numerics/),
-an LLVM plugin for numerical rewriting inside the compiler. It is built with
-`-DENZYME_POSEIDON=ON`; see `enzyme/Poseidon/README.md`.
