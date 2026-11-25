@@ -1,3 +1,11 @@
+//===- SampleDependenceAnalysis.cpp - Sample dependence of values ---------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis/SampleDependenceAnalysis.h"
 
 #include "Interfaces/Utils.h"
@@ -398,35 +406,33 @@ ScopedSampleDependenceCache::~ScopedSampleDependenceCache() {
   activeSampleDependenceCache = previous;
 }
 
+/// The analysis of the region of the innermost `impulse.infer_region` that is
+/// `region` or holds it, or null when no infer_region holds `region`.
 static std::shared_ptr<SampleDependenceAnalysis>
-analyzeRegion(InferRegionOp regionOp, Region *region) {
-  AnalysisTarget target = region == &regionOp.getLogpdf()
-                              ? AnalysisTarget::Logpdf
-                              : AnalysisTarget::Sampling;
-  if (activeSampleDependenceCache)
-    return activeSampleDependenceCache->get(regionOp, target);
-  return std::make_shared<SampleDependenceAnalysis>(regionOp, target);
+analyzeInferRegionHolding(Region *region) {
+  while (region) {
+    Operation *parent = region->getParentOp();
+    if (!parent)
+      return nullptr;
+    if (auto regionOp = dyn_cast<InferRegionOp>(parent)) {
+      AnalysisTarget target = region == &regionOp.getLogpdf()
+                                  ? AnalysisTarget::Logpdf
+                                  : AnalysisTarget::Sampling;
+      if (activeSampleDependenceCache)
+        return activeSampleDependenceCache->get(regionOp, target);
+      return std::make_shared<SampleDependenceAnalysis>(regionOp, target);
+    }
+    region = parent->getParentRegion();
+  }
+  return nullptr;
 }
 
 std::shared_ptr<SampleDependenceAnalysis>
 impulse::analyzeEnclosingRegion(Operation *op) {
-  auto regionOp = op->getParentOfType<InferRegionOp>();
-  if (!regionOp)
-    return nullptr;
-  Region *region = op->getParentRegion();
-  while (region && region->getParentOp() != regionOp)
-    region = region->getParentOp()->getParentRegion();
-  if (!region)
-    return nullptr;
-  return analyzeRegion(regionOp, region);
+  return analyzeInferRegionHolding(op->getParentRegion());
 }
 
 std::shared_ptr<SampleDependenceAnalysis>
 impulse::analyzeRegionHolding(Value value) {
-  Region *region = value.getParentRegion();
-  while (region && !isa<InferRegionOp>(region->getParentOp()))
-    region = region->getParentOp()->getParentRegion();
-  if (!region)
-    return nullptr;
-  return analyzeRegion(cast<InferRegionOp>(region->getParentOp()), region);
+  return analyzeInferRegionHolding(value.getParentRegion());
 }
