@@ -468,10 +468,9 @@ static json::Object targetJSON(const Options &O, double tau, bool siteTarget) {
   return target;
 }
 
-// The directory of -poseidon-explain, else of -poseidon-report-path.
+// The directory of -poseidon-explain.
 static const std::string &explanationDir(const Options &O) {
-  const DiagnosticOptions &D = O.Diagnostics;
-  return !D.Explain.empty() ? D.Explain : D.ReportPath;
+  return O.Diagnostics.Explain;
 }
 
 // Writes `doc`, the explanation of a site, as <stem>.explain.json into the
@@ -1724,7 +1723,7 @@ void Explainer::emitRemarks() {
 }
 
 bool explainWanted(const Options &O, const Function &F) {
-  return !O.Diagnostics.Explain.empty() || !O.Diagnostics.ReportPath.empty() ||
+  return !O.Diagnostics.Explain.empty() ||
          OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
 }
 

@@ -17,8 +17,8 @@
 ; gives the applied rewrite is the one the explanation of the compile that
 ; reads the table back gives it.
 ; RUN: mkdir %t/ids
-; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
-; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
+; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-explain=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
+; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-explain=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
 ; RUN: %python -c "import json, sys; print(*json.load(open(sys.argv[1]))['result']['applied'])" %t/ids/solve/preprocess_tester.explain.json > %t/ids/solve.id
 ; RUN: FileCheck --check-prefix=IDS-ID %s < %t/ids/solve.id
 ; RUN: FileCheck --check-prefix=IDS-EXPLAIN -DID=$(cat %t/ids/solve.id) %s < %t/ids/solve/preprocess_tester.explain.json

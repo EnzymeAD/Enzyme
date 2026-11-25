@@ -13,7 +13,6 @@
 ; CHECK-NEXT: --poseidon-print
 ; CHECK-NEXT: --poseidon-profile-generate
 ; CHECK-NEXT: --poseidon-profile-use[=<directory>]
-; CHECK-NEXT: --poseidon-report-path=<directory>
 ; CHECK: --poseidon-tau=<error>
 ; CHECK-NOT: --poseidon-
 

@@ -139,7 +139,6 @@ static void printHelp(StringRef Prog) {
          "                                this share of the profiled FP cost\n"
          "  -poseidon-cache=<dir>         Herbie results, DP tables, "
          "descriptors\n"
-         "  -poseidon-report-path=<dir>   write <func>.explain.json there\n"
          "  -poseidon-explain=<dir>       write <func>.explain.json (see\n"
          "                                poseidon-explain)\n"
          "  -poseidon-help                this message\n\n"

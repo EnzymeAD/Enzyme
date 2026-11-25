@@ -369,10 +369,6 @@ POSEIDON_DIAGNOSTIC_OPTION(ShowTable, Bool, false, "poseidon-show-table",
                            Hidden, Other, "",
                            "Print the whole DP table of each solve (long for a "
                            "large program)")
-POSEIDON_DIAGNOSTIC_OPTION(ReportPath, String, "", "poseidon-report-path", User,
-                           Other, "directory",
-                           "Directory to write <func>.explain.json to when "
-                           "-poseidon-explain names none")
 POSEIDON_DIAGNOSTIC_OPTION(
     Explain, String, "", "poseidon-explain", User, Other, "directory",
     "Directory to write <func>.explain.json to: for every site, what its "
