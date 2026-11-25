@@ -52,7 +52,9 @@ trip count. A host model holds rows of two kinds, which mean different things:
 - A math-library row is the function's reciprocal throughput: independent
   calls on fixed inputs. A dependent chain would price a call whose result
   follows a predicted branch (an overflowing `exp`, a saturated `tanh`) at
-  nothing.
+  nothing. The inputs lie inside the function's domain, on the ordinary path
+  of its routine in the C library, in the intervals `microbm_cpu.py` lists
+  beside each function.
 
 The GPU rows are reciprocal throughputs throughout, so a GPU model and a host
 model are not comparable row for row. Before a loop is timed, the script

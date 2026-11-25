@@ -30,6 +30,7 @@ measured, progress to stderr."""
 
 import argparse
 import ctypes
+import math
 import os
 import random
 import re
@@ -65,6 +66,7 @@ def float_to_llvm_hex(f, precision):
 
 
 def generate_random_fp(precision):
+    """A fixed input of an arithmetic operation or a conversion."""
     if precision == "double":
         return random.uniform(-1e10, 1e10)
     return random.uniform(-1e5, 1e5)
@@ -74,50 +76,109 @@ OPS = ["fneg", "fadd", "fsub", "fmul", "fdiv", "fcmp"]
 
 CASTS = [("fpext", "float", "double"), ("fptrunc", "double", "float")]
 
+# The inputs of a math-library row: an interval per floating-point argument,
+# inside the function's domain and on the ordinary path of its routine in
+# glibc 2.39, as its sources branch and timing across magnitudes shows: no
+# overflow, underflow, saturation, domain error or large-argument reduction.
+# An input is never an integer or a power of two, which some routines take
+# shortcuts on. D is for a function whose path depends on nothing more.
+D = (-10.0, 10.0)
 FUNC_INFO = {
-    "fmuladd": {"intrinsic": "llvm.fmuladd", "num_operands": 3},
-    "sin": {"intrinsic": "llvm.sin", "num_operands": 1},
-    "cos": {"intrinsic": "llvm.cos", "num_operands": 1},
-    "tan": {"intrinsic": None, "num_operands": 1},
-    "exp": {"intrinsic": "llvm.exp", "num_operands": 1},
-    "log": {"intrinsic": "llvm.log", "num_operands": 1},
-    "sqrt": {"intrinsic": "llvm.sqrt", "num_operands": 1},
-    "expm1": {"intrinsic": None, "num_operands": 1},
-    "log1p": {"intrinsic": None, "num_operands": 1},
-    "cbrt": {"intrinsic": None, "num_operands": 1},
-    "pow": {"intrinsic": "llvm.pow", "num_operands": 2},
-    "fabs": {"intrinsic": "llvm.fabs", "num_operands": 1},
-    "fma": {"intrinsic": "llvm.fma", "num_operands": 3},
-    "maxnum": {"intrinsic": "llvm.maxnum", "num_operands": 2},
-    "minnum": {"intrinsic": "llvm.minnum", "num_operands": 2},
-    "ceil": {"intrinsic": "llvm.ceil", "num_operands": 1},
-    "floor": {"intrinsic": "llvm.floor", "num_operands": 1},
-    "exp2": {"intrinsic": "llvm.exp2", "num_operands": 1},
-    "log10": {"intrinsic": "llvm.log10", "num_operands": 1},
-    "log2": {"intrinsic": "llvm.log2", "num_operands": 1},
-    "rint": {"intrinsic": "llvm.rint", "num_operands": 1},
-    "round": {"intrinsic": "llvm.round", "num_operands": 1},
-    "trunc": {"intrinsic": "llvm.trunc", "num_operands": 1},
-    "copysign": {"intrinsic": "llvm.copysign", "num_operands": 2},
-    "fdim": {"intrinsic": None, "num_operands": 2},
-    "fmod": {"intrinsic": None, "num_operands": 2},
-    "asin": {"intrinsic": None, "num_operands": 1},
-    "acos": {"intrinsic": None, "num_operands": 1},
-    "atan": {"intrinsic": None, "num_operands": 1},
-    "atan2": {"intrinsic": None, "num_operands": 2},
-    "sinh": {"intrinsic": None, "num_operands": 1},
-    "cosh": {"intrinsic": None, "num_operands": 1},
-    "tanh": {"intrinsic": None, "num_operands": 1},
-    "asinh": {"intrinsic": None, "num_operands": 1},
-    "acosh": {"intrinsic": None, "num_operands": 1},
-    "atanh": {"intrinsic": None, "num_operands": 1},
-    "hypot": {"intrinsic": None, "num_operands": 2},
-    "erf": {"intrinsic": None, "num_operands": 1},
-    "lgamma": {"intrinsic": None, "num_operands": 1},
-    "tgamma": {"intrinsic": None, "num_operands": 1},
-    "remainder": {"intrinsic": None, "num_operands": 2},
-    "powi": {"intrinsic": "llvm.powi", "num_operands": 2},
+    "fmuladd": {"intrinsic": "llvm.fmuladd", "num_operands": 3, "inputs": [D, D, D]},
+    # Below 1e5 the argument reduction stays short; beyond 1e8 (sinf and cosf:
+    # 120) it takes the slow path.
+    "sin": {"intrinsic": "llvm.sin", "num_operands": 1, "inputs": [D]},
+    "cos": {"intrinsic": "llvm.cos", "num_operands": 1, "inputs": [D]},
+    "tan": {"intrinsic": None, "num_operands": 1, "inputs": [D]},
+    # exp2f, expf and exp overflow from 128, 88.7 and 709.8 up, and underflow
+    # to subnormals below their negatives, through a slower path.
+    "exp": {"intrinsic": "llvm.exp", "num_operands": 1, "inputs": [(-20.0, 20.0)]},
+    # Logarithms of a negative number are a domain error.
+    "log": {"intrinsic": "llvm.log", "num_operands": 1, "inputs": [(0.1, 100.0)]},
+    "sqrt": {"intrinsic": "llvm.sqrt", "num_operands": 1, "inputs": [(0.1, 100.0)]},
+    # Below -17 (float) and -38 (double) expm1 is -1.
+    "expm1": {"intrinsic": None, "num_operands": 1, "inputs": [(-5.0, 5.0)]},
+    # Defined above -1; near -1 the result runs to minus infinity.
+    "log1p": {"intrinsic": None, "num_operands": 1, "inputs": [(-0.5, 10.0)]},
+    "cbrt": {"intrinsic": None, "num_operands": 1, "inputs": [D]},
+    # A negative base needs an integer exponent; the result stays in range.
+    "pow": {"intrinsic": "llvm.pow", "num_operands": 2, "inputs": [(0.5, 10.0), (-4.0, 4.0)]},
+    "fabs": {"intrinsic": "llvm.fabs", "num_operands": 1, "inputs": [D]},
+    "fma": {"intrinsic": "llvm.fma", "num_operands": 3, "inputs": [D, D, D]},
+    "maxnum": {"intrinsic": "llvm.maxnum", "num_operands": 2, "inputs": [D, D]},
+    "minnum": {"intrinsic": "llvm.minnum", "num_operands": 2, "inputs": [D, D]},
+    "ceil": {"intrinsic": "llvm.ceil", "num_operands": 1, "inputs": [D]},
+    "floor": {"intrinsic": "llvm.floor", "num_operands": 1, "inputs": [D]},
+    "exp2": {"intrinsic": "llvm.exp2", "num_operands": 1, "inputs": [(-20.0, 20.0)]},
+    "log10": {"intrinsic": "llvm.log10", "num_operands": 1, "inputs": [(0.1, 100.0)]},
+    "log2": {"intrinsic": "llvm.log2", "num_operands": 1, "inputs": [(0.1, 100.0)]},
+    "rint": {"intrinsic": "llvm.rint", "num_operands": 1, "inputs": [D]},
+    "round": {"intrinsic": "llvm.round", "num_operands": 1, "inputs": [D]},
+    "trunc": {"intrinsic": "llvm.trunc", "num_operands": 1, "inputs": [D]},
+    "copysign": {"intrinsic": "llvm.copysign", "num_operands": 2, "inputs": [D, D]},
+    "fdim": {"intrinsic": None, "num_operands": 2, "inputs": [D, D]},
+    "fmod": {"intrinsic": None, "num_operands": 2, "inputs": [D, D]},
+    # Defined on [-1, 1]; above 0.92 asin and acos take their slower paths near
+    # 1.
+    "asin": {"intrinsic": None, "num_operands": 1, "inputs": [(-0.9, 0.9)]},
+    "acos": {"intrinsic": None, "num_operands": 1, "inputs": [(-0.9, 0.9)]},
+    "atan": {"intrinsic": None, "num_operands": 1, "inputs": [D]},
+    "atan2": {"intrinsic": None, "num_operands": 2, "inputs": [D, D]},
+    # From 22 on (float: 9) the hyperbolic functions grow through exp to
+    # overflow, and tanh is +-1.
+    "sinh": {"intrinsic": None, "num_operands": 1, "inputs": [(-5.0, 5.0)]},
+    "cosh": {"intrinsic": None, "num_operands": 1, "inputs": [(-5.0, 5.0)]},
+    "tanh": {"intrinsic": None, "num_operands": 1, "inputs": [(-5.0, 5.0)]},
+    "asinh": {"intrinsic": None, "num_operands": 1, "inputs": [D]},
+    # Defined from 1 on.
+    "acosh": {"intrinsic": None, "num_operands": 1, "inputs": [(1.5, 10.0)]},
+    # Defined on (-1, 1).
+    "atanh": {"intrinsic": None, "num_operands": 1, "inputs": [(-0.9, 0.9)]},
+    "hypot": {"intrinsic": None, "num_operands": 2, "inputs": [D, D]},
+    # From 6 on erf is +-1.
+    "erf": {"intrinsic": None, "num_operands": 1, "inputs": [(-3.0, 3.0)]},
+    # Poles at 0 and the negative integers, and below 0 the reflection through
+    # sin; tgamma overflows from 171.6 (float: 35) on.
+    "lgamma": {"intrinsic": None, "num_operands": 1, "inputs": [(0.5, 10.0)]},
+    "tgamma": {"intrinsic": None, "num_operands": 1, "inputs": [(0.5, 10.0)]},
+    "remainder": {"intrinsic": None, "num_operands": 2, "inputs": [D, D]},
+    # The exponent is drawn from POWI_EXPONENTS; a base within a factor 2 of 1
+    # keeps every power normal.
+    "powi": {"intrinsic": "llvm.powi", "num_operands": 2, "inputs": [(0.5, 2.0)]},
 }
+
+# An exponent of 0 or 1 is no operation at all.
+POWI_EXPONENTS = [e for e in range(-10, 11) if e not in (0, 1)]
+
+
+def inputs_of(name):
+    """The intervals of `name`'s floating-point arguments; stops unless the
+    table gives one to each."""
+    info = FUNC_INFO[name]
+    want = info["num_operands"] - (1 if name == "powi" else 0)
+    got = info.get("inputs") or []
+    if len(got) != want or any(not lo < hi for lo, hi in got):
+        sys.exit(f"microbm_cpu.py: {name} needs {want} input interval(s) with lo < hi in FUNC_INFO, has {got}")
+    return got
+
+
+def is_shortcut(v):
+    """An integer or a power of two, which some routines take shortcuts on."""
+    return v == int(v) or math.frexp(abs(v))[0] == 0.5
+
+
+def draw(interval, T):
+    """An input from `interval`, as the type T holds it."""
+    lo, hi = interval
+    while True:
+        v = random.uniform(lo, hi)
+        if T == "float":
+            v = struct.unpack("<f", struct.pack("<f", v))[0]
+        if not is_shortcut(v):
+            break
+    if not lo <= v <= hi:
+        sys.exit(f"microbm_cpu.py: the input {v!r} lies outside its interval [{lo}, {hi}]")
+    return v
 
 
 def const(f, precision):
@@ -166,39 +227,40 @@ def chain_step(name, precision):
 
 
 # The operation on an input of its own, (row, type) -> (input type, result
-# type, the operation on %y as the i-th step). Every input is the fixed value
-# today's inputs come from; the restoring step puts it in front of each step.
+# type, the operation on %y as the i-th step, the interval of a library
+# function's first argument or None). A library function's other arguments
+# come from its FUNC_INFO inputs, an arithmetic operation's and a conversion's
+# from generate_random_fp.
 def fixed_input_step(name, precision):
     T = precision
     if name.startswith("fpext_") or name.startswith("fptrunc_"):
         op, rest = name.split("_", 1)
         src, dst = rest.split("_to_")
-        return src, dst, lambda y, i: ([f"%s{i} = {op} {src} {y} to {dst}"], f"%s{i}")
+        return src, dst, lambda y, i: ([f"%s{i} = {op} {src} {y} to {dst}"], f"%s{i}"), None
     if name == "fneg":
-        return T, T, lambda y, i: ([f"%s{i} = fneg {T} {y}"], f"%s{i}")
+        return T, T, lambda y, i: ([f"%s{i} = fneg {T} {y}"], f"%s{i}"), None
     if name == "fcmp":
-        return T, T, chain_step(name, T)
+        return T, T, chain_step(name, T), None
     if name in OPS:
-        return T, T, lambda y, i: ([f"%s{i} = {name} {T} {y}, {const(generate_random_fp(T), T)}"], f"%s{i}")
-    info = FUNC_INFO[name]
+        return T, T, lambda y, i: ([f"%s{i} = {name} {T} {y}, {const(generate_random_fp(T), T)}"], f"%s{i}"), None
+    info, inputs = FUNC_INFO[name], inputs_of(name)
     # The C library names the float form of a function with an f suffix.
     fn = f"{info['intrinsic']}.{intrinsic_suffix[T]}" if info["intrinsic"] else name + ("f" if T == "float" else "")
     if name == "powi":
-        # An exponent of 0 or 1 is no operation at all.
-        k = lambda i: random.choice([e for e in range(-10, 11) if e not in (0, 1)])
-        return T, T, lambda y, i: ([f"%s{i} = call {T} @{fn}({T} {y}, i32 {k(i)})"], f"%s{i}")
+        return T, T, (lambda y, i: ([f"%s{i} = call {T} @{fn}({T} {y}, i32 {random.choice(POWI_EXPONENTS)})"],
+                                    f"%s{i}")), inputs[0]
 
     def rest():
-        return "".join(f", {T} {const(generate_random_fp(T), T)}" for _ in range(info["num_operands"] - 1))
+        return "".join(f", {T} {const(draw(interval, T), T)}" for interval in inputs[1:])
 
-    return T, T, lambda y, i: ([f"%s{i} = call {T} @{fn}({T} {y}{rest()})"], f"%s{i}")
+    return T, T, lambda y, i: ([f"%s{i} = call {T} @{fn}({T} {y}{rest()})"], f"%s{i}"), inputs[0]
 
 
 def bits(T):
     return {"float": "i32", "double": "i64"}[T]
 
 
-def restore(x, R, S, i):
+def restore(x, R, S, i, interval=None):
     """The step that gives the next operation its fixed input of type S, as a
     function of the previous result %x of type R, which it keeps the input
     dependent on while discarding its value, whatever it is (NaN and infinity
@@ -211,7 +273,8 @@ def restore(x, R, S, i):
     if bits(R) != bits(S):
         lines.append(f"%rw{i} = {'trunc' if bits(R) == 'i64' else 'zext'} {bits(R)} {m} to {bits(S)}")
         m = f"%rw{i}"
-    [c] = struct.unpack("<I" if S == "float" else "<Q", struct.pack("<f" if S == "float" else "<d", generate_random_fp(S)))
+    v = draw(interval, S) if interval else generate_random_fp(S)
+    [c] = struct.unpack("<I" if S == "float" else "<Q", struct.pack("<f" if S == "float" else "<d", v))
     # The input leaves the integer registers through an addition of +0, which
     # the compiler keeps, so that no integer operation can stand in for the
     # floating-point one it feeds (fneg of a bitcast is an integer xor).
@@ -263,10 +326,10 @@ def chain_shape(name, precision, behind_asm=False):
 
 
 def fixed_input_shape(name, precision):
-    S, R, op = fixed_input_step(name, precision)
+    S, R, op, interval = fixed_input_step(name, precision)
 
     def step(x, i):
-        lines, y = restore(x, R, S, i)
+        lines, y = restore(x, R, S, i, interval)
         more, r = op(y, i)
         return lines + more, r
 
@@ -275,11 +338,11 @@ def fixed_input_shape(name, precision):
     return Shape("fixed input", R, step, lambda x, i: restore(x, R, R, i), op, S)
 
 
-def independent_input(T, i):
+def independent_input(T, i, interval):
     """A fixed input of type T the compiler cannot see, on no previous step:
     the bits of the input or-ed with a zero it cannot see."""
     zero = "%zero32" if T == "float" else "%zero64"
-    [c] = struct.unpack("<I" if T == "float" else "<Q", struct.pack("<f" if T == "float" else "<d", generate_random_fp(T)))
+    [c] = struct.unpack("<I" if T == "float" else "<Q", struct.pack("<f" if T == "float" else "<d", draw(interval, T)))
     return [f"%io{i} = or {bits(T)} {zero}, {c}", f"%ic{i} = bitcast {bits(T)} %io{i} to {T}",
             f"%iy{i} = fadd {T} %ic{i}, {const(0.0, T)}"], f"%iy{i}"
 
@@ -291,10 +354,10 @@ def independent_shape(name, precision):
     whose result follows from a predicted branch rather than from its input
     (an overflowing exp, a saturated tanh, fdim's zero), which a chain would
     price at nothing."""
-    S, R, op = fixed_input_step(name, precision)
+    S, R, op, interval = fixed_input_step(name, precision)
 
     def run(i, call):
-        lines, y = independent_input(S, i)
+        lines, y = independent_input(S, i, interval)
         more, r = (op(y, i) if call else ([], y))
         return lines + more + [f"store volatile {R} {r}, {R}* @sink.{R}"]
 
@@ -594,6 +657,8 @@ def main():
     ap.add_argument("--iterations", type=int, default=0, help="loop trips of each run, in place of sizing it by time")
     ap.add_argument("--chain-only", action="store_true", help="time every operation in the chain through itself, refusing one that folds")
     args = ap.parse_args()
+    for name in FUNC_INFO:
+        inputs_of(name)
     args.features = checked_features(args.cpu, args.features)
     tm = create_target_machine(args.cpu, args.features)
 
