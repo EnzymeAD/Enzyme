@@ -1486,6 +1486,102 @@ static Value scalarAt(OpBuilder &b, Location loc, Value tensor,
       b, loc, RankedTensorType::get({}, type.getElementType()), slice);
 }
 
+static LogicalResult processImpulseBlock(Block &block,
+                                         PatternRewriter &rewriter,
+                                         BranchCarry &carry,
+                                         ProcessSampleFn processSample);
+
+/// Branches start from the pre-if snapshot; untaken slots stay zero.
+static LogicalResult processImpulseIf(impulse::IfOp ifOp,
+                                      PatternRewriter &rewriter,
+                                      BranchCarry &carry,
+                                      ProcessSampleFn processSample) {
+  Location loc = ifOp.getLoc();
+  BranchCarry before = carry;
+
+  Block &trueBlock = ifOp.getTrueBranch().front();
+  if (failed(processImpulseBlock(trueBlock, rewriter, carry, processSample)))
+    return failure();
+  BranchCarry afterTrue = carry;
+
+  Block &falseBlock = ifOp.getFalseBranch().front();
+  carry.currTrace = before.currTrace;
+  carry.weight = before.weight;
+  carry.corr = before.corr;
+  if (failed(processImpulseBlock(falseBlock, rewriter, carry, processSample)))
+    return failure();
+
+  auto extendYield = [&](Block &block, const BranchCarry &branch) {
+    auto yield = cast<impulse::YieldOp>(block.getTerminator());
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(yield);
+    SmallVector<Value> operands(yield.getOperands().begin(),
+                                yield.getOperands().end());
+    operands.push_back(branch.currTrace);
+    operands.push_back(branch.weight);
+    if (branch.corr)
+      operands.push_back(branch.corr);
+    impulse::YieldOp::create(rewriter, yield.getLoc(), operands);
+    rewriter.eraseOp(yield);
+  };
+  extendYield(trueBlock, afterTrue);
+  extendYield(falseBlock, carry);
+
+  SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
+                                   ifOp.getResultTypes().end());
+  unsigned oldNumResults = ifOp.getNumResults();
+  newResultTypes.push_back(before.currTrace.getType());
+  // Not always scalar: an MH site-scores regenerate carries a vector.
+  newResultTypes.push_back(before.weight.getType());
+  if (before.corr)
+    newResultTypes.push_back(before.corr.getType());
+
+  rewriter.setInsertionPoint(ifOp);
+  auto newIf =
+      impulse::IfOp::create(rewriter, loc, newResultTypes, ifOp.getPredicate());
+  rewriter.inlineRegionBefore(ifOp.getTrueBranch(), newIf.getTrueBranch(),
+                              newIf.getTrueBranch().end());
+  rewriter.inlineRegionBefore(ifOp.getFalseBranch(), newIf.getFalseBranch(),
+                              newIf.getFalseBranch().end());
+
+  carry.currTrace = newIf.getResult(oldNumResults);
+  carry.weight = newIf.getResult(oldNumResults + 1);
+  if (before.corr)
+    carry.corr = newIf.getResult(oldNumResults + 2);
+
+  rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
+  return success();
+}
+
+static LogicalResult processImpulseBlock(Block &block,
+                                         PatternRewriter &rewriter,
+                                         BranchCarry &carry,
+                                         ProcessSampleFn processSample) {
+  SmallVector<Operation *> ops;
+  for (Operation &op : block)
+    ops.push_back(&op);
+
+  for (Operation *op : ops) {
+    if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
+      if (failed(processSample(sampleOp, carry)))
+        return failure();
+    } else if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
+      bool hasSample = false;
+      ifOp->walk([&](impulse::SampleOp) { hasSample = true; });
+      if (hasSample &&
+          failed(processImpulseIf(ifOp, rewriter, carry, processSample)))
+        return failure();
+    } else {
+      for (Region &region : op->getRegions())
+        for (Block &nested : region.getBlocks())
+          if (failed(
+                  processImpulseBlock(nested, rewriter, carry, processSample)))
+            return failure();
+    }
+  }
+  return success();
+}
+
 static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
                                 Value corr) {
   auto vecType = RankedTensorType::get({2}, b.getF64Type());
@@ -1590,102 +1686,6 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
   if (width > positionSize)
     windows.push_back({positionSize, width});
   return mergeColumnWindows(windows);
-}
-
-static LogicalResult processImpulseBlock(Block &block,
-                                         PatternRewriter &rewriter,
-                                         BranchCarry &carry,
-                                         ProcessSampleFn processSample);
-
-/// Branches start from the pre-if snapshot; untaken slots stay zero.
-static LogicalResult processImpulseIf(impulse::IfOp ifOp,
-                                      PatternRewriter &rewriter,
-                                      BranchCarry &carry,
-                                      ProcessSampleFn processSample) {
-  Location loc = ifOp.getLoc();
-  BranchCarry before = carry;
-
-  Block &trueBlock = ifOp.getTrueBranch().front();
-  if (failed(processImpulseBlock(trueBlock, rewriter, carry, processSample)))
-    return failure();
-  BranchCarry afterTrue = carry;
-
-  Block &falseBlock = ifOp.getFalseBranch().front();
-  carry.currTrace = before.currTrace;
-  carry.weight = before.weight;
-  carry.corr = before.corr;
-  if (failed(processImpulseBlock(falseBlock, rewriter, carry, processSample)))
-    return failure();
-
-  auto extendYield = [&](Block &block, const BranchCarry &branch) {
-    auto yield = cast<impulse::YieldOp>(block.getTerminator());
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPoint(yield);
-    SmallVector<Value> operands(yield.getOperands().begin(),
-                                yield.getOperands().end());
-    operands.push_back(branch.currTrace);
-    operands.push_back(branch.weight);
-    if (branch.corr)
-      operands.push_back(branch.corr);
-    impulse::YieldOp::create(rewriter, yield.getLoc(), operands);
-    rewriter.eraseOp(yield);
-  };
-  extendYield(trueBlock, afterTrue);
-  extendYield(falseBlock, carry);
-
-  SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
-                                   ifOp.getResultTypes().end());
-  unsigned oldNumResults = ifOp.getNumResults();
-  newResultTypes.push_back(before.currTrace.getType());
-  // Not always scalar: an MH site-scores regenerate carries a vector.
-  newResultTypes.push_back(before.weight.getType());
-  if (before.corr)
-    newResultTypes.push_back(before.corr.getType());
-
-  rewriter.setInsertionPoint(ifOp);
-  auto newIf =
-      impulse::IfOp::create(rewriter, loc, newResultTypes, ifOp.getPredicate());
-  rewriter.inlineRegionBefore(ifOp.getTrueBranch(), newIf.getTrueBranch(),
-                              newIf.getTrueBranch().end());
-  rewriter.inlineRegionBefore(ifOp.getFalseBranch(), newIf.getFalseBranch(),
-                              newIf.getFalseBranch().end());
-
-  carry.currTrace = newIf.getResult(oldNumResults);
-  carry.weight = newIf.getResult(oldNumResults + 1);
-  if (before.corr)
-    carry.corr = newIf.getResult(oldNumResults + 2);
-
-  rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
-  return success();
-}
-
-static LogicalResult processImpulseBlock(Block &block,
-                                         PatternRewriter &rewriter,
-                                         BranchCarry &carry,
-                                         ProcessSampleFn processSample) {
-  SmallVector<Operation *> ops;
-  for (Operation &op : block)
-    ops.push_back(&op);
-
-  for (Operation *op : ops) {
-    if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
-      if (failed(processSample(sampleOp, carry)))
-        return failure();
-    } else if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
-      bool hasSample = false;
-      ifOp->walk([&](impulse::SampleOp) { hasSample = true; });
-      if (hasSample &&
-          failed(processImpulseIf(ifOp, rewriter, carry, processSample)))
-        return failure();
-    } else {
-      for (Region &region : op->getRegions())
-        for (Block &nested : region.getBlocks())
-          if (failed(
-                  processImpulseBlock(nested, rewriter, carry, processSample)))
-            return failure();
-    }
-  }
-  return success();
 }
 
 /// Which per-site yields (terminator operands 1..) depend on `seeds`.
