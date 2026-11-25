@@ -172,7 +172,7 @@ bool impulse::constructLogpdfRegion(
   if (!regionOp.getLogpdf().empty())
     return false;
   Region &samplerRegion = regionOp.getSampling();
-  if (samplerRegion.empty() || !samplerRegion.hasOneBlock())
+  if (samplerRegion.empty())
     return false;
   ArrayAttr selection = regionOp.getSelectionAttr();
   ArrayAttr allAddresses = regionOp.getAllAddressesAttr();
@@ -192,8 +192,7 @@ bool impulse::constructLogpdfRegion(
       if (!isa<IfOp>(p))
         return false;
     ArrayAttr address = site.getAddressAttr();
-    if (!address || site.getNumResults() < 2 || site.getLogpdf().empty() ||
-        !site.getLogpdf().hasOneBlock())
+    if (!address || site.getNumResults() < 2 || site.getLogpdf().empty())
       return false;
     unsigned numOutputs = site.getNumResults() - 1;
     unsigned numParams =

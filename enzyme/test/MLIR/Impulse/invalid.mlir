@@ -73,3 +73,11 @@ func.func @infer_region_missing_fn(%rng : tensor<2xui64>, %trace : tensor<1x1xf6
   } <{hmc_config = #impulse.hmc_config<trajectory_length = 1.0>, selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]]}> : (tensor<2xui64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
   return
 }
+
+// -----
+
+func.func @select_type_mismatch(%cond : tensor<i1>, %a : tensor<2xf64>, %b : tensor<3xf64>) -> tensor<2xf64> {
+  // expected-error @below {{'impulse.select' op failed to verify that all of {true_value, false_value, result} have same type}}
+  %r = impulse.select %cond, %a, %b : (tensor<i1>, tensor<2xf64>, tensor<3xf64>) -> tensor<2xf64>
+  return %r : tensor<2xf64>
+}

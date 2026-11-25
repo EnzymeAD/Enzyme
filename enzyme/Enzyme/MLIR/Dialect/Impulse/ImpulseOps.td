@@ -378,7 +378,8 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
 
   let results = (outs Variadic<AnyType>:$outputs);
 
-  let regions = (region AnyRegion:$sampling, AnyRegion:$logpdf);
+  let regions = (region MaxSizedRegion<1>:$sampling,
+                        MaxSizedRegion<1>:$logpdf);
 
   let hasVerifier = 1;
 
@@ -424,7 +425,8 @@ def InferRegionOp : Impulse_Op<"infer_region",
 
   let results = outputs;
 
-  let regions = (region AnyRegion:$sampling, AnyRegion:$logpdf);
+  let regions = (region MaxSizedRegion<1>:$sampling,
+                        MaxSizedRegion<1>:$logpdf);
 
   let assemblyFormat = [{
     `` custom<OptionalCallee>($fn)
@@ -660,7 +662,8 @@ def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
 // Tensor manipulation ops
 //===----------------------------------------------------------------------===//
 
-def SelectOp : Impulse_Op<"select", [Pure]> {
+def SelectOp : Impulse_Op<"select",
+    [Pure, AllTypesMatch<["true_value", "false_value", "result"]>]> {
   let summary = "Select between two values";
   let description = [{
     Elementwise selection between `true_value` and `false_value`: each result
@@ -669,8 +672,7 @@ def SelectOp : Impulse_Op<"select", [Pure]> {
     rank-0 `tensor<i1>` `condition` selects between the two operands as whole
     tensors, so the operands may have a shape that differs from a per-element
     condition. When `condition` matches the operand shape, selection is per
-    element. `true_value` and `false_value` share the result's shape and element
-    type.
+    element.
   }];
 
   let arguments = (ins
@@ -776,7 +778,7 @@ def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
 // Math ops
 //===----------------------------------------------------------------------===//
 
-def LogisticOp : Impulse_Op<"logistic", [Pure]> {
+def LogisticOp : Impulse_Op<"logistic", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
   let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
   let description = [{
     Elementwise logistic (sigmoid) function `1 / (1 + exp(-x))` over `operand`.
