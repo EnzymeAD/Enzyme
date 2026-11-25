@@ -2,6 +2,9 @@
 #include <cstdio>
 
 int main() {
+  // The inputs are rounded as written, so that every host computes them alike:
+  // a host whose compiler fuses a multiply and an add would not.
+#pragma clang fp contract(off)
   const int n = 3000, m = 2048;
   double *hx = new double[n], *hy = new double[n];
   for (int i = 0; i < n; ++i) {
