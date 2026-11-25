@@ -2388,7 +2388,7 @@ struct ExpandImpulsePass
         }
 
         // D. Replace uses of the original sample op with the new values.
-        sampleOp.replaceAllUsesWith(sampledValues);
+        rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
 
         toErase.push_back(sampleOp);
         return success();
@@ -4451,7 +4451,7 @@ struct ExpandImpulsePass
           }
         }
 
-        sampleOp.replaceAllUsesWith(sampledValues);
+        rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
         toErase.push_back(sampleOp);
         return success();
       };
@@ -5162,7 +5162,7 @@ struct ExpandImpulsePass
           }
         }
 
-        sampleOp.replaceAllUsesWith(sampledValues);
+        rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
         toErase.push_back(sampleOp);
         return success();
       };
