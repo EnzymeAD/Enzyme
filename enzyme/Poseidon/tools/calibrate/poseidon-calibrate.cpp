@@ -23,6 +23,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -506,6 +507,61 @@ static int measureHost(const Device &D, StringRef Part) {
   return run(Argv, Part);
 }
 
+// A GPU is measured kMicrobmRuns times and each row is the median of its runs:
+// a run another process or the host stretched is outvoted, and a row is never
+// the measurement of one disturbed run. A row is written when most runs wrote
+// it (a tile row exists only when its GEMM ran faster than the scalar one).
+constexpr unsigned kMicrobmRuns = 3;
+
+static std::string medianOfRuns(ArrayRef<std::string> Runs) {
+  std::string Out;
+  SmallVector<std::string, 128> Order;
+  std::map<std::string, SmallVector<double, 4>> Values;
+  for (const std::string &Run : Runs) {
+    bool First = &Run == &Runs.front();
+    for (StringRef Line : llvm::split(Run, '\n')) {
+      Line = Line.trim();
+      if (Line.empty())
+        continue;
+      if (Line.starts_with("#")) {
+        if (First)
+          (Out += Line) += '\n';
+        continue;
+      }
+      auto [Key, Value] = Line.rsplit(',');
+      double V;
+      if (Value.getAsDouble(V))
+        fail("the microbenchmark printed the line '" + Line +
+             "', which is not a row");
+      auto [It, New] = Values.try_emplace(Key.str());
+      if (New)
+        Order.push_back(Key.str());
+      It->second.push_back(V);
+    }
+  }
+  for (const std::string &Key : Order) {
+    SmallVector<double, 4> &V = Values[Key];
+    if (2 * V.size() <= Runs.size())
+      continue;
+    llvm::sort(V);
+    double Median = V.size() % 2 ? V[V.size() / 2]
+                                 : (V[V.size() / 2 - 1] + V[V.size() / 2]) / 2;
+    if (V.back() > 1.1 * V.front()) {
+      outs() << "[calibrate] the runs differ by more than 10% on " << Key
+             << ":";
+      for (double X : V)
+        outs() << ' ' << format("%g", X);
+      outs() << "; the median is written\n";
+    }
+    raw_string_ostream(Out) << Key << ',' << format("%.9g", Median) << '\n';
+  }
+  return Out;
+}
+
+static bool isUsableModel(StringRef Rows) {
+  return Rows.contains("\nfmul,double,") && Rows.contains("# native_arch=");
+}
+
 /// Measures the per-op rows into a new `Csv`.
 static void armMicrobm(StringRef Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
@@ -513,15 +569,34 @@ static void armMicrobm(StringRef Csv, const Device &D) {
            << '\n';
     return;
   }
-  outs() << "[calibrate] measuring per-op throughput (several minutes)\n";
-  // The rows land in <csv>.part as they are measured; the file takes the
-  // model's name once the run has written a usable model.
+  // The rows land in <csv>.part; the file takes the model's name once the
+  // runs have written a usable model.
   std::string Part = (Csv + ".part").str();
-  int RC =
-      D.Host ? measureHost(D, Part) : run({tool(D, "poseidon-microbm")}, Part);
-  std::string Rows = RC == 0 ? readFile(Part) : std::string();
-  if (!StringRef(Rows).contains("\nfmul,double,") ||
-      !StringRef(Rows).contains("# native_arch=")) {
+  std::string Rows;
+  if (D.Host) {
+    outs() << "[calibrate] measuring per-op throughput\n";
+    Rows = measureHost(D, Part) == 0 ? readFile(Part) : std::string();
+  } else {
+    SmallVector<std::string, kMicrobmRuns> Runs;
+    for (unsigned I = 1; I <= kMicrobmRuns; ++I) {
+      outs() << "[calibrate] measuring per-op throughput, run " << I << " of "
+             << kMicrobmRuns << '\n';
+      outs().flush();
+      // The redirection does not truncate the file it writes.
+      sys::fs::remove(Part);
+      std::string Run = run({tool(D, "poseidon-microbm")}, Part) == 0
+                            ? readFile(Part)
+                            : std::string();
+      if (!isUsableModel(Run))
+        break;
+      Runs.push_back(std::move(Run));
+    }
+    if (Runs.size() == kMicrobmRuns) {
+      Rows = medianOfRuns(Runs);
+      writeFile(Part, Rows);
+    }
+  }
+  if (!isUsableModel(Rows)) {
     sys::fs::remove(Part);
     fail("the microbenchmark produced no usable cost model");
   }
