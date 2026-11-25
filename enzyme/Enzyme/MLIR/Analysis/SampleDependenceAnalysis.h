@@ -66,7 +66,7 @@ private:
   SmallVector<Value> raisedWorklist;
   UpdateStats stats;
 
-  void runSamplerAnalysis();
+  void runSamplingAnalysis();
   void runLogpdfAnalysis();
   void markSampleDependent(Value value);
   void propagateDependence(Region &region);

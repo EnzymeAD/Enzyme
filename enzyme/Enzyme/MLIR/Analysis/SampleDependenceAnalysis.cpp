@@ -17,7 +17,7 @@ SampleDependenceAnalysis::SampleDependenceAnalysis(InferRegionOp regionOp,
   if (target == AnalysisTarget::Logpdf)
     runLogpdfAnalysis();
   else
-    runSamplerAnalysis();
+    runSamplingAnalysis();
 }
 
 Region &SampleDependenceAnalysis::getTargetRegion() {
@@ -71,7 +71,7 @@ void SampleDependenceAnalysis::propagateDependence(Region &region) {
   }
 }
 
-void SampleDependenceAnalysis::runSamplerAnalysis() {
+void SampleDependenceAnalysis::runSamplingAnalysis() {
   DenseSet<Attribute> selectedAddresses;
   bool hasSelection = false;
   if (auto selection = regionOp.getSelectionAttr()) {

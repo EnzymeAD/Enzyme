@@ -510,8 +510,8 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
     getOperation()->walk([&](InferRegionOp op) { regions.push_back(op); });
 
     for (InferRegionOp regionOp : regions) {
-      // Sampler first: what it hoists is inherited by the logpdf region built
-      // next. The analysis needs a sampler entry block (none in custom logpdf).
+      // `sampling` goes first: the `logpdf` region built from it next
+      // inherits what it hoists.
       if (!regionOp.getSampling().empty())
         runSICMOnRegion(regionOp, AnalysisTarget::Sampling);
 
