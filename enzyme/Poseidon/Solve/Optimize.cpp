@@ -441,8 +441,8 @@ SmallVector<SolutionStep> stepsToApply(ArrayRef<SolutionStep> steps) {
 
 // Materializes the steps of `steps` that stepsToApply keeps, which it
 // returns.
-static SmallVector<SolutionStep> applySolution(const Options &O,
-                                               ArrayRef<SolutionStep> steps) {
+static Expected<SmallVector<SolutionStep>>
+applySolution(const Options &O, ArrayRef<SolutionStep> steps) {
   SmallVector<SolutionStep> applied = stepsToApply(steps);
   if (steps.empty())
     return applied;
@@ -462,19 +462,23 @@ static SmallVector<SolutionStep> applySolution(const Options &O,
       continue;
     }
     ++next;
-    unit.materialize(step.candidateIndex);
+    if (Error E = unit.materialize(step.candidateIndex))
+      return std::move(E);
   }
   return applied;
 }
 
 // Applies `steps` to F and cleans F up; true when a step was applied.
-static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
-                                  ArrayRef<SolutionStep> steps) {
+static Expected<bool> materializeFPSolution(Session &S, Function &F,
+                                            FunctionFPState &st,
+                                            ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
   auto &subgraphs = st.subgraphs;
-  SmallVector<SolutionStep> applied = applySolution(O, steps);
+  Expected<SmallVector<SolutionStep>> applied = applySolution(O, steps);
+  if (!applied)
+    return applied.takeError();
   const bool changed = !steps.empty();
-  printPin(S, st, applied);
+  printPin(S, st, *applied);
 
   if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << '\n';
@@ -603,12 +607,15 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
 
   bool changed = false;
   for (FunctionFPState *st : sites) {
-    const bool siteChanged = materializeFPSolution(S, *st->F, *st, perSite[st]);
+    Expected<bool> siteChanged =
+        materializeFPSolution(S, *st->F, *st, perSite[st]);
+    if (!siteChanged)
+      return siteChanged.takeError();
     // An unrewritten site calls the original body again: the preprocessed
     // clone need not lower bit-identically.
-    if (joint && !siteChanged)
+    if (joint && !*siteChanged)
       redirectNoopSite(S.Sites, st->F, S.Opts.Diagnostics.Print);
-    changed |= siteChanged;
+    changed |= *siteChanged;
   }
   // The host-dispatch descriptors of a joint solve are known only once every
   // site is materialized.

@@ -126,7 +126,7 @@ public:
     return candidates[i].desc;
   }
   std::string choiceText(size_t i) const override;
-  void materialize(size_t i) override;
+  llvm::Error materialize(size_t i) override;
   void price() override;
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;

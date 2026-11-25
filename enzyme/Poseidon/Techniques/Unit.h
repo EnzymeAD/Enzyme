@@ -133,8 +133,9 @@ public:
   virtual std::string selectionText(size_t i) const = 0;
   // Candidate i as the DP table print and the materialization log name it.
   virtual std::string choiceText(size_t i) const = 0;
-  // Rewrites the site's IR with candidate i.
-  virtual void materialize(size_t i) = 0;
+  // Rewrites the site's IR with candidate i. A candidate that cannot be built
+  // as selected is an error, and the compile stops.
+  virtual llvm::Error materialize(size_t i) = 0;
 
   // Prices the candidates and drops those the accuracy model refuses; a unit
   // priced when proposed does nothing.

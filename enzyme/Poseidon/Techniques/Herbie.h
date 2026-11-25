@@ -133,7 +133,7 @@ public:
     return candidates[i].expr;
   }
   std::string choiceText(size_t i) const override;
-  void materialize(size_t i) override;
+  llvm::Error materialize(size_t i) override;
   void price() override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {

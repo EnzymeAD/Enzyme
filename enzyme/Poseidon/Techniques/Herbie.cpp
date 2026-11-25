@@ -1705,7 +1705,7 @@ BoundaryCastFreq RewriteUnit::boundaryCastFreq(const LoopInfo &LI) const {
 // The unit
 //===----------------------------------------------------------------------===//
 
-void RewriteUnit::materialize(size_t candidateIndex) {
+Error RewriteUnit::materialize(size_t candidateIndex) {
   FPGraph &G = graph();
   auto &valueToNodeMap = G.valueToNodeMap;
   assert(candidateIndex < candidates.size() &&
@@ -1771,6 +1771,7 @@ void RewriteUnit::materialize(size_t candidateIndex) {
   }
 
   subgraph->outputs_rewritten += roots.size();
+  return Error::success();
 }
 
 double RewriteUnit::getCompCostDelta(size_t candidateIndex) {

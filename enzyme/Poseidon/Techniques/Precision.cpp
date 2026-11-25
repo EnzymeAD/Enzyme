@@ -1458,12 +1458,13 @@ std::string PrecisionUnit::choiceText(size_t i) const {
          std::to_string(cand.ordinal) + ")";
 }
 
-void PrecisionUnit::materialize(size_t i) {
+Error PrecisionUnit::materialize(size_t i) {
   assert(i < candidates.size() && "the solver names one of the candidates");
   // An operation this change erases may be an input of another subgraph whose
   // rewrite a later step materializes: the rewrite reads the value the
   // operation's users now read, as the units were priced.
   candidates[i].apply(session(), *subgraph, nullptr, &graph());
+  return Error::success();
 }
 
 void PrecisionUnit::price() {

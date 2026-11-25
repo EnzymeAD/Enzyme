@@ -371,7 +371,10 @@ public:
     return dropped;
   }
   std::string choiceText(size_t i) const override;
-  void materialize(size_t i) override { apply(session(), i); }
+  llvm::Error materialize(size_t i) override {
+    apply(session(), i);
+    return llvm::Error::success();
+  }
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {
