@@ -1605,6 +1605,46 @@ static Value packScalars(OpBuilder &builder, Location loc,
   return vec;
 }
 
+/// Writes `update` into the rank-2 `tensor` starting at row 0, column
+/// `column`.
+static Value updateColumns(OpBuilder &builder, Location loc, Value tensor,
+                           Value update, int64_t column) {
+  Value row = i64Const(builder, loc, 0);
+  Value col = i64Const(builder, loc, column);
+  return impulse::DynamicUpdateSliceOp::create(
+      builder, loc, tensor.getType(), tensor, update, ValueRange{row, col});
+}
+
+/// Flattens `value` to a single row and writes it into `trace` starting at
+/// column `column`.
+static Value writeTraceColumns(OpBuilder &builder, Location loc, Value trace,
+                               Value value, int64_t column) {
+  auto valueType = cast<RankedTensorType>(value.getType());
+  auto rowType = RankedTensorType::get(
+      {1, computeTensorElementCount(valueType)}, valueType.getElementType());
+  Value row = impulse::ReshapeOp::create(builder, loc, rowType, value);
+  return updateColumns(builder, loc, trace, row, column);
+}
+
+/// Writes the `values` of `site` into `trace` one after another from column
+/// `offset` on, advancing `offset` past them. With `write` unset only `offset`
+/// advances. Fails on a dynamically shaped value.
+static LogicalResult appendSiteValues(OpBuilder &builder,
+                                      impulse::SampleOp site,
+                                      ArrayRef<Value> values, Value &trace,
+                                      int64_t &offset, bool write = true) {
+  for (Value value : values) {
+    int64_t numElements =
+        computeTensorElementCount(cast<RankedTensorType>(value.getType()));
+    if (numElements < 0)
+      return site.emitError("Impulse: dynamic tensor dimensions not supported");
+    if (write)
+      trace = writeTraceColumns(builder, site.getLoc(), trace, value, offset);
+    offset += numElements;
+  }
+  return success();
+}
+
 /// Returns a `1 x width` trace whose leading columns are `values` and whose
 /// following columns hold `siteScores`, one score per column.
 static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
@@ -1683,9 +1723,7 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
     Value curWin = sliceOf(trace);
     Value upd =
         impulse::SelectOp::create(b, loc, winType, accepted, propWin, curWin);
-    out = impulse::DynamicUpdateSliceOp::create(
-        b, loc, traceType, out, upd,
-        ValueRange{i64Const(b, loc, 0), i64Const(b, loc, start)});
+    out = updateColumns(b, loc, out, upd, start);
   }
   return out;
 }
@@ -2120,30 +2158,12 @@ struct ExpandImpulsePass
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
 
-          if (addressInList(sampleOp, selection)) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleTy);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleTy.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-              Value colOff =
-                  i64Const(rewriter, sampleOp.getLoc(), currentOffset);
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
-              currentOffset += numElements;
-            }
-          }
+          if (addressInList(sampleOp, selection) &&
+              failed(
+                  appendSiteValues(rewriter, sampleOp,
+                                   ArrayRef<Value>(sampledValues).drop_front(),
+                                   currTrace, currentOffset)))
+            return failure();
 
           rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
@@ -2195,31 +2215,12 @@ struct ExpandImpulsePass
             siteScores.push_back(logpdf.getResult(0));
 
           // A3. Check if this sample is in the selection and insert into trace
-          if (addressInList(sampleOp, selection)) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleType.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-              Value colOff =
-                  i64Const(rewriter, sampleOp.getLoc(), currentOffset);
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
-              currentOffset += numElements;
-            }
-          }
+          if (addressInList(sampleOp, selection) &&
+              failed(
+                  appendSiteValues(rewriter, sampleOp,
+                                   ArrayRef<Value>(sampledValues).drop_front(),
+                                   currTrace, currentOffset)))
+            return failure();
         } else {
           // B. Generative function: recursively simulate the nested function
           if (scoreTailSize > 0) {
@@ -2283,12 +2284,8 @@ struct ExpandImpulsePass
               return failure();
             }
 
-            Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-            Value colOff = i64Const(rewriter, sampleOp.getLoc(), mergeOffset);
-            currTrace = impulse::DynamicUpdateSliceOp::create(
-                            rewriter, sampleOp.getLoc(), traceType, currTrace,
-                            subTrace, ValueRange{row0, colOff})
-                            .getResult();
+            currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
+                                      subTrace, mergeOffset);
             currentOffset =
                 std::max(currentOffset, mergeOffset + subPositionSize);
 
@@ -2686,17 +2683,9 @@ struct ExpandImpulsePass
             Value v = subMap.lookupOrDefault(y->getOperand(k));
             map.map(site.getResult(k), v);
             vals.push_back(v);
-            auto vt = cast<RankedTensorType>(v.getType());
-            int64_t n = computeTensorElementCount(vt);
-            auto flatType = RankedTensorType::get({1, n}, vt.getElementType());
-            Value flat = impulse::ReshapeOp::create(b, loc, flatType, v);
-            Value row0 = i64Const(b, loc, 0);
-            Value col = i64Const(b, loc, wOff);
-            newTrace =
-                impulse::DynamicUpdateSliceOp::create(
-                    b, loc, traceType, newTrace, flat, ValueRange{row0, col})
-                    .getResult();
-            wOff += n;
+            newTrace = writeTraceColumns(b, loc, newTrace, v, wOff);
+            wOff +=
+                computeTensorElementCount(cast<RankedTensorType>(v.getType()));
           }
           proposedSelected[addr] = vals;
         } else {
@@ -3532,25 +3521,17 @@ struct ExpandImpulsePass
             for (size_t s : slots) {
               Value slotCol =
                   impulse::ReshapeOp::create(b, loc, blockColType, selOf[s]);
-              block = impulse::DynamicUpdateSliceOp::create(
-                  b, loc, blockType, block, slotCol,
-                  ValueRange{i64Const(b, loc, 0),
-                             i64Const(b, loc, cols[0][s] - g)});
+              block = updateColumns(b, loc, block, slotCol, cols[0][s] - g);
             }
             Value blockWin = impulse::ReshapeOp::create(b, loc, winType, block);
-            trace = impulse::DynamicUpdateSliceOp::create(
-                b, loc, traceType, trace, blockWin,
-                ValueRange{i64Const(b, loc, 0), i64Const(b, loc, g)});
+            trace = updateColumns(b, loc, trace, blockWin, g);
           }
         } else {
           for (size_t s = 0; s < numCols; ++s) {
             Value row = impulse::ReshapeOp::create(b, loc, rowType, selOf[s]);
             for (unsigned k = 0; k < numMoves; ++k) {
               Value unitCell = unitSlice(row, k);
-              trace = impulse::DynamicUpdateSliceOp::create(
-                  b, loc, traceType, trace, unitCell,
-                  ValueRange{i64Const(b, loc, 0),
-                             i64Const(b, loc, cols[k][s])});
+              trace = updateColumns(b, loc, trace, unitCell, cols[k][s]);
             }
           }
         }
@@ -3779,9 +3760,7 @@ struct ExpandImpulsePass
         auto flatType = RankedTensorType::get({1, vt.getNumElements()},
                                               traceType.getElementType());
         Value flat = impulse::ReshapeOp::create(b, loc, flatType, value);
-        return impulse::DynamicUpdateSliceOp::create(
-            b, loc, traceType, trace, flat,
-            ValueRange{i64Const(b, loc, 0), i64Const(b, loc, col)});
+        return updateColumns(b, loc, trace, flat, col);
       };
 
       // For later regions (e.g. HMC) that pin these sites from the trace.
@@ -3885,10 +3864,7 @@ struct ExpandImpulsePass
 
         Value newRow = impulse::ReshapeOp::create(b, loc, rowType, newVals);
         if (evenlySpaced && stride == 1) {
-          trace = impulse::DynamicUpdateSliceOp::create(
-              b, loc, traceType, trace, newRow,
-              ValueRange{i64Const(b, loc, 0),
-                         i64Const(b, loc, selectedCols[0])});
+          trace = updateColumns(b, loc, trace, newRow, selectedCols[0]);
         } else {
           for (auto [k, col] : llvm::enumerate(selectedCols)) {
             Value colSlice = impulse::SliceOp::create(
@@ -3896,9 +3872,7 @@ struct ExpandImpulsePass
                 b.getDenseI64ArrayAttr({0, (int64_t)k}),
                 b.getDenseI64ArrayAttr({1, (int64_t)k + 1}),
                 b.getDenseI64ArrayAttr({1, 1}));
-            trace = impulse::DynamicUpdateSliceOp::create(
-                b, loc, traceType, trace, colSlice,
-                ValueRange{i64Const(b, loc, 0), i64Const(b, loc, col)});
+            trace = updateColumns(b, loc, trace, colSlice, col);
           }
         }
         if (scoreTail)
@@ -4258,29 +4232,12 @@ struct ExpandImpulsePass
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
 
-          if (addressInList(sampleOp, selection)) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleTy);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleTy.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, loc, flatSampleType, sampleValue);
-              Value row0 = i64Const(rewriter, loc, 0);
-              Value colOff = i64Const(rewriter, loc, currentTraceOffset);
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, loc, traceType, currTrace, flatSample,
-                              ValueRange{row0, colOff})
-                              .getResult();
-              currentTraceOffset += numElements;
-            }
-          }
+          if (addressInList(sampleOp, selection) &&
+              failed(
+                  appendSiteValues(rewriter, sampleOp,
+                                   ArrayRef<Value>(sampledValues).drop_front(),
+                                   currTrace, currentTraceOffset)))
+            return failure();
 
           rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
@@ -4402,31 +4359,12 @@ struct ExpandImpulsePass
               siteScores.push_back(logpdf.getResult(0));
           }
 
-          if (addressInList(sampleOp, selection)) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleType.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-              Value colOff =
-                  i64Const(rewriter, sampleOp.getLoc(), currentTraceOffset);
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
-              currentTraceOffset += numElements;
-            }
-          }
+          if (addressInList(sampleOp, selection) &&
+              failed(
+                  appendSiteValues(rewriter, sampleOp,
+                                   ArrayRef<Value>(sampledValues).drop_front(),
+                                   currTrace, currentTraceOffset)))
+            return failure();
         } else {
           // B. Generative function: recursively generate the nested function
           if (scoreTailSize > 0) {
@@ -4514,12 +4452,8 @@ struct ExpandImpulsePass
             int64_t mergeOffset = computeOffsetForSampleInSelection(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
 
-            Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-            Value colOff = i64Const(rewriter, sampleOp.getLoc(), mergeOffset);
-            currTrace = impulse::DynamicUpdateSliceOp::create(
-                            rewriter, sampleOp.getLoc(), traceType, currTrace,
-                            subTrace, ValueRange{row0, colOff})
-                            .getResult();
+            currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
+                                      subTrace, mergeOffset);
             currentTraceOffset =
                 std::max(currentTraceOffset, mergeOffset + subPositionSize);
 
@@ -4955,32 +4889,13 @@ struct ExpandImpulsePass
           }
           ++siteOrdinal;
 
-          if (addressInList(sampleOp, selection)) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleTy);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-              // The offset advances even when the value is not rewritten.
-              if (!deltaMode || isSelected) {
-                auto flatSampleType = RankedTensorType::get(
-                    {1, numElements}, sampleTy.getElementType());
-                auto flatSample = impulse::ReshapeOp::create(
-                    rewriter, loc, flatSampleType, sampleValue);
-                Value row0 = i64Const(rewriter, loc, 0);
-                Value colOff = i64Const(rewriter, loc, currentTraceOffset);
-                currTrace = impulse::DynamicUpdateSliceOp::create(
-                                rewriter, loc, traceType, currTrace, flatSample,
-                                ValueRange{row0, colOff})
-                                .getResult();
-              }
-              currentTraceOffset += numElements;
-            }
-          }
+          if (addressInList(sampleOp, selection) &&
+              failed(
+                  appendSiteValues(rewriter, sampleOp,
+                                   ArrayRef<Value>(sampledValues).drop_front(),
+                                   currTrace, currentTraceOffset,
+                                   /*write=*/!deltaMode || isSelected)))
+            return failure();
 
           rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
@@ -5168,32 +5083,13 @@ struct ExpandImpulsePass
           }
           ++siteOrdinal;
 
-          if (addressInList(sampleOp, selection)) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-              if (!deltaMode || isSelected) {
-                auto flatSampleType = RankedTensorType::get(
-                    {1, numElements}, sampleType.getElementType());
-                auto flatSample = impulse::ReshapeOp::create(
-                    rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-                Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-                Value colOff =
-                    i64Const(rewriter, sampleOp.getLoc(), currentTraceOffset);
-                currTrace = impulse::DynamicUpdateSliceOp::create(
-                                rewriter, sampleOp.getLoc(), traceType,
-                                currTrace, flatSample, ValueRange{row0, colOff})
-                                .getResult();
-              }
-              currentTraceOffset += numElements;
-            }
-          }
+          if (addressInList(sampleOp, selection) &&
+              failed(
+                  appendSiteValues(rewriter, sampleOp,
+                                   ArrayRef<Value>(sampledValues).drop_front(),
+                                   currTrace, currentTraceOffset,
+                                   /*write=*/!deltaMode || isSelected)))
+            return failure();
         } else {
           // B. Generative function: recursively regenerate the nested function
           auto genFn =
@@ -5322,12 +5218,8 @@ struct ExpandImpulsePass
                   rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
             }
 
-            Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
-            Value colOff = i64Const(rewriter, sampleOp.getLoc(), mergeOffset);
-            currTrace = impulse::DynamicUpdateSliceOp::create(
-                            rewriter, sampleOp.getLoc(), traceType, currTrace,
-                            subTrace, ValueRange{row0, colOff})
-                            .getResult();
+            currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
+                                      subTrace, mergeOffset);
             currentTraceOffset =
                 std::max(currentTraceOffset, mergeOffset + subPositionSize);
 
