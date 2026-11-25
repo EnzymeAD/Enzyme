@@ -43,7 +43,10 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 #include "llvm/TargetParser/Host.h"
-#if LLVM_VERSION_MAJOR >= 22
+// clang's option table left the driver library during LLVM 22, at a point of
+// its development that neither LLVM_VERSION_MAJOR nor ENZYME_LLVM22_PRERELEASE
+// marks.
+#if __has_include("clang/Options/Options.h")
 #include "clang/Options/Options.h"
 namespace clang_options = clang::options;
 using clang::getDriverOptTable;
