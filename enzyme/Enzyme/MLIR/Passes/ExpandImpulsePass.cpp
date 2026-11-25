@@ -2091,12 +2091,7 @@ static SmallVector<Value> cloneLogpdfBody(OpBuilder &builder, Block &lpBlock,
   IRMapping map;
   for (auto [arg, value] : llvm::zip(lpBlock.getArguments(), args))
     map.map(arg, value);
-  for (Operation &op : lpBlock.without_terminator())
-    builder.clone(op, map);
-  SmallVector<Value> yields;
-  for (Value yielded : lpBlock.getTerminator()->getOperands())
-    yields.push_back(map.lookupOrDefault(yielded));
-  return yields;
+  return cloneBlockBody(builder, lpBlock, map);
 }
 
 /// Proposes fresh values for the selected sites of `op` from its sampler,

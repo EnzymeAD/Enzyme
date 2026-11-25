@@ -60,6 +60,24 @@ Value emitBroadcastScalar(OpBuilder &builder, Location loc, Value scalar,
 /// log(exp(lhs) + exp(rhs)), or lhs + rhs where lhs - rhs is NaN.
 Value emitLogAddExp(OpBuilder &builder, Location loc, Value lhs, Value rhs);
 
+/// Creates a matrix constant of `type` whose (i, j) entry is 1 where
+/// `isOne(i, j)` holds and 0 elsewhere.
+Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
+                          RankedTensorType type,
+                          function_ref<bool(int64_t, int64_t)> isOne);
+
+/// Clones the operations of `block` except its terminator at the insertion
+/// point through `mapping`, and returns the terminator's operands mapped.
+SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,
+                                  IRMapping &mapping);
+
+/// Attributes of an `enzyme.autodiff_region` with `numActiveArgs` active
+/// arguments that differentiates its first result and passes its second
+/// through as a constant, followed by the entries of `extra` when it is set.
+SmallVector<NamedAttribute> buildGradientRegionAttrs(Builder &builder,
+                                                     unsigned numActiveArgs,
+                                                     DictionaryAttr extra);
+
 } // namespace impulse
 } // namespace mlir
 

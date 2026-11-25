@@ -144,10 +144,7 @@ static Value cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
       for (unsigned i = 1, e = site.getInputs().size(); i < e; ++i, ++argIdx)
         siteMap.map(siteLogpdf.getArgument(argIdx),
                     map.lookupOrDefault(site.getInputs()[i]));
-      for (Operation &siteOp : siteLogpdf.without_terminator())
-        builder.clone(siteOp, siteMap);
-      Value contribution =
-          siteMap.lookupOrDefault(siteLogpdf.getTerminator()->getOperand(0));
+      Value contribution = cloneBlockBody(builder, siteLogpdf, siteMap).front();
       contributions.push_back(contribution);
       addToTotal(contribution);
       continue;

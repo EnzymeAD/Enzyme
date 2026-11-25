@@ -93,29 +93,6 @@ static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
   return arith::SubFOp::create(builder, loc, logQPart, log2piTerm);
 }
 
-/// Attributes for an autodiff region with `numActiveArgs` active arguments
-/// that differentiates its first result and passes its second through as a
-/// constant, followed by the entries of `extra` when it is non-null.
-static SmallVector<NamedAttribute>
-buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
-                         DictionaryAttr extra) {
-  MLIRContext *context = builder.getContext();
-  enzyme::ActivityAttr active =
-      enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_active);
-  enzyme::ActivityAttr constant =
-      enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_const);
-  SmallVector<NamedAttribute> attrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr(SmallVector<Attribute>(numActiveArgs, active))),
-      builder.getNamedAttr("ret_activity",
-                           builder.getArrayAttr({active, constant})),
-  };
-  if (extra)
-    llvm::append_range(attrs, extra);
-  return attrs;
-}
-
 namespace {
 /// The model's log joint density and its rng state after scoring it.
 struct LogPResult {
@@ -176,9 +153,7 @@ static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
     mapping.map(arg, component);
   }
 
-  for (Operation &op : lpBlock.without_terminator())
-    builder.clone(op, mapping);
-  return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+  return cloneBlockBody(builder, lpBlock, mapping).front();
 }
 
 /// Log joint density of the model at the constrained position `z`, from the

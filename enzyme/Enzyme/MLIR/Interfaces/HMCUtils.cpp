@@ -80,28 +80,6 @@ static bool isDiagonalMass(RankedTensorType t) {
          (t.getRank() == 2 && t.getShape()[0] == 1 && t.getShape()[1] != 1);
 }
 
-/// Creates a constant square matrix holding 1 where `isOne(row, col)` and 0
-/// elsewhere.
-static Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
-                                 RankedTensorType matrixType,
-                                 function_ref<bool(int64_t, int64_t)> isOne) {
-  assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
-  assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
-         "Expected square matrix type");
-
-  int64_t size = matrixType.getShape()[0];
-  Type elemType = matrixType.getElementType();
-
-  SmallVector<Attribute> values;
-  values.reserve(size * size);
-  for (int64_t i = 0; i < size; ++i)
-    for (int64_t j = 0; j < size; ++j)
-      values.push_back(builder.getFloatAttr(elemType, isOne(i, j) ? 1.0 : 0.0));
-
-  auto denseAttr = DenseElementsAttr::get(matrixType, values);
-  return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
-}
-
 /// Creates a 2D identity matrix of the specified type.
 static Value createIdentityMatrix(OpBuilder &builder, Location loc,
                                   RankedTensorType matrixType) {
@@ -361,15 +339,6 @@ static impulse::GenerateOp emitGenerateAt(OpBuilder &builder, Location loc,
       ctx.allAddresses, builder.getStringAttr(""));
 }
 
-/// Clones `block` without its terminator at the insertion point and returns the
-/// clone of the terminator's first operand.
-static Value cloneBlockBody(OpBuilder &builder, Block &block,
-                            IRMapping &mapping) {
-  for (Operation &op : block.without_terminator())
-    builder.clone(op, mapping);
-  return mapping.lookupOrDefault(block.getTerminator()->getOperand(0));
-}
-
 /// Clones the logpdf region with its block arguments bound to consecutive
 /// slices of `qConstrained` and returns the log density. Values the region
 /// captures from above the `infer_region` op are sample-invariant.
@@ -393,7 +362,7 @@ static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
     mapping.map(arg, component);
     offset += numElements;
   }
-  return cloneBlockBody(builder, lpBlock, mapping);
+  return cloneBlockBody(builder, lpBlock, mapping).front();
 }
 
 /// Emits the logpdf symbol at `position` and returns the log density. A
@@ -414,25 +383,7 @@ static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
   Block &entry = fn.getFunctionBody().front();
   IRMapping mapping;
   mapping.map(entry.getArguments(), args);
-  return cloneBlockBody(builder, entry, mapping);
-}
-
-/// Attributes of a gradient region with one active argument whose results are
-/// the active potential and a constant RNG state, followed by `extra`.
-static SmallVector<NamedAttribute> gradientRegionAttrs(Builder &builder,
-                                                       DictionaryAttr extra) {
-  auto active = enzyme::ActivityAttr::get(builder.getContext(),
-                                          enzyme::Activity::enzyme_active);
-  auto constant = enzyme::ActivityAttr::get(builder.getContext(),
-                                            enzyme::Activity::enzyme_const);
-  SmallVector<NamedAttribute> attrs{
-      builder.getNamedAttr("activity", builder.getArrayAttr({active})),
-      builder.getNamedAttr("ret_activity",
-                           builder.getArrayAttr({active, constant})),
-  };
-  if (extra)
-    llvm::append_range(attrs, extra);
-  return attrs;
+  return cloneBlockBody(builder, entry, mapping).front();
 }
 
 /// Emits the potential U(q) = -log p(qConstrained) - log|det J(q)|, with the
@@ -489,7 +440,8 @@ static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{ctx.getScalarType(), rng.getType(), autodiffType},
       ValueRange{autodiffPosition, gradSeed},
-      gradientRegionAttrs(builder, ctx.autodiffAttrs));
+      buildGradientRegionAttrs(builder, /*numActiveArgs=*/1,
+                               ctx.autodiffAttrs));
 
   Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
   Value qArg = autodiffBlock->addArgument(autodiffType, loc);

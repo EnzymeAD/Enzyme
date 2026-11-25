@@ -233,24 +233,6 @@ static Value reduceLastAxis(OpBuilder &builder, Location loc, Value v,
                                 builder.getDenseI64ArrayAttr({0}));
 }
 
-/// Creates a matrix constant of `type` whose (i, j) entry is 1 where
-/// `isOne(i, j)` holds and 0 elsewhere.
-static Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
-                                 RankedTensorType type,
-                                 function_ref<bool(int64_t, int64_t)> isOne) {
-  const llvm::fltSemantics &semantics =
-      cast<FloatType>(type.getElementType()).getFloatSemantics();
-  APFloat zero(semantics, 0);
-  APFloat one(semantics, 1);
-  SmallVector<APFloat> values;
-  values.reserve(type.getNumElements());
-  for (int64_t i = 0, rows = type.getDimSize(0); i < rows; ++i)
-    for (int64_t j = 0, cols = type.getDimSize(1); j < cols; ++j)
-      values.push_back(isOne(i, j) ? one : zero);
-  return arith::ConstantOp::create(builder, loc, type,
-                                   DenseElementsAttr::get(type, values));
-}
-
 namespace {
 /// m contiguous simplex blocks of eventSize constrained (n = eventSize - 1
 /// free) entries.

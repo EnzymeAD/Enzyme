@@ -22,6 +22,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
 
 using namespace mlir;
@@ -154,4 +155,49 @@ Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
   auto log1pResult = math::Log1pOp::create(builder, loc, expNegAbsDelta);
   auto normalResult = arith::AddFOp::create(builder, loc, amax, log1pResult);
   return arith::SelectOp::create(builder, loc, isNaN, nanResult, normalResult);
+}
+
+Value impulse::emitIndicatorMatrix(OpBuilder &builder, Location loc,
+                                   RankedTensorType type,
+                                   function_ref<bool(int64_t, int64_t)> isOne) {
+  const llvm::fltSemantics &semantics =
+      cast<FloatType>(type.getElementType()).getFloatSemantics();
+  APFloat zero(semantics, 0);
+  APFloat one(semantics, 1);
+  SmallVector<APFloat> values;
+  values.reserve(type.getNumElements());
+  for (int64_t i = 0, rows = type.getDimSize(0); i < rows; ++i)
+    for (int64_t j = 0, cols = type.getDimSize(1); j < cols; ++j)
+      values.push_back(isOne(i, j) ? one : zero);
+  return arith::ConstantOp::create(builder, loc, type,
+                                   DenseElementsAttr::get(type, values));
+}
+
+SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,
+                                           IRMapping &mapping) {
+  for (Operation &op : block.without_terminator())
+    builder.clone(op, mapping);
+  return llvm::map_to_vector(
+      block.getTerminator()->getOperands(),
+      [&](Value operand) { return mapping.lookupOrDefault(operand); });
+}
+
+SmallVector<NamedAttribute>
+impulse::buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
+                                  DictionaryAttr extra) {
+  MLIRContext *context = builder.getContext();
+  auto active =
+      enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_active);
+  auto constant =
+      enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_const);
+  SmallVector<NamedAttribute> attrs{
+      builder.getNamedAttr(
+          "activity",
+          builder.getArrayAttr(SmallVector<Attribute>(numActiveArgs, active))),
+      builder.getNamedAttr("ret_activity",
+                           builder.getArrayAttr({active, constant})),
+  };
+  if (extra)
+    llvm::append_range(attrs, extra);
+  return attrs;
 }
