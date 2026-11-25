@@ -275,10 +275,7 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
   // NumPyro's (chain, site_key) = split(chain) per site in declaration order.
   auto zeroScalar = scalarConst(builder, loc, scalarType, 0.0);
   auto oneScalar = scalarConst(builder, loc, scalarType, 1.0);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto c0i64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value c0i64 = i64Const(builder, loc, 0);
 
   Value eps = scalarConst(builder, loc, positionType, 0.0);
   Value chain = guideSeed;
@@ -294,10 +291,7 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         impulse::RngDistributionAttr::get(builder.getContext(),
                                           impulse::RngDistribution::NORMAL));
     Value siteEps = randOp.getResult();
-    auto offsetI64 = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.offset)));
+    Value offsetI64 = i64Const(builder, loc, info.offset);
     eps = impulse::DynamicUpdateSliceOp::create(
         builder, loc, positionType, eps, siteEps, ValueRange{c0i64, offsetI64});
   }
@@ -534,10 +528,7 @@ static ParamState applyAdamUpdate(OpBuilder &builder, Location loc, Value param,
   Value b2V = arith::MulFOp::create(builder, loc, b2Bcast, v);
   Value vNew = arith::AddFOp::create(builder, loc, oneMinusB2GSq, b2V);
 
-  auto i64Ty = RankedTensorType::get({}, builder.getI64Type());
-  Value oneI64 = arith::ConstantOp::create(
-      builder, loc, i64Ty,
-      DenseElementsAttr::get(i64Ty, builder.getI64IntegerAttr(1)));
+  Value oneI64 = i64Const(builder, loc, 1);
   Value stepPlus1 = arith::AddIOp::create(builder, loc, stepIdx, oneI64);
   Value stepFloat =
       arith::SIToFPOp::create(builder, loc, scalarType, stepPlus1);
@@ -935,26 +926,14 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     }
   } else {
     // NumPyro's init_to_uniform: one split per site in declaration order.
-    auto scalarTy = ctx.getScalarType();
-    auto i64T = RankedTensorType::get({}, rewriter.getI64Type());
-    auto c0i64 = arith::ConstantOp::create(
-        rewriter, loc, i64T,
-        DenseElementsAttr::get(i64T, rewriter.getI64IntegerAttr(0)));
-    auto negRadius = arith::ConstantOp::create(
-        rewriter, loc, scalarTy,
-        DenseElementsAttr::get(
-            scalarTy, rewriter.getFloatAttr(elemType, -ctx.initRadius)));
-    auto posRadius = arith::ConstantOp::create(
-        rewriter, loc, scalarTy,
-        DenseElementsAttr::get(
-            scalarTy, rewriter.getFloatAttr(elemType, ctx.initRadius)));
+    RankedTensorType scalarType = ctx.getScalarType();
+    Value c0i64 = i64Const(rewriter, loc, 0);
+    Value negRadius = scalarConst(rewriter, loc, scalarType, -ctx.initRadius);
+    Value posRadius = scalarConst(rewriter, loc, scalarType, ctx.initRadius);
     auto uniformAttr = impulse::RngDistributionAttr::get(
         rewriter.getContext(), impulse::RngDistribution::UNIFORM);
 
-    loc0 = arith::ConstantOp::create(
-        rewriter, loc, positionType,
-        DenseElementsAttr::get(positionType,
-                               rewriter.getFloatAttr(elemType, 0.0)));
+    loc0 = scalarConst(rewriter, loc, positionType, 0.0);
     // AutoGuide._setup_prototype's numpyro.prng_key() consumes one split.
     auto preSplit = impulse::RandomSplitOp::create(
         rewriter, loc, TypeRange{rngType, rngType}, guideInitSeed);
@@ -974,10 +953,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       auto sliceTy = RankedTensorType::get({1, info.size}, elemType);
       Value initDraw2D =
           impulse::ReshapeOp::create(rewriter, loc, sliceTy, initDraw);
-      auto offsetIdx = arith::ConstantOp::create(
-          rewriter, loc, i64T,
-          DenseElementsAttr::get(i64T,
-                                 rewriter.getI64IntegerAttr(info.offset)));
+      Value offsetIdx = i64Const(rewriter, loc, info.offset);
       loc0 = impulse::DynamicUpdateSliceOp::create(
           rewriter, loc, positionType, loc0, initDraw2D,
           ValueRange{c0i64, offsetIdx});
