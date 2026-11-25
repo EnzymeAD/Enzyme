@@ -36,8 +36,9 @@ namespace poseidon {
 struct Options;
 class Session;
 
-/// The profiler runtime function `name` of type `FT`, declared in `M` if absent,
-/// marked enzyme_inactive and nofree so that AD never differentiates it.
+/// The profiler runtime function `name` of type `FT`, declared in `M` if
+/// absent, marked enzyme_inactive and nofree so that AD never differentiates
+/// it.
 llvm::FunctionCallee getProfilerHook(llvm::Module &M, llvm::StringRef name,
                                      llvm::FunctionType *FT);
 
@@ -51,16 +52,16 @@ llvm::Constant *getStringPointer(llvm::Module &M, llvm::StringRef gvName,
 /// Every optimizable instruction gets its value logged in the primal and its
 /// result routed through an identity probe whose Enzyme custom derivative logs
 /// the accumulated adjoint. That probe's augmented forward also carries the
-/// condition-number perturbation, armed at run time by `siteId`, so an armed run
-/// computes the whole site at the probed relative precision. The profile is
+/// condition-number perturbation, armed at run time by `siteId`, so an armed
+/// run computes the whole site at the probed relative precision. The profile is
 /// written as `profileName`. Returns the number of instrumented instructions.
 size_t instrumentForProfiling(llvm::Function &clone, unsigned siteId,
                               llvm::StringRef profileName);
 
 /// Embed the site's compile-time static data (header lines the profile-use
-/// compile cannot recompute) in the instrumented module and register it with the
-/// profiler runtime, which copies it verbatim into the site's .fpprofile header.
-/// `text` is a sequence of newline-terminated "Key = value" lines.
+/// compile cannot recompute) in the instrumented module and register it with
+/// the profiler runtime, which copies it verbatim into the site's .fpprofile
+/// header. `text` is a sequence of newline-terminated "Key = value" lines.
 void emitProfileStaticData(llvm::Function &clone, llvm::StringRef profileName,
                            llvm::StringRef text);
 
@@ -106,8 +107,8 @@ bool injectHostProfilerInit(llvm::Module &M, bool print);
 /// time. Every unit defines it, weakly, so the linker keeps one.
 bool defineProfileDirectory(const Options &O, llvm::Module &M);
 
-/// Device module: declare the probes enzyme_inactive before anything calls them,
-/// so that AD never differentiates them.
+/// Device module: declare the probes enzyme_inactive before anything calls
+/// them, so that AD never differentiates them.
 void predeclareInactiveProfilerProbes(llvm::Module &M);
 
 } // namespace poseidon

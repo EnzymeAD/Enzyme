@@ -123,8 +123,8 @@ constexpr llvm::StringLiteral kNextSiteIdMD = "poseidon.next.site.id";
 unsigned getNextSiteId(llvm::Module &M);
 void setNextSiteId(llvm::Module &M, unsigned next);
 
-/// What the marker call says about one site: the caller value behind each of the
-/// site's parameters, the accuracy target, and which marker arguments are
+/// What the marker call says about one site: the caller value behind each of
+/// the site's parameters, the accuracy target, and which marker arguments are
 /// Poseidon's own and must not be forwarded to the derivative request.
 struct MarkerArgs {
   llvm::SmallVector<llvm::Value *, 8> primalArgs;

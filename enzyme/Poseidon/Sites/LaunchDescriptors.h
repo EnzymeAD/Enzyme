@@ -55,7 +55,8 @@ enum class LaunchKind {
   ///     <pointer arg index>...
   ///     <seed width in bytes of that pointer, 0 if it is not an output>...
   ///     [off <byte offset of that pointer in its argument>...]
-  /// The offsets are written when a pointer is a field of an aggregate argument.
+  /// The offsets are written when a pointer is a field of an aggregate
+  /// argument.
   Profiling,
 };
 
@@ -160,9 +161,9 @@ void readProfileHeaders(const Options &O, const llvm::Module &M,
                                                 llvm::StringRef header)>
                             use);
 
-/// A value the host knows at the launch: a parameter of the optimized body, or a
-/// field of an aggregate a parameter passes by value (the captures of a lambda a
-/// kernel takes by value).
+/// A value the host knows at the launch: a parameter of the optimized body, or
+/// a field of an aggregate a parameter passes by value (the captures of a
+/// lambda a kernel takes by value).
 struct LaunchRef {
   int param = -1;
   int64_t offset = -1; // byte offset of the field; -1 = the parameter itself

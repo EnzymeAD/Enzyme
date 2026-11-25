@@ -29,8 +29,8 @@ struct Options;
 
 /// Rewrite the launch in each launch stub that a profile generation descriptor
 /// in M's manifest matches into a call of __poseidon_launch_profiled, which
-/// allocates, zeroes and seeds the shadow buffers the profiling kernel takes and
-/// launches it. Host module only.
+/// allocates, zeroes and seeds the shadow buffers the profiling kernel takes
+/// and launches it. Host module only.
 bool rewriteProfileStubBodies(const Options &O, llvm::Module &M);
 
 /// Rewrites, on the host module and before inlining, each __device_stub__

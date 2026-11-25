@@ -36,15 +36,15 @@ bool lowerDeviceCallSites(const Options &O, llvm::Module &M);
 
 /// The object of `caller` that `p` points into, through the address arithmetic
 /// its shadow can repeat, when the pass knows the object's whole extent: a
-/// static alloca, or an aggregate `caller` takes by value (byval). Null if there
-/// is none. (An AMDGPU kernel takes an aggregate by reference into its constant
-/// argument segment, and the frontend copies it into an alloca once its address
-/// is taken.)
+/// static alloca, or an aggregate `caller` takes by value (byval). Null if
+/// there is none. (An AMDGPU kernel takes an aggregate by reference into its
+/// constant argument segment, and the frontend copies it into an alloca once
+/// its address is taken.)
 llvm::Value *localObject(llvm::Value *p, const llvm::Function *caller);
 
-/// A pointer argument that points into no object: null, or undefined because the
-/// call's copy never reads it and the optimizer stopped passing the object (the
-/// address of an empty functor).
+/// A pointer argument that points into no object: null, or undefined because
+/// the call's copy never reads it and the optimizer stopped passing the object
+/// (the address of an empty functor).
 bool pointsNowhere(llvm::Value *p);
 
 /// What a function reaches through one of its pointer parameters, in bytes from
