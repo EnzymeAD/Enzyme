@@ -1774,7 +1774,6 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
   auto sampleMap = buildSampleOpMap(fn);
   int64_t positionSize =
       computePositionSizeForSelection(op, fn, layout, symbolTable);
-  bool bare = width == positionSize;
   auto inList = [](ArrayAttr list, ArrayAttr address) {
     return list && llvm::is_contained(list.getValue(), address);
   };
@@ -1788,7 +1787,7 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
     bool isDist = site && (site.getDistAttr() || site.getLogpdfFnAttr());
     bool changed = inList(regenerateAddresses, address);
     // Constrained sites outside branches read the old trace (readsConstraint).
-    if (!changed && bare)
+    if (!changed && width == positionSize)
       changed = !isDist || address.size() > 1 ||
                 site->getParentOfType<impulse::IfOp>();
     if (changed)
@@ -1831,22 +1830,26 @@ struct MHStep {
 
 /// Emits the MH accept test of `proposal` against the current `weight`: the
 /// proposal is accepted when the log of a uniform draw from its rng falls
-/// below log alpha.
+/// below log alpha. With `hasScoreTail`, `proposal.weight` is the change of
+/// the joint density rather than the new joint density.
 static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
-                                 const MHProposal &proposal, bool deltaWeight) {
+                                 const MHProposal &proposal,
+                                 bool hasScoreTail) {
   Value jointRatio =
-      deltaWeight ? proposal.weight
-                  : arith::SubFOp::create(builder, loc, proposal.weight, weight)
-                        .getResult();
+      hasScoreTail
+          ? proposal.weight
+          : arith::SubFOp::create(builder, loc, proposal.weight, weight)
+                .getResult();
   Value logAlpha =
       proposal.logRatio
           ? proposal.logRatio
           : arith::SubFOp::create(builder, loc, jointRatio, proposal.corr)
                 .getResult();
   Value acceptWeight =
-      deltaWeight ? arith::AddFOp::create(builder, loc, weight, proposal.weight)
-                        .getResult()
-                  : proposal.weight;
+      hasScoreTail
+          ? arith::AddFOp::create(builder, loc, weight, proposal.weight)
+                .getResult()
+          : proposal.weight;
   Value rng = proposal.rng;
   Value uniform = emitUniformDraw(builder, loc, rng,
                                   cast<RankedTensorType>(weight.getType()));
@@ -2015,7 +2018,7 @@ static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
 /// Returns whether every site of `fn` runs exactly once, as a score tail with
 /// one column per site requires: no `impulse.if`, and only top-level
 /// distribution sites.
-static bool deltaWeightFeasible(FunctionOpInterface fn) {
+static bool supportsScoreTail(FunctionOpInterface fn) {
   bool feasible = true;
   fn.getFunctionBody().walk([&](Operation *op) {
     if (isa<impulse::IfOp>(op))
@@ -2059,6 +2062,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   Block &samplerBlock = sampler.front();
   auto traceType = cast<RankedTensorType>(trace.getType());
   int64_t positionSize = layout.positionSize;
+  int64_t width = traceType.getShape()[1];
+  bool hasScoreTail = width > positionSize;
 
   DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
 
@@ -2136,8 +2141,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
       delta ? taintedSiteYields(lpBlock, lpBlock.getArguments())
             : SmallVector<bool>(newYields.size() - 1, true);
 
-  // A trace wider than positionSize carries a per-site score tail.
-  if (traceType.getShape()[1] > positionSize) {
+  if (hasScoreTail) {
     Value row0 = emitI64ScalarConstant(b, loc, 0);
     auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
     for (unsigned j = 1, e = newYields.size(); j < e; ++j) {
@@ -2152,7 +2156,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   }
 
   SmallVector<Value> oldYields;
-  if (traceType.getShape()[1] == positionSize) {
+  if (width == positionSize) {
     SmallVector<Value> oldPositions;
     for (Attribute addr : selection)
       llvm::append_range(
@@ -2165,7 +2169,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   Value logRatio;
   for (int64_t j : selectedOrdinals) {
     Value newScore = newYields[1 + j];
-    Value oldScore = traceType.getShape()[1] == positionSize
+    Value oldScore = width == positionSize
                          ? oldYields[1 + j]
                          : scalarAt(b, loc, trace, {0, positionSize + j});
     Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
@@ -2180,8 +2184,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
         dirtyTerms.push_back(j);
     // Selected sites' own terms cancel against the proposal density, so log
     // alpha is the sum of the remaining dirty terms.
-    bool splitRatio = withLogRatio && selectedOrdinals.size() >= 2 &&
-                      traceType.getShape()[1] > positionSize;
+    bool splitRatio =
+        withLogRatio && selectedOrdinals.size() >= 2 && hasScoreTail;
     llvm::SmallDenseSet<int64_t> ownTerms(selectedOrdinals.begin(),
                                           selectedOrdinals.end());
     Value ratio;
@@ -2216,8 +2220,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
       if (isDirty)
         changedColumns.push_back(
             {positionSize + (int64_t)j, positionSize + (int64_t)j + 1});
-  } else if (traceType.getShape()[1] > positionSize) {
-    changedColumns.push_back({positionSize, traceType.getShape()[1]});
+  } else if (hasScoreTail) {
+    changedColumns.push_back({positionSize, width});
   }
   changedColumns = mergeColumnWindows(std::move(changedColumns));
 
@@ -2944,7 +2948,7 @@ struct ExpandImpulsePass
 
       int64_t declaredWidth =
           cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
-      int64_t scoreTailSize = declaredWidth - positionSize;
+      bool hasScoreTail = declaredWidth > positionSize;
       SmallVector<Value> siteScores;
       std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
           fn, ImpulseMode::Simulate, declaredWidth));
@@ -2982,14 +2986,14 @@ struct ExpandImpulsePass
               emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
           weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                     weightAccumulator, logpdf);
-          if (scoreTailSize > 0)
+          if (hasScoreTail)
             siteScores.push_back(logpdf);
           if (addressInList(sampleOp, allAddresses) &&
               failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
                                       currentOffset)))
             return failure();
         } else {
-          if (scoreTailSize > 0) {
+          if (hasScoreTail) {
             sampleOp.emitError("Impulse: score-tail traces do not support "
                                "nested generative sites");
             return failure();
@@ -3076,7 +3080,7 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
         SmallVector<Value> newRetVals;
         Value outTrace =
-            scoreTailSize > 0
+            hasScoreTail
                 ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
                                   siteScores, declaredWidth)
                 : carry.currTrace;
@@ -3374,7 +3378,6 @@ struct ExpandImpulsePass
           fnResultTypes.push_back(t);
       }
 
-      // A trace wider than the positions carries a score tail (delta weight).
       int64_t fullPositionSize = 0;
       RegionTraceLayout layout;
       if constexpr (isRegionForm) {
@@ -3394,7 +3397,7 @@ struct ExpandImpulsePass
         fullPositionSize =
             computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
       }
-      bool deltaWeight = traceType.getShape()[1] > fullPositionSize;
+      bool hasScoreTail = traceType.getShape()[1] > fullPositionSize;
 
       // The region form fills this in during the proposal.
       ColumnWindows changedColumns;
@@ -3408,12 +3411,12 @@ struct ExpandImpulsePass
         MHProposal proposal;
         if constexpr (isRegionForm)
           proposal =
-              proposeRegionMove(b, loc, op, layout, trace, rng, deltaWeight,
+              proposeRegionMove(b, loc, op, layout, trace, rng, hasScoreTail,
                                 /*withLogRatio=*/true, changedColumns);
         else
           proposal = proposeFlatMove(b, loc, op, fnResultTypes, trace, rng);
         MHDecision decision =
-            emitMHDecision(b, loc, weight, proposal, deltaWeight);
+            emitMHDecision(b, loc, weight, proposal, hasScoreTail);
         Value newTrace = writeBackMHWindows(b, loc, trace, proposal.trace,
                                             decision.accepted, changedColumns);
         Value newWeight = arith::SelectOp::create(
@@ -3513,8 +3516,8 @@ struct ExpandImpulsePass
       auto weightType = cast<RankedTensorType>(initWeight.getType());
       Type rngType = initRng.getType();
       int64_t width = traceType.getShape()[1];
-      bool scoreTail = width > positionSize;
-      if (scoreTail && width != positionSize + (int64_t)numYields) {
+      bool hasScoreTail = width > positionSize;
+      if (hasScoreTail && width != positionSize + (int64_t)numYields) {
         op.emitError("Impulse Gibbs: score-tail width does not match the "
                      "logpdf region's per-site yields");
         return failure();
@@ -3705,7 +3708,7 @@ struct ExpandImpulsePass
             trace = updateColumns(b, loc, trace, colSlice, col);
           }
         }
-        if (scoreTail)
+        if (hasScoreTail)
           for (unsigned j = 0; j < numYields; ++j)
             if (siteOfYield[j] >= 0)
               trace = writeCols(b, trace, positionSize + j,
@@ -3770,7 +3773,7 @@ struct ExpandImpulsePass
               arith::SelectOp::create(b, loc, take1, oneArg, zeroArg);
           cur[k] = newVal;
           trace = writeCols(b, trace, selectedCols[k], newVal);
-          if (scoreTail)
+          if (hasScoreTail)
             for (unsigned j = 0; j < numYields; ++j)
               if (dirtyOf[k][j])
                 trace = writeCols(b, trace, positionSize + j,
@@ -3875,7 +3878,7 @@ struct ExpandImpulsePass
       // On a score-tail trace, regenerate returns the dirty-term weight delta.
       int64_t fullPositionSize =
           computePositionSizeForSelection(mhOp, fn, allAddresses, symbolTable);
-      bool delta =
+      bool hasScoreTail =
           cast<RankedTensorType>(traceType).getShape()[1] > fullPositionSize;
 
       SmallVector<Type> regenResultTypes;
@@ -3898,7 +3901,7 @@ struct ExpandImpulsePass
       proposal.rng = regenerateOp.getOutputs()[0];
 
       MHDecision decision =
-          emitMHDecision(rewriter, loc, oldWeight, proposal, delta);
+          emitMHDecision(rewriter, loc, oldWeight, proposal, hasScoreTail);
       Value newTrace = writeBackMHWindows(
           rewriter, loc, oldTrace, proposal.trace, decision.accepted,
           mhChangedColumnsFlat(mhOp, fn, allAddresses, selection,
@@ -3946,7 +3949,7 @@ struct ExpandImpulsePass
 
       int64_t declaredWidth =
           cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
-      int64_t scoreTailSize = declaredWidth - positionSize;
+      bool hasScoreTail = declaredWidth > positionSize;
       SmallVector<Value> siteScores;
       std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
           fn, ImpulseMode::Generate, declaredWidth, constraintSize));
@@ -4011,14 +4014,14 @@ struct ExpandImpulsePass
               emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
           weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                     weightAccumulator, logpdf);
-          if (scoreTailSize > 0)
+          if (hasScoreTail)
             siteScores.push_back(logpdf);
           if (addressInList(sampleOp, allAddresses) &&
               failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
                                       currentTraceOffset)))
             return failure();
         } else {
-          if (scoreTailSize > 0) {
+          if (hasScoreTail) {
             sampleOp.emitError("Impulse: score-tail traces do not support "
                                "nested generative sites");
             return failure();
@@ -4129,7 +4132,7 @@ struct ExpandImpulsePass
 
         SmallVector<Value> newRetVals;
         Value outTrace =
-            scoreTailSize > 0
+            hasScoreTail
                 ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
                                   siteScores, declaredWidth)
                 : carry.currTrace;
@@ -4193,7 +4196,7 @@ struct ExpandImpulsePass
 
       int64_t declaredWidth =
           cast<RankedTensorType>(CI.getNewTrace().getType()).getShape()[1];
-      int64_t scoreTailSize = declaredWidth - positionSize;
+      bool hasScoreTail = declaredWidth > positionSize;
       SmallVector<Value> siteScores;
       int64_t siteOrdinal = 0;
       std::unique_ptr<ImpulseUtils> putils(ImpulseUtils::CreateFromClone(
@@ -4222,10 +4225,9 @@ struct ExpandImpulsePass
       // (regenerated or dependent on one) of new minus old log density; clean
       // terms cancel in the MH ratio. Taint is computed up front; fresh draws
       // are added as they are created.
-      bool deltaMode = scoreTailSize > 0;
       DenseSet<Value> tainted;
-      if (deltaMode) {
-        if (!deltaWeightFeasible(NewF)) {
+      if (hasScoreTail) {
+        if (!supportsScoreTail(NewF)) {
           CI.emitError("Impulse: regenerate over a score-tail trace requires "
                        "a straight-line body of top-level distribution sites");
           return failure();
@@ -4272,7 +4274,7 @@ struct ExpandImpulsePass
         auto scoresType = RankedTensorType::get(
             {2, (int64_t)siteScoresAttr.size()}, entryBuilder.getF64Type());
         initWeight = emitSplatConstant(entryBuilder, initLoc, scoresType, 0.0);
-      } else if (hastings && !deltaMode) {
+      } else if (hastings && !hasScoreTail) {
         // Sites whose old density cannot be evaluated inline at the new state.
         hastingsTaint = computeRegenerateTaint(NewF, selection);
         SmallVector<Attribute> oldInfoAddrs;
@@ -4404,21 +4406,21 @@ struct ExpandImpulsePass
             }
           }
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
-          if (hastings && !deltaMode && (isSelected || flipIdx >= 0))
+          if (hastings && !hasScoreTail && (isSelected || flipIdx >= 0))
             hastingsTaint.insert(values.begin(), values.end());
           if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
             return failure();
 
           bool termDirty =
               isSelected ||
-              (deltaMode && llvm::any_of(siteParams(sampleOp), [&](Value v) {
+              (hasScoreTail && llvm::any_of(siteParams(sampleOp), [&](Value v) {
                  return tainted.contains(v);
                }));
-          if (deltaMode && isSelected)
+          if (hasScoreTail && isSelected)
             tainted.insert(values.begin(), values.end());
 
           Value oldScore;
-          if (scoreTailSize > 0)
+          if (hasScoreTail)
             oldScore = scalarAt(rewriter, loc, prevTrace,
                                 {0, positionSize + siteOrdinal});
 
@@ -4428,23 +4430,23 @@ struct ExpandImpulsePass
               weightAccumulator = recordSiteScore(
                   loc, weightAccumulator, it->second,
                   emitSiteLogpdf(rewriter, symbolTable, sampleOp, values));
-          } else if (!deltaMode || termDirty) {
+          } else if (!hasScoreTail || termDirty) {
             Value logpdf =
                 emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
             Value contribution =
-                deltaMode
+                hasScoreTail
                     ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore)
                           .getResult()
                     : logpdf;
             weightAccumulator = arith::AddFOp::create(
                 rewriter, loc, weightAccumulator, contribution);
-            if (scoreTailSize > 0)
+            if (hasScoreTail)
               siteScores.push_back(logpdf);
             if (hastings && isSelected) {
               // A prior draw's proposal density cancels its own term.
               branch.corr = arith::AddFOp::create(rewriter, loc, branch.corr,
                                                   contribution);
-              if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
+              if (!hasScoreTail && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
                 Value oldLogpdf = emitSiteLogpdf(
                     rewriter, symbolTable, sampleOp,
@@ -4470,7 +4472,7 @@ struct ExpandImpulsePass
           if (addressInList(sampleOp, allAddresses) &&
               failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
                                       currentTraceOffset,
-                                      /*write=*/!deltaMode || isSelected)))
+                                      /*write=*/!hasScoreTail || isSelected)))
             return failure();
         } else {
           auto genFn =
@@ -4625,7 +4627,7 @@ struct ExpandImpulsePass
 
         SmallVector<Value> newRetVals;
         Value outTrace =
-            scoreTailSize > 0
+            hasScoreTail
                 ? appendScoreTail(rewriter, retOp.getLoc(), carry.currTrace,
                                   siteScores, declaredWidth)
                 : carry.currTrace;
