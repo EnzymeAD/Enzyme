@@ -3,7 +3,7 @@
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-tau=1e-12 -poseidon-print -S -o /dev/null
-; DEFINE: %{prof} = -poseidon-profile-use=%S/../../Inputs/matmul_site_profile
+; DEFINE: %{prof} = -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune
 ; RUN: rm -rf %t && mkdir %t
 
 ; The accuracy memo of the product of Inputs/stale_cache/matmul_device.ll, one

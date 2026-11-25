@@ -1,11 +1,11 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-print -S
 ; DEFINE: %{host} = %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %loadClangPoseidon \
-; DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c \
+; DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c \
 ; DEFINE:   -mllvm -poseidon-compilation-id=layout -S -emit-llvm -o -
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/nt_body.fpprofile

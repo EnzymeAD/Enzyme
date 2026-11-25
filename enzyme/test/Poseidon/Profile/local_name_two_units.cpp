@@ -1,6 +1,6 @@
 // REQUIRES: enzyme
 // DEFINE: %{gen} = %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c
-// DEFINE: %{use} = %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-explain=%t/explain -poseidon-print
+// DEFINE: %{use} = %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-explain=%t/explain -poseidon-print
 // RUN: rm -rf %t && mkdir %t
 // RUN: %{gen} -c %S/Inputs/local_name/a.cpp -o %t/a.o
 // RUN: %{gen} -c %S/Inputs/local_name/b.cpp -o %t/b.o

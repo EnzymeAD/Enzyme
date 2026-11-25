@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/Inputs/staging_multiview \
+; DEFINE:   -poseidon-profile-use=%S/Inputs/staging_multiview -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \

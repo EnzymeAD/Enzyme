@@ -108,8 +108,8 @@ lookupDPTable(Session &S, const SiteState &st, llvm::ArrayRef<SiteUnit *> units,
               llvm::StringRef profilePath);
 
 /// The order the DP takes `units[i]`, units of the i-th site, in, which is the
-/// order of the steps of every solution: exactOrder, or prunedOrder under
-/// -poseidon-early-prune.
+/// order of the steps of every solution: exactOrder by default, or
+/// prunedOrder under -poseidon-early-prune.
 llvm::SmallVector<OptimizationUnit *>
 solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
 

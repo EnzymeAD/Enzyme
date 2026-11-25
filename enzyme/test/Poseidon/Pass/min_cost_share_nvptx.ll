@@ -1,7 +1,7 @@
 ; REQUIRES: cuda-toolkit, nvptx-registered-target
 ; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 ; DEFINE: %{use} = -poseidon-kernels=.*_kernel \
-; DEFINE:   -poseidon-profile-use=%t/prof \
+; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false \
@@ -17,10 +17,10 @@
 ; RUN:   | FileCheck --check-prefix=NOFILTER %s
 ; RUN: cp %t/prof/*.fpprofile %t/stale/
 ; RUN: sed -i 's/^CanonicalHash = .*/CanonicalHash = 0123456789abcdef/' %t/stale/cold_kernel.fpprofile
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-profile-use=%t/stale -poseidon-cache=%t/stale -S -o /dev/null 2>&1 \
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-profile-use=%t/stale -poseidon-early-prune -poseidon-cache=%t/stale -S -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STALE %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
-; RUN: not env TMPDIR=%t/tmp %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t/tmp/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
+; RUN: not env TMPDIR=%t/tmp %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-early-prune -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t/tmp/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: ls %t/tmp | count 0
 
 ; Two kernels reached by -poseidon-kernels, not by the attribute. cold_kernel

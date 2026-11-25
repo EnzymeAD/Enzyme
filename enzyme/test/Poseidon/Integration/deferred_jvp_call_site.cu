@@ -17,7 +17,7 @@
 // RUN:   | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' \
 // RUN:   | FileCheck --check-prefix=SUMS %s
 //
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 \
 // RUN:   | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt | FileCheck --check-prefix=OPT %s
 

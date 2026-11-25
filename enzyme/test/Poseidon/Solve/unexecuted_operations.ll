@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/Inputs/unexecuted_operations \
+; DEFINE:   -poseidon-profile-use=%S/Inputs/unexecuted_operations -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-tau=1e-4 -pass-remarks=poseidon \

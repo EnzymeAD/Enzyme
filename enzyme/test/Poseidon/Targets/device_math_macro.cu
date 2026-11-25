@@ -1,7 +1,7 @@
 // REQUIRES: enzyme, cuda-toolkit, nvptx-registered-target
 // DEFINE: %{use} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch \
 // DEFINE:   -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon \
-// DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-tau=1e-3 \
+// DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-early-prune -mllvm -poseidon-tau=1e-3 \
 // DEFINE:   -mllvm -poseidon-enable-rewrite=0 \
 // DEFINE:   -mllvm -poseidon-cost-model=%gpu_cost_model %s
 // RUN: rm -rf %t && mkdir -p %t/prof

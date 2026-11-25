@@ -3,16 +3,16 @@
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-print-dp-table -S
 ; DEFINE: %{two} = %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes=poseidon \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-early-prune=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-cost-budget=-0.99 -poseidon-print -poseidon-print-dp-table -S
 ; DEFINE: %{fms} = %opt %S/../Techniques/Precision/expansion_two_components_nvptx.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/expansion_two_components -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/expansion_two_components -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print -S

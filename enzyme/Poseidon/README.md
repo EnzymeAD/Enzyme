@@ -104,7 +104,10 @@ It bounds a site's modelled relative error, a sum over the parts of the site:
 a matrix product contributes its relative output error (none as written), an
 FP subgraph its output error weighted by the profiled sensitivities and
 divided by the site's summed sensitivity. The cheapest set of rewrites that
-keeps the sum within the target is applied.
+keeps the sum within the target is applied. The set is solved exactly;
+`-poseidon-early-prune` solves an approximation instead, faster on sites with
+many units, which drops a partial set for a cheaper, no less accurate one that
+the later choices admit alike.
 `-poseidon-cost-budget=<share>` instead bounds the share of a site's profiled
 cost a rewrite may add, or with a negative share has to save. Herbie results
 and solved tables are kept in `./.poseidon` (`-poseidon-cache=<dir>`), so a

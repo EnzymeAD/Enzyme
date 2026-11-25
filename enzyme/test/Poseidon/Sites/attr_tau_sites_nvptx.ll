@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/fms_loose.fpprofile
 ; RUN: cp %S/../Inputs/expansion_two_components/fms_body.fpprofile %t/prof/fms_tight.fpprofile
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S -poseidon-print > %t/out.ll 2> %t/err.txt
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S -poseidon-print > %t/out.ll 2> %t/err.txt
 ; RUN: FileCheck --check-prefix=ERR %s < %t/err.txt
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
 

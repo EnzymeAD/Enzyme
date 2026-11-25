@@ -157,12 +157,15 @@ POSEIDON_SOLVER_OPTION(TauCheapest, Bool, true, "poseidon-tau-cheapest", Hidden,
                        "frontier point that meets it rather than the most "
                        "accurate one")
 POSEIDON_SOLVER_OPTION(
-    EarlyPrune, Bool, true, "poseidon-early-prune", Hidden, SolveInput, "",
-    "Drop dominated partial solutions after every optimization unit; off, "
-    "solve exactly, dropping a partial solution only for one that is cheaper, "
-    "no less accurate and treated alike by every later unit, so that the "
-    "frontier is that of every compatible choice, at the price of pricing each "
-    "precision change against every set of rewritten outputs of its subgraph")
+    EarlyPrune, Bool, false, "poseidon-early-prune", Hidden, SolveInput, "",
+    "Solve an approximation, faster on sites with many units: after every "
+    "optimization unit, drop a partial solution for one that is cheaper, no "
+    "less accurate and that the later units admit and price alike as far as "
+    "their refusals and repricings tell. Off (the default), solve exactly, "
+    "dropping a partial solution only for one that is cheaper, no less "
+    "accurate and treated alike by every later unit, so that the frontier is "
+    "that of every compatible choice, at the price of pricing each precision "
+    "change against every set of rewritten outputs of its subgraph")
 POSEIDON_SOLVER_OPTION(SolveJointly, Bool, false, "poseidon-solve-jointly",
                        Hidden, Other, "",
                        "Solve all annotated sites in the module under one "

@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S | FileCheck %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S | FileCheck %s
 
 ; Opt phase with no Rewrite/PT: nothing is applied, so the wrapper calls the
 ; ORIGINAL body and the preprocess clone is dropped.

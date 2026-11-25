@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/Inputs/fmod_operator -poseidon-print -S
+; DEFINE:   -poseidon-profile-use=%S/Inputs/fmod_operator -poseidon-early-prune -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.5 -poseidon-cache=%t/pt -o %t/pt.ll 2>&1 | FileCheck --check-prefix=PT %s
 ; RUN: FileCheck --check-prefix=PT-IR %s < %t/pt.ll

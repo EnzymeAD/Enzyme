@@ -1,11 +1,11 @@
 ; DEFINE: %{opt} = %opt < %S/../../Inputs/piecewise_rewrite/tester.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=1e9 -S -o /dev/null
 ; RUN: rm -rf %t && mkdir -p %t/tmp %t/used %t/none %t/sig && touch %t/file
 ; RUN: not %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c -poseidon-print 2>&1 | FileCheck --check-prefix=ENABLED %s
-; RUN: not env TMPDIR=%t/tmp %clang -O1 -c -x ir %S/../../Inputs/piecewise_rewrite/tester.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -mllvm -poseidon-enable-rewrite=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-precision=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -mllvm -poseidon-print -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; RUN: not env TMPDIR=%t/tmp %clang -O1 -c -x ir %S/../../Inputs/piecewise_rewrite/tester.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-precision=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -mllvm -poseidon-print -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: not ls %t/site.o
 ; RUN: ls %t/tmp | count 0
 ; RUN: %{opt} -poseidon-enable-rewrite=false -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | count 0

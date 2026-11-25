@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/subgraph_split -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/subgraph_split -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=-0.05 -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t

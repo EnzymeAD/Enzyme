@@ -1,10 +1,10 @@
 ; DEFINE: %{clang} = %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %loadClangPoseidon \
-; DEFINE:   -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile \
+; DEFINE:   -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune \
 ; DEFINE:   -mllvm -poseidon-cache=%t/c -S -emit-llvm -o -
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/same.ll
 ; RUN: sed 's/ozaki_stub\.cu/other_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/other.ll
-; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-compilation-id=u -S -o /dev/null
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-compilation-id=u -S -o /dev/null
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-compilation-id=u -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=SAME %s
 ; RUN: %{clang} %t/other.ll -mllvm -poseidon-compilation-id=u 2>&1 | FileCheck --check-prefixes=OTHER,KEPT --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-compilation-id=v 2>&1 | FileCheck --check-prefixes=OTHERUNIT,KEPT --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s

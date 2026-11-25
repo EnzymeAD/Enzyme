@@ -5,7 +5,7 @@
 ; RUN: cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/wrap_body.fpprofile
 ; RUN: %opt %s %loadPoseidon \
 ; RUN:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/c \
+; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-12 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \

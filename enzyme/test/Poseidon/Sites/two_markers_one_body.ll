@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t -S -poseidon-print 2>&1 | FileCheck %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t -S -poseidon-print 2>&1 | FileCheck %s
 
 ; One marked body reached from TWO marker calls. The profiling run writes one
 ; record per BODY (profileSite shares one instrumented clone between a body's

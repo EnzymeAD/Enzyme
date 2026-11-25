@@ -539,10 +539,10 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
     costToAccuracyMap[0] = 0;
     costToSolutionMap[0] = {};
 
-    // Each prune also compares partial solutions a later unit treats
+    // The exact solve is the default. The pruned one compares partial
+    // solutions that both constrain a later unit, which may price them
     // differently (a precision unit is priced against the rewrites chosen on
-    // its subgraph), so the pruned frontier can miss points the exact solve
-    // finds.
+    // its subgraph), so its frontier can miss points the exact solve finds.
     Error searched =
         !O.Solver.EarlyPrune
             ? solveExact(solveOrder(O, units), scale, costToAccuracyMap,

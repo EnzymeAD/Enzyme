@@ -9,22 +9,22 @@
 ; RUN: cp %t/one.csv %t/all.csv && echo 'inkernel_rel,tcec_n2_f16_f32_m16n16k16_browmajor,0.5' >> %t/all.csv && echo 'inkernel_rel,tcec_n3_f16_f32_m16n16k16_browmajor,0.5' >> %t/all.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/col.csv && echo 'inkernel_rel,f16_f32_m16n16k16_bcolmajor,0.5' >> %t/col.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/ext.csv && echo 'inkernel_rel,f16_f32_m16n8k16_browmajor,0.5' >> %t/ext.csv
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c_class 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c_class 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=ALL,CLASS %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/col.csv -poseidon-cache=%t/c_col 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/col.csv -poseidon-cache=%t/c_col 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=ALL,CLASS %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/ext.csv -poseidon-cache=%t/c_ext 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/ext.csv -poseidon-cache=%t/c_ext 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=ALL,CLASS %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/one.csv -poseidon-cache=%t/c_one 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/one.csv -poseidon-cache=%t/c_one 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=TCEC,ONE %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/all.csv -poseidon-cache=%t/c_all 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/all.csv -poseidon-cache=%t/c_all 2>&1 \
 ; RUN:   | FileCheck --check-prefix=EXACT --implicit-check-not='in-kernel raise as' %s
-; RUN: %{opt} -poseidon-profile-use=%t/scaled -poseidon-cost-model=%t/all.csv -poseidon-cache=%t/c_scaled 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/scaled -poseidon-early-prune -poseidon-cost-model=%t/all.csv -poseidon-cache=%t/c_scaled 2>&1 \
 ; RUN:   | FileCheck --check-prefix=CLASS --implicit-check-not='in-kernel raise as' %s
 ; RUN: cp %t/one.csv %t/strict.csv && echo 'wmma_mma_m8n8k4,f64_f64,64' >> %t/strict.csv
 ; RUN: for c in f16_f16 bf16_f32 tf32_f32 f64_f64 tcec_n5_f16_f32 tcec_n2_bf16_f32 tcec_n2_tf32_f32 tcec_n3_tf32_f32 tcec_n5_tf32_f32; do \
 ; RUN:   echo "inkernel_rel,$c,0.5"; echo "inkernel_rel,${c}_m16n16k16_browmajor,0.5"; done >> %t/strict.csv
-; RUN: not %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/strict.csv -poseidon-cache=%t/c_strict -poseidon-strict-mode 2>&1 \
+; RUN: not %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/strict.csv -poseidon-cache=%t/c_strict -poseidon-strict-mode 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STRICT %s
 
 ; The in-kernel raises of the product of Inputs/stale_cache/matmul_device.ll,

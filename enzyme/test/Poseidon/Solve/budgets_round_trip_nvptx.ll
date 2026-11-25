@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-print -S -o /dev/null

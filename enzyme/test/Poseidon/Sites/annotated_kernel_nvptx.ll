@@ -1,4 +1,4 @@
-; DEFINE: %{use} = -poseidon-profile-use=%t/prof \
+; DEFINE: %{use} = -poseidon-profile-use=%t/prof -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false \

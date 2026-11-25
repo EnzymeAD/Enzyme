@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../../Inputs/fma_site_profile \
+; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-print -S
 ; RUN: rm -rf %t && split-file %s %t

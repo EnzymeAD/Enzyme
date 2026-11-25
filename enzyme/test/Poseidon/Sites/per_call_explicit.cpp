@@ -3,7 +3,7 @@
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=SAME %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -poseidon-print -Rpass-missed=poseidon -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -poseidon-print -Rpass-missed=poseidon -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
 //
 // Without the plugin a call with an explicit list does not link; with it and
@@ -12,7 +12,7 @@
 // RUN: %clang -x c++ -O2 -I%poseidon_profile_inc %loadClangPoseidon %s -lstdc++ -lm -o %t/plain
 // RUN: %t/plain | FileCheck --check-prefix=SAME %s
 //
-// RUN: not %clang -x c++ -O1 -gline-tables-only -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -DLISTS %s -o /dev/null 2>&1 | FileCheck --check-prefix=LISTS %s
+// RUN: not %clang -x c++ -O1 -gline-tables-only -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-early-prune -DLISTS %s -o /dev/null 2>&1 | FileCheck --check-prefix=LISTS %s
 
 // __poseidon_optimize takes either list. An explicit one, with Enzyme's
 // activity markers and shadows the caller provides, makes the call a site over

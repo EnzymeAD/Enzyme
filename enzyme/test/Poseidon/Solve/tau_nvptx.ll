@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
 ; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/prof

@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: %if enzyme %{ %opt < %t/tester.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
-; RUN: %opt < %t/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
-; RUN: not %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
+; RUN: %opt < %t/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
+; RUN: not %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 
 ; The profile's slot indices are positions in the canonicalized clone's
 ; optimizable instruction sequence, so the profile carries a digest of that

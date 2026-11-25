@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-3 -poseidon-cache=%t/c -poseidon-explain=%t/x -poseidon-print -S -o /dev/null 2>&1 | FileCheck %s
+; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-3 -poseidon-cache=%t/c -poseidon-explain=%t/x -poseidon-print -S -o /dev/null 2>&1 | FileCheck %s
 ; RUN: %python -c "import json, sys; r = json.load(open(sys.argv[1]))['result']; print(r['pin'], '%%.6e' %% r['modelled_rel_error'])" %t/x/matmul_body.explain.json | FileCheck --check-prefix=EXPLAIN %s
 
 ; Two matrix products on one reduction loop (Inputs/no_early_prune/two_matmuls.ll):

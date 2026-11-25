@@ -12,27 +12,27 @@
 ; RUN: cp %t/none.csv %t/rowonly.csv && echo 'library_ozaki_rect_rel,dgemm_m128n16k16,0.2' >> %t/rowonly.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/ozmk.csv && echo 'library_ozaki_rect_rel,nm14_m128k16,0.1' >> %t/ozmk.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/square.csv && echo 'library_ozaki_rect_rel,dgemm_m16n16k16,0.2' >> %t/square.csv
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_sq -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_sq -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=WARN,OZEST,SQ,NATIVE %s
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/oz.csv -poseidon-cache=%t/c_oz -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/oz.csv -poseidon-cache=%t/c_oz -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=WARN,SQ,OZAKI %s
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/ozmk.csv -poseidon-cache=%t/c_ozmk -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/ozmk.csv -poseidon-cache=%t/c_ozmk -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=WARN,OZEST,SQ,NATIVE %s
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/low.csv -poseidon-cache=%t/c_low -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/low.csv -poseidon-cache=%t/c_low -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=LOW,NATIVE --implicit-check-not='native-dgemm host dispatch' %s
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/high.csv -poseidon-cache=%t/c_high -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/high.csv -poseidon-cache=%t/c_high -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=HIGH,OZAKI --implicit-check-not='native-dgemm host dispatch' %s
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/mk.csv -poseidon-cache=%t/c_mk -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/mk.csv -poseidon-cache=%t/c_mk -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefixes=WARN,SQ,OZAKI %s
-; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/rowonly.csv -poseidon-cache=%t/c_rowonly -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/rowonly.csv -poseidon-cache=%t/c_rowonly -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=HIGH --implicit-check-not='native-dgemm host dispatch' %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_square -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_square -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=SQ --implicit-check-not='native-dgemm host dispatch' %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/square.csv -poseidon-cache=%t/c_squarerow -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/square.csv -poseidon-cache=%t/c_squarerow -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=HIGH --implicit-check-not='native-dgemm host dispatch' %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-cost-model=%t/none.csv -poseidon-cache=%t/c_none 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/none.csv -poseidon-cache=%t/c_none 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NONE --implicit-check-not='native-dgemm cublas' %s
-; RUN: not %{opt} -poseidon-profile-use=%t/rect -poseidon-cost-model=%t/oz.csv -poseidon-cache=%t/c_strict -poseidon-strict-mode 2>&1 \
+; RUN: not %{opt} -poseidon-profile-use=%t/rect -poseidon-early-prune -poseidon-cost-model=%t/oz.csv -poseidon-cache=%t/c_strict -poseidon-strict-mode 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STRICT %s
 
 ; The native DGEMM candidate of the product of Inputs/stale_cache/

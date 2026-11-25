@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt < %S/../../Inputs/piecewise_rewrite/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \

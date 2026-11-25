@@ -2,15 +2,15 @@
 ; DEFINE:   -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -disable-output
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -poseidon-print 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-early-prune -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=FLOAT %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/a/tester.explain.json
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon -poseidon-print 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-early-prune -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=KEPT %s
 ; RUN: %python -c "print('tester' + 'x' * 250)" > %t/long.name
 ; RUN: sed "s/@tester\b/@$(cat %t/long.name)/" %s > %t/long.ll
 ; RUN: mkdir -p %t/long.prof && cp %S/../Inputs/explain/precision/tester.fpprofile %t/long.prof/$(%python -c "print('tester' + 'x' * 154 + '~851579e7fddbfcd5')").fpprofile
-; RUN: %{opt} < %t/long.ll -poseidon-profile-use=%t/long.prof -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-explain=%t/long -poseidon-print 2>&1 \
+; RUN: %{opt} < %t/long.ll -poseidon-profile-use=%t/long.prof -poseidon-early-prune -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-explain=%t/long -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=LONG --implicit-check-not="Error writing" %s
 ; RUN: ls %t/long | FileCheck --check-prefix=LONGFILES %s
 ; RUN: cat %t/long/*.explain.json | FileCheck --check-prefix=LONGJSON -DNAME=$(cat %t/long.name) %s

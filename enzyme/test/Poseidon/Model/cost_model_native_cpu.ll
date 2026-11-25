@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt %s %loadPoseidon -poseidon-profile-use=%S/../Inputs/joint_profiles \
+; DEFINE: %{opt} = %opt %s %loadPoseidon -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 \

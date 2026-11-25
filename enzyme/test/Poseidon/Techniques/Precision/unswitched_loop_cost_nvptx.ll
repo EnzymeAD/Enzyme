@@ -1,7 +1,7 @@
 ; REQUIRES: nvptx-registered-target
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; RUN:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-cache=%t/c \
+; RUN:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-early-prune -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; RUN:   -poseidon-precision-expansions=true -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print \
@@ -9,7 +9,7 @@
 ; RUN: FileCheck %s < %t/log
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; RUN:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-cache=%t/k \
+; RUN:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-early-prune -poseidon-cache=%t/k \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; RUN:   -poseidon-precision-expansions=true -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print \
@@ -18,7 +18,7 @@
 ; RUN: grep '^\[poseidon\] precision candidate' %t/kept.log | sed 's/ [^ ]*acc=.*//' > %t/priced-kept
 ; RUN: diff %t/priced %t/priced-kept
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; RUN:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-cache=%t/f \
+; RUN:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-early-prune -poseidon-cache=%t/f \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; RUN:   -poseidon-precision-expansions=true -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print \

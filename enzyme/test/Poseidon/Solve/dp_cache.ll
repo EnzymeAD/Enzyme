@@ -2,8 +2,8 @@
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-print \
 ; DEFINE:   -S -o /dev/null
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
-; DEFINE: %{profiles} = -poseidon-profile-use=%S/../Inputs/pow_term/profiles
-; DEFINE: %{out0} = -poseidon-profile-use=%S/../Inputs/pow_term/out0
+; DEFINE: %{profiles} = -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-early-prune
+; DEFINE: %{out0} = -poseidon-profile-use=%S/../Inputs/pow_term/out0 -poseidon-early-prune
 ; RUN: rm -rf %t && split-file %s %t
 
 ; The DP table cache of the site in tester.ll. noscale.ll is the module without
@@ -77,7 +77,7 @@
 ; RUN: cp -r %t/parts/base %t/parts/same
 ; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/same 2>&1 | FileCheck --check-prefix=PARTS-HIT %s
 ; RUN: cp -r %t/parts/base %t/parts/profile
-; RUN: %opt %t/tester.ll %{pass} -poseidon-profile-use=%t/parts/p %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/profile 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} -poseidon-profile-use=%t/parts/p -poseidon-early-prune %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/profile 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/costmodel
 ; RUN: %opt %t/tester.ll %{pass} %{profiles} -poseidon-cost-model=%t/parts/cm.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/costmodel 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/flag

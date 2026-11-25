@@ -6,13 +6,13 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_half.csv -poseidon-print \
 ; DEFINE:   -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/in_range -poseidon-cache=%t/in16 -poseidon-cost-budget=-0.904 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/in_range -poseidon-early-prune -poseidon-cache=%t/in16 -poseidon-cost-budget=-0.904 2>&1 \
 ; RUN:   | FileCheck --check-prefix=IN16 %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/out_of_range -poseidon-cache=%t/out16 -poseidon-cost-budget=-0.904 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/out_of_range -poseidon-early-prune -poseidon-cache=%t/out16 -poseidon-cost-budget=-0.904 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT16 %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/in_range -poseidon-cache=%t/in32 -poseidon-cost-budget=-0.9 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/in_range -poseidon-early-prune -poseidon-cache=%t/in32 -poseidon-cost-budget=-0.9 2>&1 \
 ; RUN:   | FileCheck --check-prefix=IN32 %s
-; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/out_of_range -poseidon-cache=%t/out32 -poseidon-cost-budget=-0.9 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/../../Inputs/fp16_range/out_of_range -poseidon-early-prune -poseidon-cache=%t/out32 -poseidon-cost-budget=-0.9 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT32 %s
 
 ; IN16: Initial AccuracyCost: 6.432707e-14

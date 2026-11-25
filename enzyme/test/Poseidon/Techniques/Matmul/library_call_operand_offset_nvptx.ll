@@ -2,7 +2,7 @@
 ; RUN: cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/gemm_body.fpprofile
 ; RUN: cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/shifted_body.fpprofile
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
-; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/c \
+; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-print \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \

@@ -9,14 +9,14 @@
 ; RUN: sed -i -e "s/^Kappa = .*/Kappa = 0/" -e "s/^KappaMark = ok/KappaMark = below-noise/" %t/noise/matmul_body.fpprofile %t/noise/fms_body.fpprofile
 ; RUN: sed -i "/^Kappa/d" %t/nokappa/matmul_body.fpprofile %t/nokappa/fms_body.fpprofile
 ; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/matmul_body.fpprofile
-; RUN: %{opt} -poseidon-profile-use=%S/Inputs/site_kappa -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c1 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%S/Inputs/site_kappa -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c1 2>&1 \
 ; RUN:   | FileCheck --check-prefix=KAPPA %s
-; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c2 2>&1 \
+; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c2 2>&1 \
 ; RUN:   | FileCheck --check-prefix=PLAIN %s
-; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
-; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-tau=1e-3 -poseidon-cache=%t/c5 2>&1 | FileCheck --check-prefix=DIVERGED %s
-; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-solve-jointly -poseidon-cache=%t/c6 2>&1 | FileCheck --check-prefix=DIVERGED %s
-; RUN: %{opt} -poseidon-profile-use=%t/noise -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c4 > %t/noise.log 2>&1
+; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-early-prune -poseidon-enable-precision=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-early-prune -poseidon-enable-precision=false -poseidon-tau=1e-3 -poseidon-cache=%t/c5 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-early-prune -poseidon-enable-precision=false -poseidon-solve-jointly -poseidon-cache=%t/c6 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/noise -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c4 > %t/noise.log 2>&1
 ; RUN: FileCheck --check-prefix=PLAIN %s < %t/noise.log
 ; RUN: FileCheck --check-prefix=NOISE %s < %t/noise.log
 

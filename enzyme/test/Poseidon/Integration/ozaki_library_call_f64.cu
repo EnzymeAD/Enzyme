@@ -13,7 +13,7 @@
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-tau=1e-12 \
 // RUN:     %s -o %t/opt.exe -lcublas 2>&1 | FileCheck %s

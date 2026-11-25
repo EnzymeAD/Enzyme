@@ -1,7 +1,7 @@
 ; REQUIRES: tcec-cumpsgemm
 ; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/fp16_range/matmul_tiny \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/fp16_range/matmul_tiny -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t

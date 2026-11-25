@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/Inputs/unbounded_input \
+; DEFINE:   -poseidon-profile-use=%S/Inputs/unbounded_input -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -pass-remarks-missed=poseidon -S
@@ -9,7 +9,7 @@
 ; RUN: not %{opt} -poseidon-tau=1e-3 -poseidon-cache=%t/tau -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=TAU %s
 ; RUN: mkdir %t/foreign && cp %S/Inputs/unbounded_input/*.fpprofile %t/foreign/
 ; RUN: sed -i -e '10s/NumOperands = 2/NumOperands = 0/' -e '11,12d' %t/foreign/tester.fpprofile
-; RUN: not %{opt} -poseidon-profile-use=%t/foreign -poseidon-cost-budget=-0.3 -poseidon-cache=%t/foreign-cache -o /dev/null 2>&1 | FileCheck --check-prefix=FOREIGN %s
+; RUN: not %{opt} -poseidon-profile-use=%t/foreign -poseidon-early-prune -poseidon-cost-budget=-0.3 -poseidon-cache=%t/foreign-cache -o /dev/null 2>&1 | FileCheck --check-prefix=FOREIGN %s
 
 ; A subgraph whose profiled input range holds no interval of finite values
 ; cannot be sampled and has no priced precision candidate: it is left as

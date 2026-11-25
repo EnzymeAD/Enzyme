@@ -11,7 +11,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t/profile \
+// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t/profile -poseidon-early-prune \
 // RUN:     -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model \
 // RUN:     -poseidon-print -poseidon-enable-rewrite=0 -poseidon-tau=1e-3 \
 // RUN:     %s -o %t/opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s

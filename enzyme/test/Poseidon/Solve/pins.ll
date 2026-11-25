@@ -1,11 +1,11 @@
 ; DEFINE: %{regime} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/piecewise_rewrite/tester.ll \
 ; DEFINE:   %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-enable-rewrite=true \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-rewrite=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
 ; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)"
-; DEFINE: %{joint} = -poseidon-profile-use=%S/../Inputs/joint_profiles
+; DEFINE: %{joint} = -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-early-prune
 ; DEFINE: %{pt} = -poseidon-enable-rewrite=false -poseidon-enable-precision=true
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; RUN: rm -rf %t && split-file %s %t
@@ -103,12 +103,12 @@
 ; RUN: sed -e 's/tester_a/_Z6testerdd/g' -e 's/tester_b/_Z6testerdi/g' %t/sites.ll > %t/sites/mangled/m.ll
 ; RUN: cp %S/../Inputs/joint_profiles/tester_a.fpprofile %t/sites/mangled/_Z6testerdd.fpprofile
 ; RUN: cp %S/../Inputs/joint_profiles/tester_b.fpprofile %t/sites/mangled/_Z6testerdi.fpprofile
-; RUN: not %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-pin=tester:P0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-AMBIGUOUS %s
-; RUN: %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-pin=_Z6testerdi:P0=All FP64(70%%) + FP32(30%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-SYMBOL %s
+; RUN: not %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled -poseidon-early-prune %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-pin=tester:P0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-AMBIGUOUS %s
+; RUN: %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled -poseidon-early-prune %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-pin=_Z6testerdi:P0=All FP64(70%%) + FP32(30%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-SYMBOL %s
 ; RUN: sed -e 's/tester_a/_Z6testerdd/g' %t/sites.ll > %t/sites/onemangled/m.ll
 ; RUN: cp %S/../Inputs/joint_profiles/tester_a.fpprofile %t/sites/onemangled/_Z6testerdd.fpprofile
 ; RUN: cp %S/../Inputs/joint_profiles/tester_b.fpprofile %t/sites/onemangled/tester_b.fpprofile
-; RUN: %opt %t/sites/onemangled/m.ll %{pass} -poseidon-profile-use=%t/sites/onemangled %{pt} %{cm} -poseidon-cache=%t/sites/onemangled/c "-poseidon-pin=tester:P0=All FP64(50%%) + FP32(50%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-BASENAME %s
+; RUN: %opt %t/sites/onemangled/m.ll %{pass} -poseidon-profile-use=%t/sites/onemangled -poseidon-early-prune %{pt} %{cm} -poseidon-cache=%t/sites/onemangled/c "-poseidon-pin=tester:P0=All FP64(50%%) + FP32(50%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-BASENAME %s
 
 ; SITES-AMBIGUOUS: error: {{.*}}Poseidon: -poseidon-pin item 'tester:P0=All FP64(0%) + FP32(100%)' names the site 'tester', which more than one site of this module answers to; give one of them by its symbol:
 ; SITES-AMBIGUOUS-NEXT: {{^}}  _Z6testerdd (tester(double, double)){{$}}

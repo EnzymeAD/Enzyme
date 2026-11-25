@@ -14,19 +14,19 @@
 // RUN:   | FileCheck --check-prefix=EXEC %s
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/c2 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c2 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
 // RUN:     -poseidon-precision-expansion-components=2 -poseidon-tau=1e-16 \
 // RUN:     %s -o %t/two.exe 2>&1 | FileCheck --check-prefix=TWO %s
 // RUN: %t/two.exe 1e-11 1e-8 | FileCheck --check-prefix=EXEC %s
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
 // RUN:     -poseidon-precision-expansion-components=3 -poseidon-tau=1e-16 \
 // RUN:     %s -o %t/three.exe 2>&1 | FileCheck --check-prefix=THREE %s
 // RUN: %t/three.exe 0 1e-13 | FileCheck --check-prefix=EXEC %s
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
 // RUN:     -poseidon-precision-expansion-components=3 -poseidon-tau=1e-15 \
 // RUN:     %s -o %t/loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
 // RUN: %t/loose.exe 1e-9 1e-6 | FileCheck --check-prefix=EXEC %s

@@ -1,14 +1,14 @@
 // REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x c++ -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.ll
-// RUN: %clang -x c++ -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-print -mllvm -poseidon-cache=%t/u %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=LEFT %s
+// RUN: %clang -x c++ -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-print -mllvm -poseidon-cache=%t/u %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=LEFT %s
 // RUN: diff %t/plain.ll %t/left.ll
 //
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc %s -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use > %t/use.out
 // RUN: paste -d' ' %t/stock.out %t/use.out | awk '{ print ($1 == $4), ($2 == $5), ($3 == $6) }' | FileCheck --check-prefix=SAME %s
 

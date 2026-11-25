@@ -1,14 +1,14 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/gemm_body.fpprofile
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
-; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/work \
+; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/work \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-6 -poseidon-print \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; RUN:   -S -o /dev/null 2>&1 | FileCheck --check-prefix=WORK --implicit-check-not='wrote descriptor' %s
 ; RUN: sed 's/^  store double 1.000000e+00, ptr %dC, align 8$/  tail call void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef nonnull @gemm_body, i32 noundef %const, ptr noundef %B, i32 noundef %const, ptr noundef %A, i32 noundef %dup, ptr noundef %dC, ptr noundef %C) #2/' %s > %t/two.ll
 ; RUN: %opt %t/two.ll %loadPoseidon -passes=poseidon,poseidon-finalize \
-; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/two \
+; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/two \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-6 -poseidon-print \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \

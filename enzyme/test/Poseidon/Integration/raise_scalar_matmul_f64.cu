@@ -19,7 +19,7 @@
 // RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH -S -emit-llvm %s -o %t/dev.ll
 // RUN: %opt %t/dev.ll %loadPoseidon \
 // RUN:     -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-// RUN:     -poseidon-profile-use=%t/profiles \
+// RUN:     -poseidon-profile-use=%t/profiles -poseidon-early-prune \
 // RUN:     -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 // RUN:     -poseidon-cache= -poseidon-enable-matmul -poseidon-print \
 // RUN:     -poseidon-matmul-library-calls=false \

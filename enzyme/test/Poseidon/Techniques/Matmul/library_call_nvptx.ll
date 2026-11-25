@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-print -S
@@ -8,13 +8,13 @@
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../../Inputs/library_call/ozaki_stub_host.ll > %t/host.ll
 ; RUN: %{opt} -poseidon-cache=%t/tau12 -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -o %t/tau12.ll 2>&1 | FileCheck --check-prefix=TAU12 %s
 ; RUN: cat %t/tau12/launches_*.json | FileCheck --check-prefix=DESC12 %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
 ; RUN: sed 's/@cudaLaunchKernel(/@cudaLaunchKernel_ptsz(/g' %t/host.ll > %t/host_ptsz.ll
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host_ptsz.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=PTSZ %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host_ptsz.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=PTSZ %s
 ; RUN: %{opt} -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau16 -poseidon-compilation-id=tcec -poseidon-tau=1e-16 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU16 %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
 ; RUN: %{opt} -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-matmul-library-calls=false -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OFF %s
 
@@ -27,11 +27,11 @@
 ; RUN: cp %gpu_cost_model %t/rows.csv
 ; RUN: printf 'wmma_mma_m8n8k4,f64_f64,1024\ninkernel_rel,f64_f64,1\nlibrary_direct_rel,f32_f32,1\n' >> %t/rows.csv
 ; RUN: sed -n 'p; s/^\(inkernel_rel,[a-z0-9_]*\),/\1_m16n16k16_browmajor,/p' %t/rows.csv > %t/complete.csv
-; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -S -o %t/quiet.ll 2>&1 | count 0
+; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -S -o %t/quiet.ll 2>&1 | count 0
 ; RUN: ls %t/quiet/launches_*.json
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-cache=%t/quiet -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -o %t/quiet_host.ll 2>&1 | count 0
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/quiet -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -o %t/quiet_host.ll 2>&1 | count 0
 ; RUN: grep -q __poseidon_ozakiii_dgemm %t/quiet_host.ll
-; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-matmul-library-calls=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet_raise -poseidon-tau=1e-6 -poseidon-explain=%t/quiet_raise -S -o %t/quiet_raise.ll 2>&1 | count 0
+; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-matmul-library-calls=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet_raise -poseidon-tau=1e-6 -poseidon-explain=%t/quiet_raise -S -o %t/quiet_raise.ll 2>&1 | count 0
 ; RUN: grep -q llvm.nvvm.wmma %t/quiet_raise.ll
 ; RUN: FileCheck --check-prefix=CLASS %s < %t/quiet_raise/matmul_body.explain.json
 

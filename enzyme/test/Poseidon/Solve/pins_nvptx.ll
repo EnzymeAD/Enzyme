@@ -5,7 +5,7 @@
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
 ; DEFINE: %{dev} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/matmul_site_profile \
+; DEFINE:   -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul
 ; RUN: rm -rf %t && mkdir %t
 
@@ -15,15 +15,15 @@
 ; (Inputs/no_early_prune/reprice.ll): one value pins a unit of each kind, by ordinal
 ; and again by the names the pin line prints, which applies the same steps; and
 ; the errors of each kind. The steps apply in the order of the pruned solve
-; (algebraic, product, precision), not the order of the items. P1's subgraph holds the product's reduction FMA,
+; (-poseidon-early-prune: algebraic, product, precision), not the order of the items. P1's subgraph holds the product's reduction FMA,
 ; which M0's raise replaces, so the two are never taken together. The poseidon
 ; pass runs alone: the precision change calls libdevice float functions the
 ; module does not define, which poseidon-finalize refuses.
 ; RUN: mkdir %t/kinds
-; RUN: %{reprice} -poseidon-cache=%t/kinds/ord -poseidon-explain=%t/kinds/ex -poseidon-pin='R0_1,P0_0,M0_2' -S -poseidon-print -o %t/kinds/ord.ll > %t/kinds/ord.log 2>&1
+; RUN: %{reprice} -poseidon-early-prune -poseidon-cache=%t/kinds/ord -poseidon-explain=%t/kinds/ex -poseidon-pin='R0_1,P0_0,M0_2' -S -poseidon-print -o %t/kinds/ord.ll > %t/kinds/ord.log 2>&1
 ; RUN: FileCheck --check-prefix=KINDS-ORD %s < %t/kinds/ord.log
 ; RUN: cat %t/kinds/ex/matmul_body.explain.json | FileCheck --check-prefix=KINDS-EXPLAIN %s
-; RUN: %{reprice} -poseidon-cache=%t/kinds/name "-poseidon-pin=$(sed -n 's/^\[poseidon\] pin: //p' %t/kinds/ord.log)" -S -poseidon-print -o %t/kinds/name.ll 2>&1 | FileCheck --check-prefix=KINDS-NAME %s
+; RUN: %{reprice} -poseidon-early-prune -poseidon-cache=%t/kinds/name "-poseidon-pin=$(sed -n 's/^\[poseidon\] pin: //p' %t/kinds/ord.log)" -S -poseidon-print -o %t/kinds/name.ll 2>&1 | FileCheck --check-prefix=KINDS-NAME %s
 ; RUN: diff %t/kinds/ord.ll %t/kinds/name.ll
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/range_r -poseidon-pin='R9_0' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-RANGE-R %s
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/range_pt -poseidon-pin='P9_0' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-RANGE-PT %s
@@ -41,8 +41,8 @@
 ; its items: the exact solve at the cheapest point changes the precision of P0
 ; and raises M0, and its pin given with the items reversed applies them in that
 ; order again.
-; RUN: %{reprice} -poseidon-cache=%t/kinds/solve -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -S -poseidon-print -o %t/kinds/solve.ll 2>&1 | tee %t/kinds/solve.log | FileCheck --check-prefix=KINDS-SOLVE %s
-; RUN: %{reprice} -poseidon-cache=%t/kinds/repin -poseidon-early-prune=false -poseidon-print "-poseidon-pin=$(sed -n 's/^\[poseidon\] pin: //p' %t/kinds/solve.log | awk -F, '{ for (i = NF; i > 1; --i) printf "%%s,", $i; print $1 }')" -S -o %t/kinds/repin.ll 2>&1 | FileCheck --check-prefix=KINDS-REPIN %s
+; RUN: %{reprice} -poseidon-cache=%t/kinds/solve -poseidon-cost-budget=-0.952 -S -poseidon-print -o %t/kinds/solve.ll 2>&1 | tee %t/kinds/solve.log | FileCheck --check-prefix=KINDS-SOLVE %s
+; RUN: %{reprice} -poseidon-cache=%t/kinds/repin -poseidon-print "-poseidon-pin=$(sed -n 's/^\[poseidon\] pin: //p' %t/kinds/solve.log | awk -F, '{ for (i = NF; i > 1; --i) printf "%%s,", $i; print $1 }')" -S -o %t/kinds/repin.ll 2>&1 | FileCheck --check-prefix=KINDS-REPIN %s
 ; RUN: diff %t/kinds/solve.ll %t/kinds/repin.ll
 
 ; KINDS-ORD: [poseidon] Selecting R0_1: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
