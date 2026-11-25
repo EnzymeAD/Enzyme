@@ -11,7 +11,3 @@ add_mlir_translation_library(
   MLIRIR
   MLIRLLVMDialect
   MLIRTargetLLVMIRExport)
-
-target_include_directories(
-  MLIREnzymeToLLVMIRTranslation
-  PRIVATE ${ENZYME_SOURCE_DIR}/Enzyme)

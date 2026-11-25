@@ -42,25 +42,11 @@ using namespace mlir::enzyme;
 /// "Float@double".
 static void printConcreteType(raw_ostream &os, TypeTreeAttr node,
                               LLVM::ModuleTranslation &moduleTranslation) {
-  switch (node.getKind()) {
-  case TypeTreeKind::Unknown:
-    os << ConcreteType(BaseType::Unknown).str();
-    return;
-  case TypeTreeKind::Integer:
-    os << ConcreteType(BaseType::Integer).str();
-    return;
-  case TypeTreeKind::Pointer:
-    os << ConcreteType(BaseType::Pointer).str();
-    return;
-  case TypeTreeKind::Anything:
-    os << ConcreteType(BaseType::Anything).str();
-    return;
-  case TypeTreeKind::Float:
+  if (node.getKind() == BaseType::Float)
     os << ConcreteType(moduleTranslation.convertType(node.getFloatType()))
               .str();
-    return;
-  }
-  llvm_unreachable("unknown type tree kind");
+  else
+    os << ConcreteType(node.getKind()).str();
 }
 
 /// Convert `tree` to `!enzyme_type` metadata, in the encoding of
@@ -87,7 +73,7 @@ static void printTypeTreeEntries(raw_ostream &os, TypeTreeAttr tree,
                                  SmallVectorImpl<int64_t> &path,
                                  llvm::ListSeparator &separator,
                                  LLVM::ModuleTranslation &moduleTranslation) {
-  if (tree.getKind() != TypeTreeKind::Unknown) {
+  if (tree.getKind() != BaseType::Unknown) {
     os << separator << '[';
     llvm::interleave(path, os, ",");
     os << "]:";

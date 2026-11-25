@@ -23,6 +23,8 @@
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
+#include "TypeAnalysis/BaseType.h"
+
 #include "Dialect/EnzymeAttributeInterfaces.h.inc"
 #include "Dialect/EnzymeEnums.h.inc"
 

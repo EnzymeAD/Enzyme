@@ -92,6 +92,11 @@ using MConcreteType = GenericConcreteType<mlir::Type>;
 
 using MTypeTree = GenericTypeTree<mlir::Type>;
 
+class TypeTreeAttr;
+
+/// The #enzyme.type_tree attribute holding `tree`, or null if `tree` is empty.
+TypeTreeAttr getTypeTreeAttr(MLIRContext *context, const MTypeTree &tree);
+
 // The MLIR counterpart of TypeResults. There is no type analysis behind it.
 class MTypeResults {
 public:

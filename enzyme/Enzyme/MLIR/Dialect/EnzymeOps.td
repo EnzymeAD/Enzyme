@@ -106,7 +106,7 @@ def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
   }];
 
   let parameters = (ins
-    "::mlir::enzyme::TypeTreeKind":$kind,
+    "::BaseType":$kind,
     OptionalParameter<"::mlir::Type">:$floatType,
     ArrayRefParameter<"int64_t">:$offsets,
     ArrayRefParameter<"::mlir::enzyme::TypeTreeAttr">:$subtrees
@@ -114,11 +114,11 @@ def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
 
   let skipDefaultBuilders = 1;
   let builders = [
-    AttrBuilder<(ins "::mlir::enzyme::TypeTreeKind":$kind,
+    AttrBuilder<(ins "::BaseType":$kind,
                      "::mlir::Type":$floatType,
                      "::llvm::ArrayRef<int64_t>":$offsets,
                      "::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>":$subtrees), [{
-      assert((!floatType || kind == ::mlir::enzyme::TypeTreeKind::Float) &&
+      assert((!floatType || kind == ::BaseType::Float) &&
              "only a float node has a floating-point type");
       ::llvm::SmallVector<int64_t> sortedOffsets(offsets);
       ::llvm::SmallVector<::mlir::enzyme::TypeTreeAttr> sortedSubtrees(subtrees);
@@ -128,7 +128,7 @@ def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
     AttrBuilder<(ins "::mlir::FloatType":$floatType,
                      CArg<"::llvm::ArrayRef<int64_t>", "{}">:$offsets,
                      CArg<"::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>", "{}">:$subtrees), [{
-      return get($_ctxt, ::mlir::enzyme::TypeTreeKind::Float, floatType,
+      return get($_ctxt, ::BaseType::Float, floatType,
                  offsets, subtrees);
     }]>
   ];
