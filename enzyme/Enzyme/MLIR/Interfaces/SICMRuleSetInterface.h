@@ -44,12 +44,6 @@ public:
     return success();
   }
 
-  /// Called once the logpdf region of `regionOp` is built, before its rules.
-  virtual void afterLogpdfConstruction(InferRegionOp regionOp) const {}
-
-  /// Called after the rules and the hoisting of the logpdf region.
-  virtual void afterLogpdfRules(InferRegionOp regionOp) const {}
-
   /// Called once per run, after every region.
   virtual void finalize(Operation *root, const SICMRuleOptions &options) const {
   }

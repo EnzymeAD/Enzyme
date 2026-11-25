@@ -519,13 +519,9 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
         runSICMOnRegion(regionOp, AnalysisTarget::Sampling);
 
       constructLogpdfRegion(regionOp);
-      for (const SICMRuleSetInterface *ruleSet : ruleSets)
-        ruleSet->afterLogpdfConstruction(regionOp);
 
       if (!regionOp.getLogpdf().empty())
         runSICMOnRegion(regionOp, AnalysisTarget::Logpdf);
-      for (const SICMRuleSetInterface *ruleSet : ruleSets)
-        ruleSet->afterLogpdfRules(regionOp);
     }
     for (const SICMRuleSetInterface *ruleSet : ruleSets)
       ruleSet->finalize(getOperation(), options);
