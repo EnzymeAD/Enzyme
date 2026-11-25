@@ -11,12 +11,21 @@ set(POSEIDON_HAS_HIP @POSEIDON_HAS_HIP@)
 if(POSEIDON_HAS_HIP)
   set(POSEIDON_AMDGPU_ARCH @POSEIDON_AMDGPU_ARCH@)
 endif()
+# The GPU runtime a project links: CUDA, HIP, or NONE for a project of host
+# code alone; by default the GPU this Poseidon was built for.
 if(NOT DEFINED POSEIDON_GPU_RUNTIME)
   if(POSEIDON_HAS_CUDA)
     set(POSEIDON_GPU_RUNTIME CUDA)
   elseif(POSEIDON_HAS_HIP)
     set(POSEIDON_GPU_RUNTIME HIP)
+  else()
+    set(POSEIDON_GPU_RUNTIME NONE)
   endif()
+endif()
+if(NOT POSEIDON_GPU_RUNTIME MATCHES "^(CUDA|HIP|NONE)$")
+  message(
+    FATAL_ERROR
+      "POSEIDON_GPU_RUNTIME is ${POSEIDON_GPU_RUNTIME}; it takes CUDA, HIP or NONE")
 endif()
 if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
   if(NOT POSEIDON_HAS_HIP)
@@ -36,7 +45,13 @@ set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
 # /opt/rocm); a project links only those of its runtime.
 if(POSEIDON_HAS_CUDA AND POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
   find_dependency(CUDAToolkit)
-elseif(POSEIDON_GPU_RUNTIME STREQUAL "HIP" AND @POSEIDON_CONFIG_FINDS_ROCM@)
+elseif(POSEIDON_HAS_CUDA AND NOT TARGET CUDA::cublas)
+  # The exported CUDA runtimes name the toolkit's targets; a project of
+  # another runtime links neither, and needs no toolkit to import them.
+  add_library(CUDA::cublas INTERFACE IMPORTED)
+  add_library(CUDA::cudart INTERFACE IMPORTED)
+endif()
+if(POSEIDON_GPU_RUNTIME STREQUAL "HIP" AND @POSEIDON_CONFIG_FINDS_ROCM@)
   # An installation names them by these targets; a build tree links the
   # libraries of the ROCm it was built against.
   foreach(_lib hipblas amdhip64)
@@ -118,7 +133,7 @@ if(NOT TARGET Poseidon::Plain)
     target_link_libraries(
       Poseidon::ProfileUse
       INTERFACE Poseidon::poseidon_rt_hip)
-  elseif(POSEIDON_HAS_CUDA)
+  elseif(POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
     target_link_libraries(
       Poseidon::ProfileGenerate
       INTERFACE Poseidon::poseidon_profile_cuda)

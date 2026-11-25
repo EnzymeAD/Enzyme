@@ -1,3 +1,4 @@
+// REQUIRES: nvptx-registered-target
 // DEFINE: %{driver} = %poseidon_clangxx -x cuda --cuda-device-only \
 // DEFINE:   --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S \
 // DEFINE:   -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false \

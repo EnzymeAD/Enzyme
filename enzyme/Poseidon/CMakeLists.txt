@@ -87,7 +87,6 @@ set(POSEIDON_SRC
     Core/CacheKey.cpp
     Sites/Canonicalize.cpp
     Model/CostModel.cpp
-    Core/CostTable.cpp
     Targets/MathLibrary.cpp
     Targets/Target.cpp
     Targets/Host.cpp
@@ -141,18 +140,44 @@ set(POSEIDON_SRC
     Techniques/Matmul/RecognizeHostGemm.cpp
     Techniques/Matmul/RecognizeScalarLoop.cpp)
 
-set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
-set(_poseidon_plugin_tool opt)
-if(Clang_FOUND)
-  set(_poseidon_plugin_tool clang)
+# The driver runs the clang of LLVM_DIR and parses command lines with its
+# driver library, and the device profilers and HIP tools are compiled by it.
+if(NOT Clang_FOUND OR NOT EXISTS ${LLVM_TOOLS_BINARY_DIR}/clang++)
+  message(
+    FATAL_ERROR
+      "ENZYME_POSEIDON needs the clang of LLVM_DIR (${LLVM_TOOLS_BINARY_DIR}/clang++ and its CMake package); build LLVM with clang")
 endif()
+
+# The tools link LLVM, and clang's driver library, as LLVM's own tools do:
+# the shared libraries where LLVM and clang were built to link them.
+set(_poseidon_llvm_shared "")
+if(LLVM_LINK_LLVM_DYLIB)
+  set(_poseidon_llvm_shared USE_SHARED)
+endif()
+if(CLANG_LINK_CLANG_DYLIB AND TARGET clang-cpp)
+  set(_poseidon_clang_driver clang-cpp)
+else()
+  set(_poseidon_clang_driver clangDriver)
+endif()
+
+# The cost table, which the calibrator reads as the plugin does.
+add_library(poseidon_costtable OBJECT Core/CostTable.cpp)
+set_target_properties(
+  poseidon_costtable
+  PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(
+  poseidon_costtable
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
 add_llvm_library(
   ${POSEIDON_PLUGIN_TARGET}
   ${POSEIDON_SRC}
+  $<TARGET_OBJECTS:poseidon_costtable>
   MODULE
   PARTIAL_SOURCES_INTENDED
   PLUGIN_TOOL
-  ${_poseidon_plugin_tool}
+  clang
   DEPENDS
   intrinsics_gen)
 target_include_directories(
@@ -379,7 +404,12 @@ endif()
 # POSEIDON_AMDGPU_ARCH by the clang the plugin is built against, each source
 # whole as the CUDA ones are. TCEC has no HIP build.
 set(POSEIDON_HIP_RUNTIMES OFF)
-if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
+if(POSEIDON_ROCM_PATH AND NOT "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
+  message(
+    FATAL_ERROR
+      "POSEIDON_ROCM_PATH needs an LLVM with the AMDGPU target; ${LLVM_DIR} has ${LLVM_TARGETS_TO_BUILD}")
+endif()
+if(POSEIDON_ROCM_PATH)
   set(POSEIDON_HIP_RUNTIMES ON)
   # hip_as_cuda.h, which every HIP build includes, includes hipBLAS.
   if(NOT EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
@@ -505,7 +535,7 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
 endif()
 
 add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp
-               Core/CostTable.cpp)
+               $<TARGET_OBJECTS:poseidon_costtable>)
 target_include_directories(
   poseidon-calibrate
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -516,11 +546,7 @@ target_compile_definitions(
     POSEIDON_CALIBRATE_HERBIE="${POSEIDON_HERBIE_BINARY_PATH}"
     POSEIDON_CALIBRATE_PYTHON="${Python3_EXECUTABLE}"
     POSEIDON_CALIBRATE_SRCDIR="${CMAKE_CURRENT_SOURCE_DIR}")
-llvm_map_components_to_libnames(POSEIDON_CALIBRATE_LLVM_LIBS support
-                                targetparser)
-target_link_libraries(
-  poseidon-calibrate
-  PRIVATE ${POSEIDON_CALIBRATE_LLVM_LIBS})
+llvm_config(poseidon-calibrate ${_poseidon_llvm_shared} support targetparser)
 if(CMAKE_CUDA_COMPILER)
   add_dependencies(poseidon-calibrate poseidon-clang ${POSEIDON_TOOL_TARGETS})
 endif()
@@ -594,8 +620,13 @@ target_compile_definitions(
     POSEIDON_DRIVER_RT_LIBS="${POSEIDON_DRIVER_RT_LIBS}"
     POSEIDON_DRIVER_CUDA_ROOT="${CUDAToolkit_TARGET_DIR}"
     POSEIDON_DRIVER_ROCM_ROOT="${POSEIDON_ROCM_PATH}")
-llvm_map_components_to_libnames(POSEIDON_DRIVER_LLVM_LIBS support)
-target_link_libraries(poseidon-clang PRIVATE ${POSEIDON_DRIVER_LLVM_LIBS})
+llvm_config(poseidon-clang ${_poseidon_llvm_shared} option support targetparser)
+target_link_libraries(poseidon-clang PRIVATE ${_poseidon_clang_driver})
+# Enzyme takes zlib out of LLVMSupport's interface for its table generator;
+# clang's driver library compresses offload bundles with it.
+if(LLVM_ENABLE_ZLIB AND NOT LLVM_LINK_LLVM_DYLIB)
+  target_link_libraries(poseidon-clang PRIVATE ZLIB::ZLIB)
+endif()
 add_dependencies(poseidon-clang ${POSEIDON_PLUGIN_TARGET})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   add_dependencies(poseidon-clang ClangEnzyme-${LLVM_VERSION_MAJOR})

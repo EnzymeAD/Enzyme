@@ -9,7 +9,7 @@
 // RUN: FileCheck --check-prefix=USE %s < %t/use.commands
 // RUN: %cmake --install %enzyme_binary_dir/Enzyme --prefix %t/inst > /dev/null
 // RUN: %cmake --install %poseidon_package_dir --prefix %t/inst > /dev/null
-// RUN: not grep -rI '%rocm_path' %t/inst/lib/cmake/Poseidon
+// RUN: not grep -rI '%rocm_path' %t/inst/lib*/cmake/Poseidon
 // RUN: mkdir -p %t/rocm/lib && touch %t/rocm/lib/libhipblas.so %t/rocm/lib/libamdhip64.so
 // RUN: env ROCM_PATH=%t/rocm %cmake %cmake_generator -S %S/../Inputs/package -B %t/iuse -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_PREFIX_PATH=%t/inst -DPOSEIDON_GPU_RUNTIME=HIP -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof > /dev/null
 // RUN: %cmake --build %t/iuse -- -t commands host | FileCheck --check-prefix=IUSE -DPREFIX=%t %s
@@ -33,4 +33,4 @@
 // Installed, the package names no file of the ROCm it was built against: a
 // project links hipBLAS and the HIP runtime of the ROCm installation of its
 // own machine (ROCM_PATH, else /opt/rocm).
-// IUSE: [[PREFIX]]/inst/lib/libposeidon_rt_hip.a [[PREFIX]]/rocm/lib/libhipblas.so [[PREFIX]]/rocm/lib/libamdhip64.so
+// IUSE: [[PREFIX]]/inst/lib{{(64)?}}/libposeidon_rt_hip.a [[PREFIX]]/rocm/lib/libhipblas.so [[PREFIX]]/rocm/lib/libamdhip64.so

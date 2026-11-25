@@ -12,6 +12,9 @@
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-print" > /dev/null
 // RUN: %cmake --build %t/use -v 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use/host | FileCheck --check-prefix=OUT %s
+// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/none -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_GPU_RUNTIME=NONE -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0" > /dev/null
+// RUN: %cmake --build %t/none -v 2>&1 | FileCheck --check-prefix=NONE --implicit-check-not=cublas --implicit-check-not=cudart --implicit-check-not=poseidon_rt %s
+// RUN: not %cmake %cmake_generator -S %S/../Inputs/package -B %t/bad -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_GPU_RUNTIME=OpenCL 2>&1 | FileCheck --check-prefix=BADRT %s
 // RUN: not %cmake %cmake_generator -S %S/../Inputs/package -B %t/newer -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MIN_VERSION=99 2>&1 | FileCheck --check-prefix=NEWER %s
 //
 // The same from an installation of this build tree.
@@ -72,3 +75,7 @@
 // INSTDRV-SAME: -L[[PREFIX]]/lib{{(64)?}} -lposeidon_profile_host
 
 // NOENZYME: poseidon-clang++: error: Poseidon: Enzyme plugin not found at [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so; install Enzyme to the same prefix or set ENZYME_PLUGIN{{$}}
+
+// A project of host code alone links no GPU runtime of a GPU build.
+// NONE: libposeidon_profile.a
+// BADRT: POSEIDON_GPU_RUNTIME is OpenCL; it takes CUDA, HIP or NONE

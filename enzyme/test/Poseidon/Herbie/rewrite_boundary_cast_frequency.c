@@ -1,6 +1,6 @@
 // REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -lstdc++ -lm -o %t/gen
+// RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
 // RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_boundary_cast_frequency %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=1 -poseidon-herbie-binary=%S/../Inputs/rewrite_boundary_cast_frequency/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=0 -poseidon-min-uses-split=2 -poseidon-min-ops-split=1 -poseidon-cost-budget=-0.01 -poseidon-print -poseidon-cache=%t/c %s -S -emit-llvm -o %t/use.ll 2>&1 | FileCheck --check-prefix=PRICE %s
 // RUN: FileCheck --check-prefix=IR %s < %t/use.ll

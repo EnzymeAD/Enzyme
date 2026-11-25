@@ -152,12 +152,19 @@ static std::string readFile(StringRef Path) {
   return (*Buf)->getBuffer().str();
 }
 
+// Writes `Path` whole or not at all: an interrupted run leaves the model it
+// started from.
 static void writeFile(StringRef Path, StringRef Content) {
-  std::error_code EC;
-  raw_fd_ostream OS(Path, EC);
-  if (EC)
+  std::string Part = (Path + ".part").str();
+  {
+    std::error_code EC;
+    raw_fd_ostream OS(Part, EC);
+    if (EC)
+      fail("cannot write " + Part + ": " + EC.message());
+    OS << Content;
+  }
+  if (std::error_code EC = sys::fs::rename(Part, Path))
     fail("cannot write " + Path + ": " + EC.message());
-  OS << Content;
 }
 
 static std::string capture(ArrayRef<StringRef> Argv,
@@ -224,6 +231,8 @@ struct Device {
 // lists: the microbenchmark of each vendor this build has, CUDA's first, names
 // it with --device.
 static Device queryDevice() {
+  // What each microbenchmark said when it named no device.
+  std::string Reasons;
   for (bool Hip : {false, true}) {
     std::string Exe =
         sibling(Hip ? "poseidon-microbm-hip" : "poseidon-microbm");
@@ -241,10 +250,20 @@ static Device queryDevice() {
     }
     // The probe, and every child after it, sees that device alone.
     ::setenv(Visible, D.Id.c_str(), 1);
-    std::string O = capture({Exe, "--device"}, "/dev/null");
+    SmallString<128> Err;
+    if (sys::fs::createTemporaryFile("poseidon-calibrate", "err", Err))
+      fail("cannot create a temporary file");
+    std::string O = capture({Exe, "--device"}, Err);
+    std::string Why = readFile(Err);
+    sys::fs::remove(Err);
     auto [NameRef, Arch] = StringRef(O).split('\n').first.split('\t');
-    if (Arch.trim().empty())
+    if (Arch.trim().empty()) {
+      if (!StringRef(Why).trim().empty())
+        Reasons +=
+            ("\n  " + sys::path::filename(Exe) + ": " + StringRef(Why).trim())
+                .str();
       continue;
+    }
     // A device ID several products share has a marketing name listing them all
     // ("AMD Instinct MI250X / MI250"); the first names the device. The vendor
     // prefixes say nothing about it.
@@ -263,8 +282,9 @@ static Device queryDevice() {
     return D;
   }
   fail("no GPU with id " + (GpuId.empty() ? Twine("0") : Twine(GpuId)) +
-       " is visible to this build's microbenchmarks; measure this host with "
-       "--cpu <target-cpu>");
+       " is visible to this build's microbenchmarks" +
+       (Reasons.empty() ? "; measure this host with --cpu <target-cpu>"
+                        : ":" + Reasons));
 }
 
 // The model name the system reports for this host's CPU, or empty.
@@ -599,9 +619,15 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   if (!sys::fs::exists(Src))
     fail("the in-kernel harness source is missing: " + Src);
 
-  if (ProfileDir.empty())
+  if (ProfileDir.empty()) {
+    if (Only.empty()) {
+      outs() << "[calibrate] inkernel: not measured; it needs --profile <dir> "
+                "(see --help)\n";
+      return;
+    }
     fail("the in-kernel arm needs --profile <dir>: the profile of a GEMM "
          "site written by -poseidon-profile-generate");
+  }
   SmallString<256> KernelProf(ProfileDir);
   sys::path::append(
       KernelProf, "preprocess__Z10matmul_optPdPKdS1__poseidon_body.fpprofile");

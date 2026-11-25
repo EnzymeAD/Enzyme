@@ -40,7 +40,7 @@
   do {                                                                         \
     cudaError_t e = (x);                                                       \
     if (e) {                                                                   \
-      fprintf(stderr, "CUDA %s:%d %s\n", __FILE__, __LINE__,                   \
+      fprintf(stderr, "GPU runtime %s:%d %s\n", __FILE__, __LINE__,            \
               cudaGetErrorString(e));                                          \
       exit(1);                                                                 \
     }                                                                          \

@@ -6,6 +6,25 @@
 // and -lcudart, independent of the host's CUDA.
 //
 // REQUIRES: enzyme
+//
+// The command line is read as clang reads it: -x c++ compiles a .cu file as
+// C++, which takes no CUDA runtime; a flag written in the form the driver
+// gives it still asks for the profiler; a C link takes the C++ library the
+// Poseidon archives need; and a link of objects alone takes the build's GPU
+// runtimes, recorded as needed only if used.
+// RUN: echo > %t.link.o
+// RUN: cp %s %t.cxx.cu
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use -x c++ \
+// RUN:     %t.cxx.cu -### -o %t.exe 2>&1 | FileCheck --check-prefix=XCXX %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clang -Xclang -mllvm -Xclang \
+// RUN:     -poseidon-profile-generate -x c %s -### -o %t.exe 2>&1 \
+// RUN:   | FileCheck --check-prefix=XCLANG %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clang -poseidon-profile-use %t.link.o \
+// RUN:     -### -o %t.exe 2>&1 | FileCheck --check-prefix=CLINK %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clang -poseidon-profile-use -stdlib=libc++ \
+// RUN:     %t.link.o -### -o %t.exe 2>&1 | FileCheck --check-prefix=CLINKCXX %s
+// RUN: %if cuda-runtime %{ env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
+// RUN:     %t.link.o -### -o %t.exe 2>&1 | FileCheck --check-prefix=OBJCUDA %s %}
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -poseidon-cache=%t.cache \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
@@ -26,7 +45,6 @@
 // RUN:     -nogpuinc -nogpulib -poseidon-profile-generate -poseidon-tau=1e-12 \
 // RUN:     -c -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=XHIP %s
-// RUN: echo > %t.link.o
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 %t.link.o -### -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=LINKONLY %s
@@ -89,12 +107,12 @@ int main(void) { return 0; }
 
 // USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-isystem {{.*}}/include -ffp-contract=on -DPOSEIDON_DEVICE_MATH
 // USE-SAME: -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7 -Xclang -mllvm -Xclang -poseidon-cache=
-// USE-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.cuda/lib64 -lcudart -L{{[^ ]+}} -lposeidon_profile -lposeidon_rt -lcublas{{ ?$}}
+// USE-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.cuda/lib64 -lcudart -L{{[^ ]+}} -lposeidon_profile -lposeidon_rt -Wl,--push-state,--as-needed -lcublas -Wl,--pop-state{{ ?$}}
 // USE: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7" "-mllvm" "-poseidon-cache={{[^"]+}}.cache"
 // USE-NOT: {{[="]}}-poseidon-
 // USE: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7" "-mllvm" "-poseidon-cache={{[^"]+}}.cache"
 // USE-NOT: {{[="]}}-poseidon-
-// USE: "-lcudart" "-lposeidon_profile" "-lposeidon_rt" "-lcublas"
+// USE: "-lcudart" "-lposeidon_profile" "-lposeidon_rt" "--push-state" "--as-needed" "-lcublas" "--pop-state"
 
 // GEN: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so
 // GEN-SAME: -Xclang -mllvm -Xclang -poseidon-profile-generate
@@ -123,7 +141,7 @@ int main(void) { return 0; }
 
 // VALUES: clang{{.*}} -MT -poseidon-tau=1 -MD -MF {{[^ ]+}}.dep.cu -I -poseidon-include
 // VALUES-NOT: -Xclang -mllvm -Xclang -poseidon-tau
-// VALUES-NOT: -lcudart
+// VALUES-NOT: lib64 -lcudart
 
 // DEPS: {{.*}}.o: {{\\$}}
 // DEPS-NEXT: {{.*}}driver_flags.c
@@ -138,6 +156,11 @@ int main(void) { return 0; }
 // VERSION-NOT: argument unused
 // VERSION-NOT: "{{[^"]*}}ld{{(\.lld)?}}"
 
+// HELP: 1. compile with -poseidon-profile-generate
+// HELP: POSEIDON_PROFILE_DIR (default ./poseidon.profile)
+// HELP: poseidon-probe -- <program>
+// HELP: 3. compile with -poseidon-profile-use
+// HELP: Profiling a host function needs glibc
 // HELP: -poseidon-profile-generate
 // HELP: -poseidon-profile-use
 // HELP: -poseidon-tau
@@ -153,14 +176,14 @@ int main(void) { return 0; }
 // HIPUSE: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7
 // HIPUSE-NOT: -mllvm -poseidon-
 // HIPUSE-SAME: -L{{[^ ]+}}.rocm/lib -lamdhip64
-// HIPUSE-SAME: -lposeidon_profile -lposeidon_rt_hip -lhipblas{{ ?$}}
+// HIPUSE-SAME: -lposeidon_profile -lposeidon_rt_hip -Wl,--push-state,--as-needed -lhipblas -Wl,--pop-state{{ ?$}}
 // HIPUSE: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7"
 // HIPUSE-NOT: {{[="]}}-poseidon-
 // HIPUSE: {{(clang-linker-wrapper|[/"]lld)}}"
 // HIPUSE-NOT: {{[="]}}-poseidon-
 // HIPUSE: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7"
 // HIPUSE-NOT: {{[="]}}-poseidon-
-// HIPUSE: "-lamdhip64" "-lposeidon_profile" "-lposeidon_rt_hip" "-lhipblas"
+// HIPUSE: "-lamdhip64" "-lposeidon_profile" "-lposeidon_rt_hip" "--push-state" "--as-needed" "-lhipblas" "--pop-state"
 
 // HIPGEN: clang{{.*}} -fpass-plugin={{[^ ]*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin={{[^ ]*}}Enzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -isystem {{[^ ]*}}/include -ffp-contract=on -DPOSEIDON_DEVICE_MATH
 // HIPGEN-SAME: -Xclang -mllvm -Xclang -poseidon-profile-generate
@@ -176,3 +199,14 @@ int main(void) { return 0; }
 // HIPPATH: clang{{.*}} -L{{[^ ]+}}.hippath/lib -lamdhip64
 
 // ROCMPATH: clang{{.*}} -L{{[^ ]+}}.rocmpath/lib -lamdhip64
+
+// XCXX: clang++ {{.*}}.cxx.cu -### -o {{[^ ]+}} -L{{[^ ]+}} -lposeidon_profile{{ ?$}}
+
+// XCLANG: clang {{.*}}-fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so
+// XCLANG-SAME: -Xclang -mllvm -Xclang -poseidon-profile-generate
+// XCLANG-SAME: -lposeidon_profile_host{{.*}} -lposeidon_profile {{.*}}-lstdc++ -lm{{ ?$}}
+
+// CLINK: clang {{.*}}.link.o -### -o {{[^ ]+}} {{.*}}-lposeidon_profile {{.*}}-lstdc++ -lm{{ ?$}}
+// CLINKCXX: clang {{.*}}-lposeidon_profile {{.*}}-lc++ -lm{{ ?$}}
+
+// OBJCUDA: clang++ {{.*}}.link.o -### -o {{[^ ]+}} -L{{[^ ]+}}/lib64 -Wl,--push-state,--as-needed -lcudart -Wl,--pop-state -L{{[^ ]+}} -lposeidon_profile -lposeidon_rt -Wl,--push-state,--as-needed -lcublas -Wl,--pop-state

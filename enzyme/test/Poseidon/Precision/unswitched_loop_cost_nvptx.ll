@@ -1,3 +1,4 @@
+; REQUIRES: nvptx-registered-target
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; RUN:   -poseidon-profile-use=%S/../Inputs/unswitched_loop -poseidon-cache=%t/c \
