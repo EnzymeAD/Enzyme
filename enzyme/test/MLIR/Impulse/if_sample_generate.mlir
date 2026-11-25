@@ -17,7 +17,7 @@ module {
 
   func.func @test(%rng : tensor<2xui64>, %pred : tensor<i1>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %constraint = arith.constant dense<[[1.5]]> : tensor<1x1xf64>
-    %res:4 = impulse.generate @model(%rng, %pred, %mean, %stddev) given %constraint
+    %res:4 = impulse.generate @model(%rng, %pred, %mean, %stddev) constrained_by %constraint
         <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], constrained_addresses = [[#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<i1>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>

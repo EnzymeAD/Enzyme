@@ -135,7 +135,7 @@ def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpI
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $constraint prop-dict attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `constrained_by` $constraint prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 

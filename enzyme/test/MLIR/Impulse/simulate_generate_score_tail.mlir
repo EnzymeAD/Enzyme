@@ -17,7 +17,7 @@ module {
   }
 
   func.func @gen(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>, %obs : tensor<1x1xf64>) -> (tensor<1x4xf64>, tensor<f64>) {
-    %tr, %w, %r, %v = impulse.generate @model(%rng, %mean, %stddev) given %obs <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], constrained_addresses = [[#impulse.symbol<2>]] }> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    %tr, %w, %r, %v = impulse.generate @model(%rng, %mean, %stddev) constrained_by %obs <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], constrained_addresses = [[#impulse.symbol<2>]] }> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %w : tensor<1x4xf64>, tensor<f64>
   }
 }

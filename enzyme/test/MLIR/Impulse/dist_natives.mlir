@@ -52,7 +52,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @gam_top(%r: tensor<2xui64>, %a: tensor<f64>, %b: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.generate @gam_model(%r, %a, %b) given %c <{all_addresses = [[#impulse.symbol<4>]], constrained_addresses = [[#impulse.symbol<4>]]}>
+    %t, %w, %rng, %v = impulse.generate @gam_model(%r, %a, %b) constrained_by %c <{all_addresses = [[#impulse.symbol<4>]], constrained_addresses = [[#impulse.symbol<4>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -95,7 +95,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<3xf64>
   }
   func.func @dir_top(%r: tensor<2xui64>, %a: tensor<3xf64>, %c: tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>) {
-    %t, %w, %rng, %v = impulse.generate @dir_model(%r, %a) given %c <{all_addresses = [[#impulse.symbol<7>]], constrained_addresses = [[#impulse.symbol<7>]]}>
+    %t, %w, %rng, %v = impulse.generate @dir_model(%r, %a) constrained_by %c <{all_addresses = [[#impulse.symbol<7>]], constrained_addresses = [[#impulse.symbol<7>]]}>
       : (tensor<2xui64>, tensor<3xf64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>)
     return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
   }
@@ -124,7 +124,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @st_top(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.generate @st_model(%r, %df, %lc, %sc) given %c <{all_addresses = [[#impulse.symbol<10>]], constrained_addresses = [[#impulse.symbol<10>]]}>
+    %t, %w, %rng, %v = impulse.generate @st_model(%r, %df, %lc, %sc) constrained_by %c <{all_addresses = [[#impulse.symbol<10>]], constrained_addresses = [[#impulse.symbol<10>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -140,7 +140,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<3xf64>
   }
   func.func @stv_top(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>) {
-    %t, %w, %rng, %v = impulse.generate @stv_model(%r, %df, %lc, %sc) given %c <{all_addresses = [[#impulse.symbol<11>]], constrained_addresses = [[#impulse.symbol<11>]]}>
+    %t, %w, %rng, %v = impulse.generate @stv_model(%r, %df, %lc, %sc) constrained_by %c <{all_addresses = [[#impulse.symbol<11>]], constrained_addresses = [[#impulse.symbol<11>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>)
     return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
   }
@@ -155,7 +155,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @hst_top(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.generate @hst_model(%r, %df, %sc) given %c <{all_addresses = [[#impulse.symbol<9>]], constrained_addresses = [[#impulse.symbol<9>]]}>
+    %t, %w, %rng, %v = impulse.generate @hst_model(%r, %df, %sc) constrained_by %c <{all_addresses = [[#impulse.symbol<9>]], constrained_addresses = [[#impulse.symbol<9>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
