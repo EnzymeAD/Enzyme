@@ -51,28 +51,12 @@ MConcreteType MTypeResults::firstPointer(size_t num, Value val,
 static TypeTreeAttr getTypeTreeNode(
     MLIRContext *context, MTypeTree::ConcreteTypeMapType::const_iterator begin,
     MTypeTree::ConcreteTypeMapType::const_iterator end, size_t depth) {
-  TypeTreeKind kind = TypeTreeKind::Unknown;
+  BaseType kind = BaseType::Unknown;
   Type floatType;
   // The mapping orders an entry before its extensions.
   if (begin != end && begin->first.size() == depth) {
-    const MConcreteType &type = begin->second;
-    switch (type.SubTypeEnum) {
-    case BaseType::Integer:
-      kind = TypeTreeKind::Integer;
-      break;
-    case BaseType::Float:
-      kind = TypeTreeKind::Float;
-      floatType = type.isFloat();
-      break;
-    case BaseType::Pointer:
-      kind = TypeTreeKind::Pointer;
-      break;
-    case BaseType::Anything:
-      kind = TypeTreeKind::Anything;
-      break;
-    case BaseType::Unknown:
-      break;
-    }
+    kind = begin->second.SubTypeEnum;
+    floatType = begin->second.isFloat();
     ++begin;
   }
   SmallVector<int64_t> offsets;
@@ -89,7 +73,7 @@ static TypeTreeAttr getTypeTreeNode(
     }
     begin = groupEnd;
   }
-  if (kind == TypeTreeKind::Unknown && subtrees.empty())
+  if (kind == BaseType::Unknown && subtrees.empty())
     return {};
   return TypeTreeAttr::get(context, kind, floatType, offsets, subtrees);
 }

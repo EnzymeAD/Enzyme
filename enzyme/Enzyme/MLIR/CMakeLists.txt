@@ -1,5 +1,7 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+# For TypeAnalysis/, which the dialect shares with LLVM Enzyme.
+include_directories(${ENZYME_SOURCE_DIR}/Enzyme)
 
 # On by default with FlangEnzyme, where flang has the pipeline callbacks.
 if(ENZYME_FLANG AND LLVM_VERSION_MAJOR GREATER_EQUAL 24)
