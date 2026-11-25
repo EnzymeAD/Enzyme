@@ -1,0 +1,2 @@
+r1.json | :precision binary32 | :name "1" (fma v3 (* v0 v1) (* (+ v0 v1) (* v0 v1)))
+none

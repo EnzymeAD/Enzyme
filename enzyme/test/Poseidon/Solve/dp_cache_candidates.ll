@@ -6,7 +6,7 @@
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh
 ; DEFINE: %{array} = %opt < %t/array.ll %{herbie} \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/array_cores/profiles \
-; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 \
+; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; DEFINE:   -S -o /dev/null
 ; RUN: rm -rf %t && split-file %s %t
 
@@ -43,10 +43,10 @@
 ; inputs. The table is solved again rather than replayed against candidates it
 ; never priced.
 ; RUN: mkdir %t/set
-; RUN: %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-FIRST %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-FIRST %s
 ; RUN: rm %t/set/c/cachedHerbieOutput_*
-; RUN: env FAKE_HERBIE_ARRAY=timeout %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-DRIFT %s
-; RUN: %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-HIT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores/timeout %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-DRIFT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{array} -poseidon-cache=%t/set/c 2>&1 | FileCheck --check-prefix=SET-HIT %s
 
 ; SET-FIRST: Solving the DP for preprocess_tester.
 ; SET-FIRST: Applying solution for (let* ((t1 (- (sqrt (+ (* v0 v0) (* v1 v1))) v0))) (array t1 (* t1 0.5)))

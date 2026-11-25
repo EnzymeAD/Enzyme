@@ -1,15 +1,15 @@
 ; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/array_cores/profiles \
 ; DEFINE:   -poseidon-enable-herbie=true \
-; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/array_cores/fake-herbie.sh \
+; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh \
 ; DEFINE:   -poseidon-herbie-processes=1 -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
 ; DEFINE:   -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cache=%t/arrays -poseidon-herbie-arrays -poseidon-print 2>&1 | FileCheck --check-prefix=ARRAY %s
-; RUN: env FAKE_HERBIE_ARRAY=timeout %{opt} -poseidon-cache=%t/fallback -poseidon-herbie-arrays -poseidon-print 2>&1 | FileCheck --check-prefix=FALLBACK %s
-; RUN: %{opt} -poseidon-cache=%t/off -poseidon-herbie-arrays=false 2>&1 | FileCheck --check-prefix=OFF %s
-; RUN: not %{opt} -poseidon-cache=%t/grouping -poseidon-herbie-arrays -poseidon-herbie-array-grouping=Inputs 2>&1 \
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{opt} -poseidon-cache=%t/arrays -poseidon-herbie-arrays -poseidon-print 2>&1 | FileCheck --check-prefix=ARRAY %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores/timeout %{opt} -poseidon-cache=%t/fallback -poseidon-herbie-arrays -poseidon-print 2>&1 | FileCheck --check-prefix=FALLBACK %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores %{opt} -poseidon-cache=%t/off -poseidon-herbie-arrays=false 2>&1 | FileCheck --check-prefix=OFF %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/array_cores not %{opt} -poseidon-cache=%t/grouping -poseidon-herbie-arrays -poseidon-herbie-array-grouping=Inputs 2>&1 \
 ; RUN:   | FileCheck --check-prefix=GROUPING %s
 
 ; Both outputs read sqrt(x*x + y*y) - x. With -poseidon-herbie-arrays the

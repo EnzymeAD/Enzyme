@@ -4,7 +4,7 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/base -o /dev/null 2>&1 | FileCheck --check-prefix=BASE %s
 ; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/split -poseidon-split-calls=pow -o /dev/null 2>&1 | FileCheck --check-prefix=SPLIT %s
-; RUN: %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-budget=-1e-9 -poseidon-split-calls=pow -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE-CORE %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/pow_term %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-budget=-1e-9 -poseidon-split-calls=pow -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE-CORE %s
 ; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
 ; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/po -poseidon-output-profiles=%S/../Inputs/pow_term/out0,%S/../Inputs/pow_term/out1 -o /dev/null 2>&1 | FileCheck --check-prefix=PO %s
 ; RUN: not %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/../Inputs/pow_term/out0,%t/none -o /dev/null 2>&1 \

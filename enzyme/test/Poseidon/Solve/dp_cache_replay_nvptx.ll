@@ -1,7 +1,7 @@
 ; DEFINE: %{reprice} = env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie \
 ; DEFINE:   %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes=poseidon \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true \
-; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 \
+; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false \
 ; DEFINE:   -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-show-table -S

@@ -1,0 +1,2 @@
+match.json | (+ (* v0 v1) v0)
+other.json

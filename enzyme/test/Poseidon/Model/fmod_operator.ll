@@ -3,12 +3,12 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.5 -poseidon-cache=%t/pt -o %t/pt.ll 2>&1 | FileCheck --check-prefix=PT %s
 ; RUN: FileCheck --check-prefix=PT-IR %s < %t/pt.ll
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/fmod_operator %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/fmod_operator %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE %s
 ; RUN: FileCheck --check-prefix=HERBIE-IR %s < %t/herbie.ll
 ; RUN: grep -v '^fmod,' %cost_models/cm_cpu_native.csv > %t/nofmod.csv
 ; RUN: not %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%t/nofmod.csv -poseidon-cache=%t/nofmod -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMOD %s
 ; RUN: grep -v '^fma,' %cost_models/cm_cpu_native.csv > %t/nofma.csv
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/fmod_operator not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%t/nofma.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/nofma -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMA %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/fmod_operator not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%t/nofma.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/nofma -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMA %s
 
 ; An frem is the operator fmod: Herbie is given (fmod a b), the accuracy model
 ; evaluates it as fmod, and the cost model prices it, and an frem that a fmod
