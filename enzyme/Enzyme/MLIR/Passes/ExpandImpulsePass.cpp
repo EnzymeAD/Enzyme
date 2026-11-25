@@ -1645,6 +1645,54 @@ static LogicalResult appendSiteValues(OpBuilder &builder,
   return success();
 }
 
+/// Reads a value of `type` from row 0 of `trace`, starting at column `column`.
+static Value sliceTraceValue(OpBuilder &builder, Location loc, Value trace,
+                             int64_t column, RankedTensorType type) {
+  int64_t numElements = computeTensorElementCount(type);
+  auto rowType = RankedTensorType::get({1, numElements}, type.getElementType());
+  Value row = impulse::SliceOp::create(
+      builder, loc, rowType, trace, builder.getDenseI64ArrayAttr({0, column}),
+      builder.getDenseI64ArrayAttr({1, column + numElements}),
+      builder.getDenseI64ArrayAttr({1, 1}));
+  return impulse::ReshapeOp::create(builder, loc, type, row);
+}
+
+/// Reads consecutive values of `types` from row 0 of `trace`, starting at
+/// column `offset`.
+static SmallVector<Value> sliceTraceValues(OpBuilder &builder, Location loc,
+                                           Value trace, int64_t offset,
+                                           TypeRange types) {
+  SmallVector<Value> values;
+  for (Type type : types) {
+    auto tensorType = cast<RankedTensorType>(type);
+    values.push_back(sliceTraceValue(builder, loc, trace, offset, tensorType));
+    offset += computeTensorElementCount(tensorType);
+  }
+  return values;
+}
+
+/// Returns replacements for the results of `site`: its rng input, then its
+/// values read from row 0 of `source` starting at column `offset`. Fails on a
+/// dynamically shaped value.
+static FailureOr<SmallVector<Value>> readSiteValues(OpBuilder &builder,
+                                                    impulse::SampleOp site,
+                                                    Value source,
+                                                    int64_t offset) {
+  SmallVector<Value> values{site.getInputs().front()};
+  for (Value result : llvm::drop_begin(site->getResults())) {
+    auto type = cast<RankedTensorType>(result.getType());
+    int64_t numElements = computeTensorElementCount(type);
+    if (numElements < 0) {
+      site.emitError("Impulse: dynamic tensor dimensions not supported");
+      return failure();
+    }
+    values.push_back(
+        sliceTraceValue(builder, site.getLoc(), source, offset, type));
+    offset += numElements;
+  }
+  return values;
+}
+
 /// Returns a `1 x width` trace whose leading columns are `values` and whose
 /// following columns hold `siteScores`, one score per column.
 static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
@@ -2690,19 +2738,10 @@ struct ExpandImpulsePass
           proposedSelected[addr] = vals;
         } else {
           map.map(site.getResult(0), curRng);
-          int64_t rOff = siteOff;
-          for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
-            auto rt = cast<RankedTensorType>(site.getResult(k).getType());
-            int64_t n = computeTensorElementCount(rt);
-            auto sliceType = RankedTensorType::get({1, n}, rt.getElementType());
-            Value slice = impulse::SliceOp::create(
-                b, loc, sliceType, trace, b.getDenseI64ArrayAttr({0, rOff}),
-                b.getDenseI64ArrayAttr({1, rOff + n}),
-                b.getDenseI64ArrayAttr({1, 1}));
-            Value val = impulse::ReshapeOp::create(b, loc, rt, slice);
-            map.map(site.getResult(k), val);
-            rOff += n;
-          }
+          map.map(
+              site.getResults().drop_front(),
+              sliceTraceValues(b, loc, trace, siteOff,
+                               TypeRange(site->getResultTypes()).drop_front()));
         }
       }
 
@@ -2740,21 +2779,11 @@ struct ExpandImpulsePass
       IRMapping oldLpMap;
       if (traceType.getShape()[1] == positionSize) {
         unsigned oldArgIdx = 0;
-        for (Attribute addr : selection) {
-          int64_t rOff = traceOffsetOf.lookup(addr);
-          for (Value v : proposedSelected[addr]) {
-            auto vt = cast<RankedTensorType>(v.getType());
-            int64_t n = computeTensorElementCount(vt);
-            Value slice = impulse::SliceOp::create(
-                b, loc, RankedTensorType::get({1, n}, vt.getElementType()),
-                trace, b.getDenseI64ArrayAttr({0, rOff}),
-                b.getDenseI64ArrayAttr({1, rOff + n}),
-                b.getDenseI64ArrayAttr({1, 1}));
-            oldLpMap.map(lpBlock.getArgument(oldArgIdx++),
-                         impulse::ReshapeOp::create(b, loc, vt, slice));
-            rOff += n;
-          }
-        }
+        for (Attribute addr : selection)
+          for (Value oldValue :
+               sliceTraceValues(b, loc, trace, traceOffsetOf.lookup(addr),
+                                ValueRange(proposedSelected[addr]).getTypes()))
+            oldLpMap.map(lpBlock.getArgument(oldArgIdx++), oldValue);
         for (Operation &lo : lpBlock.without_terminator())
           b.clone(lo, oldLpMap);
       }
@@ -3891,16 +3920,10 @@ struct ExpandImpulsePass
         if (batched)
           return batchedSweep(b, trace, weight, rng);
         SmallVector<Value> cur;
-        for (auto [k, col] : llvm::enumerate(selectedCols)) {
-          auto argType =
-              cast<RankedTensorType>(lpBlock.getArgument(k).getType());
-          Value sl = impulse::SliceOp::create(
-              b, loc, RankedTensorType::get({1, 1}, traceType.getElementType()),
-              trace, b.getDenseI64ArrayAttr({0, col}),
-              b.getDenseI64ArrayAttr({1, col + 1}),
-              b.getDenseI64ArrayAttr({1, 1}));
-          cur.push_back(impulse::ReshapeOp::create(b, loc, argType, sl));
-        }
+        for (auto [k, col] : llvm::enumerate(selectedCols))
+          cur.push_back(sliceTraceValue(
+              b, loc, trace, col,
+              cast<RankedTensorType>(lpBlock.getArgument(k).getType())));
         auto scalarType = RankedTensorType::get({}, traceType.getElementType());
         for (unsigned k = 0; k < selectedCols.size(); ++k) {
           auto argType =
@@ -4190,29 +4213,11 @@ struct ExpandImpulsePass
 
           sampledValues.resize(sampleOp.getNumResults());
           if (isConstrained) {
-            sampledValues[0] = rng;
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, loc, sliceType, constraint,
-                  rewriter.getDenseI64ArrayAttr({0, constrainedOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, constrainedOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              sampledValues[i] =
-                  impulse::ReshapeOp::create(rewriter, loc, resultType, sliced)
-                      .getResult();
-              constrainedOffset += numElements;
-            }
+            FailureOr<SmallVector<Value>> read = readSiteValues(
+                rewriter, sampleOp, constraint, constrainedOffset);
+            if (failed(read))
+              return failure();
+            sampledValues = std::move(*read);
           } else {
             if (!impulse::distSamplerEmittable(dist)) {
               sampleOp.emitError("Impulse: distribution sampler is not "
@@ -4262,31 +4267,11 @@ struct ExpandImpulsePass
           if (isConstrained) {
             // Extract sampled values from constraint tensor
             sampledValues.resize(sampleOp.getNumResults());
-            sampledValues[0] = sampleOp.getOperand(0); // RNG state
-
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), sliceType, constraint,
-                  rewriter.getDenseI64ArrayAttr({0, constrainedOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, constrainedOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              auto extracted = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), resultType, sliced);
-              sampledValues[i] = extracted.getResult();
-              constrainedOffset += numElements;
-            }
+            FailureOr<SmallVector<Value>> read = readSiteValues(
+                rewriter, sampleOp, constraint, constrainedOffset);
+            if (failed(read))
+              return failure();
+            sampledValues = std::move(*read);
 
             // Compute weight via logpdf using constrained values.
             auto logpdfFn =
@@ -4700,24 +4685,6 @@ struct ExpandImpulsePass
             rewriter, loc, acc.getType(), acc, scoreRow,
             ValueRange{i64Const(rewriter, loc, 1), i64Const(rewriter, loc, k)});
       };
-      auto sliceOldValues = [&](impulse::SampleOp sampleOp, int64_t offset) {
-        SmallVector<Value> vals(sampleOp.getNumResults());
-        for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-          auto resultType =
-              cast<RankedTensorType>(sampleOp.getResult(i).getType());
-          int64_t n = computeTensorElementCount(resultType);
-          auto sliced = impulse::SliceOp::create(
-              rewriter, sampleOp.getLoc(),
-              RankedTensorType::get({1, n}, resultType.getElementType()),
-              prevTrace, rewriter.getDenseI64ArrayAttr({0, offset}),
-              rewriter.getDenseI64ArrayAttr({1, offset + n}),
-              rewriter.getDenseI64ArrayAttr({1, 1}));
-          vals[i] = impulse::ReshapeOp::create(rewriter, sampleOp.getLoc(),
-                                               resultType, sliced);
-          offset += n;
-        }
-        return vals;
-      };
 
       SmallVector<Operation *> toErase;
       BranchCarry carry{initTrace, initWeight, /*offset=*/0,
@@ -4789,29 +4756,11 @@ struct ExpandImpulsePass
             Value source = isConstrained ? constraint : prevTrace;
             int64_t extractOffset =
                 isConstrained ? constrainedOffset : sampleOffset;
-            sampledValues[0] = rng;
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, loc, sliceType, source,
-                  rewriter.getDenseI64ArrayAttr({0, extractOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, extractOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              sampledValues[i] =
-                  impulse::ReshapeOp::create(rewriter, loc, resultType, sliced)
-                      .getResult();
-              extractOffset += numElements;
-            }
+            FailureOr<SmallVector<Value>> read =
+                readSiteValues(rewriter, sampleOp, source, extractOffset);
+            if (failed(read))
+              return failure();
+            sampledValues = std::move(*read);
             if (flipIdx >= 0) {
               oldLive = oldLiveAt(loc, flipIdx);
               SmallVector<Value> drawn = drawFresh();
@@ -4869,10 +4818,11 @@ struct ExpandImpulsePass
                                                   contribution);
               if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
-                SmallVector<Value> oldVals =
-                    sliceOldValues(sampleOp, sampleOffset);
+                SmallVector<Value> oldVals = sliceTraceValues(
+                    rewriter, loc, prevTrace, sampleOffset,
+                    TypeRange(sampleOp->getResultTypes()).drop_front());
                 Value oldLp = impulse::emitDistLogpdf(rewriter, loc, dist,
-                                                      oldVals[1], distArgs);
+                                                      oldVals[0], distArgs);
                 branch.corr =
                     arith::SubFOp::create(rewriter, loc, branch.corr, oldLp);
               }
@@ -4946,31 +4896,11 @@ struct ExpandImpulsePass
             int64_t extractOffset =
                 isConstrained ? constrainedOffset : sampleOffset;
             sampledValues.resize(sampleOp.getNumResults());
-            sampledValues[0] = sampleOp.getOperand(0); // RNG state
-
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return failure();
-              }
-
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), sliceType, source,
-                  rewriter.getDenseI64ArrayAttr({0, extractOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, extractOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              auto extracted = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), resultType, sliced);
-              sampledValues[i] = extracted.getResult();
-              extractOffset += numElements;
-            }
+            FailureOr<SmallVector<Value>> read =
+                readSiteValues(rewriter, sampleOp, source, extractOffset);
+            if (failed(read))
+              return failure();
+            sampledValues = std::move(*read);
           }
 
           int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
@@ -5057,9 +4987,9 @@ struct ExpandImpulsePass
                                                   branch.corr, contribution);
               if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
-                SmallVector<Value> oldOperands =
-                    sliceOldValues(sampleOp, sampleOffset);
-                oldOperands.erase(oldOperands.begin());
+                SmallVector<Value> oldOperands = sliceTraceValues(
+                    rewriter, sampleOp.getLoc(), prevTrace, sampleOffset,
+                    TypeRange(sampleOp->getResultTypes()).drop_front());
                 for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
                   oldOperands.push_back(sampleOp.getOperand(i));
                 auto oldLp = func::CallOp::create(
