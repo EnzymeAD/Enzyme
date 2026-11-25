@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Format.h"
@@ -117,6 +118,29 @@ static std::string sibling(StringRef Name) {
   SmallString<256> P(ToolDir);
   sys::path::append(P, Name);
   return std::string(P);
+}
+
+namespace {
+/// The GPU calibrators, each built once per vendor.
+enum class Calibrator {
+  /// Per-op throughputs and the --device query.
+  Ops,
+  /// The library-call (host dispatch) rows.
+  Library
+};
+} // namespace
+
+/// The installed name of `C` for an AMD GPU (`Hip`) or an NVIDIA one, as
+/// tools/CMakeLists.txt names the executables.
+static StringRef calibratorName(Calibrator C, bool Hip) {
+  switch (C) {
+  case Calibrator::Ops:
+    return Hip ? "poseidon-calibrate-ops-hip" : "poseidon-calibrate-ops-cuda";
+  case Calibrator::Library:
+    return Hip ? "poseidon-calibrate-library-hip"
+               : "poseidon-calibrate-library-cuda";
+  }
+  llvm_unreachable("every calibrator has a name");
 }
 
 /// `Rel` under share/poseidon of this tool's installation, else under the
@@ -272,8 +296,7 @@ static Device queryDevice() {
   std::string Reasons;
   for (bool Hip : {false, true}) {
     const StringRef Vendor = Hip ? "HIP" : "CUDA";
-    std::string Exe = sibling(Hip ? "poseidon-calibrate-ops-hip"
-                                  : "poseidon-calibrate-ops-cuda");
+    std::string Exe = sibling(calibratorName(Calibrator::Ops, Hip));
     if (!sys::fs::exists(Exe))
       continue;
     const char *Visible = Hip ? "HIP_VISIBLE_DEVICES" : "CUDA_VISIBLE_DEVICES";
@@ -450,9 +473,9 @@ static std::string python() {
   return *P;
 }
 
-/// The calibrator `Name` that measures `D`: its HIP build on an AMD GPU.
-static std::string tool(const Device &D, StringRef Name) {
-  return sibling(D.Hip ? (Name + "-hip").str() : Name.str());
+/// The calibrator `C` that measures `D`, installed next to this tool.
+static std::string tool(const Device &D, Calibrator C) {
+  return sibling(calibratorName(C, D.Hip));
 }
 
 /// Whether `Arch` is a GPU's; anything else is a host's.
@@ -618,7 +641,7 @@ static void armMicrobm(StringRef Csv, const Device &D) {
       outs().flush();
       // The redirection does not truncate the file it writes.
       sys::fs::remove(Part);
-      std::string Run = run({tool(D, "poseidon-calibrate-ops-cuda")}, Part) == 0
+      std::string Run = run({tool(D, Calibrator::Ops)}, Part) == 0
                             ? readFile(Part)
                             : std::string();
       if (!isUsableModel(Run))
@@ -670,9 +693,9 @@ static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
   if (alreadyMeasured(Csv, Arm, Family))
     return;
   outs() << "poseidon-calibrate: measuring " << Arm << " host dispatch\n";
-  writeRows(Csv, Arm, Family,
-            capture({tool(D, "poseidon-calibrate-library-cuda"), Arm,
-                     utostr(RefN), utostr(Reps)}));
+  writeRows(
+      Csv, Arm, Family,
+      capture({tool(D, Calibrator::Library), Arm, utostr(RefN), utostr(Reps)}));
 }
 
 /// The extents `Shape` spells as `Count` positive integers joined by 'x'.
@@ -753,9 +776,8 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
     return;
   }
   std::string Content = readFile(Csv);
-  SmallVector<std::string, 8> Argv = {
-      tool(D, "poseidon-calibrate-library-cuda"), "ozaki", utostr(RefN),
-      utostr(Reps)};
+  SmallVector<std::string, 8> Argv = {tool(D, Calibrator::Library), "ozaki",
+                                      utostr(RefN), utostr(Reps)};
   const size_t Fixed = Argv.size();
   for (const auto &[Arg, Key] : Shapes) {
     // A shape counts as measured when its first Ozaki-II row is in the model.

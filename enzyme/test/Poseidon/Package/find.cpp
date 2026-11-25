@@ -23,7 +23,7 @@
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/igen -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_PREFIX_PATH=%t/inst -DPOSEIDON_MODE=instrument > %t/igen.log
 // RUN: FileCheck --check-prefix=INST -DLIBDIR=%install_libdir -DPREFIX=%t/inst %s < %t/igen.log
 // RUN: %cmake --build %t/igen -v > %t/igen.build.log
-// RUN: FileCheck --check-prefix=INSTCMD -DLIBDIR=%install_libdir -DPREFIX=%t/inst %if cuda-runtime || !amdgpu-device-profiler %{--implicit-check-not=enzyme-lto-prelink%} %s < %t/igen.build.log
+// RUN: FileCheck %if cuda-runtime || !amdgpu-device-profiler %{--check-prefixes=INSTCMD,INSTCMD-NOLTO --implicit-check-not=enzyme-lto-prelink%} %else %{--check-prefixes=INSTCMD,INSTCMD-LTO%} -DLIBDIR=%install_libdir -DPREFIX=%t/inst %s < %t/igen.build.log
 // RUN: env POSEIDON_PROFILE_DIR=%t/iprof %t/igen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/iprof | FileCheck --check-prefix=PROF %s
 // RUN: test -x %t/inst/bin/poseidon-clang++
@@ -66,7 +66,10 @@
 // INST-NEXT: -- Poseidon plugins [[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
 // INST-NEXT: -- Poseidon include [[PREFIX]]/include
 
-// INSTCMD: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin=[[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -ffp-contract=on
+// Where the default GPU runtime is HIP, the instrument compile also asks
+// Enzyme for the LTO pre-link run, at this place; elsewhere it does not.
+// INSTCMD-NOLTO: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin=[[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -ffp-contract=on
+// INSTCMD-LTO: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin=[[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -ffp-contract=on
 // INSTCMD: libposeidon_profile_shadows.a
 
 // The installed driver takes the plugins, the header and the runtimes from its
