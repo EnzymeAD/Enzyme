@@ -108,8 +108,9 @@ endfunction()
 poseidon_add_test_program(poseidon-test-cache-key Core/cache_key.cpp
                           ${POSEIDON_SOURCE_DIR}/Core/CacheKey.cpp)
 # CacheKey.cpp stamps a key with the pass's build identity.
-target_include_directories(poseidon-test-cache-key
-                           PRIVATE ${POSEIDON_BINARY_DIR}/identity)
+target_include_directories(
+  poseidon-test-cache-key
+  PRIVATE ${POSEIDON_BINARY_DIR}/identity)
 add_dependencies(poseidon-test-cache-key poseidon_build_identity)
 poseidon_add_test_program(
   poseidon-test-round-to-prec Core/round_to_prec_apfloat.cpp

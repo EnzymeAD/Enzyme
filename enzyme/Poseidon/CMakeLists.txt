@@ -149,12 +149,8 @@ target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE ${MPFR_LIB_PATH})
 
 # What a cached result was computed by: Poseidon's sources. Hashed when they
 # change, not when the build is configured.
-file(
-  GLOB_RECURSE
-  POSEIDON_SOURCE_FILES
-  CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
+file(GLOB_RECURSE POSEIDON_SOURCE_FILES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 # A source removed or moved leaves no newer time stamp behind, so the list is a
 # dependency too; GENERATE rewrites it only when it changes.
 string(REPLACE ";" "\n" _poseidon_source_list "${POSEIDON_SOURCE_FILES}")
@@ -166,10 +162,8 @@ set(POSEIDON_BUILD_IDENTITY ${CMAKE_CURRENT_BINARY_DIR}/identity/BuildIdentity.h
 add_custom_command(
   OUTPUT ${POSEIDON_BUILD_IDENTITY}
   COMMAND
-    ${CMAKE_COMMAND}
-    -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-    -DOUT=${POSEIDON_BUILD_IDENTITY}
-    -P
+    ${CMAKE_COMMAND} -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DOUT=${POSEIDON_BUILD_IDENTITY} -P
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
   DEPENDS
     ${POSEIDON_SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/identity/Sources.txt

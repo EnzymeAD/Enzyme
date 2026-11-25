@@ -20,9 +20,10 @@ if(POSEIDON_BUILD_HERBIE)
     herbie
     GIT_REPOSITORY https://github.com/herbie-fp/herbie
     GIT_TAG 73ba1fe76f97d4cdb852a602addd82e3a983b209
-    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix
-    # A pinned commit has nothing to update, and an update would rerun the
-    # build step, whose raco pkg install refuses the package it installed.
+    PREFIX
+      ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix
+      # A pinned commit has nothing to update, and an update would rerun the
+      # build step, whose raco pkg install refuses the package it installed.
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ""
     BUILD_IN_SOURCE
