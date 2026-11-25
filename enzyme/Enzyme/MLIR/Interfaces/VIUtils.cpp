@@ -114,6 +114,29 @@ static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
   return arith::SubFOp::create(builder, loc, logQPart, log2piTerm);
 }
 
+/// Attributes for an autodiff region with `numActiveArgs` active arguments
+/// that differentiates its first result and passes its second through as a
+/// constant, followed by the entries of `extra` when it is non-null.
+static SmallVector<NamedAttribute>
+buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
+                         DictionaryAttr extra) {
+  MLIRContext *context = builder.getContext();
+  enzyme::ActivityAttr active =
+      enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_active);
+  enzyme::ActivityAttr constant =
+      enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_const);
+  SmallVector<NamedAttribute> attrs{
+      builder.getNamedAttr(
+          "activity",
+          builder.getArrayAttr(SmallVector<Attribute>(numActiveArgs, active))),
+      builder.getNamedAttr("ret_activity",
+                           builder.getArrayAttr({active, constant})),
+  };
+  if (extra)
+    llvm::append_range(attrs, extra);
+  return attrs;
+}
+
 namespace {
 struct LogPResult {
   Value logP;
@@ -280,26 +303,8 @@ emitSingleParticleELBO(OpBuilder &builder, Location loc, Value locParam,
   Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
 
   SmallVector<Value> adInputs{locParam, scaleParam, gradSeed};
-  SmallVector<NamedAttribute> adAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto a : ctx.autodiffAttrs)
-      adAttrs.push_back(a);
-  }
+  SmallVector<NamedAttribute> adAttrs =
+      buildGradientRegionAttrs(builder, /*numActiveArgs=*/2, ctx.autodiffAttrs);
 
   auto adOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{scalarType, rngType, positionType, positionType},
@@ -383,23 +388,8 @@ emitSingleParticleAutoDelta(OpBuilder &builder, Location loc, Value locParam,
   Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
 
   SmallVector<Value> adInputs{locParam, gradSeed};
-  SmallVector<NamedAttribute> adAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr({enzyme::ActivityAttr::get(
-              builder.getContext(), enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto a : ctx.autodiffAttrs)
-      adAttrs.push_back(a);
-  }
+  SmallVector<NamedAttribute> adAttrs =
+      buildGradientRegionAttrs(builder, /*numActiveArgs=*/1, ctx.autodiffAttrs);
 
   auto adOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{scalarType, rngType, positionType}, adInputs,
@@ -459,26 +449,8 @@ emitSingleParticleMVNELBO(OpBuilder &builder, Location loc, Value locParam,
 
   Value gradSeed = scalarConst(builder, loc, scalarType, 1.0);
   SmallVector<Value> adInputs{locParam, xScaleTril, gradSeed};
-  SmallVector<NamedAttribute> adAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto a : ctx.autodiffAttrs)
-      adAttrs.push_back(a);
-  }
+  SmallVector<NamedAttribute> adAttrs =
+      buildGradientRegionAttrs(builder, /*numActiveArgs=*/2, ctx.autodiffAttrs);
 
   auto adOp = enzyme::AutoDiffRegionOp::create(
       builder, loc,
