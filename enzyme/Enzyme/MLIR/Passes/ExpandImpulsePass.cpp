@@ -2166,6 +2166,22 @@ static bool deltaWeightFeasible(FunctionOpInterface fn) {
   return feasible;
 }
 
+/// Clones the body of the logpdf block `lpBlock` with its arguments bound to
+/// `args` and returns the cloned yields: the joint density, then one density
+/// per site.
+static SmallVector<Value> cloneLogpdfBody(OpBuilder &builder, Block &lpBlock,
+                                          ValueRange args) {
+  IRMapping map;
+  for (auto [arg, value] : llvm::zip(lpBlock.getArguments(), args))
+    map.map(arg, value);
+  for (Operation &op : lpBlock.without_terminator())
+    builder.clone(op, map);
+  SmallVector<Value> yields;
+  for (Value yielded : lpBlock.getTerminator()->getOperands())
+    yields.push_back(map.lookupOrDefault(yielded));
+  return yields;
+}
+
 /// Proposes fresh values for the selected sites of `op` from its sampler,
 /// reads the other sites from `trace` and scores the result with the logpdf
 /// region. `drawOverride` gives the values of replaced sampler draws.
@@ -2255,28 +2271,23 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   }
 
   Block &lpBlock = logpdf.front();
-  IRMapping lpMap;
-  unsigned argIdx = 0;
+  SmallVector<Value> newPositions;
   for (Attribute addr : selection)
-    for (Value v : proposedSelected[addr])
-      lpMap.map(lpBlock.getArgument(argIdx++), v);
-  for (Operation &lpOp : lpBlock.without_terminator())
-    b.clone(lpOp, lpMap);
-  Operation *lpTerm = lpBlock.getTerminator();
-  Value newWeight = lpMap.lookupOrDefault(lpTerm->getOperand(0));
+    llvm::append_range(newPositions, proposedSelected[addr]);
+  SmallVector<Value> newYields = cloneLogpdfBody(b, lpBlock, newPositions);
+  Value newWeight = newYields[0];
   SmallVector<bool> dirty =
       delta ? taintedSiteYields(lpBlock, lpBlock.getArguments())
-            : SmallVector<bool>(lpTerm->getNumOperands() - 1, true);
+            : SmallVector<bool>(newYields.size() - 1, true);
 
   // A trace wider than positionSize carries a per-site score tail.
   if (traceType.getShape()[1] > positionSize) {
     Value row0 = i64Const(b, loc, 0);
     auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
-    for (unsigned j = 1, e = lpTerm->getNumOperands(); j < e; ++j) {
+    for (unsigned j = 1, e = newYields.size(); j < e; ++j) {
       if (!dirty[j - 1])
         continue;
-      Value score = lpMap.lookupOrDefault(lpTerm->getOperand(j));
-      Value flat = impulse::ReshapeOp::create(b, loc, cellType, score);
+      Value flat = impulse::ReshapeOp::create(b, loc, cellType, newYields[j]);
       Value col = i64Const(b, loc, positionSize + (int64_t)j - 1);
       newTrace = impulse::DynamicUpdateSliceOp::create(
                      b, loc, traceType, newTrace, flat, ValueRange{row0, col})
@@ -2284,23 +2295,22 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     }
   }
 
-  IRMapping oldLpMap;
+  SmallVector<Value> oldYields;
   if (traceType.getShape()[1] == positionSize) {
-    unsigned oldArgIdx = 0;
+    SmallVector<Value> oldPositions;
     for (Attribute addr : selection)
-      for (Value oldValue :
-           sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
-                            ValueRange(proposedSelected[addr]).getTypes()))
-        oldLpMap.map(lpBlock.getArgument(oldArgIdx++), oldValue);
-    for (Operation &lpOp : lpBlock.without_terminator())
-      b.clone(lpOp, oldLpMap);
+      llvm::append_range(
+          oldPositions,
+          sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
+                           ValueRange(proposedSelected[addr]).getTypes()));
+    oldYields = cloneLogpdfBody(b, lpBlock, oldPositions);
   }
   Value corr;
   Value logRatio;
   for (int64_t j : selectedOrdinals) {
-    Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
+    Value newScore = newYields[1 + j];
     Value oldScore = traceType.getShape()[1] == positionSize
-                         ? oldLpMap.lookupOrDefault(lpTerm->getOperand(1 + j))
+                         ? oldYields[1 + j]
                          : scalarAt(b, loc, trace, {0, positionSize + j});
     Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
     corr =
@@ -2321,7 +2331,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     Value ratio;
     Value sum;
     for (int64_t j : dirtyTerms) {
-      Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
+      Value newScore = newYields[1 + j];
       Value oldScore = scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
       Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
       sum =
@@ -3815,17 +3825,12 @@ struct ExpandImpulsePass
         // All sites at v at once: each yield sees at most one selected site.
         SmallVector<Value> yieldsAt[2];
         for (int v = 0; v < 2; ++v) {
-          IRMapping m;
-          for (unsigned j = 0; j < lpBlock.getNumArguments(); ++j)
-            m.map(lpBlock.getArgument(j),
-                  f64Const(
-                      b, loc,
-                      cast<RankedTensorType>(lpBlock.getArgument(j).getType()),
-                      (double)v));
-          for (Operation &lo : lpBlock.without_terminator())
-            b.clone(lo, m);
-          for (unsigned j = 0; j < numYields; ++j)
-            yieldsAt[v].push_back(m.lookupOrDefault(lpTerm->getOperand(1 + j)));
+          SmallVector<Value> positions;
+          for (BlockArgument arg : lpBlock.getArguments())
+            positions.push_back(f64Const(
+                b, loc, cast<RankedTensorType>(arg.getType()), (double)v));
+          llvm::append_range(yieldsAt[v], llvm::drop_begin(cloneLogpdfBody(
+                                              b, lpBlock, positions)));
         }
         SmallVector<Value> logOdds(n);
         for (unsigned j = 0; j < numYields; ++j) {
@@ -3909,14 +3914,11 @@ struct ExpandImpulsePass
           SmallVector<Value> yieldsAt[2];
           Value scoreAt[2];
           for (int v = 0; v < 2; ++v) {
-            IRMapping m;
-            for (unsigned j = 0; j < lpBlock.getNumArguments(); ++j)
-              m.map(lpBlock.getArgument(j),
-                    j == k ? f64Const(b, loc, argType, (double)v) : cur[j]);
-            for (Operation &lo : lpBlock.without_terminator())
-              b.clone(lo, m);
+            SmallVector<Value> positions(cur);
+            positions[k] = f64Const(b, loc, argType, (double)v);
+            SmallVector<Value> yields = cloneLogpdfBody(b, lpBlock, positions);
             for (unsigned j = 0; j < numYields; ++j) {
-              Value y = m.lookupOrDefault(lpTerm->getOperand(1 + j));
+              Value y = yields[1 + j];
               yieldsAt[v].push_back(y);
               if (!dirtyOf[k][j])
                 continue;
