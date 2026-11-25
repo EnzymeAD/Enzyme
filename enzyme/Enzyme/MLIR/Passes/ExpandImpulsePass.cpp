@@ -261,59 +261,77 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
   return supports;
 }
 
+/// Returns the number of trace columns the values of `site` take.
+static int64_t sampleRegionSize(impulse::SampleRegionOp site) {
+  int64_t size = 0;
+  for (Value result : llvm::drop_begin(site->getResults()))
+    size += computeTensorElementCount(cast<RankedTensorType>(result.getType()));
+  return size;
+}
+
+namespace {
+/// Where the sites of a region-form infer op sit on its trace.
+struct RegionTraceLayout {
+  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
+  /// First trace column of each address in `all_addresses`.
+  DenseMap<Attribute, int64_t> columnOf;
+  /// Columns taken by the values of all addresses, before any score tail.
+  int64_t positionSize = 0;
+};
+} // namespace
+
+/// Lays out the `all_addresses` of `regionOp` on its trace, in that order.
+/// Sites are looked up in the whole sampling region, or with `topLevelOnly`
+/// in its entry block only. Fails when an address has no site.
+static FailureOr<RegionTraceLayout>
+getRegionTraceLayout(impulse::InferRegionOp regionOp, bool topLevelOnly) {
+  RegionTraceLayout layout;
+  auto addSite = [&](impulse::SampleRegionOp site) {
+    if (Attribute address = site.getAddressAttr())
+      layout.siteByAddress[address] = site;
+  };
+  if (topLevelOnly)
+    for (auto site :
+         regionOp.getSampling().front().getOps<impulse::SampleRegionOp>())
+      addSite(site);
+  else
+    regionOp.getSampling().walk(addSite);
+  for (Attribute address : regionOp.getAllAddressesAttr()) {
+    impulse::SampleRegionOp site = layout.siteByAddress.lookup(address);
+    if (!site)
+      return failure();
+    layout.columnOf[address] = layout.positionSize;
+    layout.positionSize += sampleRegionSize(site);
+  }
+  return layout;
+}
+
 /// Position offsets follow `selection`, trace offsets `all_addresses`.
 static SmallVector<impulse::SupportInfo>
 collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
-  SmallVector<impulse::SupportInfo> supports;
   ArrayAttr selection = regionOp.getSelectionAttr();
-  ArrayAttr allAddresses = regionOp.getAllAddressesAttr();
-  if (!selection || !allAddresses || regionOp.getSampling().empty())
-    return supports;
-
+  if (!selection || !regionOp.getAllAddressesAttr() ||
+      regionOp.getSampling().empty())
+    return {};
   // Branch-local sites also hold trace columns, so walk the whole sampler.
-  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-  regionOp.getSampling().walk([&](impulse::SampleRegionOp site) {
-    if (auto address = site.getAddressAttr())
-      siteByAddress[address] = site;
-  });
+  FailureOr<RegionTraceLayout> layout =
+      getRegionTraceLayout(regionOp, /*topLevelOnly=*/false);
+  if (failed(layout))
+    return {};
 
-  auto siteSize = [](impulse::SampleRegionOp site) -> int64_t {
-    int64_t size = 0;
-    for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
-      size +=
-          cast<RankedTensorType>(site.getResult(i).getType()).getNumElements();
-    return size;
-  };
-
+  SmallVector<impulse::SupportInfo> supports;
   int64_t positionOffset = 0;
   int64_t unconstrainedOffset = 0;
   for (Attribute addr : selection) {
-    auto it = siteByAddress.find(addr);
-    if (it == siteByAddress.end())
+    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
+    if (!site || !layout->columnOf.count(addr))
       return {};
-    impulse::SampleRegionOp site = it->second;
-
-    int64_t traceOffset = 0;
-    bool foundInTrace = false;
-    for (Attribute traceAddr : allAddresses) {
-      if (traceAddr == addr) {
-        foundInTrace = true;
-        break;
-      }
-      auto traceIt = siteByAddress.find(traceAddr);
-      if (traceIt == siteByAddress.end())
-        return {};
-      traceOffset += siteSize(traceIt->second);
-    }
-    if (!foundInTrace)
-      return {};
-
-    int64_t constrainedSize = siteSize(site);
+    int64_t constrainedSize = sampleRegionSize(site);
     int64_t unconstrainedSize = transforms::getUnconstrainedSize(
         constrainedSize, site.getSupportAttr());
-    supports.emplace_back(positionOffset, traceOffset, constrainedSize,
-                          unconstrainedOffset, unconstrainedSize,
-                          site.getSupportAttr());
+    supports.emplace_back(positionOffset, layout->columnOf.lookup(addr),
+                          constrainedSize, unconstrainedOffset,
+                          unconstrainedSize, site.getSupportAttr());
     positionOffset += constrainedSize;
     unconstrainedOffset += unconstrainedSize;
   }
@@ -338,56 +356,37 @@ static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
   ArrayAttr allAddresses = regionOp.getAllAddressesAttr();
   if (!selection || !allAddresses || regionOp.getSampling().empty())
     return false;
-
-  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-  regionOp.getSampling().walk([&](impulse::SampleRegionOp site) {
-    if (auto address = site.getAddressAttr())
-      siteByAddress[address] = site;
-  });
-
-  auto resultSizes = [](impulse::SampleRegionOp site,
-                        SmallVectorImpl<int64_t> &sizes) {
-    for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
-      sizes.push_back(
-          cast<RankedTensorType>(site.getResult(i).getType()).getNumElements());
-  };
+  FailureOr<RegionTraceLayout> layout =
+      getRegionTraceLayout(regionOp, /*topLevelOnly=*/false);
+  if (failed(layout))
+    return false;
 
   DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
-
   DenseMap<Attribute, int64_t> declPositionOffset;
-  int64_t traceOffset = 0, positionOffset = 0, unconstrainedOffset = 0;
+  int64_t positionOffset = 0, unconstrainedOffset = 0;
   for (Attribute addr : allAddresses) {
-    auto it = siteByAddress.find(addr);
-    if (it == siteByAddress.end())
-      return false;
-    impulse::SampleRegionOp site = it->second;
-    SmallVector<int64_t> sizes;
-    resultSizes(site, sizes);
-    int64_t siteSize = 0;
-    for (int64_t size : sizes)
-      siteSize += size;
-    if (selectedSet.contains(addr)) {
-      int64_t unconstrainedSize =
-          transforms::getUnconstrainedSize(siteSize, site.getSupportAttr());
-      out.supports.emplace_back(positionOffset, traceOffset, siteSize,
-                                unconstrainedOffset, unconstrainedSize,
-                                site.getSupportAttr());
-      declPositionOffset[addr] = positionOffset;
-      positionOffset += siteSize;
-      unconstrainedOffset += unconstrainedSize;
-    }
-    traceOffset += siteSize;
+    if (!selectedSet.contains(addr))
+      continue;
+    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
+    int64_t siteSize = sampleRegionSize(site);
+    int64_t unconstrainedSize =
+        transforms::getUnconstrainedSize(siteSize, site.getSupportAttr());
+    out.supports.emplace_back(positionOffset, layout->columnOf.lookup(addr),
+                              siteSize, unconstrainedOffset, unconstrainedSize,
+                              site.getSupportAttr());
+    declPositionOffset[addr] = positionOffset;
+    positionOffset += siteSize;
+    unconstrainedOffset += unconstrainedSize;
   }
   out.positionSize = positionOffset;
 
   for (Attribute addr : selection) {
-    auto it = siteByAddress.find(addr);
-    if (it == siteByAddress.end())
+    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
+    if (!site)
       return false;
-    SmallVector<int64_t> sizes;
-    resultSizes(it->second, sizes);
     int64_t within = 0;
-    for (int64_t size : sizes) {
+    for (Value result : llvm::drop_begin(site->getResults())) {
+      int64_t size = cast<RankedTensorType>(result.getType()).getNumElements();
       out.argSlices.emplace_back(declPositionOffset[addr] + within, size);
       within += size;
     }
@@ -1864,51 +1863,6 @@ static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
   Value accepted = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
   return {accepted, acceptWeight, rng};
-}
-
-/// Returns the number of trace columns the values of `site` take.
-static int64_t sampleRegionSize(impulse::SampleRegionOp site) {
-  int64_t size = 0;
-  for (Value result : llvm::drop_begin(site->getResults()))
-    size += computeTensorElementCount(cast<RankedTensorType>(result.getType()));
-  return size;
-}
-
-namespace {
-/// Where the sites of a region-form infer op sit on its trace.
-struct RegionTraceLayout {
-  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-  /// First trace column of each address in `all_addresses`.
-  DenseMap<Attribute, int64_t> columnOf;
-  /// Columns taken by the values of all addresses, before any score tail.
-  int64_t positionSize = 0;
-};
-} // namespace
-
-/// Lays out the `all_addresses` of `regionOp` on its trace, in that order.
-/// Sites are looked up in the whole sampling region, or with `topLevelOnly`
-/// in its entry block only. Fails when an address has no site.
-static FailureOr<RegionTraceLayout>
-getRegionTraceLayout(impulse::InferRegionOp regionOp, bool topLevelOnly) {
-  RegionTraceLayout layout;
-  auto addSite = [&](impulse::SampleRegionOp site) {
-    if (Attribute address = site.getAddressAttr())
-      layout.siteByAddress[address] = site;
-  };
-  if (topLevelOnly)
-    for (auto site :
-         regionOp.getSampling().front().getOps<impulse::SampleRegionOp>())
-      addSite(site);
-  else
-    regionOp.getSampling().walk(addSite);
-  for (Attribute address : regionOp.getAllAddressesAttr()) {
-    impulse::SampleRegionOp site = layout.siteByAddress.lookup(address);
-    if (!site)
-      return failure();
-    layout.columnOf[address] = layout.positionSize;
-    layout.positionSize += sampleRegionSize(site);
-  }
-  return layout;
 }
 
 /// Returns whether `op` or an op nested in it has an operand in `values`.
