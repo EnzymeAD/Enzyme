@@ -148,7 +148,7 @@ Error checkPinnedSites(Session &S, Module &M) {
       if (!item.site.empty() && item.named.empty())
         return userError(
             "-poseidon-pin item '" + Twine(item.text) + "' names the site '" +
-            item.site + "', which is no site of this module. Its sites are:" +
+            item.site + "', which is no site of this module; its sites are:" +
             listSites(std::set<std::string>(P.sites.begin(), P.sites.end())));
   P.sites.clear();
   P.printed.clear();
@@ -190,7 +190,7 @@ static Expected<size_t> findNamed(const PinItem &item, const Function &F,
   return userError(F, F.getSubprogram(),
                    "-poseidon-pin: " + Twine(site) + ": " + unit +
                        " has no candidate named '" + item.name +
-                       "'. Its candidates are:" + names);
+                       "'; its candidates are:" + names);
 }
 
 Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {

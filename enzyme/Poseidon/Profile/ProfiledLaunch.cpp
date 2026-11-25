@@ -140,10 +140,9 @@ Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
           userError(F, F.getSubprogram(),
                     "the launch stub " + F.getName() +
                         " does not end in __cuda/__hipPopCallConfiguration "
-                        "and cuda/hipLaunchKernel, so the profiling run "
-                        "cannot pass its kernel the shadows it is profiled "
-                        "with. Compile against the CUDA or ROCm headers, "
-                        "which declare that launch API."));
+                        "and cuda/hipLaunchKernel, through which the "
+                        "profiling run passes its kernel the shadows; compile "
+                        "against the CUDA or ROCm headers"));
       continue;
     }
 

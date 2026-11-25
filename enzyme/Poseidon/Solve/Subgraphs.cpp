@@ -259,11 +259,11 @@ Error attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
           raw_string_ostream(name) << *operand;
           return userError(*op, "the profile gives this operation " +
                                     Twine(profileInfo.minOperands.size()) +
-                                    " operand range(s), and its operand " +
+                                    " operand range(s), and none for its "
+                                    "operand " +
                                     Twine(i) + " (" + StringRef(name).trim() +
-                                    ") has none: the profile was not "
-                                    "generated from this program. Re-run "
-                                    "profile generation.");
+                                    "); re-run profile generation for this "
+                                    "program");
         }
         valueToNodeMap[operand]->updateBounds(profileInfo.minOperands[i],
                                               profileInfo.maxOperands[i]);

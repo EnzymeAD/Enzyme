@@ -153,15 +153,12 @@ Error requireDeviceMathMacro(Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice() || M.getFunction(kMacroMark))
     return Error::success();
-  return userError(
-      "this device compilation has Poseidon sites and does "
-      "not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, "
-      "under which the header keeps the " +
-      T.mathLibrary() +
-      " functions a rewrite or a site's derivative calls; "
-      "include the header and define the macro "
-      "(-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the "
-      "Poseidon CMake targets do");
+  return userError("this device compile has Poseidon sites and does not "
+                   "include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, "
+                   "which keeps the " +
+                   T.mathLibrary() +
+                   " functions a rewrite or a site's derivative calls; "
+                   "include the header and define POSEIDON_DEVICE_MATH");
 }
 
 bool releaseDeviceMath(Module &M) {

@@ -120,7 +120,7 @@ static Error reportRow(Session &S, const RecognizedMatmul &m, const Twine &what,
     return userError(anchorOf(m), "strict mode: " + what +
                                       " has no measured '" + row + "' row in " +
                                       costModelPath(S.CostModel) + "; " +
-                                      measure + " measures it.");
+                                      measure + " measures it");
   if (!S.Matmul.ReportedRows.insert(row).second)
     return Error::success();
   const Instruction &at = anchorOf(m);
@@ -249,10 +249,9 @@ static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
   if (O.Matmul.MatmulCalibration) {
     if (O.Solver.Pin.empty())
       return userError(anchorOf(m),
-                       "-poseidon-matmul-calibration requires "
-                       "-poseidon-pin. Uncalibrated in-kernel "
-                       "classes are proposed at a placeholder price under "
-                       "that flag, and a DP solve must never see one.");
+                       "-poseidon-matmul-calibration requires -poseidon-pin, "
+                       "since it proposes uncalibrated in-kernel classes at a "
+                       "placeholder price no solve may see");
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] calibration mode: " << what
                    << " has no measured inkernel_rel," << cls
@@ -1106,7 +1105,7 @@ Error MatmulUnit::apply(Session &S, size_t candidateIndex) {
                            "uses, above the " +
                            Twine(cap) +
                            " B a kernel may hold; select fewer of them with "
-                           "-poseidon-pin.");
+                           "-poseidon-pin");
     return Error::success();
   }
   case Scheme::OzakiII:

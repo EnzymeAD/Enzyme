@@ -15,4 +15,4 @@
 
 ; DEFAULT: remark: {{.*}}Poseidon proposes no algebraic rewrites: this Poseidon was built without Herbie (configure it with -DPOSEIDON_HERBIE_BINARY=<herbie> or -DPOSEIDON_BUILD_HERBIE=ON){{$}}
 
-; ASKED: error: {{.*}}Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/herbie_default_{{[0-9A-F]+}}.json, and this Poseidon was built without Herbie (configure it with -DPOSEIDON_HERBIE_BINARY=<herbie> or -DPOSEIDON_BUILD_HERBIE=ON). Compute the answer on a machine with Herbie and copy its -poseidon-cache directory here, or turn algebraic rewriting off with -poseidon-enable-rewrite=0.{{$}}
+; ASKED: error: {{.*}}Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/herbie_default_{{[0-9A-F]+}}.json, and this Poseidon was built without Herbie (configure it with -DPOSEIDON_HERBIE_BINARY=<herbie> or -DPOSEIDON_BUILD_HERBIE=ON); copy here the -poseidon-cache directory of a compile that ran Herbie, or turn algebraic rewriting off with -poseidon-enable-rewrite=0{{$}}

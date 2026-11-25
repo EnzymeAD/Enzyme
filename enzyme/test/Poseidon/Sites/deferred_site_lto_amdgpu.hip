@@ -66,10 +66,10 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
   dy[0] = dyl;
 }
 
-// DEFERRED: deferred_site_lto_amdgpu.hip:[[@LINE-16]]:{{[0-9]+}}: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang -mllvm -Xclang -enzyme-lto-prelink=1).{{$}}
+// DEFERRED: deferred_site_lto_amdgpu.hip:[[@LINE-16]]:{{[0-9]+}}: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered, which Enzyme leaves to the post-link run of an LTO pre-link compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang -mllvm -Xclang -enzyme-lto-prelink=1){{$}}
 // DEFERRED: exit status 1
 
-// NOENZYME: deferred_site_lto_amdgpu.hip:[[@LINE-19]]:{{[0-9]+}}: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.{{$}}
+// NOENZYME: deferred_site_lto_amdgpu.hip:[[@LINE-19]]:{{[0-9]+}}: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin{{$}}
 // NOENZYME: exit status 1
 
 // CO-NOT: UND {{[_a-zA-Z]}}

@@ -18,7 +18,7 @@
 ; it.
 
 ; ENABLED-NOT: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
-; ENABLED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/herbie_default_{{[0-9A-F]+}}.json, and there is no Herbie at {{.*}}/no-herbie to compute it. Compute the answer on a machine with Herbie and copy its -poseidon-cache directory here, or turn algebraic rewriting off with -poseidon-enable-rewrite=0.{{$}}
+; ENABLED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/herbie_default_{{[0-9A-F]+}}.json, and there is no Herbie at {{.*}}/no-herbie to compute it; copy here the -poseidon-cache directory of a compile that ran Herbie, or turn algebraic rewriting off with -poseidon-enable-rewrite=0{{$}}
 
 
 ; A Herbie that exits with a nonzero status is not a crash. When it wrote a

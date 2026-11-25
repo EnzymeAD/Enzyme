@@ -26,7 +26,7 @@
 ; MATCH-NEXT: [[R:%.*]] = call double @tester(double %x, double %y, double %z)
 ; MATCH-NEXT: ret double [[R]]
 
-; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}). Its slot indices do not name the same instructions; re-run profile generation.
+; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}); re-run profile generation
 
 ;--- tester.ll
 define double @tester(double %x, double %y, double %z) #0 {

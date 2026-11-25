@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
 // FAILED-NEXT: poseidon-kappa: error: the second unperturbed run (exit 3) wrote no metric; its output follows
 // FAILED-NEXT: no second run
 
-// USE: kappa_request.cpp:[[#@LINE-83]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/_Z5gaussPKdPdi.fpprofile). Run the profiling build again as 'poseidon-kappa -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_KAPPA=0 in its environment to solve each site against its own target.
+// USE: kappa_request.cpp:[[#@LINE-83]]:1: error: Poseidon: the profiling run declared a metric with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/_Z5gaussPKdPdi.fpprofile); run the profiling build again under 'poseidon-kappa -- <program> [args...]', or with POSEIDON_KAPPA=0 to solve each site against its own target
 // USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {
 
 // USAGE: That takes 1 + <sites> x

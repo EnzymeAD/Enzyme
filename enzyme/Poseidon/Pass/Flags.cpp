@@ -138,8 +138,8 @@ Options readOptions() {
 
 static Error noNumber(StringRef flag) {
   return userError("-" + flag +
-                   " was given no number: its value is empty or nan. Write a "
-                   "number after '=', or leave the flag out for its default.");
+                   " was given an empty value or nan; write a number after "
+                   "'=', or leave the flag out for its default");
 }
 
 // No solution saves more than the whole profiled cost, so a budget below -1 is
@@ -151,22 +151,17 @@ static Error validateCostBudget(double budget) {
     return noNumber("poseidon-cost-budget");
   if (std::isfinite(budget) && budget > 0x1p30)
     return userError("-poseidon-cost-budget=" + Twine(exactDouble(budget)) +
-                     " lets a solution add more than 2^30 times the profiled "
-                     "cost, which the DP's cost axis does not hold; give a "
-                     "share of at most 1073741824.");
+                     " is above 2^30, the largest share of the profiled cost "
+                     "the solve holds; give a share of at most 1073741824");
   if (std::isfinite(budget) && budget >= -1.0)
     return Error::success();
   return userError(
       "-poseidon-cost-budget=" + Twine(exactDouble(budget)) +
       (std::isfinite(budget)
-           ? " asks a solution to save more than the whole profiled "
-             "cost"
+           ? " asks a solution to save more than the whole profiled cost"
            : " is not a finite number") +
-      ". It takes the share of a site's profiled cost a solution may "
-      "add, negative for one it has to save (-0.25 requires saving a "
-      "quarter), not a cost. The frontier of a site's solve, with "
-      "the budget that selects each point, is in the "
-      "<site>.explain.json -poseidon-explain=<dir> writes.");
+      "; give the share of a site's profiled cost a solution may add, "
+      "negative for one it has to save (-0.25 saves a quarter)");
 }
 
 Error validateOptions(const Options &O) {
@@ -174,18 +169,18 @@ Error validateOptions(const Options &O) {
   if (!is_contained({"inputs", "executions"}, H.HerbieArrayGrouping))
     return userError(
         "-poseidon-herbie-array-grouping=" + Twine(H.HerbieArrayGrouping) +
-        " is not 'inputs' or 'executions'.");
+        " is not 'inputs' or 'executions'");
   if (!is_contained({"sensitivity", "gradient", "none"}, H.HerbieArrayWeights))
     return userError(
         "-poseidon-herbie-array-weights=" + Twine(H.HerbieArrayWeights) +
-        " is not 'sensitivity', 'gradient' or 'none'.");
+        " is not 'sensitivity', 'gradient' or 'none'");
   if (std::string err; !O.Profiling.Kernels.empty() &&
                        O.Profiling.Kernels != "all" &&
                        !Regex(O.Profiling.Kernels).isValid(err))
     return userError(Twine("-poseidon-kernels=") + O.Profiling.Kernels +
-                     " is not a valid regular expression: " + err +
-                     ". Give a regular expression of kernel names, or "
-                     "'all'.");
+                     " is not a valid regular expression (" + err +
+                     "); give a regular expression of kernel names, or "
+                     "'all'");
   if (!O.Profiling.usesProfile())
     return Error::success();
   const std::pair<StringRef, double> numbers[] = {

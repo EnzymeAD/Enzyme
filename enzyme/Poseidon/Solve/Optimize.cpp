@@ -220,8 +220,8 @@ static Error putOnApplicationScale(Session &S, Function &F,
           F, F.getSubprogram(),
           Twine("the profile of ") + F.getName() +
               " carries a measured condition number, which scales one "
-              "site-wide error; it cannot be combined with "
-              "-poseidon-output-profiles. Leave out one or the other.");
+              "site-wide error and so cannot be combined with "
+              "-poseidon-output-profiles; leave out one or the other");
     siteSumSens = 1.0;
   }
 
@@ -242,9 +242,8 @@ static Error putOnApplicationScale(Session &S, Function &F,
                  "noise (Kappa = " +
                  shortDouble(profileHeader.kappa) + ", " +
                  kappaMarkName(profileHeader.kappaMark) +
-                 "), so the site is solved against its own target; probe "
-                 "it with larger perturbations (POSEIDON_KAPPA_LADDER) to "
-                 "measure it",
+                 "), so the site is solved against its own target; measure it "
+                 "with larger perturbation steps in POSEIDON_KAPPA_LADDER",
              DS_Warning);
   if (profileHeader.hasKappa && !unresolved) {
     double sumSens = siteSumSens;
@@ -254,7 +253,7 @@ static Error putOnApplicationScale(Session &S, Function &F,
                            " carries a measured condition number but a zero "
                            "total sensitivity, so the accuracy costs cannot "
                            "be put on the scale the condition number was "
-                           "measured against; re-run profile generation.");
+                           "measured against; re-run profile generation");
     factor = profileHeader.kappaMark == KappaMark::Diverged
                  ? 1e30
                  : profileHeader.kappa / sumSens;

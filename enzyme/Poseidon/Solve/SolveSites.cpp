@@ -299,7 +299,7 @@ static Error checkToleranceInputs(const Function &at, StringRef siteName,
                          scaleStr +
                          ", so no rewrite's modelled error can be expressed "
                          "as a per-operation relative level; re-run profile "
-                         "generation for this site.");
+                         "generation for this site");
   }
 
   if (!std::isfinite(baseline))
@@ -310,7 +310,7 @@ static Error checkToleranceInputs(const Function &at, StringRef siteName,
                          "candidate's modelled error can be placed on an "
                          "absolute scale; give the site a cost budget "
                          "instead of a tolerance, or re-run profile "
-                         "generation if its profile is not of this program.");
+                         "generation if its profile is not of this program");
   return Error::success();
 }
 

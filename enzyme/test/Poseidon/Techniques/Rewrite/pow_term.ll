@@ -103,4 +103,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; PO-NOT: sensitivity floor raised
 ; PO: Initial AccuracyCost: 2.600950e-17
 
-; PO-MISSING: error: {{.*}}Poseidon: the profile directory {{.*}}none (-poseidon-output-profiles) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; PO-MISSING: error: {{.*}}Poseidon: the profile directory {{.*}}none (-poseidon-output-profiles) does not exist; run the program built with -poseidon-profile-generate first, or pass the directory it wrote

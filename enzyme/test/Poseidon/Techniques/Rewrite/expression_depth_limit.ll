@@ -5,7 +5,7 @@
 ; An output deeper than the deepest expression the algebraic search is given
 ; is a user error that names the operation where the limit is crossed.
 
-; CHECK: error: {{.*}}Poseidon: Expression depth exceeded maximum allowed depth of 100 for +; consider disabling loop unrolling
+; CHECK: error: {{.*}}Poseidon: the expression of + is deeper than 100 operations; compile the site without loop unrolling
 
 define double @test_opt(double %x, double %y) {
 entry:

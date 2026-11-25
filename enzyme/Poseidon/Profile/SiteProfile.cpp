@@ -1038,13 +1038,13 @@ static Error planShadows(CallInst *CI, Function &clone,
     if (!ext)
       return userError(
           *CI, site +
-                   " no longer reaches a constant range of memory through "
-                   "argument " +
+                   " cannot be a Poseidon site: it no longer reaches a "
+                   "constant range of memory through argument " +
                    Twine(S.param + 1) + " (a pointer the call " +
                    toString(ext.takeError()) +
-                   "), so it cannot be a Poseidon site. Copy the argument "
-                   "into a local object, or pass its shadow in the call: "
-                   "enzyme_dup before the pointer and the shadow after it.");
+                   "); copy the argument into a local object, or pass its "
+                   "shadow in the call (enzyme_dup before the pointer, the "
+                   "shadow after it)");
     if (!ext->accessed()) {
       plan.constant.insert(S.activity);
       continue;

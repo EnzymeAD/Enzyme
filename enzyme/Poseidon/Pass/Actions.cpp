@@ -104,9 +104,9 @@ static Error requireProfileDirectory(CallBase *CI, StringRef dir,
   return userError(*CI,
                    Twine("the profile directory ") + dir + " (" + flag + ") " +
                        (isDir ? "holds no .fpprofile file" : "does not exist") +
-                       "; no profiling run wrote into it. Run the "
-                       "program built with -poseidon-profile-generate "
-                       "first, or pass the directory it wrote");
+                       "; run the program built with "
+                       "-poseidon-profile-generate first, or pass the "
+                       "directory it wrote");
 }
 
 namespace {

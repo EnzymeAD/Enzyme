@@ -88,15 +88,15 @@
 ; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 
 ; SITES-STALE-NOT: Starting accuracy DP solver
-; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. The frontier of a site's solve, with the budget that selects each point, is in the <site>.explain.json -poseidon-explain=<dir> writes.
-; SITES-HUGE: error: {{.*}}Poseidon: -poseidon-cost-budget=[[BUDGET]] lets a solution add more than 2^30 times the profiled cost, which the DP's cost axis does not hold; give a share of at most 1073741824.
+; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost; give the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 saves a quarter)
+; SITES-HUGE: error: {{.*}}Poseidon: -poseidon-cost-budget=[[BUDGET]] is above 2^30, the largest share of the profiled cost the solve holds; give a share of at most 1073741824
 ; SITES-NONFINITE-NOT: Starting accuracy DP solver
-; SITES-NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. The frontier of a site's solve, with the budget that selects each point, is in the <site>.explain.json -poseidon-explain=<dir> writes.
+; SITES-NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number; give the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 saves a quarter)
 ; SITES-UNUSED-NOT: error:
 ; SITES-UNUSED-NOT: -poseidon-cost-budget
 
 ; SITES-NONUMBER-NOT: Starting accuracy DP solver
-; SITES-NONUMBER: error: {{.*}}Poseidon: -[[FLAG]] was given no number: its value is empty or nan. Write a number after '=', or leave the flag out for its default.
+; SITES-NONUMBER: error: {{.*}}Poseidon: -[[FLAG]] was given an empty value or nan; write a number after '=', or leave the flag out for its default
 ; SITES-NONUMBER-NOT: Starting accuracy DP solver
 
 ; One shared budget is spent against one accuracy target, so the sites of a

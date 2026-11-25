@@ -157,9 +157,9 @@ static bool hasSite(const Options &O, Module &M) {
 static Error requirePluginOrder(const Options &O, Module &M) {
   if (!hasSite(O, M) || !enzymeAlreadyRan(M))
     return Error::success();
-  return userError("Enzyme's pass has already run on this module. The plugins "
-                   "must be given in the order -fpass-plugin=<Poseidon>.so "
-                   "-fpass-plugin=<ClangEnzyme>.so.");
+  return userError("Enzyme's pass ran on this module before Poseidon's; give "
+                   "the plugins in the order -fpass-plugin=<Poseidon>.so "
+                   "-fpass-plugin=<ClangEnzyme>.so");
 }
 
 static void runAlwaysInliner(Module &M, ModuleAnalysisManager &MAM) {
@@ -249,23 +249,20 @@ static bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
          !static_cast<cl::opt<bool> *>(It->second)->getValue();
 }
 
-// Why a derivative request is still unlowered where the pass expects Enzyme to
-// have run. A pass run by pipeline name is not told which phase it runs in.
+// The end of the error about a derivative request still unlowered where the
+// pass expects Enzyme to have run: why, when the phase says, and what to pass.
+// A pass run by pipeline name is not told which phase it runs in.
 static std::string unloweredRequestReason(bool phaseKnown,
                                           ThinOrFullLTOPhase Phase,
                                           OptimizationLevel Level) {
   if (phaseKnown && enzymeDeferredToPostLink(Phase, Level))
-    return "This is an LTO pre-link compile, where Enzyme leaves derivative "
-           "requests to the post-link run unless -enzyme-lto-prelink is "
-           "given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang "
-           "-mllvm -Xclang -enzyme-lto-prelink=1).";
-  std::string reason =
-      "Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.";
-  if (!phaseKnown)
-    reason += " In an LTO pre-link pipeline Enzyme also leaves derivative "
-              "requests to the post-link run unless -enzyme-lto-prelink is "
-              "given.";
-  return reason;
+    return ", which Enzyme leaves to the post-link run of an LTO pre-link "
+           "compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang "
+           "-mllvm -Xclang -enzyme-lto-prelink=1)";
+  if (phaseKnown)
+    return "; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin";
+  return "; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin, and "
+         "in an LTO pre-link compile -mllvm -enzyme-lto-prelink=1";
 }
 
 namespace {
@@ -330,11 +327,11 @@ struct DeferredSitePass : PassParent<DeferredSitePass> {
   Error runEnzyme(Module &M, LocalAnalysisManagers &AMs) {
     ModulePassManager MPM;
     if (Error E = PB->parsePassPipeline(MPM, "enzyme"))
-      return userError(Twine("a deferred site needs a second Enzyme run and "
+      return userError(Twine("a deferred site needs a second Enzyme run, and "
                              "the Enzyme pass pipeline is not registered (") +
                        toString(std::move(E)) +
-                       "). Add -fpass-plugin=<ClangEnzyme>.so after the "
-                       "Poseidon plugin.");
+                       "); add -fpass-plugin=<ClangEnzyme>.so after the "
+                       "Poseidon plugin");
     MPM.run(M, AMs.MAM);
     return Error::success();
   }
@@ -370,7 +367,7 @@ struct DeferredSitePass : PassParent<DeferredSitePass> {
             userError(*B, B->getSubprogram(),
                       Twine("the marked body ") + B->getName() +
                           " still holds an __enzyme_* request that nothing "
-                          "lowered. " +
+                          "lowered" +
                           unloweredRequestReason(PhaseKnown, Phase, Level)));
     // The canonical form of a deferred site is taken here, in both phases, so
     // that the slots the profile was numbered against are the ones the solve
@@ -531,7 +528,7 @@ struct FinalizePass : PassParent<FinalizePass> {
         return stopOnError(
             S, M,
             userError(Twine("profile generation emitted a derivative request "
-                            "that nothing lowered. ") +
+                            "that nothing lowered") +
                       unloweredRequestReason(PhaseKnown, Phase, Level)));
     const Target &T = Target::of(M);
     if (Error E = finalizeModule(S, M))

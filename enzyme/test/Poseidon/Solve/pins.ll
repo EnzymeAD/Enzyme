@@ -45,7 +45,7 @@
 ; NAMED: ret double
 ; NAMED-DROPPED: error: {{.*}}Poseidon: -poseidon-pin: tester: R0 has no candidate named '(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) {{.*}}': pricing dropped it, because a regime-split arm is reached by fewer than {{[0-9]+}} samples
 
-; NAMED-UNKNOWN: error: {{.*}}Poseidon: -poseidon-pin: tester: R0 has no candidate named '(-.f64 v0 v1)'. Its candidates are:
+; NAMED-UNKNOWN: error: {{.*}}Poseidon: -poseidon-pin: tester: R0 has no candidate named '(-.f64 v0 v1)'; its candidates are:
 ; NAMED-UNKNOWN-NEXT: {{^}}  (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 
 ; The value a replay from the cached table prints applies what the replay
@@ -87,11 +87,11 @@
 
 ; SITES-NOSITE: [poseidon] pin: {{$}}
 ; SITES-NOSITE: [poseidon] pin: {{$}}
-; SITES-NOSITE: error: Poseidon: -poseidon-pin item 'tester_c:P0=All FP64(0%) + FP32(100%)' names the site 'tester_c', which is no site of this module. Its sites are:
+; SITES-NOSITE: error: Poseidon: -poseidon-pin item 'tester_c:P0=All FP64(0%) + FP32(100%)' names the site 'tester_c', which is no site of this module; its sites are:
 ; SITES-NOSITE-NEXT: {{^}}  tester_a{{$}}
 ; SITES-NOSITE-NEXT: {{^}}  tester_b{{$}}
 
-; SITES-NONAME: error: {{.*}}Poseidon: -poseidon-pin: tester_a: P0 has no candidate named 'All FP64(10%) + FP32(90%)'. Its candidates are:
+; SITES-NONAME: error: {{.*}}Poseidon: -poseidon-pin: tester_a: P0 has no candidate named 'All FP64(10%) + FP32(90%)'; its candidates are:
 ; SITES-NONAME-NEXT: {{^}}  All FP64(0%) + FP32(100%){{$}}
 ; SITES-NONAME-NEXT: {{^}}  All FP64(50%) + FP32(50%){{$}}
 

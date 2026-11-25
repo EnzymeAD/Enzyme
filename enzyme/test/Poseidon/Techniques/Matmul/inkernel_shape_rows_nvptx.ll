@@ -56,4 +56,4 @@
 ; EXACT-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32  compCost/MAC=2.560000e+02  rel=5.000000e-01
 ; EXACT-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32  compCost/MAC=2.560000e+02  rel=5.000000e-01
 
-; STRICT: error: {{.*}}strict mode: in-kernel raise as tcec_n2_f16_f32, tcec_n3_f16_f32 has no measured 'inkernel_rel,<class>_m16n16k16_browmajor' row in {{.*}}strict.csv; poseidon-calibrate --gpu <id> --product 16x16x16:browmajor measures it.
+; STRICT: error: {{.*}}strict mode: in-kernel raise as tcec_n2_f16_f32, tcec_n3_f16_f32 has no measured 'inkernel_rel,<class>_m16n16k16_browmajor' row in {{.*}}strict.csv; poseidon-calibrate --gpu <id> --product 16x16x16:browmajor measures it

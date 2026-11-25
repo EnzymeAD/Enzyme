@@ -32,7 +32,7 @@ declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; SITE-ID: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}site_id/tester.fpprofile:1: SiteId 2147483648 is out of range; re-run profile generation.
-; TRUNCATED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}truncated/tester.fpprofile:20: the record of slot 1 ends before its Operand[1] line; re-run profile generation.
-; FIELD: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}field/tester.fpprofile:8: Exec many is not a number; re-run profile generation.
-; DROPPED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}dropped/tester.fpprofile:5: expected the SumSens line of slot 0; re-run profile generation.
+; SITE-ID: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}site_id/tester.fpprofile:1: SiteId 2147483648 is out of range; re-run profile generation
+; TRUNCATED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}truncated/tester.fpprofile:20: the record of slot 1 ends before its Operand[1] line; re-run profile generation
+; FIELD: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}field/tester.fpprofile:8: Exec many is not a number; re-run profile generation
+; DROPPED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}dropped/tester.fpprofile:5: expected the SumSens line of slot 0; re-run profile generation

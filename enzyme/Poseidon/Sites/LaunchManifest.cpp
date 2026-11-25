@@ -168,9 +168,8 @@ Error writeLaunchManifest(const Options &O, LaunchManifest &L,
   auto cannot = [&](StringRef action, const Twine &why) {
     return userError("cannot " + action + " the launch manifest " + m.path +
                      ": " + why +
-                     ". The manifest is kept in the -poseidon-launch-dir "
-                     "directory, or else the -poseidon-cache one, which has "
-                     "to be writable.");
+                     "; make the -poseidon-launch-dir directory, or else the "
+                     "-poseidon-cache one, writable");
   };
   if (!any) {
     if (sys::fs::exists(m.path))
@@ -246,10 +245,9 @@ Error readDescriptors(const Options &O, const Module &M, LaunchKind kind,
     if (Error E = parse(toks))
       return userError("the launch manifest " + m.path + " holds the " +
                        kindName(kind) + " descriptor '" + *line +
-                       "', which does not parse: " + toString(std::move(E)) +
-                       ". The device compile of this unit writes it into the "
-                       "-poseidon-cache directory; remove that directory and "
-                       "compile the unit again.");
+                       "', which does not parse (" + toString(std::move(E)) +
+                       "); remove the -poseidon-cache directory and compile "
+                       "the unit again");
   }
   return Error::success();
 }

@@ -692,13 +692,9 @@ Expected<bool> lowerDeviceCallSites(const Options &O, Module &M) {
             userError(*CB,
                       perCallSiteName(B->getName()) +
                           " cannot be a Poseidon site: " + why +
-                          ". The pass makes the shadow of a pointer into a "
-                          "local object of the caller or an aggregate it "
-                          "takes by value, or else of the constant range of "
-                          "memory the call reaches through the pointer. Copy "
-                          "such an argument into a local object, or pass its "
-                          "shadow in the call: enzyme_dup before the pointer "
-                          "and the shadow after it."));
+                          "; copy the argument into a local object, or pass "
+                          "its shadow in the call (enzyme_dup before the "
+                          "pointer, the shadow after it)"));
         markOutlineTransparent(B);
         continue;
       }

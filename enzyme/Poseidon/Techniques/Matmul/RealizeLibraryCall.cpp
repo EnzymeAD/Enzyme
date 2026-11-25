@@ -220,7 +220,7 @@ Error applyLibraryCall(Session &S, const RecognizedMatmul &m,
                      "a second matrix product of " + F->getName() +
                          " was selected to run as a library call, and a "
                          "kernel's launch takes one; leave out "
-                         "-poseidon-matmul-library-calls for this body.");
+                         "-poseidon-matmul-library-calls for this body");
   S.Matmul.GemmBodies[F] = {note, v};
   if (!note.standalone)
     fissionGemmForDispatch(S.Opts, *F, m);

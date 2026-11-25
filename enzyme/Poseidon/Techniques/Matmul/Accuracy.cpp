@@ -76,7 +76,7 @@ loadProfileRaise(const RecognizedMatmul &m, const ProfileMap &profile) {
                                      Twine(fmulIdx) +
                                      ", the multiply of a matrix product whose "
                                      "accumulation it records executed; "
-                                     "re-run profile generation.");
+                                     "re-run profile generation");
   }
   if (abInfo->minOperands.size() < 2)
     return userError(*(h->fmul ? h->fmul : h->fma),
@@ -84,7 +84,7 @@ loadProfileRaise(const RecognizedMatmul &m, const ProfileMap &profile) {
                          Twine((unsigned)abInfo->minOperands.size()) +
                          " operand range(s) of instruction " + Twine(abIdx) +
                          ", the multiply of a matrix product, which has two; "
-                         "re-run profile generation.");
+                         "re-run profile generation");
 
   MatmulProfile out;
   out.a = {abInfo->minOperands[0], abInfo->maxOperands[0],
@@ -127,7 +127,7 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
           *ab, "the profile records " + Twine((unsigned)ai.minOperands.size()) +
                    " operand range(s) of instruction " + Twine(abIdx) +
                    ", the multiply of a matrix product, which "
-                   "has two; re-run profile generation.");
+                   "has two; re-run profile generation");
     auto fIt = profile.find(requireSlot(h.fmas[r]));
     // Operand 0 of the fma is whichever load the source wrote first; the A/B
     // roles were settled by the address analysis, so map through it.

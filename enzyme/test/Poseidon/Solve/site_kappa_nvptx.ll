@@ -48,7 +48,7 @@
 ; A condition number the probe could not tell from the noise of the runs
 ; would scale every error to zero; the site is solved as one without a
 ; condition number instead, with a warning.
-; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; probe it with larger perturbations (POSEIDON_KAPPA_LADDER) to measure it{{$}}
+; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; measure it with larger perturbation steps in POSEIDON_KAPPA_LADDER{{$}}
 ; NOISE: warning: {{.*}}condition number of preprocess_matmul_body
 
 ; A site whose probe run diverged carries no measured kappa; its candidates are

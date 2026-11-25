@@ -160,7 +160,7 @@ private:
   Error refusal(const Twine &What) const {
     return userError(F, F.getSubprogram(),
                      Path + ":" + Twine(LineNo) + ": " + What +
-                         "; re-run profile generation.");
+                         "; re-run profile generation");
   }
 
   /// The next line, trimmed; none at the end of the file.
@@ -397,9 +397,7 @@ Error requireCanonicalHash(const SiteProfileHeader &header,
           " was recorded against a different canonical form "
           "(profile CanonicalHash " +
           (header.canonicalHash.empty() ? "none" : header.canonicalHash) +
-          ", this compile " + canonicalHash +
-          "). Its slot indices do not name the same "
-          "instructions; re-run profile generation.");
+          ", this compile " + canonicalHash + "); re-run profile generation");
 }
 
 StringRef kappaMarkName(KappaMark M) {
@@ -426,13 +424,12 @@ Error requireMeasuredKappa(const SiteProfileHeader &header,
     return Error::success();
   return userError(
       F, F.getSubprogram(),
-      Twine("the profiling run declared a quantity of interest with "
-            "poseidon_metric and did not measure the condition number of ") +
+      Twine("the profiling run declared a metric with poseidon_metric and "
+            "did not measure the condition number of ") +
           F.getName() + " against it (" + profilePath +
-          "). Run the profiling build again as 'poseidon-kappa -- <program> "
-          "[args...]', the command the profiling run printed, to measure it, "
-          "or with POSEIDON_KAPPA=0 in its environment to solve each site "
-          "against its own target.");
+          "); run the profiling build again under 'poseidon-kappa -- "
+          "<program> [args...]', or with POSEIDON_KAPPA=0 to solve each site "
+          "against its own target");
 }
 
 } // namespace poseidon

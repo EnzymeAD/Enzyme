@@ -97,6 +97,6 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; TAU: [poseidon] preprocess_tester: 1 subgraph output(s) carry no priced candidate, so the baseline below covers only the priced ones and the reported relative error is a lower bound.
 ; TAU: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
 ; TAU: [poseidon] preprocess_tester_nan: 1 subgraph output(s) carry no priced candidate, so the baseline below covers only the priced ones and the reported relative error is a lower bound.
-; TAU-NEXT: error: <unknown>:0:0: in function preprocess_tester_nan void (double, double, ptr): Poseidon: site preprocess_tester_nan was given an accuracy tolerance but its profile carries a total sensitivity of 0.000000e+00, so no rewrite's modelled error can be expressed as a per-operation relative level; re-run profile generation for this site.
+; TAU-NEXT: error: <unknown>:0:0: in function preprocess_tester_nan void (double, double, ptr): Poseidon: site preprocess_tester_nan was given an accuracy tolerance but its profile carries a total sensitivity of 0.000000e+00, so no rewrite's modelled error can be expressed as a per-operation relative level; re-run profile generation for this site
 
-; FOREIGN: error: <unknown>:0:0: in function preprocess_tester void (double, double, ptr): Poseidon: the profile gives this operation 0 operand range(s), and its operand 0 (double %x) has none: the profile was not generated from this program. Re-run profile generation.
+; FOREIGN: error: <unknown>:0:0: in function preprocess_tester void (double, double, ptr): Poseidon: the profile gives this operation 0 operand range(s), and none for its operand 0 (double %x); re-run profile generation for this program

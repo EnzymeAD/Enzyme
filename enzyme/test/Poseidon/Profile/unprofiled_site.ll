@@ -57,10 +57,10 @@
 ; LEFT-NEXT: [[R:%.*]] = call double @tester(double %x, double %y, double %z)
 ; LEFT-NEXT: ret double [[R]]
 
-; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}). Its slot indices do not name the same instructions; re-run profile generation.
+; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}); re-run profile generation
 
-; EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
-; METRIC: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/metric_only (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-profile-use) holds no .fpprofile file; run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; METRIC: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/metric_only (-poseidon-profile-use) holds no .fpprofile file; run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 
 ; ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
 ; ABSENT: remark: <unknown>:0:0: Poseidon left the site unchanged: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed)
@@ -69,8 +69,8 @@
 ; STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 
 ; OUT-NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/tester.fpprofile); left unchanged
-; OUT-NODIR: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/missing (-poseidon-output-profiles) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
-; OUT-EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-output-profiles) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; OUT-NODIR: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/missing (-poseidon-output-profiles) does not exist; run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; OUT-EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-output-profiles) holds no .fpprofile file; run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
 ; OUT-STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}unrelated_site_profile/tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 

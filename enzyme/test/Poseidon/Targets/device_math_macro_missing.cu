@@ -46,6 +46,6 @@ __attribute__((global)) void marked(double *o, const double *a) {
 }
 #endif
 
-// CHECK: error: Poseidon: this device compilation has Poseidon sites and does not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, under which the header keeps the [[LIB]] functions a rewrite or a site's derivative calls; include the header and define the macro (-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the Poseidon CMake targets do{{$}}
+// CHECK: error: Poseidon: this device compile has Poseidon sites and does not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, which keeps the [[LIB]] functions a rewrite or a site's derivative calls; include the header and define POSEIDON_DEVICE_MATH{{$}}
 // DEFINED-NOT: POSEIDON_DEVICE_MATH
 // INACTIVE-NOT: POSEIDON_DEVICE_MATH

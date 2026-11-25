@@ -281,9 +281,10 @@ FPNode::fullExpression(const FPGraph &G,
 
   if (depth > kMaxExprDepth)
     return userError(*cast<Instruction>(value),
-                     "Expression depth exceeded maximum allowed depth of " +
-                         Twine(kMaxExprDepth) + " for " + operationName(*this) +
-                         "; consider disabling loop unrolling");
+                     "the expression of " + operationName(*this) +
+                         " is deeper than " + Twine(kMaxExprDepth) +
+                         " operations; compile the site without loop "
+                         "unrolling");
 
   std::string expr = "(" + (is(fpcore::Neg) ? "-" : operationName(*this));
   for (auto operand : operands) {

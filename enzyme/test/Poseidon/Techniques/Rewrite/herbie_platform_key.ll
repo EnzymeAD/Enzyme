@@ -27,12 +27,12 @@
 ; NV-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; NV-OTHERARCH-NOT: [poseidon] Using cached Herbie output
-; NV-OTHERARCH: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}cache/herbie_cuda-sm90_{{[0-9A-F]+}}.json, and there is no Herbie at /nonexistent/herbie to compute it.
+; NV-OTHERARCH: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}cache/herbie_cuda-sm90_{{[0-9A-F]+}}.json, and there is no Herbie at /nonexistent/herbie to compute it;
 
-; NV-NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_sm_120_synthetic.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
+; NV-NOPLATFORM: error: {{.*}}Poseidon: the Herbie platform of this device's cost model, {{.*}}cm_sm_120_synthetic.herbie.rkt, does not exist; generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
 
 ; NV-RECALIBRATED-NOT: [poseidon] Using cached Herbie output
-; NV-RECALIBRATED: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}cache/herbie_cuda-sm120_{{[0-9A-F]+}}.json, and there is no Herbie at /nonexistent/herbie to compute it.
+; NV-RECALIBRATED: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}cache/herbie_cuda-sm120_{{[0-9A-F]+}}.json, and there is no Herbie at /nonexistent/herbie to compute it;
 
 ; AMD GPU, the module retargeted to gfx942: poseidon-calibrate generates the
 ; Herbie platform of an AMD GPU's cost model (hip-gfx942, hip-gfx90a) beside it,
@@ -65,7 +65,7 @@
 ; AMD-MATCH: [poseidon] Using cached Herbie output from {{.*}}herbie_hip-gfx942_9E5CC014DF84A1D1.json
 ; AMD-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
-; AMD-NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'
+; AMD-NOPLATFORM: error: {{.*}}Poseidon: the Herbie platform of this device's cost model, {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt, does not exist; generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'
 
 ;--- kernel.ll
 source_filename = "herbie_platform_key.cu"

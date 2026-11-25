@@ -81,21 +81,18 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
       P.Name = V.str();
   } else if (T.isDevice()) {
     // Generated next to the CSV it was priced from, by
-    // `poseidon-calibrate --only herbie-platform`.
+    // `poseidon-calibrate --only herbie-platform`. Another architecture's
+    // platform holds that architecture's prices, so none is substituted.
     StringRef Csv(costModelPath(S.CostModel));
     P.Path =
         (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
     if (!sys::fs::exists(P.Path))
       return userError(
           F, F.getSubprogram(),
-          Twine("the Herbie algebraic search needs the platform generated "
-                "from this device's cost model, and ") +
-              P.Path +
-              " does not exist. Generate it with 'poseidon-calibrate --only "
-              "herbie-platform --out " +
-              costModelPath(S.CostModel) +
-              "'. Another architecture's platform is that architecture's "
-              "prices and is never substituted.");
+          Twine("the Herbie platform of this device's cost model, ") + P.Path +
+              ", does not exist; generate it with "
+              "'poseidon-calibrate --only herbie-platform --out " +
+              costModelPath(S.CostModel) + "'");
   }
 
   if (!P.Path.empty()) {
@@ -104,7 +101,7 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
       return userError(F, F.getSubprogram(),
                        Twine("cannot read the Herbie platform ") + P.Path +
                            "; -poseidon-herbie-platform names a platform file "
-                           "or a platform compiled into Herbie.");
+                           "or a platform compiled into Herbie");
   }
   S.Herbie.PlatformResolved = true;
   return &P;
@@ -328,16 +325,16 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
               (Opts.Program.empty() ? ", and " + kBuiltWithoutHerbie.str()
                                     : ", and the Herbie at " + Opts.Program +
                                           " cannot run (" + R.Failure + ")") +
-              ". Point -poseidon-herbie-binary at a Herbie, or turn algebraic "
-              "rewriting off with -poseidon-enable-rewrite=0.");
+              "; point -poseidon-herbie-binary at a Herbie, or turn algebraic "
+              "rewriting off with -poseidon-enable-rewrite=0");
     if (!R.Warning.empty())
       diagnose(F, F.getSubprogram(), R.Warning, DS_Warning);
     if (R.Result == HerbieRunResult::Outcome::Crashed && O.Model.StrictMode)
       return userError(F, F.getSubprogram(),
                        Twine("strict mode: Herbie crashed (") + R.Crash +
                            ") on " + RunLabel +
-                           ". Without -poseidon-strict-mode the subgraph is "
-                           "left as written.");
+                           "; without -poseidon-strict-mode the subgraph is "
+                           "left as written");
     if (R.Result != HerbieRunResult::Outcome::Ok)
       continue;
     const bool cached = R.From == HerbieRunResult::Origin::Cache;
@@ -416,11 +413,11 @@ static Error checkAnswer(const HerbieCoreAnswer &answer,
         "the Herbie answer for " + source.first + " in " +
             (source.second.empty() ? std::string("no cache file")
                                    : source.second) +
-            " has, for core \"" + answer.Name + "\", " +
+            " has, for core \"" + answer.Name +
+            "\", an expression Poseidon cannot model (" +
             toString(parsed.takeError()) +
-            "; Poseidon cannot model that expression. Remove the "
-            "file to search again, or turn algebraic rewriting off "
-            "with -poseidon-enable-rewrite=0.");
+            "); remove the file to search again, or turn algebraic rewriting "
+            "off with -poseidon-enable-rewrite=0");
   };
   if (Error E = check(answer.Rewrites->BestExpr))
     return E;

@@ -885,7 +885,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
           "strict mode: the host-dispatch geometry of " + F.getName() +
               " is unrecoverable for a non-square GEMM at a changed deploy "
               "scale, so its candidate set would be reduced; profile at the "
-              "deploy shape, or leave out -poseidon-strict-mode.");
+              "deploy shape, or leave out -poseidon-strict-mode");
     return std::nullopt;
   }
   const unsigned gM = extents->M, gNcols = extents->Ncols;

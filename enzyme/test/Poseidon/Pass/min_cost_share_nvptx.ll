@@ -121,8 +121,8 @@ attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 
 ; The share of a kernel is read from its profile, which has to be of the
 ; canonical form the compile numbers.
-; STALE: {{^}}error: <unknown>:0:0: in function preprocess_cold_kernel_poseidon_body void (ptr, ptr, ptr): Poseidon: the profile of preprocess_cold_kernel_poseidon_body was recorded against a different canonical form (profile CanonicalHash 0123456789abcdef, this compile fea337c617ef94c9). Its slot indices do not name the same instructions; re-run profile generation.{{$}}
+; STALE: {{^}}error: <unknown>:0:0: in function preprocess_cold_kernel_poseidon_body void (ptr, ptr, ptr): Poseidon: the profile of preprocess_cold_kernel_poseidon_body was recorded against a different canonical form (profile CanonicalHash 0123456789abcdef, this compile fea337c617ef94c9); re-run profile generation{{$}}
 
 ; A -poseidon-kernels value that is no regular expression is an error of the
 ; compile, under opt and under clang, without clang's crash reporting.
-; BADREGEX: {{^}}error: Poseidon: -poseidon-kernels=( is not a valid regular expression: parentheses not balanced. Give a regular expression of kernel names, or 'all'.{{$}}
+; BADREGEX: {{^}}error: Poseidon: -poseidon-kernels=( is not a valid regular expression (parentheses not balanced); give a regular expression of kernel names, or 'all'{{$}}

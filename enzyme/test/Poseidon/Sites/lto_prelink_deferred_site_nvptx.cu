@@ -51,7 +51,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
   dy[0] = dyl;
 }
 
-// DEFERRED: {{^}}error: <unknown>:0:0: in function jvp_body void (ptr, ptr, ptr, ptr): Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang -mllvm -Xclang -enzyme-lto-prelink=1).{{$}}
+// DEFERRED: {{^}}error: <unknown>:0:0: in function jvp_body void (ptr, ptr, ptr, ptr): Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered, which Enzyme leaves to the post-link run of an LTO pre-link compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang -mllvm -Xclang -enzyme-lto-prelink=1){{$}}
 // DEFERRED: exit status 1
 
 // The kernel passes its locals to the module's copy of the lowered tangent,
@@ -111,4 +111,4 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 // PGEN-DAG: store double [[BYP]], ptr [[BY]],
 // PGEN: {{^}}}
 
-// BYNAME: {{^}}error: <unknown>:0:0: in function jvp_body void (ptr, ptr, ptr, ptr): Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin. In an LTO pre-link pipeline Enzyme also leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given.{{$}}
+// BYNAME: {{^}}error: <unknown>:0:0: in function jvp_body void (ptr, ptr, ptr, ptr): Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin, and in an LTO pre-link compile -mllvm -enzyme-lto-prelink=1{{$}}

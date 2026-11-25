@@ -14,7 +14,7 @@
 
 ; DEFAULT: remark: {{.*}}Poseidon proposes no algebraic rewrites: there is no Herbie at {{.*}}/no-herbie{{( \[-Rpass-missed=poseidon\])?$}}
 
-; STRICT: error: {{.*}}Poseidon: no Herbie answer for subgraph 0 of preprocess_tester_a is cached in {{.*}}, and there is no Herbie at {{.*}}/no-herbie to compute it.
+; STRICT: error: {{.*}}Poseidon: no Herbie answer for subgraph 0 of preprocess_tester_a is cached in {{.*}}, and there is no Herbie at {{.*}}/no-herbie to compute it; copy here the -poseidon-cache directory of a compile that ran Herbie, or turn algebraic rewriting off with -poseidon-enable-rewrite=0{{$}}
 
 ; HERBIE: fake-herbie: report
 

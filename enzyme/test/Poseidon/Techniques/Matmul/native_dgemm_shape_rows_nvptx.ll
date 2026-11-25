@@ -65,4 +65,4 @@
 
 ; NONE: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch is not proposed: this device's cost model carries no measured 'library_ozaki_rel,dgemm' row; poseidon-calibrate --gpu <id> measures it
 
-; STRICT: error: {{.*}}strict mode: {{.*}} has no measured '{{[a-z0-9_]+,[a-z0-9_]+}}' row in {{.*}}oz.csv; poseidon-calibrate --gpu <id>{{.*}} measures it.
+; STRICT: error: {{.*}}strict mode: {{.*}} has no measured '{{[a-z0-9_]+,[a-z0-9_]+}}' row in {{.*}}oz.csv; poseidon-calibrate --gpu <id>{{.*}} measures it

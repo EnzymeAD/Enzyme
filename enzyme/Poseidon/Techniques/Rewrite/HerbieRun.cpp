@@ -280,9 +280,9 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
             (Opts.Program.empty()
                  ? kBuiltWithoutHerbie.str()
                  : "there is no Herbie at " + Opts.Program + " to compute it") +
-            ". Compute the answer on a machine with Herbie and copy its "
-            "-poseidon-cache directory here, or turn algebraic rewriting off "
-            "with -poseidon-enable-rewrite=0.");
+            "; copy here the -poseidon-cache directory of a compile that ran "
+            "Herbie, or turn algebraic rewriting off with "
+            "-poseidon-enable-rewrite=0");
   return std::nullopt;
 }
 
@@ -483,19 +483,20 @@ stoppedRun(const ProcessOutcome &ran, const AnswerCache &cache,
   if (!ran.killed)
     return std::nullopt;
   Run.Result = HerbieRunResult::Outcome::Timeout;
-  Run.Warning =
-      ("Herbie " + Label + " was stopped after " + printed(ran.seconds) +
-       " s, its wall budget of " + Twine(wallBudget) +
-       " s, so the subgraph has no algebraic candidates; raise "
-       "-poseidon-herbie-subgraph-timeout to spend more, or set it "
-       "to 0 to wait for as long as Herbie takes")
-          .str();
+  std::string recorded;
   if (!cache.timeoutPath.empty()) {
     if (Error E = writeAnswer(Opts.CacheDir, cache.timeoutPath,
                               cache.answeredBy, (uint64_t)wallBudget))
       return std::move(E);
-    Run.Warning += "; the timeout is recorded in " + cache.timeoutPath;
+    recorded = " (recorded in " + cache.timeoutPath + ")";
   }
+  Run.Warning =
+      ("Herbie " + Label + " was stopped after " + printed(ran.seconds) +
+       " s, its wall budget of " + Twine(wallBudget) + " s" + recorded +
+       ", so the subgraph has no algebraic candidates; raise "
+       "-poseidon-herbie-subgraph-timeout, or set it to 0 to wait "
+       "for as long as Herbie takes")
+          .str();
   return Run;
 }
 
