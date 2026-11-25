@@ -23,7 +23,7 @@
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/igen -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_PREFIX_PATH=%t/inst -DPOSEIDON_MODE=instrument > %t/igen.log
 // RUN: FileCheck --check-prefix=INST -DLIBDIR=%install_libdir -DPREFIX=%t/inst %s < %t/igen.log
 // RUN: %cmake --build %t/igen -v > %t/igen.build.log
-// RUN: FileCheck --check-prefix=INSTCMD -DLIBDIR=%install_libdir -DPREFIX=%t/inst --implicit-check-not=enzyme-lto-prelink %s < %t/igen.build.log
+// RUN: FileCheck --check-prefix=INSTCMD -DLIBDIR=%install_libdir -DPREFIX=%t/inst %if cuda-runtime || !amdgpu-device-profiler %{--implicit-check-not=enzyme-lto-prelink%} %s < %t/igen.build.log
 // RUN: env POSEIDON_PROFILE_DIR=%t/iprof %t/igen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/iprof | FileCheck --check-prefix=PROF %s
 // RUN: test -x %t/inst/bin/poseidon-clang++
@@ -37,7 +37,10 @@
 // generate a profile, the public header and POSEIDON_DEVICE_MATH,
 // statement-only contraction and the runtimes each action links, for a project
 // that names nothing else of Poseidon's. The package leaves the project's
-// MPFR_FOUND alone (Inputs/package/CMakeLists.txt stops otherwise).
+// MPFR_FOUND alone (Inputs/package/CMakeLists.txt stops otherwise). A host
+// compile gets no -enzyme-lto-prelink when the default runtime is CUDA or
+// NONE; a build with HIP alone defaults to the HIP runtime, under which every
+// profile-generate compile gets it (package_find_hip.cpp).
 
 // TREE: -- Poseidon 0.1 from [[DIR]]
 // TREE-NEXT: -- Poseidon plugins [[DIR]]/lib/Poseidon-{{[0-9]+}}.so {{.*}}/Enzyme/ClangEnzyme-{{[0-9]+}}.so
