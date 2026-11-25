@@ -19,7 +19,10 @@
 #include <hip/hip_runtime.h>
 #include <hipblas/hipblas.h>
 
+#define cudaDevAttrClockRate hipDeviceAttributeClockRate
+#define cudaDeviceGetAttribute hipDeviceGetAttribute
 #define cudaDeviceGetLimit hipDeviceGetLimit
+#define cudaDeviceProp hipDeviceProp_t
 #define cudaDeviceSetLimit hipDeviceSetLimit
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaError_t hipError_t
@@ -30,6 +33,7 @@
 #define cudaEventSynchronize hipEventSynchronize
 #define cudaEvent_t hipEvent_t
 #define cudaFree hipFree
+#define cudaGetDeviceProperties hipGetDeviceProperties
 #define cudaGetErrorString hipGetErrorString
 #define cudaLaunchKernel hipLaunchKernel
 #define cudaLimitMallocHeapSize hipLimitMallocHeapSize

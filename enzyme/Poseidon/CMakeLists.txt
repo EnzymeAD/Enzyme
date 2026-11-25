@@ -398,24 +398,21 @@ if(CMAKE_CUDA_COMPILER)
 
   add_executable(poseidon-microbm tools/calibrate/microbm.cu)
   set(POSEIDON_TOOL_TARGETS poseidon-microbm)
-  # The dispatch calibrators time the runtime entry points, so they link it.
-  set(_calibrators ozaki direct)
-  if(POSEIDON_TCEC_USE_CUMPSGEMM)
-    list(APPEND _calibrators tcec)
-  endif()
-  foreach(_cal ${_calibrators})
-    add_executable(poseidon-${_cal}-calibrate
-                   tools/calibrate/${_cal}_calibrate.cu)
-    target_link_libraries(
-      poseidon-${_cal}-calibrate
-      PRIVATE poseidon_rt CUDA::cublas)
-    list(APPEND POSEIDON_TOOL_TARGETS poseidon-${_cal}-calibrate)
-  endforeach()
+  # The dispatch calibrator times the runtime entry points, so it links them.
+  add_executable(poseidon-dispatch-calibrate
+                 tools/calibrate/dispatch_calibrate.cu)
+  target_compile_definitions(
+    poseidon-dispatch-calibrate
+    PRIVATE POSEIDON_TCEC=$<BOOL:${POSEIDON_TCEC_USE_CUMPSGEMM}>)
+  target_link_libraries(
+    poseidon-dispatch-calibrate
+    PRIVATE poseidon_rt CUDA::cublas)
+  list(APPEND POSEIDON_TOOL_TARGETS poseidon-dispatch-calibrate)
   # Installed, it still finds cuMpSGEMM where it was built, as the programs
   # poseidon-clang links do.
   if(POSEIDON_TCEC_USE_CUMPSGEMM)
     set_target_properties(
-      poseidon-tcec-calibrate
+      poseidon-dispatch-calibrate
       PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
   endif()
 endif()
@@ -521,26 +518,28 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
     add_custom_target(${name} ALL DEPENDS ${_exe})
   endfunction()
 
-  poseidon_add_hip_tool(poseidon-microbm-hip tools/calibrate/microbm_hip.hip)
+  poseidon_add_hip_tool(poseidon-microbm-hip tools/calibrate/microbm.cu)
   set(POSEIDON_HIP_TOOL_TARGETS poseidon-microbm-hip)
-  # The dispatch calibrators time hipBLAS; a ROCm installation without it gets
+  # The dispatch calibrator times hipBLAS; a ROCm installation without it gets
   # the per-op calibrator alone.
   if(EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
-    foreach(_cal ozaki direct)
-      poseidon_add_hip_tool(
-        poseidon-${_cal}-calibrate-hip tools/calibrate/${_cal}_calibrate.cu
-        $<TARGET_FILE:poseidon_rt_hip> ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
-      add_dependencies(poseidon-${_cal}-calibrate-hip poseidon_rt_hip)
-      list(APPEND POSEIDON_HIP_TOOL_TARGETS poseidon-${_cal}-calibrate-hip)
-    endforeach()
+    poseidon_add_hip_tool(
+      poseidon-dispatch-calibrate-hip tools/calibrate/dispatch_calibrate.cu
+      $<TARGET_FILE:poseidon_rt_hip> ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
+    add_dependencies(poseidon-dispatch-calibrate-hip poseidon_rt_hip)
+    list(APPEND POSEIDON_HIP_TOOL_TARGETS poseidon-dispatch-calibrate-hip)
   else()
     message(
       STATUS
-        "Poseidon: no hipBLAS in ${POSEIDON_ROCM_PATH}; the HIP dispatch calibrators are not built")
+        "Poseidon: no hipBLAS in ${POSEIDON_ROCM_PATH}; the HIP dispatch calibrator is not built")
   endif()
 endif()
 
-add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp)
+add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp
+               Core/CostTable.cpp Targets/MathFunctions.cpp)
+target_include_directories(
+  poseidon-calibrate
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(
   poseidon-calibrate
   PRIVATE
@@ -548,7 +547,8 @@ target_compile_definitions(
     POSEIDON_CALIBRATE_HERBIE="${POSEIDON_HERBIE_BINARY_PATH}"
     POSEIDON_CALIBRATE_PYTHON="${Python3_EXECUTABLE}"
     POSEIDON_CALIBRATE_SRCDIR="${CMAKE_CURRENT_SOURCE_DIR}")
-llvm_map_components_to_libnames(POSEIDON_CALIBRATE_LLVM_LIBS support)
+llvm_map_components_to_libnames(POSEIDON_CALIBRATE_LLVM_LIBS support
+                                targetparser)
 target_link_libraries(
   poseidon-calibrate
   PRIVATE ${POSEIDON_CALIBRATE_LLVM_LIBS})
@@ -668,7 +668,11 @@ install(
   DIRECTORY ${ENZYME_SOURCE_DIR}/include/poseidon
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY runtime DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
-install(DIRECTORY tools DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
+# The sources poseidon-calibrate runs.
+install(
+  FILES tools/calibrate/inkernel_calibrate.cu tools/calibrate/microbm_cpu.py
+  tools/calibrate/herbie_platform.py
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon/tools/calibrate)
 install(
   PROGRAMS tools/explain/poseidon-explain
   DESTINATION ${CMAKE_INSTALL_BINDIR})

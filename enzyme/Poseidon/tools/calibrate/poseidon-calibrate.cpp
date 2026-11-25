@@ -8,18 +8,18 @@
 //
 // Poseidon prices every candidate from one CSV measured on the device the code
 // will run on. This tool measures it, and is to Poseidon what llvm-profdata is
-// to clang PGO: run it once per GPU, and every later compile finds the model by
-// the module's target-cpu.
-//
-// Measures the cost model of one GPU, family by family (--only), into one CSV;
-// see tools/calibrate/README.md for the families.
+// to clang PGO: run it once per GPU or host CPU, and every later compile finds
+// the model by the module's target-cpu.
 //
 //===----------------------------------------------------------------------===//
+
+#include "Core/CostTable.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
@@ -29,13 +29,14 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
 
 #include <map>
 #include <optional>
 #include <string>
-#include <tuple>
 
 using namespace llvm;
+using namespace poseidon;
 
 static cl::opt<std::string>
     GpuId("gpu", cl::init(""), cl::value_desc("id"),
@@ -44,8 +45,13 @@ static cl::opt<std::string>
                    "HIP_VISIBLE_DEVICES on an AMD GPU, else "
                    "0)"));
 static cl::opt<std::string>
+    Cpu("cpu", cl::init(""), cl::value_desc("target-cpu"),
+        cl::desc("Measure this host for the target-cpu a compile uses: native, "
+                 "or a name such as x86-64, as -march= takes it"));
+static cl::opt<std::string>
     Out("out", cl::init(""), cl::value_desc("path"),
-        cl::desc("Cost model to write; a directory takes cm_<arch>_<gpu>.csv "
+        cl::desc("Cost model to write; a path not ending in .csv is a "
+                 "directory, which takes cm_<target-cpu>_<device>.csv "
                  "(default: $XDG_CACHE_HOME/poseidon)"));
 static cl::opt<bool>
     Check("check", cl::desc("Validate the resolved cost model against this "
@@ -61,6 +67,16 @@ static cl::opt<std::string> ProfileDir(
     "profile", cl::init(""), cl::value_desc("dir"),
     cl::desc("Profile of a GEMM site the in-kernel arm enumerates its "
              "candidates from (required by that arm)"));
+static cl::opt<std::string>
+    Python("python", cl::init(POSEIDON_CALIBRATE_PYTHON),
+           cl::value_desc("path"),
+           cl::desc("Python 3 the herbie-platform arm and the per-op arm of "
+                    "--cpu run under (default: the one this build was "
+                    "configured with, else python3 on PATH)"));
+static cl::opt<unsigned> CpuIterations(
+    "cpu-iterations", cl::Hidden, cl::value_desc("count"),
+    cl::desc("Loop trips of each CPU microbenchmark run, in place of the "
+             "count a trial run sizes"));
 static cl::opt<std::string>
     Herbie("herbie", cl::init(POSEIDON_CALIBRATE_HERBIE),
            cl::value_desc("path"),
@@ -111,6 +127,7 @@ static std::string num(double V) { return formatv("{0:F6}", V).str(); }
 // Runs a program, optionally capturing its stdout into a file.
 static int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
                StringRef StderrFile = "") {
+  outs().flush();
   std::optional<StringRef> Redirects[3] = {std::nullopt, std::nullopt,
                                            std::nullopt};
   if (!StdoutFile.empty())
@@ -140,11 +157,12 @@ static void writeFile(StringRef Path, StringRef Content) {
   OS << Content;
 }
 
-static std::string capture(ArrayRef<StringRef> Argv) {
+static std::string capture(ArrayRef<StringRef> Argv,
+                           StringRef StderrFile = "") {
   SmallString<128> Tmp;
   if (sys::fs::createTemporaryFile("poseidon-calibrate", "out", Tmp))
     fail("cannot create a temporary file");
-  int RC = run(Argv, Tmp);
+  int RC = run(Argv, Tmp, StderrFile);
   std::string S = RC == 0 ? readFile(Tmp) : std::string();
   sys::fs::remove(Tmp);
   return S;
@@ -158,32 +176,29 @@ static bool hasFamily(StringRef Csv, StringRef Family) {
   return false;
 }
 
-// Replaces every row of the families the new rows belong to, so a re-measured
-// family never leaves a stale row behind.
+// The (family, key) a row is identified by.
+static std::pair<StringRef, StringRef> rowKey(StringRef Line) {
+  auto [Family, Rest] = Line.split(',');
+  return {Family, Rest.split(',').first};
+}
+
+// Replaces the rows whose (family, key) the new rows carry and keeps the
+// others.
 static void mergeRows(std::string &Csv, StringRef Rows) {
-  SmallVector<StringRef, 4> Families;
-  for (StringRef Line : llvm::split(Rows, '\n')) {
-    Line = Line.trim();
-    if (Line.empty())
-      continue;
-    StringRef Fam = Line.split(',').first;
-    if (!llvm::is_contained(Families, Fam))
-      Families.push_back(Fam);
-  }
+  SmallVector<StringRef, 8> New;
+  for (StringRef Line : llvm::split(Rows, '\n'))
+    if (!Line.trim().empty())
+      New.push_back(Line.trim());
   std::string Kept;
   for (StringRef Line : llvm::split(Csv, '\n')) {
-    if (Line.empty())
-      continue;
-    StringRef Fam = Line.split(',').first;
-    if (llvm::is_contained(Families, Fam))
+    if (Line.empty() || llvm::any_of(New, [&](StringRef N) {
+          return rowKey(N) == rowKey(Line);
+        }))
       continue;
     Kept += Line;
     Kept += '\n';
   }
-  for (StringRef Line : llvm::split(Rows, '\n')) {
-    Line = Line.trim();
-    if (Line.empty())
-      continue;
+  for (StringRef Line : New) {
     Kept += Line;
     Kept += '\n';
   }
@@ -194,101 +209,121 @@ namespace {
 struct Device {
   std::string Id;
   std::string Name; // punctuation stripped, as it appears in the file name
-  std::string Arch; // sm_<cc>, or gfx<NNN> on an AMD GPU
+  std::string Arch; // sm_<cc>, gfx<NNN> on an AMD GPU, a CPU's target-cpu
   bool Hip = false;
+  bool Host = false;
+  std::string Model;    // a host's model name, as the system reports it
+  std::string Features; // the host's features, when Arch is its own CPU
 };
 } // namespace
 
-// The HIP runtime names an AMD GPU itself, through the HIP microbenchmark run
-// on the device HIP_VISIBLE_DEVICES selects.
-static Device queryHipDevice() {
-  Device D;
-  D.Hip = true;
-  D.Id = GpuId;
-  if (D.Id.empty()) {
-    if (const char *V = ::getenv("HIP_VISIBLE_DEVICES"))
-      D.Id = StringRef(V).split(',').first.str();
-    if (D.Id.empty())
-      D.Id = "0";
+// The GPU --gpu names, else the first one the vendor's visible-devices variable
+// lists: the microbenchmark of each vendor this build has, CUDA's first, names
+// it with --device.
+static Device queryDevice() {
+  for (bool Hip : {false, true}) {
+    std::string Exe =
+        sibling(Hip ? "poseidon-microbm-hip" : "poseidon-microbm");
+    if (!sys::fs::exists(Exe))
+      continue;
+    const char *Visible = Hip ? "HIP_VISIBLE_DEVICES" : "CUDA_VISIBLE_DEVICES";
+    Device D;
+    D.Hip = Hip;
+    D.Id = GpuId;
+    if (D.Id.empty()) {
+      if (const char *V = ::getenv(Visible))
+        D.Id = StringRef(V).split(',').first.str();
+      if (D.Id.empty())
+        D.Id = "0";
+    }
+    // The probe, and every child after it, sees that device alone.
+    ::setenv(Visible, D.Id.c_str(), 1);
+    std::string O = capture({Exe, "--device"}, "/dev/null");
+    auto [NameRef, Arch] = StringRef(O).split('\n').first.split('\t');
+    if (Arch.trim().empty())
+      continue;
+    // A device ID several products share has a marketing name listing them all
+    // ("AMD Instinct MI250X / MI250"); the first names the device. The vendor
+    // prefixes say nothing about it.
+    for (char C : NameRef.split('/').first.trim())
+      if (isAlnum(C))
+        D.Name += C;
+    StringRef N(D.Name);
+    for (StringRef Prefix :
+         {"NVIDIA", "GeForce", "Tesla", "Quadro", "AMD", "Instinct", "Radeon"})
+      while (N.consume_front(Prefix))
+        ;
+    D.Name = N.str();
+    if (D.Name.empty())
+      fail("the GPU runtime gives device " + D.Id + " no name");
+    D.Arch = Arch.trim().str();
+    return D;
   }
-  ::setenv("HIP_VISIBLE_DEVICES", D.Id.c_str(), 1);
-  std::string O = capture({sibling("poseidon-microbm-hip"), "--device"});
-  StringRef NameRef, Arch;
-  std::tie(NameRef, Arch) = StringRef(O).split('\n').first.split('\t');
-  if (Arch.trim().empty())
-    fail("no HIP device with id " + D.Id);
-  // A device ID several products share has a marketing name listing them all
-  // ("AMD Instinct MI250X / MI250"); the first names the device.
-  NameRef = NameRef.split('/').first;
-  for (char C : NameRef.trim())
+  fail("no GPU with id " + (GpuId.empty() ? Twine("0") : Twine(GpuId)) +
+       " is visible to this build's microbenchmarks; measure this host with "
+       "--cpu <target-cpu>");
+}
+
+// The model name the system reports for this host's CPU, or empty.
+static std::string hostModelName() {
+  auto Buf = MemoryBuffer::getFileAsStream("/proc/cpuinfo");
+  if (!Buf)
+    return std::string();
+  for (StringRef Line : llvm::split((*Buf)->getBuffer(), '\n')) {
+    auto [Key, Value] = Line.split(':');
+    if (Key.trim() == "model name")
+      return Value.trim().str();
+  }
+  return std::string();
+}
+
+// The host measured for the target-cpu --cpu names. A compile for `native`
+// takes the CPU name and features LLVM detects here, so the microbenchmarks are
+// compiled for them; a named CPU takes that CPU's own features, as -march=
+// does. The model name distinguishes machines with the same target-cpu, and a
+// system that reports none names the device by its detected CPU.
+static Device queryHost() {
+  Device D;
+  D.Host = true;
+  D.Arch = Cpu;
+  StringRef HostCpu = sys::getHostCPUName();
+  if (D.Arch == "native") {
+    if (HostCpu.empty() || HostCpu == "generic")
+      fail("LLVM does not recognise this host's CPU, so --cpu native names "
+           "no target-cpu; pass the -march= name the compile uses");
+    D.Arch = HostCpu.str();
+    for (const auto &F : sys::getHostCPUFeatures())
+      D.Features += (D.Features.empty() ? "" : ",") +
+                    ((F.second ? "+" : "-") + F.first()).str();
+  }
+  D.Model = hostModelName();
+  if (D.Model.empty())
+    D.Model = HostCpu.str();
+  std::string Model = StringRef(D.Model).split('@').first.str();
+  for (StringRef Mark : {"(R)", "(TM)", "(tm)"})
+    for (size_t At; (At = Model.find(Mark)) != std::string::npos;)
+      Model.erase(At, Mark.size());
+  std::string Clean;
+  for (char C : Model)
     if (isAlnum(C))
-      D.Name += C;
-  StringRef N(D.Name);
-  for (StringRef Prefix : {"AMD", "Instinct", "Radeon"})
+      Clean += C;
+  StringRef N(Clean);
+  for (StringRef Prefix : {"AMD", "Intel"})
     while (N.consume_front(Prefix))
       ;
   D.Name = N.str();
   if (D.Name.empty())
-    fail("the HIP runtime gives device " + D.Id + " no name");
-  D.Arch = Arch.trim().str();
+    fail("this host's CPU has no name to file its cost model under; pass "
+         "--out <file>.csv");
   return D;
-}
-
-static Device queryDevice() {
-  const bool Hip = sys::fs::exists(sibling("poseidon-microbm-hip"));
-  if (Hip && !sys::findProgramByName("nvidia-smi"))
-    return queryHipDevice();
-  Device D;
-  D.Id = GpuId;
-  if (D.Id.empty()) {
-    if (const char *V = ::getenv("CUDA_VISIBLE_DEVICES"))
-      D.Id = StringRef(V).split(',').first.str();
-    if (D.Id.empty())
-      D.Id = "0";
-  }
-  auto Smi = sys::findProgramByName("nvidia-smi");
-  if (!Smi)
-    fail("nvidia-smi not found, so this device cannot be identified");
-  std::string O = capture({*Smi, "-i", D.Id, "--query-gpu=name,compute_cap",
-                           "--format=csv,noheader"});
-  StringRef Line = StringRef(O).split('\n').first.trim();
-  // Some AMD systems install nvidia-smi without an NVIDIA GPU.
-  if (Line.empty() && Hip)
-    return queryHipDevice();
-  if (Line.empty())
-    fail("no CUDA device with id " + D.Id);
-  StringRef NameRef, CC;
-  std::tie(NameRef, CC) = Line.split(',');
-  for (char C : NameRef.trim())
-    if (isAlnum(C))
-      D.Name += C;
-  // The names carry a vendor prefix that says nothing about the device.
-  StringRef N(D.Name);
-  for (StringRef Prefix : {"NVIDIA", "GeForce", "Tesla", "Quadro"})
-    while (N.consume_front(Prefix))
-      ;
-  D.Name = N.str();
-  StringRef Major, Minor;
-  std::tie(Major, Minor) = CC.trim().split('.');
-  D.Arch = ("sm_" + Major + Minor).str();
-  return D;
-}
-
-static std::string defaultOutDir() {
-  if (const char *X = ::getenv("XDG_CACHE_HOME"))
-    if (*X)
-      return (StringRef(X) + "/poseidon").str();
-  SmallString<128> Home;
-  if (!sys::path::home_directory(Home))
-    fail("neither XDG_CACHE_HOME nor a home directory is set; pass --out");
-  sys::path::append(Home, ".cache/poseidon");
-  return std::string(Home);
 }
 
 static std::string resolveCsv(const Device &D) {
   std::string Path = Out;
   if (Path.empty())
-    Path = defaultOutDir();
+    Path = userCacheDir();
+  if (Path.empty())
+    fail("neither XDG_CACHE_HOME nor HOME is set; pass --out");
   if (sys::fs::is_directory(Path) || StringRef(Path).ends_with("/") ||
       !StringRef(sys::path::filename(Path)).ends_with(".csv")) {
     if (std::error_code EC = sys::fs::create_directories(Path))
@@ -301,12 +336,34 @@ static std::string resolveCsv(const Device &D) {
   return Path;
 }
 
+static constexpr StringLiteral Arms[] = {
+    "microbm", "herbie-platform", "ozaki",   "ozaki-rect",
+    "tcec",    "direct",          "inkernel"};
+
+// The arms that take a host: the per-op microbenchmark, and the platform arm,
+// which reads a CSV.
+static bool isHostArm(StringRef Arm) {
+  return Arm == "microbm" || Arm == "herbie-platform";
+}
+
 static bool wants(StringRef Arm) {
   if (Only.empty())
     return true;
-  SmallVector<StringRef, 8> Arms;
-  StringRef(Only).split(Arms, ',', -1, false);
-  return llvm::is_contained(Arms, Arm);
+  SmallVector<StringRef, 8> Asked;
+  StringRef(Only).split(Asked, ',', -1, false);
+  return llvm::is_contained(Asked, Arm);
+}
+
+// The interpreter the Python arms run under.
+static std::string python() {
+  if (!Python.empty() &&
+      (Python.getNumOccurrences() || sys::fs::exists(Python)))
+    return Python;
+  auto P = sys::findProgramByName("python3");
+  if (!P)
+    fail("no Python 3 interpreter: this build was configured without one and "
+         "python3 is not on PATH; pass --python <path>");
+  return *P;
 }
 
 // The calibrator binary that measures this device: the HIP build of it on an
@@ -330,20 +387,15 @@ static std::string platformPathFor(StringRef Csv) {
   return Stem.str() + ".herbie.rkt";
 }
 
-static std::string csvNativeArch(StringRef Csv) {
-  StringRef Arch;
-  for (StringRef Line : llvm::split(readFile(Csv), '\n'))
-    if (Line.consume_front("# native_arch="))
-      Arch = Line.trim();
-  return Arch.str();
-}
-
 // Herbie's algebraic search ranks candidates by a platform cost table. This
 // arm writes that table from the same CSV the DP prices from, so a rewrite is
 // proposed and priced on one device's numbers. No GPU is touched: the CSV is
 // the only input.
 static void armHerbiePlatform(StringRef Csv) {
-  std::string Arch = csvNativeArch(Csv);
+  CostModelState CM(Csv.str());
+  if (Error E = loadCostModel(CM))
+    fail(toString(std::move(E)));
+  const std::string &Arch = CM.NativeArch;
   if (Arch.empty())
     fail(Csv + " carries no '# native_arch=' header, so no Herbie platform "
                "can be generated from it");
@@ -352,18 +404,10 @@ static void armHerbiePlatform(StringRef Csv) {
            << " is a host cost model; Herbie keeps its own default platform\n";
     return;
   }
-  std::string Script = shipped("tools/herbie/csv_to_herbie_platform.py");
+  std::string Script = shipped("tools/calibrate/herbie_platform.py");
   if (!sys::fs::exists(Script))
     fail("the platform generator is missing: " + Script);
-  std::string Python = POSEIDON_CALIBRATE_PYTHON;
-  if (Python.empty() || !sys::fs::exists(Python)) {
-    auto P = sys::findProgramByName("python3");
-    if (!P)
-      fail("python3 is needed to generate the Herbie platform from " + Csv +
-           "; put one on PATH or configure the build with a Python3 "
-           "interpreter");
-    Python = *P;
-  }
+  std::string Py = python();
   // The CSV file name carries the device (cm_<arch>_<device>.csv); it is a
   // comment in the platform header, so a generated file says what it is.
   std::string Device;
@@ -371,8 +415,7 @@ static void armHerbiePlatform(StringRef Csv) {
   if (Name.consume_front("cm_" + Arch + "_"))
     Device = Name.str();
   std::string Out = platformPathFor(Csv);
-  SmallVector<StringRef, 14> Argv = {Python,   Script, "--csv",    Csv,
-                                     "--arch", Arch,   "--output", Out};
+  SmallVector<StringRef, 10> Argv = {Py, Script, "--csv", Csv, "--output", Out};
   if (!Herbie.empty()) {
     Argv.push_back("--herbie-binary");
     Argv.push_back(Herbie);
@@ -386,6 +429,37 @@ static void armHerbiePlatform(StringRef Csv) {
   outs() << "[calibrate] wrote " << Out << '\n';
 }
 
+// A host is measured by microbm_cpu.py, which JIT-compiles each
+// microbenchmark with llvmlite for the CPU and features it is given. Its rows
+// go to `Part`.
+static int measureHost(const Device &D, StringRef Part) {
+  std::string Py = python();
+  std::string Missing =
+      capture({Py, "-c",
+               "import importlib.util as u, sys; print(' '.join(n for n in "
+               "sys.argv[1:] if u.find_spec(n) is None))",
+               "llvmlite"});
+  if (!StringRef(Missing).trim().empty())
+    fail(Py + " cannot import the Python package " + StringRef(Missing).trim() +
+         ", which the CPU microbenchmark needs; install it (pip install " +
+         StringRef(Missing).trim() + ") or pass --python <interpreter>");
+  std::string Script = shipped("tools/calibrate/microbm_cpu.py");
+  if (!sys::fs::exists(Script))
+    fail("the CPU microbenchmark is missing: " + Script);
+  std::string Iterations = utostr(CpuIterations);
+  SmallVector<StringRef, 12> Argv = {Py,     Script,     "--cpu",
+                                     D.Arch, "--device", D.Model};
+  if (!D.Features.empty()) {
+    Argv.push_back("--features");
+    Argv.push_back(D.Features);
+  }
+  if (CpuIterations.getNumOccurrences()) {
+    Argv.push_back("--iterations");
+    Argv.push_back(Iterations);
+  }
+  return run(Argv, Part);
+}
+
 static void armMicrobm(StringRef Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
     outs() << "[calibrate] per-op throughputs already measured: " << Csv
@@ -393,11 +467,19 @@ static void armMicrobm(StringRef Csv, const Device &D) {
     return;
   }
   outs() << "[calibrate] measuring per-op throughput (several minutes)\n";
-  std::string Rows = capture({tool(D, "poseidon-microbm")});
+  // The rows land in <csv>.part as they are measured; the file takes the
+  // model's name once the run has written a usable model.
+  std::string Part = (Csv + ".part").str();
+  int RC =
+      D.Host ? measureHost(D, Part) : run({tool(D, "poseidon-microbm")}, Part);
+  std::string Rows = RC == 0 ? readFile(Part) : std::string();
   if (!StringRef(Rows).contains("\nfmul,double,") ||
-      !StringRef(Rows).contains("# native_arch="))
+      !StringRef(Rows).contains("# native_arch=")) {
+    sys::fs::remove(Part);
     fail("the microbenchmark produced no usable cost model");
-  writeFile(Csv, Rows);
+  }
+  if (std::error_code EC = sys::fs::rename(Part, Csv))
+    fail("cannot write " + Csv + ": " + EC.message());
   outs() << "[calibrate] wrote " << Csv << '\n';
 }
 
@@ -420,12 +502,15 @@ static bool alreadyMeasured(StringRef Csv, StringRef Arm, StringRef Family) {
   return true;
 }
 
-static void armDispatch(StringRef Csv, StringRef Arm, StringRef Family,
-                        StringRef Tool) {
+// The dispatch calibrator measures the family of the arm it is named.
+static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
+                        StringRef Family) {
   if (alreadyMeasured(Csv, Arm, Family))
     return;
   outs() << "[calibrate] measuring " << Arm << " host dispatch\n";
-  writeRows(Csv, Arm, Family, capture({Tool, utostr(RefN), utostr(Reps)}));
+  writeRows(Csv, Arm, Family,
+            capture({tool(D, "poseidon-dispatch-calibrate"), Arm, utostr(RefN),
+                     utostr(Reps)}));
 }
 
 // The rectangular rows are keyed by the shape of the product they price, so
@@ -442,8 +527,8 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
   std::string Content = readFile(Csv);
   SmallVector<StringRef, 4> Shapes;
   StringRef(OzakiRect).split(Shapes, ',', -1, false);
-  SmallVector<std::string, 8> Argv = {tool(D, "poseidon-ozaki-calibrate"),
-                                      utostr(RefN), utostr(Reps)};
+  SmallVector<std::string, 8> Argv = {tool(D, "poseidon-dispatch-calibrate"),
+                                      "ozaki", utostr(RefN), utostr(Reps)};
   SmallVector<std::string, 4> Keys;
   for (StringRef Shape : Shapes) {
     SmallVector<StringRef, 3> Dims;
@@ -473,14 +558,7 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
     return;
   outs() << "[calibrate] measuring ozaki-rect host dispatch\n";
   SmallVector<StringRef, 8> Args(Argv.begin(), Argv.end());
-  std::string Rows = capture(Args);
-  if (!hasFamily(Rows, "ozaki_dispatch_rect_rel"))
-    fail("ozaki-rect calibration produced no ozaki_dispatch_rect_rel row");
-  for (StringRef Line : llvm::split(Content, '\n'))
-    if (Line.starts_with("ozaki_dispatch_rect_rel,") &&
-        llvm::none_of(Keys, [&](StringRef K) { return Line.contains(K); }))
-      Rows += (Line + "\n").str();
-  writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", Rows);
+  writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", capture(Args));
 }
 
 // The error-corrected dispatch runs on cuMpSGEMM, so a build without it has no
@@ -498,8 +576,7 @@ static void armTcec(StringRef Csv, const Device &D) {
               "-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>); its row stays absent\n";
     return;
   }
-  armDispatch(Csv, "tcec", "tcec_dispatch_rel",
-              sibling("poseidon-tcec-calibrate"));
+  armDispatch(Csv, D, "tcec", "tcec_dispatch_rel");
 }
 
 // The in-kernel classes are the one family the compiler has to be asked about:
@@ -626,7 +703,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
 
   std::string Rows;
   for (const auto &[Cls, Idx] : Classes) {
-    if (!Force && hasFamily(Content, "wmma_inkernel_rel") &&
+    if (!Force &&
         StringRef(Content).contains("wmma_inkernel_rel," + Cls + ",")) {
       outs() << "  = " << Cls << " already calibrated\n";
       continue;
@@ -651,60 +728,33 @@ static void armInKernel(const std::string &Csv, const Device &D) {
     outs() << "[calibrate] in-kernel: nothing new to write\n";
     return;
   }
-  // The merge is per family, so re-measured classes replace the whole family:
-  // carry the classes this run did not touch across.
-  for (StringRef Line : llvm::split(Content, '\n'))
-    if (Line.starts_with("wmma_inkernel_rel,")) {
-      StringRef Cls = Line.split(',').second.split(',').first;
-      if (!StringRef(Rows).contains(("wmma_inkernel_rel," + Cls + ",").str()))
-        Rows += (Line + "\n").str();
-    }
   mergeRows(Content, Rows);
   writeFile(Csv, Content);
 }
 
-// The same order the compiler resolves in, so --check answers the question a
-// compile would ask.
-static std::string findExisting(const Device &D, const std::string &Preferred) {
-  if (sys::fs::exists(Preferred))
-    return Preferred;
-  std::string Prefix = "cm_" + D.Arch + "_";
-  std::error_code EC;
-  for (sys::fs::directory_iterator It(defaultOutDir(), EC), E; It != E && !EC;
-       It.increment(EC)) {
-    StringRef Name = sys::path::filename(It->path());
-    if (Name.starts_with(Prefix) && Name.ends_with(".csv"))
-      return It->path();
-  }
-  return Preferred;
-}
-
-static int checkModel(const std::string &Preferred, const Device &D) {
-  std::string Csv = findExisting(D, Preferred);
-  if (!sys::fs::exists(Csv)) {
-    errs() << "poseidon-calibrate: no cost model for " << D.Arch << " in "
-           << defaultOutDir()
-           << "; measure this device with poseidon-calibrate\n";
+// Resolves the model as a compile for this device does, with --out in the
+// place of -poseidon-cost-model, and reports what of it a full run writes.
+static int checkModel(const Device &D) {
+  CostModelState CM(Out.empty() ? std::string() : resolveCsv(D));
+  Error E = requireCostModel(CM, D.Arch, "this device", !D.Host);
+  if (!CM.Loaded) {
+    errs() << "poseidon-calibrate: " << toString(std::move(E)) << '\n';
     return 1;
   }
-  std::string Content = readFile(Csv);
   int Bad = 0;
-  StringRef Arch;
-  for (StringRef Line : llvm::split(Content, '\n'))
-    if (Line.consume_front("# native_arch="))
-      Arch = Line.trim();
-  outs() << "cost model  " << Csv << '\n';
-  outs() << "device      " << D.Name << " (" << D.Arch << ", id " << D.Id
-         << ")\n";
-  if (Arch != D.Arch) {
-    outs() << "native_arch " << (Arch.empty() ? "<absent>" : Arch)
-           << "  MISMATCH: this device is " << D.Arch << '\n';
+  outs() << "cost model  " << costModelPath(CM) << '\n';
+  outs() << "device      " << D.Name << " (" << D.Arch;
+  if (!D.Host)
+    outs() << ", id " << D.Id;
+  outs() << ")\n";
+  if (E) {
+    errs() << "poseidon-calibrate: " << toString(std::move(E)) << '\n';
     ++Bad;
   } else {
-    outs() << "native_arch " << Arch << "  ok\n";
+    outs() << "native_arch " << D.Arch << "  ok\n";
   }
-  std::string Platform = platformPathFor(Csv);
-  if (isGpuArch(Arch)) {
+  if (!D.Host) {
+    std::string Platform = platformPathFor(costModelPath(CM));
     bool Have = sys::fs::exists(Platform);
     outs() << (Have ? "have        " : "MISSING     ") << Platform
            << "  (Herbie algebraic-search platform; regenerate with "
@@ -712,21 +762,22 @@ static int checkModel(const std::string &Preferred, const Device &D) {
     if (!Have)
       ++Bad;
   }
+  enum Where { Everywhere, Gpu, Nvidia };
   struct {
     const char *Family;
     const char *What;
-    bool NvidiaOnly;
+    Where On;
   } Families[] = {
-      {"fmul", "per-op throughputs", false},
-      {"wmma_mma_m16n16k16", "tensor-core tile prices", true},
-      {"ozaki_dispatch_rel", "Ozaki-II host dispatch", false},
-      {"tcec_dispatch_rel", "error-corrected host dispatch", true},
-      {"direct_dispatch_rel", "reduced-precision host dispatch", false},
-      {"wmma_inkernel_rel", "in-kernel tensor-core raises", true}};
+      {"fmul", "per-op throughputs", Everywhere},
+      {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
+      {"ozaki_dispatch_rel", "Ozaki-II host dispatch", Gpu},
+      {"tcec_dispatch_rel", "error-corrected host dispatch", Nvidia},
+      {"direct_dispatch_rel", "reduced-precision host dispatch", Gpu},
+      {"wmma_inkernel_rel", "in-kernel tensor-core raises", Nvidia}};
   for (const auto &F : Families) {
-    if (D.Hip && F.NvidiaOnly) {
+    if ((D.Host && F.On != Everywhere) || (D.Hip && F.On == Nvidia)) {
       outs() << "n/a         " << F.Family << "  (" << F.What << ": none on "
-             << D.Arch << ")\n";
+             << (D.Host ? "a host" : D.Arch) << ")\n";
       continue;
     }
     if (!POSEIDON_CALIBRATE_TCEC &&
@@ -735,7 +786,9 @@ static int checkModel(const std::string &Preferred, const Device &D) {
              << ": none in a build without cuMpSGEMM)\n";
       continue;
     }
-    bool Have = hasFamily(Content, F.Family);
+    bool Have = llvm::any_of(getCostModel(CM), [&](const auto &Row) {
+      return Row.first.first == F.Family;
+    });
     outs() << (Have ? "have        " : "MISSING     ") << F.Family << "  ("
            << F.What << ")\n";
     if (!Have)
@@ -750,9 +803,35 @@ static int checkModel(const std::string &Preferred, const Device &D) {
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(
       argc, argv,
-      "measure this GPU's Poseidon cost model, or check an existing one\n");
+      "measure the Poseidon cost model of a GPU, or with --cpu of this host, "
+      "or check an existing one\n\n"
+      "Each arm writes its row families into the one CSV:\n"
+      "  microbm          <op>,<type> and "
+      "fpext_/fptrunc_<from>_to_<to>,<from>,\n"
+      "                   and on NVIDIA wmma_mma_<tile>,<in>_<acc>\n"
+      "  herbie-platform  no rows: the Herbie platform <csv>.herbie.rkt\n"
+      "  ozaki            ozaki_dispatch_rel,nm<8..14> and ,dgemm\n"
+      "  ozaki-rect       ozaki_dispatch_rect_rel,nm<k>_m<M>k<K> and\n"
+      "                   ,dgemm_m<M>n<N>k<K>\n"
+      "  tcec             tcec_dispatch_rel,fp16tcec\n"
+      "  direct           direct_dispatch_rel,<in>_<acc>\n"
+      "  inkernel         wmma_inkernel_rel,<class>\n"
+      "A host has the first two arms only.\n");
   ToolDir = std::string(sys::path::parent_path(
       sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main)));
+
+  SmallVector<StringRef, 8> Asked;
+  StringRef(Only).split(Asked, ',', -1, false);
+  for (StringRef Arm : Asked) {
+    if (!llvm::is_contained(Arms, Arm))
+      fail("--only: there is no arm '" + Arm + "'");
+    if (Cpu.getNumOccurrences() && !isHostArm(Arm))
+      fail("the " + Arm + " arm measures a GPU, and --cpu a host");
+  }
+  if (Cpu.getNumOccurrences() && GpuId.getNumOccurrences())
+    fail("--cpu measures this host and --gpu a GPU; pass one of them");
+  if (Cpu.getNumOccurrences() && Cpu.empty())
+    fail("--cpu needs a target-cpu: native, or a name -march= takes");
 
   // The platform arm reads a CSV and writes a file beside it. Asking for it
   // alone, against a named CSV, therefore needs no device present: that is how
@@ -764,17 +843,16 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  Device D = queryDevice();
-  // Every child runs on the device that is being measured.
-  ::setenv(D.Hip ? "HIP_VISIBLE_DEVICES" : "CUDA_VISIBLE_DEVICES", D.Id.c_str(),
-           1);
-  std::string Csv = resolveCsv(D);
+  Device D = Cpu.getNumOccurrences() ? queryHost() : queryDevice();
 
   if (Check)
-    return checkModel(Csv, D);
+    return checkModel(D);
+  std::string Csv = resolveCsv(D);
 
-  outs() << "[calibrate] device " << D.Name << " (" << D.Arch << ", id " << D.Id
-         << ")\n";
+  outs() << "[calibrate] device " << D.Name << " (" << D.Arch;
+  if (!D.Host)
+    outs() << ", id " << D.Id;
+  outs() << ")\n";
   if (wants("microbm"))
     armMicrobm(Csv, D);
   if (!sys::fs::exists(Csv))
@@ -783,18 +861,18 @@ int main(int argc, char **argv) {
   // Right after microbm, because it translates exactly what microbm wrote.
   if (wants("microbm") || wants("herbie-platform"))
     armHerbiePlatform(Csv);
-  if (wants("ozaki"))
-    armDispatch(Csv, "ozaki", "ozaki_dispatch_rel",
-                tool(D, "poseidon-ozaki-calibrate"));
-  if (wants("ozaki-rect"))
-    armOzakiRect(Csv, D);
-  if (wants("tcec"))
-    armTcec(Csv, D);
-  if (wants("direct"))
-    armDispatch(Csv, "direct", "direct_dispatch_rel",
-                tool(D, "poseidon-direct-calibrate"));
-  if (wants("inkernel"))
-    armInKernel(Csv, D);
+  if (!D.Host) {
+    if (wants("ozaki"))
+      armDispatch(Csv, D, "ozaki", "ozaki_dispatch_rel");
+    if (wants("ozaki-rect"))
+      armOzakiRect(Csv, D);
+    if (wants("tcec"))
+      armTcec(Csv, D);
+    if (wants("direct"))
+      armDispatch(Csv, D, "direct", "direct_dispatch_rel");
+    if (wants("inkernel"))
+      armInKernel(Csv, D);
+  }
   outs() << "[calibrate] cost model: " << Csv << '\n';
   return 0;
 }

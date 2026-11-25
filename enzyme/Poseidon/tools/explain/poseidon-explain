@@ -423,16 +423,10 @@ def parse_ast(text, src):
 
 
 def run_clang(src, func, args):
-    clang = args.clang or os.environ.get("POSEIDON_EXPLAIN_CLANG")
-    if not clang:
-        for cand in ("clang++-21", "clang++", "clang"):
-            if shutil.which(cand):
-                clang = cand
-                break
+    clang = args.clang or shutil.which("clang++") or shutil.which("clang")
     if not clang:
         return None, "no clang found (--clang)"
     extra = list(args.clang_arg or [])
-    extra += os.environ.get("POSEIDON_EXPLAIN_CLANG_ARGS", "").split()
     cmd = [clang, "-fsyntax-only", "-w", "-ferror-limit=0", "-Xclang", "-ast-dump=json",
            "-Xclang", "-ast-dump-filter=" + func] + extra + [src]
     try:

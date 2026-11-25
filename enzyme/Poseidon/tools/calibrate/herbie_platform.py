@@ -1,39 +1,16 @@
 #!/usr/bin/env python3
-"""Generate a Herbie platform .rkt file from a Poseidon GPU cost model CSV.
+"""Generate the Herbie platform of a Poseidon GPU cost model CSV.
 
-Usage:
-    python3 csv_to_herbie_platform.py \\
-        --csv cm_sm_<cc>_<device>.csv \\
-        --arch sm_<cc> \\
-        --device <device-name> \\
-        --output <same dir>/cm_sm_<cc>_<device>.herbie.rkt
+    herbie_platform.py --csv cm_<arch>_<device>.csv --device <device> \\
+        --herbie-binary <herbie> --output cm_<arch>_<device>.herbie.rkt
 
-    # Or dump to stdout:
-    python3 csv_to_herbie_platform.py --csv ... --arch sm_<cc>
+The platform is named after the CSV's native_arch: cuda-sm<NN> for an NVIDIA
+GPU, hip-gfx<NNN> for an AMD one. Herbie loads it by path, and as a raco exe
+binary carries no collection to read a #lang line with, the file is a plain
+(module ...) form in the language module the binary embeds.
 
-An AMD GPU's model (--arch gfx<NNN>) gives the platform hip-gfx<NNN>.
-
-The file is passed to Herbie by path (`herbie report --platform <path>`), so it
-lives next to the CSV it was generated from and no Herbie tree is patched.
-
-WHY THE FILE IS A `(module ...)` FORM AND NOT `#lang s-exp ...`:
-Herbie's `activate-platform!` `dynamic-require`s the path. The Herbie this
-project builds and ships is a `raco exe` / `raco distribute` executable, which
-carries no Racket collection directories: reading a `#lang s-exp "..."` module
-needs the `s-exp/lang/reader` collection and fails with `collection not found`.
-A plain `(module <name> <language> ...)` form needs no reader, and the language
-is named by the module name `raco exe` gave the embedded
-`src/syntax/platform-language.rkt`. Use --platform-language / --flonum-module
-for a Herbie that is not a `raco exe` binary (e.g. `herbie/syntax/platform-language`
-for a collection install, or `(file "/abs/path/src/syntax/platform-language.rkt")`
-for a source checkout).
-
-Caveats:
-  - f32 and f64 only. Herbie has no binary16/bfloat16 representations,
-    so half/bf16 rows in the CSV are silently dropped.
-  - Any op missing from the CSV at the requested precision aborts the
-    script with a hard error - no silent fallbacks. Add the row to the
-    CSV (or remove the op from UNARY_MATH/BINARY_MATH/SPECIAL_UNARY).
+Herbie has binary32 and binary64 only, so the CSV's float and double rows are
+read. A row the platform needs that the CSV lacks is an error.
 """
 
 import argparse
@@ -69,35 +46,12 @@ def read_poseidon_csv(path: Path) -> Tuple[Dict[Tuple[str, str], float], Dict[st
     return costs, meta
 
 
-UNARY_MATH: List[Tuple[str, str, str]] = [
-    ("fabs",   "fabs",   "fabs"),
-    ("sin",    "sin",    "sin"),
-    ("cos",    "cos",    "cos"),
-    ("tan",    "tan",    "tan"),
-    ("sinh",   "sinh",   "sinh"),
-    ("cosh",   "cosh",   "cosh"),
-    ("tanh",   "tanh",   "tanh"),
-    ("asin",   "asin",   "asin"),
-    ("acos",   "acos",   "acos"),
-    ("atan",   "atan",   "atan"),
-    ("asinh",  "asinh",  "asinh"),
-    ("acosh",  "acosh",  "acosh"),
-    ("atanh",  "atanh",  "atanh"),
-    ("cbrt",   "cbrt",   "cbrt"),
-    ("ceil",   "ceil",   "ceil"),
-    ("floor",  "floor",  "floor"),
-    ("round",  "round",  "round"),
-    ("rint",   "rint",   "rint"),
-    ("trunc",  "trunc",  "trunc"),
-    ("erf",    "erf",    "erf"),
-    ("exp",    "exp",    "exp"),
-    ("exp2",   "exp2",   "exp2"),
-    ("lgamma", "lgamma", "lgamma"),
-    ("log",    "log",    "log"),
-    ("log10",  "log10",  "log10"),
-    ("log2",   "log2",   "log2"),
-    ("sqrt",   "sqrt",   "sqrt"),
-    ("tgamma", "tgamma", "tgamma"),
+# Herbie's operator, the CSV row and the libm function are one name.
+UNARY_MATH: List[str] = [
+    "fabs", "sin", "cos", "tan", "sinh", "cosh", "tanh", "asin", "acos",
+    "atan", "asinh", "acosh", "atanh", "cbrt", "ceil", "floor", "round",
+    "rint", "trunc", "erf", "exp", "exp2", "lgamma", "log", "log10", "log2",
+    "sqrt", "tgamma",
 ]
 
 BINARY_MATH: List[Tuple[str, str, str]] = [
@@ -227,9 +181,9 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
     unary_lines = [
         f"(define-operations ([x {repr_name}]) {repr_name} #:fpcore (! :precision {herbie_prec} _)"
     ]
-    for herbie_name, poseidon_op, libm_base in UNARY_MATH:
-        c_val = _fmt(cost(costs, poseidon_op, precision))
-        impl = _math_impl(libm_base)
+    for herbie_name in UNARY_MATH:
+        c_val = _fmt(cost(costs, herbie_name, precision))
+        impl = _math_impl(herbie_name)
         unary_lines.append(
             f"  [{herbie_name}.{suffix} #:spec ({herbie_name} x) "
             f"#:impl {impl} #:cost {c_val}]"
@@ -344,9 +298,9 @@ def embedded_module_names(herbie_binary: Path) -> Tuple[Optional[str], Optional[
             f"'|{flonum.group(0).decode()}|" if flonum else None)
 
 
-def default_platform_name(arch: str) -> str:
+def herbie_platform_name(arch: str) -> str:
     """cuda-sm120 for an NVIDIA architecture, hip-gfx942 for an AMD one: the
-    name Poseidon keys its Herbie cache with (Techniques/Herbie.cpp)."""
+    name the pass gives Herbie (Target::herbiePlatform)."""
     vendor = "hip" if arch.startswith("gfx") else "cuda"
     return f"{vendor}-{arch.replace('_', '')}"
 
@@ -361,16 +315,12 @@ def emit_platform(costs: Dict[Tuple[str, str], float],
     csv_precs = set(prec for (_, prec) in costs.keys())
     active_precisions = [p for p in ("float", "double") if p in csv_precs]
 
-    fadd_f32 = cost(costs, "fadd", "float")
-    fadd_f64 = cost(costs, "fadd", "double")
-    del fadd_f32, fadd_f64
-
     move_costs = {}
     for prec in active_precisions:
         bits = PREC_CONFIG[prec]["bits"]
         if bits not in move_costs:
             move_costs[bits] = _fmt(cost(costs, "fcmp", prec))
-    move_bool = move_costs.get(16, move_costs.get(32, "5"))
+    move_bool = move_costs[32]
 
     vendor = "HIP" if arch.startswith("gfx") else "CUDA"
     header = [
@@ -383,7 +333,7 @@ def emit_platform(costs: Dict[Tuple[str, str], float],
     header += [
         ";; Cost unit: reciprocal throughput as the CSV measured it.",
         ";;",
-        ";; Generated by poseidon/tools/herbie/csv_to_herbie_platform.py; pass it",
+        ";; Generated by herbie_platform.py; pass it",
         ";; to Herbie by path (--platform <this file>). DO NOT HAND-EDIT:",
         ";; regenerate from the CSV instead (poseidon-calibrate --only",
         ";; herbie-platform --out <csv>).",
@@ -424,53 +374,34 @@ def emit_platform(costs: Dict[Tuple[str, str], float],
     return "\n".join(body) + "\n"
 
 
-def pct(s: str) -> str:
-    """Escape a literal for an argparse help string."""
-    return s.replace("%", "%%")
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--csv", required=True, type=Path,
                     help="Poseidon cost model CSV (cm_<arch>_<device>.csv)")
-    ap.add_argument("--arch", required=True,
-                    help="Architecture tag as used in the CSV, e.g. sm_120 or gfx942")
-    ap.add_argument("--platform-name",
-                    help="Herbie platform name (default: 'cuda-<arch with underscores stripped>', "
-                         "e.g. cuda-sm120, or hip-<arch> for gfx<NNN>)")
     ap.add_argument("--device",
-                    help="Optional device name for the file-header comment (e.g. RTX5090)")
-    ap.add_argument("--output", type=Path,
-                    help="Output path for the .rkt file (default: stdout)")
-    # argparse %-formats a help string against its own parameter dict, and the
-    # two defaults contain a literal `%e` ("#%embedded:"), so every `%` in them
-    # is doubled. Python 3.14 checks this when the argument is declared, so an
-    # unescaped default aborts every run.
-    ap.add_argument("--platform-language", default=DEFAULT_PLATFORM_LANGUAGE,
-                    help="Module path the platform is written in, used verbatim "
-                         f"(default: {pct(DEFAULT_PLATFORM_LANGUAGE)}, the name raco exe "
-                         "gives the embedded herbie src/syntax/platform-language.rkt)")
-    ap.add_argument("--flonum-module", default=DEFAULT_FLONUM_MODULE,
-                    help="Module path `flsingle` is required from, used verbatim "
-                         f"(default: {pct(DEFAULT_FLONUM_MODULE)})")
+                    help="Device name for the file-header comment")
+    ap.add_argument("--output", required=True, type=Path,
+                    help="Output path for the .rkt file")
     ap.add_argument("--herbie-binary", type=Path,
                     help="raco exe Herbie binary to read the two embedded module "
                          "names from; overrides the defaults when found")
     args = ap.parse_args()
+    language, flonum_module = DEFAULT_PLATFORM_LANGUAGE, DEFAULT_FLONUM_MODULE
     if args.herbie_binary and args.herbie_binary.exists():
         lang, flonum = embedded_module_names(args.herbie_binary)
-        if lang:
-            args.platform_language = lang
-        if flonum:
-            args.flonum_module = flonum
-        print(f"platform language from {args.herbie_binary}: {args.platform_language}",
+        language = lang or language
+        flonum_module = flonum or flonum_module
+        print(f"platform language from {args.herbie_binary}: {language}",
               file=sys.stderr)
 
     if not args.csv.exists():
         sys.exit(f"csv not found: {args.csv}")
 
     costs, meta = read_poseidon_csv(args.csv)
+    arch = meta.get("native_arch")
+    if not arch:
+        sys.exit(f"csv has no '# native_arch=' header: {args.csv}")
     if not any(op == "fadd" for (op, _) in costs):
         sys.exit(f"csv has no fadd entries - looks malformed: {args.csv}")
 
@@ -481,38 +412,16 @@ def main() -> int:
             f"csv needs both float and double entries (found float={have_float}, "
             f"double={have_double}): {args.csv}"
         )
-    csv_precs = sorted(set(prec for (_, prec) in costs.keys())
-                       & {"float", "double"})
-    print(f"precisions found in CSV: {', '.join(csv_precs)}", file=sys.stderr)
-
-    platform_name = args.platform_name or default_platform_name(args.arch)
 
     try:
-        rkt = emit_platform(costs, meta, args.arch, args.device, platform_name,
-                            args.platform_language, args.flonum_module)
+        rkt = emit_platform(costs, meta, arch, args.device, herbie_platform_name(arch),
+                            language, flonum_module)
     except RuntimeError as e:
         sys.exit(f"emit failed: {e}")
 
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rkt)
-        print(f"wrote {args.output}", file=sys.stderr)
-    else:
-        sys.stdout.write(rkt)
-
-    ops_per_prec = (
-        len(UNARY_MATH) + len(BINARY_MATH) + len(SPECIAL_UNARY)
-        + 4 + 6 + 4 + 1 + 1 + 1 + 1
-    )
-    n_precs = len(csv_precs)
-    n_casts = n_precs * (n_precs - 1)
-    total = ops_per_prec * n_precs + n_casts
-    print(
-        f"{platform_name}: ~{total} impls across {', '.join(csv_precs)} "
-        f"({n_casts} casts, fadd f32={cost(costs, 'fadd', 'float')}, "
-        f"fadd f64={cost(costs, 'fadd', 'double')})",
-        file=sys.stderr,
-    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(rkt)
+    print(f"wrote {args.output}", file=sys.stderr)
     return 0
 
 

@@ -45,7 +45,7 @@ CPU_OPS = [
 GPU_OPS = [
     ("fadd", 1), ("fsub", 1), ("fmul", 1), ("fdiv", 8), ("fneg", 1),
     ("fabs", 1), ("fcmp", 1), ("fma", 1), ("fmuladd", 1), ("sqrt", 8),
-    ("rsqrt", 8), ("cbrt", 16), ("exp", 8), ("expm1", 16), ("exp2", 8),
+    ("cbrt", 16), ("exp", 8), ("expm1", 16), ("exp2", 8),
     ("log", 16), ("log1p", 16), ("log2", 16), ("log10", 16), ("sin", 16),
     ("cos", 16), ("tan", 16), ("asin", 16), ("acos", 16), ("atan", 16),
     ("sinh", 16), ("cosh", 16), ("tanh", 16), ("asinh", 16), ("acosh", 16),

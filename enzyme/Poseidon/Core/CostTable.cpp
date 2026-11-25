@@ -7,7 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostTable.h"
+#include "Targets/MathFunctions.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -48,7 +50,7 @@ const std::string &costModelPath(CostModelState &CM) {
   return CM.Resolved;
 }
 
-static std::string userCacheDir() {
+std::string userCacheDir() {
   if (const char *X = std::getenv("XDG_CACHE_HOME"))
     if (*X)
       return std::string(X) + "/poseidon";
@@ -61,7 +63,7 @@ static std::string userCacheDir() {
 // One measured model per device: the file name carries the architecture it was
 // measured on, so the module's target-cpu names it.
 static Error resolveForTarget(CostModelState &CM, StringRef TargetCpu,
-                              StringRef FnName) {
+                              StringRef FnName, bool OnDevice) {
   if (resolveFromRequest(CM))
     return Error::success();
   if (TargetCpu.empty())
@@ -88,8 +90,11 @@ static Error resolveForTarget(CostModelState &CM, StringRef TargetCpu,
                  ? "the user cache, which neither XDG_CACHE_HOME nor HOME "
                    "locates"
                  : Dir) +
-            "; measure this device with poseidon-calibrate, or pass "
-            "-poseidon-cost-model=<csv>");
+            (OnDevice ? "; measure the GPU with 'poseidon-calibrate --gpu <id>'"
+                      : "; measure this host with 'poseidon-calibrate --cpu " +
+                            TargetCpu + "'") +
+            ", or name a model with -poseidon-cost-model=<csv> or "
+            "POSEIDON_COST_MODEL");
   if (Found.size() > 1) {
     std::string List;
     for (const std::string &P : Found)
@@ -113,8 +118,40 @@ static Error modelError(CostModelState &CM, const Twine &What) {
                                What);
 }
 
-static Error loadCostModel(CostModelState &CM,
-                           function_ref<bool(StringRef, StringRef)> IsRow) {
+static bool isScalarTypeName(StringRef T) {
+  return is_contained({"bf16", "half", "float", "double", "fp80", "fp128"}, T);
+}
+
+// Whether `Opcode,Type` is a row family poseidon-calibrate writes, read by a
+// compile or not; must agree with the calibrator.
+static bool isCostModelRow(StringRef Opcode, StringRef Type) {
+  if (is_contained({"ozaki_dispatch_rel", "ozaki_dispatch_rect_rel",
+                    "tcec_dispatch_rel", "direct_dispatch_rel",
+                    "wmma_inkernel_rel"},
+                   Opcode))
+    return !Type.empty();
+  if (Opcode.consume_front("wmma_mma_")) {
+    unsigned M, N, K;
+    return Opcode.consume_front("m") && !Opcode.consumeInteger(10, M) &&
+           Opcode.consume_front("n") && !Opcode.consumeInteger(10, N) &&
+           Opcode.consume_front("k") && !Opcode.consumeInteger(10, K) &&
+           Opcode.empty() && !Type.empty();
+  }
+  for (StringRef Cast : {"fpext_", "fptrunc_"})
+    if (Opcode.consume_front(Cast)) {
+      auto [From, To] = Opcode.split("_to_");
+      return isScalarTypeName(From) && isScalarTypeName(To) && Type == From;
+    }
+  if (!isScalarTypeName(Type))
+    return false;
+  return is_contained({"fneg", "fadd", "fsub", "fmul", "fdiv", "fcmp",
+                       "fmuladd", "maxnum", "minnum"},
+                      Opcode) ||
+         any_of(mathFunctions(),
+                [&](const MathFunction &Fn) { return Fn.Name == Opcode; });
+}
+
+Error loadCostModel(CostModelState &CM) {
   if (CM.Loaded)
     return Error::success();
   std::ifstream CostFile(costModelPath(CM));
@@ -150,13 +187,13 @@ static Error loadCostModel(CostModelState &CM,
     if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
       return modelError(CM, "line " + Twine(LineNo) +
                                 " is not '<opcode>,<type>,<cost>': " + Line);
-    if (!IsRow(Fields[0], Fields[1]))
+    if (!isCostModelRow(Fields[0], Fields[1]))
       return modelError(CM, "line " + Twine(LineNo) + " has the row '" +
                                 Fields[0] + "," + Fields[1] +
-                                "', of no row family Poseidon reads (the "
-                                "calibrator's README lists them); remove the "
-                                "line, or compile with the Poseidon whose "
-                                "poseidon-calibrate wrote it");
+                                "', of no row family Poseidon reads "
+                                "(poseidon-calibrate --help lists them); "
+                                "remove the line, or compile with the "
+                                "Poseidon whose poseidon-calibrate wrote it");
     if (!CM.Model.try_emplace({Fields[0].str(), Fields[1].str()}, Cost).second)
       return modelError(CM, "has the row '" + Fields[0] + "," + Fields[1] +
                                 "' twice");
@@ -206,11 +243,10 @@ uint64_t getCostModelFingerprint(CostModelState &CM) {
 }
 
 Error requireCostModel(CostModelState &CM, StringRef targetCpu,
-                       StringRef function,
-                       function_ref<bool(StringRef, StringRef)> IsRow) {
-  if (Error E = resolveForTarget(CM, targetCpu, function))
+                       StringRef function, bool OnDevice) {
+  if (Error E = resolveForTarget(CM, targetCpu, function, OnDevice))
     return E;
-  if (Error E = loadCostModel(CM, IsRow))
+  if (Error E = loadCostModel(CM))
     return E;
   if (CM.NativeArch.empty())
     return modelError(CM, "carries no '# native_arch=' header, so it cannot "

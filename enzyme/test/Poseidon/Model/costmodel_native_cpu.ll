@@ -55,14 +55,14 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NOARCH-NOT: Initial ComputationCost
 ; NOARCH-NOT: [poseidon] Finished Optimization
 
-; NOMODEL: error: {{.*}}Poseidon: no cost model for target-cpu 'x86-64' in {{.*}}xdg-cache{{.}}poseidon; measure this device with poseidon-calibrate, or pass -poseidon-cost-model=<csv>{{$}}
+; NOMODEL: error: {{.*}}Poseidon: no cost model for target-cpu 'x86-64' in {{.*}}xdg-cache{{.}}poseidon; measure this host with 'poseidon-calibrate --cpu x86-64', or name a model with -poseidon-cost-model=<csv> or POSEIDON_COST_MODEL{{$}}
 ; NOMODEL-NOT: Initial ComputationCost
 ; NOMODEL-NOT: [poseidon] Finished Optimization
 
 ; TWICE: error: {{.*}}Poseidon: cost model {{.*}}twice.csv has the row 'fadd,float' twice{{$}}
 ; TWICE-NOT: [poseidon] Finished Optimization
 
-; UNKNOWN: error: {{.*}}Poseidon: cost model {{.*}}unknown.csv line [[LINE]] has the row 'fwibble,double', of no row family Poseidon reads (the calibrator's README lists them); remove the line, or compile with the Poseidon whose poseidon-calibrate wrote it{{$}}
+; UNKNOWN: error: {{.*}}Poseidon: cost model {{.*}}unknown.csv line [[LINE]] has the row 'fwibble,double', of no row family Poseidon reads (poseidon-calibrate --help lists them); remove the line, or compile with the Poseidon whose poseidon-calibrate wrote it{{$}}
 ; UNKNOWN-NOT: [poseidon] Finished Optimization
 
 ; SHORT: error: {{.*}}Poseidon: cost model {{.*}}short.csv line [[LINE]] is not '<opcode>,<type>,<cost>': fadd,float{{$}}

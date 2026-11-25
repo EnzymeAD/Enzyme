@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Measure the host CPU cost model Poseidon prices CPU candidates from."""
+"""Measure the host CPU cost model Poseidon prices CPU candidates from.
 
-import time
-import csv
-import struct
-import random
-import numpy as np
-import llvmlite.binding as llvm
+Each benchmark is a JIT-compiled loop whose every trip runs 128 instances of
+one operation of float or double, the formats a precision change offers a host
+function. A trial run sizes the trip count so that a timed run lasts TARGET_S
+seconds, and the best of REPS timed runs counts. A row is the time of one
+operation, less the loop's own time per trip, in the unit of the GPU rows:
+clock cycles times two, a cycle being the latency of a dependent integer add
+as timed just before the row.
+Rows go to stdout as they are measured, progress to stderr."""
+
+import argparse
 import ctypes
 import os
-import argparse
-import platform
-import re
-import subprocess
+import random
+import struct
+import sys
+import tempfile
+import time
+
+import llvmlite.binding as llvm
 
 
 random.seed(42)
@@ -23,162 +30,27 @@ llvm.initialize_native_asmprinter()
 FAST_MATH_FLAG = "fast"
 
 unrolled = 128
-iterations = 100000000
-AMPLIFIER = 10
+TARGET_S = 0.25
+TRIAL_S = 0.01
+REPS = 3
 
-precision_to_llvm_type = {
-    "double": "double",
-    "float": "float",
-    "half": "half",
-    "fp80": "x86_fp80",
-    "fp128": "fp128",
-    "bf16": "bfloat",
-}
-
-precision_to_intrinsic_suffix = {
-    "double": "f64",
-    "float": "f32",
-    "half": "f16",
-    "fp80": "f80",
-    "fp128": "f128",
-    "bf16": "bf16",
-}
-
-precision_ranks = {"bf16": 0, "half": 1, "float": 2, "double": 3, "fp80": 4, "fp128": 5}
-precisions_ordered = ["bf16", "half", "float", "double", "fp80", "fp128"]
 precisions = ["float", "double"]
 
-
-def get_zero_literal(precision):
-    if precision in ("double", "float", "half"):
-        return "0.0"
-    elif precision == "bf16":
-        return "0xR0000"
-    elif precision == "fp80":
-        return "0xK00000000000000000000"
-    elif precision == "fp128":
-        return "0xL00000000000000000000000000000000"
-    return "0.0"
-
-
-def float64_to_fp80_bytes(value: np.float64) -> bytes:
-    packed = struct.pack(">d", value)
-    (bits,) = struct.unpack(">Q", packed)
-    sign = (bits >> 63) & 0x1
-    exponent = (bits >> 52) & 0x7FF
-    mantissa = bits & 0xFFFFFFFFFFFFF
-
-    if exponent == 0:
-        if mantissa == 0:
-            fp80_exponent = 0
-            fp80_mantissa = 0
-        else:
-            shift = 0
-            while (mantissa & (1 << 52)) == 0:
-                mantissa <<= 1
-                shift += 1
-            exponent = 1 - shift
-            exponent_bias_64 = 1023
-            exponent_bias_80 = 16383
-            fp80_exponent = exponent - exponent_bias_64 + exponent_bias_80
-            fp80_mantissa = mantissa << (63 - 52)
-    elif exponent == 0x7FF:
-        fp80_exponent = 0x7FFF
-        if mantissa == 0:
-            fp80_mantissa = 0x8000000000000000
-        else:
-            fp80_mantissa = 0xC000000000000000 | (mantissa << (63 - 52))
-    else:
-        exponent_bias_64 = 1023
-        exponent_bias_80 = 16383
-        fp80_exponent = exponent - exponent_bias_64 + exponent_bias_80
-        fp80_mantissa = (0x8000000000000000) | (mantissa << (63 - 52))
-
-    exponent_sign = (sign << 15) | fp80_exponent
-    fp80_bits = (exponent_sign << 64) | fp80_mantissa
-    fp80_bytes = fp80_bits.to_bytes(10, byteorder="big")
-    return fp80_bytes
-
-
-def float64_to_fp128_bytes(value: np.float64) -> bytes:
-    packed = struct.pack(">d", value)
-    (bits,) = struct.unpack(">Q", packed)
-    sign = (bits >> 63) & 0x1
-    exponent = (bits >> 52) & 0x7FF
-    mantissa = bits & 0xFFFFFFFFFFFFF
-
-    if exponent == 0:
-        fp128_exponent = 0
-    elif exponent == 0x7FF:
-        fp128_exponent = 0x7FFF
-    else:
-        exponent_bias_64 = 1023
-        exponent_bias_128 = 16383
-        fp128_exponent = exponent - exponent_bias_64 + exponent_bias_128
-
-    fp128_mantissa = mantissa << 60
-    fp128_bits = (sign << 127) | (fp128_exponent << 112) | fp128_mantissa
-    fp128_bytes = fp128_bits.to_bytes(16, byteorder="big")
-    return fp128_bytes
+intrinsic_suffix = {"float": "f32", "double": "f64"}
 
 
 def float_to_llvm_hex(f, precision):
-    if precision == "double":
-        f_cast = np.float64(f)
-        packed = struct.pack(">d", f_cast)
-        [i] = struct.unpack(">Q", packed)
-        return f"0x{i:016X}"
-    elif precision == "float":
-        f_cast = np.float32(f)
-        packed = struct.pack(">d", f_cast)
-        [i] = struct.unpack(">Q", packed)
-        return f"0x{i:016X}"
-    elif precision == "half":
-        f_cast = np.float16(f)
-        packed = f_cast.tobytes()
-        [i] = struct.unpack(">H", packed)
-        return f"0xH{i:04X}"
-    elif precision == "bf16":
-        f_cast = np.float32(f)
-        [bits] = struct.unpack(">I", struct.pack(">f", f_cast))
-        bf16_bits = bits >> 16
-        return f"0xR{bf16_bits:04X}"
-    elif precision == "fp80":
-        f_cast = np.float64(f)
-        fp80_bytes = float64_to_fp80_bytes(f_cast)
-        return f"0xK{fp80_bytes.hex().upper()}"
-    elif precision == "fp128":
-        f_cast = np.float64(f)
-        fp128_bytes = float64_to_fp128_bytes(f_cast)
-        swapped = fp128_bytes[8:] + fp128_bytes[:8]
-        return f"0xL{swapped.hex().upper()}"
-    else:
-        return str(f)
+    # LLVM IR spells a float constant as the double of the same value.
+    if precision == "float":
+        f = struct.unpack("<f", struct.pack("<f", f))[0]
+    [i] = struct.unpack(">Q", struct.pack(">d", f))
+    return f"0x{i:016X}"
 
 
 def generate_random_fp(precision):
     if precision == "double":
-        f = random.uniform(-1e10, 1e10)
-        dtype = np.float64
-    elif precision == "float":
-        f = random.uniform(-1e5, 1e5)
-        dtype = np.float32
-    elif precision == "half":
-        f = random.uniform(-1e3, 1e3)
-        dtype = np.float16
-    elif precision == "bf16":
-        f = random.uniform(-1e3, 1e3)
-        dtype = np.float32
-    elif precision == "fp80":
-        f = random.uniform(-1e10, 1e10)
-        dtype = np.float64
-    elif precision == "fp128":
-        f = random.uniform(-1e10, 1e10)
-        dtype = np.float64
-    else:
-        f = random.uniform(-1e3, 1e3)
-        dtype = np.float64
-    return dtype(f).item()
+        return random.uniform(-1e10, 1e10)
+    return random.uniform(-1e5, 1e5)
 
 
 OP_INFO = {
@@ -188,9 +60,9 @@ OP_INFO = {
     "fmul": {"llvm_instr": "fmul", "num_operands": 2, "kind": "arithmetic"},
     "fdiv": {"llvm_instr": "fdiv", "num_operands": 2, "kind": "arithmetic"},
     "fcmp": {"llvm_instr": "fcmp", "num_operands": 2, "kind": "compare"},
-    "fptrunc": {"llvm_instr": "fptrunc", "num_operands": 1, "kind": "cast"},
-    "fpext": {"llvm_instr": "fpext", "num_operands": 1, "kind": "cast"},
 }
+
+CASTS = [("fpext", "float", "double"), ("fptrunc", "double", "float")]
 
 FUNC_INFO = {
     "fmuladd": {"intrinsic": "llvm.fmuladd", "num_operands": 3},
@@ -238,20 +110,19 @@ FUNC_INFO = {
 }
 
 
-def generate_loop_code(llvm_type, iterations, body_instructions, final_acc_reg):
-    zero_literal = get_zero_literal(llvm_type)
+def generate_loop_code(llvm_type, body_instructions, final_acc_reg):
     code = f"""
-define i32 @main() optnone noinline {{
+define i32 @main(i32 %n) optnone noinline {{
 entry:
   %i = alloca i32
   %acc = alloca {llvm_type}
   store i32 0, i32* %i
-  store {llvm_type} {zero_literal}, {llvm_type}* %acc
+  store {llvm_type} 0.0, {llvm_type}* %acc
   br label %loop
 
 loop:
   %i_val = load i32, i32* %i
-  %cond = icmp slt i32 %i_val, {iterations}
+  %cond = icmp slt i32 %i_val, %n
   br i1 %cond, label %body, label %exit
 
 body:
@@ -275,10 +146,10 @@ define void @use({llvm_type} %val) {{
     return code
 
 
-def generate_arithmetic_op_code(op_key, precision, iterations):
+def generate_arithmetic_op_code(op_key, precision):
     """Generate LLVM IR for a basic arithmetic operator (or fneg) based on OP_INFO."""
     op_info = OP_INFO[op_key]
-    llvm_type = precision_to_llvm_type[precision]
+    llvm_type = precision
     body_lines = ""
     for idx in range(unrolled):
         operands = []
@@ -286,22 +157,17 @@ def generate_arithmetic_op_code(op_key, precision, iterations):
             f_val = generate_random_fp(precision)
             operands.append(float_to_llvm_hex(f_val, precision))
 
-        if op_info["num_operands"] == 1:
-            line = f"  %result{idx} = {op_info['llvm_instr']} {FAST_MATH_FLAG} {llvm_type} {operands[0]}"
-            body_lines += line + "\n"
-            body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {llvm_type} %acc_val{idx}, %result{idx}\n"
-        elif op_info["num_operands"] == 2:
-            line = f"  %result{idx} = {op_info['llvm_instr']} {FAST_MATH_FLAG} {llvm_type} {operands[0]}, {operands[1]}"
-            body_lines += line + "\n"
-            body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {llvm_type} %acc_val{idx}, %result{idx}\n"
+        line = f"  %result{idx} = {op_info['llvm_instr']} {FAST_MATH_FLAG} {llvm_type} {', '.join(operands)}"
+        body_lines += line + "\n"
+        body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {llvm_type} %acc_val{idx}, %result{idx}\n"
 
     final_acc = f"%acc_val{unrolled}"
-    return generate_loop_code(llvm_type, iterations, body_lines, final_acc)
+    return generate_loop_code(llvm_type, body_lines, final_acc)
 
 
-def generate_compare_op_code(precision, iterations):
+def generate_compare_op_code(precision):
     """Generate LLVM IR for an fcmp (comparison) operation."""
-    llvm_type = precision_to_llvm_type[precision]
+    llvm_type = precision
 
     body_lines = ""
     for idx in range(unrolled):
@@ -314,7 +180,7 @@ def generate_compare_op_code(precision, iterations):
         body_lines += f"  %cmp_int{idx} = zext i1 %cmp{idx} to i32\n"
 
     code = f"""
-define i32 @main() optnone noinline {{
+define i32 @main(i32 %n) optnone noinline {{
 entry:
   %i = alloca i32
   %acc = alloca i32
@@ -324,7 +190,7 @@ entry:
 
 loop:
   %i_val = load i32, i32* %i
-  %cond = icmp slt i32 %i_val, {iterations}
+  %cond = icmp slt i32 %i_val, %n
   br i1 %cond, label %body, label %exit
 
 body:
@@ -355,66 +221,28 @@ define void @use_i32(i32 %val) {{
     return code
 
 
-def generate_cast_op_code(op_key, src_precision, dst_precision, iterations):
+def generate_cast_op_code(op_key, src_precision, dst_precision):
     """Generate LLVM IR for a cast operation (fptrunc or fpext)."""
-    op_info = OP_INFO[op_key]
-    src_type = precision_to_llvm_type[src_precision]
-    dst_type = precision_to_llvm_type[dst_precision]
-    zero_literal = get_zero_literal(dst_precision)
-
     body_lines = ""
     for idx in range(unrolled):
         f_val = generate_random_fp(src_precision)
         hex_val = float_to_llvm_hex(f_val, src_precision)
-        line = f"  %result{idx} = {op_info['llvm_instr']} {src_type} {hex_val} to {dst_type}"
+        line = f"  %result{idx} = {op_key} {src_precision} {hex_val} to {dst_precision}"
         body_lines += line + "\n"
-        body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {dst_type} %acc_val{idx}, %result{idx}\n"
+        body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {dst_precision} %acc_val{idx}, %result{idx}\n"
 
     final_acc = f"%acc_val{unrolled}"
-    code = f"""
-define i32 @main() optnone noinline {{
-entry:
-  %i = alloca i32
-  %acc = alloca {dst_type}
-  store i32 0, i32* %i
-  store {dst_type} {zero_literal}, {dst_type}* %acc
-  br label %loop
-
-loop:
-  %i_val = load i32, i32* %i
-  %cond = icmp slt i32 %i_val, {iterations}
-  br i1 %cond, label %body, label %exit
-
-body:
-  %acc_val0 = load {dst_type}, {dst_type}* %acc
-{body_lines}
-  store {dst_type} {final_acc}, {dst_type}* %acc
-  %i_next = add i32 %i_val, 1
-  store i32 %i_next, i32* %i
-  br label %loop
-
-exit:
-  %final_acc = load {dst_type}, {dst_type}* %acc
-  call void @use({dst_type} %final_acc)
-  ret i32 0
-}}
-
-define void @use({dst_type} %val) {{
-  ret void
-}}
-"""
-    return code
+    return generate_loop_code(dst_precision, body_lines, final_acc)
 
 
-def generate_function_call_code(func_name, precision, iterations):
+def generate_function_call_code(func_name, precision):
     """Generate LLVM IR for a function call based on FUNC_INFO."""
 
     func_info = FUNC_INFO[func_name]
-    llvm_type = precision_to_llvm_type[precision]
-    intrinsic_suffix = precision_to_intrinsic_suffix.get(precision, "")
+    llvm_type = precision
 
     if func_info["intrinsic"]:
-        fn = f"{func_info['intrinsic']}.{intrinsic_suffix}"
+        fn = f"{func_info['intrinsic']}.{intrinsic_suffix[precision]}"
     else:
         fn = func_name
 
@@ -427,28 +255,14 @@ def generate_function_call_code(func_name, precision, iterations):
             f_val = generate_random_fp(precision)
             i_val = random.randint(-10, 10)
             f_hex = float_to_llvm_hex(f_val, precision)
-            line = f"  %result{idx} = call {FAST_MATH_FLAG} {llvm_type} @{fn}(" f"{llvm_type} {f_hex}, i32 {i_val})"
-            body_lines += line + "\n"
-            body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {llvm_type} %acc_val{idx}, %result{idx}\n"
+            args = f"{llvm_type} {f_hex}, i32 {i_val}"
         else:
-            operands = []
-            for _ in range(num_operands):
-                f_val = generate_random_fp(precision)
-                operands.append(float_to_llvm_hex(f_val, precision))
-
-            if num_operands == 1:
-                call_str = f"call {FAST_MATH_FLAG} {llvm_type} @{fn}({llvm_type} {operands[0]})"
-            elif num_operands == 2:
-                call_str = (
-                    f"call {FAST_MATH_FLAG} {llvm_type} @{fn}({llvm_type} {operands[0]}, {llvm_type} {operands[1]})"
-                )
-            elif num_operands == 3:
-                call_str = f"call {FAST_MATH_FLAG} {llvm_type} @{fn}({llvm_type} {operands[0]}, {llvm_type} {operands[1]}, {llvm_type} {operands[2]})"
-            else:
-                call_str = ""
-
-            body_lines += f"  %result{idx} = {call_str}\n"
-            body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {llvm_type} %acc_val{idx}, %result{idx}\n"
+            args = ", ".join(
+                f"{llvm_type} {float_to_llvm_hex(generate_random_fp(precision), precision)}"
+                for _ in range(num_operands)
+            )
+        body_lines += f"  %result{idx} = call {FAST_MATH_FLAG} {llvm_type} @{fn}({args})\n"
+        body_lines += f"  %acc_val{idx+1} = fadd {FAST_MATH_FLAG} {llvm_type} %acc_val{idx}, %result{idx}\n"
 
     if func_name == "powi":
         decl = f"declare {llvm_type} @{fn}({llvm_type}, i32)"
@@ -458,17 +272,17 @@ def generate_function_call_code(func_name, precision, iterations):
 
     code = f"""
 {decl}
-define i32 @main() optnone noinline {{
+define i32 @main(i32 %n) optnone noinline {{
 entry:
   %i = alloca i32
   %acc = alloca {llvm_type}
   store i32 0, i32* %i
-  store {llvm_type} {get_zero_literal(precision)}, {llvm_type}* %acc
+  store {llvm_type} 0.0, {llvm_type}* %acc
   br label %loop
 
 loop:
   %i_val = load i32, i32* %i
-  %cond = icmp slt i32 %i_val, {iterations}
+  %cond = icmp slt i32 %i_val, %n
   br i1 %cond, label %body, label %exit
 
 body:
@@ -491,9 +305,9 @@ define void @use({llvm_type} %val) {{
     return code
 
 
-def generate_baseline_code(iterations):
+def generate_baseline_code():
     return f"""
-define i32 @main() optnone noinline {{
+define i32 @main(i32 %n) optnone noinline {{
 entry:
   %i = alloca i32
   store i32 0, i32* %i
@@ -501,7 +315,7 @@ entry:
 
 loop:
   %i_val = load i32, i32* %i
-  %cond = icmp slt i32 %i_val, {iterations}
+  %cond = icmp slt i32 %i_val, %n
   br i1 %cond, label %body, label %exit
 
 body:
@@ -515,132 +329,156 @@ exit:
 """
 
 
-def create_execution_engine():
-    target = llvm.Target.from_default_triple()
-    target_machine = target.create_target_machine()
-    mod = llvm.parse_assembly("")
-    engine = llvm.create_mcjit_compiler(mod, target_machine)
-    return engine
+def generate_int_chain_code():
+    """A dependent chain of integer adds, one cycle each: the clock."""
+    body = "".join(f"  %a{i + 1} = add i64 %a{i}, %step\n" for i in range(unrolled))
+    return f"""
+define i32 @main(i32 %n) optnone noinline {{
+entry:
+  %i = alloca i32
+  %acc = alloca i64
+  %step = sext i32 %n to i64
+  store i32 0, i32* %i
+  store i64 0, i64* %acc
+  br label %loop
+
+loop:
+  %i_val = load i32, i32* %i
+  %cond = icmp slt i32 %i_val, %n
+  br i1 %cond, label %body, label %exit
+
+body:
+  %a0 = load i64, i64* %acc
+{body}
+  store i64 %a{unrolled}, i64* %acc
+  %i_next = add i32 %i_val, 1
+  store i32 %i_next, i32* %i
+  br label %loop
+
+exit:
+  %final = load i64, i64* %acc
+  %r = trunc i64 %final to i32
+  ret i32 %r
+}}
+"""
 
 
-def run_llvm_ir_jit(llvm_ir):
-    engine = create_execution_engine()
+def create_target_machine(cpu, features):
+    return llvm.Target.from_default_triple().create_target_machine(cpu=cpu, features=features)
+
+
+def target_complaints(cpu, features):
+    """What LLVM prints about the CPU and features it does not know."""
+    with tempfile.TemporaryFile() as err:
+        saved = os.dup(2)
+        os.dup2(err.fileno(), 2)
+        try:
+            create_target_machine(cpu, features)
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+        err.seek(0)
+        return list(dict.fromkeys(line for line in err.read().decode().splitlines() if line.strip()))
+
+
+def checked_features(cpu, features):
+    """The features to compile with. A disabled feature this llvmlite's LLVM
+    does not know is one it cannot emit either, so it is dropped; an unknown
+    CPU or enabled feature stops the measurement, which would otherwise time
+    code for another processor."""
+    unknown = {line.split("'")[1] for line in target_complaints(cpu, features) if "recognized feature" in line}
+    features = ",".join(f for f in features.split(",") if f and not (f.startswith("-") and f in unknown))
+    complaints = target_complaints(cpu, features)
+    if complaints:
+        v = ".".join(map(str, llvm.llvm_version_info))
+        sys.exit(f"microbm_cpu.py: the LLVM {v} of llvmlite cannot compile for target-cpu {cpu}:\n" + "\n".join(complaints))
+    return features
+
+
+def compile_jit(llvm_ir, cpu, features):
+    """The engine, which the caller keeps alive, and its main(n)."""
+    engine = llvm.create_mcjit_compiler(llvm.parse_assembly(""), create_target_machine(cpu, features))
     mod = llvm.parse_assembly(llvm_ir)
     mod.verify()
     engine.add_module(mod)
     engine.finalize_object()
-
-    func_ptr = engine.get_function_address("main")
-    cfunc = ctypes.CFUNCTYPE(ctypes.c_int)(func_ptr)
-
-    start = time.perf_counter()
-    retval = cfunc()
-    end = time.perf_counter()
-
-    return (end - start), retval
+    return engine, ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)(engine.get_function_address("main"))
 
 
-def host_target_cpu():
-    clang = os.environ.get("CLANG", "clang")
-    out = subprocess.run([clang, "-march=native", "-###", "-x", "c", "-c", os.devnull], capture_output=True, text=True).stderr
-    m = re.search(r'"-target-cpu" "([^"]+)"', out)
-    if not m:
-        raise SystemExit(f"microbm_cpu.py: could not read -target-cpu from {clang}; pass --native-arch")
-    return m.group(1)
+class Bench:
+    """One JIT-compiled loop, its trip count fixed at `iterations` if given,
+    else by trial runs to last `target` seconds."""
+
+    def __init__(self, llvm_ir, args, target=TARGET_S):
+        self.engine, self.main = compile_jit(llvm_ir, args.cpu, args.features)
+        self.n = args.iterations or 1000
+        t = self.run()
+        while not args.iterations and t < TRIAL_S:
+            self.n *= 10
+            t = self.run()
+        if not args.iterations:
+            self.n = min(2**31 - 1, max(1, int(self.n * target / t)))
+
+    def run(self):
+        start = time.perf_counter()
+        self.main(self.n)
+        return time.perf_counter() - start
+
+    def per_trip(self):
+        """Seconds per trip, the best of REPS runs."""
+        return min(self.run() for _ in range(REPS)) / self.n
 
 
-def cpu_model_name():
-    try:
-        with open("/proc/cpuinfo") as f:
-            for line in f:
-                if line.startswith("model name"):
-                    return line.split(":", 1)[1].strip()
-    except OSError:
-        pass
-    return platform.processor() or "unknown CPU"
+def benchmarks():
+    """(row, type, IR) of every row, in the order they print."""
+    for precision in precisions:
+        for instr, info in OP_INFO.items():
+            if info["kind"] == "arithmetic":
+                yield instr, precision, generate_arithmetic_op_code(instr, precision)
+            else:
+                yield instr, precision, generate_compare_op_code(precision)
+        for op, src, dst in CASTS:
+            if src == precision:
+                yield f"{op}_{src}_to_{dst}", src, generate_cast_op_code(op, src, dst)
+        for func in FUNC_INFO:
+            yield func, precision, generate_function_call_code(func, precision)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--cpu", required=True, help="target-cpu the microbenchmarks are compiled for")
+    ap.add_argument("--features", default="", help="target features, as +name,-name")
+    ap.add_argument("--device", required=True, help="the CPU's model name, for the header")
+    ap.add_argument("--iterations", type=int, default=0, help="loop trips of each run, in place of sizing it by time")
+    args = ap.parse_args()
+    args.features = checked_features(args.cpu, args.features)
+
+    # The clock is read again before every row, so that a row is counted in
+    # the cycles of the frequency it ran at.
+    loop = Bench(generate_baseline_code(), args, TARGET_S / 5)
+    chain = Bench(generate_int_chain_code(), args, TARGET_S / 5)
+
+    def clock():
+        """The loop's own time per trip, and the length of a cycle."""
+        base = loop.per_trip()
+        cycle = (chain.per_trip() - base) / unrolled
+        if cycle <= 0:
+            sys.exit("microbm_cpu.py: the integer-add chain measured no time, so there is no cycle to count in")
+        return base, cycle
+
+    rows = list(benchmarks())
+    print(f"# Generated by microbm_cpu.py on {args.device}")
+    print(f"# native_arch={args.cpu}")
+    print(f"# scalar_types={','.join(sorted(precisions, reverse=True))}", flush=True)
+    for k, (name, precision, code) in enumerate(rows, 1):
+        print(f"[microbm_cpu] {k}/{len(rows)} {name},{precision}", file=sys.stderr, flush=True)
+        bench = Bench(code, args)
+        base, cycle = clock()
+        op = (bench.per_trip() - base) / unrolled
+        # A positive floor, as the GPU rows keep: an operation the loop hides
+        # entirely still has a row.
+        print(f"{name},{precision},{max(op / cycle * 2.0, 1e-12):.9g}", flush=True)
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Measure the host CPU cost model Poseidon prices CPU candidates from.")
-    ap.add_argument("--out", default="results.csv")
-    ap.add_argument("--native-arch", default=None, help="target-cpu the compile will use; default: what $CLANG -march=native resolves to")
-    args = ap.parse_args()
-    native_arch = args.native_arch or host_target_cpu()
-    csv_file = args.out
-    with open(csv_file, "w", newline="") as csvfile:
-        csvfile.write(f"# Generated by microbm_cpu.py on {cpu_model_name()}\n")
-        csvfile.write(f"# native_arch={native_arch}\n")
-        csvfile.write(f"# scalar_types={','.join(sorted(precisions, reverse=True))}\n")
-        fieldnames = ["instruction", "precision", "cost"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-        llvm_code = generate_baseline_code(iterations)
-        baseline_time, _ = run_llvm_ir_jit(llvm_code)
-
-        for precision in precisions:
-            for instr in OP_INFO:
-                op_kind = OP_INFO[instr]["kind"]
-                if op_kind == "cast":
-                    src_precision = precision
-                    src_rank = precision_ranks.get(src_precision)
-                    if src_rank is None:
-                        continue
-
-                    if instr == "fptrunc":
-                        dst_precisions = [
-                            p for p in precisions_ordered if p in precisions and precision_ranks[p] < src_rank
-                        ]
-                    else:
-                        dst_precisions = [
-                            p for p in precisions_ordered if p in precisions and precision_ranks[p] > src_rank
-                        ]
-
-                    for dst_precision in dst_precisions:
-                        if (src_precision, dst_precision) in [
-                            ("half", "bf16"),
-                            ("bf16", "half"),
-                        ]:
-                            continue
-                        code = generate_cast_op_code(instr, src_precision, dst_precision, iterations)
-                        name = f"{instr}_{src_precision}_to_{dst_precision}"
-                        elapsed, _ = run_llvm_ir_jit(code)
-                        adjusted = (elapsed - baseline_time) * AMPLIFIER
-                        writer.writerow(
-                            {
-                                "instruction": name,
-                                "precision": src_precision,
-                                "cost": int(adjusted),
-                            }
-                        )
-                else:
-                    if op_kind == "arithmetic":
-                        code = generate_arithmetic_op_code(instr, precision, iterations)
-                    elif op_kind == "compare":
-                        code = generate_compare_op_code(precision, iterations)
-                    else:
-                        code = ""
-                    if code.strip():
-                        elapsed, _ = run_llvm_ir_jit(code)
-                        adjusted = (elapsed - baseline_time) * AMPLIFIER
-                        writer.writerow(
-                            {
-                                "instruction": instr,
-                                "precision": precision,
-                                "cost": int(adjusted),
-                            }
-                        )
-
-            for func in FUNC_INFO:
-                code = generate_function_call_code(func, precision, iterations)
-                if code.strip():
-                    elapsed, _ = run_llvm_ir_jit(code)
-                    adjusted = (elapsed - baseline_time) * AMPLIFIER
-                    writer.writerow(
-                        {
-                            "instruction": func,
-                            "precision": precision,
-                            "cost": int(adjusted),
-                        }
-                    )
-
-    print(f"Results in '{csv_file}'. Baseline: {baseline_time:.6f}s")
+    main()

@@ -43,7 +43,7 @@ jobs:
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} libzstd-dev libmpfr-dev
-          sudo python3 -m pip install --upgrade pip lit
+          sudo python3 -m pip install --upgrade pip lit llvmlite
 
     # Racket as Herbie's own CI pins it; Rust comes with the runner image.
     - name: Install Racket

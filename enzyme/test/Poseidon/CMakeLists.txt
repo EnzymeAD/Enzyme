@@ -26,7 +26,7 @@ message(
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(POSEIDON_TEST_COST_MODELS ${CMAKE_CURRENT_BINARY_DIR}/cost_models)
 set(_generator ${CMAKE_CURRENT_SOURCE_DIR}/Inputs/make_cost_models.py)
-set(_platform ${POSEIDON_SOURCE_DIR}/tools/herbie/csv_to_herbie_platform.py)
+set(_platform ${POSEIDON_SOURCE_DIR}/tools/calibrate/herbie_platform.py)
 set(_outputs "")
 foreach(
   _model
@@ -41,11 +41,7 @@ foreach(
   list(APPEND _outputs ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
 endforeach()
 set(_platforms "")
-foreach(_arch_model sm_120:sm_120_synthetic sm_90:sm_90_synthetic
-        ${POSEIDON_TEST_GPU_ARCH_RESOLVED}:gpu_synthetic)
-  string(REPLACE ":" ";" _arch_model ${_arch_model})
-  list(GET _arch_model 0 _arch)
-  list(GET _arch_model 1 _model)
+foreach(_model sm_120_synthetic sm_90_synthetic gpu_synthetic)
   set(_csv ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
   set(_rkt ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.herbie.rkt)
   list(APPEND _outputs ${_csv} ${_rkt})
@@ -57,8 +53,6 @@ foreach(_arch_model sm_120:sm_120_synthetic sm_90:sm_90_synthetic
     ${_platform}
     --csv
     ${_csv}
-    --arch
-    ${_arch}
     --output
     ${_rkt})
 endforeach()

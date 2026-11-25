@@ -1,4 +1,4 @@
-//===- microbm.cu - per-operation costs on NVIDIA GPUs --------------------===//
+//===- microbm.cu - per-operation costs on NVIDIA and AMD GPUs ------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,122 +6,116 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Unified Poseidon GPU cost-model profiler.
+// The per-op rows of a GPU cost model, measured on the GPU it runs on: built
+// as CUDA (poseidon-microbm) and as HIP (poseidon-microbm-hip).
 //
-// Methodology:
-//   1. Each op gets a kernel doing N dependent ops per thread (private
-//      register)
-//   2. Launched on <SMs * 4 blocks, 1024 threads> to saturate the GPU and
-//      surface throughput throttling (e.g. F64 1:N pipeline on consumer parts)
-//   3. Time T(N) and T(2N) via cudaEvent
-//   4. cycles = ((T(2N) - T(N)) * 2 / chain_2N) * clock_rate_ghz * 2
-//      (the trailing *2 is an FMA factor the CSV's unit includes)
+// Each op gets a kernel doing N dependent ops per thread in a register,
+// launched on enough threads to saturate the device and timed at N and 2N:
+//   cycles = (T(2N) - T(N)) / N * clock_rate_ghz * 2 / threads
+// (the trailing *2 is an FMA factor the CSV's unit includes).
 //
-// Output: cost-model rows on stdout in Poseidon's loader format
-//   # native_arch=sm_<cc>
-//   # scalar_types=...
-//   # matrix_types=...
-//   opcode,precision,cost
+// Each loop body is the instruction its row names. On NVIDIA that is PTX, or
+// libdevice for the math library. On AMD an op the ISA has as one instruction
+// is that instruction in amdgcn inline assembly, so the compiler can neither
+// fold, contract nor reassociate the chain; an op the backend lowers to a
+// sequence (division, round, the math library, which is ROCm's ocml) is the
+// IEEE lowering a HIP device compile emits, behind an empty asm the value
+// passes through, so no identity of the op (round(round(x)) = round(x)) can
+// shorten the chain.
 //
-// WMMA load/store rows are derived as marginal cost:
-//   load_a_cycles = T(load_a + N x mma) - T(N x mma)
-// so a fused tile cost decomposes as
-//   tile_cost = load_a + load_b + load_c + K x mma + store_d.
+// On NVIDIA the tensor-core tile rows follow; in-kernel raises are NVPTX-only,
+// so no compile for an AMD GPU reads them.
 //
-// Run by poseidon-calibrate; standalone: poseidon-microbm > <csv>
+// Rows go to stdout in Poseidon's loader format. With --device the tool prints
+// "<name>\t<arch>" of device 0 and exits.
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#ifdef __HIP__
+#include "../../runtime/hip_as_cuda.h"
+#else
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <mma.h>
+#endif
 
-using namespace nvcuda;
+// The math library entry points, declared explicitly so that no math.h
+// fast-math lowering applies and no header maps a name to a builtin. Each is
+// the precise form.
+#ifdef __HIP__
+#define MATHF(fn) __ocml_##fn##_f32
+#define MATHD(fn) __ocml_##fn##_f64
+#else
+#define MATHF(fn) __nv_##fn##f
+#define MATHD(fn) __nv_##fn
+#endif
 
-// libdevice functions, declared explicitly so that no math.h fast-math
-// lowering applies. Each is the precise (libm-equivalent) form.
+#define LIBM_UNARY(X)                                                          \
+  X(cbrt);                                                                     \
+  X(exp);                                                                      \
+  X(expm1);                                                                    \
+  X(exp2);                                                                     \
+  X(log);                                                                      \
+  X(log1p);                                                                    \
+  X(log2);                                                                     \
+  X(log10);                                                                    \
+  X(sin);                                                                      \
+  X(cos);                                                                      \
+  X(tan);                                                                      \
+  X(asin);                                                                     \
+  X(acos);                                                                     \
+  X(atan);                                                                     \
+  X(sinh);                                                                     \
+  X(cosh);                                                                     \
+  X(tanh);                                                                     \
+  X(asinh);                                                                    \
+  X(acosh);                                                                    \
+  X(atanh);                                                                    \
+  X(erf);                                                                      \
+  X(lgamma);                                                                   \
+  X(tgamma);
+// The rounding ops AMD has no single instruction for.
+#ifdef __HIP__
+#define VENDOR_LIBM_UNARY(X) X(round);
+#else
+#define VENDOR_LIBM_UNARY(X)                                                   \
+  X(ceil);                                                                     \
+  X(floor);                                                                    \
+  X(trunc);                                                                    \
+  X(round);                                                                    \
+  X(rint);
+#endif
+// (op, second operand).
+#define LIBM_BINARY(X)                                                         \
+  X(atan2, 1.0001);                                                            \
+  X(pow, 1.0001);                                                              \
+  X(hypot, 1.0001);                                                            \
+  X(fmod, 1.0001);                                                             \
+  X(remainder, 1.0001);                                                        \
+  X(fdim, 0.5);
+
+#define DECLARE_UNARY(fn)                                                      \
+  __device__ float MATHF(fn)(float);                                           \
+  __device__ double MATHD(fn)(double)
+#define DECLARE_BINARY(fn, other)                                              \
+  __device__ float MATHF(fn)(float, float);                                    \
+  __device__ double MATHD(fn)(double, double)
 extern "C" {
-__device__ float __nv_sqrtf(float);
-__device__ double __nv_sqrt(double);
-__device__ float __nv_rsqrtf(float);
-__device__ double __nv_rsqrt(double);
-__device__ float __nv_cbrtf(float);
-__device__ double __nv_cbrt(double);
-__device__ float __nv_expf(float);
-__device__ double __nv_exp(double);
-__device__ float __nv_expm1f(float);
-__device__ double __nv_expm1(double);
-__device__ float __nv_exp2f(float);
-__device__ double __nv_exp2(double);
-__device__ float __nv_logf(float);
-__device__ double __nv_log(double);
-__device__ float __nv_log1pf(float);
-__device__ double __nv_log1p(double);
-__device__ float __nv_log2f(float);
-__device__ double __nv_log2(double);
-__device__ float __nv_log10f(float);
-__device__ double __nv_log10(double);
-__device__ float __nv_sinf(float);
-__device__ double __nv_sin(double);
-__device__ float __nv_cosf(float);
-__device__ double __nv_cos(double);
-__device__ float __nv_tanf(float);
-__device__ double __nv_tan(double);
-__device__ float __nv_asinf(float);
-__device__ double __nv_asin(double);
-__device__ float __nv_acosf(float);
-__device__ double __nv_acos(double);
-__device__ float __nv_atanf(float);
-__device__ double __nv_atan(double);
-__device__ float __nv_atan2f(float, float);
-__device__ double __nv_atan2(double, double);
-__device__ float __nv_sinhf(float);
-__device__ double __nv_sinh(double);
-__device__ float __nv_coshf(float);
-__device__ double __nv_cosh(double);
-__device__ float __nv_tanhf(float);
-__device__ double __nv_tanh(double);
-__device__ float __nv_asinhf(float);
-__device__ double __nv_asinh(double);
-__device__ float __nv_acoshf(float);
-__device__ double __nv_acosh(double);
-__device__ float __nv_atanhf(float);
-__device__ double __nv_atanh(double);
-__device__ float __nv_powf(float, float);
-__device__ double __nv_pow(double, double);
-__device__ float __nv_hypotf(float, float);
-__device__ double __nv_hypot(double, double);
-__device__ float __nv_erff(float);
-__device__ double __nv_erf(double);
-__device__ float __nv_lgammaf(float);
-__device__ double __nv_lgamma(double);
-__device__ float __nv_tgammaf(float);
-__device__ double __nv_tgamma(double);
-__device__ float __nv_fmodf(float, float);
-__device__ double __nv_fmod(double, double);
-__device__ float __nv_remainderf(float, float);
-__device__ double __nv_remainder(double, double);
-__device__ float __nv_fdimf(float, float);
-__device__ double __nv_fdim(double, double);
-__device__ float __nv_copysignf(float, float);
-__device__ double __nv_copysign(double, double);
+LIBM_UNARY(DECLARE_UNARY)
+VENDOR_LIBM_UNARY(DECLARE_UNARY)
+DECLARE_UNARY(sqrt);
+LIBM_BINARY(DECLARE_BINARY)
+#ifndef __HIP__
+DECLARE_BINARY(copysign, 0);
 __device__ float __nv_fmaf(float, float, float);
 __device__ double __nv_fma(double, double, double);
-__device__ float __nv_fabsf(float);
-__device__ double __nv_fabs(double);
-__device__ float __nv_ceilf(float);
-__device__ double __nv_ceil(double);
-__device__ float __nv_floorf(float);
-__device__ double __nv_floor(double);
-__device__ float __nv_truncf(float);
-__device__ double __nv_trunc(double);
-__device__ float __nv_roundf(float);
-__device__ double __nv_round(double);
-__device__ float __nv_rintf(float);
-__device__ double __nv_rint(double);
+#endif
 }
 
 #define CHAIN32(stmt)                                                          \
@@ -130,6 +124,178 @@ __device__ double __nv_rint(double);
           stmt stmt stmt
 #define UNROLL 32
 
+// On AMD the value passes through an empty asm: no instruction, and nothing
+// known about it afterwards. NVIDIA's libdevice calls need no such barrier.
+#ifdef __HIP__
+#define OPAQUE(v) asm volatile("" : "+v"(v))
+#else
+#define OPAQUE(v)
+#endif
+
+#define K_LIBM_UN(name, T, libfn)                                              \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
+    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
+      CHAIN32(OPAQUE(a); a = libfn(a);)                                        \
+    }                                                                          \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
+  }
+
+#define K_LIBM_BIN(name, T, libfn, other)                                      \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
+    T b = (T)(other);                                                          \
+    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
+      CHAIN32(OPAQUE(a); OPAQUE(b); a = libfn(a, b);)                          \
+    }                                                                          \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
+  }
+
+// Expensive-op row shape: Poseidon's materialized kernels execute sqrt and
+// div as independent instances in unrolled loop bodies, and a latency-bound
+// chain flattens the f32:f64 ratio. They are measured as 8 independent lanes
+// per thread, with the same total op count, launch and cost arithmetic.
+#define K_LIBM_UN_ILP(name, T, libfn)                                          \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T v[8];                                                                    \
+    _Pragma("unroll") for (int j = 0; j < 8; ++j) v[j] =                       \
+        (T)((threadIdx.x + blockIdx.x * blockDim.x + j) * 0.0001) + (T)1.5;    \
+    _Pragma("unroll 1") for (int i = 0; i < N / 8; ++i) {                      \
+      _Pragma("unroll") for (int j = 0; j < 8; ++j) {                          \
+        OPAQUE(v[j]);                                                          \
+        v[j] = libfn(v[j]);                                                    \
+      }                                                                        \
+    }                                                                          \
+    T s = (T)0;                                                                \
+    _Pragma("unroll") for (int j = 0; j < 8; ++j) s += v[j];                   \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = s;                            \
+  }
+
+#define DEFINE_UNARY(fn)                                                       \
+  K_LIBM_UN(fn, float, MATHF(fn)) K_LIBM_UN(fn, double, MATHD(fn))
+#define DEFINE_BINARY(fn, other)                                               \
+  K_LIBM_BIN(fn, float, MATHF(fn), other)                                      \
+  K_LIBM_BIN(fn, double, MATHD(fn), other)
+LIBM_UNARY(DEFINE_UNARY)
+VENDOR_LIBM_UNARY(DEFINE_UNARY)
+LIBM_BINARY(DEFINE_BINARY)
+K_LIBM_UN_ILP(ilp_sqrt, float, MATHF(sqrt))
+K_LIBM_UN_ILP(ilp_sqrt, double, MATHD(sqrt))
+
+#ifdef __HIP__
+// The same, as one asm statement: the backend pads every asm statement it
+// cannot see into with a wait state, which a dependent chain of ordinary VALU
+// instructions does not need, so the chain is handed over whole.
+#define ASM32(insn) CHAIN32(insn "\n\t")
+// One instruction per op on the chain value %0. Its constants are registers
+// (%1, %2): the VOP3 encoding the f64 ops use takes no literal on gfx9.
+#define K_ASM(name, T, insn, c1, c2)                                           \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
+    T x = (T)(c1), y = (T)(c2);                                                \
+    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
+      asm volatile(ASM32(insn) : "+v"(a) : "v"(x), "v"(y));                    \
+    }                                                                          \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
+  }
+
+// The sign-bit ops act on the 32-bit word that holds the sign: the value
+// itself in f32, the high word of an f64, which is all the backend touches.
+#define K_ASM_SIGN(name, T, insn, m1, m2)                                      \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
+    uint64_t bits = 0;                                                         \
+    memcpy(&bits, &a, sizeof(T));                                              \
+    uint32_t w = (uint32_t)(bits >> (8 * sizeof(T) - 32));                     \
+    uint32_t x = (m1), y = (m2);                                               \
+    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
+      asm volatile(ASM32(insn) : "+v"(w) : "v"(x), "v"(y));                    \
+    }                                                                          \
+    bits = (bits & ~(0xffffffffull << (8 * sizeof(T) - 32))) |                 \
+           ((uint64_t)w << (8 * sizeof(T) - 32));                              \
+    memcpy(&a, &bits, sizeof(T));                                              \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
+  }
+
+#define K_FDIV_ILP(name, T, divisor)                                           \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T v[8];                                                                    \
+    T d = (T)(divisor);                                                        \
+    _Pragma("unroll") for (int j = 0; j < 8; ++j) v[j] =                       \
+        (T)((threadIdx.x + blockIdx.x * blockDim.x + j) * 0.0001) + (T)1.5;    \
+    _Pragma("unroll 1") for (int i = 0; i < N / 8; ++i) {                      \
+      OPAQUE(d);                                                               \
+      _Pragma("unroll") for (int j = 0; j < 8; ++j) v[j] = v[j] / d;           \
+    }                                                                          \
+    T s = (T)0;                                                                \
+    _Pragma("unroll") for (int j = 0; j < 8; ++j) s += v[j];                   \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = s;                            \
+  }
+
+// A regime split's condition and its select: fcmp une + select, lowered to
+// v_cmp + v_cndmask (one per 32-bit half).
+#define K_FCMP(name, T, alt)                                                   \
+  template <int N> __global__ void name##_##T(T *out) {                        \
+    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
+    T c = (T)(alt);                                                            \
+    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
+      OPAQUE(c);                                                               \
+      CHAIN32(a = (a != c) ? a : c;)                                           \
+    }                                                                          \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
+  }
+
+#define K_CVT(name, srcT, dstT, cvt_fwd, cvt_bwd)                              \
+  template <int N> __global__ void name(srcT *out) {                           \
+    srcT a =                                                                   \
+        (srcT)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (srcT)1.5;  \
+    dstT b = (dstT)0;                                                          \
+    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
+      asm volatile(ASM32(cvt_fwd " %1, %0\n\t" cvt_bwd " %0, %1")              \
+                   : "+v"(a), "+v"(b));                                        \
+    }                                                                          \
+    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
+  }
+
+K_ASM(fadd, float, "v_add_f32 %0, %0, %1", 1.0f, 0.0f)
+K_ASM(fsub, float, "v_sub_f32 %0, %0, %1", 0.5f, 0.0f)
+K_ASM(fmul, float, "v_mul_f32 %0, %0, %1", 1.0000001f, 0.0f)
+K_FDIV_ILP(ilp_fdiv, float, 1.0000001f)
+K_ASM_SIGN(fneg, float, "v_xor_b32 %0, %1, %0", 0x80000000u, 0u)
+K_ASM_SIGN(fabs, float, "v_and_b32 %0, %1, %0", 0x7fffffffu, 0u)
+K_FCMP(fcmp, float, 1.0f)
+K_ASM(fma, float, "v_fma_f32 %0, %0, %1, %2", 1.0001f, 0.0f)
+K_ASM(ceil, float, "v_ceil_f32 %0, %0", 0.0f, 0.0f)
+K_ASM(floor, float, "v_floor_f32 %0, %0", 0.0f, 0.0f)
+K_ASM(trunc, float, "v_trunc_f32 %0, %0", 0.0f, 0.0f)
+K_ASM(rint, float, "v_rndne_f32 %0, %0", 0.0f, 0.0f)
+K_ASM(maxnum, float, "v_max_f32 %0, %0, %1", 1.0f, 0.0f)
+K_ASM(minnum, float, "v_min_f32 %0, %0, %1", 1.0f, 0.0f)
+// copysign(a, -1.0): v_bfi_b32 takes the magnitude bits from a, the sign from
+// the second operand.
+K_ASM_SIGN(copysign, float, "v_bfi_b32 %0, %1, %0, %2", 0x7fffffffu,
+           0xbf800000u)
+
+K_ASM(fadd, double, "v_add_f64 %0, %0, %1", 1.0, 0.0)
+K_ASM(fsub, double, "v_add_f64 %0, %0, -%1", 0.5, 0.0)
+K_ASM(fmul, double, "v_mul_f64 %0, %0, %1", 1.0000000000000002, 0.0)
+K_FDIV_ILP(ilp_fdiv, double, 1.0000000000000002)
+K_ASM_SIGN(fneg, double, "v_xor_b32 %0, %1, %0", 0x80000000u, 0u)
+K_ASM_SIGN(fabs, double, "v_and_b32 %0, %1, %0", 0x7fffffffu, 0u)
+K_FCMP(fcmp, double, 1.0)
+K_ASM(fma, double, "v_fma_f64 %0, %0, %1, %2", 1.0001, 0.0)
+K_ASM(ceil, double, "v_ceil_f64 %0, %0", 0.0, 0.0)
+K_ASM(floor, double, "v_floor_f64 %0, %0", 0.0, 0.0)
+K_ASM(trunc, double, "v_trunc_f64 %0, %0", 0.0, 0.0)
+K_ASM(rint, double, "v_rndne_f64 %0, %0", 0.0, 0.0)
+K_ASM(maxnum, double, "v_max_f64 %0, %0, %1", 1.0, 0.0)
+K_ASM(minnum, double, "v_min_f64 %0, %0, %1", 1.0, 0.0)
+K_ASM_SIGN(copysign, double, "v_bfi_b32 %0, %1, %0, %2", 0x7fffffffu,
+           0xbff00000u)
+
+K_CVT(cvt_f32_f64, float, double, "v_cvt_f64_f32", "v_cvt_f32_f64")
+K_CVT(cvt_f64_f32, double, float, "v_cvt_f32_f64", "v_cvt_f64_f32")
+#else
 #define K_PTX_BIN(name, T, asm_constraint, insn, arg_imm)                      \
   template <int N> __global__ void name##_##T(T *out) {                        \
     T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
@@ -147,43 +313,6 @@ __device__ double __nv_rint(double);
       CHAIN32(asm volatile(insn " %0, %0;" : "+" asm_constraint(a));)          \
     }                                                                          \
     out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
-  }
-
-#define K_LIBM_UN(name, T, libfn)                                              \
-  template <int N> __global__ void name##_##T(T *out) {                        \
-    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
-    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
-      CHAIN32(a = libfn(a);)                                                   \
-    }                                                                          \
-    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
-  }
-
-#define K_LIBM_BIN(name, T, libfn, other)                                      \
-  template <int N> __global__ void name##_##T(T *out) {                        \
-    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
-    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
-      CHAIN32(a = libfn(a, other);)                                            \
-    }                                                                          \
-    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
-  }
-
-// Expensive-op row shape: Poseidon's materialized kernels execute
-// sqrt/rsqrt/div as independent instances in unrolled loop bodies, not as one
-// per-thread dependent chain, and where the chain is latency-bound its shape
-// flattens the f32:f64 ratio. Measure them in the materialized shape: 8
-// independent lanes per thread (per-lane dependence across steps keeps DCE
-// away), same total op count, launch, and cost arithmetic as the chain kernels.
-#define K_LIBM_UN_ILP(name, T, libfn)                                          \
-  template <int N> __global__ void name##_##T(T *out) {                        \
-    T v[8];                                                                    \
-    _Pragma("unroll") for (int j = 0; j < 8; ++j) v[j] =                       \
-        (T)((threadIdx.x + blockIdx.x * blockDim.x + j) * 0.0001) + (T)1.5;    \
-    _Pragma("unroll 1") for (int i = 0; i < N / 8; ++i) {                      \
-      _Pragma("unroll") for (int j = 0; j < 8; ++j) v[j] = libfn(v[j]);        \
-    }                                                                          \
-    T s = (T)0;                                                                \
-    _Pragma("unroll") for (int j = 0; j < 8; ++j) s += v[j];                   \
-    out[threadIdx.x + blockIdx.x * blockDim.x] = s;                            \
   }
 
 #define K_PTX_BIN_ILP(name, T, asm_constraint, insn, arg_imm)                  \
@@ -241,50 +370,11 @@ __device__ double __nv_rint(double);
 K_PTX_BIN(fadd, float, "f", "add.f32", "0f3F800000") // +1.0
 K_PTX_BIN(fsub, float, "f", "sub.f32", "0f3F000000") // -0.5
 K_PTX_BIN(fmul, float, "f", "mul.f32", "0f3F800001") // *1.0000001
-K_PTX_BIN(fdiv, float, "f", "div.rn.f32", "0f3F800001")
+K_PTX_BIN_ILP(ilp_fdiv, float, "f", "div.rn.f32", "0f3F800001")
 K_PTX_UN(fneg, float, "f", "neg.f32")
 K_PTX_UN(fabs, float, "f", "abs.f32")
 K_FCMP(fcmp, float, "f", "f32", "0f3F800000")
 K_FMA(fma, float, __nv_fmaf, 1.0001f, 0.0f)
-K_LIBM_UN(sqrt, float, __nv_sqrtf)
-K_LIBM_UN(rsqrt, float, __nv_rsqrtf)
-K_LIBM_UN_ILP(ilp_sqrt, float, __nv_sqrtf) // materialized shape
-K_LIBM_UN_ILP(ilp_rsqrt, float, __nv_rsqrtf)
-K_PTX_BIN_ILP(ilp_fdiv, float, "f", "div.rn.f32", "0f3F800001")
-K_LIBM_UN(cbrt, float, __nv_cbrtf)
-K_LIBM_UN(exp, float, __nv_expf)
-K_LIBM_UN(expm1, float, __nv_expm1f)
-K_LIBM_UN(exp2, float, __nv_exp2f)
-K_LIBM_UN(log, float, __nv_logf)
-K_LIBM_UN(log1p, float, __nv_log1pf)
-K_LIBM_UN(log2, float, __nv_log2f)
-K_LIBM_UN(log10, float, __nv_log10f)
-K_LIBM_UN(sin, float, __nv_sinf)
-K_LIBM_UN(cos, float, __nv_cosf)
-K_LIBM_UN(tan, float, __nv_tanf)
-K_LIBM_UN(asin, float, __nv_asinf)
-K_LIBM_UN(acos, float, __nv_acosf)
-K_LIBM_UN(atan, float, __nv_atanf)
-K_LIBM_UN(sinh, float, __nv_sinhf)
-K_LIBM_UN(cosh, float, __nv_coshf)
-K_LIBM_UN(tanh, float, __nv_tanhf)
-K_LIBM_UN(asinh, float, __nv_asinhf)
-K_LIBM_UN(acosh, float, __nv_acoshf)
-K_LIBM_UN(atanh, float, __nv_atanhf)
-K_LIBM_UN(erf, float, __nv_erff)
-K_LIBM_UN(lgamma, float, __nv_lgammaf)
-K_LIBM_UN(tgamma, float, __nv_tgammaf)
-K_LIBM_UN(ceil, float, __nv_ceilf)
-K_LIBM_UN(floor, float, __nv_floorf)
-K_LIBM_UN(trunc, float, __nv_truncf)
-K_LIBM_UN(round, float, __nv_roundf)
-K_LIBM_UN(rint, float, __nv_rintf)
-K_LIBM_BIN(atan2, float, __nv_atan2f, 1.0001f)
-K_LIBM_BIN(pow, float, __nv_powf, 1.0001f)
-K_LIBM_BIN(hypot, float, __nv_hypotf, 1.0001f)
-K_LIBM_BIN(fmod, float, __nv_fmodf, 1.0001f)
-K_LIBM_BIN(remainder, float, __nv_remainderf, 1.0001f)
-K_LIBM_BIN(fdim, float, __nv_fdimf, 0.5f)
 K_PTX_BIN(maxnum, float, "f", "max.f32", "0f3F800000")
 K_PTX_BIN(minnum, float, "f", "min.f32", "0f3F800000")
 K_LIBM_BIN(copysign, float, __nv_copysignf, -1.0f)
@@ -292,315 +382,179 @@ K_LIBM_BIN(copysign, float, __nv_copysignf, -1.0f)
 K_PTX_BIN(fadd, double, "d", "add.f64", "0d3FF0000000000000")
 K_PTX_BIN(fsub, double, "d", "sub.f64", "0d3FE0000000000000")
 K_PTX_BIN(fmul, double, "d", "mul.f64", "0d3FF0000000000001")
-K_PTX_BIN(fdiv, double, "d", "div.rn.f64", "0d3FF0000000000001")
+K_PTX_BIN_ILP(ilp_fdiv, double, "d", "div.rn.f64", "0d3FF0000000000001")
 K_PTX_UN(fneg, double, "d", "neg.f64")
 K_PTX_UN(fabs, double, "d", "abs.f64")
 K_FCMP(fcmp, double, "d", "f64", "0d3FF0000000000000")
 K_FMA(fma, double, __nv_fma, 1.0001, 0.0)
-K_LIBM_UN(sqrt, double, __nv_sqrt)
-K_LIBM_UN(rsqrt, double, __nv_rsqrt)
-K_LIBM_UN_ILP(ilp_sqrt, double, __nv_sqrt) // materialized shape
-K_LIBM_UN_ILP(ilp_rsqrt, double, __nv_rsqrt)
-K_PTX_BIN_ILP(ilp_fdiv, double, "d", "div.rn.f64", "0d3FF0000000000001")
-K_LIBM_UN(cbrt, double, __nv_cbrt)
-K_LIBM_UN(exp, double, __nv_exp)
-K_LIBM_UN(expm1, double, __nv_expm1)
-K_LIBM_UN(exp2, double, __nv_exp2)
-K_LIBM_UN(log, double, __nv_log)
-K_LIBM_UN(log1p, double, __nv_log1p)
-K_LIBM_UN(log2, double, __nv_log2)
-K_LIBM_UN(log10, double, __nv_log10)
-K_LIBM_UN(sin, double, __nv_sin)
-K_LIBM_UN(cos, double, __nv_cos)
-K_LIBM_UN(tan, double, __nv_tan)
-K_LIBM_UN(asin, double, __nv_asin)
-K_LIBM_UN(acos, double, __nv_acos)
-K_LIBM_UN(atan, double, __nv_atan)
-K_LIBM_UN(sinh, double, __nv_sinh)
-K_LIBM_UN(cosh, double, __nv_cosh)
-K_LIBM_UN(tanh, double, __nv_tanh)
-K_LIBM_UN(asinh, double, __nv_asinh)
-K_LIBM_UN(acosh, double, __nv_acosh)
-K_LIBM_UN(atanh, double, __nv_atanh)
-K_LIBM_UN(erf, double, __nv_erf)
-K_LIBM_UN(lgamma, double, __nv_lgamma)
-K_LIBM_UN(tgamma, double, __nv_tgamma)
-K_LIBM_UN(ceil, double, __nv_ceil)
-K_LIBM_UN(floor, double, __nv_floor)
-K_LIBM_UN(trunc, double, __nv_trunc)
-K_LIBM_UN(round, double, __nv_round)
-K_LIBM_UN(rint, double, __nv_rint)
-K_LIBM_BIN(atan2, double, __nv_atan2, 1.0001)
-K_LIBM_BIN(pow, double, __nv_pow, 1.0001)
-K_LIBM_BIN(hypot, double, __nv_hypot, 1.0001)
-K_LIBM_BIN(fmod, double, __nv_fmod, 1.0001)
-K_LIBM_BIN(remainder, double, __nv_remainder, 1.0001)
-K_LIBM_BIN(fdim, double, __nv_fdim, 0.5)
 K_PTX_BIN(maxnum, double, "d", "max.f64", "0d3FF0000000000000")
 K_PTX_BIN(minnum, double, "d", "min.f64", "0d3FF0000000000000")
 K_LIBM_BIN(copysign, double, __nv_copysign, -1.0)
 
 K_CVT(cvt_f32_f64, float, double, "f", "d", "cvt.f64.f32", "cvt.rn.f32.f64")
 K_CVT(cvt_f64_f32, double, float, "d", "f", "cvt.rn.f32.f64", "cvt.f64.f32")
+#endif
 
-template <int M, int N_TILE, int K, int CHAIN_N>
-__global__ void wmma_mma_f16f32(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ __half a_smem[16 * 16];
-  __shared__ __half b_smem[16 * 16];
-  if (threadIdx.x == 0) {
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2half(0.5f);
-      b_smem[i] = __float2half(0.5f);
-    }
+struct Config {
+  int blocks;
+  int threads;
+  int reps;
+};
+static Config gCfg = {0, 1024, 50};
+
+#ifdef __HIP__
+// An AMD GPU's clock settles slowly after a change of load, so each kernel
+// runs for kWarmMs before it is timed, a batch lasts at least kBatchMs, and
+// the time is the median of kBatches batches of at least `reps` launches.
+constexpr int kBatches = 7;
+constexpr double kWarmMs = 20.0, kBatchMs = 5.0;
+
+template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
+  cudaEvent_t e0, e1;
+  (void)cudaEventCreate(&e0);
+  (void)cudaEventCreate(&e1);
+  auto batch = [&](int reps) {
+    (void)cudaEventRecord(e0);
+    for (int i = 0; i < reps; ++i)
+      kernel();
+    (void)cudaEventRecord(e1);
+    (void)cudaEventSynchronize(e1);
+    float ms;
+    (void)cudaEventElapsedTime(&ms, e0, e1);
+    return (double)ms;
+  };
+  double ms = batch(reps);
+  for (double warm = ms; warm < kWarmMs; warm += ms)
+    ms = batch(reps);
+  if (ms < kBatchMs)
+    reps = (int)std::ceil(reps * kBatchMs / std::max(ms, 1e-3));
+  double t[kBatches];
+  for (int b = 0; b < kBatches; ++b)
+    t[b] = batch(reps) * 1e6 / reps;
+  (void)cudaEventDestroy(e0);
+  (void)cudaEventDestroy(e1);
+  std::sort(t, t + kBatches);
+  return t[kBatches / 2];
+}
+#else
+// The mean of `reps` launches after three untimed ones.
+template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
+  cudaEvent_t e0, e1;
+  (void)cudaEventCreate(&e0);
+  (void)cudaEventCreate(&e1);
+  for (int i = 0; i < 3; ++i)
+    kernel();
+  (void)cudaDeviceSynchronize();
+  (void)cudaEventRecord(e0);
+  for (int i = 0; i < reps; ++i)
+    kernel();
+  (void)cudaEventRecord(e1);
+  (void)cudaEventSynchronize(e1);
+  float ms;
+  (void)cudaEventElapsedTime(&ms, e0, e1);
+  (void)cudaEventDestroy(e0);
+  (void)cudaEventDestroy(e1);
+  return (double)ms * 1e6 / reps;
+}
+#endif
+
+static double gGhz;
+
+double diff_cycles(double t_n, double t_2n, int n1, int n2) {
+  double per_op_ns = (t_2n - t_n) / (n2 - n1);
+  return per_op_ns * gGhz * 2.0;
+}
+
+#define BENCH_SCALAR(stem, T, op_name, prec_name, sink)                        \
+  {                                                                            \
+    double t1 = timeit_ns(                                                     \
+        [&]() { stem##_##T<512><<<gCfg.blocks, gCfg.threads>>>(sink); });      \
+    double t2 = timeit_ns(                                                     \
+        [&]() { stem##_##T<1024><<<gCfg.blocks, gCfg.threads>>>(sink); });     \
+    /* reciprocal throughput per op: divide the saturated per-step wall */     \
+    /* by the number of independent chains running in parallel (one per */     \
+    /* thread). */                                                             \
+    double c =                                                                 \
+        diff_cycles(t1, t2, 512, 1024) / ((double)gCfg.blocks * gCfg.threads); \
+    if (c <= 0)                                                                \
+      c = 1e-12; /* fneg/fabs etc. are ~free; keep a positive floor */         \
+    printf("%s,%s,%.9g\n", op_name, prec_name, c);                             \
   }
-  __syncthreads();
-  fragment<matrix_a, M, N_TILE, K, __half, row_major> fA;
-  fragment<matrix_b, M, N_TILE, K, __half, col_major> fB;
-  fragment<accumulator, M, N_TILE, K, float> fC;
-  fill_fragment(fC, 0.0f);
-  load_matrix_sync(fA, a_smem, 16);
-  load_matrix_sync(fB, b_smem, 16);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i)
-    mma_sync(fC, fA, fB, fC);
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
 
-template <int M, int N_TILE, int K, int CHAIN_N>
-__global__ void wmma_mma_s8s32(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ signed char a_smem[16 * 16];
-  __shared__ signed char b_smem[16 * 16];
-  if (threadIdx.x == 0) {
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = 1;
-      b_smem[i] = 1;
-    }
+#define BENCH_CVT(name, sink, op_label, prec_label)                            \
+  {                                                                            \
+    double t1 =                                                                \
+        timeit_ns([&]() { name<512><<<gCfg.blocks, gCfg.threads>>>(sink); });  \
+    double t2 =                                                                \
+        timeit_ns([&]() { name<1024><<<gCfg.blocks, gCfg.threads>>>(sink); }); \
+    double c = diff_cycles(t1, t2, 512, 1024) * 0.5 /                          \
+               ((double)gCfg.blocks * gCfg.threads);                           \
+    if (c <= 0)                                                                \
+      c = 1e-12;                                                               \
+    printf("%s,%s,%.9g\n", op_label, prec_label, c);                           \
   }
-  __syncthreads();
-  fragment<matrix_a, M, N_TILE, K, signed char, row_major> fA;
-  fragment<matrix_b, M, N_TILE, K, signed char, col_major> fB;
-  fragment<accumulator, M, N_TILE, K, int> fC;
-  fill_fragment(fC, 0);
-  load_matrix_sync(fA, a_smem, 16);
-  load_matrix_sync(fB, b_smem, 16);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i)
-    mma_sync(fC, fA, fB, fC);
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
 
-template <int M, int N_TILE, int K, int CHAIN_N>
-__global__ void wmma_mma_f16f16(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ __half a_smem[16 * 16], b_smem[16 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2half(0.5f);
-      b_smem[i] = __float2half(0.5f);
-    }
-  __syncthreads();
-  fragment<matrix_a, M, N_TILE, K, __half, row_major> fA;
-  fragment<matrix_b, M, N_TILE, K, __half, col_major> fB;
-  fragment<accumulator, M, N_TILE, K, __half> fC;
-  fill_fragment(fC, __float2half(0.0f));
-  load_matrix_sync(fA, a_smem, 16);
-  load_matrix_sync(fB, b_smem, 16);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i)
-    mma_sync(fC, fA, fB, fC);
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused,
-              (unsigned long long)__half2float(fC.x[0]));
-}
+// (kernel stem, row) of each per-op row, in the order they print; fmuladd is
+// priced as fma and powi as pow.
+#define PER_OP_ROWS(X)                                                         \
+  X(fadd, fadd);                                                               \
+  X(fsub, fsub);                                                               \
+  X(fmul, fmul);                                                               \
+  X(ilp_fdiv, fdiv);                                                           \
+  X(fneg, fneg);                                                               \
+  X(fabs, fabs);                                                               \
+  X(fcmp, fcmp);                                                               \
+  X(fma, fma);                                                                 \
+  X(fma, fmuladd);                                                             \
+  X(ilp_sqrt, sqrt);                                                           \
+  X(cbrt, cbrt);                                                               \
+  X(exp, exp);                                                                 \
+  X(expm1, expm1);                                                             \
+  X(exp2, exp2);                                                               \
+  X(log, log);                                                                 \
+  X(log1p, log1p);                                                             \
+  X(log2, log2);                                                               \
+  X(log10, log10);                                                             \
+  X(sin, sin);                                                                 \
+  X(cos, cos);                                                                 \
+  X(tan, tan);                                                                 \
+  X(asin, asin);                                                               \
+  X(acos, acos);                                                               \
+  X(atan, atan);                                                               \
+  X(sinh, sinh);                                                               \
+  X(cosh, cosh);                                                               \
+  X(tanh, tanh);                                                               \
+  X(asinh, asinh);                                                             \
+  X(acosh, acosh);                                                             \
+  X(atanh, atanh);                                                             \
+  X(erf, erf);                                                                 \
+  X(lgamma, lgamma);                                                           \
+  X(tgamma, tgamma);                                                           \
+  X(ceil, ceil);                                                               \
+  X(floor, floor);                                                             \
+  X(trunc, trunc);                                                             \
+  X(round, round);                                                             \
+  X(rint, rint);                                                               \
+  X(atan2, atan2);                                                             \
+  X(pow, pow);                                                                 \
+  X(pow, powi);                                                                \
+  X(hypot, hypot);                                                             \
+  X(fmod, fmod);                                                               \
+  X(remainder, remainder);                                                     \
+  X(fdim, fdim);                                                               \
+  X(maxnum, maxnum);                                                           \
+  X(minnum, minnum);                                                           \
+  X(copysign, copysign);
 
-template <int M, int N_TILE, int K, int CHAIN_N>
-__global__ void wmma_mma_bf16f32(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ __nv_bfloat16 a_smem[16 * 16], b_smem[16 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2bfloat16(0.5f);
-      b_smem[i] = __float2bfloat16(0.5f);
-    }
-  __syncthreads();
-  fragment<matrix_a, M, N_TILE, K, __nv_bfloat16, row_major> fA;
-  fragment<matrix_b, M, N_TILE, K, __nv_bfloat16, col_major> fB;
-  fragment<accumulator, M, N_TILE, K, float> fC;
-  fill_fragment(fC, 0.0f);
-  load_matrix_sync(fA, a_smem, 16);
-  load_matrix_sync(fB, b_smem, 16);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i)
-    mma_sync(fC, fA, fB, fC);
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-template <int CHAIN_N> __global__ void wmma_mma_tf32f32(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ float a_smem[16 * 8], b_smem[8 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 128; ++i) {
-      a_smem[i] = 0.5f;
-      b_smem[i] = 0.5f;
-    }
-  __syncthreads();
-  fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> fA;
-  fragment<matrix_b, 16, 16, 8, precision::tf32, col_major> fB;
-  fragment<accumulator, 16, 16, 8, float> fC;
-  fill_fragment(fC, 0.0f);
-  load_matrix_sync(fA, a_smem, 8);
-  load_matrix_sync(fB, b_smem, 8);
-#pragma unroll
-  for (int i = 0; i < fA.num_elements; ++i)
-    fA.x[i] = wmma::__float_to_tf32(fA.x[i]);
-#pragma unroll
-  for (int i = 0; i < fB.num_elements; ++i)
-    fB.x[i] = wmma::__float_to_tf32(fB.x[i]);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i)
-    mma_sync(fC, fA, fB, fC);
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-template <int CHAIN_N> __global__ void wmma_mma_f64f64(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ double a_smem[8 * 4], b_smem[4 * 8];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 32; ++i) {
-      a_smem[i] = 0.5;
-      b_smem[i] = 0.5;
-    }
-  __syncthreads();
-  fragment<matrix_a, 8, 8, 4, double, row_major> fA;
-  fragment<matrix_b, 8, 8, 4, double, col_major> fB;
-  fragment<accumulator, 8, 8, 4, double> fC;
-  fill_fragment(fC, 0.0);
-  load_matrix_sync(fA, a_smem, 4);
-  load_matrix_sync(fB, b_smem, 4);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i)
-    mma_sync(fC, fA, fB, fC);
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-template <int CHAIN_N> __global__ void wmma_loada_f16(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ __half a_smem[16 * 16], b_smem[16 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2half(0.5f);
-      b_smem[i] = __float2half(0.5f);
-    }
-  __syncthreads();
-  fragment<matrix_a, 16, 16, 16, __half, row_major> fA;
-  fragment<matrix_b, 16, 16, 16, __half, col_major> fB;
-  fragment<accumulator, 16, 16, 16, float> fC;
-  fill_fragment(fC, 0.0f);
-  load_matrix_sync(fB, b_smem, 16);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i) {
-    load_matrix_sync(fA, a_smem, 16);
-    mma_sync(fC, fA, fB, fC);
-  }
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-template <int CHAIN_N> __global__ void wmma_loadb_f16(uint64_t *out_unused) {
-  using namespace nvcuda::wmma;
-  __shared__ __half a_smem[16 * 16], b_smem[16 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2half(0.5f);
-      b_smem[i] = __float2half(0.5f);
-    }
-  __syncthreads();
-  fragment<matrix_a, 16, 16, 16, __half, row_major> fA;
-  fragment<matrix_b, 16, 16, 16, __half, col_major> fB;
-  fragment<accumulator, 16, 16, 16, float> fC;
-  fill_fragment(fC, 0.0f);
-  load_matrix_sync(fA, a_smem, 16);
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i) {
-    load_matrix_sync(fB, b_smem, 16);
-    mma_sync(fC, fA, fB, fC);
-  }
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-template <int CHAIN_N>
-__global__ void wmma_loadc_f32(uint64_t *out_unused, float *c_dev) {
-  using namespace nvcuda::wmma;
-  __shared__ __half a_smem[16 * 16], b_smem[16 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2half(0.5f);
-      b_smem[i] = __float2half(0.5f);
-    }
-  __syncthreads();
-  fragment<matrix_a, 16, 16, 16, __half, row_major> fA;
-  fragment<matrix_b, 16, 16, 16, __half, col_major> fB;
-  fragment<accumulator, 16, 16, 16, float> fC;
-  load_matrix_sync(fA, a_smem, 16);
-  load_matrix_sync(fB, b_smem, 16);
-  // Per-block region to avoid contention on a single cache line.
-  float *cb = c_dev + blockIdx.x * 256;
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i) {
-    load_matrix_sync(fC, cb, 16, mem_row_major);
-    mma_sync(fC, fA, fB, fC);
-  }
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-template <int CHAIN_N>
-__global__ void wmma_stored_f32(uint64_t *out_unused, float *d_dev) {
-  using namespace nvcuda::wmma;
-  __shared__ __half a_smem[16 * 16], b_smem[16 * 16];
-  if (threadIdx.x == 0)
-    for (int i = 0; i < 256; ++i) {
-      a_smem[i] = __float2half(0.5f);
-      b_smem[i] = __float2half(0.5f);
-    }
-  __syncthreads();
-  fragment<matrix_a, 16, 16, 16, __half, row_major> fA;
-  fragment<matrix_b, 16, 16, 16, __half, col_major> fB;
-  fragment<accumulator, 16, 16, 16, float> fC;
-  fill_fragment(fC, 0.0f);
-  load_matrix_sync(fA, a_smem, 16);
-  load_matrix_sync(fB, b_smem, 16);
-  // Per-block region to avoid write contention on a single line.
-  float *db = d_dev + blockIdx.x * 256;
-#pragma unroll 1
-  for (int i = 0; i < CHAIN_N; ++i) {
-    mma_sync(fC, fA, fB, fC);
-    store_matrix_sync(db, fC, 16, mem_row_major);
-  }
-  if (threadIdx.x == 0)
-    atomicMax((unsigned long long *)out_unused, (unsigned long long)fC.x[0]);
-}
-
-// Real-GEMM reality-check kernels. The isolated dependent-tile loops above
-// (wmma_mma_*) price MMA throughput with fragments resident across a whole
-// chain, which flatters the tensor path relative to a real GEMM that reloads
-// fragments as it streams K. Per scheme, a real WMMA GEMM and a scalar-FP64
-// GEMM of the same shape are timed, and a scheme whose real GEMM is not faster
-// than scalar (rel = t_scheme / t_scalarFP64 >= 1.0) has its row omitted.
+#ifndef __HIP__
+// The tensor-core tile rows. Per scheme, a real tiled WMMA GEMM and a
+// scalar-FP64 tiled GEMM of the same shape are timed; the row is written only
+// when the scheme is faster, and its value is the ratio of the two times. A
+// compile reads only whether the row exists.
 //
-// tgemm: shared-memory tiled WMMA GEMM. Each block computes a BM x BN output
-// tile via a BWM x BWN warp grid; each warp computes WPT_M x WPT_N WMMA tiles,
-// reusing hoisted A fragments across WPT_N and each B fragment across WPT_M. A
-// KT-deep-times-BK_STAGE slab of A/B is staged in shared per K step. C is
-// written out so nothing is dead-code-eliminated.
+// tgemm: each block computes a BM x BN output tile with a BWM x BWN warp grid,
+// each warp WPT_M x WPT_N WMMA tiles from a BK_STAGE-deep slab of A and B
+// staged in shared memory. C is written so nothing is dead.
 template <typename AB, typename ACC, typename FRAG_AB, int MT, int NT, int KT,
           int BWM, int BWN, int WPT_M, int WPT_N, int BK_STAGE, bool IS_TF32>
 __global__ void tgemm(const AB *__restrict__ A, const AB *__restrict__ B,
@@ -734,226 +688,10 @@ __global__ void sgemm(const double *__restrict__ A,
     }
 }
 
-struct Config {
-  int blocks;
-  int threads;
-  int N1;
-  int N2;
-  int reps;
-};
-static Config gCfg = {0, 1024, 512, 1024, 50};
-
-// Saturating launch config for the tensor-core (WMMA) measurements. The scalar
-// path runs blocks x 1024 threads (about 32 warps/SM, throughput-saturated);
-// the WMMA path must likewise run many warps/SM, else a 1-warp/SM launch
-// measures MMA latency rather than throughput and the two scales are
-// incomparable.
-static int gWmmaBlocks = 0;    // set in main to #SMs x 8
-static int gWmmaThreads = 128; // 4 warps/block (safe regs even for f64 DMMA)
-static inline double gWmmaWarps() {
-  return (double)gWmmaBlocks * (gWmmaThreads / 32);
-}
-
-template <typename K> double timeit_ns(K kernel) {
-  cudaEvent_t e0, e1;
-  cudaEventCreate(&e0);
-  cudaEventCreate(&e1);
-  for (int i = 0; i < 3; ++i)
-    kernel();
-  cudaDeviceSynchronize();
-  cudaEventRecord(e0);
-  for (int i = 0; i < gCfg.reps; ++i)
-    kernel();
-  cudaEventRecord(e1);
-  cudaEventSynchronize(e1);
-  float ms;
-  cudaEventElapsedTime(&ms, e0, e1);
-  cudaEventDestroy(e0);
-  cudaEventDestroy(e1);
-  return (double)ms * 1e6 / gCfg.reps;
-}
-
-// Reps-parameterized timer for the (expensive) reality-check GEMMs.
-template <typename K> double timeit_ns(K kernel, int reps) {
-  cudaEvent_t e0, e1;
-  cudaEventCreate(&e0);
-  cudaEventCreate(&e1);
-  for (int i = 0; i < 3; ++i)
-    kernel();
-  cudaDeviceSynchronize();
-  cudaEventRecord(e0);
-  for (int i = 0; i < reps; ++i)
-    kernel();
-  cudaEventRecord(e1);
-  cudaEventSynchronize(e1);
-  float ms;
-  cudaEventElapsedTime(&ms, e0, e1);
-  cudaEventDestroy(e0);
-  cudaEventDestroy(e1);
-  return (double)ms * 1e6 / reps;
-}
-
-static double gGhz;
-
-double diff_cycles(double t_n, double t_2n, int n1, int n2) {
-  double per_op_ns = (t_2n - t_n) / (n2 - n1);
-  return per_op_ns * gGhz * 2.0;
-}
-
-#define BENCH_SCALAR(stem, T, op_name, prec_name, sink)                        \
-  {                                                                            \
-    double t1 = timeit_ns(                                                     \
-        [&]() { stem##_##T<512><<<gCfg.blocks, gCfg.threads>>>(sink); });      \
-    double t2 = timeit_ns(                                                     \
-        [&]() { stem##_##T<1024><<<gCfg.blocks, gCfg.threads>>>(sink); });     \
-    /* reciprocal throughput per op: divide the saturated per-step wall */     \
-    /* by the number of independent chains running in parallel (one per */     \
-    /* thread). */                                                             \
-    double c =                                                                 \
-        diff_cycles(t1, t2, 512, 1024) / ((double)gCfg.blocks * gCfg.threads); \
-    if (c <= 0)                                                                \
-      c = 1e-12; /* fneg/fabs etc. are ~free; keep a positive floor */         \
-    printf("%s,%s,%.9g\n", op_name, prec_name, c);                             \
-  }
-
-#define BENCH_CVT(name, sink, op_label, prec_label)                            \
-  {                                                                            \
-    double t1 =                                                                \
-        timeit_ns([&]() { name<512><<<gCfg.blocks, gCfg.threads>>>(sink); });  \
-    double t2 =                                                                \
-        timeit_ns([&]() { name<1024><<<gCfg.blocks, gCfg.threads>>>(sink); }); \
-    double c = diff_cycles(t1, t2, 512, 1024) * 0.5 /                          \
-               ((double)gCfg.blocks * gCfg.threads);                           \
-    if (c <= 0)                                                                \
-      c = 1e-12;                                                               \
-    printf("%s,%s,%.9g\n", op_label, prec_label, c);                           \
-  }
-
-double bench_mma_chain_f16f32() {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns([&]() {
-    wmma_mma_f16f32<16, 16, 16, 256><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  double t2 = timeit_ns([&]() {
-    wmma_mma_f16f32<16, 16, 16, 512><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512);
-}
-double bench_mma_chain_s8s32() {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns([&]() {
-    wmma_mma_s8s32<16, 16, 16, 256><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  double t2 = timeit_ns([&]() {
-    wmma_mma_s8s32<16, 16, 16, 512><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512);
-}
-double bench_mma_chain_f16f16() {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns([&]() {
-    wmma_mma_f16f16<16, 16, 16, 256><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  double t2 = timeit_ns([&]() {
-    wmma_mma_f16f16<16, 16, 16, 512><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512);
-}
-double bench_mma_chain_bf16f32() {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns([&]() {
-    wmma_mma_bf16f32<16, 16, 16, 256><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  double t2 = timeit_ns([&]() {
-    wmma_mma_bf16f32<16, 16, 16, 512><<<gWmmaBlocks, gWmmaThreads>>>(d);
-  });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512);
-}
-double bench_mma_chain_tf32f32() {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns(
-      [&]() { wmma_mma_tf32f32<256><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  double t2 = timeit_ns(
-      [&]() { wmma_mma_tf32f32<512><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512);
-}
-double bench_mma_chain_f64f64() {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns(
-      [&]() { wmma_mma_f64f64<256><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  double t2 = timeit_ns(
-      [&]() { wmma_mma_f64f64<512><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512);
-}
-
-double bench_loada_marginal(double mma_per_op_cycles) {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns(
-      [&]() { wmma_loada_f16<256><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  double t2 = timeit_ns(
-      [&]() { wmma_loada_f16<512><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  cudaFree(d);
-  double per_iter = diff_cycles(t1, t2, 256, 512);
-  return per_iter - mma_per_op_cycles;
-}
-double bench_loadb_marginal(double mma_per_op_cycles) {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  double t1 = timeit_ns(
-      [&]() { wmma_loadb_f16<256><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  double t2 = timeit_ns(
-      [&]() { wmma_loadb_f16<512><<<gWmmaBlocks, gWmmaThreads>>>(d); });
-  cudaFree(d);
-  return diff_cycles(t1, t2, 256, 512) - mma_per_op_cycles;
-}
-double bench_loadc_marginal(double mma_per_op_cycles) {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  size_t c_bytes = (size_t)gWmmaBlocks * 256 * sizeof(float);
-  float *c_dev;
-  cudaMalloc(&c_dev, c_bytes);
-  cudaMemset(c_dev, 0, c_bytes);
-  double t1 = timeit_ns(
-      [&]() { wmma_loadc_f32<256><<<gWmmaBlocks, gWmmaThreads>>>(d, c_dev); });
-  double t2 = timeit_ns(
-      [&]() { wmma_loadc_f32<512><<<gWmmaBlocks, gWmmaThreads>>>(d, c_dev); });
-  cudaFree(d);
-  cudaFree(c_dev);
-  return diff_cycles(t1, t2, 256, 512) - mma_per_op_cycles;
-}
-double bench_stored_marginal(double mma_per_op_cycles) {
-  uint64_t *d;
-  cudaMalloc(&d, sizeof(uint64_t));
-  size_t d_bytes = (size_t)gWmmaBlocks * 256 * sizeof(float);
-  float *d_dev;
-  cudaMalloc(&d_dev, d_bytes);
-  double t1 = timeit_ns(
-      [&]() { wmma_stored_f32<256><<<gWmmaBlocks, gWmmaThreads>>>(d, d_dev); });
-  double t2 = timeit_ns(
-      [&]() { wmma_stored_f32<512><<<gWmmaBlocks, gWmmaThreads>>>(d, d_dev); });
-  cudaFree(d);
-  cudaFree(d_dev);
-  return diff_cycles(t1, t2, 256, 512) - mma_per_op_cycles;
-}
-
-// Wall-time (ns/GEMM) of a real dispatched WMMA GEMM for one scheme, at
-// M=N=K=GN. Sets *ok=false (and returns -1) if the scheme is unsupported on
-// this arch (launch failure). Used only as a reality-check gate; the printed
-// per-tile cost stays the isolated-loop value.
 static const int kGemmReps = 10;
+
+// Wall time (ns per GEMM) of one scheme's tiled WMMA GEMM at M = N = K = GN;
+// *ok is false when the scheme does not run on this GPU.
 template <typename AB, typename ACC, typename FRAG_AB, int MT, int NT, int KT,
           int BWM, int BWN, int WPT_M, int WPT_N, int BK_STAGE, bool IS_TF32>
 double tensor_gemm_ns(int GN, bool *ok) {
@@ -1057,154 +795,16 @@ double scalar_gemm_ns(int GN) {
   return ns;
 }
 
-int main() {
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, 0);
-  // CUDA 13 removed cudaDeviceProp::clockRate; the attribute returns the same
-  // kHz value on CUDA >= 4.0, so this is the one portable path.
-  int clkKHz = 0;
-  cudaDeviceGetAttribute(&clkKHz, cudaDevAttrClockRate, 0);
-  gGhz = (double)clkKHz / 1e6;
-  gCfg.blocks = prop.multiProcessorCount;
-  gWmmaBlocks = prop.multiProcessorCount * 8; // many warps/SM saturate TCs
-
-  printf("# Generated by microbm.cu on %s\n", prop.name);
-  printf("# native_arch=sm_%d%d\n", prop.major, prop.minor);
-  printf("# scalar_types=double,float\n");
-  printf("# matrix_types=bf16,double,float,half,tf32\n");
-
-  size_t total = (size_t)gCfg.blocks * gCfg.threads;
-  float *fout;
-  cudaMalloc(&fout, total * sizeof(float));
-  double *dout;
-  cudaMalloc(&dout, total * sizeof(double));
-
-  BENCH_SCALAR(fadd, float, "fadd", "float", fout);
-  BENCH_SCALAR(fsub, float, "fsub", "float", fout);
-  BENCH_SCALAR(fmul, float, "fmul", "float", fout);
-  BENCH_SCALAR(ilp_fdiv, float, "fdiv", "float", fout); // ILP shape
-  BENCH_SCALAR(fneg, float, "fneg", "float", fout);
-  BENCH_SCALAR(fabs, float, "fabs", "float", fout);
-  BENCH_SCALAR(fcmp, float, "fcmp", "float", fout);
-  BENCH_SCALAR(fma, float, "fma", "float", fout);
-  BENCH_SCALAR(fma, float, "fmuladd", "float", fout);     // alias
-  BENCH_SCALAR(ilp_sqrt, float, "sqrt", "float", fout);   // ILP shape
-  BENCH_SCALAR(ilp_rsqrt, float, "rsqrt", "float", fout); // ILP shape
-  BENCH_SCALAR(cbrt, float, "cbrt", "float", fout);
-  BENCH_SCALAR(exp, float, "exp", "float", fout);
-  BENCH_SCALAR(expm1, float, "expm1", "float", fout);
-  BENCH_SCALAR(exp2, float, "exp2", "float", fout);
-  BENCH_SCALAR(log, float, "log", "float", fout);
-  BENCH_SCALAR(log1p, float, "log1p", "float", fout);
-  BENCH_SCALAR(log2, float, "log2", "float", fout);
-  BENCH_SCALAR(log10, float, "log10", "float", fout);
-  BENCH_SCALAR(sin, float, "sin", "float", fout);
-  BENCH_SCALAR(cos, float, "cos", "float", fout);
-  BENCH_SCALAR(tan, float, "tan", "float", fout);
-  BENCH_SCALAR(asin, float, "asin", "float", fout);
-  BENCH_SCALAR(acos, float, "acos", "float", fout);
-  BENCH_SCALAR(atan, float, "atan", "float", fout);
-  BENCH_SCALAR(sinh, float, "sinh", "float", fout);
-  BENCH_SCALAR(cosh, float, "cosh", "float", fout);
-  BENCH_SCALAR(tanh, float, "tanh", "float", fout);
-  BENCH_SCALAR(asinh, float, "asinh", "float", fout);
-  BENCH_SCALAR(acosh, float, "acosh", "float", fout);
-  BENCH_SCALAR(atanh, float, "atanh", "float", fout);
-  BENCH_SCALAR(erf, float, "erf", "float", fout);
-  BENCH_SCALAR(lgamma, float, "lgamma", "float", fout);
-  BENCH_SCALAR(tgamma, float, "tgamma", "float", fout);
-  BENCH_SCALAR(ceil, float, "ceil", "float", fout);
-  BENCH_SCALAR(floor, float, "floor", "float", fout);
-  BENCH_SCALAR(trunc, float, "trunc", "float", fout);
-  BENCH_SCALAR(round, float, "round", "float", fout);
-  BENCH_SCALAR(rint, float, "rint", "float", fout);
-  BENCH_SCALAR(atan2, float, "atan2", "float", fout);
-  BENCH_SCALAR(pow, float, "pow", "float", fout);
-  BENCH_SCALAR(pow, float, "powi", "float", fout); // alias
-  BENCH_SCALAR(hypot, float, "hypot", "float", fout);
-  BENCH_SCALAR(fmod, float, "fmod", "float", fout);
-  BENCH_SCALAR(remainder, float, "remainder", "float", fout);
-  BENCH_SCALAR(fdim, float, "fdim", "float", fout);
-  BENCH_SCALAR(maxnum, float, "maxnum", "float", fout);
-  BENCH_SCALAR(minnum, float, "minnum", "float", fout);
-  BENCH_SCALAR(copysign, float, "copysign", "float", fout);
-
-  BENCH_SCALAR(fadd, double, "fadd", "double", dout);
-  BENCH_SCALAR(fsub, double, "fsub", "double", dout);
-  BENCH_SCALAR(fmul, double, "fmul", "double", dout);
-  BENCH_SCALAR(ilp_fdiv, double, "fdiv", "double", dout); // ILP shape
-  BENCH_SCALAR(fneg, double, "fneg", "double", dout);
-  BENCH_SCALAR(fabs, double, "fabs", "double", dout);
-  BENCH_SCALAR(fcmp, double, "fcmp", "double", dout);
-  BENCH_SCALAR(fma, double, "fma", "double", dout);
-  BENCH_SCALAR(fma, double, "fmuladd", "double", dout);
-  BENCH_SCALAR(ilp_sqrt, double, "sqrt", "double", dout);   // ILP shape
-  BENCH_SCALAR(ilp_rsqrt, double, "rsqrt", "double", dout); // ILP shape
-  BENCH_SCALAR(cbrt, double, "cbrt", "double", dout);
-  BENCH_SCALAR(exp, double, "exp", "double", dout);
-  BENCH_SCALAR(expm1, double, "expm1", "double", dout);
-  BENCH_SCALAR(exp2, double, "exp2", "double", dout);
-  BENCH_SCALAR(log, double, "log", "double", dout);
-  BENCH_SCALAR(log1p, double, "log1p", "double", dout);
-  BENCH_SCALAR(log2, double, "log2", "double", dout);
-  BENCH_SCALAR(log10, double, "log10", "double", dout);
-  BENCH_SCALAR(sin, double, "sin", "double", dout);
-  BENCH_SCALAR(cos, double, "cos", "double", dout);
-  BENCH_SCALAR(tan, double, "tan", "double", dout);
-  BENCH_SCALAR(asin, double, "asin", "double", dout);
-  BENCH_SCALAR(acos, double, "acos", "double", dout);
-  BENCH_SCALAR(atan, double, "atan", "double", dout);
-  BENCH_SCALAR(sinh, double, "sinh", "double", dout);
-  BENCH_SCALAR(cosh, double, "cosh", "double", dout);
-  BENCH_SCALAR(tanh, double, "tanh", "double", dout);
-  BENCH_SCALAR(asinh, double, "asinh", "double", dout);
-  BENCH_SCALAR(acosh, double, "acosh", "double", dout);
-  BENCH_SCALAR(atanh, double, "atanh", "double", dout);
-  BENCH_SCALAR(erf, double, "erf", "double", dout);
-  BENCH_SCALAR(lgamma, double, "lgamma", "double", dout);
-  BENCH_SCALAR(tgamma, double, "tgamma", "double", dout);
-  BENCH_SCALAR(ceil, double, "ceil", "double", dout);
-  BENCH_SCALAR(floor, double, "floor", "double", dout);
-  BENCH_SCALAR(trunc, double, "trunc", "double", dout);
-  BENCH_SCALAR(round, double, "round", "double", dout);
-  BENCH_SCALAR(rint, double, "rint", "double", dout);
-  BENCH_SCALAR(atan2, double, "atan2", "double", dout);
-  BENCH_SCALAR(pow, double, "pow", "double", dout);
-  BENCH_SCALAR(pow, double, "powi", "double", dout);
-  BENCH_SCALAR(hypot, double, "hypot", "double", dout);
-  BENCH_SCALAR(fmod, double, "fmod", "double", dout);
-  BENCH_SCALAR(remainder, double, "remainder", "double", dout);
-  BENCH_SCALAR(fdim, double, "fdim", "double", dout);
-  BENCH_SCALAR(maxnum, double, "maxnum", "double", dout);
-  BENCH_SCALAR(minnum, double, "minnum", "double", dout);
-  BENCH_SCALAR(copysign, double, "copysign", "double", dout);
-
-  BENCH_CVT(cvt_f32_f64, fout, "fpext_float_to_double", "float");
-  BENCH_CVT(cvt_f64_f32, dout, "fptrunc_double_to_float", "double");
-
-  cudaFree(fout);
-  cudaFree(dout);
-
-  // Isolated-loop per-tile MMA costs: the primary source of the printed
-  // wmma_mma_* rows. They preserve the inter-scheme compute spread the DP
-  // solver needs (s8 < f16/bf16 < tf32) and mma_f16f32 also prices the marginal
-  // load/store rows below (which subtract one raw machine-wide MMA).
-  double mma_f16f32 = bench_mma_chain_f16f32();
-  double mma_s8s32 = bench_mma_chain_s8s32();
-  double mma_f16f16 = bench_mma_chain_f16f16();
-  double mma_bf16f32 = bench_mma_chain_bf16f32();
-  double mma_tf32f32 = bench_mma_chain_tf32f32();
-  double ww = gWmmaWarps();
-
-  // Reality-check gate (see tgemm). It is an existence check only: a scheme
-  // with rel >= 1.0 is omitted because its isolated cost would make a
-  // near-free candidate; how much faster a scheme must be to win is the
-  // solver's cost comparison.
+static void tileRows() {
   const int GN = 2048;
-  const double REL_OMIT = 1.0;
   double t_scalar = scalar_gemm_ns(GN);
-  auto emit_gated = [&](const char *name, const char *prec, double iso_per_tile,
-                        double t_scheme, bool ran) {
+  if (t_scalar <= 0) {
+    fprintf(stderr, "[microbm] the scalar-FP64 reference GEMM did not run; "
+                    "no tile row is written\n");
+    return;
+  }
+  auto emit = [&](const char *name, const char *prec, double t_scheme,
+                  bool ran) {
     if (!ran) {
       fprintf(stderr,
               "[microbm] %s,%s: WMMA GEMM unsupported on this arch; "
@@ -1212,63 +812,105 @@ int main() {
               name, prec);
       return;
     }
-    double rel = (t_scalar > 0) ? t_scheme / t_scalar : 0.0;
-    if (rel >= REL_OMIT) {
+    double rel = t_scheme / t_scalar;
+    if (rel >= 1.0) {
       fprintf(stderr,
-              "[microbm] %s,%s: real GEMM rel=%.3f >= %.2f: not faster "
-              "than scalar FP64; vestigial tensor path, omitting row\n",
-              name, prec, rel, REL_OMIT);
+              "[microbm] %s,%s: real GEMM rel=%.3f is not faster than scalar "
+              "FP64; omitting row\n",
+              name, prec, rel);
       return;
     }
-    printf("%s,%s,%.9g\n", name, prec, iso_per_tile / ww);
+    printf("%s,%s,%.9g\n", name, prec, rel);
   };
-  {
-    bool ok;
-    double t;
-    t = tensor_gemm_ns<__half, float, __half, 16, 16, 16, 2, 4, 4, 2, 32,
-                       false>(GN, &ok);
-    emit_gated("wmma_mma_m16n16k16", "f16_f32", mma_f16f32, t, ok);
-    t = tensor_gemm_ns<signed char, int, signed char, 16, 16, 16, 2, 4, 4, 2,
-                       32, false>(GN, &ok);
-    emit_gated("wmma_mma_m16n16k16", "s8_s32", mma_s8s32, t, ok);
-    t = tensor_gemm_ns<__half, __half, __half, 16, 16, 16, 2, 4, 4, 2, 32,
-                       false>(GN, &ok);
-    emit_gated("wmma_mma_m16n16k16", "f16_f16", mma_f16f16, t, ok);
-    t = tensor_gemm_ns<__nv_bfloat16, float, __nv_bfloat16, 16, 16, 16, 2, 4, 4,
-                       2, 32, false>(GN, &ok);
-    emit_gated("wmma_mma_m16n16k16", "bf16_f32", mma_bf16f32, t, ok);
-    t = tensor_gemm_ns<float, float, nvcuda::wmma::precision::tf32, 16, 16, 8,
-                       2, 4, 4, 2, 32, true>(GN, &ok);
-    emit_gated("wmma_mma_m16n16k8", "tf32_f32", mma_tf32f32, t, ok);
+  bool ok;
+  double t;
+  t = tensor_gemm_ns<__half, float, __half, 16, 16, 16, 2, 4, 4, 2, 32, false>(
+      GN, &ok);
+  emit("wmma_mma_m16n16k16", "f16_f32", t, ok);
+  t = tensor_gemm_ns<signed char, int, signed char, 16, 16, 16, 2, 4, 4, 2, 32,
+                     false>(GN, &ok);
+  emit("wmma_mma_m16n16k16", "s8_s32", t, ok);
+  t = tensor_gemm_ns<__half, __half, __half, 16, 16, 16, 2, 4, 4, 2, 32, false>(
+      GN, &ok);
+  emit("wmma_mma_m16n16k16", "f16_f16", t, ok);
+  t = tensor_gemm_ns<__nv_bfloat16, float, __nv_bfloat16, 16, 16, 16, 2, 4, 4,
+                     2, 32, false>(GN, &ok);
+  emit("wmma_mma_m16n16k16", "bf16_f32", t, ok);
+  t = tensor_gemm_ns<float, float, nvcuda::wmma::precision::tf32, 16, 16, 8, 2,
+                     4, 4, 2, 32, true>(GN, &ok);
+  emit("wmma_mma_m16n16k8", "tf32_f32", t, ok);
+  t = tensor_gemm_ns<double, double, double, 8, 8, 4, 4, 4, 2, 2, 16, false>(
+      GN, &ok);
+  emit("wmma_mma_m8n8k4", "f64_f64", t, ok);
+}
+#endif
 
-    // f64 (m8n8k4 DMMA): the isolated bench runs only when the real DMMA GEMM
-    // ran.
-    bool f64ok = false;
-    t = tensor_gemm_ns<double, double, double, 8, 8, 4, 4, 4, 2, 2, 16, false>(
-        GN, &f64ok);
-    double mma_f64f64 = f64ok ? bench_mma_chain_f64f64() : 0.0;
-    emit_gated("wmma_mma_m8n8k4", "f64_f64", mma_f64f64, t, f64ok);
+// The name and the processor of a device, as its cost model is filed under.
+static void deviceArch(const cudaDeviceProp &prop, char *arch, size_t size) {
+#ifdef __HIP__
+  // gcnArchName carries the target features ("gfx942:sramecc+:xnack-"); the
+  // processor alone names the cost model.
+  snprintf(arch, size, "%s", prop.gcnArchName);
+  if (char *colon = strchr(arch, ':'))
+    *colon = 0;
+#else
+  snprintf(arch, size, "sm_%d%d", prop.major, prop.minor);
+#endif
+}
+
+int main(int argc, char **argv) {
+  cudaDeviceProp prop;
+  if (cudaGetDeviceProperties(&prop, 0) != cudaSuccess) {
+    fprintf(stderr, "[microbm] no GPU device\n");
+    return 1;
+  }
+  char arch[sizeof(prop.name)];
+  deviceArch(prop, arch, sizeof(arch));
+  if (argc > 1 && !strcmp(argv[1], "--device")) {
+    printf("%s\t%s\n", prop.name, arch);
+    return 0;
   }
 
-  // Marginal load/store: subtract a single MMA from each.
-  double load_a = bench_loada_marginal(mma_f16f32);
-  double load_b = bench_loadb_marginal(mma_f16f32);
-  double load_c = bench_loadc_marginal(mma_f16f32);
-  double store_d = bench_stored_marginal(mma_f16f32);
-  if (load_a < 0)
-    load_a = 0;
-  if (load_b < 0)
-    load_b = 0;
-  if (load_c < 0)
-    load_c = 0;
-  if (store_d < 0)
-    store_d = 0;
+  // From CUDA 13 on, cudaDeviceProp carries no clock rate.
+  int clkKHz = 0;
+  (void)cudaDeviceGetAttribute(&clkKHz, cudaDevAttrClockRate, 0);
+  gGhz = (double)clkKHz / 1e6;
+  // 1024 threads are 32 warps of an SM, but only 16 waves of a CU, whose four
+  // SIMDs hold 32: an AMD GPU takes two blocks per CU to be throughput-bound.
+#ifdef __HIP__
+  gCfg.blocks = prop.multiProcessorCount * 2;
+#else
+  gCfg.blocks = prop.multiProcessorCount;
+#endif
 
-  // Per-tile marginal load/store (same per-warp normalization as the MMA).
-  printf("wmma_load_a_m16n16k16,f16,%.9g\n", load_a / ww);
-  printf("wmma_load_b_m16n16k16,f16,%.9g\n", load_b / ww);
-  printf("wmma_load_c_m16n16k16,f32,%.9g\n", load_c / ww);
-  printf("wmma_store_d_m16n16k16,f32,%.9g\n", store_d / ww);
+  printf("# Generated by microbm.cu on %s\n", prop.name);
+  printf("# native_arch=%s\n", arch);
+  printf("# scalar_types=double,float\n");
 
+  size_t total = (size_t)gCfg.blocks * gCfg.threads;
+  float *fout;
+  (void)cudaMalloc(&fout, total * sizeof(float));
+  double *dout;
+  (void)cudaMalloc(&dout, total * sizeof(double));
+
+#ifdef __HIP__
+  // Bring the GPU to its sustained clock before the first row.
+  for (int i = 0; i < 2000; ++i)
+    fma_float<1024><<<gCfg.blocks, gCfg.threads>>>(fout);
+  (void)cudaDeviceSynchronize();
+#endif
+
+#define BENCH_FLOAT(stem, row) BENCH_SCALAR(stem, float, #row, "float", fout)
+#define BENCH_DOUBLE(stem, row) BENCH_SCALAR(stem, double, #row, "double", dout)
+  PER_OP_ROWS(BENCH_FLOAT)
+  PER_OP_ROWS(BENCH_DOUBLE)
+  BENCH_CVT(cvt_f32_f64, fout, "fpext_float_to_double", "float");
+  BENCH_CVT(cvt_f64_f32, dout, "fptrunc_double_to_float", "double");
+
+  (void)cudaFree(fout);
+  (void)cudaFree(dout);
+#ifndef __HIP__
+  tileRows();
+#endif
   return 0;
 }

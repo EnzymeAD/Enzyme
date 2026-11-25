@@ -30,7 +30,7 @@ if(POSEIDON_BUILD_HERBIE)
       1
       # Built from the source tree, not installed as a Racket package: the
       # module names raco exe embeds are then `syntax/platform-language`, the
-      # language csv_to_herbie_platform.py names in the platforms it writes.
+      # language herbie_platform.py names in the platforms it writes.
     BUILD_COMMAND cargo build --release --manifest-path=egg-herbie/Cargo.toml
     COMMAND
       raco

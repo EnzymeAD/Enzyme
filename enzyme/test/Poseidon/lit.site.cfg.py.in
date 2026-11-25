@@ -1,6 +1,7 @@
 @LIT_SITE_CFG_IN_HEADER@
 
 import os
+import subprocess
 import sys
 
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
@@ -79,6 +80,13 @@ config.substitutions.append(('%gpu_cost_model',
                              '@POSEIDON_TEST_COST_MODELS@/cm_gpu_synthetic.csv'))
 config.substitutions.append(('%cost_models', '@POSEIDON_TEST_COST_MODELS@'))
 config.substitutions.append(('%gpu_arch', '@POSEIDON_TEST_GPU_ARCH_RESOLVED@'))
+
+# The Python poseidon-calibrate runs its CPU microbenchmark under, when it has
+# the package that microbenchmark JIT-compiles with.
+calibrate_python = '@Python3_EXECUTABLE@'
+if subprocess.run([calibrate_python, '-c', 'import llvmlite.binding'],
+                  capture_output=True).returncode == 0:
+    config.available_features.add('cpu-calibration')
 
 herbie_binary = '@POSEIDON_HERBIE_BINARY_PATH@'
 config.substitutions.append(('%herbie_binary', herbie_binary))

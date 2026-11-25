@@ -15,7 +15,7 @@
 ; (NV-NOPLATFORM); the same platform name with other costs does not read it
 ; either, since the platform's contents are part of the key (NV-RECALIBRATED).
 ; RUN: mkdir %t/nv %t/nv/cache %t/nv/nocm %t/nv/recal
-; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/nv/cache/cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt
+; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/nv/cache/cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt
 ; RUN: sed "s/sm_120/sm_90/" %s > %t/nv/sm90.ll
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/nv/nocm/
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %cost_models/cm_sm_120_synthetic.herbie.rkt %t/nv/recal/ && echo ";; recalibrated" >> %t/nv/recal/cm_sm_120_synthetic.herbie.rkt
@@ -24,7 +24,7 @@
 ; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/nocm-cache 2>&1 | FileCheck --check-prefix=NV-NOPLATFORM %s
 ; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-RECALIBRATED %s
 
-; NV-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt
+; NV-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt
 ; NV-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; NV-OTHERARCH-NOT: Using cached Herbie output
@@ -53,7 +53,7 @@
 ; RUN: %if amdgpu-registered-target %{ sed 's/^# native_arch=sm_120$/# native_arch=gfx90a/' %cost_models/cm_sm_120_synthetic.csv > %t/amd/cm/cm_gfx90a_Fixture.csv %}
 ; RUN: %if amdgpu-registered-target %{ %poseidon_calibrate --only herbie-platform --out %t/amd/cm/cm_gfx90a_Fixture.csv > /dev/null %}
 ; RUN: %if amdgpu-registered-target %{ FileCheck --check-prefix=AMD-PLATFORM90A %s < %t/amd/cm/cm_gfx90a_Fixture.herbie.rkt %}
-; RUN: %if amdgpu-registered-target %{ cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/amd/cache/cachedHerbieOutput_hip-gfx942_70805211AE06B2CB.txt %}
+; RUN: %if amdgpu-registered-target %{ cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/amd/cache/cachedHerbieOutput_hip-gfx942_761F468C1372B235.txt %}
 ; RUN: %if amdgpu-registered-target %{ %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%t/amd/cm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/cache 2>&1 | FileCheck --check-prefix=AMD-MATCH %s %}
 ; RUN: %if amdgpu-registered-target %{ not %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/amd/nocm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/nocm-cache 2>&1 | FileCheck --check-prefix=AMD-NOPLATFORM %s %}
 
@@ -66,7 +66,7 @@
 ; AMD-PLATFORM90A: ;; HIP gfx90a platform, generated from a Poseidon GPU cost model CSV.
 ; AMD-PLATFORM90A: (module hip-gfx90a
 
-; AMD-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_hip-gfx942_70805211AE06B2CB.txt
+; AMD-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_hip-gfx942_761F468C1372B235.txt
 ; AMD-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; AMD-NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'

@@ -16,7 +16,6 @@
 #ifndef POSEIDON_CORE_COST_TABLE_H
 #define POSEIDON_CORE_COST_TABLE_H
 
-#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -52,12 +51,21 @@ struct CostModelState {
   std::optional<std::unordered_set<std::string>> PTFuncs;
 };
 
+// The directory a compile looks a model up in by target-cpu:
+// $XDG_CACHE_HOME/poseidon, else $HOME/.cache/poseidon; empty when neither
+// variable is set.
+std::string userCacheDir();
+
+// Parses the model the request names, and fails unless every line is a header
+// or a row of a family poseidon-calibrate writes.
+llvm::Error loadCostModel(CostModelState &CM);
+
 // Resolves and loads the model for the function named `function`, compiled for
-// `targetCpu`, and fails unless its native_arch header names `targetCpu` and
-// `IsRow` takes each of its rows as (opcode, type).
-llvm::Error requireCostModel(
-    CostModelState &CM, llvm::StringRef targetCpu, llvm::StringRef function,
-    llvm::function_ref<bool(llvm::StringRef, llvm::StringRef)> IsRow);
+// `targetCpu`, and fails unless its native_arch header names `targetCpu`.
+// `OnDevice` says whether `targetCpu` is a GPU's, which decides the
+// poseidon-calibrate command a missing model is named with.
+llvm::Error requireCostModel(CostModelState &CM, llvm::StringRef targetCpu,
+                             llvm::StringRef function, bool OnDevice);
 
 // The loaded model; a site has required it.
 const std::map<std::pair<std::string, std::string>, double> &
