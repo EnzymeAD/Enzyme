@@ -374,6 +374,67 @@ static MatrixIndex classifyTidIndex(const SCEV *S, int64_t &unitByte) {
   return idx;
 }
 
+// The extension of the integer `v` to `wide`, distributed over the no-wrap
+// arithmetic `v` is computed by: sext over nsw add, sub, mul and shl by a
+// constant, zext over the nuw ones. Contract: `v` reaches the address of an
+// executed load through an inbounds GEP. A wrap of any of these operations
+// makes that address poison and the load undefined, so in every defined
+// execution none wraps and the extension of the result equals the arithmetic
+// on the extended operands. This makes the address of A[row * K + k] with int
+// indices an affine function of k, which ScalarEvolution alone does not see.
+static const SCEV *extendedIndex(ScalarEvolution &SE, Value *v, Type *wide,
+                                 bool isSigned, unsigned depth = 0) {
+  auto leaf = [&] {
+    return isSigned ? SE.getSignExtendExpr(SE.getSCEV(v), wide)
+                    : SE.getZeroExtendExpr(SE.getSCEV(v), wide);
+  };
+  auto *BO = dyn_cast<OverflowingBinaryOperator>(v);
+  if (!BO || depth > 8 ||
+      !(isSigned ? BO->hasNoSignedWrap() : BO->hasNoUnsignedWrap()))
+    return leaf();
+  auto operand = [&](unsigned i) {
+    return extendedIndex(SE, BO->getOperand(i), wide, isSigned, depth + 1);
+  };
+  switch (BO->getOpcode()) {
+  case Instruction::Add:
+    return SE.getAddExpr(operand(0), operand(1));
+  case Instruction::Sub:
+    return SE.getMinusSCEV(operand(0), operand(1));
+  case Instruction::Mul:
+    return SE.getMulExpr(operand(0), operand(1));
+  case Instruction::Shl:
+    if (auto *C = dyn_cast<ConstantInt>(BO->getOperand(1));
+        C && C->getValue().ult(wide->getIntegerBitWidth()))
+      return SE.getMulExpr(operand(0),
+                           SE.getConstant(APInt::getOneBitSet(
+                               wide->getIntegerBitWidth(), C->getZExtValue())));
+    return leaf();
+  default:
+    return leaf();
+  }
+}
+
+// The address `ptr` of an executed load with the extended index of an
+// inbounds GEP taken by extendedIndex.
+static const SCEV *extendedAddress(ScalarEvolution &SE, const DataLayout &DL,
+                                   Value *ptr, unsigned depth = 0) {
+  auto *GEP = dyn_cast<GetElementPtrInst>(ptr);
+  if (!GEP || depth > 8 || !GEP->isInBounds() || GEP->getNumIndices() != 1)
+    return SE.getSCEV(ptr);
+  auto *ext = dyn_cast<CastInst>(GEP->getOperand(1));
+  if (!ext || !(isa<SExtInst>(ext) || isa<ZExtInst>(ext)) ||
+      ext->getType() != DL.getIndexType(GEP->getType()))
+    return SE.getSCEV(ptr);
+  Type *idxTy = ext->getType();
+  const SCEV *idx =
+      extendedIndex(SE, ext->getOperand(0), idxTy, isa<SExtInst>(ext));
+  const SCEV *size = SE.getConstant(
+      idxTy, DL.getTypeAllocSize(GEP->getSourceElementType()).getFixedValue());
+  return SE.getAddExpr(
+      extendedAddress(SE, DL, GEP->getPointerOperand(), depth + 1),
+      SE.getMulExpr(size, idx));
+}
+
 // The matmul handle of one header phi of an innermost loop whose phi+FMA chain
 // is matmul-shaped (A K-stride, B K-stride, tid-axis invariants). None
 // otherwise; `why` says why when the phi is a multiply-add reduction, and
@@ -391,8 +452,16 @@ tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   LoadInst *aLoad = rc->aLoad;
   LoadInst *bLoad = rc->bLoad;
 
-  const SCEV *aAddr = SE.getSCEV(aLoad->getPointerOperand());
-  const SCEV *bAddr = SE.getSCEV(bLoad->getPointerOperand());
+  // An address ScalarEvolution does not see as a recurrence of L may still
+  // be one once its index's extension is distributed.
+  auto address = [&](LoadInst *load) {
+    const SCEV *S = SE.getSCEV(load->getPointerOperand());
+    if (auto *rec = dyn_cast<SCEVAddRecExpr>(S); rec && rec->getLoop() == L)
+      return S;
+    return extendedAddress(SE, DL, load->getPointerOperand());
+  };
+  const SCEV *aAddr = address(aLoad);
+  const SCEV *bAddr = address(bLoad);
   auto *aRec = dyn_cast<SCEVAddRecExpr>(aAddr);
   auto *bRec = dyn_cast<SCEVAddRecExpr>(bAddr);
   auto refuse = [&](const Twine &reason) -> std::optional<ScalarLoopHandle> {

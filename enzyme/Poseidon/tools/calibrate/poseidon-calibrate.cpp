@@ -90,7 +90,9 @@ static cl::opt<std::string> OzakiRect(
     "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
     cl::desc("(M, K) of the M x Ncols x K host GEMMs whose Ozaki-II rows the "
              "ozaki-rect arm measures; MxNxK instead measures "
-             "the native DGEMM row of a call with exactly those extents"));
+             "the native DGEMM row of a call with exactly those extents. "
+             "The shapes are the ones the calls run at, which a compile's "
+             "missing-row warning names"));
 static cl::opt<unsigned>
     RefN("n", cl::init(2048), cl::value_desc("N"),
          cl::desc("Square reference shape the dispatch arms and "

@@ -37,6 +37,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
 #include <set>
@@ -542,14 +543,16 @@ struct LibrarySite {
   // place of the product.
   std::optional<GemmBodyNote> note;
   bool dispatchable = false;
-  // The product's extents at profile scale. A square product is priced from
-  // the modular row "ozaki_dispatch_rel,nmNN", measured on a square; any other
-  // from "ozaki_dispatch_rect_rel,nmNN_m<M>k<K>".
-  unsigned shapeM = 0, shapeN = 0, shapeK = 0;
-  // The extents the dispatch is compiled with, when all three are constants of
-  // this compile (a scalar-loop product's descriptor); 0 when one is a
-  // run-time value.
-  unsigned staticM = 0, staticN = 0, staticK = 0;
+  // The M x Ncols x K the call runs at, when all three are constants of this
+  // compile (a scalar-loop product's descriptor). Both library families price
+  // such a product from the rows of this shape: a rectangular one from the
+  // rows measured at it, a square one from the square rows. The shape of a
+  // product whose extents are run-time values is not known to the compile,
+  // and the two families stand in for it differently: Ozaki-II with
+  // `profileShape`, the extents at profile scale, and the native DGEMM with
+  // the square row.
+  std::optional<std::array<unsigned, 3>> runShape;
+  std::array<unsigned, 3> profileShape = {0, 0, 0};
 };
 } // namespace
 
@@ -563,14 +566,12 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
                  << m.K
                  << ": host-dispatched Ozaki-II NOT PROPOSED -- the body "
                     "is not a host-dispatchable GEMM.\n";
-  if (note && m.origin == AbstractMatmul::Origin::ScalarLoopReduction) {
-    L.staticM = (unsigned)note->dims[DimM].add;
-    L.staticN = (unsigned)note->dims[DimNcols].add;
-    L.staticK = (unsigned)note->dims[DimK].add;
-  }
-  L.shapeM = m.globalM ? m.globalM : m.M;
-  L.shapeN = m.globalN ? m.globalN : m.N;
-  L.shapeK = m.globalK ? m.globalK : m.K;
+  if (note && m.origin == AbstractMatmul::Origin::ScalarLoopReduction)
+    L.runShape = {(unsigned)note->dims[DimM].add,
+                  (unsigned)note->dims[DimNcols].add,
+                  (unsigned)note->dims[DimK].add};
+  L.profileShape = {m.globalM ? m.globalM : m.M, m.globalN ? m.globalN : m.N,
+                    m.globalK ? m.globalK : m.K};
   return L;
 }
 
@@ -585,10 +586,10 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
   return opt;
 }
 
-// A square product is priced from the row measured on a square; any other only
-// from the row measured at its own (M, K), since the runtime's per-MAC cost
-// depends on M and K but not on the column count. A modulus count without its
-// row is not proposed.
+// A rectangular product is priced only from the rows measured at its (M, K),
+// since the runtime's per-MAC cost depends on M and K but not on the column
+// count, and a square one from the square rows; the shape is the one
+// LibrarySite gives Ozaki-II. A modulus count without its row is not proposed.
 static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
   if (!L.dispatchable)
@@ -596,7 +597,8 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
   const AbstractMatmul &m = P.m;
   // The runtime's INT32 residue sums hold a reduction shorter than
   // kOzakiIIMaxK, at the scale the call runs at and at the one simulated.
-  const unsigned reduction = std::max({L.staticK, L.shapeK, m.K});
+  const unsigned reduction =
+      std::max({L.runShape ? (*L.runShape)[2] : 0u, L.profileShape[2], m.K});
   if (reduction >= (unsigned)kOzakiIIMaxK) {
     if (P.S.Opts.Diagnostics.Print)
       llvm::errs() << "  Matmul[" << m.id << "] ozaki-ii NOT PROPOSED -- its "
@@ -605,9 +607,12 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                    << ".\n";
     return;
   }
-  const bool square = L.shapeM == L.shapeN && L.shapeN == L.shapeK;
-  const std::string shapeKey =
-      "m" + std::to_string(L.shapeM) + "k" + std::to_string(L.shapeK);
+  const std::array<unsigned, 3> &shape =
+      L.runShape ? *L.runShape : L.profileShape;
+  const bool square = shape[0] == shape[1] && shape[1] == shape[2];
+  const std::string shapeM = std::to_string(shape[0]),
+                    shapeK = std::to_string(shape[2]);
+  const std::string shapeKey = "m" + shapeM + "k" + shapeK;
   const std::string family =
       square ? "ozaki_dispatch_rel" : "ozaki_dispatch_rect_rel";
   std::string missing;
@@ -627,12 +632,12 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
   }
   // One row name for all the moduli of the shape.
   if (!missing.empty())
-    reportMissingRow(
-        P.S, m, "ozaki-ii host dispatch at nm=" + missing,
-        family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey),
-        square ? std::string(kCalibrate)
-               : std::string(kCalibrate) + " --ozaki-rect " +
-                     std::to_string(L.shapeM) + "x" + std::to_string(L.shapeK));
+    reportMissingRow(P.S, m, "ozaki-ii host dispatch at nm=" + missing,
+                     family + ",nm<nm>" +
+                         (square ? std::string() : "_" + shapeKey),
+                     square ? std::string(kCalibrate)
+                            : std::string(kCalibrate) + " --ozaki-rect " +
+                                  shapeM + "x" + shapeK);
 }
 
 // The split scheme as __poseidon_tcec_dgemm, which realizes a different rate
@@ -719,30 +724,28 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // The native product (__poseidon_native_dgemm), one cublasDgemm on the real
 // M x Ncols x K for every layout combination. Its per-MAC rate depends on the
 // shape, so a call whose extents are constants of this compile is priced from
-// the row measured at those extents when the model has one. A run-time extent
-// leaves only the square row: the surrogate's shape is not the one the call
-// runs at.
+// the row measured at those extents when the model has one; any other from
+// the square row (see LibrarySite).
 static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                                  MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
   const AbstractMatmul &m = P.m;
   // Extents of this compile are priced from the row measured at them, a
-  // square one also from the square row; run-time extents, whose surrogate
-  // shape is not the one the call runs at, from the square row.
-  const bool isStatic = L.staticM && L.staticN && L.staticK;
-  const bool square = L.staticM == L.staticN && L.staticN == L.staticK;
-  const std::string shape = std::to_string(L.staticM) + "x" +
-                            std::to_string(L.staticN) + "x" +
-                            std::to_string(L.staticK);
-  const std::string rectKey = "dgemm_m" + std::to_string(L.staticM) + "n" +
-                              std::to_string(L.staticN) + "k" +
-                              std::to_string(L.staticK);
+  // square one also from the square row.
+  const unsigned M = L.runShape ? (*L.runShape)[0] : 0,
+                 N = L.runShape ? (*L.runShape)[1] : 0,
+                 K = L.runShape ? (*L.runShape)[2] : 0;
+  const std::string shape =
+      std::to_string(M) + "x" + std::to_string(N) + "x" + std::to_string(K);
+  const std::string rectKey = "dgemm_m" + std::to_string(M) + "n" +
+                              std::to_string(N) + "k" + std::to_string(K);
   double rel =
-      isStatic ? lookupCost(P.S.CostModel, "ozaki_dispatch_rect_rel", rectKey)
-                     .value_or(-1.0)
-               : -1.0;
-  if (rel <= 0.0 && isStatic && !square) {
+      L.runShape ? lookupCost(P.S.CostModel, "ozaki_dispatch_rect_rel", rectKey)
+                       .value_or(-1.0)
+                 : -1.0;
+  const bool rectangular = L.runShape && !(M == N && N == K);
+  if (rel <= 0.0 && rectangular) {
     reportMissingRow(P.S, m, "native-dgemm host dispatch at " + shape,
                      "ozaki_dispatch_rect_rel," + rectKey,
                      std::string(kCalibrate) + " --ozaki-rect " + shape);
