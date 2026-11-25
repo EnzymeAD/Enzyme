@@ -846,7 +846,7 @@ LogicalResult mlir::impulse::lowerVI(PatternRewriter &rewriter, OpT op,
     return failure();
   }
   if (ctx.hasCustomLogpdf()) {
-    op.emitError("Impulse VI: custom logpdf mode is not yet supported");
+    op.emitError("Impulse VI: custom logpdf mode is not supported");
     return failure();
   }
 

@@ -4291,7 +4291,7 @@ struct ExpandImpulsePass
         auto fn = cast<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(mcmcOp, fnAttr));
         if (fn.getFunctionBody().empty()) {
-          mcmcOp.emitError("Impulse: calling `mcmc` on an empty function");
+          mcmcOp.emitError("Impulse: calling `infer` on an empty function");
           return failure();
         }
       }
@@ -4641,18 +4641,10 @@ struct ExpandImpulsePass
     LogicalResult matchAndRewrite(impulse::MHOp mhOp,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
-
-      auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
-          mhOp, mhOp.getFnAttr());
-
-      if (fn.getFunctionBody().empty()) {
-        mhOp.emitError(
-            "Impulse: calling `mh` on an empty function; if this is a "
-            "distribution function, its sample op should have a logpdf "
-            "attribute to avoid recursive `mh` calls which is intended for "
-            "generative functions");
+      FailureOr<FunctionOpInterface> fn =
+          lookupModelBody(mhOp, mhOp.getFnAttr(), "mh", symbolTable);
+      if (failed(fn))
         return failure();
-      }
 
       auto loc = mhOp.getLoc();
 
@@ -4669,7 +4661,7 @@ struct ExpandImpulsePass
       auto selection = mhOp.getSelectionAttr();
 
       FailureOr<FlatTraceLayout> layout =
-          getFlatTraceLayout(mhOp, fn, allAddresses, symbolTable);
+          getFlatTraceLayout(mhOp, *fn, allAddresses, symbolTable);
       if (failed(layout))
         return failure();
       // On a score-tail trace, regenerate returns the dirty-term weight delta.
@@ -4678,7 +4670,7 @@ struct ExpandImpulsePass
 
       MHProposal proposal =
           proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
-                          nameAttr, fn.getResultTypes());
+                          nameAttr, fn->getResultTypes());
       proposal.changed = mhChangedColumnsFlat(*layout, selection, width);
       MHStep step = emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal,
                                hasScoreTail);
