@@ -149,6 +149,35 @@ Value impulse::emitBroadcastConstant(OpBuilder &builder, Location loc,
   return emitBroadcastScalar(builder, loc, scalar, type);
 }
 
+Value impulse::emitMatrixConstant(
+    OpBuilder &builder, Location loc, RankedTensorType type,
+    function_ref<double(int64_t row, int64_t col)> entry) {
+  const llvm::fltSemantics &semantics =
+      cast<FloatType>(type.getElementType()).getFloatSemantics();
+  SmallVector<APFloat> values;
+  values.reserve(type.getNumElements());
+  for (int64_t row = 0, rows = type.getDimSize(0); row < rows; ++row) {
+    for (int64_t col = 0, cols = type.getDimSize(1); col < cols; ++col) {
+      APFloat value(entry(row, col));
+      bool losesInfo;
+      value.convert(semantics, APFloat::rmNearestTiesToEven, &losesInfo);
+      values.push_back(value);
+    }
+  }
+  return arith::ConstantOp::create(builder, loc, type,
+                                   DenseElementsAttr::get(type, values));
+}
+
+Value impulse::emitSumAll(OpBuilder &builder, Location loc, Value tensor) {
+  auto tensorType = cast<RankedTensorType>(tensor.getType());
+  auto scalarType = RankedTensorType::get({}, tensorType.getElementType());
+  Value ones = emitSplatConstant(builder, loc, tensorType, 1.0);
+  DenseI64ArrayAttr allDims = builder.getDenseI64ArrayAttr(
+      llvm::to_vector(llvm::seq<int64_t>(0, tensorType.getRank())));
+  return impulse::DotOp::create(builder, loc, scalarType, tensor, ones, allDims,
+                                allDims);
+}
+
 Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
                              Value rhs) {
   auto amax = arith::MaximumFOp::create(builder, loc, lhs, rhs);
@@ -164,20 +193,36 @@ Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
   return arith::SelectOp::create(builder, loc, isNaN, nanResult, normalResult);
 }
 
-Value impulse::emitIndicatorMatrix(OpBuilder &builder, Location loc,
-                                   RankedTensorType type,
-                                   function_ref<bool(int64_t, int64_t)> isOne) {
-  const llvm::fltSemantics &semantics =
-      cast<FloatType>(type.getElementType()).getFloatSemantics();
-  APFloat zero(semantics, 0);
-  APFloat one(semantics, 1);
-  SmallVector<APFloat> values;
-  values.reserve(type.getNumElements());
-  for (int64_t i = 0, rows = type.getDimSize(0); i < rows; ++i)
-    for (int64_t j = 0, cols = type.getDimSize(1); j < cols; ++j)
-      values.push_back(isOne(i, j) ? one : zero);
-  return arith::ConstantOp::create(builder, loc, type,
-                                   DenseElementsAttr::get(type, values));
+Value impulse::emitSoftplus(OpBuilder &builder, Location loc, Value x) {
+  Value expX = math::ExpOp::create(builder, loc, x);
+  return math::Log1pOp::create(builder, loc, expX);
+}
+
+Value impulse::emitSoftplusInv(OpBuilder &builder, Location loc, Value x) {
+  Value expX = math::ExpOp::create(builder, loc, x);
+  Value one =
+      emitSplatConstant(builder, loc, cast<RankedTensorType>(x.getType()), 1.0);
+  Value expXMinus1 = arith::SubFOp::create(builder, loc, expX, one);
+  return math::LogOp::create(builder, loc, expXMinus1);
+}
+
+Value impulse::emitRandomDraw(OpBuilder &builder, Location loc, Value &rng,
+                              RankedTensorType sampleType,
+                              RngDistribution distribution) {
+  auto scalarType = RankedTensorType::get({}, sampleType.getElementType());
+  Value zero = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value one = emitSplatConstant(builder, loc, scalarType, 1.0);
+  auto op = impulse::RandomOp::create(
+      builder, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
+      impulse::RngDistributionAttr::get(builder.getContext(), distribution));
+  rng = op.getOutputRngState();
+  return op.getResult();
+}
+
+Value impulse::emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
+                               RankedTensorType sampleType) {
+  return emitRandomDraw(builder, loc, rng, sampleType,
+                        RngDistribution::UNIFORM);
 }
 
 Value impulse::emitRowSlice(OpBuilder &builder, Location loc, Value row,
@@ -201,9 +246,22 @@ SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,
       [&](Value operand) { return mapping.lookupOrDefault(operand); });
 }
 
-SmallVector<NamedAttribute>
-impulse::buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
-                                  DictionaryAttr extra) {
+Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
+                               StringRef label, bool debugDump) {
+  if (debugDump) {
+    return enzyme::DumpOp::create(builder, loc, value.getType(), value,
+                                  builder.getStringAttr(label))
+        .getOutput();
+  }
+  return value;
+}
+
+/// Attributes of an `enzyme.autodiff_region` with `numActiveArgs` active
+/// arguments that differentiates its first result and passes its second
+/// through as a constant, followed by the entries of `extra` when it is set.
+static SmallVector<NamedAttribute>
+buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
+                         DictionaryAttr extra) {
   MLIRContext *context = builder.getContext();
   auto active =
       enzyme::ActivityAttr::get(context, enzyme::Activity::enzyme_active);

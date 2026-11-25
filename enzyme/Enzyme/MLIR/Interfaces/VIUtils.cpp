@@ -55,24 +55,13 @@ struct VIContext : public ModelContext {
 };
 } // namespace
 
-/// Sums all elements of `tensor` into a rank-0 tensor with a dot against ones.
-static Value sumAllElements(OpBuilder &builder, Location loc, Value tensor) {
-  auto tensorType = cast<RankedTensorType>(tensor.getType());
-  auto scalarType = RankedTensorType::get({}, tensorType.getElementType());
-  Value ones = emitSplatConstant(builder, loc, tensorType, 1.0);
-  DenseI64ArrayAttr allDims = builder.getDenseI64ArrayAttr(
-      llvm::to_vector(llvm::seq<int64_t>(0, tensorType.getRank())));
-  return impulse::DotOp::create(builder, loc, scalarType, tensor, ones, allDims,
-                                allDims);
-}
-
 /// Whether `elbo` and every gradient in `grads` are finite. A gradient is
 /// tested through its sum, which is not finite when any element is not.
 static Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
                                             Value elbo, ValueRange grads) {
   Value isFinite = math::IsFiniteOp::create(builder, loc, elbo);
   for (Value grad : grads) {
-    Value gradSum = sumAllElements(builder, loc, grad);
+    Value gradSum = emitSumAll(builder, loc, grad);
     Value gradFinite = math::IsFiniteOp::create(builder, loc, gradSum);
     isFinite = arith::AndIOp::create(builder, loc, isFinite, gradFinite);
   }
@@ -87,7 +76,7 @@ static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
   auto scalarType = ctx.getScalarType();
 
   Value epsSq = arith::MulFOp::create(builder, loc, eps, eps);
-  Value sumEpsSq = sumAllElements(builder, loc, epsSq);
+  Value sumEpsSq = emitSumAll(builder, loc, epsSq);
   Value halfSumEpsSq = arith::MulFOp::create(
       builder, loc, sumEpsSq, emitSplatConstant(builder, loc, scalarType, 0.5));
   Value log2piTerm = emitSplatConstant(builder, loc, scalarType,
@@ -197,7 +186,7 @@ static ValueAndGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
                                        "VI: zConstrained", ctx.debugDump);
 
         Value logScale = math::LogOp::create(builder, loc, scaleDumped);
-        Value sumLogScale = sumAllElements(builder, loc, logScale);
+        Value sumLogScale = emitSumAll(builder, loc, logScale);
         Value logQUnc = emitGaussianLogQ(builder, loc, sumLogScale, eps, ctx);
         logQUnc = conditionalDump(builder, loc, logQUnc, "VI: logQUnc",
                                   ctx.debugDump);
@@ -268,7 +257,7 @@ emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
   Value diag = impulse::emitSoftplus(builder, loc, diagPre);
 
   Value logDiag = math::LogOp::create(builder, loc, diag);
-  Value sumLogDiag = sumAllElements(builder, loc, logDiag);
+  Value sumLogDiag = emitSumAll(builder, loc, logDiag);
 
   Value scaleTril = emitSplatConstant(builder, loc, matTy, 0.0);
 
@@ -330,14 +319,8 @@ static ValueAndGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
       builder, loc, TypeRange{rngType, rngType}, guideSeed);
   Value siteKey = siteSplit.getResult(1);
 
-  auto zeroScalar = emitSplatConstant(builder, loc, scalarType, 0.0);
-  auto oneScalar = emitSplatConstant(builder, loc, scalarType, 1.0);
-  auto randOp = impulse::RandomOp::create(
-      builder, loc, TypeRange{rngType, positionType}, siteKey, zeroScalar,
-      oneScalar,
-      impulse::RngDistributionAttr::get(builder.getContext(),
-                                        impulse::RngDistribution::NORMAL));
-  Value eps = randOp.getResult();
+  Value eps = emitRandomDraw(builder, loc, siteKey, positionType,
+                             impulse::RngDistribution::NORMAL);
 
   Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
   Value modelRng = modelSeed;

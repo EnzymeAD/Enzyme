@@ -64,16 +64,6 @@ SmallVector<Type> NUTSTreeState::getTypes() const {
   return types;
 }
 
-Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
-                               StringRef label, bool debugDump) {
-  if (debugDump) {
-    return enzyme::DumpOp::create(builder, loc, value.getType(), value,
-                                  builder.getStringAttr(label))
-        .getOutput();
-  }
-  return value;
-}
-
 /// Whether the HMC kernels treat a mass tensor of type `t` as a diagonal:
 /// `tensor<N>` for every N and `tensor<1xN>` for N > 1. `tensor<1x1>` is a
 /// dense 1x1 matrix.
@@ -85,8 +75,9 @@ static bool isDiagonalMass(RankedTensorType t) {
 /// Creates a 2D identity matrix of the specified type.
 static Value createIdentityMatrix(OpBuilder &builder, Location loc,
                                   RankedTensorType matrixType) {
-  return emitIndicatorMatrix(builder, loc, matrixType,
-                             [](int64_t i, int64_t j) { return i == j; });
+  return emitMatrixConstant(builder, loc, matrixType, [](int64_t i, int64_t j) {
+    return i == j ? 1.0 : 0.0;
+  });
 }
 
 /// Computes A[::-1, ::-1] using permutation matrix through P @ A @ P.
@@ -94,9 +85,9 @@ static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
                                    Value matrix) {
   auto matrixType = cast<RankedTensorType>(matrix.getType());
   int64_t size = matrixType.getShape()[0];
-  Value permutation = emitIndicatorMatrix(
+  Value permutation = emitMatrixConstant(
       builder, loc, matrixType,
-      [size](int64_t i, int64_t j) { return j == size - 1 - i; });
+      [size](int64_t i, int64_t j) { return j == size - 1 - i ? 1.0 : 0.0; });
 
   // PA = P @ A
   auto rowsReversed = impulse::DotOp::create(

@@ -17,7 +17,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cmath>
@@ -59,19 +58,6 @@ static Value emitLogSigmoid(OpBuilder &builder, Location loc, Value x) {
   return arith::NegFOp::create(builder, loc, softplusNegX);
 }
 
-Value impulse::emitSoftplus(OpBuilder &builder, Location loc, Value x) {
-  Value expX = math::ExpOp::create(builder, loc, x);
-  return math::Log1pOp::create(builder, loc, expX);
-}
-
-Value impulse::emitSoftplusInv(OpBuilder &builder, Location loc, Value x) {
-  Value expX = math::ExpOp::create(builder, loc, x);
-  Value one =
-      emitSplatConstant(builder, loc, cast<RankedTensorType>(x.getType()), 1.0);
-  Value expXMinus1 = arith::SubFOp::create(builder, loc, expX, one);
-  return math::LogOp::create(builder, loc, expXMinus1);
-}
-
 /// Creates a rank-0 constant of `elemType` holding `v`.
 static Value scalarConst(OpBuilder &builder, Location loc, Type elemType,
                          double v) {
@@ -93,16 +79,6 @@ static Value broadcastToSample(OpBuilder &builder, Location loc, Value v,
   return emitBroadcastScalar(builder, loc, scalar, sampleType);
 }
 
-/// Sums the rank-1 `vector` to a rank-0 tensor by a dot product with ones.
-static Value sumVector(OpBuilder &builder, Location loc, Value vector) {
-  auto type = cast<RankedTensorType>(vector.getType());
-  Value ones = emitSplatConstant(builder, loc, type, 1.0);
-  return impulse::DotOp::create(
-      builder, loc, RankedTensorType::get({}, type.getElementType()), vector,
-      ones, builder.getDenseI64ArrayAttr({0}),
-      builder.getDenseI64ArrayAttr({0}));
-}
-
 /// Sums `v` to a rank-0 tensor; a one-element `v` is reshaped, not summed.
 static Value reduceSumToScalar(OpBuilder &builder, Location loc, Value v) {
   auto vt = cast<RankedTensorType>(v.getType());
@@ -115,7 +91,7 @@ static Value reduceSumToScalar(OpBuilder &builder, Location loc, Value v) {
   if (vt.getRank() != 1)
     flat = impulse::ReshapeOp::create(builder, loc,
                                       RankedTensorType::get({n}, elemType), v);
-  return sumVector(builder, loc, flat);
+  return emitSumAll(builder, loc, flat);
 }
 
 /// Sums each row of the `numRows` x `numCols` matrix `v`.
@@ -140,27 +116,14 @@ struct SimplexDims {
 };
 } // namespace
 
-/// Creates a constant of the matrix type `ty` whose every row is `rowVals`.
-static Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
-                      ArrayRef<double> rowVals) {
-  auto elemType = ty.getElementType();
-  int64_t m = ty.getShape()[0], ncol = ty.getShape()[1];
-  SmallVector<APFloat> vals;
-  vals.reserve(m * ncol);
-  for (int64_t r = 0; r < m; ++r)
-    for (int64_t c = 0; c < ncol; ++c)
-      vals.push_back(cast<FloatAttr>(builder.getFloatAttr(elemType, rowVals[c]))
-                         .getValue());
-  return arith::ConstantOp::create(builder, loc, ty,
-                                   DenseElementsAttr::get(ty, vals));
-}
-
 /// The n x n matrix of ones above the diagonal, and on it unless `strict`.
 static Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
                      Type elemType) {
-  return emitIndicatorMatrix(
-      builder, loc, RankedTensorType::get({n, n}, elemType),
-      [&](int64_t i, int64_t j) { return strict ? i < j : i <= j; });
+  return emitMatrixConstant(builder, loc,
+                            RankedTensorType::get({n, n}, elemType),
+                            [&](int64_t i, int64_t j) {
+                              return (strict ? i < j : i <= j) ? 1.0 : 0.0;
+                            });
 }
 
 /// Multiplies `mat` on the right by the triangular ones matrix `tri`, which
@@ -174,11 +137,11 @@ static Value prefixSum(OpBuilder &builder, Location loc, Value mat, Value tri) {
 /// The m x n matrix whose column c holds log(n - c), the stick-breaking offset.
 static Value shiftMat(OpBuilder &builder, Location loc, const SimplexDims &d,
                       Type elemType) {
-  SmallVector<double> rowVals(d.n);
-  for (int64_t c = 0; c < d.n; ++c)
-    rowVals[c] = std::log((double)(d.n - c));
-  return matConst(builder, loc, RankedTensorType::get({d.m, d.n}, elemType),
-                  rowVals);
+  return emitMatrixConstant(builder, loc,
+                            RankedTensorType::get({d.m, d.n}, elemType),
+                            [&](int64_t, int64_t c) {
+                              return std::log(static_cast<double>(d.n - c));
+                            });
 }
 
 /// Stick-breaking map from m * n unconstrained values to m simplex blocks.
@@ -273,7 +236,7 @@ static Value logDetSimplex(OpBuilder &builder, Location loc,
 
   Value flat = impulse::ReshapeOp::create(
       builder, loc, RankedTensorType::get({d.m * d.n}, elemType), term);
-  return sumVector(builder, loc, flat);
+  return emitSumAll(builder, loc, flat);
 }
 
 /// Simplex block sizes of a constrained vector of `constrainedSize` entries.
@@ -474,14 +437,14 @@ Value impulse::emitConstrainLogAbsDetJacobian(OpBuilder &builder, Location loc,
   case SupportKind::POSITIVE:
   case SupportKind::GREATER_THAN:
   case SupportKind::LESS_THAN:
-    return sumVector(builder, loc, unconstrained);
+    return emitSumAll(builder, loc, unconstrained);
   case SupportKind::UNIT_INTERVAL:
-    return sumVector(builder, loc,
-                     emitLogSigmoidDerivative(builder, loc, unconstrained));
+    return emitSumAll(builder, loc,
+                      emitLogSigmoidDerivative(builder, loc, unconstrained));
   case SupportKind::INTERVAL: {
     double scale = support.getUpperBound().getValueAsDouble() -
                    support.getLowerBound().getValueAsDouble();
-    Value sumLogProduct = sumVector(
+    Value sumLogProduct = emitSumAll(
         builder, loc, emitLogSigmoidDerivative(builder, loc, unconstrained));
 
     int64_t n = zType.getNumElements();
@@ -496,27 +459,6 @@ Value impulse::emitConstrainLogAbsDetJacobian(OpBuilder &builder, Location loc,
         simplexDimsFromUnconstrained(support, zType.getNumElements()));
   }
   llvm_unreachable("unknown SupportKind");
-}
-
-/// Draws `sampleType` values from `distribution` with parameters 0 and 1,
-/// that is uniform on [0, 1) or standard normal, and advances `rng`.
-static Value emitRandomDraw(OpBuilder &builder, Location loc, Value &rng,
-                            RankedTensorType sampleType,
-                            RngDistribution distribution) {
-  Type elemType = sampleType.getElementType();
-  Value zero = scalarConst(builder, loc, elemType, 0.0);
-  Value one = scalarConst(builder, loc, elemType, 1.0);
-  auto op = impulse::RandomOp::create(
-      builder, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
-      impulse::RngDistributionAttr::get(builder.getContext(), distribution));
-  rng = op.getOutputRngState();
-  return op.getResult();
-}
-
-Value impulse::emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
-                               RankedTensorType sampleType) {
-  return emitRandomDraw(builder, loc, rng, sampleType,
-                        RngDistribution::UNIFORM);
 }
 
 /// Standard exponential sample -log1p(-u) from a uniform sample `u`.
@@ -918,8 +860,10 @@ static Value emitBaseLogpdf(OpBuilder &builder, Location loc, DistBaseKind base,
     Value unnormed = arith::MulFOp::create(
         builder, loc, scalarConst(builder, loc, elemType, -0.5), maha);
 
-    Value identity = emitIndicatorMatrix(
-        builder, loc, matType, [](int64_t i, int64_t j) { return i == j; });
+    Value identity =
+        emitMatrixConstant(builder, loc, matType, [](int64_t i, int64_t j) {
+          return i == j ? 1.0 : 0.0;
+        });
     Value upperCholMasked =
         arith::MulFOp::create(builder, loc, upperChol, identity);
     Value onesN = emitSplatConstant(builder, loc, vecType, 1.0);

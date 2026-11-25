@@ -9,6 +9,7 @@
 #ifndef ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 #define ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 
+#include "Dialect/Impulse/Impulse.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -64,14 +65,33 @@ Value emitBroadcastScalar(OpBuilder &builder, Location loc, Value scalar,
 Value emitBroadcastConstant(OpBuilder &builder, Location loc,
                             RankedTensorType type, double value);
 
+/// Creates a constant of the matrix type `type` whose (row, col) entry is
+/// `entry(row, col)`.
+Value emitMatrixConstant(OpBuilder &builder, Location loc,
+                         RankedTensorType type,
+                         function_ref<double(int64_t row, int64_t col)> entry);
+
+/// Sums all elements of `tensor` to a rank-0 tensor by a dot product with
+/// ones.
+Value emitSumAll(OpBuilder &builder, Location loc, Value tensor);
+
 /// log(exp(lhs) + exp(rhs)), or lhs + rhs where lhs - rhs is NaN.
 Value emitLogAddExp(OpBuilder &builder, Location loc, Value lhs, Value rhs);
 
-/// Creates a matrix constant of `type` whose (i, j) entry is 1 where
-/// `isOne(i, j)` holds and 0 elsewhere.
-Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
-                          RankedTensorType type,
-                          function_ref<bool(int64_t, int64_t)> isOne);
+/// Elementwise log1p(exp(x)).
+Value emitSoftplus(OpBuilder &builder, Location loc, Value x);
+
+/// Elementwise log(exp(x) - 1), the inverse of emitSoftplus.
+Value emitSoftplusInv(OpBuilder &builder, Location loc, Value x);
+
+/// Draws `sampleType` values from `distribution` with parameters 0 and 1,
+/// that is uniform on [0, 1) or standard normal, and advances `rng`.
+Value emitRandomDraw(OpBuilder &builder, Location loc, Value &rng,
+                     RankedTensorType sampleType, RngDistribution distribution);
+
+/// Draws `sampleType` values uniform on [0, 1) and advances `rng`.
+Value emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
+                      RankedTensorType sampleType);
 
 /// Reads a value of `type` from row 0 of the rank-2 `row`, starting at column
 /// `column`.
@@ -83,12 +103,10 @@ Value emitRowSlice(OpBuilder &builder, Location loc, Value row, int64_t column,
 SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,
                                   IRMapping &mapping);
 
-/// Attributes of an `enzyme.autodiff_region` with `numActiveArgs` active
-/// arguments that differentiates its first result and passes its second
-/// through as a constant, followed by the entries of `extra` when it is set.
-SmallVector<NamedAttribute> buildGradientRegionAttrs(Builder &builder,
-                                                     unsigned numActiveArgs,
-                                                     DictionaryAttr extra);
+/// Returns `value` passed through an `enzyme.dump` labeled `label` when
+/// `debugDump` is set, else `value` itself.
+Value conditionalDump(OpBuilder &builder, Location loc, Value value,
+                      StringRef label, bool debugDump);
 
 /// A scalar and its gradient with respect to each argument of the region that
 /// computed it.
@@ -100,8 +118,9 @@ struct ValueAndGradient {
 /// Emits an `enzyme.autodiff_region` over `args`, seeded with the rank-0
 /// `seed`, whose body `body` builds from the region arguments the scalar to
 /// differentiate, drawing from the RNG state it is given. Advances `rng` to
-/// the RNG state the body leaves and returns the scalar and its gradients.
-/// The attributes of the region are those of buildGradientRegionAttrs.
+/// the RNG state the body leaves, which the region passes through as a
+/// constant, and returns the scalar and its gradients. `extraAttrs`, when set,
+/// are added to the attributes of the region.
 ValueAndGradient
 emitGradientRegion(OpBuilder &builder, Location loc, ValueRange args,
                    Value seed, Value &rng, DictionaryAttr extraAttrs,

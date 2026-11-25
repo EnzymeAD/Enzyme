@@ -36,15 +36,6 @@ Value emitUnconstrain(OpBuilder &builder, Location loc, SupportAttr support,
 Value emitConstrainLogAbsDetJacobian(OpBuilder &builder, Location loc,
                                      SupportAttr support, Value unconstrained);
 
-/// Elementwise log1p(exp(x)).
-Value emitSoftplus(OpBuilder &builder, Location loc, Value x);
-/// Elementwise log(exp(x) - 1), the inverse of emitSoftplus.
-Value emitSoftplusInv(OpBuilder &builder, Location loc, Value x);
-
-/// Draws `sampleType` values uniform on [0, 1) and advances `rng`.
-Value emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
-                      RankedTensorType sampleType);
-
 /// False for rejection-loop samplers, whose RNG stream cannot be replayed.
 bool distSamplerEmittable(DistAttr dist);
 

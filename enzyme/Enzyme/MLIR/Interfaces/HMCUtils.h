@@ -218,11 +218,6 @@ struct SubtreeBuildResult {
   Value pSumCkpts;
 };
 
-/// Conditionally dump a value for debugging.
-/// Emits an enzyme::DumpOp if `debugDump` is true; otherwise has no effect.
-Value conditionalDump(OpBuilder &builder, Location loc, Value value,
-                      StringRef label, bool debugDump);
-
 /// Computes `v = M^-1 @ p`
 /// If `invMass` is nullptr, returns `momentum` unchanged (assumes identity)
 /// If `invMass` is a diagonal matrix, computes `v = invMass * momentum`
