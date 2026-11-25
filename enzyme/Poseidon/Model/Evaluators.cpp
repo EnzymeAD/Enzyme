@@ -13,7 +13,6 @@
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
@@ -196,18 +195,33 @@ static constexpr BinaryFn kBinaryFns[] = {
     {"remainder", std::remainder, remainderf},
 };
 
-static constexpr StringLiteral kComparisons[] = {"==", "!=", "<",
-                                                 ">",  "<=", ">="};
+// Whether comparison `pred` holds between two values whose order is `order`
+// (negative, zero or positive), or which are unordered when it is none.
+static bool comparisonHolds(CmpInst::Predicate pred, std::optional<int> order) {
+  if (!order)
+    return CmpInst::isUnordered(pred);
+  switch (pred) {
+  case CmpInst::FCMP_OEQ:
+    return *order == 0;
+  case CmpInst::FCMP_UNE:
+    return *order != 0;
+  case CmpInst::FCMP_OLT:
+    return *order < 0;
+  case CmpInst::FCMP_OGT:
+    return *order > 0;
+  case CmpInst::FCMP_OLE:
+    return *order <= 0;
+  case CmpInst::FCMP_OGE:
+    return *order >= 0;
+  default:
+    llvm_unreachable("FPCore has no other comparison");
+  }
+}
 
-// The comparison `op` of `a` and `b`, as C compares them.
-template <typename T> static bool compare(StringRef op, T a, T b) {
-  return StringSwitch<bool>(op)
-      .Case("==", a == b)
-      .Case("!=", a != b)
-      .Case("<", a < b)
-      .Case(">", a > b)
-      .Case("<=", a <= b)
-      .Case(">=", a >= b);
+template <typename T> static std::optional<int> orderOf(T a, T b) {
+  if (std::isnan(a) || std::isnan(b))
+    return std::nullopt;
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 static constexpr ConstantOp kConstants[] = {
@@ -349,11 +363,12 @@ void FPEvaluator::evaluateNode(const FPNode *node,
               ? (double)truncToPrec(
                     fmaf(toF(operand(0)), toF(operand(1)), toF(operand(2))))
               : std::fma(operand(0), operand(1), operand(2));
-  } else if (is_contained(kComparisons, node->op)) {
-    bool r = useReducedFloat
-                 ? compare(node->op, toF(operand(0)), toF(operand(1)))
-                 : compare(node->op, operand(0), operand(1));
-    res = r ? 1.0 : 0.0;
+  } else if (std::optional<CmpInst::Predicate> pred =
+                 fpcoreComparison(node->op)) {
+    std::optional<int> order = useReducedFloat
+                                   ? orderOf(toF(operand(0)), toF(operand(1)))
+                                   : orderOf(operand(0), operand(1));
+    res = comparisonHolds(*pred, order) ? 1.0 : 0.0;
   } else if (const ConstantOp *C = findOp(kConstants, node->op)) {
     res = C->Value;
   } else {
@@ -557,12 +572,16 @@ void MPFREvaluator::evaluateNode(
   } else if (node->op == "fma") {
     SmallVector<mpfr_ptr, 3> ops = rounded();
     mpfr_fma(res, ops[0], ops[1], ops[2], MPFR_RNDN);
-  } else if (is_contained(kComparisons, node->op)) {
+  } else if (std::optional<CmpInst::Predicate> pred =
+                 fpcoreComparison(node->op)) {
     evaluateNode(node->operands[0].get(), inputValues);
     evaluateNode(node->operands[1].get(), inputValues);
-    int order = mpfr_cmp(getResult(node->operands[0].get()),
-                         getResult(node->operands[1].get()));
-    mpfr_set_ui(res, compare(node->op, order, 0), MPFR_RNDN);
+    mpfr_t &a = getResult(node->operands[0].get());
+    mpfr_t &b = getResult(node->operands[1].get());
+    std::optional<int> order;
+    if (!mpfr_unordered_p(a, b))
+      order = mpfr_cmp(a, b);
+    mpfr_set_ui(res, comparisonHolds(*pred, order), MPFR_RNDN);
   } else if (node->op == "and" || node->op == "or") {
     evaluateNode(node->operands[0].get(), inputValues);
     evaluateNode(node->operands[1].get(), inputValues);

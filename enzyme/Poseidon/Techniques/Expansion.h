@@ -62,8 +62,8 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
-// The libm function a call to `name` computes, without the f or l suffix of
-// its float and long double variants: "fmax" for fmaxf and for __nv_fmax.
+// The math function a call to `name` computes, from the device math library or
+// libm: "fmax" for fmaxf and for __nv_fmax; empty for any other call.
 llvm::StringRef libmBaseName(llvm::StringRef name);
 
 // Materialize `instsToChange` as an n-component expansion and erase them, with

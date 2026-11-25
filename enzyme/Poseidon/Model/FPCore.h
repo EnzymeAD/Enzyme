@@ -23,6 +23,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Error.h"
 
 #include <functional>
 #include <memory>
@@ -37,7 +38,13 @@ class Type;
 
 namespace poseidon {
 
-std::shared_ptr<FPNode> parseHerbieExpr(
+// The expression graph of the FPCore expression `expr`, over the values its
+// symbols name. An error, saying what and where, for an expression that is not
+// one the evaluators and the lowering model: an unknown symbol or operator, an
+// operator of an unmodelled format or with the wrong operand count, a truth
+// value where a number belongs or the reverse, or a malformed literal, approx
+// form or array.
+llvm::Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
@@ -69,11 +76,6 @@ std::string getHerbieOperator(const llvm::Instruction &I);
 // The name of intrinsic `Callee` without its "llvm." prefix and type suffixes:
 // "sin" for llvm.sin.f64.
 llvm::StringRef intrinsicBaseName(const llvm::Function &Callee);
-
-// The math function a library call to `Name` computes: `Name` when it is a
-// row of mathFunctions(), else its float form's row without the f suffix, else
-// empty.
-llvm::StringRef mathFunctionOf(llvm::StringRef Name);
 
 void getUniqueArgs(const std::string &expr,
                    llvm::SmallSet<std::string, 8> &args);

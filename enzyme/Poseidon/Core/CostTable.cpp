@@ -22,6 +22,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <system_error>
 #include <tuple>
@@ -186,6 +187,11 @@ Error loadCostModel(CostModelState &CM) {
     if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
       return modelError(CM, "line " + Twine(It.line_number()) +
                                 " is not '<opcode>,<type>,<cost>': " + Line);
+    if (!std::isfinite(Cost) || Cost < 0)
+      return modelError(CM, "line " + Twine(It.line_number()) +
+                                " prices the row '" + Fields[0] + "," +
+                                Fields[1] + "' at " + Fields[2].trim() +
+                                ", which is not a finite non-negative cost");
     if (!isCostModelRow(Fields[0], Fields[1]))
       return modelError(CM, "line " + Twine(It.line_number()) +
                                 " has the row '" + Fields[0] + "," + Fields[1] +

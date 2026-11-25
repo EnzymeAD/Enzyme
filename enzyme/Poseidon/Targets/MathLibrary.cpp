@@ -71,14 +71,24 @@ static bool hasRow(StringRef Name, bool MathFunction::*Column) {
   });
 }
 
+StringRef mathFunctionOf(StringRef Name) {
+  auto IsRow = [](StringRef N) {
+    return any_of(mathFunctions(),
+                  [&](const MathFunction &F) { return F.Name == N; });
+  };
+  if (IsRow(Name))
+    return Name;
+  if (Name.ends_with("f") && IsRow(Name.drop_back()))
+    return Name.drop_back();
+  return "";
+}
+
 bool isLibmFunction(StringRef Name) {
   return hasRow(Name, &MathFunction::Libm);
 }
 
 bool isOptimizableLibmCall(StringRef Name) {
-  return hasRow(Name, &MathFunction::Optimizable) ||
-         (Name.ends_with("f") &&
-          hasRow(Name.drop_back(), &MathFunction::Optimizable));
+  return hasRow(mathFunctionOf(Name), &MathFunction::Optimizable);
 }
 
 bool hasFloatSuffixInC(StringRef Name) {
@@ -90,9 +100,7 @@ bool isDeviceMathBase(StringRef Name) {
 }
 
 std::string retypeLibmFunction(StringRef name, Type *newType) {
-  StringRef baseName = name;
-  if (baseName.ends_with("f") || baseName.ends_with("l"))
-    baseName = baseName.drop_back();
+  StringRef baseName = mathFunctionOf(name);
   if (!isLibmFunction(baseName))
     return "";
   if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())

@@ -148,14 +148,13 @@ static void getSampledPoints(
     double upper = node->getUpperBound();
 
     if (!std::isfinite(lower) || !std::isfinite(upper) || lower > upper) {
-      // [INF, -INF] is the initial range: the profiler never observed this
-      // input. Refuse to sample rather than invent a bound.
-      llvm::errs() << "Poseidon: input to sampled subgraph has unprofiled "
-                      "bounds ["
-                   << lower << ", " << upper
-                   << "]; refusing to sample it. This subgraph cannot be "
-                      "priced and will keep its original body. Input value: "
-                   << *input << '\n';
+      // The profile gave the input this range: it saw an infinity, or no value
+      // but NaN, which leaves no interval of finite values to draw from.
+      llvm::errs() << "Poseidon: the profiled range [" << lower << ", " << upper
+                   << "] of the subgraph input " << *input
+                   << " is not an interval of finite values, so the subgraph "
+                      "cannot be sampled or priced and keeps its original "
+                      "body.\n";
       return;
     }
 
@@ -169,12 +168,11 @@ static void getSampledPoints(
   for (const FPLLValue *leaf : leaves) {
     double lower = leaf->getLowerBound(), upper = leaf->getUpperBound();
     if (!std::isfinite(lower) || !std::isfinite(upper) || lower > upper) {
-      llvm::errs() << "Poseidon: value a subgraph input is computed from has "
-                      "unprofiled bounds ["
-                   << lower << ", " << upper
-                   << "]; refusing to sample the subgraph. It cannot be priced "
-                      "and will keep its original body. Value: "
-                   << *leaf->value << '\n';
+      llvm::errs() << "Poseidon: the profiled range [" << lower << ", " << upper
+                   << "] of " << *leaf->value
+                   << ", which a subgraph input is computed from, is not an "
+                      "interval of finite values, so the subgraph cannot be "
+                      "sampled or priced and keeps its original body.\n";
       return;
     }
     leafBox.insert({leaf->value, {lower, upper}});

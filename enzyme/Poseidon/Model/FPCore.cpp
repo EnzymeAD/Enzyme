@@ -55,17 +55,128 @@ static SmallVector<StringRef, 4> splitTopLevel(StringRef S) {
   return Items;
 }
 
-std::shared_ptr<FPNode> parseHerbieExpr(
-    const std::string &expr,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
-    const SetVector<Value *> *subgraphInputs) {
-  auto parse = [&](StringRef sub) {
-    return parseHerbieExpr(sub.str(), valueToNodeMap, symbolToValueMap,
-                           approxSpecs, subgraphInputs);
-  };
-  const std::string trimmedExpr = StringRef(expr).trim(' ').str();
+namespace {
+struct FPCoreOperator {
+  StringLiteral Op;
+  // The operand count; an array takes any positive number.
+  unsigned Arity;
+  bool Boolean;
+};
+} // namespace
+
+// The operators the evaluators and the lowering model, as Herbie names them.
+static constexpr FPCoreOperator kOperators[] = {
+    {"neg", 1, false},
+    {"sin", 1, false},
+    {"cos", 1, false},
+    {"tan", 1, false},
+    {"exp", 1, false},
+    {"expm1", 1, false},
+    {"log", 1, false},
+    {"log1p", 1, false},
+    {"sqrt", 1, false},
+    {"cbrt", 1, false},
+    {"asin", 1, false},
+    {"acos", 1, false},
+    {"atan", 1, false},
+    {"sinh", 1, false},
+    {"cosh", 1, false},
+    {"tanh", 1, false},
+    {"asinh", 1, false},
+    {"acosh", 1, false},
+    {"atanh", 1, false},
+    {"ceil", 1, false},
+    {"floor", 1, false},
+    {"exp2", 1, false},
+    {"log10", 1, false},
+    {"log2", 1, false},
+    {"rint", 1, false},
+    {"round", 1, false},
+    {"trunc", 1, false},
+    {"fabs", 1, false},
+    {"erf", 1, false},
+    {"lgamma", 1, false},
+    {"tgamma", 1, false},
+    {"binary64->binary32", 1, false},
+    {"binary32->binary64", 1, false},
+    {"+", 2, false},
+    {"-", 2, false},
+    {"*", 2, false},
+    {"/", 2, false},
+    {"pow", 2, false},
+    {"hypot", 2, false},
+    {"atan2", 2, false},
+    {"copysign", 2, false},
+    {"fmax", 2, false},
+    {"fmin", 2, false},
+    {"fdim", 2, false},
+    {"fmod", 2, false},
+    {"remainder", 2, false},
+    {"fma", 3, false},
+    {"PI", 0, false},
+    {"E", 0, false},
+    {"INFINITY", 0, false},
+    {"NAN", 0, false},
+    {"==", 2, true},
+    {"!=", 2, true},
+    {"<", 2, true},
+    {">", 2, true},
+    {"<=", 2, true},
+    {">=", 2, true},
+    {"and", 2, true},
+    {"or", 2, true},
+    {"not", 1, true},
+    {"TRUE", 0, true},
+    {"FALSE", 0, true},
+    {"if", 3, false},
+    {"array", 0, false},
+};
+
+static const FPCoreOperator *fpcoreOperator(StringRef Op) {
+  const FPCoreOperator *O =
+      find_if(kOperators, [&](const FPCoreOperator &O) { return O.Op == Op; });
+  return O == std::end(kOperators) ? nullptr : O;
+}
+
+// Whether `N` is a truth value: a comparison, a logical operation, or a choice
+// between truth values.
+static bool isBoolean(const FPNode &N) {
+  if (N.getType() != FPNode::NodeType::Node)
+    return false;
+  if (N.op == "if")
+    return isBoolean(*N.operands[1]);
+  const FPCoreOperator *O = fpcoreOperator(N.op);
+  return O && O->Boolean;
+}
+
+static Error malformed(const Twine &Why, StringRef Expr) {
+  return createStringError(inconvertibleErrorCode(),
+                           Why + " in '" + Expr + "'");
+}
+
+namespace {
+struct FPCoreParser {
+  std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
+  std::unordered_map<std::string, Value *> &symbolToValueMap;
+  SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs;
+  const SetVector<Value *> *subgraphInputs;
+
+  Expected<std::shared_ptr<FPNode>> parse(StringRef expr, bool top);
+  // `expr` parsed as a number, not a truth value or an array.
+  Expected<std::shared_ptr<FPNode>> parseNumber(StringRef expr) {
+    Expected<std::shared_ptr<FPNode>> N = parse(expr, /*top=*/false);
+    if (N && isBoolean(**N))
+      return malformed("a truth value where a number is expected", expr);
+    return N;
+  }
+};
+} // namespace
+
+Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
+                                                      bool top) {
+  const std::string trimmedExpr = expr.trim(' ').str();
+  if (trimmedExpr.empty())
+    return malformed("an empty expression", expr);
 
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
     if (auto node = valueToNodeMap[symbolToValueMap[trimmedExpr]]) {
@@ -83,14 +194,13 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     if (std::regex_match(trimmedExpr, matches, constantPattern)) {
       std::string value = matches[1].str();
       std::string dtype = matches[3].str();
-      if (dtype == "binary64") {
+      if (dtype == "binary64")
         dtype = "f64";
-      } else if (dtype == "binary32") {
+      else if (dtype == "binary32")
         dtype = "f32";
-      } else {
-        report_fatal_error("Herbie expr parser: Unexpected constant dtype: " +
-                           Twine(dtype));
-      }
+      else
+        return malformed("a literal of the unmodelled format " + dtype,
+                         trimmedExpr);
       return std::make_shared<FPConst>(value, dtype);
     }
     if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
@@ -101,25 +211,21 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   }
 
   if (StringRef(trimmedExpr).starts_with("#s(approx")) {
-    if (trimmedExpr.back() != ')') {
-      report_fatal_error("Malformed approx expression: " + Twine(trimmedExpr));
-    }
     StringRef inner =
         StringRef(trimmedExpr).drop_front(9).drop_back().trim(' ');
     SmallVector<StringRef, 4> parts = splitTopLevel(inner);
-    if (parts.size() < 2) {
-      report_fatal_error("Malformed approx expression: " + Twine(trimmedExpr));
-    }
+    if (trimmedExpr.back() != ')' || parts.size() < 2)
+      return malformed("an approx form without its specification and result",
+                       trimmedExpr);
     StringRef resultPart = inner.drop_front(parts[0].size() + 1).trim(' ');
     if (approxSpecs)
       approxSpecs->push_back({parts[0].str(), resultPart.str()});
-    return parse(resultPart);
+    return parse(resultPart, top);
   }
 
-  if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
-    llvm::errs() << "Unexpected subexpression: " << trimmedExpr << '\n';
-    report_fatal_error("Failed to parse Herbie expression");
-  }
+  if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')')
+    return malformed("an unknown symbol or an unparenthesized operation",
+                     trimmedExpr);
 
   StringRef body = StringRef(trimmedExpr).drop_front().drop_back();
   StringRef fullOp = body.take_until([](char c) { return c == ' '; });
@@ -128,25 +234,30 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   // An array projection, `(ref.N.array<...> (array e0 e1 ...))` or
   // `(ref.N.array<...> (sincos.fXX x))`: the N-th element is what is wanted.
   if (fullOp.starts_with("ref.")) {
-    size_t idxEnd = fullOp.find('.', 4);
-    unsigned idx = std::stoul(fullOp.substr(4, idxEnd - 4).str());
+    unsigned idx;
     StringRef inner = args.trim(' ');
-    if (!inner.empty() && inner.front() == '(' && inner.back() == ')') {
+    if (!fullOp.drop_front(4)
+             .take_until([](char c) { return c == '.'; })
+             .getAsInteger(10, idx) &&
+        !inner.empty() && inner.front() == '(' && inner.back() == ')') {
       StringRef projected = inner.drop_front().drop_back();
       StringRef head = projected.take_until([](char c) { return c == ' '; });
       SmallVector<StringRef, 4> elems =
           splitTopLevel(projected.drop_front(head.size()));
       if (head == "array" && idx < elems.size())
-        return parse(elems[idx]);
-      if (head.starts_with("sincos.") && elems.size() == 1 && idx < 2) {
+        return parseNumber(elems[idx]);
+      if ((head == "sincos.f64" || head == "sincos.f32") && elems.size() == 1 &&
+          idx < 2) {
         auto node = std::make_shared<FPNode>(idx == 0 ? "sin" : "cos",
                                              head.drop_front(7).str());
-        node->addOperand(parse(elems[0]));
+        Expected<std::shared_ptr<FPNode>> operand = parseNumber(elems[0]);
+        if (!operand)
+          return operand.takeError();
+        node->addOperand(*operand);
         return node;
       }
     }
-    llvm::errs() << "Unexpected array projection: " << body << '\n';
-    report_fatal_error("Failed to parse Herbie expression");
+    return malformed("an array projection of no array element", trimmedExpr);
   }
 
   std::string dtype;
@@ -157,11 +268,25 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     op = fullOp.substr(0, pos).str();
     dtype = fullOp.substr(pos + 1).str();
     if (dtype != "f64" && dtype != "f32")
-      report_fatal_error("Herbie expr parser: Unexpected operator dtype: " +
-                         Twine(fullOp));
+      return malformed("the operator " + fullOp + " of an unmodelled format",
+                       trimmedExpr);
   } else {
     op = fullOp.str();
   }
+
+  const FPCoreOperator *O = fpcoreOperator(op);
+  if (!O)
+    return malformed("the operator " + op + ", which Poseidon does not model",
+                     trimmedExpr);
+  SmallVector<StringRef, 4> operandTexts = splitTopLevel(args);
+  if (op == "array" ? !top || operandTexts.empty()
+                    : operandTexts.size() != O->Arity)
+    return malformed(op == "array"
+                         ? Twine("an array that is not a whole expression")
+                         : "the operator " + op + " with " +
+                               Twine(operandTexts.size()) +
+                               " operand(s), not " + Twine(O->Arity),
+                     trimmedExpr);
 
   // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
   // destination precision, which makes it an identity at that precision.
@@ -173,8 +298,23 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   }
 
   auto node = std::make_shared<FPNode>(op, dtype);
-  for (StringRef operand : splitTopLevel(args))
-    node->addOperand(parse(operand));
+  // A logical operation, and the condition of a choice, take truth values;
+  // every other operand is a number.
+  const bool logical = op == "and" || op == "or" || op == "not";
+  for (auto [k, text] : enumerate(operandTexts)) {
+    const bool truth = logical || (op == "if" && k == 0);
+    Expected<std::shared_ptr<FPNode>> operand =
+        truth || op == "if" ? parse(text, /*top=*/false) : parseNumber(text);
+    if (!operand)
+      return operand.takeError();
+    if (truth && !isBoolean(**operand))
+      return malformed("a number where a truth value is expected", text);
+    node->addOperand(*operand);
+  }
+  if (op == "if" &&
+      isBoolean(*node->operands[1]) != isBoolean(*node->operands[2]))
+    return malformed("a choice between a number and a truth value",
+                     trimmedExpr);
 
   if (subgraphInputs)
     if (auto existing =
@@ -182,6 +322,19 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       return existing;
 
   return node;
+}
+
+Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
+    const std::string &expr,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
+    const SetVector<Value *> *subgraphInputs) {
+  FPCoreParser P{valueToNodeMap, symbolToValueMap, approxSpecs, subgraphInputs};
+  Expected<std::shared_ptr<FPNode>> N = P.parse(expr, /*top=*/true);
+  if (N && isBoolean(**N))
+    return malformed("a truth value where a number is expected", expr);
+  return N;
 }
 
 std::string dtypeOfType(Type *T) {
@@ -514,10 +667,13 @@ fpcoreToC(const std::string &expr,
   SmallVector<std::string, 1> out;
   if (!isRenderableFPCore(expr, symbolToValueMap))
     return out;
-  std::shared_ptr<FPNode> node = parseHerbieExpr(
+  Expected<std::shared_ptr<FPNode>> parsed = parseHerbieExpr(
       expr, valueToNodeMap, symbolToValueMap, approxSpecs, how.inputs);
-  if (!node)
+  if (!parsed) {
+    consumeError(parsed.takeError());
     return out;
+  }
+  std::shared_ptr<FPNode> node = *parsed;
   if (node->op == "array")
     for (const auto &element : node->operands)
       out.push_back(renderC(*element, how, resultDtype));
@@ -564,18 +720,6 @@ std::string getHerbieOperator(const Instruction &I) {
 
 StringRef intrinsicBaseName(const Function &Callee) {
   return Intrinsic::getBaseName(Callee.getIntrinsicID()).drop_front(5);
-}
-
-StringRef mathFunctionOf(StringRef Name) {
-  auto Row = [](StringRef N) {
-    return any_of(mathFunctions(),
-                  [&](const MathFunction &F) { return F.Name == N; });
-  };
-  if (Row(Name))
-    return Name;
-  if (Name.ends_with("f") && Row(Name.drop_back()))
-    return Name.drop_back();
-  return "";
 }
 
 void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {

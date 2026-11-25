@@ -205,6 +205,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
       llvm::errs() << "Herbie output: " << content << '\n';
       Run.Result = Outcome::Ok;
       Run.From = HerbieRunResult::Origin::Cache;
+      Run.CacheFile = cacheFilePath;
       return Run;
     }
     if (!cached.unreadable.empty() && !haveHerbie)
@@ -451,6 +452,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                << binaryDigest << '\n';
 
   Run.Result = Outcome::Ok;
+  Run.CacheFile = cacheFilePath;
   return Run;
 }
 

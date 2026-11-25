@@ -115,8 +115,9 @@ static constexpr StringLiteral kLibraryCalls[] = {
     "erf",   "lgamma", "tgamma", "asinh", "acosh", "atanh",
 };
 
+// IEEE comparisons, as FPCore's: with a NaN operand only != holds.
 static constexpr ComparisonOp kComparisons[] = {
-    {"==", CmpInst::FCMP_OEQ, "eq"}, {"!=", CmpInst::FCMP_ONE, "ne"},
+    {"==", CmpInst::FCMP_OEQ, "eq"}, {"!=", CmpInst::FCMP_UNE, "ne"},
     {"<", CmpInst::FCMP_OLT, "lt"},  {">", CmpInst::FCMP_OGT, "gt"},
     {"<=", CmpInst::FCMP_OLE, "le"}, {">=", CmpInst::FCMP_OGE, "ge"},
 };
@@ -132,6 +133,12 @@ template <typename Row, size_t N>
 static const Row *findOp(const Row (&Table)[N], StringRef Op) {
   const Row *R = find_if(Table, [&](const Row &R) { return R.Op == Op; });
   return R == std::end(Table) ? nullptr : R;
+}
+
+std::optional<CmpInst::Predicate> fpcoreComparison(StringRef Op) {
+  if (const ComparisonOp *C = findOp(kComparisons, Op))
+    return C->Pred;
+  return std::nullopt;
 }
 
 static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {

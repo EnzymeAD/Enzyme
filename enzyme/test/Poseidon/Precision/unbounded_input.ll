@@ -7,9 +7,15 @@
 ; RUN: %{opt} -poseidon-cost-budget=-0.3 -poseidon-cache=%t/budget -o %t/budget.ll 2>&1 | FileCheck --check-prefix=BUDGET %s
 ; RUN: FileCheck --check-prefix=IR --implicit-check-not=preprocess %s < %t/budget.ll
 ; RUN: not %{opt} -poseidon-tau=1e-3 -poseidon-cache=%t/tau -o /dev/null 2>&1 | FileCheck --check-prefix=TAU %s
+; RUN: mkdir %t/foreign && cp %S/../Inputs/unbounded_input/*.fpprofile %t/foreign/
+; RUN: sed -i -e '10s/NumOperands = 2/NumOperands = 0/' -e '11,12d' %t/foreign/preprocess_tester.fpprofile
+; RUN: not %{opt} -poseidon-profile-use=%t/foreign -poseidon-cost-budget=-0.3 -poseidon-cache=%t/foreign-cache -o /dev/null 2>&1 | FileCheck --check-prefix=FOREIGN %s
 
-; A subgraph that cannot be sampled has no priced precision candidate: it is
-; left as written and the compile goes on. The profiled run saw @tester's x at
+; A subgraph whose profiled input range holds no interval of finite values
+; cannot be sampled and has no priced precision candidate: it is left as
+; written and the compile goes on. A profile that gives an operation no range
+; for an operand was not generated from this program, and the compile stops
+; naming the operand (FOREIGN). The profiled run saw @tester's x at
 ; infinity, and @tester_nan only takes the square root of negative numbers.
 ; Under a tolerance the profile of @tester_nan, which carries no sensitivity,
 ; is an error of its own.
@@ -77,7 +83,7 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; BUDGET: Poseidon: input to sampled subgraph has unprofiled bounds [2.000000e+00, INF]; refusing to sample it. This subgraph cannot be priced and will keep its original body. Input value: double %x
+; BUDGET: Poseidon: the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values, so the subgraph cannot be sampled or priced and keeps its original body.
 ; BUDGET-NEXT: [poseidon] subgraph cannot be priced (the profiled input box is empty or unbounded); discarding its 2 precision candidate(s) and keeping the original body.
 ; BUDGET: No solution found within the computation cost budget!
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left (? + ?) * ? as written: its candidates could not be priced: the profiled input box is empty or unbounded and the algebraic search is disabled
@@ -91,3 +97,5 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; TAU: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
 ; TAU: [poseidon] preprocess_tester_nan: 1 subgraph output(s) carry no priced candidate, so the baseline below covers only the priced ones and the reported relative error is a lower bound.
 ; TAU-NEXT: error: <unknown>:0:0: in function preprocess_tester_nan void (double, double, ptr): Poseidon: site preprocess_tester_nan was given an accuracy tolerance but its profile carries a total sensitivity of 0.000000e+00, so no rewrite's modelled error can be expressed as a per-operation relative level; re-run profile generation for this site.
+
+; FOREIGN: error: <unknown>:0:0: in function preprocess_tester void (double, double, ptr): Poseidon: the profile gives this operation 0 operand range(s), and its operand 0 (double %x) has none: the profile was not generated from this program. Re-run profile generation.

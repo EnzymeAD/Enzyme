@@ -248,12 +248,13 @@ readHerbieResults(StringRef Contents, size_t NumCores) {
   return Answers;
 }
 
-// Collects Herbie's rewrites of `inputExprs`, cores of the site `F`, into
-// `COs`, unpriced.
-static void improveViaHerbie(Session &S,
-                             const std::vector<std::string> &inputExprs,
-                             std::vector<RewriteUnit> &COs, int subgraphIdx,
-                             const Function &F) {
+// Collects Herbie's rewrites of `inputExprs`, cores of the site `F` over the
+// graph the maps describe, into `COs`, unpriced.
+static void improveViaHerbie(
+    Session &S, const std::vector<std::string> &inputExprs,
+    std::vector<RewriteUnit> &COs, int subgraphIdx, const Function &F,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
   const Options &O = S.Opts;
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
     llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
@@ -269,6 +270,8 @@ static void improveViaHerbie(Session &S,
     TermCounts.push_back(std::nullopt);
   SmallVector<HerbieRunResult, 2> Runs;
   SmallVector<std::vector<HerbieCoreAnswer>, 2> RunAnswers;
+  // Where each of RunAnswers came from: its run's label and cache file.
+  SmallVector<std::pair<std::string, std::string>, 2> RunSources;
   for (std::optional<unsigned> Terms : TermCounts) {
     Opts.TaylorTerms = Terms;
     const std::string RunLabel =
@@ -332,13 +335,15 @@ static void improveViaHerbie(Session &S,
       continue;
     }
     RunAnswers.push_back(std::move(*Read));
+    RunSources.push_back({RunLabel, Runs.back().CacheFile});
     ++*Taken;
   }
 
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
 
-  for (ArrayRef<HerbieCoreAnswer> answers : RunAnswers)
+  for (auto [answers, runSource] : llvm::zip(RunAnswers, RunSources))
     for (const HerbieCoreAnswer &answer : answers) {
+      const std::pair<std::string, std::string> &source = runSource;
       StringRef testName = answer.Name;
       StringRef status = answer.Status ? StringRef(*answer.Status) : "?";
       llvm::errs() << "[poseidon] Herbie core \"" << testName << "\" (subgraph "
@@ -374,6 +379,29 @@ static void improveViaHerbie(Session &S,
 
       double initialCostVal = costAccuracy.Initial.Cost;
       CO.initialHerbieAccuracy = 1.0 - costAccuracy.Initial.ErrorBits / bits;
+
+      // An answer is external input: an expression the model cannot read
+      // stops the compile here, before anything evaluates or lowers it.
+      auto check = [&](const std::string &expr) {
+        Expected<std::shared_ptr<FPNode>> parsed =
+            parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap, nullptr,
+                            &CO.subgraph->inputs);
+        if (!parsed)
+          reportUserError(
+              F, F.getSubprogram(),
+              "the Herbie answer for " + source.first + " in " +
+                  (source.second.empty() ? std::string("no cache file")
+                                         : source.second) +
+                  " has, for core \"" + testName + "\", " +
+                  toString(parsed.takeError()) +
+                  "; Poseidon cannot model that expression. Remove the "
+                  "file to search again, or turn algebraic rewriting off "
+                  "with -poseidon-enable-herbie=0.");
+      };
+      check(rewrites.BestExpr);
+      for (const HerbieAlternative &alternative : costAccuracy.Alternatives)
+        if (alternative.Expr)
+          check(*alternative.Expr);
 
       if (seenExprSet.insert(rewrites.BestExpr).second) {
         double bestCost = costAccuracy.Best.Cost / initialCostVal;
@@ -881,8 +909,9 @@ static void setUnifiedAccuracyCost(
   SmallVector<CandidatePricing, 4> pricings(CO.candidates.size());
   SmallVector<ElementPricing *, 0> allElements;
   for (auto [candidate, P] : llvm::zip(CO.candidates, pricings)) {
-    P.parsed = parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap,
-                               nullptr, &CO.subgraph->inputs);
+    P.parsed = cantFail(parseHerbieExpr(candidate.expr, valueToNodeMap,
+                                        symbolToValueMap, nullptr,
+                                        &CO.subgraph->inputs));
     SmallVector<std::shared_ptr<FPNode>, 1> elements;
     if (CO.isArray()) {
       if (P.parsed->op != "array" ||
@@ -1009,8 +1038,8 @@ static double priceRewrite(
     argNames.push_back(argStr);
   }
 
-  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap,
-                                    nullptr, &subgraphInputs);
+  auto parsedNode = cantFail(parseHerbieExpr(
+      expr, valueToNodeMap, symbolToValueMap, nullptr, &subgraphInputs));
   // An existing value a node was mapped back to is an argument no symbol names.
   SmallVector<Value *, 2> mappedArgs;
   SmallVector<FPNode *, 16> stack{parsedNode.get()};
@@ -1501,7 +1530,8 @@ void proposeHerbieCandidates(
                     numArrayCores ? arrayInputs : herbieInputs,
                     numArrayCores ? arrayCOs : newCOs);
   if (numArrayCores)
-    improveViaHerbie(S, arrayInputs, arrayCOs, subgraphCounter, F);
+    improveViaHerbie(S, arrayInputs, arrayCOs, subgraphCounter, F,
+                     valueToNodeMap, symbolToValueMap);
   for (const Eligible &E : eligible) {
     SmallVector<const char *, 2> sendAt;
     for (size_t k = 0; k < numArrayCores; ++k)
@@ -1519,7 +1549,8 @@ void proposeHerbieCandidates(
              std::make_move_iterator(arrayCOs.end()));
 
   if (!herbieInputs.empty()) {
-    improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter, F);
+    improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter, F,
+                     valueToNodeMap, symbolToValueMap);
     COs.append(std::make_move_iterator(newCOs.begin()),
                std::make_move_iterator(newCOs.end()));
   }
@@ -1537,8 +1568,8 @@ void RewriteUnit::materialize(size_t candidateIndex) {
          "a rewrite's outputs are in the site when it is materialized");
 
   auto parsedNode =
-      parseHerbieExpr(candidates[candidateIndex].expr, valueToNodeMap,
-                      symbolToValueMap, nullptr, &subgraph->inputs);
+      cantFail(parseHerbieExpr(candidates[candidateIndex].expr, valueToNodeMap,
+                               symbolToValueMap, nullptr, &subgraph->inputs));
   SmallVector<std::shared_ptr<FPNode>, 1> elements;
   if (isArray()) {
     if (parsedNode->op != "array" ||

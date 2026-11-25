@@ -113,6 +113,9 @@ struct HerbieRunResult {
   enum class Origin { Cache, Fresh };
   Origin From = Origin::Fresh;
   std::string ResultsJson;
+  // The cache file an Ok result was read from or saved to; empty without a
+  // cache.
+  std::string CacheFile;
   std::string Crash;
   std::string Failure;
 };

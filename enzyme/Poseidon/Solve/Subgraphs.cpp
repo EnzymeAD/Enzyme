@@ -336,15 +336,27 @@ void attachProfile(
             auto &operand = operand_.value();
             auto i = operand_.index();
 
-            if (i < profileInfo.minOperands.size()) {
-              auto operandNode = valueToNodeMap[operand];
-              operandNode->updateBounds(profileInfo.minOperands[i],
-                                        profileInfo.maxOperands[i]);
-              if (O.Diagnostics.Print) {
-                llvm::errs() << "Range of " << *operand << " is ["
-                             << operandNode->getLowerBound() << ", "
-                             << operandNode->getUpperBound() << "]\n";
-              }
+            if (i >= profileInfo.minOperands.size()) {
+              if (isa<Constant>(operand))
+                continue;
+              std::string name;
+              raw_string_ostream(name) << *operand;
+              reportUserError(*op, "the profile gives this operation " +
+                                       Twine(profileInfo.minOperands.size()) +
+                                       " operand range(s), and its operand " +
+                                       Twine(i) + " (" +
+                                       StringRef(name).trim() +
+                                       ") has none: the profile was not "
+                                       "generated from this program. Re-run "
+                                       "profile generation.");
+            }
+            auto operandNode = valueToNodeMap[operand];
+            operandNode->updateBounds(profileInfo.minOperands[i],
+                                      profileInfo.maxOperands[i]);
+            if (O.Diagnostics.Print) {
+              llvm::errs() << "Range of " << *operand << " is ["
+                           << operandNode->getLowerBound() << ", "
+                           << operandNode->getUpperBound() << "]\n";
             }
           }
         } else {

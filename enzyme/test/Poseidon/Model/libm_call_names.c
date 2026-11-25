@@ -2,11 +2,14 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -lstdc++ -lm -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
-// RUN: env FAKE_HERBIE_DIR=%S/../Inputs/fmod_operator %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=1 -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=0 -poseidon-print -poseidon-cache=%t/c %s -S -emit-llvm -o /dev/null 2>&1 | FileCheck %s
+// RUN: env FAKE_HERBIE_DIR=%S/../Inputs/fmod_operator %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=1 -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=1 -poseidon-cost-budget=-0.5 -poseidon-print -poseidon-cache=%t/c %s -S -emit-llvm -o %t/use.ll 2>&1 | FileCheck %s
+// RUN: FileCheck --check-prefix=IR %s < %t/use.ll
 
 // A host call to erf is the math function erf, though its name ends in f as
-// the float form of a function would: Herbie is given (erf ...), and the cost
-// model prices the call by the erf row (8 in double), beside the fadd (4).
+// the float form of a function would: Herbie is given (erf ...), the cost model
+// prices the call by the erf row (8 in double), beside the fadd (4), and the
+// precision change that runs the site in float calls erff, priced at 2, with
+// the fadd (1) and the two casts (1 each).
 
 #include "poseidon/poseidon.h"
 #include <math.h>
@@ -30,3 +33,8 @@ int main(void) {
 // CHECK: Initial ComputationCost: 1.200000e+01
 // CHECK-NEXT: Initial HerbieAccuracy:
 // CHECK-NEXT: Initial Expression: (+ v0 (erf v0))
+// CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.200000e+01 cand=5.000000e+00
+// CHECK: Applying solution for CS: All FP64(0%) + FP32(100%)
+
+// IR-LABEL: define {{.*}} @kernel(
+// IR: call float @erff(float

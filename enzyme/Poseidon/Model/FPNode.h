@@ -21,6 +21,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
@@ -28,6 +29,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -142,6 +144,10 @@ emitSharedElements(llvm::ArrayRef<std::shared_ptr<FPNode>> elements,
                    llvm::function_ref<llvm::IRBuilder<> &(size_t)> at,
                    llvm::ValueToValueMapTy *VMap,
                    const llvm::DominatorTree *DT);
+
+// The fcmp predicate of FPCore comparison operator `Op`: IEEE's, under which
+// only != holds when an operand is NaN. None for another operator.
+std::optional<llvm::CmpInst::Predicate> fpcoreComparison(llvm::StringRef Op);
 
 class SubgraphSamples;
 

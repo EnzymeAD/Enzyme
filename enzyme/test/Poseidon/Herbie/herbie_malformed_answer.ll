@@ -20,18 +20,24 @@
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/zero_alternatives.json %t/c/cachedHerbieOutput_*
 ; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=ZERO-ALTERNATIVES %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/approx_without_result.json %t/c/cachedHerbieOutput_*
-; RUN: not --crash %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=APPROX %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=APPROX %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/literal_binary16.json %t/c/cachedHerbieOutput_*
-; RUN: not --crash %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=LITERAL %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=LITERAL %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/operator_f16.json %t/c/cachedHerbieOutput_*
-; RUN: not --crash %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=OPERATOR %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=OPERATOR %s
+; RUN: cp %S/../Inputs/herbie_malformed_answer/unknown_operator.json %t/c/cachedHerbieOutput_*
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=UNKNOWN-OPERATOR %s
+; RUN: cp %S/../Inputs/herbie_malformed_answer/operator_arity.json %t/c/cachedHerbieOutput_*
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=ARITY %s
 
 ; The answers are replayed from the cache with no Herbie to run. A cached
 ; answer that is not shaped as Herbie writes its results gives the
 ; subgraph no algebraic candidates, as a crash of Herbie does: the site is
 ; solved without them, and under -poseidon-strict-mode the compile stops. An
 ; answer that lists no alternatives offers Herbie's best expression alone. An
-; expression that does not parse stops the compile.
+; expression the model cannot read, malformed or with an operator, format or
+; operand count it does not model, stops the compile with an error at the site
+; naming the answer's cache file, before anything evaluates or lowers it.
 
 ; FRESH: Saved Herbie output to cache file
 
@@ -51,6 +57,8 @@
 
 ; ZERO-ALTERNATIVES: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1)
 
-; APPROX: LLVM ERROR: Malformed approx expression: #s(approx v0)
-; LITERAL: LLVM ERROR: Herbie expr parser: Unexpected constant dtype: binary16
-; OPERATOR: LLVM ERROR: Herbie expr parser: Unexpected operator dtype: +.f16
+; APPROX: error: <unknown>:0:0: in function preprocess_tester double (double, double): Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", an approx form without its specification and result in '#s(approx v0)'; Poseidon cannot model that expression. Remove the file to search again, or turn algebraic rewriting off with -poseidon-enable-herbie=0.{{$}}
+; LITERAL: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", a literal of the unmodelled format binary16 in '#s(literal 1 binary16)'; Poseidon cannot model
+; OPERATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", the operator +.f16 of an unmodelled format in '(+.f16 v0 v1)'; Poseidon cannot model
+; UNKNOWN-OPERATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", the operator erfc, which Poseidon does not model in '(erfc.f64 v0)'; Poseidon cannot model
+; ARITY: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", the operator < with 3 operand(s), not 2 in '(<.f64 v0 v1 v0)'; Poseidon cannot model

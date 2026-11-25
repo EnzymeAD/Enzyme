@@ -7,7 +7,8 @@
 // model takes it) and from the binary64 evaluation (getFPValues).
 //
 // lower-fpcore lowers each of them, as a rewrite is lowered, into a function
-// @fpcore.<n> of the module that returns it.
+// @fpcore.<n>(double %x, double %y) of the module that returns it, its
+// symbols x and y the two arguments.
 #include "IR/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
@@ -42,7 +43,7 @@ struct EvaluateFPCore : PassParent<EvaluateFPCore> {
       std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
       std::unordered_map<std::string, Value *> SymbolToValue;
       std::shared_ptr<FPNode> Node =
-          parseHerbieExpr(Expr, ValueToNode, SymbolToValue);
+          cantFail(parseHerbieExpr(Expr, ValueToNode, SymbolToValue));
       SmallVector<double, 1> Reference, Binary64;
       getMPFRValues({Node.get()}, {}, Reference);
       getFPValues({Node.get()}, {}, Binary64);
@@ -58,25 +59,37 @@ struct LowerFPCore : PassParent<LowerFPCore> {
     NamedMDNode *Exprs = M.getNamedMetadata("poseidon.test.fpcore");
     if (!Exprs)
       report_fatal_error("lower-fpcore: no !poseidon.test.fpcore");
+    LLVMContext &C = M.getContext();
+    Type *Double = Type::getDoubleTy(C);
     for (auto [I, Entry] : enumerate(Exprs->operands())) {
       std::string Expr =
           cast<MDString>(Entry->getOperand(0))->getString().str();
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
-      std::unordered_map<std::string, Value *> SymbolToValue;
-      std::shared_ptr<FPNode> Node =
-          parseHerbieExpr(Expr, ValueToNode, SymbolToValue);
       // Lowered into a scratch function first: the result's type, and so the
       // function's, is known only after lowering.
-      LLVMContext &C = M.getContext();
-      Function *Scratch =
-          Function::Create(FunctionType::get(Type::getVoidTy(C), false),
-                           GlobalValue::InternalLinkage, "", M);
+      Function *Scratch = Function::Create(
+          FunctionType::get(Type::getVoidTy(C), {Double, Double}, false),
+          GlobalValue::InternalLinkage, "", M);
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
+      std::unordered_map<std::string, Value *> SymbolToValue;
+      for (auto [Symbol, Arg] : zip(StringRef("xy"), Scratch->args())) {
+        auto Node = std::make_shared<FPLLValue>(&Arg, "__arg", "f64");
+        Node->symbol = std::string(1, Symbol);
+        ValueToNode[&Arg] = Node;
+        SymbolToValue[Node->symbol] = &Arg;
+      }
+      std::shared_ptr<FPNode> Node =
+          cantFail(parseHerbieExpr(Expr, ValueToNode, SymbolToValue));
       IRBuilder<> B(BasicBlock::Create(C, "entry", Scratch));
       Value *V = Node->getLLValue(B);
       B.CreateRet(V);
-      Function *F = Function::Create(FunctionType::get(V->getType(), false),
-                                     GlobalValue::ExternalLinkage,
-                                     "fpcore." + Twine(I), M);
+      Function *F = Function::Create(
+          FunctionType::get(V->getType(), {Double, Double}, false),
+          GlobalValue::ExternalLinkage, "fpcore." + Twine(I), M);
+      for (auto [From, To, Name] :
+           zip(Scratch->args(), F->args(), StringRef("xy"))) {
+        To.setName(StringRef(&Name, 1));
+        From.replaceAllUsesWith(&To);
+      }
       F->splice(F->end(), Scratch);
       Scratch->eraseFromParent();
     }

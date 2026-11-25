@@ -109,9 +109,15 @@ inline constexpr MathFunction kMathFunctions[] = {
 
 inline llvm::ArrayRef<MathFunction> mathFunctions() { return kMathFunctions; }
 
+// The math function a library call to `Name` computes: `Name` when it is a
+// row of mathFunctions(), else its float form's row without the f suffix, else
+// empty.
+llvm::StringRef mathFunctionOf(llvm::StringRef Name);
+
 // Whether `Name` is a libm function Poseidon prices and can retype.
 bool isLibmFunction(llvm::StringRef Name);
 
+// Whether a call to `Name` is one of a function isOptimizable accepts.
 bool isOptimizableLibmCall(llvm::StringRef Name);
 
 bool hasFloatSuffixInC(llvm::StringRef Name);

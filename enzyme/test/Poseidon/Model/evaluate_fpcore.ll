@@ -6,7 +6,11 @@
 ; |Gamma|, here of Gamma(-2.5) < 0) and tgamma among them; binary64 is libm's
 ; value, which may differ from the reference in its last place.
 
-!poseidon.test.fpcore = !{!0, !1, !2, !3, !4, !5}
+; A comparison is IEEE's, as in FPCore: with a NaN operand every comparison but
+; != is false, in the reference as in binary64, and so are the logical
+; operations over it.
+
+!poseidon.test.fpcore = !{!0, !1, !2, !3, !4, !5, !6, !7, !8, !9, !10, !11, !12, !13, !14}
 
 ; CHECK: (E.f64): reference 2.7182818284590451 binary64 2.7182818284590451
 !0 = !{!"(E.f64)"}
@@ -20,3 +24,21 @@
 !4 = !{!"(lgamma.f64 #s(literal -5/2 binary64))"}
 ; CHECK-NEXT: (tgamma.f64 #s(literal 9/2 binary64)): reference 11.631728396567448 binary64 11.63172839656{{[0-9]+}}
 !5 = !{!"(tgamma.f64 #s(literal 9/2 binary64))"}
+; CHECK-NEXT: (if (==.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64)): reference 0 binary64 0
+!6 = !{!"(if (==.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (!=.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64)): reference 1 binary64 1
+!7 = !{!"(if (!=.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (<.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64)): reference 0 binary64 0
+!8 = !{!"(if (<.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (>.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64)): reference 0 binary64 0
+!9 = !{!"(if (>.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (<=.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64)): reference 0 binary64 0
+!10 = !{!"(if (<=.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (>=.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64)): reference 0 binary64 0
+!11 = !{!"(if (>=.f64 (NAN.f64) #s(literal 1 binary64)) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (and (!=.f64 (NAN.f64) (NAN.f64)) (not (==.f64 (NAN.f64) (NAN.f64)))) #s(literal 1 binary64) #s(literal 0 binary64)): reference 1 binary64 1
+!12 = !{!"(if (and (!=.f64 (NAN.f64) (NAN.f64)) (not (==.f64 (NAN.f64) (NAN.f64)))) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (or (<=.f64 (NAN.f64) (NAN.f64)) (>=.f64 (NAN.f64) (NAN.f64))) #s(literal 1 binary64) #s(literal 0 binary64)): reference 0 binary64 0
+!13 = !{!"(if (or (<=.f64 (NAN.f64) (NAN.f64)) (>=.f64 (NAN.f64) (NAN.f64))) #s(literal 1 binary64) #s(literal 0 binary64))"}
+; CHECK-NEXT: (if (not (<.f64 (NAN.f64) #s(literal 1 binary64))) #s(literal 1 binary64) #s(literal 0 binary64)): reference 1 binary64 1
+!14 = !{!"(if (not (<.f64 (NAN.f64) #s(literal 1 binary64))) #s(literal 1 binary64) #s(literal 0 binary64))"}

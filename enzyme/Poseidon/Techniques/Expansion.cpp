@@ -332,9 +332,7 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
 StringRef libmBaseName(StringRef name) {
   if (StringRef device = deviceMathName(name); !device.empty())
     return device;
-  if (!name.empty() && (name.back() == 'f' || name.back() == 'l'))
-    name = name.drop_back(1);
-  return name;
+  return mathFunctionOf(name);
 }
 
 // The math function a call to `callee` computes: sqrt, fma or fmuladd for an
