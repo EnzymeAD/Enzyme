@@ -149,8 +149,8 @@ const CallBase *siteCallOf(const Session &S, const Function &F) {
   return nullptr;
 }
 
-std::optional<GemmBodyNote> libraryCallNote(const Session &S,
-                                            const AbstractMatmul &m) {
+Expected<std::optional<GemmBodyNote>> libraryCallNote(const Session &S,
+                                                      const AbstractMatmul &m) {
   Function *F = const_cast<Function *>(anchorOf(m).getFunction());
   GemmBodyNote note;
   switch (m.origin) {
@@ -158,10 +158,13 @@ std::optional<GemmBodyNote> libraryCallNote(const Session &S,
     note = m.hostGemm->library;
     break;
   case AbstractMatmul::Origin::ScalarLoopReduction: {
-    std::optional<GemmBodyNote> n = constantShapeLibraryNote(S.Opts, *F, m);
+    Expected<std::optional<GemmBodyNote>> n =
+        constantShapeLibraryNote(S.Opts, *F, m);
     if (!n)
+      return n.takeError();
+    if (!*n)
       return std::nullopt;
-    note = *n;
+    note = **n;
     break;
   }
   }
@@ -202,8 +205,8 @@ std::optional<GemmBodyNote> libraryCallNote(const Session &S,
   return note;
 }
 
-void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
-                      const SchemeVariant &v) {
+Error applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
+                       const SchemeVariant &v) {
   assert(S.Opts.Matmul.OzakiHostDispatch &&
          "library calls are proposed only under -poseidon-ozaki-host-dispatch");
   Function *F = const_cast<Function *>(anchorOf(m).getFunction());
@@ -213,14 +216,15 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
   // with one library call, and the solve chooses for the body's products
   // independently.
   if (S.Matmul.GemmBodies.count(F))
-    reportUserError(anchorOf(m),
-                    "a second matrix product of " + F->getName() +
-                        " was selected to run as a library call, and a "
-                        "kernel's launch takes one; leave out "
-                        "-poseidon-ozaki-host-dispatch for this body.");
+    return userError(anchorOf(m),
+                     "a second matrix product of " + F->getName() +
+                         " was selected to run as a library call, and a "
+                         "kernel's launch takes one; leave out "
+                         "-poseidon-ozaki-host-dispatch for this body.");
   S.Matmul.GemmBodies[F] = note;
   if (!note.standalone)
     fissionGemmForDispatch(S.Opts, *F, m);
+  return Error::success();
 }
 
 static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,

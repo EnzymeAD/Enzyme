@@ -721,6 +721,7 @@ storeGuardBounds(Function &F, const AbstractMatmul &m,
 static bool startsAtBase(ScalarEvolution &SE, const SCEV *addr) {
   const SCEV *offset = SE.getMinusSCEV(addr, SE.getPointerBase(addr));
   struct LaunchIndices {
+    explicit LaunchIndices(ScalarEvolution &SE) : SE(SE) {}
     ScalarEvolution &SE;
     ValueToSCEVMapTy atZero;
     bool follow(const SCEV *S) {
@@ -732,7 +733,7 @@ static bool startsAtBase(ScalarEvolution &SE, const SCEV *addr) {
       return true;
     }
     bool isDone() const { return false; }
-  } indices{SE, {}};
+  } indices(SE);
   visitAll(offset, indices);
   return SCEVParameterRewriter::rewrite(offset, SE, indices.atZero)->isZero();
 }
@@ -746,9 +747,9 @@ StoreInst *productStore(Function &F, const AbstractMatmul &m) {
   return nullptr;
 }
 
-std::optional<GemmBodyNote> constantShapeLibraryNote(const Options &O,
-                                                     Function &F,
-                                                     const AbstractMatmul &m) {
+Expected<std::optional<GemmBodyNote>>
+constantShapeLibraryNote(const Options &O, Function &F,
+                         const AbstractMatmul &m) {
   assert(m.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
          "a constant-shape product");
   auto refuse = [&](const Twine &why) -> std::optional<GemmBodyNote> {
@@ -880,7 +881,7 @@ std::optional<GemmBodyNote> constantShapeLibraryNote(const Options &O,
                    ") has no recoverable geometry; profile at the deploy shape",
                DS_Warning);
       if (O.Model.StrictMode)
-        reportUserError(
+        return userError(
             F, F.getSubprogram(),
             "strict mode: the host-dispatch geometry of " + F.getName() +
                 " is unrecoverable for a non-square GEMM at a changed deploy "

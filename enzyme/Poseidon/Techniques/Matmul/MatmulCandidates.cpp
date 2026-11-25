@@ -585,9 +585,12 @@ struct LibrarySite {
 };
 } // namespace
 
-static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
+static Expected<LibrarySite> librarySite(Session &S, const AbstractMatmul &m) {
   LibrarySite L;
-  L.note = libraryCallNote(S, m);
+  Expected<std::optional<GemmBodyNote>> found = libraryCallNote(S, m);
+  if (!found)
+    return found.takeError();
+  L.note = std::move(*found);
   const std::optional<GemmBodyNote> &note = L.note;
   L.dispatchable = note.has_value();
   if (S.Opts.Diagnostics.Print && !L.dispatchable)
@@ -863,7 +866,10 @@ Error generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
         return E;
     }
     if (S.Opts.Matmul.OzakiHostDispatch) {
-      const LibrarySite L = librarySite(S, m);
+      Expected<LibrarySite> site = librarySite(S, m);
+      if (!site)
+        return site.takeError();
+      const LibrarySite &L = *site;
       cm.library = L.note;
       if (Error E = proposeLibraryModular(P, L, cm))
         return E;
@@ -920,8 +926,7 @@ Error MatmulUnit::apply(Session &S, size_t candidateIndex) {
 
   if (opt.realization == Realization::LibraryCall) {
     assert(library && "a library call is proposed only with its descriptor");
-    applyLibraryCall(S, *matmul, *library, opt.variant);
-    return Error::success();
+    return applyLibraryCall(S, *matmul, *library, opt.variant);
   }
   assert(matmul->origin == AbstractMatmul::Origin::ScalarLoopReduction &&
          "a runtime-shape product is proposed only as a library call");

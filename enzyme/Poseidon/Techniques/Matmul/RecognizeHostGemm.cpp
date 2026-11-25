@@ -660,6 +660,8 @@ namespace {
 /// rows and columns run along. Atoms are numbered in the order the steps meet
 /// them, which orders every polynomial, so the steps run in a fixed order.
 struct ChainAnalysis {
+  ChainAnalysis(ScalarEvolution &SE, ArrayRef<ChainMember> chain)
+      : SE(SE), chain(chain) {}
   ScalarEvolution &SE;
   ArrayRef<ChainMember> chain;
   AtomTable atoms;
@@ -1337,7 +1339,7 @@ static Expected<RecognizedChain> analyzeChain(Function &F, ScalarEvolution &SE,
     if (m.aLoad->getType() != eltTy || m.bLoad->getType() != eltTy)
       return refuse("chain members disagree on element type");
 
-  ChainAnalysis C{SE, chain, {}, {}, {}};
+  ChainAnalysis C(SE, chain);
   RecognizedChain out;
   RuntimeGemmHandle &H = out.H;
   GemmBodyNote &note = H.library;
