@@ -81,8 +81,6 @@ struct MatrixIndex {
 struct ThreadIndexBounds {
   /// Per axis x, y, z, the exclusive bound in threads of the grid; 0 for none.
   std::array<uint64_t, 3> ub = {0, 0, 0};
-  /// Whether some axis is bounded.
-  bool any() const { return ub[0] || ub[1] || ub[2]; }
   /// Lowers the bound of `axis` (0, 1 or 2) to `bound` unless it is already
   /// lower.
   void tighten(unsigned axis, uint64_t bound) {
