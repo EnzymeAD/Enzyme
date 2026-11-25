@@ -858,11 +858,28 @@ static void deviceArch(const cudaDeviceProp &prop, char *arch, size_t size) {
 #endif
 }
 
+/// Whether `e` says that this vendor's runtime sees no device at all, as
+/// against a device it could not initialize.
+static bool isNoDevice(cudaError_t e) {
+#ifdef __HIP__
+  return e == hipErrorNoDevice || e == hipErrorInvalidDevice ||
+         e == hipErrorInsufficientDriver;
+#else
+  return e == cudaErrorNoDevice || e == cudaErrorInvalidDevice ||
+         e == cudaErrorInsufficientDriver;
+#endif
+}
+
+/// The exit status of a run that finds no device of this vendor, after which
+/// poseidon-calibrate tries the other vendor's microbenchmark; a device the
+/// runtime could not initialize exits with 1.
+constexpr int kExitNoDevice = 2;
+
 int main(int argc, char **argv) {
   cudaDeviceProp prop;
-  if (cudaGetDeviceProperties(&prop, 0) != cudaSuccess) {
-    fprintf(stderr, "[microbm] no GPU device\n");
-    return 1;
+  if (cudaError_t e = cudaGetDeviceProperties(&prop, 0); e != cudaSuccess) {
+    fprintf(stderr, "%s\n", cudaGetErrorString(e));
+    return isNoDevice(e) ? kExitNoDevice : 1;
   }
   char arch[sizeof(prop.name)];
   deviceArch(prop, arch, sizeof(arch));

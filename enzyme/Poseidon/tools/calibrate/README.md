@@ -32,6 +32,13 @@ A compile passes the platform that sits next to the CSV it prices from
     poseidon-calibrate --cpu x86-64            # this host, for a compile with -march=x86-64, the default on x86-64
     poseidon-calibrate --cpu x86-64 --check
 
+A run that was asked for a row and could not measure it, a class that did not
+build or run on the device for instance, writes the rows it measured, names the
+others on its last line and exits with status 1; the same command run again
+measures only those. The GPU is the one the CUDA microbenchmark finds, else
+the HIP one; a microbenchmark that cannot initialize the device, or cannot be
+started, stops the run with its reason.
+
 A host CPU is measured for the target-cpu its compiles use: `--cpu` takes the
 name `-march=` takes, and `native` stands for the CPU LLVM detects on this
 machine, whose features the measurement takes as well. The model is

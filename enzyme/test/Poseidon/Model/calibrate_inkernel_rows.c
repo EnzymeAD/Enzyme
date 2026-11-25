@@ -3,7 +3,9 @@
 // the square harness of --n with B strided along K, and a --product that names
 // a layout at its extents with B in that layout, each harness profiled at
 // extents of at most 128 in the same layout. A row the model has is not
-// measured again, and a product without a layout has no in-kernel rows.
+// measured again, and a product without a layout has no in-kernel rows. A
+// class that does not run leaves its row out and fails the run, whose last
+// line names the row; the same command measures only that row when run again.
 //
 // RUN: rm -rf %t && mkdir -p %t/bin
 // RUN: cp %poseidon_calibrate %t/bin/ && cp %S/../Inputs/fake-poseidon-clang.sh %t/bin/poseidon-clang++
@@ -17,6 +19,11 @@
 // RUN: not grep 'm64n32k16' %t/cm.csv
 // RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor \
 // RUN:   | FileCheck --check-prefix=AGAIN --implicit-check-not='  + ' %s
+// RUN: not env FAKE_CLANG_FAIL=M0_2 %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 64x16x32:browmajor > %t/fail.out 2>&1
+// RUN: FileCheck --check-prefix=FAIL %s < %t/fail.out
+// RUN: grep -c '_m64n16k32_browmajor,' %t/cm.csv | FileCheck --check-prefix=TWO %s
+// RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 64x16x32:browmajor \
+// RUN:   | FileCheck --check-prefix=REPEAT --implicit-check-not='  + ' %s
 // RUN: not %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --product 2048x112:bcolmajor 2>&1 | FileCheck --check-prefix=BAD %s
 // RUN: not %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --product 64x64x64:colmajor 2>&1 | FileCheck --check-prefix=BAD %s
 
@@ -51,5 +58,18 @@
 // AGAIN: = tcec_n2_tf32_f32 already calibrated
 // AGAIN: = tcec_n2_tf32_f32_m2048n112k2048_bcolmajor already calibrated
 // AGAIN: [calibrate] in-kernel: nothing new to write
+
+// FAIL: [calibrate] in-kernel raises at 64x16x32, B strided along K
+// FAIL: initialization error
+// FAIL-NEXT: ! tcec_n2_tf32_f32_m64n16k32_browmajor did not run
+// FAIL: [calibrate] cost model: {{.*}}cm.csv
+// FAIL-NEXT: poseidon-calibrate: 1 row(s) not measured, which the same command measures alone when run again: wmma_inkernel_rel,tcec_n2_tf32_f32_m64n16k32_browmajor{{$}}
+// FAIL-NOT: {{.}}
+
+// TWO: 2
+
+// REPEAT: = bf16_f32_m64n16k32_browmajor already calibrated
+// REPEAT-NEXT: = f16_f32_m64n16k32_browmajor already calibrated
+// REPEAT-NEXT: + tcec_n2_tf32_f32_m64n16k32_browmajor 0.5000 ms  rel 0.250000
 
 // BAD: poseidon-calibrate: --product: '{{.*}}' is not a product MxNxK or MxNxK:<layout>, <layout> browmajor or bcolmajor

@@ -109,6 +109,9 @@ static cl::opt<unsigned>
 /// The directory of this executable.
 static std::string ToolDir;
 
+/// The rows this run was asked for and did not measure, which make it fail.
+static SmallVector<std::string, 8> Unmeasured;
+
 /// The tool `Name` installed next to this one.
 static std::string sibling(StringRef Name) {
   SmallString<256> P(ToolDir);
@@ -131,8 +134,10 @@ static std::string shipped(StringRef Rel) {
 /// `V` with six decimals, as a row holds it.
 static std::string decimal(double V) { return formatv("{0:F6}", V).str(); }
 
-/// Prints `poseidon-calibrate: <Message>` to stderr.
+/// Prints `poseidon-calibrate: <Message>` to stderr, after what was printed to
+/// stdout.
 static void printError(const Twine &Message) {
+  outs().flush();
   errs() << "poseidon-calibrate: " << Message << '\n';
 }
 
@@ -254,13 +259,19 @@ struct Device {
 };
 } // namespace
 
+/// The exit status of a microbenchmark that finds no device of its vendor.
+constexpr int kMicrobmNoDevice = 2;
+
 /// The GPU --gpu names, else the first the vendor's visible-devices variable
 /// lists, as the microbenchmark of each vendor this build has names it, CUDA's
-/// first.
+/// first. A microbenchmark that finds no device of its vendor passes the
+/// question to the next; one that cannot initialize the device, or cannot be
+/// started, ends the run with its reason.
 static Device queryDevice() {
-  // What each microbenchmark said when it named no device.
+  // What each microbenchmark said when it found no device.
   std::string Reasons;
   for (bool Hip : {false, true}) {
+    const StringRef Vendor = Hip ? "HIP" : "CUDA";
     std::string Exe =
         sibling(Hip ? "poseidon-microbm-hip" : "poseidon-microbm");
     if (!sys::fs::exists(Exe))
@@ -277,20 +288,42 @@ static Device queryDevice() {
     }
     // The probe, and every child after it, sees that device alone.
     ::setenv(Visible, D.Id.c_str(), 1);
-    SmallString<128> Err;
-    if (sys::fs::createTemporaryFile("poseidon-calibrate", "err", Err))
+    SmallString<128> Out, Err;
+    if (sys::fs::createTemporaryFile("poseidon-calibrate", "out", Out) ||
+        sys::fs::createTemporaryFile("poseidon-calibrate", "err", Err))
       fail("cannot create a temporary file");
-    FileRemover RemoveErr(Err);
-    std::string Named = capture({Exe, "--device"}, Err).value_or("");
-    std::string Why = readFile(Err);
-    auto [NameRef, Arch] = StringRef(Named).split('\n').first.split('\t');
-    if (Arch.trim().empty()) {
-      if (!StringRef(Why).trim().empty())
-        Reasons +=
-            ("\n  " + sys::path::filename(Exe) + ": " + StringRef(Why).trim())
-                .str();
+    FileRemover RemoveOut(Out), RemoveErr(Err);
+    outs().flush();
+    std::optional<StringRef> Redirects[3] = {std::nullopt, StringRef(Out),
+                                             StringRef(Err)};
+    std::string Failure;
+    StringRef Argv[] = {Exe, "--device"};
+    int RC =
+        sys::ExecuteAndWait(Exe, Argv, std::nullopt, Redirects, 0, 0, &Failure);
+    std::string Why = StringRef(readFile(Err)).trim().str();
+    if (RC == kMicrobmNoDevice) {
+      Reasons += ("\n  " + sys::path::filename(Exe) + ": " + Why).str();
       continue;
     }
+    if (!Failure.empty() || (RC != 0 && RC != 1)) {
+      if (Failure.empty())
+        Failure = "exit status " + itostr(RC);
+      fail("the " + Vendor + " microbenchmark " + sys::path::filename(Exe) +
+           " could not be started (" + Failure + ")" +
+           (Why.empty() ? "" : ": " + Why) +
+           (Reasons.empty() ? ""
+                            : "; the microbenchmarks before it found no "
+                              "device:" +
+                                  Reasons));
+    }
+    if (RC != 0)
+      fail("the " + Vendor + " microbenchmark could not initialize device " +
+           D.Id + ": " + Why);
+    std::string Named = readFile(Out);
+    auto [NameRef, Arch] = StringRef(Named).split('\n').first.split('\t');
+    if (Arch.trim().empty())
+      fail("the " + Vendor + " microbenchmark named device " + D.Id +
+           " no processor: '" + StringRef(Named).trim() + "'");
     // A device ID several products share has a marketing name listing them all
     // ("AMD Instinct MI250X / MI250"); the first names the device. The vendor
     // prefixes say nothing about it.
@@ -800,14 +833,14 @@ constexpr unsigned kProfileExtent = 128;
 
 /// Measures the in-kernel rows of the harness at `M` x `N` x `K`, B
 /// column-major when `BColMajor`, each row keyed by its class and `Suffix`,
-/// into `Rows`: the harness is profiled at small extents, the classes the pass
-/// proposes from that profile are listed, and the scalar-FP64 loop and each
-/// class applied are timed. A class that does not build or run is reported
-/// and left absent.
-static void measureInKernel(const std::string &Csv, const Device &D,
-                            StringRef Content, StringRef Work, unsigned M,
-                            unsigned N, unsigned K, bool BColMajor,
-                            StringRef Suffix, std::string &Rows) {
+/// into `Csv`, and returns how many it wrote: the harness is profiled at small
+/// extents, the classes the pass proposes from that profile are listed, and
+/// the scalar-FP64 loop and each class applied are timed. The row of a class
+/// that does not build or run is added to Unmeasured.
+static unsigned measureInKernel(const std::string &Csv, const Device &D,
+                                StringRef Work, unsigned M, unsigned N,
+                                unsigned K, bool BColMajor, StringRef Suffix) {
+  std::string Content = readFile(Csv);
   std::string Src = shipped("tools/calibrate/inkernel_calibrate.cu");
   if (!sys::fs::exists(Src))
     fail("the in-kernel harness source is missing: " + Src);
@@ -882,6 +915,7 @@ static void measureInKernel(const std::string &Csv, const Device &D,
   outs() << "[calibrate] " << Classes.size()
          << " in-kernel class(es) proposed\n";
 
+  std::string Rows;
   for (const auto &[Class, Index] : Classes) {
     const std::string Row = "wmma_inkernel_rel," + Class + Suffix.str();
     if (!Force && StringRef(Content).contains(Row + ",")) {
@@ -891,19 +925,27 @@ static void measureInKernel(const std::string &Csv, const Device &D,
     std::string Exe = Dir + "/cand_" + Class + ".exe";
     std::string Log = Dir + "/build_" + Class + ".log";
     if (compile("-poseidon-apply-rewrites=M0_" + Index, Exe, Log)) {
-      outs() << "  ! " << Class << " did not build; left uncalibrated (" << Log
-             << ")\n";
+      outs() << "  ! " << Class << Suffix << " did not build (" << Log << ")\n";
+      Unmeasured.push_back(Row);
       continue;
     }
     std::optional<double> Ms = timeOf(Exe);
     if (!Ms) {
-      outs() << "  ! " << Class << " did not run; left uncalibrated\n";
+      outs() << "  ! " << Class << Suffix << " did not run\n";
+      Unmeasured.push_back(Row);
       continue;
     }
     Rows += Row + "," + decimal(*Ms / *BaseMs) + "\n";
     outs() << "  + " << Class << Suffix << ' ' << formatv("{0:F4}", *Ms)
            << " ms  rel " << decimal(*Ms / *BaseMs) << '\n';
   }
+  // Each shape's rows are written as soon as they are measured, so that a run
+  // that stops at a later shape keeps them.
+  if (Rows.empty())
+    return 0;
+  mergeRows(Content, Rows);
+  writeFile(Csv, Content);
+  return llvm::count(Rows, '\n');
 }
 
 /// Measures the in-kernel rows: of each class on the square harness at --n,
@@ -915,7 +957,6 @@ static void armInKernel(const std::string &Csv, const Device &D) {
               "NVPTX-only; their rows stay absent\n";
     return;
   }
-  std::string Content = readFile(Csv);
   SmallString<256> WorkBuf;
   if (std::error_code EC =
           sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf))
@@ -923,20 +964,15 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   std::string Work(WorkBuf);
   outs() << "[calibrate] in-kernel workdir " << Work << '\n';
 
-  std::string Rows;
-  measureInKernel(Csv, D, Content, Work, RefN, RefN, RefN,
-                  /*BColMajor=*/false, "", Rows);
+  unsigned Written = measureInKernel(Csv, D, Work, RefN, RefN, RefN,
+                                     /*BColMajor=*/false, "");
   for (const ProductShape &P : products())
     if (!P.Layout.empty())
-      measureInKernel(Csv, D, Content, Work, P.M, P.N, P.K,
-                      P.Layout == BLayouts[1], "_" + P.key() + "_" + P.Layout,
-                      Rows);
-  if (Rows.empty()) {
+      Written +=
+          measureInKernel(Csv, D, Work, P.M, P.N, P.K, P.Layout == BLayouts[1],
+                          "_" + P.key() + "_" + P.Layout);
+  if (!Written)
     outs() << "[calibrate] in-kernel: nothing new to write\n";
-    return;
-  }
-  mergeRows(Content, Rows);
-  writeFile(Csv, Content);
 }
 
 /// Resolves the model as a compile for `D` does, with --out in the place of
@@ -1085,5 +1121,12 @@ int main(int argc, char **argv) {
       armInKernel(Csv, D);
   }
   outs() << "[calibrate] cost model: " << Csv << '\n';
+  if (!Unmeasured.empty()) {
+    printError(Twine(Unmeasured.size()) +
+               " row(s) not measured, which the same command measures alone "
+               "when run again: " +
+               join(Unmeasured, ", "));
+    return 1;
+  }
   return 0;
 }
