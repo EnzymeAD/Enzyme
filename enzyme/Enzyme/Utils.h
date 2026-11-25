@@ -2644,7 +2644,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
                                   llvm::Value *dim_2, bool cacheMat, bool byRef,
-                                  bool cublas);
+                                  bool cublas, llvm::Value *layout = nullptr);
 
 template <typename T>
 static inline void append(llvm::SmallVectorImpl<T> &vec) {}

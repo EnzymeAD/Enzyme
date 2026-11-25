@@ -972,7 +972,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << "{get_cached_mat_width(Builder2, ";
         rev_call_arg(forward, Dag, pattern, 1, os, vars);
         os << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name
-           << ", cache_" << matName << ", byRef, cublas)}";
+           << ", cache_" << matName << ", byRef, cublas, arg_layout)}";
         return;
       }
       if (Def->getName() == "is_zero") {
