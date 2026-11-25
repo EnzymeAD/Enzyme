@@ -3,6 +3,7 @@
 #ifndef ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H
 #define ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H
 
+#include "Dialect/Impulse/Impulse.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -13,6 +14,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <optional>
 
@@ -24,7 +26,7 @@ struct StateSlot {
   mlir::RankedTensorType type;
 };
 
-/// Names of the HMC/NUTS `state_schema` slots.
+/// Names of the `state_schema` slots.
 namespace state_slot {
 inline constexpr llvm::StringLiteral kPosition = "position";
 inline constexpr llvm::StringLiteral kGradient = "gradient";
@@ -42,6 +44,19 @@ inline constexpr llvm::StringLiteral kWelfordN = "welford_n";
 inline constexpr llvm::StringLiteral kWindowIdx = "window_idx";
 inline constexpr llvm::StringLiteral kWarmupOffset = "warmup_offset";
 inline constexpr llvm::StringLiteral kRng = "rng";
+inline constexpr llvm::StringLiteral kLoc = "loc";
+inline constexpr llvm::StringLiteral kScaleUnconstrained =
+    "scale_unconstrained";
+inline constexpr llvm::StringLiteral kScaleTrilUnconstrained =
+    "scale_tril_unconstrained";
+inline constexpr llvm::StringLiteral kOptMLoc = "opt_m_loc";
+inline constexpr llvm::StringLiteral kOptVLoc = "opt_v_loc";
+inline constexpr llvm::StringLiteral kOptMScale = "opt_m_scale";
+inline constexpr llvm::StringLiteral kOptVScale = "opt_v_scale";
+inline constexpr llvm::StringLiteral kOptMScaleTril = "opt_m_scale_tril";
+inline constexpr llvm::StringLiteral kOptVScaleTril = "opt_v_scale_tril";
+inline constexpr llvm::StringLiteral kOptStepCount = "opt_step_count";
+inline constexpr llvm::StringLiteral kWeight = "weight";
 } // namespace state_slot
 
 /// Whether an inverse mass matrix of type `type` is diagonal: `tensor<N>` and
@@ -113,10 +128,9 @@ buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
   return slots;
 }
 
-enum class VIGuide { None, AutoNormal, AutoDelta, AutoMVN };
-
+/// The VI slots of the guide `guide`, which is not CUSTOM.
 inline llvm::SmallVector<StateSlot>
-buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
+buildVIStateSchema(GuideKind guide, int64_t positionSize, mlir::Type elemType) {
   mlir::MLIRContext *ctx = elemType.getContext();
   auto i64TensorType =
       mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
@@ -124,48 +138,44 @@ buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
   int64_t flat = positionSize * (positionSize + 1) / 2;
   auto flatType = mlir::RankedTensorType::get({flat}, elemType);
 
-  llvm::SmallVector<StateSlot> slots;
   switch (guide) {
-  case VIGuide::AutoNormal:
-    slots = {
-        {"loc", vecType},
-        {"scale_unconstrained", vecType},
-        {"opt_m_loc", vecType},
-        {"opt_v_loc", vecType},
-        {"opt_m_scale", vecType},
-        {"opt_v_scale", vecType},
-        {"opt_step_count", i64TensorType},
+  case GuideKind::AUTO_NORMAL:
+    return {
+        {state_slot::kLoc, vecType},
+        {state_slot::kScaleUnconstrained, vecType},
+        {state_slot::kOptMLoc, vecType},
+        {state_slot::kOptVLoc, vecType},
+        {state_slot::kOptMScale, vecType},
+        {state_slot::kOptVScale, vecType},
+        {state_slot::kOptStepCount, i64TensorType},
     };
-    break;
-  case VIGuide::AutoDelta:
-    slots = {
-        {"loc", vecType},
-        {"opt_m_loc", vecType},
-        {"opt_v_loc", vecType},
-        {"opt_step_count", i64TensorType},
+  case GuideKind::AUTO_DELTA:
+    return {
+        {state_slot::kLoc, vecType},
+        {state_slot::kOptMLoc, vecType},
+        {state_slot::kOptVLoc, vecType},
+        {state_slot::kOptStepCount, i64TensorType},
     };
-    break;
-  case VIGuide::AutoMVN:
-    slots = {
-        {"loc", vecType},
-        {"scale_tril_unconstrained", flatType},
-        {"opt_m_loc", vecType},
-        {"opt_v_loc", vecType},
-        {"opt_m_scale_tril", flatType},
-        {"opt_v_scale_tril", flatType},
-        {"opt_step_count", i64TensorType},
+  case GuideKind::AUTO_MULTIVARIATE_NORMAL:
+    return {
+        {state_slot::kLoc, vecType},
+        {state_slot::kScaleTrilUnconstrained, flatType},
+        {state_slot::kOptMLoc, vecType},
+        {state_slot::kOptVLoc, vecType},
+        {state_slot::kOptMScaleTril, flatType},
+        {state_slot::kOptVScaleTril, flatType},
+        {state_slot::kOptStepCount, i64TensorType},
     };
-    break;
-  case VIGuide::None:
+  case GuideKind::CUSTOM:
     break;
   }
-  return slots;
+  llvm_unreachable("a CUSTOM guide has no state schema");
 }
 
 /// Only `weight`: trace and rng travel as the op's universal results.
 inline llvm::SmallVector<StateSlot> buildMHStateSchema(mlir::Type elemType) {
   auto scalarType = mlir::RankedTensorType::get({}, elemType);
-  return {{"weight", scalarType}};
+  return {{state_slot::kWeight, scalarType}};
 }
 
 inline std::optional<unsigned> slotIndex(mlir::ArrayAttr schema,

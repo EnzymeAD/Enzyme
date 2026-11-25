@@ -822,14 +822,11 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   auto elemType = ctx.getElementType();
   auto positionType = ctx.getPositionType();
 
-  bool isResume = !op.getStateIn().empty();
+  ValueRange stateIn = op.getStateIn();
+  bool isResume = !stateIn.empty();
   ArrayAttr schema = op.getStateSchemaAttr();
-  auto slotIn = [&](StringRef name) -> Value {
-    auto idx = impulse::slotIndex(schema, name);
-    if (!idx)
-      return Value();
-    auto stateIn = op.getStateIn();
-    return *idx < stateIn.size() ? stateIn[*idx] : Value();
+  auto slotIn = [&](StringRef name) {
+    return stateInSlot(schema, stateIn, name);
   };
 
   // A cold start splits the key into the loop key, an unused model seed and
@@ -849,7 +846,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
 
   Value loc0;
   if (isResume) {
-    loc0 = slotIn("loc");
+    loc0 = slotIn(state_slot::kLoc);
   } else if (Value initPosition = op.getInitPosition()) {
     if (initPosition.getType() == positionType) {
       loc0 = initPosition;
@@ -894,19 +891,17 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     }
   }
 
-  ParamState locState{loc0, slotIn("opt_m_loc"), slotIn("opt_v_loc")};
-  Value initStepCount = slotIn("opt_step_count");
+  ParamState locState{loc0, slotIn(state_slot::kOptMLoc),
+                      slotIn(state_slot::kOptVLoc)};
+  Value initStepCount = slotIn(state_slot::kOptStepCount);
   SVILoopResult loopRes;
-  impulse::VIGuide guide;
   if (ctx.guideKind == impulse::GuideKind::AUTO_DELTA) {
-    guide = impulse::VIGuide::AutoDelta;
     loopRes = emitSVILoop(rewriter, loc, {locState}, rng0, initStepCount, ctx,
                           emitAutoDeltaParticle, /*recordConstrained=*/true);
   } else if (ctx.guideKind == impulse::GuideKind::AUTO_NORMAL) {
-    guide = impulse::VIGuide::AutoNormal;
     Value scale0;
     if (isResume) {
-      scale0 = slotIn("scale_unconstrained");
+      scale0 = slotIn(state_slot::kScaleUnconstrained);
     } else if (Value initScale = op.getInitScale()) {
       if (initScale.getType() != positionType)
         initScale =
@@ -916,20 +911,20 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       double initScaleU = std::log(std::expm1(ctx.initScale));
       scale0 = emitSplatConstant(rewriter, loc, positionType, initScaleU);
     }
-    ParamState scaleState{scale0, slotIn("opt_m_scale"), slotIn("opt_v_scale")};
+    ParamState scaleState{scale0, slotIn(state_slot::kOptMScale),
+                          slotIn(state_slot::kOptVScale)};
     loopRes = emitSVILoop(rewriter, loc, {locState, scaleState}, rng0,
                           initStepCount, ctx, emitAutoNormalParticle,
                           /*recordConstrained=*/false);
   } else {
     // scale_tril = init_scale * I: zero off-diagonals, softplus_inv diagonal.
-    guide = impulse::VIGuide::AutoMVN;
     int64_t d = ctx.positionSize;
     int64_t flatSize = d * (d + 1) / 2;
     int64_t nOff = d * (d - 1) / 2;
     auto flatType = RankedTensorType::get({flatSize}, elemType);
     Value xScaleTril0;
     if (isResume) {
-      xScaleTril0 = slotIn("scale_tril_unconstrained");
+      xScaleTril0 = slotIn(state_slot::kScaleTrilUnconstrained);
     } else {
       double initU = std::log(std::expm1(ctx.initScale));
       SmallVector<Attribute> vals;
@@ -941,27 +936,28 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
       xScaleTril0 = arith::ConstantOp::create(
           rewriter, loc, flatType, DenseElementsAttr::get(flatType, vals));
     }
-    ParamState scaleTrilState{xScaleTril0, slotIn("opt_m_scale_tril"),
-                              slotIn("opt_v_scale_tril")};
+    ParamState scaleTrilState{xScaleTril0, slotIn(state_slot::kOptMScaleTril),
+                              slotIn(state_slot::kOptVScaleTril)};
     loopRes = emitSVILoop(rewriter, loc, {locState, scaleTrilState}, rng0,
                           initStepCount, ctx, emitAutoMVNParticle,
                           /*recordConstrained=*/false);
   }
 
   auto slotValue = [&](StringRef name) -> Value {
-    if (name == "loc")
+    if (name == state_slot::kLoc)
       return loopRes.params[0].param;
-    if (name == "scale_unconstrained" || name == "scale_tril_unconstrained")
+    if (name == state_slot::kScaleUnconstrained ||
+        name == state_slot::kScaleTrilUnconstrained)
       return loopRes.params[1].param;
-    if (name == "opt_m_loc")
+    if (name == state_slot::kOptMLoc)
       return loopRes.params[0].m;
-    if (name == "opt_v_loc")
+    if (name == state_slot::kOptVLoc)
       return loopRes.params[0].v;
-    if (name == "opt_m_scale" || name == "opt_m_scale_tril")
+    if (name == state_slot::kOptMScale || name == state_slot::kOptMScaleTril)
       return loopRes.params[1].m;
-    if (name == "opt_v_scale" || name == "opt_v_scale_tril")
+    if (name == state_slot::kOptVScale || name == state_slot::kOptVScaleTril)
       return loopRes.params[1].v;
-    if (name == "opt_step_count")
+    if (name == state_slot::kOptStepCount)
       return loopRes.stepCount;
     llvm_unreachable("unknown VI state slot");
   };
@@ -976,7 +972,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
           rewriter.getFloatAttr(elemType, 0.0)))); // log_densities (unused)
   results.push_back(loopRes.rng);
   for (const impulse::StateSlot &slot :
-       impulse::buildVIStateSchema(guide, ctx.positionSize, elemType))
+       impulse::buildVIStateSchema(ctx.guideKind, ctx.positionSize, elemType))
     results.push_back(slotValue(slot.name));
 
   rewriter.replaceOp(op, results);
