@@ -34,6 +34,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
@@ -42,6 +43,7 @@
 #include <string>
 
 using namespace llvm;
+using namespace llvm::PatternMatch;
 
 namespace poseidon {
 
@@ -186,14 +188,15 @@ static bool recoverGuardExtents(const Options &O, Function &F,
     if (h.blocks.count(&BB))
       continue;
     Instruction *BI = BB.getTerminator();
-    if (!isConditionalBranch(BI))
+    Value *Cond;
+    if (!match(BI, m_Br(m_Value(Cond), m_BasicBlock(), m_BasicBlock())))
       continue;
     for (unsigned i = 0; i < 2; ++i) {
       // The edge query rejects a duplicated edge on its own, so a two-way
       // branch to one block dominates nothing and contributes no fact.
       if (!DT.dominates(BasicBlockEdge(&BB, BI->getSuccessor(i)), SB))
         continue;
-      if (!collectIndexBounds(branchCondition(BI), /*holds=*/i == 0, bound)) {
+      if (!collectIndexBounds(Cond, /*holds=*/i == 0, bound)) {
         if (O.Diagnostics.Print)
           llvm::errs() << "[ozaki-host-dispatch] " << F.getName()
                        << ": a condition gating the GEMM store is not a "

@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares the evaluator classes for floating-point expressions
-// in the Poseidon optimization pass.
+// The values of an expression graph at a point: as the program computes them,
+// at the precisions a candidate's changes give its nodes, and exactly.
 //
 //===----------------------------------------------------------------------===//
 
@@ -19,7 +19,6 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Value.h"
-#include <mpfr.h>
 #include <unordered_map>
 
 #include "Core/ExpansionModel.h"
@@ -40,39 +39,14 @@ private:
   std::unordered_map<const FPNode *, double> approxSqrtError;
 
   bool evaluateExpansionNode(const FPNode *node, unsigned n);
+  PrecisionChangeType getNodePrecision(const FPNode *node) const;
 
 public:
   FPEvaluator(llvm::ArrayRef<PrecisionChange> changes = {});
 
-  PrecisionChangeType getNodePrecision(const FPNode *node) const;
   void evaluateNode(const FPNode *node,
                     const llvm::MapVector<llvm::Value *, double> &inputValues);
   double getResult(const FPNode *node) const;
-};
-
-class MPFREvaluator {
-private:
-  struct CachedValue {
-    mpfr_t value;
-    unsigned prec;
-
-    CachedValue(unsigned prec);
-    CachedValue(const CachedValue &) = delete;
-    CachedValue &operator=(const CachedValue &) = delete;
-    CachedValue(CachedValue &&other) noexcept;
-    CachedValue &operator=(CachedValue &&other) noexcept;
-    ~CachedValue();
-  };
-
-  std::unordered_map<const FPNode *, CachedValue> cache;
-  unsigned prec;
-
-public:
-  explicit MPFREvaluator(unsigned prec);
-
-  void evaluateNode(const FPNode *node,
-                    const llvm::MapVector<llvm::Value *, double> &inputValues);
-  mpfr_t &getResult(FPNode *node);
 };
 
 void getFPValues(llvm::ArrayRef<FPNode *> outputs,
@@ -80,10 +54,12 @@ void getFPValues(llvm::ArrayRef<FPNode *> outputs,
                  llvm::SmallVectorImpl<double> &results,
                  llvm::ArrayRef<PrecisionChange> changes = {});
 
+// The exact values, evaluated in MPFR at increasing precision until the first
+// 53 significand bits of each output stop changing; NaN for an output that
+// does not settle by 1024 bits.
 void getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
                    const llvm::MapVector<llvm::Value *, double> &inputValues,
-                   llvm::SmallVectorImpl<double> &results,
-                   unsigned groundTruthPrec);
+                   llvm::SmallVectorImpl<double> &results);
 
 } // namespace poseidon
 #endif // POSEIDON_EVALUATORS_H

@@ -1,32 +1,33 @@
 ; DEFINE: %{opt} = %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
-; DEFINE:   -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh \
+; DEFINE:   -poseidon-enable-herbie=true \
 ; DEFINE:   -poseidon-herbie-processes=1 -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
 ; DEFINE:   -poseidon-cache=%t/c -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} 2>&1 | FileCheck --check-prefix=FRESH %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh 2>&1 | FileCheck --check-prefix=FRESH %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/no_alternatives.json %t/c/cachedHerbieOutput_*
-; RUN: %{opt} 2>&1 | FileCheck --check-prefix=NO-ALTERNATIVES %s
-; RUN: not %{opt} -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=NO-ALTERNATIVES-STRICT %s
+; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=NO-ALTERNATIVES %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=NO-ALTERNATIVES-STRICT %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/no_bits.json %t/c/cachedHerbieOutput_*
-; RUN: %{opt} 2>&1 | FileCheck --check-prefix=NO-BITS %s
-; RUN: not %{opt} -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=NO-BITS-STRICT %s
+; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=NO-BITS %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=NO-BITS-STRICT %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/not_object.json %t/c/cachedHerbieOutput_*
-; RUN: %{opt} 2>&1 | FileCheck --check-prefix=NOT-OBJECT %s
-; RUN: not %{opt} -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=NOT-OBJECT-STRICT %s
+; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=NOT-OBJECT %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=NOT-OBJECT-STRICT %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/unknown_core.json %t/c/cachedHerbieOutput_*
-; RUN: %{opt} 2>&1 | FileCheck --check-prefix=UNKNOWN-CORE %s
+; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=UNKNOWN-CORE %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/zero_alternatives.json %t/c/cachedHerbieOutput_*
-; RUN: %{opt} -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=ZERO-ALTERNATIVES %s
+; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=ZERO-ALTERNATIVES %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/approx_without_result.json %t/c/cachedHerbieOutput_*
-; RUN: not --crash %{opt} 2>&1 | FileCheck --check-prefix=APPROX %s
+; RUN: not --crash %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=APPROX %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/literal_binary16.json %t/c/cachedHerbieOutput_*
-; RUN: not --crash %{opt} 2>&1 | FileCheck --check-prefix=LITERAL %s
+; RUN: not --crash %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=LITERAL %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/operator_f16.json %t/c/cachedHerbieOutput_*
-; RUN: not --crash %{opt} 2>&1 | FileCheck --check-prefix=OPERATOR %s
+; RUN: not --crash %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=OPERATOR %s
 
-; A cached answer that is not shaped as Herbie writes its results gives the
+; The answers are replayed from the cache with no Herbie to run. A cached
+; answer that is not shaped as Herbie writes its results gives the
 ; subgraph no algebraic candidates, as a crash of Herbie does: the site is
 ; solved without them, and under -poseidon-strict-mode the compile stops. An
 ; answer that lists no alternatives offers Herbie's best expression alone. An

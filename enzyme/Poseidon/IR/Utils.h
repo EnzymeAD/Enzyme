@@ -1,4 +1,4 @@
-//===- Utils.h - Utility functions for Poseidon optimization pass ---------===//
+//===- Utils.h - IR helpers of the Poseidon pass --------------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares utility functions for the Poseidon floating-point
-// optimization pass.
+// Shims over the LLVM versions the pass builds against, the simplification
+// pipeline it runs, how it reports a user error, and small IR helpers.
 //
 //===----------------------------------------------------------------------===//
 
@@ -50,24 +50,6 @@ template <typename DerivedT> using PassParent = llvm::PassInfoMixin<DerivedT>;
 // DataLayout argument of its constructor.
 llvm::SCEVExpander makeSCEVExpander(llvm::ScalarEvolution &SE,
                                     const char *name);
-
-// LLVM 24 split BranchInst into CondBrInst and UncondBrInst.
-inline bool isConditionalBranch(const llvm::Value *V) {
-#if LLVM_VERSION_MAJOR >= 24
-  return llvm::isa<llvm::CondBrInst>(V);
-#else
-  auto *BI = llvm::dyn_cast<llvm::BranchInst>(V);
-  return BI && BI->isConditional();
-#endif
-}
-
-inline llvm::Value *branchCondition(llvm::Value *V) {
-#if LLVM_VERSION_MAJOR >= 24
-  return llvm::cast<llvm::CondBrInst>(V)->getCondition();
-#else
-  return llvm::cast<llvm::BranchInst>(V)->getCondition();
-#endif
-}
 
 // A builder inserting at `IP` in `BB`; `IP` may be `BB->end()`. LLVM 24 takes
 // the position alone and deprecates the form that also names the block.

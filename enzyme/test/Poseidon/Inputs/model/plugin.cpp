@@ -5,11 +5,15 @@
 // named metadata as a Herbie expression without variables and prints it with
 // its value from the MPFR reference (getMPFRValues at 53 bits, as the accuracy
 // model takes it) and from the binary64 evaluation (getFPValues).
+//
+// lower-fpcore lowers each of them, as a rewrite is lowered, into a function
+// @fpcore.<n> of the module that returns it.
 #include "IR/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/FPNode.h"
 
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
@@ -40,12 +44,43 @@ struct EvaluateFPCore : PassParent<EvaluateFPCore> {
       std::shared_ptr<FPNode> Node =
           parseHerbieExpr(Expr, ValueToNode, SymbolToValue);
       SmallVector<double, 1> Reference, Binary64;
-      getMPFRValues({Node.get()}, {}, Reference, 53);
+      getMPFRValues({Node.get()}, {}, Reference);
       getFPValues({Node.get()}, {}, Binary64);
       outs() << Expr << ": reference " << format("%.17g", Reference[0])
              << " binary64 " << format("%.17g", Binary64[0]) << '\n';
     }
     return PreservedAnalyses::all();
+  }
+};
+
+struct LowerFPCore : PassParent<LowerFPCore> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    NamedMDNode *Exprs = M.getNamedMetadata("poseidon.test.fpcore");
+    if (!Exprs)
+      report_fatal_error("lower-fpcore: no !poseidon.test.fpcore");
+    for (auto [I, Entry] : enumerate(Exprs->operands())) {
+      std::string Expr =
+          cast<MDString>(Entry->getOperand(0))->getString().str();
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> ValueToNode;
+      std::unordered_map<std::string, Value *> SymbolToValue;
+      std::shared_ptr<FPNode> Node =
+          parseHerbieExpr(Expr, ValueToNode, SymbolToValue);
+      // Lowered into a scratch function first: the result's type, and so the
+      // function's, is known only after lowering.
+      LLVMContext &C = M.getContext();
+      Function *Scratch =
+          Function::Create(FunctionType::get(Type::getVoidTy(C), false),
+                           GlobalValue::InternalLinkage, "", M);
+      IRBuilder<> B(BasicBlock::Create(C, "entry", Scratch));
+      Value *V = Node->getLLValue(B);
+      B.CreateRet(V);
+      Function *F = Function::Create(FunctionType::get(V->getType(), false),
+                                     GlobalValue::ExternalLinkage,
+                                     "fpcore." + Twine(I), M);
+      F->splice(F->end(), Scratch);
+      Scratch->eraseFromParent();
+    }
+    return PreservedAnalyses::none();
   }
 };
 
@@ -59,6 +94,10 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
                    ArrayRef<PassBuilder::PipelineElement>) {
                   if (Name == "evaluate-fpcore") {
                     MPM.addPass(EvaluateFPCore());
+                    return true;
+                  }
+                  if (Name == "lower-fpcore") {
+                    MPM.addPass(LowerFPCore());
                     return true;
                   }
                   return false;

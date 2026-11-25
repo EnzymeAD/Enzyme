@@ -45,11 +45,10 @@ public:
   std::string dtype;
   std::string symbol;
   llvm::SmallVector<std::shared_ptr<FPNode>, 2> operands;
-  double sens =
-      std::numeric_limits<double>::quiet_NaN(); // Sensitivity score, sum of
-                                                // |grad * value|
-  double grad =
-      std::numeric_limits<double>::quiet_NaN(); // Sum of gradients (not abs)
+  // Sensitivity score, the sum of |grad * value|.
+  double sens = std::numeric_limits<double>::quiet_NaN();
+  // The sum of the gradients, signed.
+  double grad = std::numeric_limits<double>::quiet_NaN();
   uint64_t executions = 0;
 
   explicit FPNode(const std::string &op, const std::string &dtype)
@@ -61,18 +60,27 @@ public:
 
   NodeType getType() const;
   void addOperand(std::shared_ptr<FPNode> operand);
-  virtual bool hasSymbol() const;
-  virtual std::string
+  bool hasSymbol() const { return !symbol.empty(); }
+  // The Herbie expression of a node of the original graph, a value or a
+  // literal: a subgraph input as its symbol, anything else spelled out over
+  // its operands.
+  std::string
   toFullExpression(std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
                        &valueToNodeMap,
                    const llvm::SetVector<llvm::Value *> &subgraphInputs,
                    unsigned depth = 0);
-  virtual void updateBounds(double lower, double upper, bool print);
-  virtual double getLowerBound() const;
-  virtual double getUpperBound() const;
+  // Widens the profiled range of a value to [lower, upper]; a literal's range
+  // stays its value.
+  void updateBounds(double lower, double upper);
+  double getLowerBound() const { return lb; }
+  double getUpperBound() const { return ub; }
   virtual llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
              const llvm::ValueToValueMapTy *VMap = nullptr);
+
+protected:
+  double lb = std::numeric_limits<double>::infinity();
+  double ub = -std::numeric_limits<double>::infinity();
 };
 
 class FPLLValue;
@@ -90,10 +98,6 @@ std::shared_ptr<FPNode> existingDefinition(
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap);
 
 class FPLLValue : public FPNode {
-private:
-  double lb = std::numeric_limits<double>::infinity();
-  double ub = -std::numeric_limits<double>::infinity();
-
 public:
   llvm::Value *value;
 
@@ -101,15 +105,6 @@ public:
                      const std::string &dtype)
       : FPNode(NodeType::LLValue, op, dtype), value(value) {}
 
-  bool hasSymbol() const override;
-  std::string
-  toFullExpression(std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-                       &valueToNodeMap,
-                   const llvm::SetVector<llvm::Value *> &subgraphInputs,
-                   unsigned depth = 0) override;
-  void updateBounds(double lower, double upper, bool print) override;
-  double getLowerBound() const override;
-  double getUpperBound() const override;
   llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
              const llvm::ValueToValueMapTy *VMap = nullptr) override;
@@ -117,29 +112,21 @@ public:
   static bool classof(const FPNode *N);
 };
 
+// A literal; both its bounds are its value as a double, read once, as the
+// evaluators read it at every sample and a rational literal is parsed in MPFR.
 class FPConst : public FPNode {
 private:
   std::string strValue;
-  // The literal as a double, read once: the evaluators read it at every
-  // sample, and a rational literal is parsed in MPFR.
-  double value;
 
   static double literalValue(const std::string &strValue);
 
 public:
   explicit FPConst(const std::string &strValue, const std::string &dtype)
-      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue),
-        value(literalValue(strValue)) {}
+      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {
+    lb = ub = literalValue(strValue);
+  }
 
-  std::string
-  toFullExpression(std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-                       &valueToNodeMap,
-                   const llvm::SetVector<llvm::Value *> &subgraphInputs,
-                   unsigned depth = 0) override;
-  bool hasSymbol() const override;
-  void updateBounds(double lower, double upper, bool print) override;
-  double getLowerBound() const override;
-  double getUpperBound() const override;
+  const std::string &literal() const { return strValue; }
   llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
              const llvm::ValueToValueMapTy *VMap = nullptr) override;

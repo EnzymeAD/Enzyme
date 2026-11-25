@@ -1,1 +1,15 @@
-{"tests":[{"name":"2","status":"error","output":"#f"}]}
+{
+  "key": {
+    "Herbie binary": "0000000000000000",
+    "format": "1"
+  },
+  "value": {
+    "tests": [
+      {
+        "name": "2",
+        "status": "error",
+        "output": "#f"
+      }
+    ]
+  }
+}

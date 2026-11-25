@@ -63,11 +63,10 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
 // the function it is priced in.
 using InstWeight = llvm::function_ref<double(const llvm::Instruction &)>;
 
-// `At`, when given, is where a missing row is reported: the instruction a
-// scratch function `F` is priced for.
-double getCompCost(CostModelState &CM, llvm::Function *F,
-                   InstWeight Weight = nullptr,
-                   const llvm::Instruction *At = nullptr);
+// The most expensive path through `F`, a scratch function priced for the
+// instruction `At`, where a missing row is reported.
+double getCompCost(CostModelState &CM, llvm::Function *F, InstWeight Weight,
+                   const llvm::Instruction *At);
 
 // With `opExec`, each priced instruction is weighted by its measured
 // execution count over `normalizer`; an instruction with no count, or no map,

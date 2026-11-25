@@ -20,7 +20,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/xxhash.h"
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +34,7 @@ std::string readFileDigest(StringRef Path) {
   auto Buf = MemoryBuffer::getFile(Path);
   if (!Buf)
     return std::string();
-  return llvm::utohexstr(llvm::xxh3_64bits((*Buf)->getBuffer()));
+  return contentDigest((*Buf)->getBuffer());
 }
 
 // The digest of the Herbie binary at `Program`, read once per compile.
@@ -89,23 +88,21 @@ void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
   Key.add("Herbie platform", Opts.Platform.Name + " " + Opts.Platform.Digest);
 }
 
-// Writes `contents` to the cache file `path`, creating the cache directory.
-static Error writeCacheFile(StringRef cacheDir, StringRef path,
-                            StringRef contents) {
+// Writes the entry `value`, answered by the Herbie `answeredBy` names, to the
+// cache file `path`, creating the cache directory.
+static Error writeAnswer(StringRef cacheDir, StringRef path,
+                         const CacheKey &answeredBy, json::Value value) {
+  static constexpr StringLiteral kWritable =
+      ". Herbie's answers are kept in the -poseidon-cache directory, which has "
+      "to be writable.";
   if (std::error_code EC = sys::fs::create_directories(cacheDir, true))
     return createStringError(EC, "cannot create the Herbie cache directory " +
-                                     cacheDir + ": " + EC.message());
-  std::error_code EC;
-  raw_fd_ostream out(path, EC);
-  if (!EC) {
-    out << contents;
-    out.close();
-    EC = out.error();
-    out.clear_error();
-  }
-  if (EC)
-    return createStringError(EC, "cannot write the Herbie cache file " + path +
-                                     ": " + EC.message());
+                                     cacheDir + ": " + EC.message() +
+                                     kWritable);
+  if (Error E = writeCacheEntry(path, answeredBy, std::move(value)))
+    return createStringError(inconvertibleErrorCode(),
+                             "cannot write the Herbie cache file " + path +
+                                 ": " + toString(std::move(E)) + kWritable);
   return Error::success();
 }
 
@@ -169,20 +166,28 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
   std::string &content = Run.ResultsJson;
   std::string cacheFilePath;
 
-  // A result is filed under everything that decides it: the cores, the
-  // binary, its search arguments and the platform it ranks candidates by.
-  // The platform name leads the file name so that one device's results are
-  // told apart from another's at a glance.
+  // An answer is filed under the question: the cores, the search arguments
+  // and the platform Herbie ranks candidates by. The platform name leads the
+  // file name so that one device's answers are told apart from another's at a
+  // glance. The entry records the Herbie that gave it.
   std::string joinedCores;
   for (const auto &expr : Cores) {
     joinedCores += expr;
     joinedCores += '\n';
   }
-  CacheKey key;
-  addHerbieKeyParts(key, Opts, Digests);
-  key.add("Herbie arguments", join(herbieSearchArgs(Opts), " "));
-  key.addContent("cores", joinedCores);
-  const std::string keyDigest = key.digest();
+  CacheKey question;
+  question.add("Herbie platform", Platform.Name + " " + Platform.Digest);
+  question.add("Herbie arguments", join(herbieSearchArgs(Opts), " "));
+  question.addContent("cores", joinedCores);
+  const std::string keyDigest = question.digest();
+  // Without a Herbie to run, an answer any Herbie gave is the answer.
+  const std::string binaryDigest = herbieBinaryDigest(Program, Digests);
+  const bool haveHerbie = !binaryDigest.empty();
+  CacheKey answeredBy;
+  answeredBy.add("Herbie binary", binaryDigest);
+  SmallVector<StringRef, 1> unchecked;
+  if (!haveHerbie)
+    unchecked.push_back("Herbie binary");
   std::string timeoutMarkerPath;
 
   if (!Opts.CacheDir.empty()) {
@@ -191,11 +196,10 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
     // A timeout gets its own marker so it never looks like an empty result.
     timeoutMarkerPath =
         Opts.CacheDir + "/cachedHerbieTimeout_" + keyStem + ".txt";
-    std::ifstream cacheFile(cacheFilePath);
-    if (cacheFile) {
-      content.assign((std::istreambuf_iterator<char>(cacheFile)),
-                     std::istreambuf_iterator<char>());
-      cacheFile.close();
+    CacheEntryRead cached =
+        readCacheEntry(cacheFilePath, answeredBy, unchecked);
+    if (cached.value) {
+      raw_string_ostream(content) << *cached.value;
       llvm::errs() << "Using cached Herbie output from " << cacheFilePath
                    << '\n';
       llvm::errs() << "Herbie output: " << content << '\n';
@@ -203,25 +207,48 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
       Run.From = HerbieRunResult::Origin::Cache;
       return Run;
     }
+    if (!cached.unreadable.empty() && !haveHerbie)
+      return createStringError(inconvertibleErrorCode(),
+                               "the Herbie cache file " + cacheFilePath +
+                                   " for " + Label + " is not a cache entry (" +
+                                   cached.unreadable + ")");
+    if (!cached.unreadable.empty() || !cached.differs.empty())
+      llvm::errs() << "[poseidon] Herbie " << Label << ": the cache file "
+                   << cacheFilePath << " holds "
+                   << (cached.unreadable.empty()
+                           ? "the answer of another Herbie"
+                           : "no cache entry (" + cached.unreadable + ")")
+                   << "; running Herbie to replace it\n";
   }
 
   if (!Opts.CacheDir.empty()) {
     // A recorded timeout is a result too: without it every re-solve pays the
     // full wall-clock budget again to learn the same thing.
-    std::ifstream markerFile(timeoutMarkerPath);
-    unsigned spentBudget = 0;
-    if (markerFile >> spentBudget && wallBudget > 0 &&
-        spentBudget >= wallBudget) {
+    CacheEntryRead marker =
+        readCacheEntry(timeoutMarkerPath, answeredBy, unchecked);
+    std::optional<uint64_t> spentBudget =
+        marker.value ? marker.value->getAsUINT64() : std::nullopt;
+    if (spentBudget && wallBudget > 0 && *spentBudget >= wallBudget) {
       llvm::errs() << "[poseidon] Herbie " << Label << ": cached TIMEOUT ("
-                   << spentBudget
+                   << *spentBudget
                    << " s budget already spent on this exact input, "
                    << timeoutMarkerPath
                    << "). No algebraic candidates for this subgraph. "
                       "Raise -poseidon-herbie-subgraph-timeout above "
-                   << spentBudget << " to retry it.\n";
+                   << *spentBudget << " to retry it.\n";
       Run.Result = Outcome::Timeout;
       return Run;
     }
+    if (!haveHerbie)
+      return createStringError(
+          inconvertibleErrorCode(),
+          "no Herbie answer for " + Label + " is cached in " + cacheFilePath +
+              ", and " +
+              (Program.empty() ? "this Poseidon was built without Herbie"
+                               : "there is no Herbie at " + Program) +
+              " to compute it. Compute the answer on a machine with Herbie "
+              "and copy its -poseidon-cache directory here, or turn "
+              "algebraic rewriting off with -poseidon-enable-herbie=0.");
   }
 
   SmallVector<SmallString<64>> shardIn(shards), shardOut(shards);
@@ -349,8 +376,8 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                     "it to 0 to wait for as long as Herbie takes.\n";
     removeShardFiles();
     if (!timeoutMarkerPath.empty()) {
-      if (Error E = writeCacheFile(Opts.CacheDir, timeoutMarkerPath,
-                                   std::to_string(wallBudget) + "\n"))
+      if (Error E = writeAnswer(Opts.CacheDir, timeoutMarkerPath, answeredBy,
+                                (uint64_t)wallBudget))
         return std::move(E);
       llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath << '\n';
     }
@@ -360,7 +387,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
 
   // One process: its results.json verbatim. Several: their tests merged into
   // the first one's report.
-  std::optional<json::Object> merged;
+  std::optional<json::Value> answer;
   for (unsigned s = 0; s < shards; ++s) {
     auto Buf = MemoryBuffer::getFile(shardOut[s] + "/results.json");
     Expected<json::Value> parsed =
@@ -388,22 +415,19 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                         .str();
       return Run;
     }
-    if (shards == 1) {
-      content = (*Buf)->getBuffer().str();
-      break;
-    }
-    if (!merged) {
-      merged = std::move(*parsed->getAsObject());
+    if (!answer) {
+      if (shards == 1)
+        content = (*Buf)->getBuffer().str();
+      answer = std::move(*parsed);
       continue;
     }
-    json::Array *dst = merged->getArray("tests");
+    json::Array *dst = answer->getAsObject()->getArray("tests");
     for (auto &t : *parsed->getAsObject()->getArray("tests"))
       dst->push_back(std::move(t));
   }
-  if (merged) {
+  if (shards > 1) {
     content.clear();
-    raw_string_ostream os(content);
-    os << json::Value(std::move(*merged));
+    raw_string_ostream(content) << *answer;
   }
   removeShardFiles();
   if (RC != 0)
@@ -414,7 +438,8 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
   llvm::errs() << "Herbie output: " << content << '\n';
 
   if (!Opts.CacheDir.empty()) {
-    if (Error E = writeCacheFile(Opts.CacheDir, cacheFilePath, content))
+    if (Error E = writeAnswer(Opts.CacheDir, cacheFilePath, answeredBy,
+                              std::move(*answer)))
       return std::move(E);
     llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
                  << '\n';
@@ -423,7 +448,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
   }
   llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
                << herbieSecs << " s, a fresh answer of the Herbie with digest "
-               << herbieBinaryDigest(Program, Digests) << '\n';
+               << binaryDigest << '\n';
 
   Run.Result = Outcome::Ok;
   return Run;

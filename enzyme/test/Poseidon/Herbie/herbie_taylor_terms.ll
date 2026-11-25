@@ -77,6 +77,6 @@
 ; UNION46-NEXT: Expression #1:
 
 ; UNSET-NOT: Taylor terms
-; UNSET: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_D7072D91AD47CF1E.txt
+; UNSET: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_7D7D1B4F7D656892.txt
 
 ; NOOPTION: error: {{.*}}Poseidon: the cache {{.*}}old holds no Herbie answer for subgraph 0 of preprocess_tester at {{[0-9]+}} Taylor terms, and the Herbie at {{.*}}no-option-herbie.sh cannot run (-poseidon-herbie-num-taylor-terms passes it --num-taylor-terms, which it does not take ('report --help' does not list it); use a Herbie built with the option, or leave the flag out)

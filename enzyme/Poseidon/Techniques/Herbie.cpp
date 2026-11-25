@@ -277,10 +277,7 @@ static void improveViaHerbie(Session &S,
     Expected<HerbieRunResult> Run =
         runHerbie(inputExprs, Opts, RunLabel, S.Herbie.HerbieDigests);
     if (!Run)
-      reportUserError(F, F.getSubprogram(),
-                      toString(Run.takeError()) +
-                          ". Herbie's answers are kept in the -poseidon-cache "
-                          "directory, which has to be writable.");
+      reportUserError(F, F.getSubprogram(), toString(Run.takeError()));
     Runs.push_back(std::move(*Run));
     // A timeout is Herbie's answer for these cores; a Herbie that does not
     // start gives none.

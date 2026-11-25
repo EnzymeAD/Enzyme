@@ -26,7 +26,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/xxhash.h"
 
 #include <map>
 #include <string>
@@ -39,9 +38,7 @@ namespace poseidon {
 // Pricing is also where candidates are dropped, and a table hit skips pricing,
 // so the hit sees every candidate the table's positions were taken without; a
 // cached step names its candidate as well as its position.
-static std::string candidateKey(StringRef text) {
-  return utohexstr(xxh3_64bits(text));
-}
+static std::string candidateKey(StringRef text) { return contentDigest(text); }
 
 static std::optional<size_t> findCandidate(const SiteUnit &unit, size_t hint,
                                            StringRef key) {
@@ -103,7 +100,7 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
   // Two builds of one source differ in whether the error-corrected dispatch is
   // a candidate.
   key.add("TCEC backend", kHaveTcecDispatch ? "cuMpSGEMM" : "none");
-  key.add("cost model", utohexstr(getCostModelFingerprint(S.CostModel)));
+  key.addContent("cost model", costModelRows(S.CostModel));
   key.add("cost axis", "cost-model units times 2^(32 - log2 profiled cost)");
 
   SmallVector<std::string, 4> profilePaths = {profilePath.str()};

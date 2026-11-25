@@ -16,11 +16,13 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/LineIterator.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
-#include <cstring>
-#include <fstream>
 #include <system_error>
 #include <tuple>
 
@@ -154,17 +156,14 @@ static bool isCostModelRow(StringRef Opcode, StringRef Type) {
 Error loadCostModel(CostModelState &CM) {
   if (CM.Loaded)
     return Error::success();
-  std::ifstream CostFile(costModelPath(CM));
-  if (!CostFile.is_open())
+  ErrorOr<std::unique_ptr<MemoryBuffer>> File =
+      MemoryBuffer::getFile(costModelPath(CM));
+  if (!File)
     return modelError(CM, "cannot be opened");
-  std::string Line;
-  unsigned LineNo = 0;
-  while (std::getline(CostFile, Line)) {
-    ++LineNo;
-    if (Line.empty())
-      continue;
+  for (line_iterator It(**File); !It.is_at_end(); ++It) {
+    StringRef Line = *It;
     if (Line[0] == '#') {
-      auto content = StringRef(Line).drop_front(1).trim();
+      auto content = Line.drop_front(1).trim();
       StringRef key, vals;
       std::tie(key, vals) = content.split('=');
       key = key.trim();
@@ -182,14 +181,14 @@ Error loadCostModel(CostModelState &CM) {
       continue;
     }
     SmallVector<StringRef, 3> Fields;
-    StringRef(Line).split(Fields, ',');
+    Line.split(Fields, ',');
     double Cost;
     if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
-      return modelError(CM, "line " + Twine(LineNo) +
+      return modelError(CM, "line " + Twine(It.line_number()) +
                                 " is not '<opcode>,<type>,<cost>': " + Line);
     if (!isCostModelRow(Fields[0], Fields[1]))
-      return modelError(CM, "line " + Twine(LineNo) + " has the row '" +
-                                Fields[0] + "," + Fields[1] +
+      return modelError(CM, "line " + Twine(It.line_number()) +
+                                " has the row '" + Fields[0] + "," + Fields[1] +
                                 "', of no row family Poseidon reads "
                                 "(poseidon-calibrate --help lists them); "
                                 "remove the line, or compile with the "
@@ -210,36 +209,15 @@ getCostModel(CostModelState &CM) {
   return CM.Model;
 }
 
-// Hashes the parsed map rather than the file bytes so comments and row order
-// stay out of the DP-cache key; a changed price invalidates the cached table.
-uint64_t getCostModelFingerprint(CostModelState &CM) {
-  uint64_t &FP = CM.Fingerprint;
-  if (CM.FingerprintComputed)
-    return FP;
-  CM.FingerprintComputed = true;
+std::string costModelRows(CostModelState &CM) {
+  std::string Rows;
   if (costModelPath(CM).empty())
-    return FP;
-  const auto &Model = getCostModel(CM);
-  uint64_t h = 1469598103934665603ULL;
-  auto mix = [&](uint64_t v) {
-    h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-  };
-  auto mixStr = [&](StringRef s) {
-    for (unsigned char c : s)
-      mix((uint64_t)c);
-    mix(0x5eULL);
-  };
-  for (const auto &kv : Model) {
-    mixStr(kv.first.first);
-    mixStr(kv.first.second);
-    uint64_t bits;
-    double d = kv.second;
-    std::memcpy(&bits, &d, sizeof(bits));
-    mix(bits);
-  }
-  mixStr(CM.NativeArch);
-  FP = h;
-  return FP;
+    return Rows;
+  raw_string_ostream OS(Rows);
+  for (const auto &[Row, Cost] : getCostModel(CM))
+    OS << Row.first << ',' << Row.second << ',' << format("%a", Cost) << '\n';
+  OS << "native_arch=" << CM.NativeArch << '\n';
+  return Rows;
 }
 
 Error requireCostModel(CostModelState &CM, StringRef targetCpu,

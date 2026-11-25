@@ -97,14 +97,20 @@ static DPCost addDPCost(DPCost a, DPCost b) {
                      " leaves the DP's integer cost axis");
 }
 
-bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
+// Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
+// their footprints overlap and one of them consumes its footprint.
+static bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
   if (a.rewritesSameOutputAs(b))
     return true;
   return (a.consumesFootprint() || b.consumesFootprint()) &&
          a.footprintOverlaps(b);
 }
 
-bool reads(const OptimizationUnit &later, const OptimizationUnit &earlier) {
+// Whether taking `later` is admitted or priced differently depending on
+// whether `earlier` was taken. Neither test reads which candidate `earlier`
+// took.
+static bool reads(const OptimizationUnit &later,
+                  const OptimizationUnit &earlier) {
   return excludes(later, earlier) || later.pricedAgainst(earlier);
 }
 

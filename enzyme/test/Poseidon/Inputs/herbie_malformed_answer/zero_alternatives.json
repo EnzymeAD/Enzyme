@@ -1,1 +1,28 @@
-{"tests":[{"bits":64,"name":"0","status":"imp-start","output":"(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))","cost-accuracy":[[1.0,30.0],[1.4,0.6,"(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))"],[]]}]}
+{
+  "key": {
+    "Herbie binary": "0000000000000000",
+    "format": "1"
+  },
+  "value": {
+    "tests": [
+      {
+        "bits": 64,
+        "name": "0",
+        "status": "imp-start",
+        "output": "(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))",
+        "cost-accuracy": [
+          [
+            1.0,
+            30.0
+          ],
+          [
+            1.4,
+            0.6,
+            "(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))"
+          ],
+          []
+        ]
+      }
+    ]
+  }
+}

@@ -1,13 +1,8 @@
-//===- Utils.cpp - Utility functions for Poseidon optimization pass -------===//
+//===- Utils.cpp - IR helpers of the Poseidon pass ------------------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
-//
-// This file implements utility functions for the Poseidon floating-point
-// optimization pass.
 //
 //===----------------------------------------------------------------------===//
 

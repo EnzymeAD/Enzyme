@@ -17,8 +17,8 @@
 ; RUN: mkdir %t/one_output %t/one_output/prune %t/one_output/exact
 ; RUN: sed 's/^fma,double,512$/fma,double,448/' %cost_models/cm_sm_120_synthetic.csv > %t/one_output/cm_sm_120_fma.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/one_output/cm_sm_120_fma.herbie.rkt
-; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/one_output/prune/cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt
-; RUN: cp %t/one_output/prune/cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt %t/one_output/exact/
+; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/one_output/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
+; RUN: cp %t/one_output/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt %t/one_output/exact/
 ; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/prune -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-PRUNE %s
 ; RUN: FileCheck --check-prefix=ONE-PRUNE-BUDGETS %s < %t/one_output/prune/budgets.txt
 ; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-EXACT %s
@@ -62,8 +62,8 @@
 ; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/joint/prof/preprocess_tester_b.fpprofile
 ; RUN: sed 's/^fma,double,512$/fma,double,448/' %cost_models/cm_sm_120_synthetic.csv > %t/joint/cm_sm_120_fma.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/joint/cm_sm_120_fma.herbie.rkt
-; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/joint/prune/cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt
-; RUN: cp %t/joint/prune/cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt %t/joint/exact/
+; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
+; RUN: cp %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt %t/joint/exact/
 ; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
 ; RUN: FileCheck --check-prefix=JOINT-PRUNE-BUDGETS %s < %t/joint/prune/budgets.txt
 ; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-EXACT %s

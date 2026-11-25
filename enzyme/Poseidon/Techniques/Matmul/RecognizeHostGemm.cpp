@@ -42,6 +42,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -52,6 +53,7 @@
 #include <vector>
 
 using namespace llvm;
+using namespace llvm::PatternMatch;
 
 namespace poseidon {
 
@@ -526,9 +528,11 @@ static bool rgMatchStridedThreadLoop(Loop *L, ScalarEvolution &SE,
   if (!latch)
     return false;
   Instruction *br = latch->getTerminator();
-  if (!isConditionalBranch(br) || br->getSuccessor(0) != L->getHeader())
+  Value *cond;
+  if (!match(br,
+             m_Br(m_Value(cond), m_Specific(L->getHeader()), m_BasicBlock())))
     return false;
-  auto *cmp = dyn_cast<ICmpInst>(branchCondition(br));
+  auto *cmp = dyn_cast<ICmpInst>(cond);
   if (!cmp)
     return false;
   auto pred = cmp->getPredicate();
@@ -711,9 +715,10 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
   BasicBlock *anchorBB = chain.back().fma->getParent();
   for (BasicBlock &BB : F) {
     Instruction *br = BB.getTerminator();
-    if (!isConditionalBranch(br))
+    Value *cond;
+    if (!match(br, m_Br(m_Value(cond), m_BasicBlock(), m_BasicBlock())))
       continue;
-    auto *cmp = dyn_cast<ICmpInst>(branchCondition(br));
+    auto *cmp = dyn_cast<ICmpInst>(cond);
     if (!cmp)
       continue;
     auto pred = cmp->getPredicate();

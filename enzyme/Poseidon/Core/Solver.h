@@ -131,15 +131,6 @@ private:
   unsigned kindId;
 };
 
-// Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
-// their footprints overlap and one of them consumes its footprint.
-bool excludes(const OptimizationUnit &a, const OptimizationUnit &b);
-
-// Whether taking `later` is admitted or priced differently depending on
-// whether `earlier` was taken. Neither test reads which candidate `earlier`
-// took.
-bool reads(const OptimizationUnit &later, const OptimizationUnit &earlier);
-
 // Whether `step`, which does not consume its footprint, overlaps a step of
 // `chosen` that does.
 bool overlapsConsumed(const SolutionStep &step,

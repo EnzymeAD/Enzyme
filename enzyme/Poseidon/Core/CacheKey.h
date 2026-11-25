@@ -17,6 +17,7 @@
 #ifndef POSEIDON_CACHEKEY_H
 #define POSEIDON_CACHEKEY_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -45,9 +46,11 @@ public:
   std::string digest() const;
   llvm::json::Object toJSON() const;
   // The name of the first part `stored` disagrees on, "format" when it was
-  // written under another format or under none; nullopt when it agrees.
+  // written under another format or under none; nullopt when it agrees. A part
+  // named in `unchecked` agrees whatever `stored` holds for it.
   std::optional<std::string>
-  firstDifference(const llvm::json::Object *stored) const;
+  firstDifference(const llvm::json::Object *stored,
+                  llvm::ArrayRef<llvm::StringRef> unchecked = {}) const;
 
 private:
   llvm::SmallVector<std::pair<std::string, std::string>, 64> parts;
@@ -64,14 +67,16 @@ llvm::Error writeCacheEntry(llvm::StringRef path, const CacheKey &key,
                             llvm::json::Value value);
 
 struct CacheEntryRead {
-  // The stored value, when the stored key equals `key` in every part.
+  // The stored value, when the stored key equals `key` in every part but those
+  // named in `unchecked`.
   std::optional<llvm::json::Value> value;
   // Otherwise the first part it differs in (see firstDifference), or why the
   // file is not an entry; both empty when there is no file.
   std::string differs;
   std::string unreadable;
 };
-CacheEntryRead readCacheEntry(llvm::StringRef path, const CacheKey &key);
+CacheEntryRead readCacheEntry(llvm::StringRef path, const CacheKey &key,
+                              llvm::ArrayRef<llvm::StringRef> unchecked = {});
 
 } // namespace poseidon
 #endif // POSEIDON_CACHEKEY_H

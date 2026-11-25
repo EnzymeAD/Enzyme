@@ -5,21 +5,15 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-//
-// This file implements the evaluator classes for floating-point expressions
-// in the Poseidon optimization pass.
-//
-//===----------------------------------------------------------------------===//
 
 #include "Evaluators.h"
 #include "FPFormat.h"
 #include "FPNode.h"
-#include "Sampling.h"
 #include "Targets/Target.h"
 
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
@@ -27,6 +21,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <mpfr.h>
 #include <string>
 #include <vector>
 
@@ -35,6 +30,9 @@ using namespace llvm;
 namespace poseidon {
 
 static constexpr unsigned kMaxMPFRPrec = 1024;
+// The significand bits of the reference that have to agree between two
+// precisions for it to count as converged: those of a binary64 result.
+static constexpr unsigned kGroundTruthPrec = 53;
 
 FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
   for (const auto &[index, change] : enumerate(changes)) {
@@ -112,25 +110,117 @@ PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
   auto it = nodePrecisions.find(node);
   if (it != nodePrecisions.end())
     return it->second;
+  const FPFormatInfo *F = formatOfDtype(node->dtype);
+  if (!F || F->Kind == FPKind::Invalid)
+    llvm_unreachable(
+        ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
+            .c_str());
+  return F->Precision;
+}
 
-  if (node->dtype == "f16")
-    return PrecisionChangeType::FP16;
-  if (node->dtype == "bf16")
-    return PrecisionChangeType::BF16;
-  if (node->dtype == "f32")
-    return PrecisionChangeType::FP32;
-  if (node->dtype == "f64")
-    return PrecisionChangeType::FP64;
-  // Herbie's spellings, for a node built from Herbie text that was not
-  // normalized.
-  if (node->dtype == "binary32")
-    return PrecisionChangeType::FP32;
-  if (node->dtype == "binary64")
-    return PrecisionChangeType::FP64;
+namespace {
+struct UnaryFn {
+  StringLiteral Op;
+  double (*F64)(double);
+  float (*F32)(float);
+};
+struct BinaryFn {
+  StringLiteral Op;
+  double (*F64)(double, double);
+  float (*F32)(float, float);
+};
+struct ConstantOp {
+  StringLiteral Op;
+  double Value;
+};
+} // namespace
 
-  llvm_unreachable(
-      ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
-          .c_str());
+static double identity(double x) { return x; }
+static float identityF(float x) { return x; }
+
+// The functions an operator is evaluated with in binary64 and in binary32. A
+// conversion is the identity at the precision of its node, its destination.
+static constexpr UnaryFn kUnaryFns[] = {
+    {"neg", [](double x) { return -x; }, [](float x) { return -x; }},
+    {"sin", std::sin, sinf},
+    {"cos", std::cos, cosf},
+    {"tan", std::tan, tanf},
+    {"exp", std::exp, expf},
+    {"expm1", std::expm1, expm1f},
+    {"log", std::log, logf},
+    {"log1p", std::log1p, log1pf},
+    {"sqrt", std::sqrt, sqrtf},
+    {"cbrt", std::cbrt, cbrtf},
+    {"asin", std::asin, asinf},
+    {"acos", std::acos, acosf},
+    {"atan", std::atan, atanf},
+    {"sinh", std::sinh, sinhf},
+    {"cosh", std::cosh, coshf},
+    {"tanh", std::tanh, tanhf},
+    {"asinh", std::asinh, asinhf},
+    {"acosh", std::acosh, acoshf},
+    {"atanh", std::atanh, atanhf},
+    {"ceil", std::ceil, ceilf},
+    {"floor", std::floor, floorf},
+    {"exp2", std::exp2, exp2f},
+    {"log10", std::log10, log10f},
+    {"log2", std::log2, log2f},
+    {"rint", std::rint, rintf},
+    {"round", std::round, roundf},
+    {"trunc", std::trunc, truncf},
+    {"fabs", std::fabs, fabsf},
+    {"erf", std::erf, erff},
+    {"lgamma", std::lgamma, lgammaf},
+    {"tgamma", std::tgamma, tgammaf},
+    {"binary64->binary32", identity, identityF},
+    {"binary32->binary64", identity, identityF},
+};
+
+static constexpr BinaryFn kBinaryFns[] = {
+    {"+", [](double a, double b) { return a + b; },
+     [](float a, float b) { return a + b; }},
+    {"-", [](double a, double b) { return a - b; },
+     [](float a, float b) { return a - b; }},
+    {"*", [](double a, double b) { return a * b; },
+     [](float a, float b) { return a * b; }},
+    {"/", [](double a, double b) { return a / b; },
+     [](float a, float b) { return a / b; }},
+    {"pow", std::pow, powf},
+    {"hypot", std::hypot, hypotf},
+    {"atan2", std::atan2, atan2f},
+    {"copysign", std::copysign, copysignf},
+    {"fmax", std::fmax, fmaxf},
+    {"fmin", std::fmin, fminf},
+    {"fdim", std::fdim, fdimf},
+    {"fmod", std::fmod, fmodf},
+    {"remainder", std::remainder, remainderf},
+};
+
+static constexpr StringLiteral kComparisons[] = {"==", "!=", "<",
+                                                 ">",  "<=", ">="};
+
+// The comparison `op` of `a` and `b`, as C compares them.
+template <typename T> static bool compare(StringRef op, T a, T b) {
+  return StringSwitch<bool>(op)
+      .Case("==", a == b)
+      .Case("!=", a != b)
+      .Case("<", a < b)
+      .Case(">", a > b)
+      .Case("<=", a <= b)
+      .Case(">=", a >= b);
+}
+
+static constexpr ConstantOp kConstants[] = {
+    {"PI", M_PI},
+    {"E", M_E},
+    {"INFINITY", INFINITY},
+    {"NAN", NAN},
+};
+
+template <typename Row, size_t N>
+static const Row *findOp(const Row (&Table)[N], StringRef Op) {
+  const Row *R = find_if(Table, [&](const Row &R) { return R.Op == Op; });
+  return R == std::end(Table) ? nullptr : R;
 }
 
 void FPEvaluator::evaluateNode(const FPNode *node,
@@ -233,12 +323,8 @@ void FPEvaluator::evaluateNode(const FPNode *node,
                           nodePrec == PrecisionChangeType::BF16);
 
   auto truncToPrec = [&](float val) -> float {
-    FPKind k = FPKind::Invalid;
-    if (nodePrec == PrecisionChangeType::BF16)
-      k = FPKind::BF16;
-    else if (nodePrec == PrecisionChangeType::FP16)
-      k = FPKind::F16;
-    else
+    FPKind k = formatOf(nodePrec).Kind;
+    if (k != FPKind::BF16 && k != FPKind::F16)
       return val;
     return static_cast<float>(roundToPrec((double)val, k));
   };
@@ -247,195 +333,29 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     return truncToPrec(static_cast<float>(v));
   };
 
-  auto evalUnary = [&](auto f64Fn, auto f32Fn) -> double {
-    double op = getResult(node->operands[0].get());
-    if (useReducedFloat)
-      return (double)truncToPrec(f32Fn(toF(op)));
-    return f64Fn(op);
-  };
-  auto evalBinary = [&](auto f64Fn, auto f32Fn) -> double {
-    double a = getResult(node->operands[0].get());
-    double b = getResult(node->operands[1].get());
-    if (useReducedFloat)
-      return (double)truncToPrec(f32Fn(toF(a), toF(b)));
-    return f64Fn(a, b);
-  };
-  auto evalTernary = [&](auto f64Fn, auto f32Fn) -> double {
-    double a = getResult(node->operands[0].get());
-    double b = getResult(node->operands[1].get());
-    double c = getResult(node->operands[2].get());
-    if (useReducedFloat)
-      return (double)truncToPrec(f32Fn(toF(a), toF(b), toF(c)));
-    return f64Fn(a, b, c);
-  };
-  auto evalCompare = [&](auto cmp) -> double {
-    double a = getResult(node->operands[0].get());
-    double b = getResult(node->operands[1].get());
-    bool r = useReducedFloat ? cmp(toF(a), toF(b)) : cmp(a, b);
-    return r ? 1.0 : 0.0;
-  };
-
-  if (node->op == "neg") {
-    res = evalUnary([](double x) { return -x; }, [](float x) { return -x; });
-  } else if (node->op == "+") {
-    res = evalBinary([](double a, double b) { return a + b; },
-                     [](float a, float b) { return a + b; });
-  } else if (node->op == "-") {
-    res = evalBinary([](double a, double b) { return a - b; },
-                     [](float a, float b) { return a - b; });
-  } else if (node->op == "*") {
-    res = evalBinary([](double a, double b) { return a * b; },
-                     [](float a, float b) { return a * b; });
-  } else if (node->op == "/") {
-    res = evalBinary([](double a, double b) { return a / b; },
-                     [](float a, float b) { return a / b; });
-  } else if (node->op == "sin") {
-    res = evalUnary(static_cast<double (*)(double)>(std::sin),
-                    static_cast<float (*)(float)>(sinf));
-  } else if (node->op == "cos") {
-    res = evalUnary(static_cast<double (*)(double)>(std::cos),
-                    static_cast<float (*)(float)>(cosf));
-  } else if (node->op == "tan") {
-    res = evalUnary(static_cast<double (*)(double)>(std::tan),
-                    static_cast<float (*)(float)>(tanf));
-  } else if (node->op == "exp") {
-    res = evalUnary(static_cast<double (*)(double)>(std::exp),
-                    static_cast<float (*)(float)>(expf));
-  } else if (node->op == "expm1") {
-    res = evalUnary(static_cast<double (*)(double)>(std::expm1),
-                    static_cast<float (*)(float)>(expm1f));
-  } else if (node->op == "log") {
-    res = evalUnary(static_cast<double (*)(double)>(std::log),
-                    static_cast<float (*)(float)>(logf));
-  } else if (node->op == "log1p") {
-    res = evalUnary(static_cast<double (*)(double)>(std::log1p),
-                    static_cast<float (*)(float)>(log1pf));
-  } else if (node->op == "sqrt") {
-    auto approx = approxSqrtError.find(node);
-    if (approx != approxSqrtError.end())
-      res = approxSqrtModel(toF(getResult(node->operands[0].get())),
-                            approx->second);
-    else
-      res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
-                      static_cast<float (*)(float)>(sqrtf));
-  } else if (node->op == "cbrt") {
-    res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
-                    static_cast<float (*)(float)>(cbrtf));
-  } else if (node->op == "asin") {
-    res = evalUnary(static_cast<double (*)(double)>(std::asin),
-                    static_cast<float (*)(float)>(asinf));
-  } else if (node->op == "acos") {
-    res = evalUnary(static_cast<double (*)(double)>(std::acos),
-                    static_cast<float (*)(float)>(acosf));
-  } else if (node->op == "atan") {
-    res = evalUnary(static_cast<double (*)(double)>(std::atan),
-                    static_cast<float (*)(float)>(atanf));
-  } else if (node->op == "sinh") {
-    res = evalUnary(static_cast<double (*)(double)>(std::sinh),
-                    static_cast<float (*)(float)>(sinhf));
-  } else if (node->op == "cosh") {
-    res = evalUnary(static_cast<double (*)(double)>(std::cosh),
-                    static_cast<float (*)(float)>(coshf));
-  } else if (node->op == "tanh") {
-    res = evalUnary(static_cast<double (*)(double)>(std::tanh),
-                    static_cast<float (*)(float)>(tanhf));
-  } else if (node->op == "asinh") {
-    res = evalUnary(static_cast<double (*)(double)>(std::asinh),
-                    static_cast<float (*)(float)>(asinhf));
-  } else if (node->op == "acosh") {
-    res = evalUnary(static_cast<double (*)(double)>(std::acosh),
-                    static_cast<float (*)(float)>(acoshf));
-  } else if (node->op == "atanh") {
-    res = evalUnary(static_cast<double (*)(double)>(std::atanh),
-                    static_cast<float (*)(float)>(atanhf));
-  } else if (node->op == "ceil") {
-    res = evalUnary(static_cast<double (*)(double)>(std::ceil),
-                    static_cast<float (*)(float)>(ceilf));
-  } else if (node->op == "floor") {
-    res = evalUnary(static_cast<double (*)(double)>(std::floor),
-                    static_cast<float (*)(float)>(floorf));
-  } else if (node->op == "exp2") {
-    res = evalUnary(static_cast<double (*)(double)>(std::exp2),
-                    static_cast<float (*)(float)>(exp2f));
-  } else if (node->op == "log10") {
-    res = evalUnary(static_cast<double (*)(double)>(std::log10),
-                    static_cast<float (*)(float)>(log10f));
-  } else if (node->op == "log2") {
-    res = evalUnary(static_cast<double (*)(double)>(std::log2),
-                    static_cast<float (*)(float)>(log2f));
-  } else if (node->op == "rint") {
-    res = evalUnary(static_cast<double (*)(double)>(std::rint),
-                    static_cast<float (*)(float)>(rintf));
-  } else if (node->op == "round") {
-    res = evalUnary(static_cast<double (*)(double)>(std::round),
-                    static_cast<float (*)(float)>(roundf));
-  } else if (node->op == "trunc") {
-    res = evalUnary(static_cast<double (*)(double)>(std::trunc),
-                    static_cast<float (*)(float)>(truncf));
-  } else if (node->op == "pow") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::pow),
-                     static_cast<float (*)(float, float)>(powf));
-  } else if (node->op == "fabs") {
-    res = evalUnary(static_cast<double (*)(double)>(std::fabs),
-                    static_cast<float (*)(float)>(fabsf));
-  } else if (node->op == "hypot") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::hypot),
-                     static_cast<float (*)(float, float)>(hypotf));
-  } else if (node->op == "atan2") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::atan2),
-                     static_cast<float (*)(float, float)>(atan2f));
-  } else if (node->op == "copysign") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::copysign),
-                     static_cast<float (*)(float, float)>(copysignf));
-  } else if (node->op == "fmax") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::fmax),
-                     static_cast<float (*)(float, float)>(fmaxf));
-  } else if (node->op == "fmin") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::fmin),
-                     static_cast<float (*)(float, float)>(fminf));
-  } else if (node->op == "fdim") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::fdim),
-                     static_cast<float (*)(float, float)>(fdimf));
-  } else if (node->op == "fmod") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::fmod),
-                     static_cast<float (*)(float, float)>(fmodf));
-  } else if (node->op == "remainder") {
-    res = evalBinary(static_cast<double (*)(double, double)>(std::remainder),
-                     static_cast<float (*)(float, float)>(remainderf));
+  auto operand = [&](unsigned i) { return getResult(node->operands[i].get()); };
+  auto approx = approxSqrtError.find(node);
+  if (node->op == "sqrt" && approx != approxSqrtError.end()) {
+    res = approxSqrtModel(toF(operand(0)), approx->second);
+  } else if (const UnaryFn *F = findOp(kUnaryFns, node->op)) {
+    res = useReducedFloat ? (double)truncToPrec(F->F32(toF(operand(0))))
+                          : F->F64(operand(0));
+  } else if (const BinaryFn *F = findOp(kBinaryFns, node->op)) {
+    res = useReducedFloat
+              ? (double)truncToPrec(F->F32(toF(operand(0)), toF(operand(1))))
+              : F->F64(operand(0), operand(1));
   } else if (node->op == "fma") {
-    res = evalTernary(static_cast<double (*)(double, double, double)>(std::fma),
-                      static_cast<float (*)(float, float, float)>(fmaf));
-  } else if (node->op == "lgamma") {
-    res = evalUnary(static_cast<double (*)(double)>(std::lgamma),
-                    static_cast<float (*)(float)>(lgammaf));
-  } else if (node->op == "tgamma") {
-    res = evalUnary(static_cast<double (*)(double)>(std::tgamma),
-                    static_cast<float (*)(float)>(tgammaf));
-  } else if (node->op == "==") {
-    res = evalCompare([](auto x, auto y) { return x == y; });
-  } else if (node->op == "!=") {
-    res = evalCompare([](auto x, auto y) { return x != y; });
-  } else if (node->op == "<") {
-    res = evalCompare([](auto x, auto y) { return x < y; });
-  } else if (node->op == ">") {
-    res = evalCompare([](auto x, auto y) { return x > y; });
-  } else if (node->op == "<=") {
-    res = evalCompare([](auto x, auto y) { return x <= y; });
-  } else if (node->op == ">=") {
-    res = evalCompare([](auto x, auto y) { return x >= y; });
-  } else if (node->op == "PI") {
-    res = M_PI;
-  } else if (node->op == "E") {
-    res = M_E;
-  } else if (node->op == "INFINITY") {
-    res = INFINITY;
-  } else if (node->op == "NAN") {
-    res = NAN;
-  } else if (node->op == "binary64->binary32" ||
-             node->op == "binary32->binary64") {
-    // Identity on the value; evalUnary rounds to the node's precision, the
-    // destination format.
-    res = evalUnary([](double x) { return x; }, [](float x) { return x; });
+    res = useReducedFloat
+              ? (double)truncToPrec(
+                    fmaf(toF(operand(0)), toF(operand(1)), toF(operand(2))))
+              : std::fma(operand(0), operand(1), operand(2));
+  } else if (is_contained(kComparisons, node->op)) {
+    bool r = useReducedFloat
+                 ? compare(node->op, toF(operand(0)), toF(operand(1)))
+                 : compare(node->op, operand(0), operand(1));
+    res = r ? 1.0 : 0.0;
+  } else if (const ConstantOp *C = findOp(kConstants, node->op)) {
+    res = C->Value;
   } else {
     std::string msg = "FPEvaluator: Unexpected operator " + node->op;
     llvm_unreachable(msg.c_str());
@@ -449,6 +369,107 @@ double FPEvaluator::getResult(const FPNode *node) const {
   assert(it != cache.end() && "Node not evaluated yet");
   return it->second;
 }
+
+namespace {
+
+// Evaluates an expression in MPFR at one precision: every operation rounds its
+// operands to it and computes its result at it.
+class MPFREvaluator {
+  struct CachedValue {
+    mpfr_t value;
+    unsigned prec;
+
+    explicit CachedValue(unsigned prec);
+    CachedValue(const CachedValue &) = delete;
+    CachedValue &operator=(const CachedValue &) = delete;
+    CachedValue(CachedValue &&other) noexcept;
+    CachedValue &operator=(CachedValue &&other) noexcept;
+    ~CachedValue();
+  };
+
+  std::unordered_map<const FPNode *, CachedValue> cache;
+  unsigned prec;
+
+public:
+  explicit MPFREvaluator(unsigned prec) : prec(prec) {}
+
+  void evaluateNode(const FPNode *node,
+                    const MapVector<Value *, double> &inputValues);
+  mpfr_t &getResult(const FPNode *node);
+};
+
+using MPFRUnary = int (*)(mpfr_ptr, mpfr_srcptr, mpfr_rnd_t);
+using MPFRBinary = int (*)(mpfr_ptr, mpfr_srcptr, mpfr_srcptr, mpfr_rnd_t);
+
+struct MPFRUnaryFn {
+  StringLiteral Op;
+  MPFRUnary Fn;
+};
+struct MPFRBinaryFn {
+  StringLiteral Op;
+  MPFRBinary Fn;
+};
+
+} // namespace
+
+// lgamma is the logarithm of |Gamma|, as C's lgamma.
+static constexpr MPFRUnaryFn kMPFRUnaryFns[] = {
+    {"neg", mpfr_neg},
+    {"sin", mpfr_sin},
+    {"cos", mpfr_cos},
+    {"tan", mpfr_tan},
+    {"asin", mpfr_asin},
+    {"acos", mpfr_acos},
+    {"atan", mpfr_atan},
+    {"exp", mpfr_exp},
+    {"expm1", mpfr_expm1},
+    {"log", mpfr_log},
+    {"log1p", mpfr_log1p},
+    {"sqrt", mpfr_sqrt},
+    {"cbrt", mpfr_cbrt},
+    {"fabs", mpfr_abs},
+    {"asinh", mpfr_asinh},
+    {"acosh", mpfr_acosh},
+    {"atanh", mpfr_atanh},
+    {"sinh", mpfr_sinh},
+    {"cosh", mpfr_cosh},
+    {"tanh", mpfr_tanh},
+    {"ceil",
+     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_ceil(r, x); }},
+    {"floor",
+     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_floor(r, x); }},
+    {"erf", mpfr_erf},
+    {"exp2", mpfr_exp2},
+    {"log10", mpfr_log10},
+    {"log2", mpfr_log2},
+    {"rint", mpfr_rint},
+    {"round",
+     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_round(r, x); }},
+    {"trunc",
+     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_trunc(r, x); }},
+    {"lgamma",
+     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t rnd) {
+       int sign;
+       return mpfr_lgamma(r, &sign, x, rnd);
+     }},
+    {"tgamma", mpfr_gamma},
+};
+
+static constexpr MPFRBinaryFn kMPFRBinaryFns[] = {
+    {"+", mpfr_add},
+    {"-", mpfr_sub},
+    {"*", mpfr_mul},
+    {"/", mpfr_div},
+    {"atan2", mpfr_atan2},
+    {"pow", mpfr_pow},
+    {"hypot", mpfr_hypot},
+    {"copysign", mpfr_copysign},
+    {"fdim", mpfr_dim},
+    {"fmod", mpfr_fmod},
+    {"remainder", mpfr_remainder},
+    {"fmax", mpfr_max},
+    {"fmin", mpfr_min},
+};
 
 MPFREvaluator::CachedValue::CachedValue(unsigned prec) : prec(prec) {
   mpfr_init2(value, prec);
@@ -472,8 +493,6 @@ MPFREvaluator::CachedValue::operator=(CachedValue &&other) noexcept {
 }
 
 MPFREvaluator::CachedValue::~CachedValue() { mpfr_clear(value); }
-
-MPFREvaluator::MPFREvaluator(unsigned prec) : prec(prec) {}
 
 void MPFREvaluator::evaluateNode(
     const FPNode *node, const MapVector<Value *, double> &inputValues) {
@@ -517,346 +536,44 @@ void MPFREvaluator::evaluateNode(
   cache.emplace(node, CachedValue(nodePrec));
   mpfr_t &res = cache.at(node).value;
 
-  if (node->op == "neg") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_neg(res, op, MPFR_RNDN);
-  } else if (node->op == "+") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_add(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "-") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_sub(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "*") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_mul(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "/") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_div(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "sin") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_sin(res, op, MPFR_RNDN);
-  } else if (node->op == "cos") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_cos(res, op, MPFR_RNDN);
-  } else if (node->op == "tan") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_tan(res, op, MPFR_RNDN);
-  } else if (node->op == "asin") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_asin(res, op, MPFR_RNDN);
-  } else if (node->op == "acos") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_acos(res, op, MPFR_RNDN);
-  } else if (node->op == "atan") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_atan(res, op, MPFR_RNDN);
-  } else if (node->op == "atan2") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_atan2(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "exp") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_exp(res, op, MPFR_RNDN);
-  } else if (node->op == "expm1") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_expm1(res, op, MPFR_RNDN);
-  } else if (node->op == "log") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_log(res, op, MPFR_RNDN);
-  } else if (node->op == "log1p") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_log1p(res, op, MPFR_RNDN);
-  } else if (node->op == "sqrt") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_sqrt(res, op, MPFR_RNDN);
-  } else if (node->op == "cbrt") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_cbrt(res, op, MPFR_RNDN);
-  } else if (node->op == "pow") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_pow(res, op0, op1, MPFR_RNDN);
+  // The operands, evaluated in order and rounded to this precision.
+  auto rounded = [&]() {
+    SmallVector<mpfr_ptr, 3> ops;
+    for (const auto &operand : node->operands)
+      evaluateNode(operand.get(), inputValues);
+    for (const auto &operand : node->operands) {
+      mpfr_ptr op = getResult(operand.get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      ops.push_back(op);
+    }
+    return ops;
+  };
+
+  if (const MPFRUnaryFn *F = findOp(kMPFRUnaryFns, node->op)) {
+    F->Fn(res, rounded()[0], MPFR_RNDN);
+  } else if (const MPFRBinaryFn *F = findOp(kMPFRBinaryFns, node->op)) {
+    SmallVector<mpfr_ptr, 3> ops = rounded();
+    F->Fn(res, ops[0], ops[1], MPFR_RNDN);
   } else if (node->op == "fma") {
+    SmallVector<mpfr_ptr, 3> ops = rounded();
+    mpfr_fma(res, ops[0], ops[1], ops[2], MPFR_RNDN);
+  } else if (is_contained(kComparisons, node->op)) {
     evaluateNode(node->operands[0].get(), inputValues);
     evaluateNode(node->operands[1].get(), inputValues);
-    evaluateNode(node->operands[2].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_t &op2 = getResult(node->operands[2].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op2, nodePrec, MPFR_RNDN);
-    mpfr_fma(res, op0, op1, op2, MPFR_RNDN);
-  } else if (node->op == "fabs") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_abs(res, op, MPFR_RNDN);
-  } else if (node->op == "hypot") {
+    int order = mpfr_cmp(getResult(node->operands[0].get()),
+                         getResult(node->operands[1].get()));
+    mpfr_set_ui(res, compare(node->op, order, 0), MPFR_RNDN);
+  } else if (node->op == "and" || node->op == "or") {
     evaluateNode(node->operands[0].get(), inputValues);
     evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_hypot(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "asinh") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_asinh(res, op, MPFR_RNDN);
-  } else if (node->op == "acosh") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_acosh(res, op, MPFR_RNDN);
-  } else if (node->op == "atanh") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_atanh(res, op, MPFR_RNDN);
-  } else if (node->op == "sinh") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_sinh(res, op, MPFR_RNDN);
-  } else if (node->op == "cosh") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_cosh(res, op, MPFR_RNDN);
-  } else if (node->op == "tanh") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_tanh(res, op, MPFR_RNDN);
-  } else if (node->op == "ceil") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_ceil(res, op);
-  } else if (node->op == "floor") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_floor(res, op);
-  } else if (node->op == "erf") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_erf(res, op, MPFR_RNDN);
-  } else if (node->op == "exp2") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_exp2(res, op, MPFR_RNDN);
-  } else if (node->op == "log10") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_log10(res, op, MPFR_RNDN);
-  } else if (node->op == "log2") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_log2(res, op, MPFR_RNDN);
-  } else if (node->op == "rint") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_rint(res, op, MPFR_RNDN);
-  } else if (node->op == "round") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_round(res, op);
-  } else if (node->op == "trunc") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-    mpfr_trunc(res, op);
-  } else if (node->op == "copysign") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_copysign(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "fdim") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_dim(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "fmod") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_fmod(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "remainder") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_remainder(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "fmax") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_max(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "fmin") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-    mpfr_min(res, op0, op1, MPFR_RNDN);
-  } else if (node->op == "==") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 == mpfr_cmp(op0, op1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == "!=") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 != mpfr_cmp(op0, op1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == "<") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 > mpfr_cmp(op0, op1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == ">") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 < mpfr_cmp(op0, op1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == "<=") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 >= mpfr_cmp(op0, op1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == ">=") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 <= mpfr_cmp(op0, op1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == "and") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 == mpfr_cmp_ui(op0, 1) && 0 == mpfr_cmp_ui(op1, 1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == "or") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &op0 = getResult(node->operands[0].get());
-    mpfr_t &op1 = getResult(node->operands[1].get());
-    if (0 == mpfr_cmp_ui(op0, 1) || 0 == mpfr_cmp_ui(op1, 1))
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 0, MPFR_RNDN);
+    bool a = 0 == mpfr_cmp_ui(getResult(node->operands[0].get()), 1);
+    bool b = 0 == mpfr_cmp_ui(getResult(node->operands[1].get()), 1);
+    mpfr_set_ui(res, node->op == "and" ? a && b : a || b, MPFR_RNDN);
   } else if (node->op == "not") {
     evaluateNode(node->operands[0].get(), inputValues);
     mpfr_t &op = getResult(node->operands[0].get());
     mpfr_set_prec(res, nodePrec);
-    if (0 == mpfr_cmp_ui(op, 1))
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    else
-      mpfr_set_ui(res, 1, MPFR_RNDN);
+    mpfr_set_ui(res, 0 == mpfr_cmp_ui(op, 1) ? 0 : 1, MPFR_RNDN);
   } else if (node->op == "TRUE") {
     mpfr_set_ui(res, 1, MPFR_RNDN);
   } else if (node->op == "FALSE") {
@@ -882,7 +599,7 @@ void MPFREvaluator::evaluateNode(
   }
 }
 
-mpfr_t &MPFREvaluator::getResult(FPNode *node) {
+mpfr_t &MPFREvaluator::getResult(const FPNode *node) {
   assert(cache.count(node) > 0 && "MPFREvaluator: Unexpected unevaluated node");
   return cache.at(node).value;
 }
@@ -905,12 +622,9 @@ void getFPValues(ArrayRef<FPNode *> outputs,
   }
 }
 
-// Ground truth: evaluate at increasing MPFR precision until the first
-// `groundTruthPrec` significand bits stop changing.
 void getMPFRValues(ArrayRef<FPNode *> outputs,
                    const MapVector<Value *, double> &inputValues,
-                   SmallVectorImpl<double> &results,
-                   const unsigned groundTruthPrec) {
+                   SmallVectorImpl<double> &results) {
   assert(!outputs.empty() && "no outputs to evaluate");
   results.resize(outputs.size());
 
@@ -936,7 +650,7 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
       int resSign = mpfr_sgn(res);
       mpfr_exp_t resExp;
       char *resStr =
-          mpfr_get_str(nullptr, &resExp, 2, groundTruthPrec, res, MPFR_RNDN);
+          mpfr_get_str(nullptr, &resExp, 2, kGroundTruthPrec, res, MPFR_RNDN);
 
       if (prevResStr[i] != nullptr && resSign == prevResSign[i] &&
           resExp == prevResExp[i] && strcmp(resStr, prevResStr[i]) == 0) {

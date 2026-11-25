@@ -8,26 +8,60 @@
 
 #include "FPFormat.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/ErrorHandling.h"
-
-#include <string>
 
 using namespace llvm;
 
 namespace poseidon {
 
+static constexpr FPFormatInfo kFormats[] = {
+    {PrecisionChangeType::BF16, FPKind::BF16, "bf16", "bf16", "__bf16", "BF16",
+     Type::getBFloatTy},
+    {PrecisionChangeType::FP16, FPKind::F16, "f16", "half", "_Float16", "FP16",
+     Type::getHalfTy},
+    {PrecisionChangeType::FP32, FPKind::F32, "f32", "float", "float", "FP32",
+     Type::getFloatTy},
+    {PrecisionChangeType::FP64, FPKind::F64, "f64", "double", "double", "FP64",
+     Type::getDoubleTy},
+    {PrecisionChangeType::FP80, FPKind::Invalid, "f80", "fp80", "long double",
+     "FP80", Type::getX86_FP80Ty},
+    {PrecisionChangeType::FP128, FPKind::Invalid, "f128", "fp128", "__float128",
+     "FP128", Type::getFP128Ty},
+    {PrecisionChangeType::Expansion2, FPKind::Invalid, "", "", "", "Expansion2",
+     nullptr},
+    {PrecisionChangeType::Expansion3, FPKind::Invalid, "", "", "", "Expansion3",
+     nullptr},
+    {PrecisionChangeType::Expansion4, FPKind::Invalid, "", "", "", "Expansion4",
+     nullptr},
+};
+
+const FPFormatInfo &formatOf(PrecisionChangeType P) {
+  const FPFormatInfo *F = find_if(
+      kFormats, [&](const FPFormatInfo &F) { return F.Precision == P; });
+  assert(F != std::end(kFormats) && "every precision has a row");
+  return *F;
+}
+
+const FPFormatInfo *formatOf(Type *T) {
+  const FPFormatInfo *F = find_if(kFormats, [&](const FPFormatInfo &F) {
+    return F.LLVMType && F.LLVMType(T->getContext()) == T;
+  });
+  return F == std::end(kFormats) ? nullptr : F;
+}
+
+const FPFormatInfo *formatOfDtype(StringRef Dtype) {
+  const FPFormatInfo *F = find_if(kFormats, [&](const FPFormatInfo &F) {
+    return !F.Dtype.empty() && F.Dtype == Dtype;
+  });
+  return F == std::end(kFormats) ? nullptr : F;
+}
+
 FPKind fpKindFromType(Type *T) {
-  if (T->isHalfTy())
-    return FPKind::F16;
-  if (T->isBFloatTy())
-    return FPKind::BF16;
-  if (T->isFloatTy())
-    return FPKind::F32;
-  if (T->isDoubleTy())
-    return FPKind::F64;
-  return FPKind::Invalid;
+  const FPFormatInfo *F = formatOf(T);
+  return F ? F->Kind : FPKind::Invalid;
 }
 
 Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
@@ -52,63 +86,20 @@ Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
 }
 
 Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
-  switch (type) {
-  case PrecisionChangeType::BF16:
-    return Type::getBFloatTy(context);
-  case PrecisionChangeType::FP16:
-    return Type::getHalfTy(context);
-  case PrecisionChangeType::FP32:
-    return Type::getFloatTy(context);
-  case PrecisionChangeType::FP64:
-    return Type::getDoubleTy(context);
-  case PrecisionChangeType::FP80:
-    return Type::getX86_FP80Ty(context);
-  case PrecisionChangeType::FP128:
-    return Type::getFP128Ty(context);
-  default:
+  const FPFormatInfo &F = formatOf(type);
+  if (!F.LLVMType)
     llvm_unreachable("Unsupported FP precision");
-  }
+  return F.LLVMType(context);
 }
 
 PrecisionChangeType getPrecisionChangeType(Type *type) {
-  if (type->isBFloatTy())
-    return PrecisionChangeType::BF16;
-  if (type->isHalfTy())
-    return PrecisionChangeType::FP16;
-  if (type->isFloatTy())
-    return PrecisionChangeType::FP32;
-  if (type->isDoubleTy())
-    return PrecisionChangeType::FP64;
-  if (type->isX86_FP80Ty())
-    return PrecisionChangeType::FP80;
-  if (type->isFP128Ty())
-    return PrecisionChangeType::FP128;
+  if (const FPFormatInfo *F = formatOf(type))
+    return F->Precision;
   llvm_unreachable("Unsupported FP precision");
 }
 
 StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
-  switch (type) {
-  case PrecisionChangeType::BF16:
-    return "BF16";
-  case PrecisionChangeType::FP16:
-    return "FP16";
-  case PrecisionChangeType::FP32:
-    return "FP32";
-  case PrecisionChangeType::FP64:
-    return "FP64";
-  case PrecisionChangeType::FP80:
-    return "FP80";
-  case PrecisionChangeType::FP128:
-    return "FP128";
-  case PrecisionChangeType::Expansion2:
-    return "Expansion2";
-  case PrecisionChangeType::Expansion3:
-    return "Expansion3";
-  case PrecisionChangeType::Expansion4:
-    return "Expansion4";
-  default:
-    return "Unknown PT type";
-  }
+  return formatOf(type).Name;
 }
 
 } // namespace poseidon

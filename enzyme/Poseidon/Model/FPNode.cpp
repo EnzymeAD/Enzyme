@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPNode.h"
+#include "FPFormat.h"
 #include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
@@ -38,15 +39,8 @@ static constexpr unsigned kMaxExprDepth = 100;
 static constexpr unsigned kMaxInlinedOps = 3;
 
 static Type *fpTypeFromDtype(StringRef dtype, IRBuilder<> &builder) {
-  if (dtype == "f16")
-    return builder.getHalfTy();
-  if (dtype == "bf16")
-    return builder.getBFloatTy();
-  if (dtype == "f32")
-    return builder.getFloatTy();
-  if (dtype == "f64")
-    return builder.getDoubleTy();
-  return nullptr;
+  const FPFormatInfo *F = formatOfDtype(dtype);
+  return F ? F->LLVMType(builder.getContext()) : nullptr;
 }
 
 static std::string libmFuncName(Module *M, Type *Ty, StringRef base) {
@@ -71,41 +65,97 @@ void FPNode::addOperand(std::shared_ptr<FPNode> operand) {
   operands.push_back(operand);
 }
 
-bool FPNode::hasSymbol() const {
-  std::string msg = "Unexpected invocation of `hasSymbol` on an "
-                    "unmaterialized " +
-                    op + " FPNode";
-  llvm_unreachable(msg.c_str());
+void FPNode::updateBounds(double lower, double upper) {
+  if (isa<FPConst>(this))
+    return;
+  lb = std::min(lb, lower);
+  ub = std::max(ub, upper);
 }
 
-std::string FPNode::toFullExpression(
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const SetVector<Value *> &subgraphInputs, unsigned depth) {
-  std::string msg = "Unexpected invocation of `toFullExpression` on an "
-                    "unmaterialized " +
-                    op + " FPNode";
-  llvm_unreachable(msg.c_str());
+namespace {
+struct IntrinsicOp {
+  StringLiteral Op;
+  Intrinsic::ID ID;
+};
+struct ComparisonOp {
+  StringLiteral Op;
+  CmpInst::Predicate Pred;
+  StringLiteral Name;
+};
+struct ConstantOp {
+  StringLiteral Op;
+  double Value;
+};
+} // namespace
+
+static constexpr IntrinsicOp kUnaryIntrinsics[] = {
+    {"sin", Intrinsic::sin},     {"cos", Intrinsic::cos},
+    {"tan", Intrinsic::tan},     {"exp", Intrinsic::exp},
+    {"log", Intrinsic::log},     {"sqrt", Intrinsic::sqrt},
+    {"fabs", Intrinsic::fabs},   {"asin", Intrinsic::asin},
+    {"acos", Intrinsic::acos},   {"atan", Intrinsic::atan},
+    {"sinh", Intrinsic::sinh},   {"cosh", Intrinsic::cosh},
+    {"tanh", Intrinsic::tanh},   {"ceil", Intrinsic::ceil},
+    {"floor", Intrinsic::floor}, {"exp2", Intrinsic::exp2},
+    {"log10", Intrinsic::log10}, {"log2", Intrinsic::log2},
+    {"rint", Intrinsic::rint},   {"round", Intrinsic::round},
+    {"trunc", Intrinsic::trunc},
+};
+
+static constexpr IntrinsicOp kBinaryIntrinsics[] = {
+    {"fmin", Intrinsic::minnum},
+    {"fmax", Intrinsic::maxnum},
+    {"atan2", Intrinsic::atan2},
+    {"copysign", Intrinsic::copysign},
+};
+
+// Operators without an intrinsic every target lowers.
+static constexpr StringLiteral kLibraryCalls[] = {
+    "expm1", "log1p",  "cbrt",   "hypot", "fdim",  "fmod",  "remainder",
+    "erf",   "lgamma", "tgamma", "asinh", "acosh", "atanh",
+};
+
+static constexpr ComparisonOp kComparisons[] = {
+    {"==", CmpInst::FCMP_OEQ, "eq"}, {"!=", CmpInst::FCMP_ONE, "ne"},
+    {"<", CmpInst::FCMP_OLT, "lt"},  {">", CmpInst::FCMP_OGT, "gt"},
+    {"<=", CmpInst::FCMP_OLE, "le"}, {">=", CmpInst::FCMP_OGE, "ge"},
+};
+
+static constexpr ConstantOp kConstants[] = {
+    {"PI", M_PI},
+    {"E", M_E},
+    {"INFINITY", INFINITY},
+    {"NAN", NAN},
+};
+
+template <typename Row, size_t N>
+static const Row *findOp(const Row (&Table)[N], StringRef Op) {
+  const Row *R = find_if(Table, [&](const Row &R) { return R.Op == Op; });
+  return R == std::end(Table) ? nullptr : R;
 }
 
-void FPNode::updateBounds(double lower, double upper, bool print) {
-  std::string msg = "Unexpected invocation of `updateBounds` on an "
-                    "unmaterialized " +
-                    op + " FPNode";
-  llvm_unreachable(msg.c_str());
-}
+static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
+  if (auto *CF = dyn_cast<ConstantFP>(ops[1])) {
+    double value = CF->getValueAPF().convertToDouble();
+    if (value == std::floor(value) && value >= INT_MIN && value <= INT_MAX) {
+      int exp = static_cast<int>(value);
+      SmallVector<Type *, 1> overloadedTypes = {
+          ops[0]->getType(), Type::getInt32Ty(M->getContext())};
+      Function *powiFunc = Intrinsic::getOrInsertDeclaration(M, Intrinsic::powi,
+                                                             overloadedTypes);
+      Value *exponent =
+          ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
+      return createMathCall(b, powiFunc, {ops[0], exponent}, "herbie.powi");
+    }
+  }
 
-double FPNode::getLowerBound() const {
-  std::string msg = "Unexpected invocation of `getLowerBound` on an "
-                    "unmaterialized " +
-                    op + " FPNode";
-  llvm_unreachable(msg.c_str());
-}
-
-double FPNode::getUpperBound() const {
-  std::string msg = "Unexpected invocation of `getUpperBound` on an "
-                    "unmaterialized " +
-                    op + " FPNode";
-  llvm_unreachable(msg.c_str());
+  // The intrinsic, as clang emits pow without errno: a libcall may write
+  // errno, which keeps the loop from vectorizing and turns pow(C, x) into an
+  // errno-writing exp2 call.
+  if (!Target::of(*M).isDevice())
+    return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1], nullptr,
+                                   "herbie.pow");
+  return mathLibraryCall(b, M, "pow", ops);
 }
 
 Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
@@ -141,358 +191,63 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
     operandValues.push_back(val);
   }
 
-  static const std::unordered_map<
-      std::string, std::function<Value *(IRBuilder<> &, Module *,
-                                         const SmallVectorImpl<Value *> &)>>
-      opMap = {
-          {"neg",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return b.CreateFNeg(ops[0], "herbie.neg"); }},
-          {"+",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFAdd(ops[0], ops[1], "herbie.add");
-           }},
-          {"-",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFSub(ops[0], ops[1], "herbie.sub");
-           }},
-          {"*",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFMul(ops[0], ops[1], "herbie.mul");
-           }},
-          {"/",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFDiv(ops[0], ops[1], "herbie.div");
-           }},
-          {"fmin",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateBinaryIntrinsic(Intrinsic::minnum, ops[0], ops[1],
-                                            nullptr, "herbie.fmin");
-           }},
-          {"fmax",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateBinaryIntrinsic(Intrinsic::maxnum, ops[0], ops[1],
-                                            nullptr, "herbie.fmax");
-           }},
-          {"sin",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::sin, ops[0], nullptr,
-                                           "herbie.sin");
-           }},
-          {"cos",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::cos, ops[0], nullptr,
-                                           "herbie.cos");
-           }},
-          {"tan",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0], nullptr,
-                                           "herbie.tan");
-           }},
-          {"exp",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::exp, ops[0], nullptr,
-                                           "herbie.exp");
-           }},
-          {"expm1",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "expm1", {ops[0]}); }},
-          {"log",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::log, ops[0], nullptr,
-                                           "herbie.log");
-           }},
-          {"log1p",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "log1p", {ops[0]}); }},
-          {"sqrt",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::sqrt, ops[0], nullptr,
-                                           "herbie.sqrt");
-           }},
-          {"cbrt",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "cbrt", {ops[0]}); }},
-          {"pow",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             if (auto *CF = dyn_cast<ConstantFP>(ops[1])) {
-               double value = CF->getValueAPF().convertToDouble();
-               if (value == std::floor(value) && value >= INT_MIN &&
-                   value <= INT_MAX) {
-                 int exp = static_cast<int>(value);
-                 SmallVector<Type *, 1> overloadedTypes = {
-                     ops[0]->getType(), Type::getInt32Ty(M->getContext())};
-                 Function *powiFunc = Intrinsic::getOrInsertDeclaration(
-                     M, Intrinsic::powi, overloadedTypes);
-                 Value *exponent =
-                     ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
-                 return createMathCall(b, powiFunc, {ops[0], exponent},
-                                       "herbie.powi");
-               }
-             }
-
-             // The intrinsic, as clang emits pow without errno: a libcall
-             // may write errno, which keeps the loop from vectorizing and
-             // turns pow(C, x) into an errno-writing exp2 call.
-             if (!Target::of(*M).isDevice())
-               return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
-                                              nullptr, "herbie.pow");
-             return mathLibraryCall(b, M, "pow", {ops[0], ops[1]});
-           }},
-          {"fma",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()},
-                                      {ops[0], ops[1], ops[2]}, nullptr,
-                                      "herbie.fma");
-           }},
-          {"fabs",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::fabs, ops[0], nullptr,
-                                           "herbie.fabs");
-           }},
-          {"hypot",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return mathLibraryCall(b, M, "hypot", {ops[0], ops[1]});
-           }},
-          {"asin",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::asin, ops[0], nullptr,
-                                           "herbie.asin");
-           }},
-          {"acos",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::acos, ops[0], nullptr,
-                                           "herbie.acos");
-           }},
-          {"atan",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::atan, ops[0], nullptr,
-                                           "herbie.atan");
-           }},
-          {"atan2",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateBinaryIntrinsic(Intrinsic::atan2, ops[0], ops[1],
-                                            nullptr, "herbie.atan2");
-           }},
-          {"sinh",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::sinh, ops[0], nullptr,
-                                           "herbie.sinh");
-           }},
-          {"cosh",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::cosh, ops[0], nullptr,
-                                           "herbie.cosh");
-           }},
-          {"tanh",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::tanh, ops[0], nullptr,
-                                           "herbie.tanh");
-           }},
-          {"copysign",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateBinaryIntrinsic(Intrinsic::copysign, ops[0], ops[1],
-                                            nullptr, "herbie.copysign");
-           }},
-          {"ceil",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::ceil, ops[0], nullptr,
-                                           "herbie.ceil");
-           }},
-          {"floor",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::floor, ops[0], nullptr,
-                                           "herbie.floor");
-           }},
-          {"exp2",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::exp2, ops[0], nullptr,
-                                           "herbie.exp2");
-           }},
-          {"log10",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::log10, ops[0], nullptr,
-                                           "herbie.log10");
-           }},
-          {"log2",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::log2, ops[0], nullptr,
-                                           "herbie.log2");
-           }},
-          {"rint",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::rint, ops[0], nullptr,
-                                           "herbie.rint");
-           }},
-          {"round",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::round, ops[0], nullptr,
-                                           "herbie.round");
-           }},
-          {"trunc",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateUnaryIntrinsic(Intrinsic::trunc, ops[0], nullptr,
-                                           "herbie.trunc");
-           }},
-          {"fdim",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return mathLibraryCall(b, M, "fdim", {ops[0], ops[1]});
-           }},
-          {"fmod",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return mathLibraryCall(b, M, "fmod", {ops[0], ops[1]});
-           }},
-          {"remainder",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return mathLibraryCall(b, M, "remainder", {ops[0], ops[1]});
-           }},
-          {"erf",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "erf", {ops[0]}); }},
-          {"lgamma",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return mathLibraryCall(b, M, "lgamma", {ops[0]});
-           }},
-          {"tgamma",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return mathLibraryCall(b, M, "tgamma", {ops[0]});
-           }},
-          {"asinh",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "asinh", {ops[0]}); }},
-          {"acosh",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "acosh", {ops[0]}); }},
-          {"atanh",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return mathLibraryCall(b, M, "atanh", {ops[0]}); }},
-          {"==",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFCmpOEQ(ops[0], ops[1], "herbie.eq");
-           }},
-          {"!=",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFCmpONE(ops[0], ops[1], "herbie.ne");
-           }},
-          {"<",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFCmpOLT(ops[0], ops[1], "herbie.lt");
-           }},
-          {">",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFCmpOGT(ops[0], ops[1], "herbie.gt");
-           }},
-          {"<=",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFCmpOLE(ops[0], ops[1], "herbie.le");
-           }},
-          {">=",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFCmpOGE(ops[0], ops[1], "herbie.ge");
-           }},
-          {"and",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateAnd(ops[0], ops[1], "herbie.and");
-           }},
-          {"or",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return b.CreateOr(ops[0], ops[1], "herbie.or"); }},
-          {"not",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-               -> Value * { return b.CreateNot(ops[0], "herbie.not"); }},
-          {"TRUE",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-               -> Value * { return ConstantInt::getTrue(b.getContext()); }},
-          {"FALSE",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-               -> Value * { return ConstantInt::getFalse(b.getContext()); }},
-          {"PI",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-               -> Value * { return ConstantFP::get(b.getDoubleTy(), M_PI); }},
-          {"E",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-               -> Value * { return ConstantFP::get(b.getDoubleTy(), M_E); }},
-          {"INFINITY",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &) -> Value * {
-             return ConstantFP::getInfinity(b.getDoubleTy(), false);
-           }},
-          {"NaN",
-           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-               -> Value * { return ConstantFP::getNaN(b.getDoubleTy()); }},
-          // CreateFPCast rather than FPTrunc/FPExt: the operand may already
-          // carry the destination type, coerced to the node's dtype above,
-          // and FPCast is then the identity.
-          {"binary64->binary32",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFPCast(ops[0], b.getFloatTy(), "herbie.f64tof32");
-           }},
-          {"binary32->binary64",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFPCast(ops[0], b.getDoubleTy(), "herbie.f32tof64");
-           }},
-      };
-
   // What the target's math library provides where its intrinsic would not
-  // lower; the rest falls through to opMap.
+  // lower.
   if (!operandValues.empty() &&
       Target::of(*M).callsMathLibrary(op, operandValues[0]->getType()))
     return mathLibraryCall(builder, M, op, operandValues);
 
-  auto it = opMap.find(op);
-  if (it != opMap.end())
-    return it->second(builder, M, operandValues);
+  if (const IntrinsicOp *I = findOp(kUnaryIntrinsics, op))
+    return builder.CreateUnaryIntrinsic(I->ID, operandValues[0], nullptr,
+                                        "herbie." + op);
+  if (const IntrinsicOp *I = findOp(kBinaryIntrinsics, op))
+    return builder.CreateBinaryIntrinsic(
+        I->ID, operandValues[0], operandValues[1], nullptr, "herbie." + op);
+  if (is_contained(kLibraryCalls, op))
+    return mathLibraryCall(builder, M, op, operandValues);
+  if (const ComparisonOp *C = findOp(kComparisons, op))
+    return builder.CreateFCmp(C->Pred, operandValues[0], operandValues[1],
+                              "herbie." + C->Name);
+  if (const ConstantOp *C = findOp(kConstants, op))
+    return ConstantFP::get(builder.getDoubleTy(), C->Value);
+  if (op == "neg")
+    return builder.CreateFNeg(operandValues[0], "herbie.neg");
+  if (op == "+")
+    return builder.CreateFAdd(operandValues[0], operandValues[1], "herbie.add");
+  if (op == "-")
+    return builder.CreateFSub(operandValues[0], operandValues[1], "herbie.sub");
+  if (op == "*")
+    return builder.CreateFMul(operandValues[0], operandValues[1], "herbie.mul");
+  if (op == "/")
+    return builder.CreateFDiv(operandValues[0], operandValues[1], "herbie.div");
+  if (op == "pow")
+    return lowerPow(builder, M, operandValues);
+  if (op == "fma")
+    return builder.CreateIntrinsic(Intrinsic::fma,
+                                   {operandValues[0]->getType()}, operandValues,
+                                   nullptr, "herbie.fma");
+  if (op == "and")
+    return builder.CreateAnd(operandValues[0], operandValues[1], "herbie.and");
+  if (op == "or")
+    return builder.CreateOr(operandValues[0], operandValues[1], "herbie.or");
+  if (op == "not")
+    return builder.CreateNot(operandValues[0], "herbie.not");
+  if (op == "TRUE")
+    return ConstantInt::getTrue(builder.getContext());
+  if (op == "FALSE")
+    return ConstantInt::getFalse(builder.getContext());
+  // CreateFPCast rather than FPTrunc/FPExt: the operand may already carry the
+  // destination type, coerced to the node's dtype above, and FPCast is then the
+  // identity.
+  if (op == "binary64->binary32")
+    return builder.CreateFPCast(operandValues[0], builder.getFloatTy(),
+                                "herbie.f64tof32");
+  if (op == "binary32->binary64")
+    return builder.CreateFPCast(operandValues[0], builder.getDoubleTy(),
+                                "herbie.f32tof64");
   std::string msg = "FPNode getLLValue: Unexpected operator " + op;
   llvm_unreachable(msg.c_str());
 }
-
-bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
 
 // Memoized: an input is consulted once per input defined over it, so a chain
 // of inputs one operation apart (T^2, T^3, ...) would otherwise be re-walked
@@ -558,10 +313,17 @@ std::shared_ptr<FPNode> existingDefinition(
   return nullptr;
 }
 
-std::string FPLLValue::toFullExpression(
+std::string FPNode::toFullExpression(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const SetVector<Value *> &subgraphInputs, unsigned depth) {
-  if (subgraphInputs.contains(value) && !inlinedOps(*this, subgraphInputs)) {
+  if (auto *C = dyn_cast<FPConst>(this))
+    return C->literal();
+  auto *V = dyn_cast<FPLLValue>(this);
+  if (!V)
+    llvm_unreachable("an operator node of a parsed rewrite has no expression "
+                     "of the original graph");
+  Value *value = V->value;
+  if (subgraphInputs.contains(value) && !inlinedOps(*V, subgraphInputs)) {
     assert(hasSymbol() && "FPLLValue has no symbol!");
     return symbol;
   }
@@ -581,17 +343,6 @@ std::string FPLLValue::toFullExpression(
   expr += ")";
   return expr;
 }
-
-void FPLLValue::updateBounds(double lower, double upper, bool print) {
-  lb = std::min(lb, lower);
-  ub = std::max(ub, upper);
-  if (print)
-    llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", " << ub
-                 << "]\n";
-}
-
-double FPLLValue::getLowerBound() const { return lb; }
-double FPLLValue::getUpperBound() const { return ub; }
 
 Value *FPLLValue::getLLValue(IRBuilder<> &builder,
                              const ValueToValueMapTy *VMap) {
@@ -621,19 +372,6 @@ void FPGraph::replaceErased(Value *erased, Value *now) {
   node->value = nullptr;
 }
 
-std::string FPConst::toFullExpression(
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const SetVector<Value *> &subgraphInputs, unsigned depth) {
-  return strValue;
-}
-
-bool FPConst::hasSymbol() const {
-  std::string msg = "Unexpected invocation of `hasSymbol` on an FPConst";
-  llvm_unreachable(msg.c_str());
-}
-
-void FPConst::updateBounds(double lower, double upper, bool print) { return; }
-
 double FPConst::literalValue(const std::string &strValue) {
   if (strValue == "+inf.0") {
     return std::numeric_limits<double>::infinity();
@@ -644,10 +382,6 @@ double FPConst::literalValue(const std::string &strValue) {
 
   return literalToDouble(strValue);
 }
-
-double FPConst::getLowerBound() const { return value; }
-
-double FPConst::getUpperBound() const { return getLowerBound(); }
 
 Value *FPConst::getLLValue(IRBuilder<> &builder,
                            const ValueToValueMapTy *VMap) {

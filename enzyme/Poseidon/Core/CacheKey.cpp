@@ -70,18 +70,19 @@ json::Object CacheKey::toJSON() const {
 }
 
 std::optional<std::string>
-CacheKey::firstDifference(const json::Object *stored) const {
+CacheKey::firstDifference(const json::Object *stored,
+                          ArrayRef<StringRef> unchecked) const {
   if (!stored)
     return std::string("format");
   for (const auto &[name, value] : parts)
-    if (stored->getString(name) != StringRef(value))
+    if (!is_contained(unchecked, name) &&
+        stored->getString(name) != StringRef(value))
       return name;
   // By name: the object holds its keys in hash order.
-  if (stored->size() != parts.size())
-    for (const json::Object::value_type *kv : json::sortedElements(*stored))
-      if (llvm::none_of(parts,
-                        [&](const auto &p) { return p.first == kv->first; }))
-        return kv->first.str();
+  for (const json::Object::value_type *kv : json::sortedElements(*stored))
+    if (!is_contained(unchecked, StringRef(kv->first)) &&
+        none_of(parts, [&](const auto &p) { return p.first == kv->first; }))
+      return kv->first.str();
   return std::nullopt;
 }
 
@@ -100,7 +101,8 @@ Error writeCacheEntry(StringRef path, const CacheKey &key, json::Value value) {
       path, formatv("{0:2}", json::Value(std::move(entry))).str() + "\n");
 }
 
-CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key) {
+CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key,
+                              ArrayRef<StringRef> unchecked) {
   CacheEntryRead read;
   if (!sys::fs::exists(path))
     return read;
@@ -121,7 +123,7 @@ CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key) {
     return read;
   }
   if (std::optional<std::string> part =
-          key.firstDifference(entry->getObject("key"))) {
+          key.firstDifference(entry->getObject("key"), unchecked)) {
     read.differs = *part;
     return read;
   }

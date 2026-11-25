@@ -7,9 +7,9 @@
 //===----------------------------------------------------------------------===//
 //
 // Runs the Herbie binary on a set of FPCore cores and returns its
-// results.json, through the result cache. Nothing here reads LLVM IR or
-// Poseidon's command-line flags: the caller says how to run Herbie, so the
-// pass plugin and tools that do not link it can share one runner.
+// results.json, through the result cache: one file per question, holding the
+// answer and the digest of the Herbie that gave it. Nothing here reads LLVM IR
+// or Poseidon's command-line flags; the caller says how to run Herbie.
 //
 //===----------------------------------------------------------------------===//
 
@@ -117,10 +117,12 @@ struct HerbieRunResult {
   std::string Failure;
 };
 
-// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache:
-// the answer this binary gave, else a run, whose answer is cached. `Label`
-// names the cores in diagnostics, e.g. "subgraph 0 of foo". A cache that cannot
-// be written is an error that names the path.
+// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache: the
+// answer this Herbie gave, else a run, whose answer replaces the cached one.
+// When `Opts.Program` names no file, the cached answer is the one any Herbie
+// gave, and a question the cache does not answer is an error naming its cache
+// file. `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". A
+// cache that cannot be written is an error that names the path.
 llvm::Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                                           const HerbieRunOptions &Opts,
                                           llvm::StringRef Label,

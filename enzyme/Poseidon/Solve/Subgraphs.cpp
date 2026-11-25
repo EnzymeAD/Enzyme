@@ -316,8 +316,7 @@ void attachProfile(
             node->sens = profileInfo.sumSens;
             node->grad = profileInfo.sumGrad;
             node->executions = profileInfo.exec;
-            node->updateBounds(profileInfo.minRes, profileInfo.maxRes,
-                               O.Diagnostics.Print);
+            node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
 
             if (O.Diagnostics.Print) {
               llvm::errs() << "Range of " << *op << " is ["
@@ -341,8 +340,7 @@ void attachProfile(
               if (i < profileInfo.minOperands.size()) {
                 auto operandNode = valueToNodeMap[operand];
                 operandNode->updateBounds(profileInfo.minOperands[i],
-                                          profileInfo.maxOperands[i],
-                                          O.Diagnostics.Print);
+                                          profileInfo.maxOperands[i]);
                 if (O.Diagnostics.Print) {
                   llvm::errs() << "Range of " << *operand << " is ["
                                << operandNode->getLowerBound() << ", "

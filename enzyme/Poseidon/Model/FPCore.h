@@ -30,6 +30,7 @@
 #include <unordered_map>
 
 namespace llvm {
+class Function;
 class Instruction;
 class Type;
 } // namespace llvm
@@ -55,10 +56,6 @@ struct CRendering {
 std::string renderC(const FPNode &node, const CRendering &how,
                     llvm::StringRef resultDtype = "");
 
-bool isRenderableFPCore(
-    llvm::StringRef expr,
-    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
-
 llvm::SmallVector<std::string, 1> fpcoreToC(
     const std::string &expr,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -68,6 +65,15 @@ llvm::SmallVector<std::string, 1> fpcoreToC(
         nullptr);
 
 std::string getHerbieOperator(const llvm::Instruction &I);
+
+// The name of intrinsic `Callee` without its "llvm." prefix and type suffixes:
+// "sin" for llvm.sin.f64.
+llvm::StringRef intrinsicBaseName(const llvm::Function &Callee);
+
+// The math function a library call to `Name` computes: `Name` when it is a
+// row of mathFunctions(), else its float form's row without the f suffix, else
+// empty.
+llvm::StringRef mathFunctionOf(llvm::StringRef Name);
 
 void getUniqueArgs(const std::string &expr,
                    llvm::SmallSet<std::string, 8> &args);

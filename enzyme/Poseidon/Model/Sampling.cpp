@@ -11,7 +11,6 @@
 #include "Core/Parallel.h"
 #include "Core/UniformReal.h"
 #include "Evaluators.h"
-#include "FPCore.h"
 #include "FPNode.h"
 
 #include "llvm/ADT/SetVector.h"
@@ -38,7 +37,18 @@ double sampleError(double goldVal, double result) {
   return std::fabs(goldVal - result);
 }
 
-CancellationPlan
+namespace {
+// Cancellation-aware sampling plan: `active` iff the subgraph divides by or
+// takes the sqrt of a quantity profiled near zero; `pairs` are the leaf
+// subtraction operands whose near-coincidence produces it (independent
+// marginal sampling never reproduces that configuration).
+struct CancellationPlan {
+  bool active = false;
+  SmallVector<std::pair<Value *, Value *>, 4> pairs;
+};
+} // namespace
+
+static CancellationPlan
 buildCancellationPlan(const Options &O, const Subgraph &subgraph,
                       const std::unordered_map<Value *, std::shared_ptr<FPNode>>
                           &valueToNodeMap) {
@@ -118,12 +128,12 @@ static void collectLeaves(const FPNode *node,
 // globals) in their profiled ranges, evaluates each input from them as the
 // program does, and is kept if every input lies in its own profiled range, the
 // box Herbie searched.
-void getSampledPoints(
+static void getSampledPoints(
     const Options &O, ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     SmallVectorImpl<MapVector<Value *, double>> &sampledPoints,
-    const CancellationPlan *plan, size_t count, unsigned seedOffset) {
-  const size_t numSamples = count ? count : O.Model.NumSamples;
+    const CancellationPlan *plan, unsigned seedOffset = 0) {
+  const size_t numSamples = O.Model.NumSamples;
   std::minstd_rand0 gen(O.Model.RandomSeed + seedOffset);
   sampledPoints.clear();
 
@@ -342,7 +352,7 @@ std::optional<double> SubgraphSamples::Reference::meanError() const {
 static void evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
                               SubgraphSamples::Reference &R, size_t i) {
   SmallVector<double, 1> results;
-  getMPFRValues({node}, point, results, 53);
+  getMPFRValues({node}, point, results);
   R.gold[i] = results[0];
   getFPValues({node}, point, results);
   R.value[i] = results[0];
@@ -371,7 +381,7 @@ ArrayRef<SubgraphSamples::Point> SubgraphSamples::round(unsigned round) {
   while (rounds.size() < round) {
     rounds.emplace_back();
     getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
-                     rounds.back(), nullptr, O.Model.NumSamples, rounds.size());
+                     rounds.back(), nullptr, rounds.size());
   }
   return rounds[round - 1];
 }

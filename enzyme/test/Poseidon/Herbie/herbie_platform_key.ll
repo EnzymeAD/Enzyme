@@ -8,14 +8,14 @@
 ; named after it. The Herbie binary is absent: no compile here may need it.
 
 ; On an NVIDIA GPU, over one entry seeded under cuda-sm120, the same
-; architecture reads it (NV-MATCH); an sm_90 cost model does not and runs Herbie
-; instead, which cannot start, so the compile stops rather than replaying the
-; other device's answer (NV-OTHERARCH); a CUDA cost model with no platform file
+; architecture reads it (NV-MATCH); an sm_90 cost model looks under its own
+; name, finds no answer and, with no Herbie to compute one, stops rather than
+; replaying the other device's answer (NV-OTHERARCH); a CUDA cost model with no platform file
 ; beside it stops the compile naming the file and the command that writes it
 ; (NV-NOPLATFORM); the same platform name with other costs does not read it
 ; either, since the platform's contents are part of the key (NV-RECALIBRATED).
 ; RUN: mkdir %t/nv %t/nv/cache %t/nv/nocm %t/nv/recal
-; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/nv/cache/cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt
+; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/nv/cache/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
 ; RUN: sed "s/sm_120/sm_90/" %s > %t/nv/sm90.ll
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/nv/nocm/
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %cost_models/cm_sm_120_synthetic.herbie.rkt %t/nv/recal/ && echo ";; recalibrated" >> %t/nv/recal/cm_sm_120_synthetic.herbie.rkt
@@ -24,18 +24,16 @@
 ; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/nocm-cache 2>&1 | FileCheck --check-prefix=NV-NOPLATFORM %s
 ; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-RECALIBRATED %s
 
-; NV-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_3FAD2A26F6AB267E.txt
+; NV-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
 ; NV-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; NV-OTHERARCH-NOT: Using cached Herbie output
-; NV-OTHERARCH: [poseidon] Herbie subgraph 0 of preprocess_tester
-; NV-OTHERARCH: Poseidon: the cache {{.*}}cache holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at /nonexistent/herbie cannot run (
+; NV-OTHERARCH: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}cache/cachedHerbieOutput_cuda-sm90_{{[0-9A-F]+}}.txt, and there is no Herbie at /nonexistent/herbie to compute it.
 
 ; NV-NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_sm_120_synthetic.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
 
 ; NV-RECALIBRATED-NOT: Using cached Herbie output
-; NV-RECALIBRATED: [poseidon] Herbie subgraph 0 of preprocess_tester
-; NV-RECALIBRATED: Poseidon: the cache {{.*}}cache holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at /nonexistent/herbie cannot run (
+; NV-RECALIBRATED: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}cache/cachedHerbieOutput_cuda-sm120_{{[0-9A-F]+}}.txt, and there is no Herbie at /nonexistent/herbie to compute it.
 
 ; AMD GPU, the module retargeted to gfx942: poseidon-calibrate generates the
 ; Herbie platform of an AMD GPU's cost model (hip-gfx942, hip-gfx90a) beside it,
@@ -53,7 +51,7 @@
 ; RUN: %if amdgpu-registered-target %{ sed 's/^# native_arch=sm_120$/# native_arch=gfx90a/' %cost_models/cm_sm_120_synthetic.csv > %t/amd/cm/cm_gfx90a_Fixture.csv %}
 ; RUN: %if amdgpu-registered-target %{ %poseidon_calibrate --only herbie-platform --out %t/amd/cm/cm_gfx90a_Fixture.csv > /dev/null %}
 ; RUN: %if amdgpu-registered-target %{ FileCheck --check-prefix=AMD-PLATFORM90A %s < %t/amd/cm/cm_gfx90a_Fixture.herbie.rkt %}
-; RUN: %if amdgpu-registered-target %{ cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/amd/cache/cachedHerbieOutput_hip-gfx942_761F468C1372B235.txt %}
+; RUN: %if amdgpu-registered-target %{ cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/amd/cache/cachedHerbieOutput_hip-gfx942_9E5CC014DF84A1D1.txt %}
 ; RUN: %if amdgpu-registered-target %{ %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%t/amd/cm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/cache 2>&1 | FileCheck --check-prefix=AMD-MATCH %s %}
 ; RUN: %if amdgpu-registered-target %{ not %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/amd/nocm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/nocm-cache 2>&1 | FileCheck --check-prefix=AMD-NOPLATFORM %s %}
 
@@ -66,7 +64,7 @@
 ; AMD-PLATFORM90A: ;; HIP gfx90a platform, generated from a Poseidon GPU cost model CSV.
 ; AMD-PLATFORM90A: (module hip-gfx90a
 
-; AMD-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_hip-gfx942_761F468C1372B235.txt
+; AMD-MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_hip-gfx942_9E5CC014DF84A1D1.txt
 ; AMD-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; AMD-NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'

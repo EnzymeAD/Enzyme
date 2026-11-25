@@ -37,7 +37,6 @@ enum class PrecisionChangeType {
   FP80,
   FP128,
   Expansion2,
-  // Wider FP32 expansions; appended so no existing enumerator value shifts.
   Expansion3,
   Expansion4
 };
@@ -54,6 +53,27 @@ inline unsigned expansionComponents(PrecisionChangeType t) {
     return 0;
   }
 }
+
+// A format of the pass: its precision change type, its kind in the matrix
+// model (Invalid for none), and its names as a graph dtype, as a cost-model
+// type column, in C and in reports. An FP32 expansion has a precision change
+// type and a report name only.
+struct FPFormatInfo {
+  PrecisionChangeType Precision;
+  FPKind Kind;
+  llvm::StringLiteral Dtype;
+  llvm::StringLiteral CostType;
+  llvm::StringLiteral CType;
+  llvm::StringLiteral Name;
+  llvm::Type *(*LLVMType)(llvm::LLVMContext &);
+};
+
+const FPFormatInfo &formatOf(PrecisionChangeType P);
+// The format of `T`, or null when `T` is not a floating-point type of one.
+const FPFormatInfo *formatOf(llvm::Type *T);
+// The format a graph dtype names, or null.
+const FPFormatInfo *formatOfDtype(llvm::StringRef Dtype);
+
 llvm::Type *getLLVMFPType(PrecisionChangeType type, llvm::LLVMContext &context);
 PrecisionChangeType getPrecisionChangeType(llvm::Type *type);
 llvm::StringRef getPrecisionChangeTypeString(PrecisionChangeType type);

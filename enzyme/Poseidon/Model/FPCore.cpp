@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPCore.h"
-#include "IR/Utils.h"
+#include "FPFormat.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
 
@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -33,15 +34,39 @@ using namespace llvm;
 
 namespace poseidon {
 
+// The items of `S` separated by spaces outside parentheses, from its first
+// non-space character on; each further space separates another item.
+static SmallVector<StringRef, 4> splitTopLevel(StringRef S) {
+  SmallVector<StringRef, 4> Items;
+  S = S.ltrim(' ');
+  int Depth = 0;
+  size_t Start = 0;
+  for (size_t I = 0; I < S.size(); ++I) {
+    if (S[I] == '(') {
+      ++Depth;
+    } else if (S[I] == ')') {
+      --Depth;
+    } else if (S[I] == ' ' && Depth == 0) {
+      Items.push_back(S.slice(Start, I));
+      Start = I + 1;
+    }
+  }
+  if (Start < S.size())
+    Items.push_back(S.drop_front(Start));
+  return Items;
+}
+
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
     const SetVector<Value *> *subgraphInputs) {
-  std::string trimmedExpr = expr;
-  trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
-  trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
+  auto parse = [&](StringRef sub) {
+    return parseHerbieExpr(sub.str(), valueToNodeMap, symbolToValueMap,
+                           approxSpecs, subgraphInputs);
+  };
+  const std::string trimmedExpr = StringRef(expr).trim(' ').str();
 
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
     if (auto node = valueToNodeMap[symbolToValueMap[trimmedExpr]]) {
@@ -76,36 +101,20 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     }
   }
 
-  if (trimmedExpr.substr(0, 9) == "#s(approx") {
+  if (StringRef(trimmedExpr).starts_with("#s(approx")) {
     if (trimmedExpr.back() != ')') {
       report_fatal_error("Malformed approx expression: " + Twine(trimmedExpr));
     }
-    std::string inner = trimmedExpr.substr(9, trimmedExpr.size() - 9 - 1);
-    inner.erase(0, inner.find_first_not_of(" "));
-    inner.erase(inner.find_last_not_of(" ") + 1);
-
-    int depth = 0;
-    size_t splitPos = std::string::npos;
-    for (size_t i = 0; i < inner.size(); ++i) {
-      if (inner[i] == '(')
-        depth++;
-      else if (inner[i] == ')')
-        depth--;
-      else if (inner[i] == ' ' && depth == 0) {
-        splitPos = i;
-        break;
-      }
-    }
-    if (splitPos == std::string::npos) {
+    StringRef inner =
+        StringRef(trimmedExpr).drop_front(9).drop_back().trim(' ');
+    SmallVector<StringRef, 4> parts = splitTopLevel(inner);
+    if (parts.size() < 2) {
       report_fatal_error("Malformed approx expression: " + Twine(trimmedExpr));
     }
-    std::string resultPart = inner.substr(splitPos + 1);
-    resultPart.erase(0, resultPart.find_first_not_of(" "));
-    resultPart.erase(resultPart.find_last_not_of(" ") + 1);
+    StringRef resultPart = inner.drop_front(parts[0].size() + 1).trim(' ');
     if (approxSpecs)
-      approxSpecs->push_back({inner.substr(0, splitPos), resultPart});
-    return parseHerbieExpr(resultPart, valueToNodeMap, symbolToValueMap,
-                           approxSpecs, subgraphInputs);
+      approxSpecs->push_back({parts[0].str(), resultPart.str()});
+    return parse(resultPart);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
@@ -113,66 +122,46 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     report_fatal_error("Failed to parse Herbie expression");
   }
 
-  trimmedExpr = trimmedExpr.substr(1, trimmedExpr.size() - 2);
-
-  auto endOp = trimmedExpr.find(' ');
-  std::string fullOp = trimmedExpr.substr(0, endOp);
+  StringRef body = StringRef(trimmedExpr).drop_front().drop_back();
+  StringRef fullOp = body.take_until([](char c) { return c == ' '; });
+  StringRef args = body.drop_front(fullOp.size());
 
   // An array projection, `(ref.N.array<...> (array e0 e1 ...))` or
   // `(ref.N.array<...> (sincos.fXX x))`: the N-th element is what is wanted.
-  if (fullOp.rfind("ref.", 0) == 0) {
+  if (fullOp.starts_with("ref.")) {
     size_t idxEnd = fullOp.find('.', 4);
-    unsigned idx = std::stoul(fullOp.substr(4, idxEnd - 4));
-    std::string inner = trimmedExpr.substr(endOp + 1);
-    inner.erase(0, inner.find_first_not_of(" "));
-    inner.erase(inner.find_last_not_of(" ") + 1);
-    if (inner.front() == '(' && inner.back() == ')') {
-      std::string body = inner.substr(1, inner.size() - 2);
-      std::string head = body.substr(0, body.find(' '));
-      SmallVector<std::string, 4> elems;
-      int depth = 0;
-      size_t start = body.find_first_not_of(" ", head.size());
-      for (size_t i = start; i < body.size(); ++i) {
-        if (body[i] == '(')
-          depth++;
-        else if (body[i] == ')')
-          depth--;
-        else if (body[i] == ' ' && depth == 0) {
-          elems.push_back(body.substr(start, i - start));
-          start = i + 1;
-        }
-      }
-      if (start < body.size())
-        elems.push_back(body.substr(start));
+    unsigned idx = std::stoul(fullOp.substr(4, idxEnd - 4).str());
+    StringRef inner = args.trim(' ');
+    if (!inner.empty() && inner.front() == '(' && inner.back() == ')') {
+      StringRef projected = inner.drop_front().drop_back();
+      StringRef head = projected.take_until([](char c) { return c == ' '; });
+      SmallVector<StringRef, 4> elems =
+          splitTopLevel(projected.drop_front(head.size()));
       if (head == "array" && idx < elems.size())
-        return parseHerbieExpr(elems[idx], valueToNodeMap, symbolToValueMap,
-                               approxSpecs, subgraphInputs);
-      if (head.rfind("sincos.", 0) == 0 && elems.size() == 1 && idx < 2) {
-        auto node =
-            std::make_shared<FPNode>(idx == 0 ? "sin" : "cos", head.substr(7));
-        node->addOperand(parseHerbieExpr(elems[0], valueToNodeMap,
-                                         symbolToValueMap, approxSpecs,
-                                         subgraphInputs));
+        return parse(elems[idx]);
+      if (head.starts_with("sincos.") && elems.size() == 1 && idx < 2) {
+        auto node = std::make_shared<FPNode>(idx == 0 ? "sin" : "cos",
+                                             head.drop_front(7).str());
+        node->addOperand(parse(elems[0]));
         return node;
       }
     }
-    llvm::errs() << "Unexpected array projection: " << trimmedExpr << '\n';
+    llvm::errs() << "Unexpected array projection: " << body << '\n';
     report_fatal_error("Failed to parse Herbie expression");
   }
 
-  size_t pos = fullOp.find('.');
   std::string dtype;
   std::string op;
-  if (fullOp.rfind("array<", 0) == 0) {
+  if (fullOp.starts_with("array<")) {
     op = "array";
-  } else if (pos != std::string::npos) {
-    op = fullOp.substr(0, pos);
-    dtype = fullOp.substr(pos + 1);
+  } else if (size_t pos = fullOp.find('.'); pos != StringRef::npos) {
+    op = fullOp.substr(0, pos).str();
+    dtype = fullOp.substr(pos + 1).str();
     if (dtype != "f64" && dtype != "f32")
       report_fatal_error("Herbie expr parser: Unexpected operator dtype: " +
                          Twine(fullOp));
   } else {
-    op = fullOp;
+    op = fullOp.str();
   }
 
   // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
@@ -185,27 +174,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   }
 
   auto node = std::make_shared<FPNode>(op, dtype);
-
-  int depth = 0;
-  auto start = trimmedExpr.find_first_not_of(" ", endOp);
-  std::string::size_type curr;
-  for (curr = start; curr < trimmedExpr.size(); ++curr) {
-    if (trimmedExpr[curr] == '(')
-      depth++;
-    if (trimmedExpr[curr] == ')')
-      depth--;
-    if (depth == 0 && trimmedExpr[curr] == ' ') {
-      node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
-                                       valueToNodeMap, symbolToValueMap,
-                                       approxSpecs, subgraphInputs));
-      start = curr + 1;
-    }
-  }
-  if (start < curr) {
-    node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
-                                     valueToNodeMap, symbolToValueMap,
-                                     approxSpecs, subgraphInputs));
-  }
+  for (StringRef operand : splitTopLevel(args))
+    node->addOperand(parse(operand));
 
   if (subgraphInputs)
     if (auto existing =
@@ -216,19 +186,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 }
 
 std::string dtypeOfType(Type *T) {
-  if (T->isHalfTy())
-    return "f16";
-  if (T->isBFloatTy())
-    return "bf16";
-  if (T->isFloatTy())
-    return "f32";
-  if (T->isDoubleTy())
-    return "f64";
-  if (T->isX86_FP80Ty())
-    return "f80";
-  if (T->isFP128Ty())
-    return "f128";
-  return "";
+  const FPFormatInfo *F = formatOf(T);
+  return F ? F->Dtype.str() : "";
 }
 
 namespace {
@@ -253,20 +212,11 @@ enum : int {
 
 } // namespace
 
-static bool isFPDtype(StringRef d) {
-  return d == "f16" || d == "bf16" || d == "f32" || d == "f64" || d == "f80" ||
-         d == "f128";
-}
+static bool isFPDtype(StringRef d) { return formatOfDtype(d); }
 
 static StringRef cTypeName(StringRef d) {
-  return StringSwitch<StringRef>(d)
-      .Case("f16", "_Float16")
-      .Case("bf16", "__bf16")
-      .Case("f32", "float")
-      .Case("f64", "double")
-      .Case("f80", "long double")
-      .Case("f128", "__float128")
-      .Default("double");
+  const FPFormatInfo *F = formatOfDtype(d);
+  return F ? StringRef(F->CType) : "double";
 }
 
 // `v` printed with "%.*g" at `digits` significant digits.
@@ -433,7 +383,6 @@ public:
                           .Case("E", "M_E")
                           .Case("INFINITY", "INFINITY")
                           .Case("NAN", "NAN")
-                          .Case("NaN", "NAN")
                           .Case("TRUE", "true")
                           .Case("FALSE", "false")
                           .Default(op);
@@ -508,7 +457,7 @@ std::string renderC(const FPNode &node, const CRendering &how,
   return e.text;
 }
 
-bool isRenderableFPCore(
+static bool isRenderableFPCore(
     StringRef expr,
     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
   static const std::regex number(R"(^[-+]?(\d+(\.\d+)?(/\d+)?|inf\.0)$)");
@@ -593,43 +542,41 @@ std::string getHerbieOperator(const Instruction &I) {
   case Instruction::FRem:
     return "fmod";
   case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(&I);
-    assert(CI && CI->getCalledFunction() &&
-           "getHerbieOperator: Call without a function");
-
-    StringRef funcName = CI->getCalledFunction()->getName();
-
-    if (StringRef deviceMath = deviceMathName(funcName); !deviceMath.empty())
-      return deviceMath.str();
-
-    if (funcName.starts_with("llvm.")) {
-      std::regex regex("llvm\\.(\\w+)\\.?.*");
-      std::smatch matches;
-      std::string nameStr = funcName.str();
-      if (std::regex_search(nameStr, matches, regex) && matches.size() > 1) {
-        std::string intrinsic = matches[1];
-        if (intrinsic == "fmuladd")
-          return "fma";
-        if (intrinsic == "maxnum")
-          return "fmax";
-        if (intrinsic == "minnum")
-          return "fmin";
-        if (intrinsic == "powi")
-          return "pow";
-        return intrinsic;
-      }
-      llvm_unreachable("getHerbieOperator: Unknown LLVM intrinsic");
-    } else {
-      std::string name = funcName.str();
-      if (!name.empty() && name.back() == 'f') {
-        name.pop_back();
-      }
-      return name;
-    }
+    const Function *Callee = cast<CallInst>(I).getCalledFunction();
+    assert(Callee && "getHerbieOperator: Call without a function");
+    StringRef Name = Callee->getName();
+    if (StringRef DeviceMath = deviceMathName(Name); !DeviceMath.empty())
+      return DeviceMath.str();
+    if (Callee->isIntrinsic())
+      return StringSwitch<StringRef>(intrinsicBaseName(*Callee))
+          .Case("fmuladd", "fma")
+          .Case("maxnum", "fmax")
+          .Case("minnum", "fmin")
+          .Case("powi", "pow")
+          .Default(intrinsicBaseName(*Callee))
+          .str();
+    StringRef Fn = mathFunctionOf(Name);
+    return (Fn.empty() ? Name : Fn).str();
   }
   default:
     report_fatal_error("getHerbieOperator: Unknown operator");
   }
+}
+
+StringRef intrinsicBaseName(const Function &Callee) {
+  return Intrinsic::getBaseName(Callee.getIntrinsicID()).drop_front(5);
+}
+
+StringRef mathFunctionOf(StringRef Name) {
+  auto Row = [](StringRef N) {
+    return any_of(mathFunctions(),
+                  [&](const MathFunction &F) { return F.Name == N; });
+  };
+  if (Row(Name))
+    return Name;
+  if (Name.ends_with("f") && Row(Name.drop_back()))
+    return Name.drop_back();
+  return "";
 }
 
 void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {

@@ -19,7 +19,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
-#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -44,9 +43,6 @@ struct CostModelState {
   std::string NativeArch;
   std::map<std::pair<std::string, std::string>, double> Model;
   bool Loaded = false;
-
-  uint64_t Fingerprint = 0;
-  bool FingerprintComputed = false;
 
   std::optional<std::unordered_set<std::string>> PTFuncs;
 };
@@ -78,8 +74,10 @@ const std::string &getCostModelNativeArch(CostModelState &CM);
 // unless the flag or POSEIDON_COST_MODEL named one.
 const std::string &costModelPath(CostModelState &CM);
 
-// Content fingerprint of the loaded cost model (0 when none is configured).
-uint64_t getCostModelFingerprint(CostModelState &CM);
+// The loaded model as text, its rows in order with exact costs and its
+// native_arch header, without comments or blank lines: what a result computed
+// from its prices depends on. Empty when no model is configured.
+std::string costModelRows(CostModelState &CM);
 
 // The (opcode,type) row, if the model has it.
 std::optional<double> lookupCost(CostModelState &CM, llvm::StringRef OpcodeName,

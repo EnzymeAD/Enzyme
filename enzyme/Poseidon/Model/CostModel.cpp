@@ -7,11 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostModel.h"
+#include "FPCore.h"
+#include "FPFormat.h"
 #include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
 #include "Targets/Target.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/CFG.h"
@@ -46,12 +49,24 @@ void requireCostModel(CostModelState &CM, const Function &F) {
                       "'; measure it with poseidon-calibrate");
 }
 
-// The row `Opcode,Type`; a model without it is an error at `At`.
-static double rowCost(CostModelState &CM, const Instruction &At,
-                      StringRef Opcode, StringRef Type) {
+// The row `Opcode,Type`; a model without it is an error at `Loc` in `F`.
+static double rowCost(CostModelState &CM, const Function &F,
+                      const DiagnosticLocation &Loc, StringRef Opcode,
+                      StringRef Type) {
   if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
     return *cost;
-  missingRow(CM, *At.getFunction(), At.getDebugLoc(), Opcode, Type);
+  missingRow(CM, F, Loc, Opcode, Type);
+}
+
+static double rowCost(CostModelState &CM, const Instruction &At,
+                      StringRef Opcode, StringRef Type) {
+  return rowCost(CM, *At.getFunction(), At.getDebugLoc(), Opcode, Type);
+}
+
+// The cost-model type column of `T`, or empty when it has none.
+static StringRef costType(Type *T) {
+  const FPFormatInfo *F = formatOf(T);
+  return F ? StringRef(F->CostType) : StringRef();
 }
 
 const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
@@ -79,11 +94,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
   // otherwise be priced as free.
   if (auto *II = dyn_cast<IntrinsicInst>(I))
     if (II->getIntrinsicID() == Intrinsic::sincos) {
-      Type *ETy = cast<StructType>(I->getType())->getElementType(0);
-      std::string P = ETy->isFloatTy()    ? "float"
-                      : ETy->isDoubleTy() ? "double"
-                      : ETy->isHalfTy()   ? "half"
-                                          : "";
+      StringRef P = costType(cast<StructType>(I->getType())->getElementType(0));
       if (P.empty())
         unpriced(I);
       return rowCost(CM, RowAt, "sin", P) + rowCost(CM, RowAt, "cos", P);
@@ -132,103 +143,14 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
     auto *Call = cast<CallInst>(I);
     if (auto *CalledFunc = Call->getCalledFunction()) {
       if (CalledFunc->isIntrinsic()) {
-        switch (CalledFunc->getIntrinsicID()) {
-        case Intrinsic::sin:
-          OpcodeName = "sin";
-          break;
-        case Intrinsic::cos:
-          OpcodeName = "cos";
-          break;
-        case Intrinsic::tan:
-          OpcodeName = "tan";
-          break;
-        case Intrinsic::asin:
-          OpcodeName = "asin";
-          break;
-        case Intrinsic::acos:
-          OpcodeName = "acos";
-          break;
-        case Intrinsic::atan:
-          OpcodeName = "atan";
-          break;
-        case Intrinsic::atan2:
-          OpcodeName = "atan2";
-          break;
-        case Intrinsic::sinh:
-          OpcodeName = "sinh";
-          break;
-        case Intrinsic::cosh:
-          OpcodeName = "cosh";
-          break;
-        case Intrinsic::tanh:
-          OpcodeName = "tanh";
-          break;
-        case Intrinsic::exp:
-          OpcodeName = "exp";
-          break;
-        case Intrinsic::log:
-          OpcodeName = "log";
-          break;
-        case Intrinsic::sqrt:
+        // The approximate F32 square root is priced as sqrt.
+        if (isApproxSqrtF32(CalledFunc->getIntrinsicID()))
           OpcodeName = "sqrt";
-          break;
-        case Intrinsic::fabs:
-          OpcodeName = "fabs";
-          break;
-        case Intrinsic::fma:
-          OpcodeName = "fma";
-          break;
-        case Intrinsic::pow:
-          OpcodeName = "pow";
-          break;
-        case Intrinsic::powi:
-          OpcodeName = "powi";
-          break;
-        case Intrinsic::fmuladd:
-          OpcodeName = "fmuladd";
-          break;
-        case Intrinsic::maxnum:
-          OpcodeName = "maxnum";
-          break;
-        case Intrinsic::minnum:
-          OpcodeName = "minnum";
-          break;
-        case Intrinsic::ceil:
-          OpcodeName = "ceil";
-          break;
-        case Intrinsic::floor:
-          OpcodeName = "floor";
-          break;
-        case Intrinsic::exp2:
-          OpcodeName = "exp2";
-          break;
-        case Intrinsic::log10:
-          OpcodeName = "log10";
-          break;
-        case Intrinsic::log2:
-          OpcodeName = "log2";
-          break;
-        case Intrinsic::rint:
-          OpcodeName = "rint";
-          break;
-        case Intrinsic::round:
-          OpcodeName = "round";
-          break;
-        case Intrinsic::trunc:
-          OpcodeName = "trunc";
-          break;
-        case Intrinsic::copysign:
-          OpcodeName = "copysign";
-          break;
-        default: {
-          // The approximate F32 square root, priced as sqrt.
-          if (isApproxSqrtF32(CalledFunc->getIntrinsicID())) {
-            OpcodeName = "sqrt";
-            break;
-          }
+        else
+          OpcodeName = intrinsicBaseName(*CalledFunc).str();
+        if (!libmFuncs().count(OpcodeName) &&
+            !is_contained({"fmuladd", "maxnum", "minnum"}, OpcodeName))
           unpriced(I);
-        }
-        }
       } else if (StringRef deviceMath = deviceMathName(CalledFunc->getName());
                  !deviceMath.empty()) {
         OpcodeName = deviceMath.str();
@@ -239,14 +161,9 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
         else if (OpcodeName == "fmin")
           OpcodeName = "minnum";
       } else {
-        std::string FuncName = CalledFunc->getName().str();
-        if (!FuncName.empty() &&
-            (FuncName.back() == 'f' || FuncName.back() == 'l'))
-          FuncName.pop_back();
-
-        if (!libmFuncs().count(FuncName))
+        OpcodeName = mathFunctionOf(CalledFunc->getName()).str();
+        if (!libmFuncs().count(OpcodeName))
           unpriced(I);
-        OpcodeName = FuncName;
       }
     } else {
       unpriced(I);
@@ -257,46 +174,18 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
     unpriced(I);
   }
 
-  std::string PrecisionName;
-  Type *Ty = I->getType();
-  if (I->getOpcode() == Instruction::FCmp)
-    Ty = I->getOperand(0)->getType();
-
-  if (Ty->isBFloatTy())
-    PrecisionName = "bf16";
-  else if (Ty->isHalfTy())
-    PrecisionName = "half";
-  else if (Ty->isFloatTy())
-    PrecisionName = "float";
-  else if (Ty->isDoubleTy())
-    PrecisionName = "double";
-  else if (Ty->isX86_FP80Ty())
-    PrecisionName = "fp80";
-  else if (Ty->isFP128Ty())
-    PrecisionName = "fp128";
-  else
+  Type *Ty = I->getOpcode() == Instruction::FCmp ? I->getOperand(0)->getType()
+                                                 : I->getType();
+  StringRef PrecisionName = costType(Ty);
+  if (PrecisionName.empty())
     unpriced(I);
 
   if (I->getOpcode() == Instruction::FPExt ||
       I->getOpcode() == Instruction::FPTrunc) {
-    Type *SrcTy = I->getOperand(0)->getType();
-    std::string SrcPrecisionName;
-    if (SrcTy->isBFloatTy())
-      SrcPrecisionName = "bf16";
-    else if (SrcTy->isHalfTy())
-      SrcPrecisionName = "half";
-    else if (SrcTy->isFloatTy())
-      SrcPrecisionName = "float";
-    else if (SrcTy->isDoubleTy())
-      SrcPrecisionName = "double";
-    else if (SrcTy->isX86_FP80Ty())
-      SrcPrecisionName = "fp80";
-    else if (SrcTy->isFP128Ty())
-      SrcPrecisionName = "fp128";
-    else
+    StringRef SrcPrecisionName = costType(I->getOperand(0)->getType());
+    if (SrcPrecisionName.empty())
       unpriced(I);
-
-    OpcodeName += "_" + SrcPrecisionName + "_to_" + PrecisionName;
+    OpcodeName += ("_" + SrcPrecisionName + "_to_" + PrecisionName).str();
     PrecisionName = SrcPrecisionName;
   }
 
@@ -322,9 +211,7 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
                                                   const Function &F) {
   if (!CM.PTFuncs) {
     auto row = [&](StringRef Opcode, StringRef Type) {
-      if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
-        return *cost;
-      missingRow(CM, F, F.getSubprogram(), Opcode, Type);
+      return rowCost(CM, F, F.getSubprogram(), Opcode, Type);
     };
     std::unordered_set<std::string> funcs;
     for (const auto &func : libmFuncs()) {
@@ -411,7 +298,6 @@ double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      // TODO: unfair to ignore branches when calculating cost
       auto instCost = getInstructionCompCost(CM, I);
       if (opExec && normalizer) {
         auto it = opExec->find(I);

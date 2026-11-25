@@ -18,7 +18,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
-#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>

@@ -10,14 +10,15 @@
 ; RUN: ls %t/tmp | count 0
 ; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=DISABLED --implicit-check-not=Herbie %s
 
-; A subgraph whose Herbie answer is not in the cache needs Herbie: when Herbie
-; cannot be started the compile stops, naming the search, the cache and the
-; binary, under opt and under clang alike: an error at the site, exit status
-; 1, no object and none of clang's crash reporting. With algebraic rewriting
-; off nothing asks Herbie, and the site is solved without it.
+; A subgraph whose Herbie answer is not in the cache needs Herbie: when there is
+; no Herbie the compile stops, naming the search, the cache file the answer
+; would be in and the binary, under opt and under clang alike: an error at the
+; site, exit status 1, no object and none of clang's crash reporting. With
+; algebraic rewriting off nothing asks Herbie, and the site is solved without
+; it.
 
-; ENABLED: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
-; ENABLED: error: {{.*}}Poseidon: the cache {{.*}}c holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at {{.*}}no-herbie cannot run ({{.+}}). Point -poseidon-herbie-binary at a Herbie, or turn algebraic rewriting off with -poseidon-enable-herbie=0.
+; ENABLED-NOT: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
+; ENABLED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt, and there is no Herbie at {{.*}}/no-herbie to compute it. Compute the answer on a machine with Herbie and copy its -poseidon-cache directory here, or turn algebraic rewriting off with -poseidon-enable-herbie=0.{{$}}
 
 ; DISABLED: Solving the DP for preprocess_tester.
 

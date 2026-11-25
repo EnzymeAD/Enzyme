@@ -35,29 +35,6 @@ class FPNode;
 // Per-sample absolute accuracy error.
 double sampleError(double goldVal, double result);
 
-// Cancellation-aware sampling plan: `active` iff the subgraph divides by or
-// takes the sqrt of a quantity profiled near zero; `pairs` are the leaf
-// subtraction operands whose near-coincidence produces it (independent
-// marginal sampling never reproduces that configuration).
-struct CancellationPlan {
-  bool active = false;
-  llvm::SmallVector<std::pair<llvm::Value *, llvm::Value *>, 4> pairs;
-};
-
-CancellationPlan buildCancellationPlan(
-    const Options &O, const Subgraph &subgraph,
-    const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-        &valueToNodeMap);
-
-void getSampledPoints(
-    const Options &O, llvm::ArrayRef<llvm::Value *> inputs,
-    const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-        &valueToNodeMap,
-    llvm::SmallVectorImpl<llvm::MapVector<llvm::Value *, double>>
-        &sampledPoints,
-    const CancellationPlan *plan = nullptr, size_t count = 0,
-    unsigned seedOffset = 0);
-
 // The points one subgraph is priced at and what its original expressions
 // evaluate to there. They depend on the subgraph's inputs and the seed alone,
 // so every unit that prices a rewrite of the subgraph shares one copy. Not for
@@ -80,14 +57,15 @@ public:
           &valueToNodeMap);
   ~SubgraphSamples();
 
-  // getSampledPoints over the subgraph's inputs with its cancellation plan;
-  // empty when the profiled box cannot be sampled.
+  // -poseidon-num-samples points in the profiled box of the subgraph's inputs,
+  // with a share near the cancellations it divides by or takes the root of;
+  // empty when the box cannot be sampled.
   llvm::ArrayRef<Point> points();
   // `node` at every one of points().
   const Reference &reference(const FPNode *node);
 
-  // getSampledPoints without a cancellation plan and with seed offset
-  // `round`, for `round` >= 1.
+  // As many points drawn without the cancellation share, from the seed offset
+  // by `round`, for `round` >= 1.
   llvm::ArrayRef<Point> round(unsigned round);
   // `node` at the points of `round` listed in `which`; an entry at any other
   // point of the round is not computed.
