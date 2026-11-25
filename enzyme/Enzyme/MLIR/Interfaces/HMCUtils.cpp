@@ -360,11 +360,22 @@ static impulse::GenerateOp emitGenerateAt(OpBuilder &builder, Location loc,
       ctx.allAddresses, builder.getStringAttr(""));
 }
 
-/// Values captured from above the `infer_region` op are sample-invariant.
+/// Clones `block` without its terminator at the insertion point and returns the
+/// clone of the terminator's first operand.
+static Value cloneBlockBody(OpBuilder &builder, Block &block,
+                            IRMapping &mapping) {
+  for (Operation &op : block.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(block.getTerminator()->getOperand(0));
+}
+
+/// Clones the logpdf region with its block arguments bound to consecutive
+/// slices of `qConstrained` and returns the log density. Values the region
+/// captures from above the `infer_region` op are sample-invariant.
 static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
                                  Value qConstrained, const HMCContext &ctx) {
   Block &lpBlock = ctx.logpdfRegion->front();
-  auto elemType = ctx.getElementType();
+  Type elemType = ctx.getElementType();
 
   IRMapping mapping;
   int64_t offset = 0;
@@ -381,13 +392,12 @@ static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
     mapping.map(arg, component);
     offset += numElements;
   }
-
-  for (Operation &op : lpBlock.without_terminator())
-    builder.clone(op, mapping);
-  return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+  return cloneBlockBody(builder, lpBlock, mapping);
 }
 
-/// Inlined: Enzyme's func.call adjoint re-runs the callee's forward pass.
+/// Emits the logpdf symbol at `position` and returns the log density. A
+/// single-block body is inlined because the adjoint of a call re-runs the
+/// callee's forward pass; anything else stays a call.
 static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
                                     Value position, const HMCContext &ctx) {
   SmallVector<Value> args{position};
@@ -403,9 +413,7 @@ static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
   Block &entry = fn.getFunctionBody().front();
   IRMapping mapping;
   mapping.map(entry.getArguments(), args);
-  for (Operation &op : entry.without_terminator())
-    builder.clone(op, mapping);
-  return mapping.lookupOrDefault(entry.getTerminator()->getOperand(0));
+  return cloneBlockBody(builder, entry, mapping);
 }
 
 /// Attributes of a gradient region with one active argument whose results are
