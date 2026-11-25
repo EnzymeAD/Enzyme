@@ -115,16 +115,16 @@ static std::string inKernelCostClass(const SchemeVariant &v) {
 // not carry: the candidate is not proposed, its price is never estimated from
 // another row, and the first miss of `row` in a compilation warns, naming the
 // row and the command that measures it. Strict mode makes the miss an error.
-static void reportMissingRow(Session &S, const AbstractMatmul &m,
-                             const Twine &what, StringRef row,
-                             StringRef measure) {
+static Error reportMissingRow(Session &S, const AbstractMatmul &m,
+                              const Twine &what, StringRef row,
+                              StringRef measure) {
   if (S.Opts.Model.StrictMode)
-    reportUserError(anchorOf(m), "strict mode: " + what + " has no measured '" +
-                                     row + "' row in " +
-                                     costModelPath(S.CostModel) + "; " +
-                                     measure + " measures it.");
+    return userError(anchorOf(m), "strict mode: " + what +
+                                      " has no measured '" + row + "' row in " +
+                                      costModelPath(S.CostModel) + "; " +
+                                      measure + " measures it.");
   if (!S.Matmul.ReportedRows.insert(row).second)
-    return;
+    return Error::success();
   const Instruction &at = anchorOf(m);
   diagnose(*at.getFunction(), at.getDebugLoc(),
            "matrix product " + Twine(m.id) + ", " + Twine(m.M) + "x" +
@@ -133,6 +133,7 @@ static void reportMissingRow(Session &S, const AbstractMatmul &m,
                "measured '" +
                row + "' row; " + measure + " measures it",
            DS_Warning);
+  return Error::success();
 }
 
 // The command that measures a device's cost model; a rectangular host
@@ -142,29 +143,31 @@ constexpr StringLiteral kCalibrate = "poseidon-calibrate --gpu <id>";
 // Price one in-kernel raise from its measured wmma_inkernel_rel row. A price
 // composed from per-MMA rows would omit the cooperative fill, the
 // shared-memory staging and the accumulator traffic.
-static std::optional<double>
+static Expected<std::optional<double>>
 priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                                   const std::string &cls, double baselinePerMac,
                                   StringRef what) {
   const Options &O = S.Opts;
   double rel = lookupCost(S.CostModel, "wmma_inkernel_rel", cls).value_or(-1.0);
   if (rel > 0.0)
-    return baselinePerMac * rel;
+    return std::optional<double>(baselinePerMac * rel);
 
   if (O.Matmul.InKernelCalibration) {
     if (O.Solver.ApplyRewrites.empty())
-      reportUserError(anchorOf(m),
-                      "-poseidon-inkernel-calibration requires "
-                      "-poseidon-apply-rewrites. Uncalibrated in-kernel "
-                      "classes are proposed at a placeholder price under "
-                      "that flag, and a DP solve must never see one.");
+      return userError(anchorOf(m),
+                       "-poseidon-inkernel-calibration requires "
+                       "-poseidon-apply-rewrites. Uncalibrated in-kernel "
+                       "classes are proposed at a placeholder price under "
+                       "that flag, and a DP solve must never see one.");
     llvm::errs() << "[poseidon] calibration mode: " << what
                  << " has no measured wmma_inkernel_rel," << cls
                  << " row; proposing it at rel=1 to be timed\n";
-    return baselinePerMac;
+    return std::optional<double>(baselinePerMac);
   }
-  reportMissingRow(S, m, what, "wmma_inkernel_rel," + cls, kCalibrate);
-  return std::nullopt;
+  if (Error E =
+          reportMissingRow(S, m, what, "wmma_inkernel_rel," + cls, kCalibrate))
+    return std::move(E);
+  return std::optional<double>();
 }
 
 // The tiles poseidon-calibrate measures, so that a missing row is always one
@@ -179,7 +182,7 @@ static constexpr WmmaTarget kExpectedWmmaTargets[] = {
 
 // The tensor-core tiles the cost model has an MMA row for; a tile without one
 // is not proposed.
-static const SmallVector<WmmaTarget, 16> &
+static Expected<const SmallVector<WmmaTarget, 16> *>
 getAvailableWmmaTargets(Session &S, const AbstractMatmul &m) {
   if (!S.Matmul.AvailableWmmaTargets) {
     SmallVector<WmmaTarget, 16> result;
@@ -190,15 +193,16 @@ getAvailableWmmaTargets(Session &S, const AbstractMatmul &m) {
           std::string(fpKindName(t.inputPrec)) + "_" + fpKindName(t.accPrec);
       if (model.find({opcode, prec}) != model.end())
         result.push_back(t);
-      else
-        reportMissingRow(S, m,
-                         "the wmma " + mmaShapeSuffix(t.M, t.N, t.K) + " " +
-                             prec + " tile",
-                         opcode + "," + prec, kCalibrate);
+      else if (Error E = reportMissingRow(S, m,
+                                          "the wmma " +
+                                              mmaShapeSuffix(t.M, t.N, t.K) +
+                                              " " + prec + " tile",
+                                          opcode + "," + prec, kCalibrate))
+        return std::move(E);
     }
     S.Matmul.AvailableWmmaTargets = std::move(result);
   }
-  return *S.Matmul.AvailableWmmaTargets;
+  return &*S.Matmul.AvailableWmmaTargets;
 }
 
 // Static shared-memory preconditions at proposal time: a module whose kernel
@@ -395,10 +399,14 @@ static MatmulAccuracyQuery accuracyQuery(const AbstractMatmul &m,
   llvm_unreachable("unknown Scheme");
 }
 
-static bool wmmaTileAvailable(Session &S, const AbstractMatmul &m, unsigned M,
-                              unsigned N, unsigned K, FPKind operand,
-                              FPKind accumulator) {
-  return llvm::any_of(getAvailableWmmaTargets(S, m), [&](const WmmaTarget &wt) {
+static Expected<bool> wmmaTileAvailable(Session &S, const AbstractMatmul &m,
+                                        unsigned M, unsigned N, unsigned K,
+                                        FPKind operand, FPKind accumulator) {
+  Expected<const SmallVector<WmmaTarget, 16> *> targets =
+      getAvailableWmmaTargets(S, m);
+  if (!targets)
+    return targets.takeError();
+  return llvm::any_of(**targets, [&](const WmmaTarget &wt) {
     return wt.M == M && wt.N == N && wt.K == K && wt.inputPrec == operand &&
            wt.accPrec == accumulator;
   });
@@ -465,9 +473,9 @@ static std::string inKernelDescription(const SchemeVariant &v, unsigned tileM,
   llvm_unreachable("no in-kernel realization of this scheme");
 }
 
-static void proposeInKernel(const Product &P, const InKernelSite &K,
-                            const SchemeVariant &v, unsigned tileM,
-                            unsigned tileN, unsigned tileK, MatmulUnit &cm) {
+static Error proposeInKernel(const Product &P, const InKernelSite &K,
+                             const SchemeVariant &v, unsigned tileM,
+                             unsigned tileN, unsigned tileK, MatmulUnit &cm) {
   const AbstractMatmul &m = P.m;
   MatmulUnit::Option opt;
   opt.tileM = tileM;
@@ -480,21 +488,31 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
   // Buildability before price: a shape whose tiles do not fit the static
   // shared cap is rejected by ptxas for the whole module.
   if (!inKernelRaiseFits(P.S.Opts, *K.raiseF, m, opt, K.existingShmem, what))
-    return;
+    return Error::success();
   // An uncalibrated class is refused, not estimated.
-  std::optional<double> cost = priceInKernelRaiseFromMeasuredRow(
+  Expected<std::optional<double>> cost = priceInKernelRaiseFromMeasuredRow(
       P.S, m, inKernelCostClass(v), P.baselinePerMac, what);
   if (!cost)
-    return;
-  opt.compCost = *cost;
+    return cost.takeError();
+  if (!*cost)
+    return Error::success();
+  opt.compCost = **cost;
   cm.candidates.push_back(opt);
+  return Error::success();
 }
 
-static void proposeInKernelDirect(const Product &P, const InKernelSite &K,
-                                  MatmulUnit &cm) {
-  for (const WmmaTarget &t : getAvailableWmmaTargets(P.S, P.m))
-    proposeInKernel(P, K, SchemeVariant::direct(t.inputPrec, t.accPrec), t.M,
-                    t.N, t.K, cm);
+static Error proposeInKernelDirect(const Product &P, const InKernelSite &K,
+                                   MatmulUnit &cm) {
+  Expected<const SmallVector<WmmaTarget, 16> *> targets =
+      getAvailableWmmaTargets(P.S, P.m);
+  if (!targets)
+    return targets.takeError();
+  for (const WmmaTarget &t : **targets)
+    if (Error E =
+            proposeInKernel(P, K, SchemeVariant::direct(t.inputPrec, t.accPrec),
+                            t.M, t.N, t.K, cm))
+      return E;
+  return Error::success();
 }
 
 // The split scheme in the kernel: operands are split into N narrow Veltkamp
@@ -519,18 +537,25 @@ static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
     // modular library calls cover their range.
 };
 
-static void proposeInKernelSplit(const Product &P, const InKernelSite &K,
-                                 MatmulUnit &cm) {
+static Error proposeInKernelSplit(const Product &P, const InKernelSite &K,
+                                  MatmulUnit &cm) {
   for (const InKernelSplitVariant &s : kInKernelSplitVariants) {
-    if (!wmmaTileAvailable(P.S, P.m, s.tileM, s.tileN, s.tileK,
-                           s.variant.operand, s.variant.accumulator))
+    Expected<bool> available =
+        wmmaTileAvailable(P.S, P.m, s.tileM, s.tileN, s.tileK,
+                          s.variant.operand, s.variant.accumulator);
+    if (!available)
+      return available.takeError();
+    if (!*available)
       continue;
     // No size gate: the padded fill zero-fills boundary tiles and every slice
     // outside the valid extent, so padding is numerically inert. The one
     // precondition is the static shared cap (N slice buffers per side plus N
     // F32 tiles live at once), a capability limit rather than a price.
-    proposeInKernel(P, K, s.variant, s.tileM, s.tileN, s.tileK, cm);
+    if (Error E =
+            proposeInKernel(P, K, s.variant, s.tileM, s.tileN, s.tileK, cm))
+      return E;
   }
+  return Error::success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -594,10 +619,10 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
 // since the runtime's per-MAC cost depends on M and K but not on the column
 // count, and a square one from the square rows; the shape is the one
 // LibrarySite gives Ozaki-II. A modulus count without its row is not proposed.
-static void proposeLibraryModular(const Product &P, const LibrarySite &L,
-                                  MatmulUnit &cm) {
+static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
+                                   MatmulUnit &cm) {
   if (!L.dispatchable)
-    return;
+    return Error::success();
   const AbstractMatmul &m = P.m;
   // The runtime's INT32 residue sums hold a reduction shorter than
   // kOzakiIIMaxK, at the scale the call runs at and at the one simulated.
@@ -610,7 +635,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                    << "reduction of " << reduction
                    << " is not below the runtime's limit " << kOzakiIIMaxK
                    << '\n';
-    return;
+    return Error::success();
   }
   const std::array<unsigned, 3> &shape =
       L.runShape ? *L.runShape : L.profileShape;
@@ -637,12 +662,13 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
   }
   // One row name for all the moduli of the shape.
   if (!missing.empty())
-    reportMissingRow(P.S, m, "ozaki-ii host dispatch at nm=" + missing,
-                     family + ",nm<nm>" +
-                         (square ? std::string() : "_" + shapeKey),
-                     square ? std::string(kCalibrate)
-                            : std::string(kCalibrate) + " --ozaki-rect " +
-                                  shapeM + "x" + shapeK);
+    return reportMissingRow(
+        P.S, m, "ozaki-ii host dispatch at nm=" + missing,
+        family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey),
+        square ? std::string(kCalibrate)
+               : std::string(kCalibrate) + " --ozaki-rect " + shapeM + "x" +
+                     shapeK);
+  return Error::success();
 }
 
 // The split scheme as __poseidon_tcec_dgemm, which realizes a different rate
@@ -651,10 +677,10 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
 // which has no such runtime, a pin that names it is told why. The runtime
 // repacks operands rather than padding to a square, so no shape ratio is
 // charged.
-static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
-                                MatmulUnit &cm) {
+static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
+                                 MatmulUnit &cm) {
   if (!L.dispatchable)
-    return;
+    return Error::success();
   MatmulUnit::Option opt = libraryOption(
       SchemeVariant::tcec(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
   if (!kHaveTcecDispatch) {
@@ -670,17 +696,16 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
          "this compiler was built without cuMpSGEMM, on which the "
          "error-corrected dispatch runs; configure it with "
          "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>"});
-    return;
+    return Error::success();
   }
   double rel =
       lookupCost(P.S.CostModel, "tcec_dispatch_rel", "fp16tcec").value_or(-1.0);
-  if (rel <= 0.0) {
-    reportMissingRow(P.S, P.m, "tcec host dispatch",
-                     "tcec_dispatch_rel,fp16tcec", kCalibrate);
-    return;
-  }
+  if (rel <= 0.0)
+    return reportMissingRow(P.S, P.m, "tcec host dispatch",
+                            "tcec_dispatch_rel,fp16tcec", kCalibrate);
   opt.compCost = P.baselinePerMac * rel;
   cm.candidates.push_back(opt);
+  return Error::success();
 }
 
 // The direct scheme as __poseidon_direct_dgemm: each FP64 operand is rounded
@@ -704,19 +729,21 @@ static constexpr LibraryDirectVariant kLibraryDirectVariants[] = {
     {SchemeVariant::direct(FPKind::F32, FPKind::F32), 0, 0, 0},
 };
 
-static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
-                                 MatmulUnit &cm) {
+static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
+                                  MatmulUnit &cm) {
   if (!L.dispatchable)
-    return;
+    return Error::success();
   const AbstractMatmul &m = P.m;
   for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
     const std::string cls = schemeFormats(d.variant, '_');
     double rel =
         lookupCost(P.S.CostModel, "direct_dispatch_rel", cls).value_or(-1.0);
     if (rel <= 0.0) {
-      reportMissingRow(
-          P.S, m, Twine(schemeTag(d.variant)) + " " + cls + " host dispatch",
-          "direct_dispatch_rel," + cls, kCalibrate);
+      if (Error E = reportMissingRow(P.S, m,
+                                     Twine(schemeTag(d.variant)) + " " + cls +
+                                         " host dispatch",
+                                     "direct_dispatch_rel," + cls, kCalibrate))
+        return E;
       continue;
     }
     MatmulUnit::Option opt =
@@ -724,6 +751,7 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
     opt.compCost = P.baselinePerMac * rel;
     cm.candidates.push_back(opt);
   }
+  return Error::success();
 }
 
 // The native product (__poseidon_native_dgemm), one cublasDgemm on the real
@@ -731,10 +759,10 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // shape, so a call whose extents are constants of this compile is priced from
 // the row measured at those extents when the model has one; any other from
 // the square row (see LibrarySite).
-static void proposeLibraryNative(const Product &P, const LibrarySite &L,
-                                 MatmulUnit &cm) {
+static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
+                                  MatmulUnit &cm) {
   if (!L.dispatchable)
-    return;
+    return Error::success();
   const AbstractMatmul &m = P.m;
   // Extents of this compile are priced from the row measured at them, a
   // square one also from the square row.
@@ -750,31 +778,32 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                        .value_or(-1.0)
                  : -1.0;
   const bool rectangular = L.runShape && !(M == N && N == K);
-  if (rel <= 0.0 && rectangular) {
-    reportMissingRow(P.S, m, "native-dgemm host dispatch at " + shape,
-                     "ozaki_dispatch_rect_rel," + rectKey,
-                     std::string(kCalibrate) + " --ozaki-rect " + shape);
-    return;
-  }
+  if (rel <= 0.0 && rectangular)
+    return reportMissingRow(P.S, m, "native-dgemm host dispatch at " + shape,
+                            "ozaki_dispatch_rect_rel," + rectKey,
+                            std::string(kCalibrate) + " --ozaki-rect " + shape);
   if (rel <= 0.0)
     rel =
         lookupCost(P.S.CostModel, "ozaki_dispatch_rel", "dgemm").value_or(-1.0);
-  if (rel <= 0.0) {
-    reportMissingRow(P.S, m, "native-dgemm host dispatch",
-                     "ozaki_dispatch_rel,dgemm", kCalibrate);
-    return;
-  }
+  if (rel <= 0.0)
+    return reportMissingRow(P.S, m, "native-dgemm host dispatch",
+                            "ozaki_dispatch_rel,dgemm", kCalibrate);
   MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
   cm.candidates.push_back(opt);
+  return Error::success();
 }
 
-void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
-                              const ProfileMap &scalarProfile,
-                              unsigned sampleLogBits,
-                              SmallVectorImpl<MatmulUnit> &out) {
+Error generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
+                               const ProfileMap &scalarProfile,
+                               unsigned sampleLogBits,
+                               SmallVectorImpl<MatmulUnit> &out) {
   for (const AbstractMatmul &m : matmuls) {
-    std::optional<MatmulProfile> prof = loadProfile(m, scalarProfile);
+    Expected<std::optional<MatmulProfile>> loaded =
+        loadProfile(m, scalarProfile);
+    if (!loaded)
+      return loaded.takeError();
+    std::optional<MatmulProfile> &prof = *loaded;
     if (!prof) {
       if (S.Opts.Diagnostics.Print)
         llvm::errs() << "[poseidon] matmul[" << m.id << "] in "
@@ -794,8 +823,12 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
       // The loop body is one MAC's worth of work and the cost-model rows are
       // reciprocal throughput per op, so this sum is the baseline's cost per
       // MAC (executions = profiled total MACs).
-      for (Instruction *I : m.footprint)
-        baselinePerMac += getInstructionCompCost(S.CostModel, I);
+      for (Instruction *I : m.footprint) {
+        Expected<double> c = instructionCost(S.CostModel, I);
+        if (!c)
+          return c.takeError();
+        baselinePerMac += *c;
+      }
       break;
     case AbstractMatmul::Origin::HostGemmLoopNest: {
       const RuntimeGemmHandle &g = *m.hostGemm;
@@ -805,11 +838,13 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
       // epilogue's fadd amortized over the K-long reduction it closes.
       double bodySum = 0.0, epi = 0.0;
       for (Instruction *I : m.footprint) {
-        double c = getInstructionCompCost(S.CostModel, I);
+        Expected<double> c = instructionCost(S.CostModel, I);
+        if (!c)
+          return c.takeError();
         if (I == g.epilogue)
-          epi += c;
+          epi += *c;
         else
-          bodySum += c;
+          bodySum += *c;
       }
       baselinePerMac = bodySum / (double)R + (m.K ? epi / (double)m.K : 0.0);
       break;
@@ -822,22 +857,30 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     if (m.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
         m.scalarLoop.inKernelRaisable && siteReachedByWholeBlock(S, m)) {
       const InKernelSite K = inKernelSite(S, m);
-      proposeInKernelDirect(P, K, cm);
-      proposeInKernelSplit(P, K, cm);
+      if (Error E = proposeInKernelDirect(P, K, cm))
+        return E;
+      if (Error E = proposeInKernelSplit(P, K, cm))
+        return E;
     }
     if (S.Opts.Matmul.OzakiHostDispatch) {
       const LibrarySite L = librarySite(S, m);
       cm.library = L.note;
-      proposeLibraryModular(P, L, cm);
-      proposeLibrarySplit(P, L, cm);
-      proposeLibraryDirect(P, L, cm);
-      proposeLibraryNative(P, L, cm);
+      if (Error E = proposeLibraryModular(P, L, cm))
+        return E;
+      if (Error E = proposeLibrarySplit(P, L, cm))
+        return E;
+      if (Error E = proposeLibraryDirect(P, L, cm))
+        return E;
+      if (Error E = proposeLibraryNative(P, L, cm))
+        return E;
     }
     SmallVector<MatmulAccuracyQuery> queries;
     for (const MatmulUnit::Option &opt : cm.candidates)
       queries.push_back(accuracyQuery(m, opt));
     SmallVector<MatmulAccuracy> accuracy(queries.size());
-    evaluateMatmulAccuracy(S, m, *prof, sampleLogBits, queries, accuracy);
+    if (Error E = evaluateMatmulAccuracy(S, m, *prof, sampleLogBits, queries,
+                                         accuracy))
+      return E;
     for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
       opt.accuracyCost = a.accuracyCost;
       opt.domainError = a.domainError;
@@ -867,25 +910,21 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
 
     out.push_back(std::move(cm));
   }
+  return Error::success();
 }
 
-void MatmulUnit::apply(Session &S, size_t candidateIndex) {
-  if (candidateIndex >= candidates.size())
-    report_fatal_error("MatmulUnit index out of range");
+Error MatmulUnit::apply(Session &S, size_t candidateIndex) {
+  assert(candidateIndex < candidates.size() &&
+         "the solver names one of the candidates");
   const Option &opt = candidates[candidateIndex];
 
   if (opt.realization == Realization::LibraryCall) {
     assert(library && "a library call is proposed only with its descriptor");
     applyLibraryCall(S, *matmul, *library, opt.variant);
-    return;
+    return Error::success();
   }
-  switch (matmul->origin) {
-  case AbstractMatmul::Origin::HostGemmLoopNest:
-    report_fatal_error("a runtime-shape product was selected with a scheme "
-                       "that has no library-call realization");
-  case AbstractMatmul::Origin::ScalarLoopReduction:
-    break;
-  }
+  assert(matmul->origin == AbstractMatmul::Origin::ScalarLoopReduction &&
+         "a runtime-shape product is proposed only as a library call");
   switch (opt.variant.scheme) {
   case Scheme::Direct:
   case Scheme::Tcec: {
@@ -897,16 +936,16 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
     const uint64_t bytes = enclosingKernelSharedBytes(S, F);
     const uint64_t cap = Target::of(F).maxStaticSharedBytes();
     if (bytes > cap)
-      reportUserError(F, F.getSubprogram(),
-                      "the in-kernel raises selected for the matrix products "
-                      "of " +
-                          F.getName() + " need " + Twine(bytes) +
-                          " B of static shared memory with what their kernel "
-                          "uses, above the " +
-                          Twine(cap) +
-                          " B a kernel may hold; select fewer of them with "
-                          "-poseidon-apply-rewrites.");
-    return;
+      return userError(F, F.getSubprogram(),
+                       "the in-kernel raises selected for the matrix products "
+                       "of " +
+                           F.getName() + " need " + Twine(bytes) +
+                           " B of static shared memory with what their kernel "
+                           "uses, above the " +
+                           Twine(cap) +
+                           " B a kernel may hold; select fewer of them with "
+                           "-poseidon-apply-rewrites.");
+    return Error::success();
   }
   case Scheme::OzakiII:
   case Scheme::Native:

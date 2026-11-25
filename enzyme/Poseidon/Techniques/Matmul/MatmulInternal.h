@@ -194,16 +194,19 @@ struct MatmulProfile {
   uint64_t totalCalls = 0;
 };
 
-// None when the profiling run never executed the product.
-std::optional<MatmulProfile> loadProfile(const AbstractMatmul &m,
-                                         const ProfileMap &scalarProfile);
+// None when the profiling run never executed the product. A multiply of an
+// executed product without its two operand ranges is an error: the profile is
+// not of this program.
+llvm::Expected<std::optional<MatmulProfile>>
+loadProfile(const AbstractMatmul &m, const ProfileMap &scalarProfile);
 
 // The accuracy of each query on the product `m`, all on the same sampled
 // operands, with the domain error read off at kDefaultConfidence.
-void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
-                            const MatmulProfile &prof, unsigned sampleLogBits,
-                            llvm::ArrayRef<MatmulAccuracyQuery> queries,
-                            llvm::MutableArrayRef<MatmulAccuracy> results);
+llvm::Error
+evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
+                       const MatmulProfile &prof, unsigned sampleLogBits,
+                       llvm::ArrayRef<MatmulAccuracyQuery> queries,
+                       llvm::MutableArrayRef<MatmulAccuracy> results);
 
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_INTERNAL_H

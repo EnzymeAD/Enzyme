@@ -348,7 +348,7 @@ public:
     return candidates[idx].accuracyCost;
   }
 
-  void apply(Session &S, size_t candidateIndex);
+  llvm::Error apply(Session &S, size_t candidateIndex);
 
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::M);
@@ -371,10 +371,7 @@ public:
     return dropped;
   }
   std::string choiceText(size_t i) const override;
-  llvm::Error materialize(size_t i) override {
-    apply(session(), i);
-    return llvm::Error::success();
-  }
+  llvm::Error materialize(size_t i) override { return apply(session(), i); }
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {
@@ -387,11 +384,11 @@ std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
 // `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
 // B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
-void generateMatmulCandidates(Session &S,
-                              llvm::ArrayRef<AbstractMatmul> matmuls,
-                              const ProfileMap &scalarProfile,
-                              unsigned sampleLogBits,
-                              llvm::SmallVectorImpl<MatmulUnit> &out);
+llvm::Error generateMatmulCandidates(Session &S,
+                                     llvm::ArrayRef<AbstractMatmul> matmuls,
+                                     const ProfileMap &scalarProfile,
+                                     unsigned sampleLogBits,
+                                     llvm::SmallVectorImpl<MatmulUnit> &out);
 
 // Per matmul, pick the cheapest candidate whose estimated relative domain error
 // is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at

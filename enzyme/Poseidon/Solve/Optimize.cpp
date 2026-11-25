@@ -404,8 +404,9 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
       expansionsRoundedAsWritten(O, F, !st.subgraphs.empty());
   proposeSubgraphCandidates(S, F, profile.header, expansionSafe, st);
 
-  generateMatmulCandidates(S, st.abstractMatmuls, profile.map, sampleLogBits,
-                           st.CMs);
+  if (Error E = generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
+                                         sampleLogBits, st.CMs))
+    return std::move(E);
   st.sealUnits(S);
 
   if (Error E = priceUnlessCached(S, st, profile.path))

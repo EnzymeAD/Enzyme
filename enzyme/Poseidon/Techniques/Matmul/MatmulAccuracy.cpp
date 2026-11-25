@@ -48,13 +48,13 @@ using namespace llvm;
 
 namespace poseidon {
 
-static std::optional<MatmulProfile>
+static Expected<std::optional<MatmulProfile>>
 loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
   const ScalarLoopHandle *h = &m.scalarLoop;
   size_t fmaIdx = requireSlot(h->fma);
   auto fmaIt = profile.find(fmaIdx);
   if (fmaIt == profile.end() || fmaIt->second.exec == 0)
-    return std::nullopt;
+    return std::optional<MatmulProfile>();
   const ProfileInfo &fmaInfo = fmaIt->second;
 
   const ProfileInfo *abInfo = &fmaInfo;
@@ -63,18 +63,27 @@ loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
     size_t fmulIdx = requireSlot(h->fmul);
     auto it = profile.find(fmulIdx);
     if (it == profile.end())
-      report_fatal_error("no scalar profile record for fmul instIdx " +
-                         Twine(fmulIdx));
+      return userError(*h->fmul, "no scalar profile record for fmul instIdx " +
+                                     Twine(fmulIdx));
     abInfo = &it->second;
     abIdx = fmulIdx;
+    // The fma reads the multiply's result, so a run that executed the fma
+    // executed the multiply.
+    if (abInfo->exec == 0)
+      return userError(*h->fmul, "the profile records no execution of "
+                                 "instruction " +
+                                     Twine(fmulIdx) +
+                                     ", the multiply of a matrix product whose "
+                                     "accumulation it records executed; "
+                                     "re-run profile generation.");
   }
   if (abInfo->minOperands.size() < 2)
-    reportUserError(*(h->fmul ? h->fmul : h->fma),
-                    "the profile records " +
-                        Twine((unsigned)abInfo->minOperands.size()) +
-                        " operand range(s) of instruction " + Twine(abIdx) +
-                        ", the multiply of a matrix product, which has two; "
-                        "re-run profile generation.");
+    return userError(*(h->fmul ? h->fmul : h->fma),
+                     "the profile records " +
+                         Twine((unsigned)abInfo->minOperands.size()) +
+                         " operand range(s) of instruction " + Twine(abIdx) +
+                         ", the multiply of a matrix product, which has two; "
+                         "re-run profile generation.");
 
   MatmulProfile out;
   out.a = {abInfo->minOperands[0], abInfo->maxOperands[0], abInfo->exec,
@@ -89,13 +98,13 @@ loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
 // Origin::HostGemmLoopNest: the contraction is spread over R fma sites (the
 // unrolled outer contraction level), so the operand ranges are the union over
 // the members and the execution counts their sum.
-static std::optional<MatmulProfile>
+static Expected<std::optional<MatmulProfile>>
 loadRuntimeShapeProfile(const AbstractMatmul &m, const ProfileMap &profile) {
   const RuntimeGemmHandle &h = *m.hostGemm;
   for (Instruction *fma : h.fmas) {
     auto it = profile.find(requireSlot(fma));
     if (it == profile.end() || it->second.exec == 0)
-      return std::nullopt;
+      return std::optional<MatmulProfile>();
   }
   double aMin = std::numeric_limits<double>::max();
   double aMax = std::numeric_limits<double>::lowest();
@@ -108,12 +117,12 @@ loadRuntimeShapeProfile(const AbstractMatmul &m, const ProfileMap &profile) {
     size_t abIdx = requireSlot(ab);
     auto abIt = profile.find(abIdx);
     if (abIt == profile.end())
-      report_fatal_error(
-          "no scalar profile record for runtime-shape product member " +
-          Twine(r) + " (instIdx " + Twine(abIdx) + ")");
+      return userError(
+          *ab, "no scalar profile record for runtime-shape product member " +
+                   Twine(r) + " (instIdx " + Twine(abIdx) + ")");
     const ProfileInfo &ai = abIt->second;
     if (ai.minOperands.size() < 2)
-      reportUserError(
+      return userError(
           *ab, "the profile records " + Twine((unsigned)ai.minOperands.size()) +
                    " operand range(s) of instruction " + Twine(abIdx) +
                    ", the multiply of a matrix product, which "
@@ -145,8 +154,8 @@ loadRuntimeShapeProfile(const AbstractMatmul &m, const ProfileMap &profile) {
   return out;
 }
 
-std::optional<MatmulProfile> loadProfile(const AbstractMatmul &m,
-                                         const ProfileMap &scalarProfile) {
+Expected<std::optional<MatmulProfile>>
+loadProfile(const AbstractMatmul &m, const ProfileMap &scalarProfile) {
   switch (m.origin) {
   case AbstractMatmul::Origin::ScalarLoopReduction:
     return loadProfileRaise(m, scalarProfile);
@@ -197,8 +206,7 @@ struct CellSampler {
 } // namespace
 
 static CellSampler cellSampler(const CellStat &c, unsigned sampleLogBits) {
-  if (c.count == 0)
-    report_fatal_error("sampleCell: unexpected unprofiled cell");
+  assert(c.count != 0 && "loadProfile returns only an executed product");
   assert(c.min <= c.max && "sampleCell: corrupted profile (min > max)");
   CellSampler s;
   if (c.min == c.max) {
@@ -389,8 +397,10 @@ public:
                  [this](size_t s) { runSample(s); });
   }
 
-  // The error of parts[j], reduced over the samples in their order.
-  SampledError error(size_t j) const {
+  // The error of parts[j], reduced over the samples in their order. No finite
+  // sample is an error at the product: its profiled operands overflow every
+  // candidate.
+  Expected<SampledError> error(size_t j) const {
     SampledError result;
     double sumSampleErr = 0.0;
     unsigned finiteSamples = 0;
@@ -409,8 +419,8 @@ public:
         relSamples.push_back(sampleErr / sampleDen);
     }
     if (finiteSamples == 0)
-      report_fatal_error(Twine(describe(parts[j])) +
-                         ": unexpected all-non-finite samples");
+      return userError(anchorOf(m), Twine(describe(parts[j])) +
+                                        ": unexpected all-non-finite samples");
     result.accuracyCost = sumSampleErr / finiteSamples;
     result.domainError = percentile(relSamples, kDefaultConfidence);
     return result;
@@ -658,10 +668,10 @@ static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
   return r;
 }
 
-void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
-                            const MatmulProfile &prof, unsigned sampleLogBits,
-                            ArrayRef<MatmulAccuracyQuery> queries,
-                            MutableArrayRef<MatmulAccuracy> results) {
+Error evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
+                             const MatmulProfile &prof, unsigned sampleLogBits,
+                             ArrayRef<MatmulAccuracyQuery> queries,
+                             MutableArrayRef<MatmulAccuracy> results) {
   assert(queries.size() == results.size() && "one result per query");
   const Options &O = S.Opts;
   const unsigned numSamples = sampleCount(O);
@@ -686,7 +696,7 @@ void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
     computed.push_back(i);
   }
   if (computed.empty())
-    return;
+    return Error::success();
 
   SmallVector<MatmulAccuracyQuery> parts;
   SmallVector<size_t> partOf;
@@ -700,12 +710,16 @@ void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
   const SampledProducts products(O, m, prof, sampleLogBits, numSamples, parts);
   for (size_t c = 0; c < computed.size(); ++c) {
     const size_t i = computed[c];
-    results[i] = finish(O, prof, queries[i], products.error(partOf[c]));
+    Expected<SampledError> error = products.error(partOf[c]);
+    if (!error)
+      return error.takeError();
+    results[i] = finish(O, prof, queries[i], *error);
     memos[i].store(O, results[i].accuracyCost, results[i].domainError);
   }
   for (size_t i = 0; i < queries.size(); ++i)
     if (sameEntryAs[i])
       results[i] = results[*sameEntryAs[i]];
+  return Error::success();
 }
 
 } // namespace poseidon
