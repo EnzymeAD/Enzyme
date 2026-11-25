@@ -6,8 +6,9 @@ program marks to run as fast as the target allows: algebraic rewrites found by
 Herbie, precision changes, floating-point expansions, and on GPUs matrix
 products raised to tensor cores or emulated with Ozaki-II. It judges every
 candidate on the values a profiling run of the program recorded, with Enzyme
-differentiating the probes. Host code in C and C++, NVIDIA GPUs (CUDA) and AMD
-GPUs (HIP) are optimized alike.
+differentiating the probes. It optimizes host code in C and C++ and GPU code
+in CUDA and HIP; what each target has is listed under
+[How it works](#how-it-works).
 
 Project website: <https://prontolab.github.io/numerics/>
 
@@ -123,6 +124,117 @@ target_compile_options(app PRIVATE
   "SHELL:${POSEIDON_MLLVM} -poseidon-profile-use=${PROFILE_DIR}"
   "SHELL:${POSEIDON_MLLVM} -poseidon-tau=1e-8")
 ```
+
+## How it works
+
+### Targets
+
+| Technique | Host | NVPTX (CUDA) | AMDGPU (HIP) |
+|---|---|---|---|
+| Algebraic rewrites (Herbie) | yes | yes | yes |
+| Precision changes, floating-point expansions | yes | yes | yes |
+| Matrix product raised to tensor cores in the kernel | no | yes | no |
+| Matrix product as a library call: native, Ozaki-II, direct | no | yes | yes, without TF32 |
+| Matrix product as a library call: TCEC (cuMpSGEMM) | no | when built with it | no |
+
+The host has no matrix-product technique. Profiling records host sites with
+the host profiler and device sites with the device profiler, whose probes the
+plugin links into each device module it compiles for profile generation.
+
+### Passes
+
+The plugin adds its passes at five extension points of the new pass manager.
+At PipelineStart, before the inliner can fold a site into its callers, a
+`POSEIDON_OPTIMIZE` host function is outlined as a site, a device function's
+site is handed to the kernels that call it, and the launch stubs of the host
+half of a CUDA or HIP compile are rewritten from the launch manifest (below).
+At OptimizerEarly, in a module with a site, the canonical prefix runs first:
+the start of Enzyme's own pipeline, so that the profile-generate and the
+profile-use compile number a site's instructions alike. The site pass follows
+(profile generation instruments each site; profile use builds its units,
+prices and models them, solves, and rewrites), then the always-inliner, since
+nothing later folds the outlined bodies and the rewritten clones back. At
+OptimizerLast a deferred site, whose body is a derivative Enzyme produces, is
+handled once Enzyme has lowered that request. Under profile generation Enzyme
+then runs once more, by its pipeline name, to lower the derivative request the
+instrumented site emits; in both compiles the function simplification pipeline
+runs again over the kernels that carried the site's marker, which kept its
+arguments in memory until then. The finalizing pass then checks that no derivative request
+is left, links the device profiler, writes the launch manifest, and builds the
+output from the module as written. An LTO link runs the same passes at the
+full-LTO extension points. For `opt`, the pipeline names are `poseidon`,
+`poseidon-late` and `poseidon-finalize`.
+
+The module as written is a copy of the module taken at PipelineStart in a
+profile-use compile with a site. The canonical prefix, the outlined site bodies
+and, on a GPU, math kept out of line change the code of every function of the
+module, not only of those a rewrite reached. The copy is compiled with the
+default pipeline as a compile without a profile, and only the functions a
+rewrite reached are taken from the rewritten module into it, so every other
+function is the code a compile without Poseidon emits. There is no such copy
+under profile generation, in the host half of a GPU compile, in a joint solve
+(`-poseidon-joint-dp`), or at an LTO link.
+
+### Device and host halves
+
+clang compiles a CUDA or HIP source in two processes, the device half first.
+Where the host half has to change a kernel launch (under profile generation, to
+launch a profiled kernel with the shadows of its pointer arguments; under
+profile use, to replace a matrix product's launch with a library call), the
+device half writes a launch manifest for the translation unit into the cache
+directory, and the host half reads it. Both halves therefore run on one
+machine and see the same cache directory.
+
+### The cache directory
+
+`-poseidon-cache=<dir>`, by default `./.poseidon` in the working directory of
+the compile, holds Herbie's answers, each site's solved table, the
+matrix-accuracy estimates, and the launch manifests. Every entry but a manifest
+is filed under a digest of what it was computed from, so that a changed input
+misses it. A compile thus reads files that are not on its command line, the
+profile among them: a compiler cache such as ccache, which keys an object by
+its command line and source, can serve an object compiled against another
+profile, and a distributed build runs the compile where neither the cache
+directory nor the manifest of the device half is. Poseidon's compiles are
+therefore run without either.
+
+### Environment
+
+| Variable | Read by | Meaning |
+|---|---|---|
+| `POSEIDON_PROFILE_DIR` | profiler runtime, `poseidon-probe` | Where a profiling run writes its profiles and `metric.txt`; default `./poseidon.profile` |
+| `POSEIDON_PROFILE_HEAP_MB` | device profiler | Device heap for the profiled kernels' reverse passes; default 4096 |
+| `POSEIDON_PROBE` | profiler runtime | `0` declines the condition numbers of a declared metric; `child` marks a run of the measurement (set by `poseidon-probe`) |
+| `POSEIDON_PROBE_LADDER` | profiler runtime, `poseidon-probe` | The relative perturbations of the measurement; default `1e-8,1e-6,1e-4` |
+| `POSEIDON_PROBE_SITE`, `POSEIDON_PROBE_EPS`, `POSEIDON_PROBE_SITES` | profiler runtime | Set by `poseidon-probe`: the site a run perturbs and by how much, and the file a profiling run lists its sites in |
+| `POSEIDON_COST_MODEL` | plugin | The cost model when no `-poseidon-cost-model` names one |
+| `XDG_CACHE_HOME`, `HOME` | plugin, `poseidon-calibrate` | The user cache of cost models, `$XDG_CACHE_HOME/poseidon` or `~/.cache/poseidon` |
+| `POSEIDON_PLUGIN`, `ENZYME_PLUGIN` | `poseidon-clang` | The plugins to load in place of those of the build |
+| `POSEIDON_ECHO` | `poseidon-clang` | Prints the clang command it runs |
+| `HIP_PATH`, `ROCM_PATH` | `poseidon-clang` | The ROCm installation of a HIP compile without `--hip-path` or `--rocm-path` |
+| `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` | `poseidon-calibrate` | The GPU to measure without `--gpu` |
+| `TMPDIR` | `poseidon-probe` | Where the runs of the measurement keep their scratch directories; default `/tmp` |
+
+### File formats
+
+| File | Written by | Read by | Specified in |
+|---|---|---|---|
+| Profile, `<site>.fpprofile` and `metric.txt` | profiler runtime; `poseidon-probe` adds the condition number | plugin | `runtime/fpprofiler/FPProfileName.h` |
+| Cost model, `cm_<arch>_<device>.csv` and its Herbie platform | `poseidon-calibrate` | plugin | `tools/calibrate/README.md` |
+| Explanation, `<function>.explain.json` | plugin (`-poseidon-explain`) | `poseidon-explain` | `Solve/Explain.h` |
+| Launch manifest | device half of a GPU compile | host half | `Sites/LaunchDescriptors.h` |
+| Herbie answer, in the cache directory | plugin | plugin | `Core/HerbieRun.cpp` |
+| Solved table (DP), in the cache directory | plugin | plugin | `Solve/Solvers.cpp`, `Core/CacheKey.h` |
+
+### Platform
+
+Poseidon is built and tested on Linux. Profiling host code links a library
+that replaces `malloc` and its family for the whole process, to know the
+extent of every allocation a site's pointer reaches; it calls glibc's own
+allocator underneath, so it takes glibc. A profiling run that declared a
+metric names the command to measure it from `/proc/self/cmdline`, and
+`poseidon-probe` runs the program with POSIX `fork` and `exec`. The GPU
+runtimes and profilers take CUDA or ROCm; a HIP build is for one processor.
 
 ## License
 
