@@ -9,6 +9,7 @@
 #include "Staging.h"
 #include "Expansion.h"
 #include "Pass/Session.h"
+#include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
 
@@ -27,6 +28,8 @@
 #include "llvm/IR/ReplaceConstant.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <optional>
 
 using namespace llvm;
 
@@ -47,6 +50,120 @@ static SmallVector<Value *, 4> collectSharedCasts(GlobalVariable &G,
     }
   }
   return casts;
+}
+
+namespace {
+
+// A site whose body Proxy is solved in F, Proxy itself or a pricing clone of
+// it, and the functions that can run in the same launch: those that make the
+// site call, those that call them, and everything any of them or F calls. The
+// body the site was cut from and the site a clone copies never run with F.
+class SiteLaunch {
+public:
+  SiteLaunch(const Session &S, const Function &F, const Function &Proxy);
+
+  // Narrowing a shared buffer changes the layout every access to it in the
+  // launch reads, and the narrowings rewrite F's accesses alone. So G may be
+  // narrowed only if F reaches it through a generic pointer and no other
+  // function of the launch reads or writes it, except by handing it to the
+  // site.
+  bool onlySiteAccesses(const GlobalVariable &G) const;
+
+private:
+  // Whether I hands what it is given to the site: a call of a site function,
+  // or the marker call naming one.
+  bool callsSite(const Instruction &I) const;
+
+  const Function &F;
+  SmallPtrSet<const Function *, 4> site;
+  SmallPtrSet<const Function *, 16> mates;
+};
+
+} // namespace
+
+SiteLaunch::SiteLaunch(const Session &S, const Function &F,
+                       const Function &Proxy)
+    : F(F) {
+  site.insert(&F);
+  site.insert(&Proxy);
+  if (const Function *source = siteOriginOf(S, Proxy))
+    site.insert(source);
+
+  SmallVector<const Function *, 16> callers;
+  auto addCallersOf = [&](const Function &Callee) {
+    SmallVector<const User *, 8> users(Callee.users());
+    SmallPtrSet<const User *, 16> seen;
+    while (!users.empty()) {
+      const User *U = users.pop_back_val();
+      if (!seen.insert(U).second)
+        continue;
+      if (auto *I = dyn_cast<Instruction>(U)) {
+        const Function *Fn = I->getFunction();
+        if (!site.contains(Fn) && mates.insert(Fn).second)
+          callers.push_back(Fn);
+      } else if (isa<Constant>(U)) {
+        users.append(U->user_begin(), U->user_end());
+      }
+    }
+  };
+  for (const Function *Fn : site)
+    addCallersOf(*Fn);
+  for (size_t i = 0; i < callers.size(); ++i)
+    addCallersOf(*callers[i]);
+
+  SmallVector<const Function *, 16> todo(callers.begin(), callers.end());
+  todo.push_back(&F);
+  while (!todo.empty()) {
+    const Function *Fn = todo.pop_back_val();
+    for (const Instruction &I : instructions(*Fn))
+      if (auto *CB = dyn_cast<CallBase>(&I))
+        if (const Function *Callee = CB->getCalledFunction();
+            Callee && !Callee->isDeclaration() && !site.contains(Callee) &&
+            mates.insert(Callee).second)
+          todo.push_back(Callee);
+  }
+}
+
+bool SiteLaunch::callsSite(const Instruction &I) const {
+  auto *CB = dyn_cast<CallBase>(&I);
+  const Function *Callee = CB ? CB->getCalledFunction() : nullptr;
+  if (!Callee)
+    return false;
+  if (site.contains(Callee))
+    return true;
+  return isMarkerCall(Callee->getName()) &&
+         any_of(CB->args(), [&](const Use &A) {
+           return site.contains(dyn_cast<Function>(A->stripPointerCasts()));
+         });
+}
+
+bool SiteLaunch::onlySiteAccesses(const GlobalVariable &G) const {
+  // Each use, with whether it reaches G through an addrspacecast.
+  SmallVector<std::pair<const User *, bool>, 16> uses;
+  for (const User *U : G.users())
+    uses.push_back({U, false});
+  SmallPtrSet<const User *, 16> seen;
+  while (!uses.empty()) {
+    auto [U, generic] = uses.pop_back_val();
+    if (!seen.insert(U).second)
+      continue;
+    if (auto *I = dyn_cast<Instruction>(U)) {
+      const Function *Fn = I->getFunction();
+      if (Fn == &F) {
+        if (!generic && !isa<AddrSpaceCastInst>(I))
+          return false;
+      } else if (mates.contains(Fn) && !callsSite(*I)) {
+        return false;
+      }
+      continue;
+    }
+    auto *CE = dyn_cast<ConstantExpr>(U);
+    const bool viaCast =
+        generic || (CE && CE->getOpcode() == Instruction::AddrSpaceCast);
+    for (const User *CU : U->users())
+      uses.push_back({CU, viaCast});
+  }
+  return true;
 }
 
 // Stores `val` at `p` as the {hi, lo} float pair of the df64 layout: hi at
@@ -110,8 +227,9 @@ static void narrowStoreToPair(StoreInst *S) {
 // stored once at the staging store, hi at +0 and lo at +4 of the 8-byte slot,
 // each Dekker split turned into a pair load) when every staged load is read by
 // one Dekker split.
-static bool narrowGlobalStaging(const Options &O, Function &F, bool ds,
-                                bool announce) {
+static bool narrowGlobalStaging(const Session &S, const SiteLaunch &launch,
+                                Function &F, bool ds, bool announce) {
+  const Options &O = S.Opts;
   Module *M = F.getParent();
   Type *DoubleTy = Type::getDoubleTy(M->getContext());
   Type *I8Ty = Type::getInt8Ty(M->getContext());
@@ -251,6 +369,12 @@ static bool narrowGlobalStaging(const Options &O, Function &F, bool ds,
                    << '\n';
     if (bail || (loads.empty() && stores.empty() && memcpys.empty()))
       continue;
+    if (!launch.onlySiteAccesses(G)) {
+      if (trace)
+        llvm::errs() << "[narrow] bail: @" << G.getName()
+                     << " is read or written beside the site in its launch\n";
+      continue;
+    }
 
     if (!ds) {
       for (auto *EG : elemGEPs) {
@@ -331,9 +455,10 @@ static bool narrowGlobalStaging(const Options &O, Function &F, bool ds,
 
 //===----------------------------------------------------------------------===//
 // Narrowing of addrspace(3) staging buffers that reach the rewritten function
-// as pointer parameters. The FP32 transform halves every byte offset from the
-// base and loads and stores float. The DS transform keeps the layout, a double
-// slot holding the {hi, lo} pair, and moves only the accesses.
+// as pointer parameters or through views of any shape. The FP32 transform
+// halves every byte offset from the base and loads and stores float. The DS
+// transform keeps the layout, a double slot holding the {hi, lo} pair, and
+// moves only the accesses.
 //===----------------------------------------------------------------------===//
 namespace {
 
@@ -349,50 +474,28 @@ struct ParamStagedAccess {
 
 } // namespace
 
-static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
-                       bool dsMode, ParamStagedAccess &out);
-
-// Resolve G to parameters of F and walk the pointer graph. False if any access
-// is outside the modelled shapes (the buffer is then left alone).
-static bool collectParamStaged(const Session &S, Function &F, Function *Proxy,
-                               GlobalVariable &G, bool dsMode,
-                               ParamStagedAccess &out) {
+// The parameters of F the site binds to G, in `argIdx`.
+static void stagedParams(const Session &S, Function &F, Function *Proxy,
+                         GlobalVariable &G, SmallVectorImpl<unsigned> &argIdx) {
   SmallVector<Value *, 4> casts;
-  for (User *U : G.users()) {
+  for (User *U : G.users())
     if (auto *CE = dyn_cast<ConstantExpr>(U)) {
-      if (CE->getOpcode() == Instruction::AddrSpaceCast) {
+      if (CE->getOpcode() == Instruction::AddrSpaceCast)
         casts.push_back(CE);
-        continue;
-      }
     } else if (isa<AddrSpaceCastInst>(U)) {
       casts.push_back(U);
-      continue;
     }
-    // Any other direct user of the global (a GEP in the kernel, say) means
-    // accesses exist that this arm would not rewrite: leave the buffer alone.
-    return false;
-  }
   if (casts.empty())
-    return false;
-  // Every use of every cast must be a call (the buffer is handed to a callee)
-  // or an instruction inside F; a GEP in a third function would be missed.
-  for (Value *C : casts)
-    for (User *CU : C->users()) {
-      if (isa<CallBase>(CU))
-        continue;
-      auto *I = dyn_cast<Instruction>(CU);
-      if (!I || I->getFunction() != &F)
-        return false;
-    }
+    return;
 
   for (unsigned i = 0; i < F.arg_size(); ++i) {
     if (!F.getArg(i)->getType()->isPointerTy())
       continue;
     if (Value *SA = siteArg(S, Proxy, i))
       if (llvm::is_contained(casts, SA))
-        out.argIdx.push_back(i);
+        argIdx.push_back(i);
   }
-  if (out.argIdx.empty())
+  if (argIdx.empty())
     for (Value *C : casts)
       for (User *CU : C->users()) {
         auto *CB = dyn_cast<CallBase>(CU);
@@ -401,56 +504,41 @@ static bool collectParamStaged(const Session &S, Function &F, Function *Proxy,
         for (unsigned i = 0; i < CB->arg_size() && i < F.arg_size(); ++i)
           if (CB->getArgOperand(i) == C &&
               F.getArg(i)->getType()->isPointerTy() &&
-              !llvm::is_contained(out.argIdx, i))
-            out.argIdx.push_back(i);
+              !llvm::is_contained(argIdx, i))
+            argIdx.push_back(i);
       }
-  if (out.argIdx.empty())
-    return false;
-
-  SmallVector<Value *, 4> roots;
-  for (unsigned i : out.argIdx)
-    roots.push_back(F.getArg(i));
-  return walkStaged(S.Opts, F, roots, dsMode, out);
 }
 
-// The buffer F accesses directly: each addrspacecast of G in F is a root once
-// the constant expressions F reaches G through (offset views into the buffer)
-// are instructions. Shared memory lives for one launch, so only an access in a
-// function F calls could meet F's; one of those, or an access of G that is not
-// through a generic pointer, leaves the buffer alone.
-static bool collectGlobalStaged(const Options &O, Function &F,
-                                GlobalVariable &G, bool dsMode,
-                                ParamStagedAccess &out) {
-  convertUsersOfConstantsToInstructions({&G}, &F,
-                                        /*RemoveDeadConstants=*/false);
-  SetVector<Function *> callees;
-  callees.insert(&F);
-  for (size_t f = 0; f < callees.size(); ++f)
-    for (Instruction &I : instructions(*callees[f]))
-      if (auto *CB = dyn_cast<CallBase>(&I))
-        if (Function *callee = CB->getCalledFunction();
-            callee && !callee->isDeclaration())
-          callees.insert(callee);
-  SmallVector<Value *, 8> roots;
+// The instructions of F that use G, through constant expressions or not.
+static SmallVector<Instruction *, 8> usersIn(Function &F, GlobalVariable &G) {
+  SmallVector<Instruction *, 8> found;
   SmallVector<User *, 8> users(G.users());
-  SmallPtrSet<User *, 16> seenUsers;
+  SmallPtrSet<User *, 16> seen;
   while (!users.empty()) {
     User *U = users.pop_back_val();
-    if (!seenUsers.insert(U).second)
+    if (!seen.insert(U).second)
       continue;
     if (auto *I = dyn_cast<Instruction>(U)) {
-      if (I->getFunction() == &F) {
-        if (!isa<AddrSpaceCastInst>(I))
-          return false;
-        roots.push_back(I);
-      } else if (callees.contains(I->getFunction())) {
-        return false;
-      }
+      if (I->getFunction() == &F)
+        found.push_back(I);
     } else if (isa<Constant>(U)) {
       users.append(U->user_begin(), U->user_end());
     }
   }
-  return !roots.empty() && walkStaged(O, F, roots, dsMode, out);
+  return found;
+}
+
+// F's own casts of G, once the constant expressions F reaches G through
+// (offset views into the buffer) are instructions; none when F does not reach
+// G itself.
+static void stagedCasts(Function &F, GlobalVariable &G,
+                        SmallVectorImpl<Value *> &roots) {
+  if (usersIn(F, G).empty())
+    return;
+  convertUsersOfConstantsToInstructions({&G}, &F,
+                                        /*RemoveDeadConstants=*/false);
+  for (Instruction *I : usersIn(F, G))
+    roots.push_back(I);
 }
 
 static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
@@ -521,15 +609,13 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
           return false;
         }
         // A load the expansion converted once per use it read the value at
-        // has one split per use; only the multiview narrowing takes more
-        // than one.
+        // has one split per use.
         SmallVector<DekkerSplit, 2> splits;
         const bool split = matchDekkerSplits(L, /*allowFCmp=*/true, splits);
         const bool isSplit = split && splits.size() == 1;
         if (dsMode) {
           // DS wants Dekker splits; anything else is a foreign reader.
-          if (!isSplit &&
-              !(O.Materialization.NarrowMultiviewStaging && split)) {
+          if (!split) {
             if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: non-split reader of "
                               "staged load: "
@@ -579,19 +665,30 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
   return !(out.loads.empty() && out.stores.empty());
 }
 
-// The staged accesses of G that a parameter arm rewrites: through a parameter
-// of F, or else, under -poseidon-narrow-multiview-staging, in the site clone
-// directly.
-static bool collectStaged(Session &S, Function &F, Function *Proxy,
-                          GlobalVariable &G, bool dsMode,
+// The staged accesses of G that a parameter arm rewrites: through the
+// parameters of F the site binds to G and through F's own casts of G, in
+// views of any shape. False if any access is outside the modelled shapes (the
+// buffer is then left alone).
+static bool collectStaged(Session &S, const SiteLaunch &launch, Function &F,
+                          Function *Proxy, GlobalVariable &G, bool dsMode,
                           ParamStagedAccess &acc) {
   const Options &O = S.Opts;
-  if (!collectParamStaged(S, F, Proxy, G, dsMode, acc)) {
-    acc = ParamStagedAccess();
-    if (!O.Materialization.NarrowMultiviewStaging || !isSiteClone(S, Proxy) ||
-        !collectGlobalStaged(O, F, G, dsMode, acc))
-      return false;
+  // The site's caller values are known for a registered site alone.
+  if (!isSiteClone(S, Proxy))
+    return false;
+  if (!launch.onlySiteAccesses(G)) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[narrow-param] bail: @" << G.getName()
+                   << " is read or written beside the site in its launch\n";
+    return false;
   }
+  stagedParams(S, F, Proxy, G, acc.argIdx);
+  SmallVector<Value *, 8> roots;
+  for (unsigned i : acc.argIdx)
+    roots.push_back(F.getArg(i));
+  stagedCasts(F, G, roots);
+  if (roots.empty() || !walkStaged(O, F, roots, dsMode, acc))
+    return false;
   if (O.Diagnostics.Print) {
     llvm::errs() << "[narrow-param " << (dsMode ? "df64" : "fp32") << "] G=@"
                  << G.getName() << " args=";
@@ -615,11 +712,14 @@ static bool narrowParamStaging(Session &S, Function &F, Function &Proxy,
   bool anyChange = false;
 
   const Target &target = Target::of(*M);
+  std::optional<SiteLaunch> launch;
   for (GlobalVariable &G : M->globals()) {
     if (!target.isShared(G))
       continue;
+    if (!launch)
+      launch.emplace(S, F, Proxy);
     ParamStagedAccess acc;
-    if (!collectStaged(S, F, &Proxy, G, ds, acc))
+    if (!collectStaged(S, *launch, F, &Proxy, G, ds, acc))
       continue;
 
     if (ds) {
@@ -688,27 +788,26 @@ bool narrowSharedStagingParamDS(Session &S, Function &F, Function &Proxy,
 bool applyStagingNarrowing(Session &S, Function &F, bool announce,
                            ParamArm param, Function &paramProxy) {
   const Options &O = S.Opts;
-  bool changed = narrowGlobalStaging(O, F, /*ds=*/false, announce);
+  const SiteLaunch launch(S, F, paramProxy);
+  bool changed = narrowGlobalStaging(S, launch, F, /*ds=*/false, announce);
   if (changed && announce && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] applied shared-staging narrowing in "
                  << F.getName() << '\n';
-  if (O.Materialization.NarrowParamStaging) {
-    if (param != ParamArm::DS &&
-        narrowParamStaging(S, F, paramProxy, /*ds=*/false, announce)) {
-      changed = true;
-      if (announce && O.Diagnostics.Print)
-        llvm::errs() << "[poseidon] applied param-staged shared narrowing in "
-                     << F.getName() << '\n';
-    }
-    if (param != ParamArm::FP32 &&
-        narrowParamStaging(S, F, paramProxy, /*ds=*/true, announce)) {
-      changed = true;
-      if (announce && O.Diagnostics.Print)
-        llvm::errs() << "[poseidon] applied param-staged df64 narrowing in "
-                     << F.getName() << '\n';
-    }
+  if (param != ParamArm::DS &&
+      narrowParamStaging(S, F, paramProxy, /*ds=*/false, announce)) {
+    changed = true;
+    if (announce && O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] applied param-staged shared narrowing in "
+                   << F.getName() << '\n';
   }
-  if (narrowGlobalStaging(O, F, /*ds=*/true, announce)) {
+  if (param != ParamArm::FP32 &&
+      narrowParamStaging(S, F, paramProxy, /*ds=*/true, announce)) {
+    changed = true;
+    if (announce && O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] applied param-staged df64 narrowing in "
+                   << F.getName() << '\n';
+  }
+  if (narrowGlobalStaging(S, launch, F, /*ds=*/true, announce)) {
     changed = true;
     if (announce && O.Diagnostics.Print)
       llvm::errs() << "[poseidon] applied shared-staging df64 narrowing in "

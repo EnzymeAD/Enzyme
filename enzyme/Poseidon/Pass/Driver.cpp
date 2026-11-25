@@ -168,10 +168,6 @@ static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
   }
   warn(CI, Twine("no profile at ") + site.path + ": " + cause +
                "; leaving the site unchanged");
-  llvm::errs() << "[poseidon] " << body.getName()
-               << ": the profiled program did not contain this site (no "
-                  "profile at "
-               << site.path << "); left unchanged\n";
   explainUnprofiled(S, clone, tau, siteTarget, "unprofiled", cause, site.path);
 }
 

@@ -11,6 +11,7 @@
 #include "Model/FPCore.h"
 #include "Optimize.h"
 #include "Sites/Canonicalize.h"
+#include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
 
@@ -84,14 +85,13 @@ void buildSubgraphs(
     const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     SmallVectorImpl<Subgraph> &subgraphs) {
-  // Under loose coverage an operation the run never executed is left as
-  // written, as an unexecuted matrix product is: the profile gives it no range,
-  // which would leave its whole subgraph unpriced. What an executed operation
-  // reads was computed on the way to it, so an unexecuted one only ever ends a
-  // subgraph as the user of its outputs.
+  // An operation the run never executed is left as written, as an unexecuted
+  // matrix product is: the profile gives it no range, which would leave its
+  // whole subgraph unpriced. What an executed operation reads was computed on
+  // the way to it, so an unexecuted one only ever ends a subgraph as the user
+  // of its outputs.
   auto inSubgraph = [&](const Value &V) {
-    return isOptimizable(V) && (!O.Profiling.LooseCoverage ||
-                                executed(cast<Instruction>(V), profileMap));
+    return isOptimizable(V) && executed(cast<Instruction>(V), profileMap);
   };
   SmallVector<const Instruction *, 8> unexecuted;
   SmallPtrSet<Instruction *, 32> reductionFMAs;
@@ -241,13 +241,8 @@ void attachProfile(
       if (!tryReadProfIdxMetadata(op, idx))
         continue;
       auto it = profileMap.find(idx);
-      if (it == profileMap.end())
-        // Under loose coverage buildSubgraphs left the operation out.
-        reportUserError(*op, "the profile does not cover this operation: "
-                             "the profiling run never executed it. "
-                             "Profile an input that runs it, or pass "
-                             "-poseidon-loose-coverage to leave it as "
-                             "written.");
+      assert(it != profileMap.end() &&
+             "an operation without a profile record is in no subgraph");
       const auto &profileInfo = it->second;
 
       auto node = valueToNodeMap[op];
@@ -451,6 +446,31 @@ static const Value *stagingObjectOf(const Value *Ptr) {
   return nullptr;
 }
 
+// The objects `objectOf` gives for the pointers a subgraph reads through the
+// loads feeding it and writes through the stores of its outputs.
+static SmallPtrSet<const Value *, 4>
+touchedObjects(const Subgraph &subgraph,
+               function_ref<const Value *(const Value *)> objectOf) {
+  SmallPtrSet<const Value *, 4> touched;
+  auto add = [&](const Value *Ptr) {
+    if (const Value *O = objectOf(Ptr))
+      touched.insert(O);
+  };
+  for (Value *In : subgraph.inputs)
+    if (auto *LI = dyn_cast<LoadInst>(In))
+      add(LI->getPointerOperand());
+  for (Instruction *Op : subgraph.operations)
+    for (Value *V : Op->operands())
+      if (auto *LI = dyn_cast<LoadInst>(V))
+        add(LI->getPointerOperand());
+  for (Instruction *Out : subgraph.outputs)
+    for (User *U : Out->users())
+      if (auto *SI = dyn_cast<StoreInst>(U))
+        if (SI->getValueOperand() == Out)
+          add(SI->getPointerOperand());
+  return touched;
+}
+
 // Merges every group of subgraphs that touch a common staging buffer (a
 // pointer argument or an addrspace(3) global reached by a load feeding the
 // subgraph or a store consuming it) into one unit, so the per-unit tier is the
@@ -461,25 +481,9 @@ static void mergeSharedStagingSubgraphs(const Options &O,
   if (subgraphs.size() < 2)
     return;
 
-  SmallVector<SmallPtrSet<const Value *, 4>, 8> touched(subgraphs.size());
-  for (size_t i = 0; i < subgraphs.size(); ++i) {
-    auto add = [&](const Value *Ptr) {
-      if (const Value *O = stagingObjectOf(Ptr))
-        touched[i].insert(O);
-    };
-    for (Value *In : subgraphs[i].inputs)
-      if (auto *LI = dyn_cast<LoadInst>(In))
-        add(LI->getPointerOperand());
-    for (Instruction *Op : subgraphs[i].operations)
-      for (Value *V : Op->operands())
-        if (auto *LI = dyn_cast<LoadInst>(V))
-          add(LI->getPointerOperand());
-    for (Instruction *Out : subgraphs[i].outputs)
-      for (User *U : Out->users())
-        if (auto *SI = dyn_cast<StoreInst>(U))
-          if (SI->getValueOperand() == Out)
-            add(SI->getPointerOperand());
-  }
+  SmallVector<SmallPtrSet<const Value *, 4>, 8> touched;
+  for (const Subgraph &subgraph : subgraphs)
+    touched.push_back(touchedObjects(subgraph, stagingObjectOf));
 
   SmallVector<unsigned, 8> parent(subgraphs.size());
   for (unsigned i = 0; i < parent.size(); ++i)
@@ -551,6 +555,39 @@ static void mergeSharedStagingSubgraphs(const Options &O,
   subgraphs.clear();
   for (auto &M : merged)
     subgraphs.push_back(std::move(M));
+}
+
+void hintSharedStaging(const Session &S, Function &F,
+                       ArrayRef<Subgraph> subgraphs) {
+  // The addrspace(3) global a pointer reaches: directly, or through the
+  // parameter of F the site binds to it.
+  auto sharedBufferOf = [&](const Value *Ptr) -> const Value * {
+    const Value *Obj = getUnderlyingObject(Ptr);
+    if (auto *A = dyn_cast_or_null<Argument>(Obj))
+      if (Value *SA = siteArg(S, &F, A->getArgNo()))
+        Obj = getUnderlyingObject(SA->stripPointerCasts());
+    auto *GV = dyn_cast_or_null<GlobalVariable>(Obj);
+    return GV && Target::of(*GV->getParent()).isShared(*GV) ? GV : nullptr;
+  };
+  MapVector<const Value *, unsigned> units;
+  for (const Subgraph &subgraph : subgraphs)
+    for (const Value *G : touchedObjects(subgraph, sharedBufferOf))
+      ++units[G];
+  std::string shared;
+  raw_string_ostream os(shared);
+  ListSeparator sep;
+  for (const auto &[G, n] : units)
+    if (n > 1)
+      os << sep << '@' << G->getName() << " (" << n << " units)";
+  if (shared.empty())
+    return;
+  llvm::errs() << "[poseidon] " << F.getName()
+               << ": more than one optimization unit reads or writes the "
+                  "shared buffer(s) "
+               << shared
+               << "; a precision change narrows such a buffer only when all "
+                  "its units pick one tier, which "
+                  "-poseidon-merge-shared-staging makes them do\n";
 }
 
 static void splitSubgraphs(const Options &O,

@@ -371,6 +371,8 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
 
   attachProfile(O, profile.map, st.valueToNodeMap, st.subgraphs);
   shapeSubgraphs(O, F, st.subgraphs);
+  if (O.Candidates.EnablePT && !O.Candidates.MergeSharedStaging)
+    hintSharedStaging(S, F, st.subgraphs);
 
   if (st.subgraphs.empty() && st.abstractMatmuls.empty())
     return false;

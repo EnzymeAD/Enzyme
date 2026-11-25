@@ -264,7 +264,7 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
       // declines until then. It runs here so that foldDSPairRoundtrip sees the
       // join/split pair it cancels. A pricing clone is not a registered site,
       // and the narrowing declines on it.
-      if (nComp == 2 && F && S.Opts.Materialization.NarrowParamStaging &&
+      if (nComp == 2 && F &&
           narrowSharedStagingParamDS(S, *F, *F, /*announce=*/!VMap))
         foldDSPairRoundtrip(*F, /*foldedLimbs=*/nullptr,
                             S.Opts.Diagnostics.Print);
@@ -554,6 +554,13 @@ static void setUnifiedAccuracyCost(
     }
   }
   CS.candidates = std::move(newCandidates);
+}
+
+// Whether an operation is priced at its own measured frequency. A merged unit
+// can span a loop body and code that runs once per thread, which one
+// execution count misprices, so merging shared-staging subgraphs implies it.
+static bool freqWeightedPricing(const Options &O) {
+  return O.Model.FreqWeightedPricing || O.Candidates.MergeSharedStaging;
 }
 
 namespace {
@@ -859,7 +866,7 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
       bodyDepth = std::max(bodyDepth, cloneLI->getLoopDepth(I->getParent()));
 
   const bool freqWeighted =
-      O.Model.FreqWeightedPricing && subgraph.depthExec.size() > 1;
+      freqWeightedPricing(O) && subgraph.depthExec.size() > 1;
   double cost = 0.0;
   for (Instruction *I : coneInsts) {
     auto [price, fresh] = prices.try_emplace(I);
@@ -1002,7 +1009,7 @@ void proposePrecisionCandidates(
   subgraph.opExec.clear();
   subgraph.depthExec.clear();
   subgraph.execNormalizer = o0Exec;
-  if (O.Model.FreqWeightedPricing) {
+  if (freqWeightedPricing(O)) {
     DominatorTree freqDT(F);
     LoopInfo freqLI(freqDT);
     auto note = [&](Instruction *I) {

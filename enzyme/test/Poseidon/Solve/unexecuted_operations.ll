@@ -4,16 +4,14 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-tau=1e-4 -pass-remarks=poseidon -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-loose-coverage -poseidon-cache=%t/loose -o %t/loose.ll 2>&1 | FileCheck --check-prefix=LOOSE %s
+; RUN: %{opt} -poseidon-cache=%t/loose -o %t/loose.ll 2>&1 | FileCheck --check-prefix=LOOSE %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/loose.ll
-; RUN: not %{opt} -poseidon-cache=%t/strict -o /dev/null 2>&1 | FileCheck --check-prefix=STRICT %s
 
 ; The profiling run took only the scalar branch, so the two operations of the
-; matrix branch have no profile record. With -poseidon-loose-coverage they are
-; left as written, as an unexecuted matrix product is, with a note naming their
-; source line, and the subgraph of the executed operations around them ends at
-; them: priced from the profile alone, it is rewritten. Without the flag such
-; an operation is an error, as for a matrix product.
+; matrix branch have no profile record. They are left as written, as an
+; unexecuted matrix product is, with a note naming their source line, and the
+; subgraph of the executed operations around them ends at them: priced from the
+; profile alone, it is rewritten.
 ;
 ; Profile: this module through the host profiler, driven by
 ;   for (int i = 0; i < 64; ++i) {
@@ -90,4 +88,3 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; IR-NEXT: [[Z:%.+]] = fadd float [[W]], [[XF]]{{$}}
 ; IR-NEXT: [[ZD]] = fpext float [[Z]] to double
 
-; STRICT: error: {{.*}}Poseidon: the profile does not cover this operation: the profiling run never executed it. Profile an input that runs it, or pass -poseidon-loose-coverage to leave it as written.

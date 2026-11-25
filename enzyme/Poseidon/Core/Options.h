@@ -118,11 +118,6 @@ struct MatmulOptions {
 #include "Options.def"
 };
 
-struct MaterializationOptions {
-#define POSEIDON_MATERIALIZATION_OPTION POSEIDON_FIELD
-#include "Options.def"
-};
-
 struct DiagnosticOptions {
 #define POSEIDON_DIAGNOSTIC_OPTION POSEIDON_FIELD
 #include "Options.def"
@@ -137,7 +132,6 @@ struct Options {
   ModelOptions Model;
   HerbieOptions Herbie;
   MatmulOptions Matmul;
-  MaterializationOptions Materialization;
   DiagnosticOptions Diagnostics;
 };
 

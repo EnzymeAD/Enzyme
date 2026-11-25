@@ -6,19 +6,21 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} -poseidon-cache=%t/off -poseidon-apply-rewrites=PT0_1 -poseidon-print 2>&1 | FileCheck --check-prefix=OFF %s
-; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-merge-shared-staging -poseidon-freq-weighted-pricing -poseidon-narrow-param-staging -poseidon-cache=%t/ds -poseidon-apply-rewrites=PT0_2 -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-merge-shared-staging -poseidon-cache=%t/ds -poseidon-apply-rewrites=PT0_2 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=DS %s
-; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-merge-shared-staging -poseidon-freq-weighted-pricing -poseidon-narrow-param-staging -poseidon-cache=%t/ir -poseidon-apply-rewrites=PT0_2 2>&1 \
+; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-merge-shared-staging -poseidon-freq-weighted-pricing -poseidon-cache=%t/ir -poseidon-apply-rewrites=PT0_2 2>&1 \
 ; RUN:   | FileCheck --check-prefix=IR %s
-; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-merge-shared-staging -poseidon-freq-weighted-pricing -poseidon-narrow-param-staging -poseidon-cache=%t/f32 -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-merge-shared-staging -poseidon-freq-weighted-pricing -poseidon-cache=%t/f32 -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=F32 %s
+; RUN: %{opt} -poseidon-reduction-subgraphs -poseidon-freq-weighted-pricing -poseidon-cache=%t/hint -poseidon-apply-rewrites=PT0_0 -o /dev/null 2>&1 \
+; RUN:   | FileCheck --check-prefix=HINT %s
 
 ; OFF: Skipping trivial subgraph
 ; OFF: [poseidon] Found 1 initial subgraphs in preprocess_staged_body
 ; OFF-NOT: merged {{[0-9]+}} FP subgraphs
 ; OFF-NOT: frequency-heterogeneous subgraph
-; OFF-NOT: narrowed param-staged shared buffer
-; OFF: Applying solution for CS:
+; OFF: Applying solution for CS: Funcs FP64(0%) + FP32(100%)
+; OFF: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
 ; DS: Keeping 1-op reduction subgraph: {{.*}}@llvm.fmuladd.f64
 ; DS: [poseidon] Found 2 initial subgraphs in preprocess_staged_body
@@ -41,12 +43,14 @@
 ; F32: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; F32: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
+; HINT: [poseidon] preprocess_staged_body: more than one optimization unit reads or writes the shared buffer(s) @_ZZ13staged_kernelPKdS0_PdS1_E1s (2 units); a precision change narrows such a buffer only when all its units pick one tier, which -poseidon-merge-shared-staging makes them do
+
 ; Two contractions staged through one __shared__ buffer that reaches the body
-; as a pointer parameter, then a once-per-thread epilogue. With the four staging
-; flags off, the first contraction is a trivial 1-op subgraph and the buffer
-; keeps its FP64 layout; with them, the contractions join one optimization unit
-; priced per loop depth, and the chosen tier narrows the buffer through the
-; parameter.
+; as a pointer parameter, then a once-per-thread epilogue. The chosen tier
+; narrows the buffer through the parameter. Without the subgraph flags the first
+; contraction is a trivial 1-op subgraph; with them the contractions join one
+; optimization unit priced per loop depth, which the merge implies. Kept apart,
+; the two units sharing the buffer are named by a hint.
 ; The IR is from
 ;   template <typename R, typename... T>
 ;   __device__ R __poseidon_fp_optimize(void *, T...);

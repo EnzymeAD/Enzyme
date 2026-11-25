@@ -808,17 +808,10 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
   for (const AbstractMatmul &m : matmuls) {
     std::optional<MatmulProfile> prof = loadProfile(m, scalarProfile);
     if (!prof) {
-      if (!S.Opts.Profiling.LooseCoverage)
-        reportUserError(anchorOf(m),
-                        "the profile does not cover matrix product " +
-                            Twine(m.id) +
-                            ": the profiling run never executed it. Profile "
-                            "an input that runs it, or pass "
-                            "-poseidon-loose-coverage to leave it as "
-                            "written.");
       llvm::errs() << "[poseidon] matmul[" << m.id << "] in '"
                    << anchorOf(m).getFunction()->getName()
-                   << "' uncovered; skipping under -poseidon-loose-coverage.\n";
+                   << "': the profiling run never executed it; left as "
+                      "written.\n";
       continue;
     }
 

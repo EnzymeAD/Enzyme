@@ -4,21 +4,18 @@
 ; DEFINE:   -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-reduction-subgraphs -poseidon-merge-shared-staging \
-; DEFINE:   -poseidon-freq-weighted-pricing -poseidon-narrow-param-staging -S
+; DEFINE:   -poseidon-freq-weighted-pricing -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cache=%t/off -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
-; RUN:   | FileCheck --check-prefix=OFF --implicit-check-not="narrowed multiview" %s
-; RUN: %{opt} -poseidon-narrow-multiview-staging -poseidon-cache=%t/f32 -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-cache=%t/f32 -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=F32 %s
-; RUN: %{opt} -poseidon-narrow-multiview-staging -poseidon-cache=%t/ds -poseidon-apply-rewrites=PT0_2 -poseidon-print 2>&1 \
+; RUN: %{opt} -poseidon-cache=%t/ds -poseidon-apply-rewrites=PT0_2 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=DS %s
-; RUN: %{opt} -poseidon-narrow-multiview-staging -poseidon-cache=%t/ir -poseidon-apply-rewrites=PT0_2 2>&1 | FileCheck --check-prefix=IR %s
+; RUN: %{opt} -poseidon-cache=%t/ir -poseidon-apply-rewrites=PT0_2 2>&1 | FileCheck --check-prefix=IR %s
 ; One __shared__ array used through views of two shapes, one at a constant
 ; offset, by contractions that read each staged value twice. Element GEPs of
-; three strides make the global-rooted narrowing give up, so without
-; -poseidon-narrow-multiview-staging the buffer keeps its FP64 layout; with it
-; the chosen tier narrows every view, and the df64 tier rewires both splits of
-; a value read twice to one pair load.
+; three strides are no single stride to halve, but the chosen tier narrows
+; every view, and the df64 tier rewires both splits of a value read twice to
+; one pair load.
 ; The IR is from
 ;   __global__ POSEIDON_OPTIMIZE void multiview(const double *__restrict__ x,
 ;                                               const double *__restrict__ b,
@@ -49,19 +46,6 @@
 ; The profile: the same source through poseidon-clang++
 ; -poseidon-profile-generate, launched as multiview<<<8, dim3(4, 4)>>> on
 ; x[i] = 1.0 + 0.01 * i and b[i] = 0.5 + 0.03 * i.
-
-; OFF: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
-; OFF-NOT: narrowed multiview shared buffer
-; OFF-LABEL: ; ModuleID =
-; OFF-LABEL: define internal void @preprocess__Z9multiviewPKdS0_Pd_poseidon_body(
-; OFF: [[X:%[0-9]+]] = load double, ptr
-; OFF: [[ROW:%[0-9]+]] = getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm{{.*}}, i64 512), i64
-; OFF-NEXT: [[TID:%[0-9]+]] = zext {{.*}} to i64
-; OFF-NEXT: [[SLOT:%[0-9]+]] = getelementptr {{.*}}ptr [[ROW]], i64 [[TID]]
-; OFF-NEXT: store double [[X]], ptr [[SLOT]], align 8
-; OFF-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
-; OFF-NEXT: [[V:%[0-9]+]] = load double, ptr [[ROW]], align 8
-; OFF: fptrunc double [[V]] to float
 
 ; F32: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; F32: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to fp32 (12 loads, 3 stores)

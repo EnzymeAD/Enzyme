@@ -44,7 +44,7 @@
 ; F32-LOG: [poseidon] narrowed shared staging buffer @_ZZ5stagePKdS0_PdE2sm (1 loads, 1 stores, stride 8->4)
 ; F32-LOG: [poseidon] applied shared-staging narrowing in preprocess__Z5stagePKdS0_Pd_poseidon_body
 ; F32-LOG: [poseidon] Selecting _Z5splitPKdS0_PdPf:PT0_0: All FP64(0%) + FP32(100%)
-; F32-LOG-NOT: narrowed shared staging buffer @_ZZ5splitPKdS0_PdPfE2sm
+; F32-LOG-NOT: narrowed {{.*}}@_ZZ5splitPKdS0_PdPfE2sm
 ; F32-LABEL: define internal void @preprocess__Z5stagePKdS0_Pd_poseidon_body(
 ; F32: [[SLOT:%[0-9]+]] = getelementptr inbounds nuw [4 x i8], ptr addrspacecast (ptr addrspace(3) @_ZZ5stagePKdS0_PdE2sm to ptr), i64
 ; F32-NEXT: [[XF:%[0-9]+]] = fptrunc double {{%[0-9]+}} to float
@@ -55,9 +55,9 @@
 ; F32: %v = load double, ptr [[SSLOT]], align 8
 
 ; DS-LOG: [poseidon] Selecting _Z5stagePKdS0_Pd:PT0_2: All FP64(0%) + Expansion2(100%)
-; DS-LOG: [poseidon] narrowed shared staging (df64) @_ZZ5stagePKdS0_PdE2sm (1 loads, 1 stores, 0 memcpys)
+; DS-LOG: [poseidon] narrowed multiview shared buffer @_ZZ5stagePKdS0_PdE2sm to df64 (1 loads, 1 stores)
 ; DS-LOG: [poseidon] Selecting _Z5splitPKdS0_PdPf:PT0_2: All FP64(0%) + Expansion2(100%)
-; DS-LOG-NOT: narrowed shared staging (df64) @_ZZ5splitPKdS0_PdPfE2sm
+; DS-LOG-NOT: narrowed {{.*}}@_ZZ5splitPKdS0_PdPfE2sm
 ; DS-LABEL: define internal void @preprocess__Z5stagePKdS0_Pd_poseidon_body(
 ; DS: [[SLOT:%[0-9]+]] = getelementptr inbounds nuw [8 x i8], ptr addrspacecast (ptr addrspace(3) @_ZZ5stagePKdS0_PdE2sm to ptr), i64
 ; DS: store float {{%[0-9]+}}, ptr [[SLOT]], align 4

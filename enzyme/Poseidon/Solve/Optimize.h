@@ -108,8 +108,8 @@ constexpr llvm::StringLiteral kJointErrTol = "poseidon-joint-errtol";
 bool solveJointly(Session &S, llvm::Module &M);
 
 // The FP subgraphs of F, flood-filled over its optimizable instructions, and
-// a node for every value they read or compute. Under loose coverage the
-// instructions `profileMap` records no execution of are in no subgraph.
+// a node for every value they read or compute. The instructions `profileMap`
+// records no execution of are in no subgraph.
 void buildSubgraphs(
     const Options &O, llvm::Function &F, const ProfileMap &profileMap,
     const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
@@ -127,6 +127,13 @@ void attachProfile(
 // shared-staging merge.
 void shapeSubgraphs(const Options &O, llvm::Function &F,
                     llvm::SmallVectorImpl<Subgraph> &subgraphs);
+
+// Names, once for the site clone F, the shared buffers that more than one of
+// its optimization units reads or writes: a precision change narrows such a
+// buffer only when all of them pick one tier, which
+// -poseidon-merge-shared-staging makes them do.
+void hintSharedStaging(const Session &S, llvm::Function &F,
+                       llvm::ArrayRef<Subgraph> subgraphs);
 
 // The steps of `steps` that are applied, in order: a step whose outputs an
 // earlier step already rewrote is skipped. The binary64 and binary32 searches

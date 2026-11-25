@@ -44,10 +44,6 @@
 #ifndef POSEIDON_MATMUL_OPTION
 #define POSEIDON_MATMUL_OPTION(...) POSEIDON_OPTION(Matmul, __VA_ARGS__)
 #endif
-#ifndef POSEIDON_MATERIALIZATION_OPTION
-#define POSEIDON_MATERIALIZATION_OPTION(...)                                   \
-  POSEIDON_OPTION(Materialization, __VA_ARGS__)
-#endif
 #ifndef POSEIDON_DIAGNOSTIC_OPTION
 #define POSEIDON_DIAGNOSTIC_OPTION(...)                                        \
   POSEIDON_OPTION(Diagnostics, __VA_ARGS__)
@@ -81,10 +77,6 @@ POSEIDON_PROFILING_OPTION(
     "Share of the profiled FP cost of all -poseidon-kernels sites a site must "
     "reach to be optimized (0 disables); sites named by the attribute or the "
     "marker are never filtered")
-POSEIDON_PROFILING_OPTION(LooseCoverage, Bool, false, "poseidon-loose-coverage",
-                          Hidden, SolveInput, "",
-                          "Allow unexecuted FP instructions in subgraph "
-                          "identification")
 
 // Candidate classes.
 POSEIDON_CANDIDATE_OPTION(EnableHerbie, Bool, true, "poseidon-enable-herbie",
@@ -349,7 +341,8 @@ POSEIDON_CANDIDATE_OPTION(
     SolveInput, "",
     "Merge FP subgraphs that share a staging buffer (pointer argument or "
     "addrspace(3) global) into one optimization unit, so the solver cannot "
-    "pick two storage tiers for one buffer")
+    "pick two storage tiers for one buffer; implies "
+    "-poseidon-freq-weighted-pricing")
 // A subgraph is billed at outputs[0]'s execution count, which over-bills the
 // once-per-thread code a reduction body feeds by the trip count; that is where
 // an expansion pays its FP64 boundary conversions.
@@ -358,27 +351,6 @@ POSEIDON_MODEL_OPTION(FreqWeightedPricing, Bool, false,
                       "Price each instruction of a frequency-heterogeneous FP "
                       "subgraph at its own profiled execution count instead "
                       "of the subgraph's")
-
-// Materialization.
-// The global-rooted narrowing only sees GEPs off the global's addrspacecast; a
-// kernel that hands its __shared__ scratch to the annotated body as `double *`
-// has every element GEP off the callee's pointer parameter instead.
-POSEIDON_MATERIALIZATION_OPTION(NarrowParamStaging, Bool, false,
-                                "poseidon-narrow-param-staging", Hidden,
-                                SolveInput, "",
-                                "Narrow addrspace(3) staging buffers that "
-                                "reach the annotated body as pointer "
-                                "parameters")
-// A shared-memory kernel that uses one __shared__ array through views of
-// different shapes and constant offsets has element GEPs of several strides,
-// which the global-rooted narrowing gives up on.
-POSEIDON_MATERIALIZATION_OPTION(NarrowMultiviewStaging, Bool, false,
-                                "poseidon-narrow-multiview-staging", Hidden,
-                                SolveInput, "",
-                                "With -poseidon-narrow-param-staging, also "
-                                "narrow addrspace(3) staging buffers the body "
-                                "accesses directly, through views of any "
-                                "shape")
 
 // Diagnostics.
 POSEIDON_DIAGNOSTIC_OPTION(Print, Bool, false, "poseidon-print", User, Other,
@@ -406,5 +378,4 @@ POSEIDON_DIAGNOSTIC_OPTION(
 #undef POSEIDON_MODEL_OPTION
 #undef POSEIDON_HERBIE_OPTION
 #undef POSEIDON_MATMUL_OPTION
-#undef POSEIDON_MATERIALIZATION_OPTION
 #undef POSEIDON_DIAGNOSTIC_OPTION

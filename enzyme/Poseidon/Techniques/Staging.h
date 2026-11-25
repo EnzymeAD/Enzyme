@@ -32,11 +32,10 @@ class Session;
 bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
                                 llvm::Function &Proxy, bool announce);
 
-// Which parameter transforms applyStagingNarrowing runs under
-// -poseidon-narrow-param-staging. Each declines a buffer whose readers it does
-// not fit, so the materializer runs Both; a pricing clone runs one, because
-// narrowing an expansion's operand buffer to one float zeroes its `lo` limb
-// and prices the expansion as free.
+// Which parameter transforms applyStagingNarrowing runs. Each declines a buffer
+// whose readers it does not fit, so the materializer runs Both; a pricing clone
+// runs one, because narrowing an expansion's operand buffer to one float zeroes
+// its `lo` limb and prices the expansion as free.
 enum class ParamArm { Both, FP32, DS };
 
 // The arms in the order every site must apply them: the FP32 narrowing, the

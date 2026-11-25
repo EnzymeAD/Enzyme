@@ -741,7 +741,6 @@ static void armInKernel(const std::string &Csv, const Device &D) {
                                          CostModel,
                                          "-poseidon-enable-herbie=0",
                                          "-poseidon-enable-pt=0",
-                                         "-poseidon-loose-coverage",
                                          "-poseidon-raise-wmma",
                                          "-poseidon-print",
                                          "-poseidon-inkernel-calibration"};
