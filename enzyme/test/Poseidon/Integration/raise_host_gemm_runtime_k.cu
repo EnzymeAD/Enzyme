@@ -24,7 +24,7 @@
 // RUN: llvm-nm --defined-only %t/exe | not grep __poseidon_host_sites_present
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     %s -o %t/opt.exe 2>&1 | FileCheck %s

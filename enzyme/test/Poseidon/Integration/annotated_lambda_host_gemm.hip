@@ -16,7 +16,7 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-generate \
-// RUN:     -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN:     -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe
 // RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
@@ -27,7 +27,7 @@
 // RUN: cp %s %t/src/annotated_lambda_host_gemm.hip
 // RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/other_sites \
-// RUN:     -poseidon-cache=%t/cache -Xarch_host -mllvm=-poseidon-unit=seeded \
+// RUN:     -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-unit=seeded \
 // RUN:     -poseidon-enable-herbie=0 annotated_lambda_host_gemm.hip \
 // RUN:     -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s

@@ -11,7 +11,7 @@
 // REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe
 // RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
