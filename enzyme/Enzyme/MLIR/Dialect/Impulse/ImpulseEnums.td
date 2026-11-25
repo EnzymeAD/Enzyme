@@ -58,8 +58,6 @@ def SupportKind : I32EnumAttr<"SupportKind",
   let cppNamespace = "::mlir::impulse";
 }
 
-def SupportKindAttr : EnumAttr<Impulse_Dialect, SupportKind, "support_kind">;
-
 def XformKind : I32EnumAttr<"XformKind",
     "Bijector applied to a base distribution or constraint",
     [
@@ -78,8 +76,6 @@ def XformKind : I32EnumAttr<"XformKind",
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";
 }
-
-def XformKindAttr : EnumAttr<Impulse_Dialect, XformKind, "xform_kind">;
 
 def XformAttr : Impulse_Attr<"Xform", "xform"> {
   let summary = "A bijection (transform) in the shared bijector library";
@@ -123,8 +119,6 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";
 }
-
-def DistBaseKindAttr : EnumAttr<Impulse_Dialect, DistBaseKind, "dist_base_kind">;
 
 def DistAttr : Impulse_Attr<"Dist", "dist"> {
   let summary = "Distribution as a primitive base plus a transform chain";

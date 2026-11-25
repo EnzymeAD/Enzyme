@@ -47,6 +47,4 @@ def Impulse_Dialect : Dialect {
 class Impulse_Op<string mnemonic, list<Trait> traits = []>
     : Op<Impulse_Dialect, mnemonic, traits>;
 
-class Impulse_Type<string name> : TypeDef<Impulse_Dialect, name>;
-
 #endif // IMPULSE_DIALECT_TD
