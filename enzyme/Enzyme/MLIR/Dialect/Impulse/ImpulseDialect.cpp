@@ -31,6 +31,45 @@ static void printOptionalCallee(OpAsmPrinter &printer, Operation *,
 #define GET_OP_CLASSES
 #include "Dialect/Impulse/ImpulseOps.cpp.inc"
 
+/// Parses `(, lower = x)? (, upper = y)? (, event_size = k)?`, the parts of a
+/// SupportAttr after its kind.
+static ParseResult parseSupportParams(AsmParser &parser, FloatAttr &lower,
+                                      FloatAttr &upper,
+                                      IntegerAttr &eventSize) {
+  bool more = succeeded(parser.parseOptionalComma());
+  if (more && succeeded(parser.parseOptionalKeyword("lower"))) {
+    if (parser.parseEqual() || parser.parseCustomAttributeWithFallback(lower))
+      return failure();
+    more = succeeded(parser.parseOptionalComma());
+  }
+  if (more && succeeded(parser.parseOptionalKeyword("upper"))) {
+    if (parser.parseEqual() || parser.parseCustomAttributeWithFallback(upper))
+      return failure();
+    more = succeeded(parser.parseOptionalComma());
+  }
+  if (!more)
+    return success();
+  return failure(parser.parseKeyword("event_size") || parser.parseEqual() ||
+                 parser.parseCustomAttributeWithFallback(eventSize));
+}
+
+/// Prints what parseSupportParams reads.
+static void printSupportParams(AsmPrinter &printer, FloatAttr lower,
+                               FloatAttr upper, IntegerAttr eventSize) {
+  if (lower) {
+    printer << ", lower = ";
+    printer.printStrippedAttrOrType(lower);
+  }
+  if (upper) {
+    printer << ", upper = ";
+    printer.printStrippedAttrOrType(upper);
+  }
+  if (eventSize) {
+    printer << ", event_size = ";
+    printer.printStrippedAttrOrType(eventSize);
+  }
+}
+
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/Impulse/ImpulseAttributes.cpp.inc"
 

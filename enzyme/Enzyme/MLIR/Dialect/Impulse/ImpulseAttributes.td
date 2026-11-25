@@ -91,7 +91,11 @@ def SupportAttr : Impulse_Attr<"Support", "support"> {
     OptionalParameter<"FloatAttr">:$upper_bound,
     OptionalParameter<"IntegerAttr">:$event_size
   );
-  let assemblyFormat = "`<` $kind (`lower` `=` $lower_bound^)? (`upper` `=` $upper_bound^)? (`event_size` `=` $event_size^)? `>`";
+  // Comma-led optional groups cannot parse `<LESS_THAN, upper = y>`.
+  let assemblyFormat = [{
+    `<` $kind `` custom<SupportParams>($lower_bound, $upper_bound, $event_size)
+    `>`
+  }];
 }
 
 def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {

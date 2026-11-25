@@ -90,7 +90,7 @@ module {
     return %r, %a : tensor<2xui64>, tensor<3xf64>
   }
   func.func @dir_model(%r: tensor<2xui64>, %a: tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>) {
-    %o:2 = impulse.sample @dir_s(%r, %a) <{symbol = #impulse.symbol<7>, dist = #impulse.dist<DIRICHLET>, support = #impulse.support<SIMPLEX event_size = 3 : i64>}>
+    %o:2 = impulse.sample @dir_s(%r, %a) <{symbol = #impulse.symbol<7>, dist = #impulse.dist<DIRICHLET>, support = #impulse.support<SIMPLEX, event_size = 3 : i64>}>
       : (tensor<2xui64>, tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>)
     return %o#0, %o#1 : tensor<2xui64>, tensor<3xf64>
   }

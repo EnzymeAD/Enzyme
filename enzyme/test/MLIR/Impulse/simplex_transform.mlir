@@ -7,7 +7,7 @@ module {
   func.func private @logpdf(%x : tensor<3xf64>, %alpha : tensor<3xf64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %alpha : tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>) {
-    %s:2 = impulse.sample @dirichlet(%rng, %alpha) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<SIMPLEX event_size = 3 : i64> }> : (tensor<2xui64>, tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>)
+    %s:2 = impulse.sample @dirichlet(%rng, %alpha) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<SIMPLEX, event_size = 3 : i64> }> : (tensor<2xui64>, tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<3xf64>
   }
 

@@ -41,7 +41,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf_fn = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<INTERVAL lower = 2.000000e+00 : f64 upper = 5.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf_fn = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<INTERVAL, lower = 2.000000e+00 : f64, upper = 5.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
@@ -79,7 +79,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf_fn = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<GREATER_THAN lower = 1.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf_fn = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<GREATER_THAN, lower = 1.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
@@ -109,7 +109,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf_fn = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<LESS_THAN upper = 4.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf_fn = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<LESS_THAN, upper = 4.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
