@@ -765,6 +765,40 @@ applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc, Value param,
   return {paramNew, avgNew, momNew};
 }
 
+/// Applies `ctx.optimizerKind` to `param` with gradient `gradElbo` and state
+/// slots `m` and `v`; `step` is the zero-based global step index.
+static OptimizerUpdate applyOptimizer(OpBuilder &builder, Location loc,
+                                      const VIContext &ctx, Value step,
+                                      Value param, Value gradElbo, Value m,
+                                      Value v) {
+  switch (ctx.optimizerKind) {
+  case OptimizerKind::ADAM:
+    return applyAdamUpdate(builder, loc, param, gradElbo, m, v, step,
+                           ctx.stepSize, ctx.adamB1, ctx.adamB2, ctx.adamEps,
+                           /*clipNorm=*/0.0);
+  case OptimizerKind::CLIPPED_ADAM:
+    return applyAdamUpdate(builder, loc, param, gradElbo, m, v, step,
+                           ctx.stepSize, ctx.adamB1, ctx.adamB2, ctx.adamEps,
+                           ctx.clipNorm);
+  case OptimizerKind::MOMENTUM:
+    return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                               ctx.stepSize, ctx.momentumMass);
+  case OptimizerKind::RMSPROP:
+    return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
+                              ctx.rmspropGamma, ctx.rmspropEps);
+  case OptimizerKind::ADAGRAD:
+    return applyAdagradUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
+                              ctx.momentumMass);
+  case OptimizerKind::RMSPROP_MOMENTUM:
+    return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
+                                      ctx.stepSize, ctx.rmspropGamma,
+                                      ctx.rmspropEps, ctx.momentumMass);
+  case OptimizerKind::SGD:
+    return applySGDUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize);
+  }
+  llvm_unreachable("unknown VI optimizer kind");
+}
+
 /// `ctx.numSamples` iterations of NumPyro's SVI.update.
 static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
                                  Value scale0, Value rng0,
@@ -777,9 +811,6 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
       RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
   auto i64T = RankedTensorType::get({}, builder.getI64Type());
-
-  double clipNorm =
-      (ctx.optimizerKind == OptimizerKind::CLIPPED_ADAM) ? ctx.clipNorm : 0.0;
 
   Value c0i = i64Const(builder, loc, 0);
   Value c1i = i64Const(builder, loc, 1);
@@ -834,39 +865,12 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc, Value loc0,
     Value effectiveStep =
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
-    auto runOpt = [&](Value param, Value gradElbo, Value m,
-                      Value v) -> OptimizerUpdate {
-      switch (ctx.optimizerKind) {
-      case OptimizerKind::ADAM:
-      case OptimizerKind::CLIPPED_ADAM:
-        return applyAdamUpdate(builder, loc, param, gradElbo, m, v,
-                               effectiveStep, ctx.stepSize, ctx.adamB1,
-                               ctx.adamB2, ctx.adamEps, clipNorm);
-      case OptimizerKind::MOMENTUM:
-        return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                   ctx.stepSize, ctx.momentumMass);
-      case OptimizerKind::RMSPROP:
-        return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
-                                  ctx.stepSize, ctx.rmspropGamma,
-                                  ctx.rmspropEps);
-      case OptimizerKind::ADAGRAD:
-        return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
-                                  ctx.stepSize, ctx.momentumMass);
-      case OptimizerKind::RMSPROP_MOMENTUM:
-        return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                          ctx.stepSize, ctx.rmspropGamma,
-                                          ctx.rmspropEps, ctx.momentumMass);
-      case OptimizerKind::SGD:
-      default:
-        return applySGDUpdate(builder, loc, param, gradElbo, m, v,
-                              ctx.stepSize);
-      }
-    };
-
     OptimizerUpdate locUpd =
-        runOpt(locIter, elboRes.gradLoc, mLocIter, vLocIter);
+        applyOptimizer(builder, loc, ctx, effectiveStep, locIter,
+                       elboRes.gradLoc, mLocIter, vLocIter);
     OptimizerUpdate scaleUpd =
-        runOpt(scaleIter, elboRes.gradScale, mScaleIter, vScaleIter);
+        applyOptimizer(builder, loc, ctx, effectiveStep, scaleIter,
+                       elboRes.gradScale, mScaleIter, vScaleIter);
     Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
     Value scaleNew = scaleUpd.param, mScaleNew = scaleUpd.m,
           vScaleNew = scaleUpd.v;
@@ -941,9 +945,6 @@ static SVILoopResult emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
       RankedTensorType::get({ctx.numSamples, ctx.positionSize}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
   auto i64T = RankedTensorType::get({}, builder.getI64Type());
-
-  double clipNorm =
-      (ctx.optimizerKind == OptimizerKind::CLIPPED_ADAM) ? ctx.clipNorm : 0.0;
 
   Value c0i = i64Const(builder, loc, 0);
   Value c1i = i64Const(builder, loc, 1);
@@ -1020,36 +1021,9 @@ static SVILoopResult emitSVILoopAutoDelta(OpBuilder &builder, Location loc,
     Value effectiveStep =
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
-    auto runOpt = [&](Value param, Value gradElbo, Value m,
-                      Value v) -> OptimizerUpdate {
-      switch (ctx.optimizerKind) {
-      case OptimizerKind::ADAM:
-      case OptimizerKind::CLIPPED_ADAM:
-        return applyAdamUpdate(builder, loc, param, gradElbo, m, v,
-                               effectiveStep, ctx.stepSize, ctx.adamB1,
-                               ctx.adamB2, ctx.adamEps, clipNorm);
-      case OptimizerKind::MOMENTUM:
-        return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                   ctx.stepSize, ctx.momentumMass);
-      case OptimizerKind::RMSPROP:
-        return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
-                                  ctx.stepSize, ctx.rmspropGamma,
-                                  ctx.rmspropEps);
-      case OptimizerKind::ADAGRAD:
-        return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
-                                  ctx.stepSize, ctx.momentumMass);
-      case OptimizerKind::RMSPROP_MOMENTUM:
-        return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                          ctx.stepSize, ctx.rmspropGamma,
-                                          ctx.rmspropEps, ctx.momentumMass);
-      case OptimizerKind::SGD:
-      default:
-        return applySGDUpdate(builder, loc, param, gradElbo, m, v,
-                              ctx.stepSize);
-      }
-    };
-
-    OptimizerUpdate locUpd = runOpt(locIter, gradLocMean, mLocIter, vLocIter);
+    OptimizerUpdate locUpd =
+        applyOptimizer(builder, loc, ctx, effectiveStep, locIter, gradLocMean,
+                       mLocIter, vLocIter);
     Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
 
     if (ctx.stableUpdate) {
@@ -1119,9 +1093,6 @@ static SVILoopResult emitSVILoopMVN(OpBuilder &builder, Location loc,
   auto traceBufType = RankedTensorType::get({ctx.numSamples, d}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSamples}, elemType);
   auto i64T = RankedTensorType::get({}, builder.getI64Type());
-
-  double clipNorm =
-      (ctx.optimizerKind == OptimizerKind::CLIPPED_ADAM) ? ctx.clipNorm : 0.0;
 
   Value c0i = i64Const(builder, loc, 0);
   Value c1i = i64Const(builder, loc, 1);
@@ -1212,37 +1183,10 @@ static SVILoopResult emitSVILoopMVN(OpBuilder &builder, Location loc,
     Value effectiveStep =
         arith::AddIOp::create(builder, loc, iter, initStepCountI64);
 
-    auto runOpt = [&](Value param, Value gradElbo, Value m,
-                      Value v) -> OptimizerUpdate {
-      switch (ctx.optimizerKind) {
-      case OptimizerKind::ADAM:
-      case OptimizerKind::CLIPPED_ADAM:
-        return applyAdamUpdate(builder, loc, param, gradElbo, m, v,
-                               effectiveStep, ctx.stepSize, ctx.adamB1,
-                               ctx.adamB2, ctx.adamEps, clipNorm);
-      case OptimizerKind::MOMENTUM:
-        return applyMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                   ctx.stepSize, ctx.momentumMass);
-      case OptimizerKind::RMSPROP:
-        return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v,
-                                  ctx.stepSize, ctx.rmspropGamma,
-                                  ctx.rmspropEps);
-      case OptimizerKind::ADAGRAD:
-        return applyAdagradUpdate(builder, loc, param, gradElbo, m, v,
-                                  ctx.stepSize, ctx.momentumMass);
-      case OptimizerKind::RMSPROP_MOMENTUM:
-        return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                          ctx.stepSize, ctx.rmspropGamma,
-                                          ctx.rmspropEps, ctx.momentumMass);
-      case OptimizerKind::SGD:
-      default:
-        return applySGDUpdate(builder, loc, param, gradElbo, m, v,
-                              ctx.stepSize);
-      }
-    };
-
-    OptimizerUpdate locUpd = runOpt(locIter, gradLoc, mLocIter, vLocIter);
-    OptimizerUpdate xUpd = runOpt(xIter, gradX, mXIter, vXIter);
+    OptimizerUpdate locUpd = applyOptimizer(
+        builder, loc, ctx, effectiveStep, locIter, gradLoc, mLocIter, vLocIter);
+    OptimizerUpdate xUpd = applyOptimizer(builder, loc, ctx, effectiveStep,
+                                          xIter, gradX, mXIter, vXIter);
     Value locNew = locUpd.param, mLocNew = locUpd.m, vLocNew = locUpd.v;
     Value xNew = xUpd.param, mXNew = xUpd.m, vXNew = xUpd.v;
 
