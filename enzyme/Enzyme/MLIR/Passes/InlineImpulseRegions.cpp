@@ -213,8 +213,7 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
 
   auto sampleRegionOp = impulse::SampleRegionOp::create(
       builder, loc, sampleOp.getResultTypes(), mappedInputs,
-      sampleOp.getFnAttr(), sampleOp.getLogpdfFnAttr(),
-      ArrayAttr::get(ctx, address), support, dist, sampleOp.getNameAttr());
+      sampleOp.getLogpdfFnAttr(), ArrayAttr::get(ctx, address), support, dist);
 
   auto inlineCallee = [&](SymbolRefAttr callee, Region &region) {
     auto calleeFn = dyn_cast_or_null<FunctionOpInterface>(
@@ -284,14 +283,16 @@ static bool dissolveSubmodelSites(impulse::InferRegionOp regionOp,
 }
 
 /// Creates an `impulse.infer_region` with the operands, result types and
-/// attributes of `inferOp` and two empty regions.
+/// attributes other than `name` of `inferOp` and two empty regions.
 static impulse::InferRegionOp createInferRegion(PatternRewriter &rewriter,
                                                 impulse::InferOp inferOp) {
   OperationState state(inferOp.getLoc(),
                        impulse::InferRegionOp::getOperationName());
   state.addOperands(inferOp->getOperands());
   state.addTypes(inferOp->getResultTypes());
-  state.addAttributes(inferOp->getAttrs());
+  for (NamedAttribute attr : inferOp->getAttrs())
+    if (attr.getName() != inferOp.getNameAttrName())
+      state.addAttribute(attr.getName(), attr.getValue());
   state.addRegion();
   state.addRegion();
   return cast<impulse::InferRegionOp>(rewriter.create(state));

@@ -18,19 +18,19 @@ module {
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @normal, logpdf_fn = @logpdf, name = "s"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %t:2 = impulse.sample_region(%s#0, %s#1, %sd) sampling {
       ^bb0(%a0: tensor<2xui64>, %a1: tensor<f64>, %a2: tensor<f64>):
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], fn = @normal, logpdf_fn = @logpdf, name = "t"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %u:2 = impulse.sample_region(%t#0, %m, %sd) sampling {
       ^bb0(%a0: tensor<2xui64>, %a1: tensor<f64>, %a2: tensor<f64>):
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], fn = @normal, logpdf_fn = @logpdf, name = "u"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %u#0, %u#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%sv: tensor<f64>):
@@ -58,19 +58,19 @@ module {
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @normal, logpdf_fn = @logpdf, name = "s"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %t:2 = impulse.sample_region(%s#0, %s#1, %sd) sampling {
       ^bb0(%a0: tensor<2xui64>, %a1: tensor<f64>, %a2: tensor<f64>):
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], fn = @normal, logpdf_fn = @logpdf, name = "t"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %u:2 = impulse.sample_region(%t#0, %m, %sd) sampling {
       ^bb0(%a0: tensor<2xui64>, %a1: tensor<f64>, %a2: tensor<f64>):
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], fn = @normal, logpdf_fn = @logpdf, name = "u"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %u#0, %u#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%sv: tensor<f64>, %uv: tensor<f64>):
@@ -100,19 +100,19 @@ module {
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @normal, logpdf_fn = @logpdf, name = "s"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %t:2 = impulse.sample_region(%s#0, %s#1, %sd) sampling {
       ^bb0(%a0: tensor<2xui64>, %a1: tensor<f64>, %a2: tensor<f64>):
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], fn = @normal, logpdf_fn = @logpdf, name = "t"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %u:2 = impulse.sample_region(%t#0, %m, %sd) sampling {
       ^bb0(%a0: tensor<2xui64>, %a1: tensor<f64>, %a2: tensor<f64>):
         %o, %x = impulse.random %a0, %a1, %a2 <{rng_distribution = #impulse.rng_distribution<NORMAL>}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %o, %x : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], fn = @normal, logpdf_fn = @logpdf, name = "u"}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], logpdf_fn = @logpdf}> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %u#0, %u#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%sv: tensor<f64>):

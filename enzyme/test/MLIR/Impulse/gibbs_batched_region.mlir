@@ -21,47 +21,47 @@ module {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %p1 = arith.cmpf ogt, %z1#1, %half : tensor<f64>
       %if1:2 = impulse.if(%p1) ({
         %yo1:2 = impulse.sample_region(%z1#0, %mm) sampling {
         ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
           impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
         } logpdf {
-        } <{address = [#impulse.symbol<3>], fn = @draw, logpdf_fn = @lp, name = "yo1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        } <{address = [#impulse.symbol<3>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %yo1#0, %yo1#1 : tensor<2xui64>, tensor<f64>
       }, {
         %yi1:2 = impulse.sample_region(%z1#0, %a#1) sampling {
         ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
           impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
         } logpdf {
-        } <{address = [#impulse.symbol<4>], fn = @draw, logpdf_fn = @lp, name = "yi1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        } <{address = [#impulse.symbol<4>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %yi1#0, %yi1#1 : tensor<2xui64>, tensor<f64>
       }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%if1#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<5>], dist = #impulse.dist<BERNOULLI>, name = "z2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<5>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %p2 = arith.cmpf ogt, %z2#1, %half : tensor<f64>
       %if2:2 = impulse.if(%p2) ({
         %yo2:2 = impulse.sample_region(%z2#0, %mm) sampling {
         ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
           impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
         } logpdf {
-        } <{address = [#impulse.symbol<6>], fn = @draw, logpdf_fn = @lp, name = "yo2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        } <{address = [#impulse.symbol<6>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %yo2#0, %yo2#1 : tensor<2xui64>, tensor<f64>
       }, {
         %yi2:2 = impulse.sample_region(%z2#0, %a#1) sampling {
         ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
           impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
         } logpdf {
-        } <{address = [#impulse.symbol<7>], fn = @draw, logpdf_fn = @lp, name = "yi2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        } <{address = [#impulse.symbol<7>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         impulse.yield %yi2#0, %yi2#1 : tensor<2xui64>, tensor<f64>
       }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %if2#0, %if2#1 : tensor<2xui64>, tensor<f64>
@@ -107,17 +107,17 @@ module {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %z2#0, %z2#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%z1v: tensor<f64>, %z2v: tensor<f64>):
@@ -146,22 +146,22 @@ module {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %y:2 = impulse.sample_region(%z2#0, %mm) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<4>], fn = @draw, logpdf_fn = @lp, name = "y"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<4>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %y#0, %y#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%z1v: tensor<f64>, %z2v: tensor<f64>):
@@ -194,23 +194,23 @@ module {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %lg2 = arith.addf %lg, %z1#1 : tensor<f64>
       %z2:2 = impulse.sample_region(%z1#0, %lg2) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %y:2 = impulse.sample_region(%z2#0, %mm) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<4>], fn = @draw, logpdf_fn = @lp, name = "y"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<4>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %y#0, %y#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%z1v: tensor<f64>, %z2v: tensor<f64>):
@@ -243,23 +243,23 @@ module {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %lg2 = arith.addf %lg, %z1#1 : tensor<f64>
       %z2:2 = impulse.sample_region(%z1#0, %lg2) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %y:2 = impulse.sample_region(%z2#0, %mm) sampling {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
         impulse.yield %s0, %s1 : tensor<2xui64>, tensor<f64>
       } logpdf {
-      } <{address = [#impulse.symbol<4>], fn = @draw, logpdf_fn = @lp, name = "y"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<4>], logpdf_fn = @lp}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %y#0, %y#1 : tensor<2xui64>, tensor<f64>
     } logpdf {
     ^bb0(%z1v: tensor<f64>, %z2v: tensor<f64>):

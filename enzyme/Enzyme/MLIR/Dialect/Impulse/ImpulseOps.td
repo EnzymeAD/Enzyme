@@ -253,8 +253,7 @@ class Impulse_InferSignatureArgs {
 
     OptionalAttr<StrArrayAttr>:$state_schema,
 
-    OptionalAttr<DictionaryAttr>:$autodiff_attrs,
-    DefaultValuedStrAttr<StrAttr, "">:$name
+    OptionalAttr<DictionaryAttr>:$autodiff_attrs
   );
 }
 
@@ -324,7 +323,7 @@ def InferOp : Impulse_Op<"infer",
     to the attributes of the differentiation of the log density.
   }];
 
-  let arguments = args;
+  let arguments = !con(args, (ins DefaultValuedStrAttr<StrAttr, "">:$name));
   let results = outputs;
 
   let assemblyFormat = [{
@@ -360,19 +359,16 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
     that region then holds the density of every site.
 
     `address` is the full address of the site, as listed in the `selection`
-    and `all_addresses` of the enclosing `impulse.infer_region`. `fn`,
-    `logpdf_fn`, `support`, `dist` and `name` mean what they mean on
-    `impulse.sample`.
+    and `all_addresses` of the enclosing `impulse.infer_region`. `logpdf_fn`,
+    `support` and `dist` mean what they mean on `impulse.sample`.
   }];
 
   let arguments = (ins
     Variadic<AnyType>:$inputs,
-    OptionalAttr<FlatSymbolRefAttr>:$fn,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
     OptionalAttr<AddressAttr>:$address,
     OptionalAttr<SupportAttr>:$support,
-    OptionalAttr<DistAttr>:$dist,
-    DefaultValuedStrAttr<StrAttr, "">:$name
+    OptionalAttr<DistAttr>:$dist
   );
 
   let results = (outs Variadic<AnyType>:$outputs);

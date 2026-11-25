@@ -50,17 +50,17 @@ module {
 // CHECK-LABEL: func.func @gibbs
 // CHECK: %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} = impulse.infer_region @model(%{{.+}}) given %{{.+}} constrained_by %{{.+}} state = [%{{.+}}] sampling {
 // CHECK: %[[A:.+]]:2 = impulse.sample_region(%{{.+}}) sampling {
-// CHECK: } <fn = @draw, logpdf_fn = @lp, address = [#impulse.symbol<1>], name = "a">
+// CHECK: } <logpdf_fn = @lp, address = [#impulse.symbol<1>]>
 // CHECK: %[[Z:.+]]:2 = impulse.sample_region(%[[A]]#0, %{{.+}}) sampling {
-// CHECK: } <address = [#impulse.symbol<2>], support = <REAL>, dist = <BERNOULLI>, name = "z">
+// CHECK: } <address = [#impulse.symbol<2>], support = <REAL>, dist = <BERNOULLI>>
 // CHECK-NEXT: %[[P:.+]] = arith.cmpf ogt, %[[Z]]#1, %{{.+}} : tensor<f64>
 // CHECK-NEXT: %[[IF:.+]]:2 = impulse.if(%[[P]]) ({
 // CHECK-NEXT: %[[YO:.+]]:2 = impulse.sample_region(%[[Z]]#0, %{{.+}}) sampling {
-// CHECK: } <fn = @draw, logpdf_fn = @lp, address = [#impulse.symbol<3>], name = "yo">
+// CHECK: } <logpdf_fn = @lp, address = [#impulse.symbol<3>]>
 // CHECK-NEXT: impulse.yield %[[YO]]#0, %[[YO]]#1 : tensor<2xui64>, tensor<f64>
 // CHECK-NEXT: }, {
 // CHECK-NEXT: %[[YI:.+]]:2 = impulse.sample_region(%[[Z]]#0, %[[A]]#1) sampling {
-// CHECK: } <fn = @draw, logpdf_fn = @lp, address = [#impulse.symbol<4>], name = "yi">
+// CHECK: } <logpdf_fn = @lp, address = [#impulse.symbol<4>]>
 // CHECK-NEXT: impulse.yield %[[YI]]#0, %[[YI]]#1 : tensor<2xui64>, tensor<f64>
 // CHECK-NEXT: }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: impulse.yield %[[IF]]#0, %[[IF]]#1 : tensor<2xui64>, tensor<f64>

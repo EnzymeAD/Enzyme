@@ -40,7 +40,7 @@ module {
       ^bb0(%x: tensor<f64>, %s: tensor<f64>):
         %lp = arith.negf %x : tensor<f64>
         impulse.yield %lp : tensor<f64>
-      } <{address = [#impulse.symbol<1>], fn = @halfnormal_sampler, logpdf_fn = @halfnormal_logpdf, support = #impulse.support<POSITIVE>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      } <{address = [#impulse.symbol<1>], logpdf_fn = @halfnormal_logpdf, support = #impulse.support<POSITIVE>}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %R = impulse.dot %arg_X, %arg_X <{lhs_contracting_dimensions = array<i64: 1>, rhs_contracting_dimensions = array<i64: 1>}> : (tensor<3x3xf64>, tensor<3x3xf64>) -> tensor<3x3xf64>
       %tausq = arith.mulf %tau#1, %tau#1 : tensor<f64>
       %K = impulse.dot %tausq, %R <{lhs_contracting_dimensions = array<i64>, rhs_contracting_dimensions = array<i64>}> : (tensor<f64>, tensor<3x3xf64>) -> tensor<3x3xf64>
