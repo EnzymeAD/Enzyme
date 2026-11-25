@@ -26,7 +26,13 @@
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,bf16,-1') > %t/negative.csv
 ; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/negative.csv -poseidon-cache=%t/negative 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NEGATIVE -DLINE=$(wc -l < %t/negative.csv) %s
-; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row, a row of no family Poseidon reads or with a price that is not a finite non-negative number, and no model at all each stop the compile with an error instead of substituting a price.
+; RUN: sed 's/^# scalar_types=double,float$/# scalar_types=double,float,fp16/' %cost_models/cm_cpu_native.csv > %t/scalar.csv
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/scalar.csv -poseidon-cache=%t/scalar 2>&1 \
+; RUN:   | FileCheck --check-prefix=SCALAR %s
+; RUN: (cat %cost_models/cm_cpu_native.csv; echo '# native_arch=x86-64') > %t/repeated.csv
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/repeated.csv -poseidon-cache=%t/repeated 2>&1 \
+; RUN:   | FileCheck --check-prefix=REPEATED -DLINE=$(wc -l < %t/repeated.csv) %s
+; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row, a row of no family Poseidon reads or with a price that is not a finite non-negative number, a header given twice, a scalar type that is no format, and no model at all each stop the compile with an error instead of substituting a price.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:
@@ -76,4 +82,8 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NAN: error: {{.*}}Poseidon: cost model {{.*}}nan.csv line [[LINE]] prices the row 'fadd,bf16' at nan, which is not a finite non-negative cost{{$}}
 
 ; NEGATIVE: error: {{.*}}Poseidon: cost model {{.*}}negative.csv line [[LINE]] prices the row 'fadd,bf16' at -1, which is not a finite non-negative cost{{$}}
+
+; SCALAR: error: {{.*}}Poseidon: cost model {{.*}}scalar.csv line 3 lists the scalar type 'fp16', which is none of bf16, half, float, double, fp80 and fp128{{$}}
+
+; REPEATED: error: {{.*}}Poseidon: cost model {{.*}}repeated.csv line [[LINE]] repeats the '# native_arch=' header{{$}}
 ; SHORT-NOT: [poseidon] Finished Optimization

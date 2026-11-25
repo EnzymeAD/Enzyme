@@ -25,11 +25,8 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
-#include <mpfr.h>
-
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <functional>
 #include <string>
 
@@ -138,10 +135,6 @@ SCEVExpander makeSCEVExpander(ScalarEvolution &SE, const char *name) {
 #endif
 }
 
-double stringToDouble(const std::string &str) {
-  return std::strtod(str.c_str(), nullptr);
-}
-
 std::string shortDouble(double v) {
   std::string s;
   raw_string_ostream(s) << format("%g", v);
@@ -158,37 +151,14 @@ std::string displayName(const Function &F) {
   return demangle(F.getName().str());
 }
 
-// A Herbie literal is an exact rational whose numerator or denominator alone
-// can leave double's range (1e-302 arrives over a 303-digit denominator), so
-// the quotient is formed exactly and rounded once.
-double literalToDouble(const std::string &str) {
-  size_t div = str.find('/');
-  if (div == std::string::npos)
-    return stringToDouble(str);
-  mpfr_prec_t exact = 4 * static_cast<mpfr_prec_t>(str.size()) + 64;
-  mpfr_t num, den, quot;
-  mpfr_init2(num, exact);
-  mpfr_init2(den, exact);
-  mpfr_init2(quot, 128);
-  mpfr_set_str(num, str.substr(0, div).c_str(), 10, MPFR_RNDN);
-  mpfr_set_str(den, str.substr(div + 1).c_str(), 10, MPFR_RNDN);
-  mpfr_div(quot, num, den, MPFR_RNDN);
-  double result = mpfr_get_d(quot, MPFR_RNDN);
-  mpfr_clear(num);
-  mpfr_clear(den);
-  mpfr_clear(quot);
-  return result;
-}
-
 void topoSort(const SetVector<Instruction *> &insts,
               SmallVectorImpl<Instruction *> &instsSorted) {
   SmallPtrSet<Instruction *, 8> visited;
   SmallPtrSet<Instruction *, 8> onStack;
 
   std::function<void(Instruction *)> dfsVisit = [&](Instruction *I) {
-    if (visited.count(I))
+    if (!visited.insert(I).second)
       return;
-    visited.insert(I);
     onStack.insert(I);
 
     auto operands =
@@ -209,38 +179,8 @@ void topoSort(const SetVector<Instruction *> &insts,
     instsSorted.push_back(I);
   };
 
-  for (auto *I : insts) {
-    if (!visited.count(I)) {
-      dfsVisit(I);
-    }
-  }
-}
-
-void reverseTopoSort(const SetVector<Instruction *> &insts,
-                     SmallVectorImpl<Instruction *> &instsSorted) {
-  topoSort(insts, instsSorted);
-  std::reverse(instsSorted.begin(), instsSorted.end());
-}
-
-void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
-                      SmallPtrSetImpl<Instruction *> &exprInsts,
-                      SmallPtrSetImpl<Value *> &visited) {
-  if (!V || inputs.contains(V) || visited.contains(V)) {
-    return;
-  }
-
-  visited.insert(V);
-
-  if (auto *I = dyn_cast<Instruction>(V)) {
-    exprInsts.insert(I);
-
-    auto operands =
-        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-
-    for (auto &op : operands) {
-      collectExprInsts(op, inputs, exprInsts, visited);
-    }
-  }
+  for (Instruction *I : insts)
+    dfsVisit(I);
 }
 
 } // namespace poseidon

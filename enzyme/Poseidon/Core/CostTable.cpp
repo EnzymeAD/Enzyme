@@ -10,6 +10,7 @@
 #include "Targets/MathLibrary.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -25,7 +26,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <system_error>
-#include <tuple>
 
 using namespace llvm;
 
@@ -161,23 +161,32 @@ Error loadCostModel(CostModelState &CM) {
       MemoryBuffer::getFile(costModelPath(CM));
   if (!File)
     return modelError(CM, "cannot be opened");
+  SmallSet<StringRef, 2> SeenHeaders;
   for (line_iterator It(**File); !It.is_at_end(); ++It) {
     StringRef Line = *It;
     if (Line[0] == '#') {
-      auto content = Line.drop_front(1).trim();
-      StringRef key, vals;
-      std::tie(key, vals) = content.split('=');
-      key = key.trim();
-      vals = vals.trim();
-      if (key == "native_arch") {
-        CM.NativeArch = vals.str();
+      auto [Key, Value] = Line.drop_front(1).split('=');
+      Key = Key.trim();
+      Value = Value.trim();
+      if (Key != "native_arch" && Key != "scalar_types")
+        continue;
+      if (!SeenHeaders.insert(Key).second)
+        return modelError(CM, "line " + Twine(It.line_number()) +
+                                  " repeats the '# " + Key + "=' header");
+      if (Key == "native_arch") {
+        CM.NativeArch = Value.str();
         continue;
       }
-      if (key == "scalar_types") {
-        SmallVector<StringRef, 8> tokens;
-        vals.split(tokens, ',', -1, false);
-        for (auto t : tokens)
-          CM.ScalarTypes.insert(t.str());
+      SmallVector<StringRef, 8> Types;
+      Value.split(Types, ',', -1, false);
+      for (StringRef Type : Types) {
+        Type = Type.trim();
+        if (!isScalarTypeName(Type))
+          return modelError(CM, "line " + Twine(It.line_number()) +
+                                    " lists the scalar type '" + Type +
+                                    "', which is none of bf16, half, float, "
+                                    "double, fp80 and fp128");
+        CM.ScalarTypes.insert(Type.str());
       }
       continue;
     }

@@ -45,7 +45,7 @@ namespace poseidon {
 // value where a number belongs or the reverse, or a malformed literal, approx
 // form or array.
 llvm::Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
-    const std::string &expr,
+    llvm::StringRef expr,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
@@ -66,7 +66,7 @@ std::string renderC(const FPNode &node, const CRendering &how,
                     llvm::StringRef resultDtype = "");
 
 llvm::SmallVector<std::string, 1> fpcoreToC(
-    const std::string &expr,
+    llvm::StringRef expr,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     const CRendering &how, llvm::StringRef resultDtype = "",

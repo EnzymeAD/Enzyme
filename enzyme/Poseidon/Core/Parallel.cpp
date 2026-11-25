@@ -123,9 +123,8 @@ private:
 
 } // namespace
 
-// The pool for a -poseidon-threads value, made on first use and kept for the
-// process, as the solve asks for many small batches; null when one thread is
-// all it allows.
+// The pool for a thread count, made on first use and kept for the process, as
+// a caller may ask for many small batches; null for one thread.
 static Pool *poolFor(unsigned Threads) {
   static std::mutex Lock;
   static std::map<unsigned, std::unique_ptr<Pool>> Pools;

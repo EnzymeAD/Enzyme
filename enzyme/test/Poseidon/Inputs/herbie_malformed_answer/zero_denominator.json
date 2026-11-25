@@ -1,0 +1,27 @@
+{
+  "key": {
+    "Herbie binary": "0000000000000000",
+    "format": "1"
+  },
+  "value": {
+    "tests": [
+      {
+        "bits": 64,
+        "name": "0",
+        "status": "imp-start",
+        "output": "(+.f64 v0 #s(literal 1/0 binary64))",
+        "cost-accuracy": [
+          [
+            1.0,
+            30.0
+          ],
+          [
+            1.4,
+            0.6
+          ],
+          []
+        ]
+      }
+    ]
+  }
+}

@@ -197,7 +197,8 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
       raw_string_ostream(content) << *cached.value;
       llvm::errs() << "Using cached Herbie output from " << cacheFilePath
                    << '\n';
-      llvm::errs() << "Herbie output: " << content << '\n';
+      if (Opts.Print)
+        llvm::errs() << "Herbie output: " << content << '\n';
       Run.Result = Outcome::Ok;
       Run.From = HerbieRunResult::Origin::Cache;
       Run.CacheFile = cacheFilePath;
@@ -431,7 +432,8 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                  << " exited with status " << RC
                  << " but wrote a usable results.json; using it.\n";
 
-  llvm::errs() << "Herbie output: " << content << '\n';
+  if (Opts.Print)
+    llvm::errs() << "Herbie output: " << content << '\n';
 
   if (!Opts.CacheDir.empty()) {
     if (Error E = writeAnswer(Opts.CacheDir, cacheFilePath, answeredBy,

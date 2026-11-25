@@ -239,7 +239,7 @@ static const Row *findOp(const Row (&Table)[N], StringRef Op) {
 
 void FPEvaluator::evaluateNode(const FPNode *node,
                                const MapVector<Value *, double> &inputValues) {
-  if (cache.find(node) != cache.end())
+  if (cache.count(node))
     return;
 
   if (isa<FPConst>(node)) {
@@ -511,7 +511,7 @@ MPFREvaluator::CachedValue::~CachedValue() { mpfr_clear(value); }
 
 void MPFREvaluator::evaluateNode(
     const FPNode *node, const MapVector<Value *, double> &inputValues) {
-  if (cache.find(node) != cache.end())
+  if (cache.count(node))
     return;
 
   if (isa<FPConst>(node)) {

@@ -6,11 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Poseidon's caches, Herbie's results, the per-site DP tables and the matrix
-// accuracy memo, are keyed on the inputs the cached result was computed from,
-// as named parts. A Herbie result is filed under the digest of its key. A DP
-// table entry and an accuracy memo entry store their key's parts, so a
-// mismatch can say which input changed.
+// A cache key names the inputs a cached result was computed from, part by
+// part. A cache can file a result under the key's digest, or store the key's
+// parts beside the result in an entry, so that a mismatch says which input
+// changed.
 //
 //===----------------------------------------------------------------------===//
 

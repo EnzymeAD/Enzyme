@@ -29,6 +29,8 @@
 ; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=UNKNOWN-OPERATOR %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/operator_arity.json %t/c/cachedHerbieOutput_*
 ; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=ARITY %s
+; RUN: cp %S/../Inputs/herbie_malformed_answer/zero_denominator.json %t/c/cachedHerbieOutput_*
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie 2>&1 | FileCheck --check-prefix=ZERO-DENOMINATOR %s
 
 ; The answers are replayed from the cache with no Herbie to run. A cached
 ; answer that is not shaped as Herbie writes its results gives the
@@ -62,3 +64,4 @@
 ; OPERATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", the operator +.f16 of an unmodelled format in '(+.f16 v0 v1)'; Poseidon cannot model
 ; UNKNOWN-OPERATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", the operator erfc, which Poseidon does not model in '(erfc.f64 v0)'; Poseidon cannot model
 ; ARITY: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", the operator < with 3 operand(s), not 2 in '(<.f64 v0 v1 v0)'; Poseidon cannot model
+; ZERO-DENOMINATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt has, for core "0", a rational literal with denominator 0 in '#s(literal 1/0 binary64)'; Poseidon cannot model

@@ -13,6 +13,7 @@
 #include "Evaluators.h"
 #include "FPNode.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Instructions.h"
@@ -80,13 +81,10 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
       auto *b = dyn_cast<FPLLValue>(node->operands[1].get());
       if (a && b && a->value != b->value && inputs.count(a->value) &&
           inputs.count(b->value)) {
-        bool seen = false;
-        for (const auto &pr : plan.pairs)
-          if ((pr.first == a->value && pr.second == b->value) ||
-              (pr.first == b->value && pr.second == a->value)) {
-            seen = true;
-            break;
-          }
+        bool seen = any_of(plan.pairs, [&](const auto &pr) {
+          return (pr.first == a->value && pr.second == b->value) ||
+                 (pr.first == b->value && pr.second == a->value);
+        });
         if (!seen)
           plan.pairs.push_back({a->value, b->value});
       }

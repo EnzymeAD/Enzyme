@@ -72,6 +72,8 @@ static bool hasRow(StringRef Name, bool MathFunction::*Column) {
 }
 
 StringRef mathFunctionOf(StringRef Name) {
+  if (StringRef Device = deviceMathName(Name); !Device.empty())
+    return Device;
   auto IsRow = [](StringRef N) {
     return any_of(mathFunctions(),
                   [&](const MathFunction &F) { return F.Name == N; });

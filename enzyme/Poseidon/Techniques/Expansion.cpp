@@ -329,15 +329,9 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
   return changed;
 }
 
-StringRef libmBaseName(StringRef name) {
-  if (StringRef device = deviceMathName(name); !device.empty())
-    return device;
-  return mathFunctionOf(name);
-}
-
 // The math function a call to `callee` computes: sqrt, fma or fmuladd for an
-// intrinsic, else the name its enzyme_math attribute gives, else its libm base
-// name.
+// intrinsic, else the name its enzyme_math attribute gives, else
+// mathFunctionOf's answer.
 static StringRef mathNameOf(const Function &callee) {
   if (callee.isIntrinsic()) {
     Intrinsic::ID id = callee.getIntrinsicID();
@@ -351,7 +345,7 @@ static StringRef mathNameOf(const Function &callee) {
   }
   if (callee.hasFnAttribute("enzyme_math"))
     return callee.getFnAttribute("enzyme_math").getValueAsString();
-  return libmBaseName(callee.getName());
+  return mathFunctionOf(callee.getName());
 }
 
 // Loop-carried phi incomings are deferred: the accumulator phi and the

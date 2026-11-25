@@ -189,11 +189,20 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
   static const std::regex plainConstantPattern(
       R"(^([-+]?(\d+(\.\d+)?)(/\d+)?|[-+]?inf\.0))");
 
+  // Herbie writes a literal as an exact rational of a representable value and
+  // an infinity as inf.0, so a zero denominator is no value it can mean.
+  auto zeroDenominator = [](StringRef Literal) {
+    StringRef Denominator = Literal.split('/').second;
+    return !Denominator.empty() &&
+           Denominator.find_first_not_of('0') == StringRef::npos;
+  };
   {
     std::smatch matches;
     if (std::regex_match(trimmedExpr, matches, constantPattern)) {
       std::string value = matches[1].str();
       std::string dtype = matches[3].str();
+      if (zeroDenominator(value))
+        return malformed("a rational literal with denominator 0", trimmedExpr);
       if (dtype == "binary64")
         dtype = "f64";
       else if (dtype == "binary32")
@@ -205,6 +214,8 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
     }
     if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
       std::string value = matches[1].str();
+      if (zeroDenominator(value))
+        return malformed("a rational literal with denominator 0", trimmedExpr);
       std::string dtype = "f64";
       return std::make_shared<FPConst>(value, dtype);
     }
@@ -325,7 +336,7 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
 }
 
 Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
-    const std::string &expr,
+    StringRef expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
@@ -659,7 +670,7 @@ static bool isRenderableFPCore(
 }
 
 SmallVector<std::string, 1>
-fpcoreToC(const std::string &expr,
+fpcoreToC(StringRef expr,
           std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
           std::unordered_map<std::string, Value *> &symbolToValueMap,
           const CRendering &how, StringRef resultDtype,
@@ -700,8 +711,6 @@ std::string getHerbieOperator(const Instruction &I) {
     const Function *Callee = cast<CallInst>(I).getCalledFunction();
     assert(Callee && "getHerbieOperator: Call without a function");
     StringRef Name = Callee->getName();
-    if (StringRef DeviceMath = deviceMathName(Name); !DeviceMath.empty())
-      return DeviceMath.str();
     if (Callee->isIntrinsic())
       return StringSwitch<StringRef>(intrinsicBaseName(*Callee))
           .Case("fmuladd", "fma")

@@ -62,10 +62,6 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
-// The math function a call to `name` computes, from the device math library or
-// libm: "fmax" for fmaxf and for __nv_fmax; empty for any other call.
-llvm::StringRef libmBaseName(llvm::StringRef name);
-
 // Materialize `instsToChange` as an n-component expansion and erase them, with
 // the FP64 PHIs the expansion carries. `restoredValues`, if given, receives
 // each erased value whose users now read another, with that value; `limbs`, if

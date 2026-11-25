@@ -136,7 +136,7 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
       // semantics and are modelled: libdevice is linked before this pass, so
       // a fresh __nv_fmaxf declaration would reach ptxas undefined.
       {
-        StringRef base = libmBaseName(funcName);
+        StringRef base = mathFunctionOf(funcName);
         if ((base == "fmax" || base == "fmin") && newArgs.size() == 2) {
           Intrinsic::ID id =
               (base == "fmax") ? Intrinsic::maxnum : Intrinsic::minnum;

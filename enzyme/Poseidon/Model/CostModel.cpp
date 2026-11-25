@@ -13,6 +13,7 @@
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
@@ -25,8 +26,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include <unordered_map>
 
 using namespace llvm;
 
@@ -231,11 +230,11 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
 }
 
 static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
-                             std::unordered_map<BasicBlock *, double> &MaxCost,
-                             std::unordered_set<BasicBlock *> &Visited,
+                             DenseMap<BasicBlock *, double> &MaxCost,
+                             SmallPtrSetImpl<BasicBlock *> &Visited,
                              InstWeight Weight, const Instruction *At) {
-  if (MaxCost.find(BB) != MaxCost.end())
-    return MaxCost[BB];
+  if (auto It = MaxCost.find(BB); It != MaxCost.end())
+    return It->second;
 
   if (!Visited.insert(BB).second)
     return 0;
@@ -273,8 +272,8 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
 
 double getCompCost(CostModelState &CM, Function *F, InstWeight Weight,
                    const Instruction *At) {
-  std::unordered_map<BasicBlock *, double> MaxCost;
-  std::unordered_set<BasicBlock *> Visited;
+  DenseMap<BasicBlock *, double> MaxCost;
+  SmallPtrSet<BasicBlock *, 16> Visited;
 
   BasicBlock *EntryBB = &F->getEntryBlock();
   double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited, Weight, At);

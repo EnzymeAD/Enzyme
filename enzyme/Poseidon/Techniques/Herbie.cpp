@@ -38,6 +38,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <string>
@@ -1637,6 +1638,20 @@ double RewriteUnit::getCompCostDelta(size_t candidateIndex) {
          (double)executions;
 }
 
+// The instructions `V` is computed by, back to `inputs`.
+static void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
+                             SmallPtrSetImpl<Instruction *> &exprInsts,
+                             SmallPtrSetImpl<Value *> &visited) {
+  if (!V || inputs.contains(V) || !visited.insert(V).second)
+    return;
+  auto *I = dyn_cast<Instruction>(V);
+  if (!I)
+    return;
+  exprInsts.insert(I);
+  for (Value *op : isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands())
+    collectExprInsts(op, inputs, exprInsts, visited);
+}
+
 void RewriteUnit::findErasableInstructions() {
   SmallPtrSet<Value *, 8> visited;
   SmallPtrSet<Instruction *, 8> exprInsts;
@@ -1654,7 +1669,8 @@ void RewriteUnit::findErasableInstructions() {
       instsToProcess.insert(&I);
 
   SmallVector<Instruction *, 8> instsToProcessSorted;
-  reverseTopoSort(instsToProcess, instsToProcessSorted);
+  topoSort(instsToProcess, instsToProcessSorted);
+  std::reverse(instsToProcessSorted.begin(), instsToProcessSorted.end());
 
   erasableInsts.clear();
   for (Value *root : roots)

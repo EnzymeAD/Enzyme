@@ -29,7 +29,9 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
+#include <mpfr.h>
 
 using namespace llvm;
 
@@ -377,6 +379,26 @@ void FPGraph::replaceErased(Value *erased, Value *now) {
     valueToNodeMap[now] = std::make_shared<FPLLValue>(now, "__no", node->dtype);
   }
   node->value = nullptr;
+}
+
+// An FPCore literal, a decimal or an exact rational, as the nearest double.
+static double literalToDouble(const std::string &str) {
+  size_t div = str.find('/');
+  if (div == std::string::npos)
+    return std::strtod(str.c_str(), nullptr);
+  mpfr_prec_t exact = 4 * static_cast<mpfr_prec_t>(str.size()) + 64;
+  mpfr_t num, den, quot;
+  mpfr_init2(num, exact);
+  mpfr_init2(den, exact);
+  mpfr_init2(quot, 128);
+  mpfr_set_str(num, str.substr(0, div).c_str(), 10, MPFR_RNDN);
+  mpfr_set_str(den, str.substr(div + 1).c_str(), 10, MPFR_RNDN);
+  mpfr_div(quot, num, den, MPFR_RNDN);
+  double result = mpfr_get_d(quot, MPFR_RNDN);
+  mpfr_clear(num);
+  mpfr_clear(den);
+  mpfr_clear(quot);
+  return result;
 }
 
 double FPConst::literalValue(const std::string &strValue) {

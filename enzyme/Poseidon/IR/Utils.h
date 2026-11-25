@@ -77,23 +77,16 @@ inline auto fpOperands(llvm::Instruction &I) {
   return I.operands();
 }
 
-double stringToDouble(const std::string &str);
 // A double as %g prints it.
 std::string shortDouble(double v);
 // A double as text that reads back to the same bits, infinity included.
 std::string exactDouble(double v);
 // The demangled name of `F`.
 std::string displayName(const llvm::Function &F);
-double literalToDouble(const std::string &str);
+// Appends `insts` to `instsSorted` with each after those of `insts` it uses,
+// in `insts`' order where that leaves a choice.
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,
               llvm::SmallVectorImpl<llvm::Instruction *> &instsSorted);
-void reverseTopoSort(const llvm::SetVector<llvm::Instruction *> &insts,
-                     llvm::SmallVectorImpl<llvm::Instruction *> &instsSorted);
-
-void collectExprInsts(llvm::Value *V,
-                      const llvm::SetVector<llvm::Value *> &inputs,
-                      llvm::SmallPtrSetImpl<llvm::Instruction *> &exprInsts,
-                      llvm::SmallPtrSetImpl<llvm::Value *> &visited);
 
 // Inlines the calls of `F` that `pick` selects, in instruction order, and again
 // in what that inlined, for a bounded number of rounds so that a recursive

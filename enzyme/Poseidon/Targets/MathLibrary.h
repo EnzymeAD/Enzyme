@@ -109,9 +109,10 @@ inline constexpr MathFunction kMathFunctions[] = {
 
 inline llvm::ArrayRef<MathFunction> mathFunctions() { return kMathFunctions; }
 
-// The math function a library call to `Name` computes: `Name` when it is a
-// row of mathFunctions(), else its float form's row without the f suffix, else
-// empty.
+// The math function a call to `Name` computes: the libm function behind a
+// libdevice or ocml entry point Poseidon handles, else `Name` when it is a row
+// of mathFunctions(), else its float form's row without the f suffix, else
+// empty. "fmax" for fmax, fmaxf, __nv_fmax and __ocml_fmax_f32.
 llvm::StringRef mathFunctionOf(llvm::StringRef Name);
 
 // Whether `Name` is a libm function Poseidon prices and can retype.

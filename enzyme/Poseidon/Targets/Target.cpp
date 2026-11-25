@@ -85,14 +85,9 @@ Intrinsic::ID approxSqrtF32Of(const CallInst &CI) {
   const Function *Callee = CI.getCalledFunction();
   if (!Callee || Callee->isIntrinsic() || CI.arg_size() != 1)
     return Intrinsic::not_intrinsic;
-  const Target &T = Target::of(*CI.getModule());
-  StringRef Base = Callee->getName();
-  if (Base.ends_with("f") || Base.ends_with("l"))
-    Base = Base.drop_back();
-  if (Base != "sqrt" &&
-      Base != T.mathFunction("sqrt", Type::getDoubleTy(CI.getContext())))
+  if (mathFunctionOf(Callee->getName()) != "sqrt")
     return Intrinsic::not_intrinsic;
-  return T.approxSqrtF32();
+  return Target::of(*CI.getModule()).approxSqrtF32();
 }
 
 LaunchGeometry launchGeometryOf(const Value *V) {
