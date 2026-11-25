@@ -80,29 +80,31 @@ class Session;
 struct SolutionStep;
 struct SolveRecord;
 
+/// Whether the solve of `F` is explained: -poseidon-explain names a directory,
+/// or a remark of the pass is enabled for `F`.
 bool explainWanted(const Options &O, const llvm::Function &F);
 
-// The explanation of a site the pass leaves as written without solving it:
-// `status` is what kept it from the solve and `reason` says why. F is the
-// site's clone, or with `body` the site's body when no clone was made. `tau`
-// > 0 is the site's accuracy target, from the site when `siteTarget`.
+/// The explanation of a site the pass leaves as written without solving it:
+/// `status` is what kept it from the solve and `reason` says why. F is the
+/// site's clone, or with `body` the site's body when no clone was made. `tau`
+/// > 0 is the site's accuracy target, from the site when `siteTarget`.
 void explainLeftAlone(Session &S, llvm::Function &F, double tau,
                       bool siteTarget, llvm::StringRef status,
                       llvm::StringRef reason, llvm::StringRef profile = "",
                       bool body = false);
 
-// A remark and the explanation of a site with nothing to optimize.
+/// A remark and the explanation of a site with nothing to optimize.
 void explainNothingToOptimize(Session &S, llvm::Function &F, double tau,
                               bool siteTarget);
 
-// A remark and the explanation of a site no profile has records of: `status`
-// is "unprofiled" or "never_executed", `profile` the file looked at.
+/// A remark and the explanation of a site no profile has records of: `status`
+/// is "unprofiled" or "never_executed", `profile` the file looked at.
 void explainUnprofiled(Session &S, llvm::Function &F, double tau,
                        bool siteTarget, llvm::StringRef status,
                        llvm::StringRef cause, llvm::StringRef profile);
 
-// Remarks and the explanation of the solve of the site of `st`; an operation
-// of a subgraph the cost model has no row for is an error.
+/// Remarks and the explanation of the solve of the site of `st`; an operation
+/// of a subgraph the cost model has no row for is an error.
 llvm::Error explainSolve(Session &S, llvm::Function &F, FunctionFPState &st,
                          llvm::ArrayRef<SolutionStep> steps,
                          const SolveRecord &rec);

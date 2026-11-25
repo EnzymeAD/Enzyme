@@ -29,16 +29,16 @@ class Module;
 
 namespace poseidon {
 
-// A copy of `M`, in its context, whose values keep the use-list order of the
-// values they copy, which passes that iterate a value's users read: the
-// module as written, to compile as a build without the plugin would.
+/// A copy of `M`, in its context, whose values keep the use-list order of the
+/// values they copy, which passes that iterate a value's users read: the
+/// module as written, to compile as a build without the plugin would.
 std::unique_ptr<llvm::Module> snapshotAsWritten(const llvm::Module &M);
 
-// Compiles `twin`, the module as written, with the default pipeline of
-// `Phase` as a build without a profile, takes into it the functions in
-// `rewritten`, those a rewrite reached, and gives M its contents. M is left as
-// it is when the compile of `twin` reports an error or a rewritten function
-// refers to what `twin` does not hold alike.
+/// Compiles `twin`, the module as written, with the default pipeline of
+/// `Phase` as a build without a profile, takes into it the functions in
+/// `rewritten`, those a rewrite reached, and gives M its contents. M is left as
+/// it is when the compile of `twin` reports an error or a rewritten function
+/// refers to what `twin` does not hold alike.
 void replaceWithAsWritten(llvm::Module &M, std::unique_ptr<llvm::Module> twin,
                           const Session &parent, llvm::PassBuilder &PB,
                           llvm::OptimizationLevel Level,

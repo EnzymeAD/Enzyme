@@ -36,52 +36,62 @@ namespace poseidon {
 struct FunctionFPState;
 class Session;
 
-// One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
-// [<site>:]<unit>=<name>.
+/// One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
+/// [<site>:]<unit>=<name>.
 struct ApplyItem {
+  /// The item as written.
   std::string text;
+  /// The site the item names; empty when it applies to every site.
   std::string site;
+  /// The kind of the unit it names.
   UnitKind kind = UnitKind::R;
+  /// The index of the unit among the site's units of that kind.
   size_t unit = 0;
+  /// The candidate it applies, by ordinal; none when it names one.
   std::optional<size_t> ordinal;
+  /// The candidate it applies, by name; empty when it gives an ordinal.
   std::string name;
-  // The keys of the module's sites `site` named. Sites are solved as the pass
-  // reaches them, so that it named none is only known at the end of the
-  // module.
+  /// The keys of the module's sites `site` named. Sites are solved as the pass
+  /// reaches them, so that it named none is only known at the end of the
+  /// module.
   std::set<std::string> named;
 };
 
+/// What the compile knows of its -poseidon-apply-rewrites items and of the
+/// sites it has noted against them.
 struct PinState {
-  // Whether `items` holds the items of the compile's -poseidon-apply-rewrites.
+  /// Whether `items` holds the items of the compile's -poseidon-apply-rewrites.
   bool parsed = false;
+  /// The items, in the order the flag gives them.
   std::vector<ApplyItem> items;
+  /// The keys of the module's sites noted so far, in the order they were noted.
   std::vector<std::string> sites;
-  // Two sites cut from one body share a key; printing their pin twice would
-  // give a value that applies each item twice.
+  /// Two sites cut from one body share a key; printing their pin twice would
+  /// give a value that applies each item twice.
   std::set<std::string> printed;
 };
 
-// The steps the items of -poseidon-apply-rewrites name at the site of `st`, in
-// the order a solve of the site returns its steps.
+/// The steps the items of -poseidon-apply-rewrites name at the site of `st`, in
+/// the order a solve of the site returns its steps.
 llvm::Expected<llvm::SmallVector<SolutionStep>>
 parseManualRewrites(Session &S, FunctionFPState &st);
 
-// A site of the module, for the items of -poseidon-apply-rewrites that name
-// one; `body` is what the site's clone is made from. An item whose site two
-// sites answer to is an error.
+/// A site of the module, for the items of -poseidon-apply-rewrites that name
+/// one; `body` is what the site's clone is made from. An item whose site two
+/// sites answer to is an error.
 llvm::Error noteSiteForPins(Session &S, const llvm::Function &body);
 
-// The value of -poseidon-apply-rewrites that applies `applied` at the site of
-// `st` again.
+/// The value of -poseidon-apply-rewrites that applies `applied` at the site of
+/// `st` again.
 std::string pinValue(const Session &S, const FunctionFPState &st,
                      llvm::ArrayRef<SolutionStep> applied);
 
-// Prints pinValue once per value.
+/// Prints pinValue once per value.
 void printPin(Session &S, const FunctionFPState &st,
               llvm::ArrayRef<SolutionStep> applied);
 
-// At the end of a module: an item that names a site has to have named a site
-// of the module, if the module has any.
+/// At the end of a module: an item that names a site has to have named a site
+/// of the module, if the module has any.
 llvm::Error checkPinnedSites(Session &S, llvm::Module &M);
 
 } // namespace poseidon

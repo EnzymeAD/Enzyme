@@ -72,6 +72,7 @@ constexpr llvm::StringLiteral kExplicitIdentity = "__poseidon_site_explicit";
 constexpr llvm::StringLiteral kExplicitIdentityTau =
     "__poseidon_site_explicit_tau";
 
+/// The marker call poseidon.h writes for a call of __poseidon_fp_optimize.
 constexpr llvm::StringLiteral kMarkerName = "__poseidon_fp_optimize";
 
 /// How the arguments of a call of `fn` are read: as fn's own (automatic), or
@@ -81,8 +82,12 @@ enum class ArgumentList { Automatic, Explicit };
 /// What a call's list is, and of an automatic list, fn's own arguments and the
 /// accuracy target its poseidon_tau gives, if it has one.
 struct CallArguments {
+  /// Whether the list is automatic or explicit.
   ArgumentList kind;
+  /// Of an automatic list, the values passed for fn's parameters, in order;
+  /// empty for an explicit list.
   llvm::SmallVector<llvm::Value *, 8> own;
+  /// The accuracy target a marker call's poseidon_tau gives; none without one.
   std::optional<double> tau;
 };
 
@@ -109,6 +114,11 @@ llvm::Expected<double> readTarget(llvm::CallBase *call, llvm::Value *value,
 /// Inlines into the deferred `body` the functions Enzyme generated for it;
 /// how many calls were inlined.
 unsigned foldEnzymeGenerated(llvm::Function &body);
+/// A copy of the deferred `body` as the pipeline left it, with copies of the
+/// functions Enzyme generated for it and its always-inline callees kept out of
+/// line, so that a site the solve leaves alone is not optimized further than
+/// the code as written. One copy per body, kept in `copies`; the copies belong
+/// to the module.
 llvm::Function *
 asLeftByPipeline(llvm::Function &body,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &copies);
@@ -138,14 +148,19 @@ void setNextSiteId(llvm::Module &M, unsigned next);
 /// the site's parameters, the accuracy target, and which marker arguments are
 /// Poseidon's own and must not be forwarded to the derivative request.
 struct MarkerArgs {
+  /// The caller value of each of the site's parameters, in parameter order.
   llvm::SmallVector<llvm::Value *, 8> primalArgs;
+  /// Per marker argument, whether it is forwarded to the derivative request.
   llvm::SmallVector<bool, 16> forward;
   /// The pointers marked poseidon_shadow, whose shadows profileSite makes: the
   /// marker argument naming the activity, the pointer's, and its parameter.
   struct MadeShadow {
     unsigned activity, arg, param;
   };
+  /// The pointers marked poseidon_shadow, in argument order.
   llvm::SmallVector<MadeShadow, 4> madeShadows;
+  /// The accuracy target the marker gives; 0 for none, which leaves the site to
+  /// -poseidon-tau.
   double errTol = 0.0;
 };
 

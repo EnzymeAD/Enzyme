@@ -26,15 +26,15 @@
 
 namespace poseidon {
 
-// Runs Fn(I) for every I in [0, N) on up to `Threads` threads (0: every
-// hardware thread) and returns once every call has returned. With one thread
-// or one call, the calls run in order on the calling thread. Fn may itself
-// call forEachIndex.
+/// Runs Fn(I) for every I in [0, N) on up to `Threads` threads (0: every
+/// hardware thread) and returns once every call has returned. With one thread
+/// or one call, the calls run in order on the calling thread. Fn may itself
+/// call forEachIndex.
 void forEachIndex(unsigned Threads, size_t N,
                   llvm::function_ref<void(size_t)> Fn);
 
-// forEachIndex over the blocks of `Grain` consecutive indices of [0, N):
-// Fn(Begin, End) for each.
+/// forEachIndex over the blocks of `Grain` consecutive indices of [0, N):
+/// Fn(Begin, End) for each.
 void forEachBlock(unsigned Threads, size_t N, size_t Grain,
                   llvm::function_ref<void(size_t, size_t)> Fn);
 

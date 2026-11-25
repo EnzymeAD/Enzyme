@@ -45,7 +45,9 @@ class Value;
 
 namespace poseidon {
 
+/// A math function Poseidon knows: one row of kMathFunctions.
 struct MathFunction {
+  /// Its libm name at double precision.
   llvm::StringLiteral Name;
   /// Priced from the cost model and retyped by a precision change.
   bool Libm;
@@ -109,6 +111,7 @@ inline constexpr MathFunction kMathFunctions[] = {
     {"nearbyint", false, false, false, true, false},
 };
 
+/// Every math function Poseidon knows, in kMathFunctions' order.
 inline llvm::ArrayRef<MathFunction> mathFunctions() { return kMathFunctions; }
 
 /// The math function a call to `Name` computes: the libm function behind a

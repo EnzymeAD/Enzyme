@@ -39,14 +39,18 @@ struct Options;
 /// A launch descriptor: its manifest line and the message printed when the
 /// manifest is written.
 struct Recorded {
+  /// The descriptor as the manifest holds it: the kernel name, then its fields.
   std::string line;
+  /// What is printed, under -poseidon-print, when the manifest is written.
   std::string message;
 };
 
 /// The header of a device site's profile, which the host half registers
 /// under the profile's name.
 struct ProfileHeader {
+  /// The name the profile is written and registered under.
   std::string profileName;
+  /// The profile's header text, as the profiling runtime writes it.
   std::string header;
 };
 
@@ -56,6 +60,7 @@ struct LaunchManifest {
   /// By kernel name, so that the manifest and its messages come out in one
   /// order whatever order the sites were solved in.
   std::map<std::string, Recorded> HostDispatch, Profiling;
+  /// The profile headers of the profiled kernels, by kernel name.
   std::map<std::string, ProfileHeader> ProfileHeaders;
   /// What the device profiler's tables must hold for this module: the
   /// functions it profiles and the probes of the largest.
@@ -123,10 +128,14 @@ llvm::Error readDescriptors(
 /// gives a default value, and takeError says what was wrong.
 class DescriptorCursor {
 public:
+  /// A cursor at the first token after the kernel name `toks[0]`; `toks` must
+  /// outlive it.
   explicit DescriptorCursor(llvm::ArrayRef<llvm::StringRef> toks)
       : toks(toks) {}
 
+  /// Whether every read so far found its token and parsed it.
   bool ok() const { return why.empty(); }
+  /// Whether no token is left to read, or reading has stopped.
   bool atEnd() const { return !ok() || at == toks.size(); }
   /// Takes the next token when it is `keyword`.
   bool consume(llvm::StringRef keyword) {
@@ -135,22 +144,31 @@ public:
     ++at;
     return true;
   }
+  /// The next token as a decimal integer of type `T`; 0 once reading has
+  /// stopped, and stops it if the token is missing or not such an integer.
+  /// `what` names the field for the error.
   template <typename T> T integer(llvm::StringRef what) {
     T value{};
     if (llvm::StringRef tok = next(what); ok() && tok.getAsInteger(10, value))
       fail("its " + what + " '" + tok + "' is not an integer of its range");
     return value;
   }
+  /// The next token as a double; 0 once reading has stopped, and stops it if
+  /// the token is missing or not a number. `what` names the field for the
+  /// error.
   double real(llvm::StringRef what) {
     double value = 0.0;
     if (llvm::StringRef tok = next(what); ok() && tok.getAsDouble(value))
       fail("its " + what + " '" + tok + "' is not a number");
     return value;
   }
+  /// Stops the reading with `reason`, unless it has already stopped.
   void fail(const llvm::Twine &reason) {
     if (ok())
       why = reason.str();
   }
+  /// Success if every token was read and parsed; otherwise an error saying what
+  /// was wrong first, phrased to follow "the descriptor".
   llvm::Error takeError() {
     if (ok() && at != toks.size())
       fail("it has the unexpected token '" + toks[at] + "'");
@@ -159,6 +177,7 @@ public:
   }
 
 private:
+  /// The next token; empty, stopping the reading, when there is none.
   llvm::StringRef next(llvm::StringRef what) {
     if (!atEnd())
       return toks[at++];
@@ -166,8 +185,11 @@ private:
     return llvm::StringRef();
   }
 
+  /// The descriptor's tokens, the kernel name first.
   llvm::ArrayRef<llvm::StringRef> toks;
+  /// Index of the next token to read.
   size_t at = 1;
+  /// Why reading stopped; empty while it has not.
   std::string why;
 };
 
@@ -183,12 +205,17 @@ void readProfileHeaders(const Options &O, const llvm::Module &M,
 /// a field of an aggregate a parameter passes by value (the captures of a
 /// lambda a kernel takes by value).
 struct LaunchRef {
+  /// The parameter index; -1 for no value.
   int param = -1;
-  int64_t offset = -1; // byte offset of the field; -1 = the parameter itself
+  /// Byte offset of the field in the aggregate; -1 for the parameter itself.
+  int64_t offset = -1;
+  /// Whether the value is a field of an aggregate parameter.
   bool isField() const { return offset >= 0; }
+  /// Whether both name the same parameter and field.
   bool operator==(const LaunchRef &o) const {
     return param == o.param && offset == o.offset;
   }
+  /// Orders by parameter, then by offset, the parameter itself first.
   bool operator<(const LaunchRef &o) const {
     return param != o.param ? param < o.param : offset < o.offset;
   }

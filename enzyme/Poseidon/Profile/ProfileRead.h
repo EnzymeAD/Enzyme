@@ -33,19 +33,24 @@ namespace poseidon {
 
 /// The record of one profiled instruction.
 struct ProfileInfo {
+  /// The smallest value the instruction produced over the profiled executions.
   double minRes = std::numeric_limits<double>::max();
+  /// The largest value the instruction produced over the profiled executions.
   double maxRes = std::numeric_limits<double>::lowest();
   /// Sum of the sensitivities |gradient x value|.
   double sumSens = 0.0;
+  /// Sum of the signed gradients of the value over its executions.
   double sumGrad = 0.0;
   /// Sum of |gradient|, the accuracy weight: the signed sum understates a value
   /// whose adjoint alternates in sign.
   double sumAbsGrad = 0.0;
+  /// Number of times the instruction was executed in the profiling run.
   uint64_t exec = 0;
   /// Per operand; minMagOperands is the smallest nonzero |operand|, 0 if the
   /// operand was never nonzero.
   llvm::SmallVector<double, 2> minOperands, maxOperands, minMagOperands;
 
+  /// The accuracy weight of the instruction, its summed |gradient|.
   double weight() const { return sumAbsGrad; }
 };
 
@@ -62,7 +67,9 @@ struct FunctionProfileHeader {
   /// Launch geometry over the launches of a kernel (largest block and grid,
   /// number of launches), 0 where unknown; a device profile records it.
   uint32_t maxBlockDim[3] = {0, 0, 0};
+  /// The largest grid a launch had, per dimension; 0 where unknown.
   uint32_t maxGridDim[3] = {0, 0, 0};
+  /// Number of launches profiled; 0 where unknown.
   uint64_t launchCount = 0;
   /// Slot -> reduction trip count at profile scale, which the profile-use
   /// compile cannot recompute.
@@ -74,6 +81,7 @@ struct FunctionProfileHeader {
   /// with respect to this site's outputs; 1.0 when the profile carries no
   /// Kappa line.
   double kappa = 1.0;
+  /// Whether the profile carries a Kappa line.
   bool hasKappa = false;
   /// How the run measured Kappa; Unmeasured without a Kappa line when the run
   /// declared a quantity of interest and did not measure the condition number;
@@ -83,6 +91,7 @@ struct FunctionProfileHeader {
   bool executed = true;
 };
 
+/// The word a KappaMark line spells KappaMark::Unmeasured with.
 inline constexpr llvm::StringLiteral kKappaUnmeasured = kProfileKappaUnmeasured;
 
 /// The word a profile's KappaMark line spells `M` with.

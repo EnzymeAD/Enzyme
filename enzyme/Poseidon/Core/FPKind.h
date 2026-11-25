@@ -18,6 +18,8 @@
 
 namespace poseidon {
 
+/// The scalar formats the pass computes in, and the integer formats of the INT8
+/// tensor-core path.
 enum class FPKind {
   Invalid = 0,
   F16 = 1,
@@ -25,29 +27,42 @@ enum class FPKind {
   TF32 = 3,
   F32 = 4,
   F64 = 5,
-  S8 = 6,  // 8-bit signed integer (INT8 tensor-core operand)
-  S32 = 7, // 32-bit signed integer (INT8 tensor-core accumulator)
+  /// 8-bit signed integer, the INT8 tensor-core operand.
+  S8 = 6,
+  /// 32-bit signed integer, the INT8 tensor-core accumulator.
+  S32 = 7,
 };
+/// The format's name as diagnostics and cost-model rows spell it.
 const char *fpKindName(FPKind k);
 
+/// `x` rounded to nearest, ties to even, to the format `k` and returned as a
+/// double; overflow gives an infinity and a value below the format's range a
+/// subnormal or zero. `x` itself for F64 and Invalid; `k` must not be an
+/// integer format.
 double roundToPrec(double x, FPKind k);
-// roundToPrec(x, k) with the format of `k` looked up once, for a loop that
-// rounds many values to it.
+/// roundToPrec(x, k) with the format of `k` looked up once, for a loop that
+/// rounds many values to it.
 class Rounding {
 public:
+  /// The rounding to `k`, which must not be an integer format.
   explicit Rounding(FPKind k);
+  /// roundToPrec(x, kind).
   double operator()(double x) const;
 
 private:
+  /// The format rounded to.
   FPKind kind;
-  // 0 for the kinds every double is already in (F64, Invalid).
+  /// 0 for the kinds every double is already in (F64, Invalid).
   int precision = 0;
+  /// The format's smallest normal exponent.
   int minExponent = 0;
+  /// The spacing of the format's subnormals, as a double.
   double subnormalUlp = 0.0;
-  uint64_t maxFinite = 0; // binary64 encoding of the largest finite value
+  /// The binary64 encoding of the largest finite value of the format.
+  uint64_t maxFinite = 0;
 };
-// Smallest positive (subnormal) magnitude representable in `k`, as a double.
-// Returns 0 for F64/Invalid/integer kinds (no underflow constraint).
+/// Smallest positive (subnormal) magnitude representable in `k`, as a double.
+/// Returns 0 for F64/Invalid/integer kinds (no underflow constraint).
 double minSubnormalForKind(FPKind k);
 
 } // namespace poseidon

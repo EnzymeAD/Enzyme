@@ -37,107 +37,126 @@ namespace poseidon {
 struct Options;
 class Session;
 
+/// One site's solve: its FP graph, its profile's scale, the units proposed for
+/// it and the analyses its matrix products hold.
 struct FunctionFPState : FPGraph {
+  /// The accuracy target written at the site; 0 when the site has none and
+  /// -poseidon-tau applies.
   double errTol = 0.0;
-  // Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
-  // costs carry; the denominator that turns an accuracy cost into a
-  // per-operation relative rounding level. See solveSites.
+  /// Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
+  /// costs carry; the denominator that turns an accuracy cost into a
+  /// per-operation relative rounding level.
   double accScale = 0.0;
-  // What the profiled run spent in the site, in cost-model units: the
-  // execution count times the price of every operation the profile records.
+  /// What the profiled run spent in the site, in cost-model units: the
+  /// execution count times the price of every operation the profile records.
   double profiledCost = 0.0;
-  // The profile the site is solved from and the canonical form hash it was
-  // checked against.
+  /// The profile the site is solved from.
   std::string profilePath;
+  /// The canonical form hash the profile was checked against.
   std::string canonicalHash;
-  // The condition number the profiling run measured, when it measured one,
-  // and the factor it put the accuracy costs on the application's scale by.
+  /// The condition number the profiling run measured; none when it measured
+  /// none.
   std::optional<double> kappa;
+  /// How the profiling run measured `kappa`.
   KappaMark kappaMark = KappaMark::None;
+  /// The factor the accuracy costs were multiplied by to put them on the
+  /// application's scale: kappa over the summed sensitivity, 1 without a
+  /// measured kappa.
   double scaleFactor = 1.0;
+  /// The site's FP subgraphs, the connected components of its operations.
   llvm::SmallVector<Subgraph, 1> subgraphs;
-  // Backing storage for the matmuls; MatmulUnit::matmul points into this,
-  // so it must outlive materialization.
+  /// Backing storage for the matmuls; MatmulUnit::matmul points into this,
+  /// so it must outlive materialization.
   llvm::SmallVector<AbstractMatmul, 4> abstractMatmuls;
+  /// The rewrite units proposed for the site.
   llvm::SmallVector<RewriteUnit, 4> COs;
+  /// The precision units proposed for the site.
   llvm::SmallVector<PrecisionUnit, 4> CSs;
+  /// The matrix-product units proposed for the site.
   llvm::SmallVector<MatmulUnit, 4> CMs;
-  // The site's units in site order (COs, CSs, CMs), each bound to this site.
+  /// The site's units in site order (COs, CSs, CMs), each bound to this site.
   llvm::SmallVector<SiteUnit *, 8> units;
+  /// Whether sealUnits has run.
   bool unitsSealed = false;
-  // Set when the site is solved against the DP table cache.
+  /// Set when the site is solved against the DP table cache.
   std::unique_ptr<SiteTable> table;
 
-  // Analyses for the loop raises. The matmuls found hold raiseSE and SCEVs it
-  // owns, so these outlive materialization. raiseSE is declared last so that
-  // it is destroyed first: it references the others.
+  /// Analyses for the loop raises. The matmuls found hold raiseSE and SCEVs it
+  /// owns, so these outlive materialization. raiseSE is declared last so that
+  /// it is destroyed first: it references the others.
   std::optional<llvm::DominatorTree> raiseDT;
+  /// The loop, assumption, library and scalar-evolution analyses of the site
+  /// clone, for the loop raises; built together with raiseDT.
   std::optional<llvm::LoopInfo> raiseLI;
   std::optional<llvm::AssumptionCache> raiseAC;
   std::optional<llvm::TargetLibraryInfoImpl> raiseTLII;
   std::optional<llvm::TargetLibraryInfo> raiseTLI;
   std::optional<llvm::ScalarEvolution> raiseSE;
 
-  // Binds every unit to this site and lists it in `units`. Once per site,
-  // after its last proposal: no unit is added to COs, CSs or CMs after it.
+  /// Binds every unit to this site and lists it in `units`. Once per site,
+  /// after its last proposal: no unit is added to COs, CSs or CMs after it.
   void sealUnits(Session &S);
 };
 
-// A site's profile: the file it was read from, its records and the canonical
-// form hash of the site they were checked against.
+/// A site's profile: the file it was read from, its records and the canonical
+/// form hash of the site they were checked against.
 struct SiteProfileData {
+  /// The profile file.
   std::string path;
+  /// The profile's records by slot.
   ProfileMap map;
+  /// The profile's header.
   FunctionProfileHeader header;
+  /// The canonical form hash of the site, as computed for this compile.
   std::string canonicalHash;
 };
 
-// The file in the profile directory `dir` that holds the profile of the site
-// clone `clone`.
+/// The file in the profile directory `dir` that holds the profile of the site
+/// clone `clone`.
 std::string siteProfilePath(const Session &S, const llvm::Function &clone,
                             llvm::StringRef dir);
 
-// `errorTol` > 0 is the accuracy target written at the site; 0 means the site
-// wrote none and -poseidon-tau decides.
+/// `errorTol` > 0 is the accuracy target written at the site; 0 means the site
+/// wrote none and -poseidon-tau decides.
 llvm::Expected<bool> fpOptimize(Session &S, llvm::Function &F, double errorTol);
 
-// The attribute that marks a site of the joint solve, holding the site's
-// accuracy target.
+/// The attribute that marks a site of the joint solve, holding the site's
+/// accuracy target.
 constexpr llvm::StringLiteral kJointErrTol = "poseidon-joint-errtol";
 
-// Solves one DP over all sites of `M` marked with kJointErrTol.
+/// Solves one DP over all sites of `M` marked with kJointErrTol.
 llvm::Expected<bool> solveJointly(Session &S, llvm::Module &M);
 
-// The FP subgraphs of F, flood-filled over its optimizable instructions, and
-// a node for every value they read or compute. The instructions `profileMap`
-// records no execution of are in no subgraph.
+/// The FP subgraphs of F, flood-filled over its optimizable instructions, and
+/// a node for every value they read or compute. The instructions `profileMap`
+/// records no execution of are in no subgraph.
 void buildSubgraphs(
     const Options &O, llvm::Function &F, const ProfileMap &profileMap,
     const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls, FPGraph &G,
     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
-// Sets the profiled sensitivity, gradient, execution count and value ranges
-// of the subgraphs' nodes. A profile that gives an operand no range was not
-// generated from this program, an error at the operation.
+/// Sets the profiled sensitivity, gradient, execution count and value ranges
+/// of the subgraphs' nodes. A profile that gives an operand no range was not
+/// generated from this program, an error at the operation.
 llvm::Error attachProfile(const Options &O, const ProfileMap &profileMap,
                           FPGraph &G, llvm::ArrayRef<Subgraph> subgraphs);
 
-// The site's optimization units: the subgraphs after splitting and the
-// shared-staging merge.
+/// The site's optimization units: the subgraphs after splitting and the
+/// shared-staging merge.
 void shapeSubgraphs(const Options &O, llvm::Function &F,
                     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
-// Names, once for the site clone F, the shared buffers that more than one of
-// its optimization units reads or writes: a precision change narrows such a
-// buffer only when all of them pick one tier, which
-// -poseidon-merge-shared-staging makes them do.
+/// Names, once for the site clone F, the shared buffers that more than one of
+/// its optimization units reads or writes: a precision change narrows such a
+/// buffer only when all of them pick one tier, which
+/// -poseidon-merge-shared-staging makes them do.
 void hintSharedStaging(const Session &S, llvm::Function &F,
                        llvm::ArrayRef<Subgraph> subgraphs);
 
-// The steps of `steps` that are applied, in order: a step whose outputs an
-// earlier step already rewrote is skipped. The binary64 and binary32 searches
-// of one output are separate units, and the first rewrite erases the output
-// the second would replace.
+/// The steps of `steps` that are applied, in order: a step whose outputs an
+/// earlier step already rewrote is skipped. The binary64 and binary32 searches
+/// of one output are separate units, and the first rewrite erases the output
+/// the second would replace.
 llvm::SmallVector<SolutionStep>
 stepsToApply(llvm::ArrayRef<SolutionStep> steps);
 

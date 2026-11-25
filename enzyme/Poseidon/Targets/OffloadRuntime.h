@@ -70,6 +70,7 @@ llvm::StringRef withoutExternalizedPostfix(llvm::StringRef name);
 /// two dim3 operands, whose last three are the argument array, the dynamic
 /// shared memory size and the stream.
 bool isPopCallConfiguration(llvm::StringRef name);
+/// Whether `name` is a launch of either runtime.
 bool isLaunchKernel(llvm::StringRef name);
 /// The configuration pop of a CUDA or HIP stub, or null.
 llvm::CallInst *findPopConfig(llvm::Function &F);
@@ -77,14 +78,17 @@ llvm::CallInst *findPopConfig(llvm::Function &F);
 llvm::CallInst *findLaunchCall(llvm::Function &F);
 /// The pop of the runtime `M` declares one of, CUDA's otherwise.
 llvm::FunctionCallee popCallConfiguration(llvm::Module &M);
-/// The grid and block dimensions the configuration pop `pop` writes.
+/// The grid dimensions the configuration pop `pop` writes.
 llvm::Value *poppedGrid(llvm::CallBase &pop);
+/// The block dimensions the configuration pop `pop` writes.
 llvm::Value *poppedBlock(llvm::CallBase &pop);
-/// The kernel handle, argument array, dynamic shared memory size and stream
-/// of the launch `launch`.
+/// The kernel handle the launch `launch` launches.
 llvm::Value *launchedKernel(llvm::CallBase &launch);
+/// The argument array of the launch `launch`.
 llvm::Value *launchArguments(llvm::CallBase &launch);
+/// The dynamic shared memory size, in bytes, of the launch `launch`.
 llvm::Value *launchSharedBytes(llvm::CallBase &launch);
+/// The stream operand of the launch `launch`, as written.
 llvm::Value *launchStream(llvm::CallBase &launch);
 /// The stream the launch's work is ordered on, as a handle a library takes in
 /// any compilation: a per-thread-stream launch's null stream is its thread's
@@ -97,7 +101,9 @@ llvm::Value *launchStreamHandle(llvm::IRBuilderBase &B, llvm::CallBase &launch);
 /// offloading entries the unit leaves against the linked image, and the runtime
 /// is the one of the unit's own entries. None if `M` does neither.
 struct VariableRegistration {
+  /// The runtime the variable is registered with.
   OffloadRuntime Runtime;
+  /// The unit's registration function; null with relocatable device code.
   llvm::Function *RegisterGlobals;
 };
 /// How host module `M` registers a device variable; none if it offloads

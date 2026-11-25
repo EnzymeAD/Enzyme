@@ -24,22 +24,22 @@ namespace poseidon {
 class Session;
 struct Site;
 
-// Profile use: each of `sites` solved and its call made a call of what the
-// solve chose, appending the calls made to `calls`; in a compile without a
-// profile, the site as written. A marker becomes a call of its body, a kernel
-// a wrapper around its own outlined body.
+/// Profile use: each of `sites` solved and its call made a call of what the
+/// solve chose, appending the calls made to `calls`; in a compile without a
+/// profile, the site as written. A marker becomes a call of its body, a kernel
+/// a wrapper around its own outlined body.
 llvm::Expected<bool>
 optimizeSites(Session &S, llvm::ArrayRef<Site> sites,
               llvm::SmallVectorImpl<llvm::CallBase *> &calls);
 
-// Profile generation: instruments every site of M that is not deferred with
-// the profiling probes and rewrites its marker into an __enzyme_autodiff
-// request. Returns true if it instrumented a site.
+/// Profile generation: instruments every site of M that is not deferred with
+/// the profiling probes and rewrites its marker into an __enzyme_autodiff
+/// request. Returns true if it instrumented a site.
 llvm::Expected<bool> prepareModule(Session &S, llvm::Module &M);
 
-// Drop the canonicalized clones nothing calls any more. Runs once per module,
-// after every site is lowered and inlined. An -poseidon-apply-rewrites item
-// that names no site of the module is an error.
+/// Drop the canonicalized clones nothing calls any more. Runs once per module,
+/// after every site is lowered and inlined. An -poseidon-apply-rewrites item
+/// that names no site of the module is an error.
 llvm::Error finalizeModule(Session &S, llvm::Module &M);
 
 } // namespace poseidon

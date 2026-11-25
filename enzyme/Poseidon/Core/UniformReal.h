@@ -19,9 +19,10 @@
 
 namespace poseidon {
 
-// A real in [A, B) from the next draws of G: two of a minstd_rand0, one of an
-// mt19937_64.
+/// A real in [A, B) from the next two draws of `G`, as libstdc++ 14's
+/// std::uniform_real_distribution<double> computes it.
 double uniformReal(std::minstd_rand0 &G, double A, double B);
+/// A real in [A, B) from the next draw of `G`, computed the same way.
 double uniformReal(std::mt19937_64 &G, double A, double B);
 
 } // namespace poseidon

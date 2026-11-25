@@ -32,8 +32,13 @@ namespace poseidon {
 
 struct Options;
 
+/// One place the compile optimizes: a marker call, an annotated kernel, or a
+/// host function outlined into a body. The functions are the module's.
 struct Site {
+  /// How the site was written: a marker call, a kernel carrying the annotation
+  /// or named by -poseidon-kernels, or an annotated host function.
   enum class Form { Marker, Kernel, HostBody };
+  /// How this site was written.
   Form form;
   /// The marker's target (null when the marker names none), the kernel, or
   /// the host function's outlined body.

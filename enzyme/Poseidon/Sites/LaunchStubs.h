@@ -29,6 +29,8 @@ namespace poseidon {
 /// launch stub that a descriptor in the module's manifest matches.
 class HostStubPass : public PassParent<HostStubPass> {
 public:
+  /// Rewrites the stubs of `M`; nothing in a device module or a compile that
+  /// hands no launch over, and nothing once the session has stopped.
   llvm::PreservedAnalyses run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &MAM);
 };

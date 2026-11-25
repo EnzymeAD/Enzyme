@@ -38,13 +38,17 @@ namespace poseidon {
 /// to its addrspace(3) global through, the clone having no callers while it
 /// is optimized.
 struct SiteClone {
+  /// The body the clone was cut from.
   llvm::Function *Origin;
+  /// The caller value of each parameter of the clone, null once the value is
+  /// deleted.
   llvm::SmallVector<llvm::WeakTrackingVH, 12> Args;
 };
 
 /// The sites of one module: each site clone's record, and the identity of
 /// each body the pass made for a site and of each marker's target.
 struct SiteRecords {
+  /// The record of each site clone, by clone.
   std::map<const llvm::Function *, SiteClone> Clones;
   /// Keyed by value, not function: a later pass may replace a function by an
   /// alias or a constant.
@@ -87,6 +91,8 @@ void recordMarkerIdentities(SiteRecords &T, llvm::Module &M);
 /// 64-bit MD5 hash PGO keys a function by) of `name` as PGO would name a
 /// function of that name and linkage in that function's source file.
 std::string fileStem(llvm::StringRef name, llvm::StringRef identity);
+/// The stem of a file named after `name`, a function name that is its own
+/// identity.
 inline std::string profileNameStem(llvm::StringRef name) {
   return fileStem(name, name);
 }
@@ -97,6 +103,7 @@ std::string perCallSiteName(llvm::StringRef symbol);
 
 /// The base name and the context of the function an Itanium name demangles to.
 struct DemangledFunction {
+  /// The unqualified name, and the scope it is declared in.
   std::string BaseName, Context;
 };
 /// The base name and context `mangled` demangles to; none if it names no
@@ -111,8 +118,10 @@ void noteSiteClone(SiteRecords &T, llvm::Function *clone,
 /// The body the site clone `clone` was cut from; null if it was not.
 const llvm::Function *siteOriginOf(const SiteRecords &T,
                                    const llvm::Function &clone);
-/// The profile stem and file name of the site cut from `body`.
+/// The stem of the profile file of the site cut from `body`.
 std::string bodyProfileStem(const SiteRecords &T, const llvm::Function &body);
+/// The file name of the profile of the site cut from `body`: its stem and
+/// ".fpprofile".
 std::string bodyProfileFile(const SiteRecords &T, const llvm::Function &body);
 /// The stem of a file named after the site clone or body `F`, which is told
 /// apart from a same-named function of another source file as its profile is.

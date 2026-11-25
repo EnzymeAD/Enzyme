@@ -34,10 +34,13 @@ class Value;
 
 namespace poseidon {
 
-/// A value a kernel reads its launch geometry from, with its axis (0 to 2).
+/// A value a kernel reads its launch geometry from.
 enum class LaunchValue { None, ThreadIndex, BlockIndex, BlockDim };
+/// The launch value a kernel reads and its axis.
 struct LaunchGeometry {
+  /// Which value; None when it is no launch value.
   LaunchValue Kind = LaunchValue::None;
+  /// Its axis, 0 to 2; -1 with Kind None.
   int Axis = -1;
 };
 
@@ -70,12 +73,13 @@ class Target {
 public:
   /// The target of `M`, or of the module `F` is in.
   static const Target &of(const llvm::Module &M);
+  /// The target of the module `F` is in.
   static const Target &of(const llvm::Function &F);
   /// The target of the processors named like `processor`, such as a cost
   /// model's native_arch.
   static const Target &measuredOn(llvm::StringRef processor);
 
-  /// Identity.
+  /// Whether the target is a GPU, whose modules are device code.
   virtual bool isDevice() const = 0;
   /// The target's name, as diagnostics and cost models give it.
   virtual llvm::StringRef name() const = 0;
@@ -84,7 +88,7 @@ public:
   /// The Herbie platform of a cost model measured on `processor`.
   virtual std::string herbiePlatform(llvm::StringRef processor) const = 0;
 
-  /// Kernel ABI and memory.
+  /// Whether `F` is a kernel, an entry point the host launches.
   virtual bool isKernel(const llvm::Function &F) const = 0;
   /// Bounds the block a profiled kernel `K` may be launched with to the
   /// device's limit, where the target has no bound of its own on `K`.
@@ -101,10 +105,10 @@ public:
   /// shared memory of every address-taken function.
   virtual bool allocatesAddressTakenShared() const { return false; }
 
-  /// Launch geometry.
+  /// The launch geometry `V` reads; Kind None when it reads none.
   virtual LaunchGeometry decodeLaunchValue(const llvm::Value *V) const = 0;
 
-  /// The math library.
+  /// The name of the target's math library.
   virtual llvm::StringRef mathLibrary() const = 0;
   /// Its function for libm's `base`, at double or, for any narrower `Ty`,
   /// single precision.
@@ -178,10 +182,13 @@ LaunchGeometry launchGeometryOf(const llvm::Value *V);
 
 /// For the definitions in Targets/ only.
 const Target &hostTarget();
-/// The targets Poseidon knows, and the probe sets of host and device code.
+/// The NVPTX target.
 const Target &nvptxTarget();
+/// The AMDGPU target.
 const Target &amdgpuTarget();
+/// The entry points of the host profiler.
 const ProbeABI &hostProbes();
+/// The entry points of the device profiler both GPU targets share.
 const ProbeABI &deviceProbes();
 
 } // namespace poseidon

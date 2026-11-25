@@ -62,7 +62,9 @@ struct PointerExtent {
   int64_t lo = 0, hi = 0, writeLo = 0, writeHi = 0;
   uint64_t align = 1;
   int64_t alignedAt = 0;
+  /// Whether the function reaches any byte through the pointer.
   bool accessed() const { return lo < hi; }
+  /// Whether the function writes any byte through the pointer.
   bool written() const { return writeLo < writeHi; }
 };
 /// The extent of `A`; otherwise an error saying what the function does with

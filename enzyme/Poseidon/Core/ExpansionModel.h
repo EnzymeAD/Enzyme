@@ -17,33 +17,43 @@
 
 namespace poseidon {
 
-// An n-component FP32 expansion, n = 2, 3, 4, most significant component
-// first; components past n are zero.
+/// An n-component FP32 expansion, n = 2, 3, 4, most significant component
+/// first; components past n are zero.
 struct ExpansionLimbs {
+  /// The components, most significant first.
   float x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  /// The number of components in use.
   unsigned n = 0;
+  /// The expansion of the `n` components `limbs` points to.
   static ExpansionLimbs of(const float *limbs, unsigned n);
 };
 
-// The boundary conversions (emitToExpansion and emitExpansionToFP), by the
-// type of the value converted.
+/// The `n`-component expansion of `v`, as the emitted boundary conversion
+/// computes it.
 ExpansionLimbs expansionFromF64(double v, unsigned n);
+/// The `n`-component expansion of `v`, exact.
 ExpansionLimbs expansionFromF32(float v, unsigned n);
+/// `a` rounded to double, as the emitted boundary conversion computes it.
 double expansionToF64(const ExpansionLimbs &a);
+/// `a` rounded to float, as the emitted boundary conversion computes it.
 float expansionToF32(const ExpansionLimbs &a);
 
+/// -`a`, exact.
 ExpansionLimbs expansionNeg(const ExpansionLimbs &a);
+/// `a` + `b` in a.n components, as the emitted routine computes it; `b` has as
+/// many. Likewise for the subtraction, product, quotient and square root below.
 ExpansionLimbs expansionAdd(const ExpansionLimbs &a, const ExpansionLimbs &b);
 ExpansionLimbs expansionSub(const ExpansionLimbs &a, const ExpansionLimbs &b);
 ExpansionLimbs expansionMul(const ExpansionLimbs &a, const ExpansionLimbs &b);
-// a * a where the materializer multiplies a value by itself: the square
-// routine for n >= 3, the general product for n = 2.
+/// a * a where the materializer multiplies a value by itself: the square
+/// routine for n >= 3, the general product for n = 2.
 ExpansionLimbs expansionSqr(const ExpansionLimbs &a);
 ExpansionLimbs expansionDiv(const ExpansionLimbs &a, const ExpansionLimbs &b);
 ExpansionLimbs expansionSqrt(const ExpansionLimbs &a);
-// fma/fmuladd(a, b, c), and fma/fmuladd(a, a, c).
+/// fma/fmuladd(a, b, c), and fma/fmuladd(a, a, c).
 ExpansionLimbs expansionFma(const ExpansionLimbs &a, const ExpansionLimbs &b,
                             const ExpansionLimbs &c);
+/// fma/fmuladd(a, a, c).
 ExpansionLimbs expansionFmaSqr(const ExpansionLimbs &a,
                                const ExpansionLimbs &c);
 

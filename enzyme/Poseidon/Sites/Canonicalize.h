@@ -58,6 +58,7 @@ size_t requireSlot(const llvm::Instruction *I);
 /// before it at O0).
 void addCanonicalPreInline(llvm::FunctionPassManager &FPM,
                            llvm::OptimizationLevel Level);
+/// Adds the passes of the canonical prefix that run after its always-inliner.
 void addCanonicalPostInline(llvm::FunctionPassManager &FPM);
 
 } // namespace poseidon
