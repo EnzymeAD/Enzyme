@@ -63,6 +63,13 @@ Value emitMatrixConstant(OpBuilder &builder, Location loc,
 /// ones.
 Value emitSumAll(OpBuilder &builder, Location loc, Value tensor);
 
+/// Adds `term` to `sum`, or makes `term` the sum while `sum` is null.
+void accumulate(OpBuilder &builder, Location loc, Value &sum, Value term);
+
+/// Returns `sum`, or a zero of `type` when nothing was accumulated into it.
+Value sumOrZero(OpBuilder &builder, Location loc, Value sum,
+                RankedTensorType type);
+
 /// log(exp(lhs) + exp(rhs)), or lhs + rhs where lhs - rhs is NaN.
 Value emitLogAddExp(OpBuilder &builder, Location loc, Value lhs, Value rhs);
 
@@ -81,15 +88,30 @@ Value emitRandomDraw(OpBuilder &builder, Location loc, Value &rng,
 Value emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
                       RankedTensorType sampleType);
 
+/// Returns the slice of row 0 of the rank-2 `tensor` of type `sliceType`, a
+/// `1 x n` tensor, that takes every `stride`-th column from column `start` on.
+Value emitColumnSlice(OpBuilder &builder, Location loc,
+                      RankedTensorType sliceType, Value tensor, int64_t start,
+                      int64_t stride = 1);
+
 /// Reads a value of `type` from row 0 of the rank-2 `row`, starting at column
 /// `column`.
 Value emitRowSlice(OpBuilder &builder, Location loc, Value row, int64_t column,
                    RankedTensorType type);
 
+/// Returns entry `index` of `value` along its leading dimension, with that
+/// dimension dropped.
+Value emitLeadingEntry(OpBuilder &builder, Location loc, Value value,
+                       int64_t index);
+
 /// Clones the operations of `block` except its terminator at the insertion
 /// point through `mapping`, and returns the terminator's operands mapped.
 SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,
                                   IRMapping &mapping);
+
+/// Like the overload above, with the arguments of `block` bound to `args`.
+SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,
+                                  ValueRange args);
 
 /// Returns `value` passed through an `enzyme.dump` labeled `label` when
 /// `debugDump` is set, else `value` itself.

@@ -17,7 +17,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/IR/IRMapping.h"
 
 #include <cmath>
 #include <limits>
@@ -356,12 +355,12 @@ Value impulse::emitModelLogDensity(OpBuilder &builder, Location loc,
                                    const ModelContext &ctx) {
   if (ctx.hasLogpdfRegion()) {
     Block &lpBlock = ctx.logpdfRegion->front();
-    IRMapping mapping;
+    SmallVector<Value> args;
     for (auto [arg, column] :
          llvm::zip(lpBlock.getArguments(), ctx.logpdfArgOffsets))
-      mapping.map(arg, emitRowSlice(builder, loc, qConstrained, column,
-                                    cast<RankedTensorType>(arg.getType())));
-    return cloneBlockBody(builder, lpBlock, mapping).front();
+      args.push_back(emitRowSlice(builder, loc, qConstrained, column,
+                                  cast<RankedTensorType>(arg.getType())));
+    return cloneBlockBody(builder, lpBlock, args).front();
   }
   GenerateOp generateOp = emitGenerateAt(builder, loc, qConstrained, rng, ctx);
   if (!generateOp.getOutputs().empty())
@@ -384,10 +383,7 @@ static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
     return callOp.getResult(0);
   }
 
-  Block &entry = fn.getFunctionBody().front();
-  IRMapping mapping;
-  mapping.map(entry.getArguments(), args);
-  return cloneBlockBody(builder, entry, mapping).front();
+  return cloneBlockBody(builder, fn.getFunctionBody().front(), args).front();
 }
 
 /// Emits the potential U(q) = -log p(qConstrained) - log|det J(q)| and

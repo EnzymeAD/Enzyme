@@ -9,7 +9,6 @@
 #include "Interfaces/LogpdfRegion.h"
 #include "Interfaces/ImpulseUtils.h"
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
@@ -113,7 +112,8 @@ rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp, IRMapping &map,
     for (size_t i = 0, e = falseSites.size(); i < e; ++i)
       yields.push_back(!isTrue ? armContributions[next++]
                                : zeroOf(armBuilder, types[yields.size()]));
-    yields.push_back(armTotal ? armTotal : zeroOf(armBuilder, totalType));
+    yields.push_back(sumOrZero(armBuilder, loc, armTotal,
+                               cast<RankedTensorType>(totalType)));
     YieldOp::create(armBuilder, loc, yields);
   };
   buildArm(ifOp.getTrueBranch(), newIf.getTrueBranch(), /*isTrue=*/true);
@@ -131,28 +131,20 @@ cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
                   IRMapping &map, SmallVectorImpl<Value> &contributions,
                   function_ref<bool(Operation *)> isHoistableFromBranch) {
   Value total;
-  auto addToTotal = [&](Value density) {
-    total = total ? Value(arith::AddFOp::create(builder, loc, total, density))
-                  : density;
-  };
   for (Operation &op : block.without_terminator()) {
     if (auto site = dyn_cast<SampleRegionOp>(&op)) {
       // Pass the rng through so clones resolve; the dead chain is swept later.
       if (!site.getInputs().empty())
         map.map(site.getResult(0), map.lookupOrDefault(site.getInputs()[0]));
-      Block &siteLogpdf = site.getLogpdf().front();
-      unsigned numOutputs = site.getNumResults() - 1;
-      IRMapping siteMap;
-      unsigned argIdx = 0;
-      for (unsigned i = 0; i < numOutputs; ++i, ++argIdx)
-        siteMap.map(siteLogpdf.getArgument(argIdx),
-                    map.lookup(site.getResult(i + 1)));
-      for (unsigned i = 1, e = site.getInputs().size(); i < e; ++i, ++argIdx)
-        siteMap.map(siteLogpdf.getArgument(argIdx),
-                    map.lookupOrDefault(site.getInputs()[i]));
-      Value contribution = cloneBlockBody(builder, siteLogpdf, siteMap).front();
+      SmallVector<Value> siteArgs;
+      for (Value value : llvm::drop_begin(site.getResults()))
+        siteArgs.push_back(map.lookup(value));
+      for (unsigned i = 1, e = site.getInputs().size(); i < e; ++i)
+        siteArgs.push_back(map.lookupOrDefault(site.getInputs()[i]));
+      Value contribution =
+          cloneBlockBody(builder, site.getLogpdf().front(), siteArgs).front();
       contributions.push_back(contribution);
-      addToTotal(contribution);
+      accumulate(builder, loc, total, contribution);
       continue;
     }
     // Already hoisted above the enclosing rebuilt impulse.if.
@@ -164,7 +156,8 @@ cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
       builder.clone(op, map);
       continue;
     }
-    addToTotal(rebuildSiteIf(builder, loc, ifOp, map, contributions,
+    accumulate(builder, loc, total,
+               rebuildSiteIf(builder, loc, ifOp, map, contributions,
                              isHoistableFromBranch));
   }
   return total;
@@ -316,11 +309,8 @@ static void bindUnselectedColumns(InferRegionOp regionOp,
       int64_t numElements = resultType.getNumElements();
       if (!selected) {
         auto sliceType = RankedTensorType::get({1, numElements}, elemType);
-        Value slice = SliceOp::create(
-            above, loc, sliceType, siteTrace,
-            above.getDenseI64ArrayAttr({0, readOffset}),
-            above.getDenseI64ArrayAttr({1, readOffset + numElements}),
-            above.getDenseI64ArrayAttr({1, 1}));
+        Value slice =
+            emitColumnSlice(above, loc, sliceType, siteTrace, readOffset);
         map.map(result, ReshapeOp::create(above, loc, resultType, slice));
       }
       offset += numElements;

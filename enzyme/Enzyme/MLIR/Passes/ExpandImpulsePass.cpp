@@ -669,8 +669,6 @@ private:
   Value stateInSlot(StringRef name) const;
   /// Like `stateInSlot`, but only chain `chainIdx` of a chain-major slot.
   Value chainStateInSlot(StringRef name, int64_t chainIdx);
-  /// Takes element `chainIdx` of the leading dimension of `value`.
-  Value sliceChain(Value value, int64_t chainIdx);
 
   /// The HMC context of `model` with the given mass matrix and step size.
   HMCContext makeHMCContext(Value invMass, Value massMatrixSqrt,
@@ -944,8 +942,9 @@ SmallVector<ChainResult> MCMCChainEmitter::emitChains(Value rng) {
   SmallVector<ChainResult> chains;
   chains.reserve(numChains);
   for (int64_t chainIdx = 0; chainIdx < numChains; ++chainIdx) {
-    Value chainRng = savedKeys ? sliceChain(savedKeys, chainIdx)
-                               : splitOp.getResult(chainIdx);
+    Value chainRng = savedKeys
+                         ? emitLeadingEntry(builder, loc, savedKeys, chainIdx)
+                         : splitOp.getResult(chainIdx);
     chains.push_back(emitChain(chainRng, chainIdx));
   }
   return chains;
@@ -957,13 +956,13 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
   std::optional<AdaptationState> saved = savedAdaptation;
   if (numChains > 1) {
     if (Value savedStepSize = stateInSlot(state_slot::kStepSize))
-      stepSize = sliceChain(savedStepSize, chainIdx);
+      stepSize = emitLeadingEntry(builder, loc, savedStepSize, chainIdx);
     if (Value savedInvMass = stateInSlot(state_slot::kInverseMassMatrix))
-      invMass = sliceChain(savedInvMass, chainIdx);
+      invMass = emitLeadingEntry(builder, loc, savedInvMass, chainIdx);
     if (saved) {
       SmallVector<Value> slots = saved->toValues();
       for (Value &slot : slots)
-        slot = sliceChain(slot, chainIdx);
+        slot = emitLeadingEntry(builder, loc, slot, chainIdx);
       ArrayRef<Value> values = slots;
       saved = AdaptationState::consume(values, /*hasWelford=*/true);
     }
@@ -1021,27 +1020,8 @@ Value MCMCChainEmitter::stateInSlot(StringRef name) const {
 Value MCMCChainEmitter::chainStateInSlot(StringRef name, int64_t chainIdx) {
   Value value = stateInSlot(name);
   if (value && numChains > 1)
-    value = sliceChain(value, chainIdx);
+    value = emitLeadingEntry(builder, loc, value, chainIdx);
   return value;
-}
-
-Value MCMCChainEmitter::sliceChain(Value value, int64_t chainIdx) {
-  auto type = cast<RankedTensorType>(value.getType());
-  ArrayRef<int64_t> shape = type.getShape();
-  SmallVector<int64_t> start(shape.size(), 0),
-      limit(shape.begin(), shape.end()), stride(shape.size(), 1);
-  start[0] = chainIdx;
-  limit[0] = chainIdx + 1;
-  SmallVector<int64_t> oneShape(shape.begin(), shape.end());
-  oneShape[0] = 1;
-  auto oneType = RankedTensorType::get(oneShape, type.getElementType());
-  Value slice = impulse::SliceOp::create(builder, loc, oneType, value,
-                                         builder.getDenseI64ArrayAttr(start),
-                                         builder.getDenseI64ArrayAttr(limit),
-                                         builder.getDenseI64ArrayAttr(stride));
-  auto dropType =
-      RankedTensorType::get(shape.drop_front(), type.getElementType());
-  return impulse::ReshapeOp::create(builder, loc, dropType, slice);
 }
 
 HMCContext MCMCChainEmitter::makeHMCContext(Value invMass, Value massMatrixSqrt,
@@ -1084,7 +1064,8 @@ ChainPoint MCMCChainEmitter::initChainState(Value rng, int64_t chainIdx,
   if (model.logpdfFn) {
     chainInitPosition = initPosition;
     if (numChains > 1)
-      chainInitPosition = sliceChain(chainInitPosition, chainIdx);
+      chainInitPosition =
+          emitLeadingEntry(builder, loc, chainInitPosition, chainIdx);
   }
   return InitHMC(builder, loc, rng, ctx, chainInitPosition);
 }
@@ -1629,25 +1610,6 @@ static LogicalResult processImpulseBlock(Block &block,
   return success();
 }
 
-/// Returns entry `index` of `vec` along its leading dimension, with that
-/// dimension dropped.
-static Value takeLeading(OpBuilder &builder, Location loc, Value vec,
-                         int64_t index) {
-  auto vecType = cast<RankedTensorType>(vec.getType());
-  SmallVector<int64_t> start(vecType.getRank(), 0), limit(vecType.getShape()),
-      strides(vecType.getRank(), 1), shape(vecType.getShape());
-  start[0] = index;
-  limit[0] = index + 1;
-  shape[0] = 1;
-  Value slice = impulse::SliceOp::create(
-      builder, loc, RankedTensorType::get(shape, vecType.getElementType()), vec,
-      builder.getDenseI64ArrayAttr(start), builder.getDenseI64ArrayAttr(limit),
-      builder.getDenseI64ArrayAttr(strides));
-  auto elementType = RankedTensorType::get(vecType.getShape().drop_front(),
-                                           vecType.getElementType());
-  return impulse::ReshapeOp::create(builder, loc, elementType, slice);
-}
-
 /// Packs the rank-0 `scalars` into a new vector of type `vecType`, in order.
 static Value packScalars(OpBuilder &builder, Location loc,
                          RankedTensorType vecType, ArrayRef<Value> scalars) {
@@ -1759,27 +1721,6 @@ static Value emitSiteLogpdf(OpBuilder &builder, impulse::SampleOp site,
       .getResult(0);
 }
 
-/// Returns the slice of row 0 of the rank-2 `tensor` of type `sliceType`, a
-/// `1 x n` tensor, that takes every `stride`-th column from column `start` on.
-static Value emitColumnSlice(OpBuilder &builder, Location loc,
-                             RankedTensorType sliceType, Value tensor,
-                             int64_t start, int64_t stride = 1) {
-  int64_t end = start + (sliceType.getDimSize(1) - 1) * stride + 1;
-  return impulse::SliceOp::create(builder, loc, sliceType, tensor,
-                                  builder.getDenseI64ArrayAttr({0, start}),
-                                  builder.getDenseI64ArrayAttr({1, end}),
-                                  builder.getDenseI64ArrayAttr({1, stride}));
-}
-
-/// Reads a value of `type` from row 0 of `trace`, starting at column `column`.
-static Value sliceTraceValue(OpBuilder &builder, Location loc, Value trace,
-                             int64_t column, RankedTensorType type) {
-  auto rowType =
-      RankedTensorType::get({1, type.getNumElements()}, type.getElementType());
-  Value row = emitColumnSlice(builder, loc, rowType, trace, column);
-  return impulse::ReshapeOp::create(builder, loc, type, row);
-}
-
 /// Reads consecutive values of `types` from row 0 of `trace`, starting at
 /// column `offset`.
 static SmallVector<Value> sliceTraceValues(OpBuilder &builder, Location loc,
@@ -1788,7 +1729,7 @@ static SmallVector<Value> sliceTraceValues(OpBuilder &builder, Location loc,
   SmallVector<Value> values;
   for (Type type : types) {
     auto tensorType = cast<RankedTensorType>(type);
-    values.push_back(sliceTraceValue(builder, loc, trace, offset, tensorType));
+    values.push_back(emitRowSlice(builder, loc, trace, offset, tensorType));
     offset += tensorType.getNumElements();
   }
   return values;
@@ -1854,7 +1795,7 @@ static FailureOr<SmallVector<Value>> readSiteValues(OpBuilder &builder,
       return failure();
     }
     values.push_back(
-        sliceTraceValue(builder, site.getLoc(), source, offset, type));
+        emitRowSlice(builder, site.getLoc(), source, offset, type));
     offset += type.getNumElements();
   }
   return values;
@@ -2231,29 +2172,6 @@ static bool supportsScoreTail(FunctionOpInterface fn) {
   return feasible;
 }
 
-/// Clones the body of the logpdf block `lpBlock` with its arguments bound to
-/// `args` and returns the cloned yields: the joint density, then one density
-/// per site.
-static SmallVector<Value> cloneLogpdfBody(OpBuilder &builder, Block &lpBlock,
-                                          ValueRange args) {
-  IRMapping map;
-  for (auto [arg, value] : llvm::zip(lpBlock.getArguments(), args))
-    map.map(arg, value);
-  return cloneBlockBody(builder, lpBlock, map);
-}
-
-/// Adds `term` to `sum`, or makes `term` the sum while `sum` is null.
-static void accumulate(OpBuilder &builder, Location loc, Value &sum,
-                       Value term) {
-  sum = sum ? arith::AddFOp::create(builder, loc, sum, term).getResult() : term;
-}
-
-/// Returns `sum`, or a zero of `type` when nothing was accumulated into it.
-static Value sumOrZero(OpBuilder &builder, Location loc, Value sum,
-                       RankedTensorType type) {
-  return sum ? sum : emitSplatConstant(builder, loc, type, 0.0);
-}
-
 namespace {
 /// The sampler of a region-form MH move, cloned with fresh values for the
 /// selected sites.
@@ -2365,7 +2283,7 @@ static Value emitProposalCorrection(OpBuilder &b, Location loc,
           oldPositions,
           sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
                            ValueRange(sampled.valuesOf[addr]).getTypes()));
-    oldYields = cloneLogpdfBody(b, op.getLogpdf().front(), oldPositions);
+    oldYields = cloneBlockBody(b, op.getLogpdf().front(), oldPositions);
   }
   Value correction;
   for (int64_t j : sampled.selectedOrdinals) {
@@ -2425,7 +2343,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   SmallVector<Value> newPositions;
   for (Attribute addr : op.getSelectionAttr())
     llvm::append_range(newPositions, sampled.valuesOf[addr]);
-  SmallVector<Value> newYields = cloneLogpdfBody(b, lpBlock, newPositions);
+  SmallVector<Value> newYields = cloneBlockBody(b, lpBlock, newPositions);
   SmallVector<bool> dirty =
       delta ? taintedSiteYields(lpBlock, lpBlock.getArguments())
             : SmallVector<bool>(newYields.size() - 1, true);
@@ -2912,7 +2830,7 @@ static BatchedProposals proposeAll(OpBuilder &b, Location loc,
   batched.logRand = math::LogOp::create(b, loc, uniform);
   for (auto [k, move] : llvm::enumerate(moves)) {
     Operation *draw = move.draw;
-    Value drawn = takeLeading(b, loc, draws.getResult(), k);
+    Value drawn = emitLeadingEntry(b, loc, draws.getResult(), k);
     batched.moves.push_back(proposeRegionMove(
         b, loc, move.op, move.layout, trace0, rng0, /*delta=*/true,
         /*withLogRatio=*/false,
@@ -3178,10 +3096,10 @@ static void emitBatchedRun(MHBatch &batch) {
   SmallVector<Value> acceptedOf;
   // In sweep order, matching the sequential weight updates.
   for (unsigned k = 0; k < numMoves; ++k) {
-    Value acc = takeLeading(b, loc, accepted, k);
+    Value acc = emitLeadingEntry(b, loc, accepted, k);
     acceptedOf.push_back(acc);
-    Value acceptWeight =
-        arith::AddFOp::create(b, loc, weight, takeLeading(b, loc, deltaVec, k));
+    Value acceptWeight = arith::AddFOp::create(
+        b, loc, weight, emitLeadingEntry(b, loc, deltaVec, k));
     weight = arith::SelectOp::create(b, loc, acc, acceptWeight, weight);
   }
   Value trace = writeBackAccepted(b, loc, trace0, proposals.moves, accepted,
@@ -3431,8 +3349,8 @@ GibbsState GibbsSweepEmitter::emitBatched(OpBuilder &b, GibbsState state) {
     for (BlockArgument arg : lpBlock.getArguments())
       positions.push_back(emitSplatConstant(
           b, loc, cast<RankedTensorType>(arg.getType()), (double)v));
-    llvm::append_range(
-        yieldsAt[v], llvm::drop_begin(cloneLogpdfBody(b, lpBlock, positions)));
+    llvm::append_range(yieldsAt[v],
+                       llvm::drop_begin(cloneBlockBody(b, lpBlock, positions)));
   }
   SmallVector<Value> logOdds(n);
   for (unsigned j = 0; j < numYields; ++j) {
@@ -3464,7 +3382,7 @@ GibbsState GibbsSweepEmitter::emitBatched(OpBuilder &b, GibbsState state) {
   Value delta = arith::SelectOp::create(b, loc, take1, toOne, toZero);
   for (int64_t k = 0; k < n; ++k)
     state.weight = arith::AddFOp::create(b, loc, state.weight,
-                                         takeLeading(b, loc, delta, k));
+                                         emitLeadingEntry(b, loc, delta, k));
 
   Value newRow = impulse::ReshapeOp::create(b, loc, rowType, newVals);
   if (stride == 1)
@@ -3474,11 +3392,11 @@ GibbsState GibbsSweepEmitter::emitBatched(OpBuilder &b, GibbsState state) {
   if (hasScoreTail)
     for (unsigned j = 0; j < numYields; ++j)
       if (siteOfYield[j] >= 0)
-        state.trace =
-            writeValue(b, state.trace, positionSize + j,
-                       arith::SelectOp::create(
-                           b, loc, takeLeading(b, loc, take1, siteOfYield[j]),
-                           yieldsAt[1][j], yieldsAt[0][j]));
+        state.trace = writeValue(
+            b, state.trace, positionSize + j,
+            arith::SelectOp::create(
+                b, loc, emitLeadingEntry(b, loc, take1, siteOfYield[j]),
+                yieldsAt[1][j], yieldsAt[0][j]));
   state.trace = writeObserved(b, state.trace);
   return state;
 }
@@ -3487,9 +3405,9 @@ GibbsState GibbsSweepEmitter::emitSequential(OpBuilder &b, GibbsState state) {
   Block &lpBlock = op.getLogpdf().front();
   SmallVector<Value> cur;
   for (auto [k, col] : llvm::enumerate(selectedCols))
-    cur.push_back(sliceTraceValue(
-        b, loc, state.trace, col,
-        cast<RankedTensorType>(lpBlock.getArgument(k).getType())));
+    cur.push_back(
+        emitRowSlice(b, loc, state.trace, col,
+                     cast<RankedTensorType>(lpBlock.getArgument(k).getType())));
   auto scalarType = RankedTensorType::get({}, traceType.getElementType());
   for (unsigned k = 0; k < selectedCols.size(); ++k) {
     auto argType = cast<RankedTensorType>(lpBlock.getArgument(k).getType());
@@ -3498,7 +3416,7 @@ GibbsState GibbsSweepEmitter::emitSequential(OpBuilder &b, GibbsState state) {
     for (int v = 0; v < 2; ++v) {
       SmallVector<Value> positions(cur);
       positions[k] = emitSplatConstant(b, loc, argType, (double)v);
-      SmallVector<Value> yields = cloneLogpdfBody(b, lpBlock, positions);
+      SmallVector<Value> yields = cloneBlockBody(b, lpBlock, positions);
       for (unsigned j = 0; j < numYields; ++j) {
         Value y = yields[1 + j];
         yieldsAt[v].push_back(y);

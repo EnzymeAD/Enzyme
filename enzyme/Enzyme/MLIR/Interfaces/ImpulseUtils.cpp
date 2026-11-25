@@ -137,6 +137,16 @@ Value impulse::emitSumAll(OpBuilder &builder, Location loc, Value tensor) {
                                 allDims);
 }
 
+void impulse::accumulate(OpBuilder &builder, Location loc, Value &sum,
+                         Value term) {
+  sum = sum ? arith::AddFOp::create(builder, loc, sum, term).getResult() : term;
+}
+
+Value impulse::sumOrZero(OpBuilder &builder, Location loc, Value sum,
+                         RankedTensorType type) {
+  return sum ? sum : emitSplatConstant(builder, loc, type, 0.0);
+}
+
 Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
                              Value rhs) {
   auto amax = arith::MaximumFOp::create(builder, loc, lhs, rhs);
@@ -184,16 +194,41 @@ Value impulse::emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
                         RngDistribution::UNIFORM);
 }
 
+Value impulse::emitColumnSlice(OpBuilder &builder, Location loc,
+                               RankedTensorType sliceType, Value tensor,
+                               int64_t start, int64_t stride) {
+  int64_t end = start + (sliceType.getDimSize(1) - 1) * stride + 1;
+  return impulse::SliceOp::create(builder, loc, sliceType, tensor,
+                                  builder.getDenseI64ArrayAttr({0, start}),
+                                  builder.getDenseI64ArrayAttr({1, end}),
+                                  builder.getDenseI64ArrayAttr({1, stride}));
+}
+
 Value impulse::emitRowSlice(OpBuilder &builder, Location loc, Value row,
                             int64_t column, RankedTensorType type) {
-  int64_t numElements = type.getNumElements();
   auto sliceType =
-      RankedTensorType::get({1, numElements}, type.getElementType());
-  Value slice = impulse::SliceOp::create(
-      builder, loc, sliceType, row, builder.getDenseI64ArrayAttr({0, column}),
-      builder.getDenseI64ArrayAttr({1, column + numElements}),
-      builder.getDenseI64ArrayAttr({1, 1}));
+      RankedTensorType::get({1, type.getNumElements()}, type.getElementType());
+  Value slice = emitColumnSlice(builder, loc, sliceType, row, column);
   return impulse::ReshapeOp::create(builder, loc, type, slice);
+}
+
+Value impulse::emitLeadingEntry(OpBuilder &builder, Location loc, Value value,
+                                int64_t index) {
+  auto type = cast<RankedTensorType>(value.getType());
+  ArrayRef<int64_t> shape = type.getShape();
+  SmallVector<int64_t> start(shape.size(), 0), limit(shape),
+      strides(shape.size(), 1), sliceShape(shape);
+  start[0] = index;
+  limit[0] = index + 1;
+  sliceShape[0] = 1;
+  Value slice = impulse::SliceOp::create(
+      builder, loc, RankedTensorType::get(sliceShape, type.getElementType()),
+      value, builder.getDenseI64ArrayAttr(start),
+      builder.getDenseI64ArrayAttr(limit),
+      builder.getDenseI64ArrayAttr(strides));
+  auto entryType =
+      RankedTensorType::get(shape.drop_front(), type.getElementType());
+  return impulse::ReshapeOp::create(builder, loc, entryType, slice);
 }
 
 SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,
@@ -203,6 +238,13 @@ SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,
   return llvm::map_to_vector(
       block.getTerminator()->getOperands(),
       [&](Value operand) { return mapping.lookupOrDefault(operand); });
+}
+
+SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,
+                                           ValueRange args) {
+  IRMapping mapping;
+  mapping.map(block.getArguments(), args);
+  return cloneBlockBody(builder, block, mapping);
 }
 
 Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,

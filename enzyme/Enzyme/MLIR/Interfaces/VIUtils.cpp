@@ -239,7 +239,6 @@ emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
   auto offDiagTy = RankedTensorType::get({nOff}, elemType);
   auto diagTy = RankedTensorType::get({d}, elemType);
   auto matTy = RankedTensorType::get({d, d}, elemType);
-  auto scalarTy = RankedTensorType::get({}, elemType);
 
   Value offDiag, diagPre;
   if (nOff > 0) {
@@ -260,14 +259,6 @@ emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
 
   Value scaleTril = emitSplatConstant(builder, loc, matTy, 0.0);
 
-  auto sliceScalar = [&](Value vec, int64_t k) -> Value {
-    auto oneTy = RankedTensorType::get({1}, elemType);
-    Value s1 = impulse::SliceOp::create(builder, loc, oneTy, vec,
-                                        builder.getDenseI64ArrayAttr({k}),
-                                        builder.getDenseI64ArrayAttr({k + 1}),
-                                        builder.getDenseI64ArrayAttr({1}));
-    return impulse::ReshapeOp::create(builder, loc, scalarTy, s1);
-  };
   auto reshapeTo11 = [&](Value scalar) -> Value {
     auto t11 = RankedTensorType::get({1, 1}, elemType);
     return impulse::ReshapeOp::create(builder, loc, t11, scalar);
@@ -275,9 +266,9 @@ emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
 
   int64_t k = 0;
   for (int64_t i = 0; i < d; ++i) {
-    Value diagElem = sliceScalar(diag, i);
+    Value diagElem = emitLeadingEntry(builder, loc, diag, i);
     for (int64_t j = 0; j < i; ++j) {
-      Value offElem = sliceScalar(offDiag, k);
+      Value offElem = emitLeadingEntry(builder, loc, offDiag, k);
       Value entry = arith::MulFOp::create(builder, loc, offElem, diagElem);
       Value entry11 = reshapeTo11(entry);
       scaleTril = impulse::DynamicUpdateSliceOp::create(
