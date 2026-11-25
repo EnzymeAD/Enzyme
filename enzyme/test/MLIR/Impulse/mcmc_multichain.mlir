@@ -1,5 +1,7 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
+// NUTS with `num_chains = 2`: one sample loop per chain, results stacked.
+
 module {
   func.func @logpdf(%x : tensor<2xf64>) -> tensor<f64> {
     %sum_sq = impulse.dot %x, %x <{lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>

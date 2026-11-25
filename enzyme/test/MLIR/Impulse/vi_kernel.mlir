@@ -1,6 +1,6 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
-// NumPyro SVI rng split order, for parity: state, step, then the guide site.
+// One SVI step: the RNG splits for the state, the step, then the guide site.
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)

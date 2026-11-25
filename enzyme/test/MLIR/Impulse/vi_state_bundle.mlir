@@ -44,7 +44,7 @@ module {
 // CHECK: %[[COLDLOOP:.+]]:10 = impulse.for
 // CHECK: return %[[COLDLOOP]]#3, %[[COLDLOOP]]#4, %[[COLDLOOP]]#2, %[[COLDLOOP]]#0, %{{.*}} :
 
-// Resume skips the SVI.init split, as NumPyro's initial_optim_state does.
+// A resumed run does not split the key for the initial state.
 // CHECK-LABEL: func.func @svi_resume
 // CHECK-SAME: (%[[KEY:.+]]: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %[[LOC:.+]]: tensor<1x1xf64>, %[[SCU:.+]]: tensor<1x1xf64>, %[[ML:.+]]: tensor<1x1xf64>, %[[VL:.+]]: tensor<1x1xf64>, %[[MS:.+]]: tensor<1x1xf64>, %[[VS:.+]]: tensor<1x1xf64>
 // CHECK-NOT: impulse.random_split %[[KEY]]

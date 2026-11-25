@@ -1,5 +1,7 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
+// Gibbs on impulse.infer_region batches the updates of independent sites.
+
 module {
   func.func private @draw(%rng : tensor<2xui64>, %m : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %m : tensor<f64>) -> tensor<f64>

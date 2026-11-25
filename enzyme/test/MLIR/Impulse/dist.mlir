@@ -331,7 +331,7 @@ module {
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
 
-  // NumPyro StudentT.log_prob operation order, as -(z - kernel), for parity.
+  // StudentT log density in a fixed operation order, as -(z - kernel).
   func.func private @st_s(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     return %r, %lc : tensor<2xui64>, tensor<f64>
   }
@@ -362,7 +362,7 @@ module {
     return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
   }
 
-  // NumPyro LeftTruncatedDistribution(StudentT).log_prob operation order.
+  // Left-truncated StudentT log density in a fixed operation order.
   func.func private @hst_s(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     return %r, %sc : tensor<2xui64>, tensor<f64>
   }

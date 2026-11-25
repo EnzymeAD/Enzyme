@@ -1,5 +1,7 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
+// The NUTS sample loop without and with thinning and warmup.
+
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
@@ -43,9 +45,7 @@ module {
   }
 }
 
-// ============================================================
 // sampling_basic: 10 samples, no thinning, no warmup
-// ============================================================
 // CHECK-LABEL: func.func @sampling_basic
 // CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>)
 // CHECK-DAG: %[[C10:.+]] = arith.constant dense<10> : tensor<i64>
@@ -54,104 +54,100 @@ module {
 // CHECK-DAG: %[[SAMP_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<10x1xf64>
 // CHECK-DAG: %[[C0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<0.000000e+00> : tensor<1x1xf64>
-//
-// --- RNG splits ---
+
+// RNG splits.
 // CHECK: impulse.random_split
 // CHECK: impulse.random_split
-//
-// --- Initial gradient via autodiff ---
+
+// Initial gradient via autodiff.
 // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
 // CHECK: ^bb0(%{{.+}}: tensor<1x1xf64>):
 // CHECK: func.call @test.generate
 // CHECK: arith.negf
 // CHECK: enzyme.yield
 // CHECK: } <activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]>
-//
-// --- Sampling loop: for i in 0..10 ---
+
+// Sampling loop: for i in 0..10.
 // CHECK: %[[SLOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>)
 // CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[SAMP_INIT]], %[[ACC_INIT]], %[[LOGDENS_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>)
 // CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>
 // CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<10x1xf64>, %{{.+}}: tensor<10x2xi1>, %{{.+}}: tensor<10xf64>):
-//
-// --- Momentum sampling ---
+
+// Momentum sampling.
 // CHECK: impulse.random {{.*}} <rng_distribution = NORMAL> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
-//
-// --- Kinetic energy ---
+
+// Kinetic energy.
 // CHECK: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
-//
-// --- NUTS tree building ---
+
+// NUTS tree building.
 // CHECK: impulse.while
-//
-// --- Sample storage: update samples buffer ---
+
+// Sample storage: update samples buffer.
 // CHECK: impulse.dynamic_update_slice %{{.+}}, %{{.+}}, %[[S_ITER]], %{{.+}} : (tensor<10x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<10x1xf64>
 // CHECK: impulse.yield %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>
 // CHECK: }
 // CHECK: return %[[SLOOP]]#4, %[[SLOOP]]#5, %[[SLOOP]]#6, %[[SLOOP]]#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
 // CHECK: }
 
-// ============================================================
 // sampling_thinning: 10 total iterations, thinning=2, output 5 samples
-// ============================================================
 // CHECK-LABEL: func.func @sampling_thinning
 // CHECK-SAME: -> (tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>)
-//
-// --- Thinning loop ---
+
+// Thinning loop.
 // CHECK: impulse.for
 // CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>)
 // CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>
-//
-// --- Thinning logic ---
+
+// Thinning logic.
 // CHECK: arith.divsi
 // CHECK: arith.cmpi sge
 // CHECK: arith.remsi
 // CHECK: arith.cmpi eq
 // CHECK: arith.andi
-//
-// --- Sample storage ---
+
+// Sample storage.
 // CHECK: impulse.dynamic_update_slice %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : (tensor<5x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<5x1xf64>
 // CHECK: return {{.*}} : tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>
 // CHECK: }
 
-// ============================================================
 // sampling_with_warmup: 5 warmup + 10 sampling iterations
-// ============================================================
 // CHECK-LABEL: func.func @sampling_with_warmup
 // CHECK-SAME: -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>)
-//
-// --- Warmup loop ---
+
+// Warmup loop.
 // CHECK: %[[WARMUP:.+]]:16 = impulse.for
 // CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>)
 // CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
-//
-// --- Dual averaging update ---
+
+// Dual averaging update.
 // CHECK: arith.subf {{.*}} : tensor<f64>
 // CHECK: arith.addf {{.*}} : tensor<f64>
 // CHECK: arith.divf {{.*}} : tensor<f64>
 // CHECK: math.sqrt
 // CHECK: math.exp
-//
-// --- Welford update ---
+
+// Welford update.
 // CHECK: impulse.reshape {{.*}} : (tensor<1x1xf64>) -> tensor<1xf64>
 // CHECK: arith.subf {{.*}} : tensor<1xf64>
 // CHECK: arith.divf {{.*}} : tensor<1xf64>
 // CHECK: arith.addf {{.*}} : tensor<1xf64>
-//
-// --- Window boundary logic ---
+
+// Window boundary logic.
 // CHECK: impulse.if
 // CHECK: math.sqrt
 // CHECK: impulse.yield
 // CHECK: }, {
 // CHECK: impulse.yield
 // CHECK: })
-//
-// --- Post-warmup sampling ---
+
+// Post-warmup sampling.
 // CHECK: impulse.for
 // CHECK-SAME: iter_args(%[[WARMUP]]#0, %[[WARMUP]]#1, %[[WARMUP]]#2, %[[WARMUP]]#3
 // CHECK-SAME: : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>
-//
-// --- Momentum with adapted mass matrix ---
+
+// Momentum with adapted mass matrix.
 // CHECK: impulse.dot {{.*}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
 // CHECK: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
-//
+
 // CHECK: return {{.*}} : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
 // CHECK: }
