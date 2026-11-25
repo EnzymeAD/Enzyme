@@ -1869,6 +1869,51 @@ emitMHAccept(OpBuilder &builder, Location loc, Value trace, Value weight,
   return {newTrace, newWeight, draw.getOutputRngState(), accepted};
 }
 
+/// Returns the number of trace columns the values of `site` take.
+static int64_t sampleRegionSize(impulse::SampleRegionOp site) {
+  int64_t size = 0;
+  for (Value result : llvm::drop_begin(site->getResults()))
+    size += computeTensorElementCount(cast<RankedTensorType>(result.getType()));
+  return size;
+}
+
+namespace {
+/// Where the sites of a region-form infer op sit on its trace.
+struct RegionTraceLayout {
+  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
+  /// First trace column of each address in `all_addresses`.
+  DenseMap<Attribute, int64_t> columnOf;
+  /// Columns taken by the values of all addresses, before any score tail.
+  int64_t positionSize = 0;
+};
+} // namespace
+
+/// Lays out the `all_addresses` of `regionOp` on its trace, in that order.
+/// Sites are looked up in the whole sampling region, or with `topLevelOnly`
+/// in its entry block only. Fails when an address has no site.
+static FailureOr<RegionTraceLayout>
+getRegionTraceLayout(impulse::InferRegionOp regionOp, bool topLevelOnly) {
+  RegionTraceLayout layout;
+  auto addSite = [&](impulse::SampleRegionOp site) {
+    if (Attribute address = site.getAddressAttr())
+      layout.siteByAddress[address] = site;
+  };
+  if (topLevelOnly)
+    for (auto site :
+         regionOp.getSampling().front().getOps<impulse::SampleRegionOp>())
+      addSite(site);
+  else
+    regionOp.getSampling().walk(addSite);
+  for (Attribute address : regionOp.getAllAddressesAttr()) {
+    impulse::SampleRegionOp site = layout.siteByAddress.lookup(address);
+    if (!site)
+      return failure();
+    layout.columnOf[address] = layout.positionSize;
+    layout.positionSize += sampleRegionSize(site);
+  }
+  return layout;
+}
+
 /// Returns whether `op` or an op nested in it has an operand in `values`.
 static bool usesAnyOf(Operation *op, const DenseSet<Value> &values) {
   auto inValues = [&](Value v) { return values.contains(v); };
@@ -2646,8 +2691,9 @@ struct ExpandImpulsePass
     /// With `delta`, weight is the dirty-term delta: XLA:CPU fuses the accept
     /// decision into every write-back element, so it must stay a short chain.
     std::tuple<Value, Value, Value, Value>
-    proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
-                  ArrayAttr selection, ArrayAttr allAddresses, bool delta,
+    proposeRegion(OpBuilder &b, Location loc, OpT op,
+                  const RegionTraceLayout &layout, Value trace, Value rng,
+                  ArrayAttr selection, bool delta,
                   SmallVectorImpl<std::pair<int64_t, int64_t>> &changedColumns,
                   const DenseMap<Operation *, Value> *drawOverride = nullptr,
                   Value *logRatioOut = nullptr) const {
@@ -2656,23 +2702,7 @@ struct ExpandImpulsePass
       Region &logpdf = op.getLogpdf();
       Block &sBlock = sampler.front();
       auto traceType = cast<RankedTensorType>(trace.getType());
-
-      DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-      for (Operation &o : sBlock)
-        if (auto site = dyn_cast<impulse::SampleRegionOp>(&o))
-          if (auto addr = site.getAddressAttr())
-            siteByAddress[addr] = site;
-
-      DenseMap<Attribute, int64_t> traceOffsetOf;
-      int64_t offset = 0;
-      for (Attribute addr : allAddresses) {
-        traceOffsetOf[addr] = offset;
-        impulse::SampleRegionOp site = siteByAddress.lookup(addr);
-        for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
-          offset += computeTensorElementCount(
-              cast<RankedTensorType>(site.getResult(i).getType()));
-      }
-      const int64_t positionSize = offset;
+      int64_t positionSize = layout.positionSize;
 
       DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
 
@@ -2696,14 +2726,10 @@ struct ExpandImpulsePass
         }
         ++siteOrdinal;
         Attribute addr = site.getAddressAttr();
-        int64_t siteOff = traceOffsetOf.lookup(addr);
+        int64_t siteOff = layout.columnOf.lookup(addr);
         if (selectedSet.contains(addr)) {
           selectedOrdinals.push_back(siteOrdinal);
-          int64_t siteSize = 0;
-          for (unsigned k = 1, e = site.getNumResults(); k < e; ++k)
-            siteSize += computeTensorElementCount(
-                cast<RankedTensorType>(site.getResult(k).getType()));
-          changedColumns.push_back({siteOff, siteOff + siteSize});
+          changedColumns.push_back({siteOff, siteOff + sampleRegionSize(site)});
           Block &sub = site.getSampling().front();
           IRMapping subMap;
           subMap.map(sub.getArgument(0), curRng);
@@ -2781,7 +2807,7 @@ struct ExpandImpulsePass
         unsigned oldArgIdx = 0;
         for (Attribute addr : selection)
           for (Value oldValue :
-               sliceTraceValues(b, loc, trace, traceOffsetOf.lookup(addr),
+               sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
                                 ValueRange(proposedSelected[addr]).getTypes()))
             oldLpMap.map(lpBlock.getArgument(oldArgIdx++), oldValue);
         for (Operation &lo : lpBlock.without_terminator())
@@ -2928,12 +2954,20 @@ struct ExpandImpulsePass
 
       // A trace wider than the positions carries a score tail (delta weight).
       int64_t fullPositionSize = 0;
+      RegionTraceLayout layout;
       if constexpr (isRegionForm) {
-        for (Operation &o : op.getSampling().front())
-          if (auto site = dyn_cast<impulse::SampleRegionOp>(&o))
-            for (unsigned k = 1, e = site.getNumResults(); k < e; ++k)
-              fullPositionSize += computeTensorElementCount(
-                  cast<RankedTensorType>(site.getResult(k).getType()));
+        FailureOr<RegionTraceLayout> regionLayout =
+            getRegionTraceLayout(op, /*topLevelOnly=*/true);
+        if (failed(regionLayout)) {
+          op.emitError("Impulse MH: all_addresses entry without a top-level "
+                       "site");
+          return failure();
+        }
+        layout = std::move(*regionLayout);
+        for (auto site : op.getSampling()
+                             .front()
+                             .template getOps<impulse::SampleRegionOp>())
+          fullPositionSize += sampleRegionSize(site);
       } else {
         fullPositionSize =
             computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
@@ -2953,7 +2987,7 @@ struct ExpandImpulsePass
         if constexpr (isRegionForm)
           std::tie(proposal.trace, proposal.weight, proposal.corr,
                    proposal.rng) =
-              proposeRegion(b, loc, op, trace, rng, selection, allAddresses,
+              proposeRegion(b, loc, op, layout, trace, rng, selection,
                             deltaWeight, changedColumns, nullptr,
                             &proposal.logRatio);
         else
@@ -3029,9 +3063,10 @@ struct ExpandImpulsePass
       Attribute address;
       mutable impulse::SampleRegionOp site;
       mutable impulse::RandomOp draw;
-      ColumnWindows windows;    // value columns + dirty score columns
-      int64_t positionSize = 0; // score column of yield j: positionSize + j
-      int64_t ordinal = -1;     // the site's yield index (program order)
+      ColumnWindows windows; // value columns + dirty score columns
+      // Score column of yield j: layout.positionSize + j.
+      RegionTraceLayout layout;
+      int64_t ordinal = -1; // the site's yield index (program order)
     };
 
     static std::optional<Move> analyzeMove(impulse::InferRegionOp op) {
@@ -3044,35 +3079,22 @@ struct ExpandImpulsePass
       ArrayAttr allAddresses = op.getAllAddressesAttr();
       if (!selection || selection.size() != 1 || !allAddresses)
         return std::nullopt;
-      Block &sBlock = op.getSampling().front();
       Block &lpBlock = op.getLogpdf().front();
-      DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-      SmallVector<impulse::SampleRegionOp> sites;
-      for (Operation &o : sBlock)
-        if (auto site = dyn_cast<impulse::SampleRegionOp>(&o)) {
-          sites.push_back(site);
-          if (auto addr = site.getAddressAttr())
-            siteByAddress[addr] = site;
-        }
+      SmallVector<impulse::SampleRegionOp> sites = llvm::to_vector(
+          op.getSampling().front().getOps<impulse::SampleRegionOp>());
       Operation *lpTerm = lpBlock.getTerminator();
       if (lpTerm->getNumOperands() != 1 + sites.size() ||
           lpBlock.getNumArguments() != 1)
         return std::nullopt;
+      FailureOr<RegionTraceLayout> layout =
+          getRegionTraceLayout(op, /*topLevelOnly=*/true);
+      if (failed(layout))
+        return std::nullopt;
       Attribute address = selection[0];
-      impulse::SampleRegionOp site = siteByAddress.lookup(address);
+      impulse::SampleRegionOp site = layout->siteByAddress.lookup(address);
       if (!site || site.getNumResults() != 2)
         return std::nullopt;
-      DenseMap<Attribute, int64_t> traceOffsetOf;
-      int64_t positionSize = 0;
-      for (Attribute addr : allAddresses) {
-        impulse::SampleRegionOp s = siteByAddress.lookup(addr);
-        if (!s)
-          return std::nullopt;
-        traceOffsetOf[addr] = positionSize;
-        for (unsigned i = 1, e = s.getNumResults(); i < e; ++i)
-          positionSize += computeTensorElementCount(
-              cast<RankedTensorType>(s.getResult(i).getType()));
-      }
+      int64_t positionSize = layout->positionSize;
       auto traceType = cast<RankedTensorType>(op.getOriginalTrace().getType());
       if (traceType.getRank() != 2 || traceType.getShape()[0] != 1 ||
           traceType.getShape()[1] <= positionSize)
@@ -3111,12 +3133,9 @@ struct ExpandImpulsePass
       m.address = address;
       m.site = site;
       m.draw = draw;
-      m.positionSize = positionSize;
       m.ordinal = llvm::find(sites, site) - sites.begin();
-      int64_t off = traceOffsetOf.lookup(address);
-      int64_t size = computeTensorElementCount(
-          cast<RankedTensorType>(site.getResult(1).getType()));
-      m.windows.push_back({off, off + size});
+      int64_t column = layout->columnOf.lookup(address);
+      m.windows.push_back({column, column + sampleRegionSize(site)});
       SmallVector<bool> dirty =
           taintedSiteYields(lpBlock, lpBlock.getArguments());
       for (auto [j, d] : llvm::enumerate(dirty))
@@ -3124,6 +3143,7 @@ struct ExpandImpulsePass
           m.windows.push_back(
               {positionSize + (int64_t)j, positionSize + (int64_t)j + 1});
       m.windows = mergeColumnWindows(m.windows);
+      m.layout = std::move(*layout);
       return m;
     }
 
@@ -3410,9 +3430,8 @@ struct ExpandImpulsePass
         DenseMap<Operation *, Value> override;
         override[ms[k].draw] = takeLeading(b, loc, proposals.getResult(), k);
         auto [newTrace, delta, corr, stepRng] = mh.proposeRegion(
-            b, loc, ms[k].op, trace0, rng0, ms[k].op.getSelectionAttr(),
-            ms[k].op.getAllAddressesAttr(), /*delta=*/true, changed[k],
-            &override);
+            b, loc, ms[k].op, ms[k].layout, trace0, rng0,
+            ms[k].op.getSelectionAttr(), /*delta=*/true, changed[k], &override);
         newTraces.push_back(newTrace);
         deltaCells.push_back(delta);
         corrCells.push_back(corr);
@@ -3430,11 +3449,11 @@ struct ExpandImpulsePass
       for (unsigned k = 0; k < numMoves && slotted; ++k) {
         slotted = cols[k].size() == numCols;
         for (size_t s = 0; s < numCols && slotted; ++s)
-          slotted = (cols[k][s] >= ms[k].positionSize) ==
-                    (cols[0][s] >= ms[0].positionSize);
+          slotted = (cols[k][s] >= ms[k].layout.positionSize) ==
+                    (cols[0][s] >= ms[0].layout.positionSize);
         int64_t own = -1;
         for (size_t s = 0; s < numCols && slotted; ++s)
-          if (cols[k][s] == ms[k].positionSize + ms[k].ordinal)
+          if (cols[k][s] == ms[k].layout.positionSize + ms[k].ordinal)
             own = s;
         slotted = slotted && own >= 0 && (k == 0 || own == ownSlot);
         ownSlot = own;
@@ -3467,7 +3486,7 @@ struct ExpandImpulsePass
           }
         }
         for (size_t s = 0; s < numCols; ++s) {
-          if (cols[0][s] < ms[0].positionSize)
+          if (cols[0][s] < ms[0].layout.positionSize)
             continue;
           Value d = arith::SubFOp::create(b, loc, newOf[s], oldOf[s]);
           deltaVec =
@@ -3671,31 +3690,16 @@ struct ExpandImpulsePass
       Operation *lpTerm = lpBlock.getTerminator();
       unsigned numYields = lpTerm->getNumOperands() - 1;
       ArrayAttr selection = op.getSelectionAttr();
-      ArrayAttr allAddresses = op.getAllAddressesAttr();
 
-      DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-      op.getSampling().walk([&](impulse::SampleRegionOp site) {
-        if (auto address = site.getAddressAttr())
-          siteByAddress[address] = site;
-      });
-      auto siteSize = [](impulse::SampleRegionOp site) {
-        int64_t n = 0;
-        for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
-          n += cast<RankedTensorType>(site.getResult(i).getType())
-                   .getNumElements();
-        return n;
-      };
-      DenseMap<Attribute, int64_t> traceOffsetOf;
-      int64_t positionSize = 0;
-      for (Attribute addr : allAddresses) {
-        impulse::SampleRegionOp site = siteByAddress.lookup(addr);
-        if (!site) {
-          op.emitError("Impulse Gibbs: all_addresses entry without a site");
-          return failure();
-        }
-        traceOffsetOf[addr] = positionSize;
-        positionSize += siteSize(site);
+      FailureOr<RegionTraceLayout> layout =
+          getRegionTraceLayout(op, /*topLevelOnly=*/false);
+      if (failed(layout)) {
+        op.emitError("Impulse Gibbs: all_addresses entry without a site");
+        return failure();
       }
+      DenseMap<Attribute, impulse::SampleRegionOp> &siteByAddress =
+          layout->siteByAddress;
+      int64_t positionSize = layout->positionSize;
       Value initTrace = op.getOriginalTrace();
       Value initWeight = op.getStateIn()[0];
       Value initRng = op.getInputs()[0];
@@ -3728,7 +3732,7 @@ struct ExpandImpulsePass
                        "top-level scalar BERNOULLI site");
           return failure();
         }
-        selectedCols.push_back(traceOffsetOf.lookup(addr));
+        selectedCols.push_back(layout->columnOf.lookup(addr));
       }
       // (trace col, constraint offset, size) of constrained branch-local sites.
       SmallVector<std::tuple<int64_t, int64_t, int64_t>> observedBranchCols;
@@ -3742,8 +3746,8 @@ struct ExpandImpulsePass
           }
           if (site->getBlock() != &samplerEntry)
             observedBranchCols.push_back(
-                {traceOffsetOf.lookup(addr), off, siteSize(site)});
-          off += siteSize(site);
+                {layout->columnOf.lookup(addr), off, sampleRegionSize(site)});
+          off += sampleRegionSize(site);
         }
       }
       SmallVector<SmallVector<bool>> dirtyOf;
