@@ -1,7 +1,7 @@
 // REQUIRES: cuda-runtime
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t/prof
-// RUN: sed "s/^CanonicalHash = .*/CanonicalHash = 35f30366bcfd6f97/" %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile > %t/prof/preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile
+// RUN: sed "s/^CanonicalHash = .*/CanonicalHash = 35f30366bcfd6f97/" %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body~bd56b1cb9d03c64d.fpprofile > %t/prof/preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body~9ffe0dc738a6161b.fpprofile
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-print -mllvm -poseidon-enable-herbie=0 -mllvm -poseidon-enable-pt=0 -mllvm -poseidon-raise-wmma %s -o /dev/null 2>&1 | FileCheck --implicit-check-not='wrote descriptor' --implicit-check-not='recognized GEMM' %s
 
 // The runtime-shape GEMM of native_dgemm_runtime_cols_nvptx.cu with its

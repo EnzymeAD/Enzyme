@@ -42,8 +42,9 @@ constexpr llvm::StringLiteral kPerCallInfix = ".poseidon.";
 constexpr llvm::StringLiteral kCanonicalPrefix = "preprocess_";
 
 // The name LLVM's PGO knows `F` by (GlobalValue::getGlobalIdentifier):
-// its symbol, after the source file name and ';' when it has local linkage.
-// A kernel -fgpu-rdc externalized is named as without it.
+// its symbol, after the name of its source file and ';' when it has local
+// linkage as written. A static or anonymous kernel, which a device compile
+// gives external linkage (and with -fgpu-rdc a renamed symbol), is local.
 std::string functionIdentity(const llvm::Function &F);
 // The same for the name `name` of `F`'s linkage.
 std::string functionIdentity(const llvm::Function &F, llvm::StringRef name);

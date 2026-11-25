@@ -1,6 +1,6 @@
 // REQUIRES: amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t/prof
-// RUN: sed "s/^CanonicalHash = .*/CanonicalHash = 35f30366bcfd6f97/" %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile > %t/prof/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile
+// RUN: sed "s/^CanonicalHash = .*/CanonicalHash = 35f30366bcfd6f97/" %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body~bd56b1cb9d03c64d.fpprofile > %t/prof/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body~515a727859b8d42d.fpprofile
 // RUN: not %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%t/prof -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-unit=gfx942 -Xclang -mllvm -Xclang -poseidon-print -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 %s -o %t/k.co 2>&1 | FileCheck --implicit-check-not='recognized GEMM' %s
 
 // host_gemm_guard_nvptx.cu for gfx942: the reduce of

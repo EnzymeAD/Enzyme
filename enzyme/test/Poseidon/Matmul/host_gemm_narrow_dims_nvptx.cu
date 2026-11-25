@@ -2,9 +2,9 @@
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // DEFINE: %{compile} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-print -mllvm -poseidon-enable-herbie=0 -mllvm -poseidon-enable-pt=0 -mllvm -poseidon-raise-wmma
 // RUN: rm -rf %t && mkdir %t
-// RUN: mkdir -p %t/param && cp %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile %t/param/preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body.fpprofile
+// RUN: mkdir -p %t/param && cp %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body~bd56b1cb9d03c64d.fpprofile %t/param/preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body~975cc1e5234a4999.fpprofile
 // RUN: %{compile} -DNT=short -DDT=int -mllvm -poseidon-profile-use=%t/param -mllvm -poseidon-cache=%t/cparam %s -o /dev/null 2>&1 | FileCheck --check-prefix=PARAM --implicit-check-not='wrote descriptor' --implicit-check-not='host-dispatch' %s
-// RUN: mkdir -p %t/field && cp %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile %t/field/preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile
+// RUN: mkdir -p %t/field && cp %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body~bd56b1cb9d03c64d.fpprofile %t/field/preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body~3ec139897d2588bf.fpprofile
 // RUN: %{compile} -DNT=int -DDT=short -mllvm -poseidon-profile-use=%t/field -mllvm -poseidon-cache=%t/cfield %s -o /dev/null 2>&1 | FileCheck --check-prefix=FIELD --implicit-check-not='wrote descriptor' --implicit-check-not='host-dispatch' %s
 
 // The runtime-shape GEMM of native_dgemm_runtime_cols_nvptx.cu with a 16-bit

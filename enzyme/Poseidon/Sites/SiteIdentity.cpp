@@ -21,6 +21,8 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/MD5.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
@@ -43,13 +45,27 @@ const Function *siteOriginOf(const Session &S, const Function &clone) {
   return it == S.SiteCloneOf.end() ? nullptr : it->second.Origin;
 }
 
+// Whether the Itanium mangling of `symbol` names an entity of internal linkage
+// or one local to such an entity: an 'L' before a namespace-scope or local
+// name, or an anonymous namespace. Clang gives a static or anonymous kernel
+// external linkage in a device compile without -fgpu-rdc, since the host
+// runtime looks it up by name, so its linkage no longer says so.
+static bool mangledAsInternal(StringRef symbol) {
+  static const Regex internal("(^_Z|Z)L[0-9]|_GLOBAL__N_");
+  return symbol.starts_with("_Z") && internal.match(symbol);
+}
+
 std::string functionIdentity(const Function &F, StringRef name) {
   StringRef symbol = withoutExternalizedPostfix(name);
-  const bool local = F.hasLocalLinkage() || symbol.size() != name.size();
-  return GlobalValue::getGlobalIdentifier(symbol,
-                                          local ? GlobalValue::InternalLinkage
-                                                : GlobalValue::ExternalLinkage,
-                                          F.getParent()->getSourceFileName());
+  const bool local = F.hasLocalLinkage() || symbol.size() != name.size() ||
+                     mangledAsInternal(symbol);
+  // The file name alone, as -static-func-strip-dirname-prefix makes PGO's: a
+  // profile has to name the same site wherever the sources are checked out
+  // and however the build spells their path.
+  return GlobalValue::getGlobalIdentifier(
+      symbol,
+      local ? GlobalValue::InternalLinkage : GlobalValue::ExternalLinkage,
+      sys::path::filename(F.getParent()->getSourceFileName()));
 }
 
 std::string functionIdentity(const Function &F) {

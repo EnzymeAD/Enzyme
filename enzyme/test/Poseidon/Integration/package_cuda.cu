@@ -20,8 +20,8 @@
 // PROF-DAG: preprocess__Z4axpbPdPKdS1_i_poseidon_body.fpprofile
 // PROF-DAG: preprocess__Z4liftPdPKdi_poseidon_body.fpprofile
 // PROF-DAG: preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile
-// PROF-DAG: preprocess__ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT__poseidon_body.fpprofile
-// PROF-DAG: preprocess__ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT__poseidon_body.fpprofile
+// PROF-DAG: preprocess__ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT__poseidon_body~{{[0-9a-f]+}}.fpprofile
+// PROF-DAG: preprocess__ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT__poseidon_body~{{[0-9a-f]+}}.fpprofile
 
 // MERGED: LaunchCount = 96
 // MERGED: Exec = 8192

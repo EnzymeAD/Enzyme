@@ -87,14 +87,14 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) { return x * x
 // DESC-NEXT: "profile headers": {
 // DESC-NEXT: "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_": {
 // DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\n",
-// DESC-NEXT: "profile": "preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body"
+// DESC-NEXT: "profile": "preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body~0fd556e6d3e4c48d"
 
 // The kernel gains the three shadows, in the order of the pointers they
 // shadow, and passes the body a copy of the lambda with each data pointer
 // replaced by its shadow: the adjoints of Q and G accumulate into the first
 // two, and the one of y is read from the third, cleared, and logged as the
 // seed of both operations.
-// GENIR: @poseidon_site_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [72 x i8] c"preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body\00"
+// GENIR: @poseidon_site_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [89 x i8] c"preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body~0fd556e6d3e4c48d\00"
 // GENIR: define ptx_kernel void @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 [[N:%[0-9]+]], ptr {{.*}}byval(%class.anon){{.*}} [[L:%[0-9]+]], ptr [[DQ:%[0-9]+]], ptr [[DG:%[0-9]+]], ptr [[DY:%[0-9]+]])
 // GENIR-NEXT: [[SL:%[0-9]+]] = alloca %class.anon
 // GENIR-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr {{.*}}[[SL]], ptr {{.*}}[[L]], i64 80, i1 false)
@@ -134,6 +134,6 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) { return x * x
 // GENIR-NEXT: ret double [[A]]
 
 // USE: [poseidon] site void CuKernel2D<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, reduce(int, int, int, double*, double*, double*)::'lambda'(int)): accuracy target 1e-09
-// USE-NEXT: annotated_lambda_nvptx.cu:[[@LINE-106]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body.fpprofile:
+// USE-NEXT: annotated_lambda_nvptx.cu:[[@LINE-106]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body~0fd556e6d3e4c48d.fpprofile:
 // USE: [poseidon] every site of {{.*}}annotated_lambda_nvptx.cu was left alone; emitting the module as written
 // USE-NEXT: 2 warnings generated when compiling for {{.*}}

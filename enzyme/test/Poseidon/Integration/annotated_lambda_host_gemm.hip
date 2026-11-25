@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
 
 // The device half has no profile and keeps the kernel as written; the host
 // half dispatches its launch.
-// CHECK: warning: {{.*}}Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL11HipKernel2D{{[^ ]*}}_poseidon_body.fpprofile: the profiled program did not contain this site
+// CHECK: warning: {{.*}}Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL11HipKernel2D{{[^ ]*}}_poseidon_body~{{[0-9a-f]+}}.fpprofile: the profiled program did not contain this site
 // CHECK: [ozaki-host-dispatch] replaced the launch in stub _ZL26__device_stub__HipKernel2D{{[^ ]*}} with __poseidon_ozaki_dgemm (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 
 // OPT: DENSE: rel err ok
