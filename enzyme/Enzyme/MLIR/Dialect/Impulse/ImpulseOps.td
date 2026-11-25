@@ -87,14 +87,14 @@ def SimulateOp : Impulse_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpI
   let summary = "Simulate a generative function";
   let description = [{
     Runs the model `fn` on `inputs`, every site drawing a new value. `trace`
-    is the trace of `selection` and `weight` the joint log density of the run.
-    `outputs` are the results of `fn`.
+    is the trace of `all_addresses` and `weight` the joint log density of the
+    run. `outputs` are the results of `fn`.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    AddressArrayAttr:$selection,
+    AddressArrayAttr:$all_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -114,7 +114,7 @@ def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpI
   let description = [{
     Runs the model `fn` on `inputs`. A site in `constrained_addresses` takes
     its value from `constraint`, a trace of `constrained_addresses`; every
-    other site draws a new value. `trace` is the trace of `selection` and
+    other site draws a new value. `trace` is the trace of `all_addresses` and
     `weight` the joint log density of the run. `outputs` are the results of
     `fn`.
   }];
@@ -123,7 +123,7 @@ def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpI
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     AnyRankedTensor:$constraint,
-    AddressArrayAttr:$selection,
+    AddressArrayAttr:$all_addresses,
     AddressArrayAttr:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
@@ -143,13 +143,12 @@ def RegenerateOp : Impulse_Op<"regenerate",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Regenerate selected addresses in a trace";
   let description = [{
-    Runs the model `fn` on `inputs` again, the sites in `regenerate_addresses`
-    drawing new values. Every other site takes its value from
-    `original_trace`, a trace of `selection`, except that a site in
-    `constrained_addresses` takes it from `constraint`, a trace of
-    `constrained_addresses`, whenever the site runs. `new_trace` has the type
-    of `original_trace` and holds the values of the new run; `outputs` are the
-    results of `fn`.
+    Runs the model `fn` on `inputs` again, the sites in `selection` drawing
+    new values. Every other site takes its value from `original_trace`, a
+    trace of `all_addresses`, except that a site in `constrained_addresses`
+    takes it from `constraint`, a trace of `constrained_addresses`, whenever
+    the site runs. `new_trace` has the type of `original_trace` and holds the
+    values of the new run; `outputs` are the results of `fn`.
 
     With a plain trace, `weight` is the joint log density of the new run. With
     a score-tail trace, `weight` is the joint log density of the new run minus
@@ -162,8 +161,8 @@ def RegenerateOp : Impulse_Op<"regenerate",
     Variadic<AnyType>:$inputs,
     AnyRankedTensor:$original_trace,
     Optional<AnyRankedTensor>:$constraint,
+    AddressArrayAttr:$all_addresses,
     AddressArrayAttr:$selection,
-    AddressArrayAttr:$regenerate_addresses,
     OptionalAttr<AddressArrayAttr>:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
@@ -183,10 +182,10 @@ def MHOp : Impulse_Op<"mh",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Metropolis-Hastings step for probabilistic inference";
   let description = [{
-    One Metropolis-Hastings step on `original_trace`, a trace of `selection`
-    whose joint log density is `original_weight`. The proposal is the
-    `impulse.regenerate` of `original_trace` with the same `fn`, `inputs`,
-    `selection`, `regenerate_addresses`, `constraint` and
+    One Metropolis-Hastings step on `original_trace`, a trace of
+    `all_addresses` whose joint log density is `original_weight`. The proposal
+    is the `impulse.regenerate` of `original_trace` with the same `fn`,
+    `inputs`, `all_addresses`, `selection`, `constraint` and
     `constrained_addresses`, and it is accepted with the Metropolis-Hastings
     probability for a proposal that draws the regenerated sites from their
     distributions. If `accepted` is true, `new_trace` and `new_weight` are the
@@ -201,8 +200,8 @@ def MHOp : Impulse_Op<"mh",
     AnyRankedTensor:$original_weight,
     Variadic<AnyType>:$inputs,
     Optional<AnyRankedTensor>:$constraint,
+    AddressArrayAttr:$all_addresses,
     AddressArrayAttr:$selection,
-    AddressArrayAttr:$regenerate_addresses,
     OptionalAttr<AddressArrayAttr>:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );

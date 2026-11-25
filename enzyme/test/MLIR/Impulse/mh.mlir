@@ -18,10 +18,10 @@ module {
     %c1000 = arith.constant 1000 : index
     %res:3 = scf.for %i = %c0 to %c1000 step %c1 iter_args(%trace = %init_trace, %weight = %init_weight, %rng1 = %rng) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>) {
       %step1:4 = impulse.mh @test(%rng1, %mean, %stddev) given %trace weight %weight
-          <{ name = "mh_1", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<2>]] }>
+          <{ name = "mh_1", all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], selection = [[#impulse.symbol<2>]] }>
           : (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>)
       %step2:4 = impulse.mh @test(%step1#3, %mean, %stddev) given %step1#0 weight %step1#1
-          <{ name = "mh_2", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<1>]] }>
+          <{ name = "mh_2", all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], selection = [[#impulse.symbol<1>]] }>
           : (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>)
       scf.yield %step2#0, %step2#1, %step2#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
     }

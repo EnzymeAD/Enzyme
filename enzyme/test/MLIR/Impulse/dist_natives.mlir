@@ -10,7 +10,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @exp_top(%r: tensor<2xui64>, %lam: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @exp_model(%r, %lam) <{selection = [[#impulse.symbol<1>]]}>
+    %t, %w, %rng, %v = impulse.simulate @exp_model(%r, %lam) <{all_addresses = [[#impulse.symbol<1>]]}>
       : (tensor<2xui64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -24,7 +24,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @bern_top(%r: tensor<2xui64>, %lg: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @bern_model(%r, %lg) <{selection = [[#impulse.symbol<2>]]}>
+    %t, %w, %rng, %v = impulse.simulate @bern_model(%r, %lg) <{all_addresses = [[#impulse.symbol<2>]]}>
       : (tensor<2xui64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -38,7 +38,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @du_top(%r: tensor<2xui64>, %lo: tensor<f64>, %hi: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @du_model(%r, %lo, %hi) <{selection = [[#impulse.symbol<3>]]}>
+    %t, %w, %rng, %v = impulse.simulate @du_model(%r, %lo, %hi) <{all_addresses = [[#impulse.symbol<3>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -52,7 +52,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @gam_top(%r: tensor<2xui64>, %a: tensor<f64>, %b: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.generate @gam_model(%r, %a, %b) given %c <{selection = [[#impulse.symbol<4>]], constrained_addresses = [[#impulse.symbol<4>]]}>
+    %t, %w, %rng, %v = impulse.generate @gam_model(%r, %a, %b) given %c <{all_addresses = [[#impulse.symbol<4>]], constrained_addresses = [[#impulse.symbol<4>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -66,7 +66,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @hn_top(%r: tensor<2xui64>, %s: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @hn_model(%r, %s) <{selection = [[#impulse.symbol<5>]]}>
+    %t, %w, %rng, %v = impulse.simulate @hn_model(%r, %s) <{all_addresses = [[#impulse.symbol<5>]]}>
       : (tensor<2xui64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -80,7 +80,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @hc_top(%r: tensor<2xui64>, %s: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @hc_model(%r, %s) <{selection = [[#impulse.symbol<6>]]}>
+    %t, %w, %rng, %v = impulse.simulate @hc_model(%r, %s) <{all_addresses = [[#impulse.symbol<6>]]}>
       : (tensor<2xui64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -95,7 +95,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<3xf64>
   }
   func.func @dir_top(%r: tensor<2xui64>, %a: tensor<3xf64>, %c: tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>) {
-    %t, %w, %rng, %v = impulse.generate @dir_model(%r, %a) given %c <{selection = [[#impulse.symbol<7>]], constrained_addresses = [[#impulse.symbol<7>]]}>
+    %t, %w, %rng, %v = impulse.generate @dir_model(%r, %a) given %c <{all_addresses = [[#impulse.symbol<7>]], constrained_addresses = [[#impulse.symbol<7>]]}>
       : (tensor<2xui64>, tensor<3xf64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>)
     return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
   }
@@ -109,7 +109,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @gum_top(%r: tensor<2xui64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @gum_model(%r, %lc, %sc) <{selection = [[#impulse.symbol<8>]]}>
+    %t, %w, %rng, %v = impulse.simulate @gum_model(%r, %lc, %sc) <{all_addresses = [[#impulse.symbol<8>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -124,7 +124,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @st_top(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.generate @st_model(%r, %df, %lc, %sc) given %c <{selection = [[#impulse.symbol<10>]], constrained_addresses = [[#impulse.symbol<10>]]}>
+    %t, %w, %rng, %v = impulse.generate @st_model(%r, %df, %lc, %sc) given %c <{all_addresses = [[#impulse.symbol<10>]], constrained_addresses = [[#impulse.symbol<10>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -140,7 +140,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<3xf64>
   }
   func.func @stv_top(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>) {
-    %t, %w, %rng, %v = impulse.generate @stv_model(%r, %df, %lc, %sc) given %c <{selection = [[#impulse.symbol<11>]], constrained_addresses = [[#impulse.symbol<11>]]}>
+    %t, %w, %rng, %v = impulse.generate @stv_model(%r, %df, %lc, %sc) given %c <{all_addresses = [[#impulse.symbol<11>]], constrained_addresses = [[#impulse.symbol<11>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>)
     return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
   }
@@ -155,7 +155,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @hst_top(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.generate @hst_model(%r, %df, %sc) given %c <{selection = [[#impulse.symbol<9>]], constrained_addresses = [[#impulse.symbol<9>]]}>
+    %t, %w, %rng, %v = impulse.generate @hst_model(%r, %df, %sc) given %c <{all_addresses = [[#impulse.symbol<9>]], constrained_addresses = [[#impulse.symbol<9>]]}>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }

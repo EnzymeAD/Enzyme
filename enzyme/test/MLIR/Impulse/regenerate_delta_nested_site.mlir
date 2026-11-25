@@ -19,8 +19,8 @@ module {
     %prev = arith.constant dense<[[0.1, 0.2, -1.1, -1.2]]> : tensor<1x4xf64>
     // expected-error @below {{Impulse: regenerate over a score-tail trace requires a straight-line body of top-level distribution sites}}
     %res:4 = impulse.regenerate @model(%rng, %c, %pred) given %prev
-        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]],
-          regenerate_addresses = [[#impulse.symbol<1>]] }>
+        <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]],
+          selection = [[#impulse.symbol<1>]] }>
         : (tensor<2xui64>, tensor<f64>, i1, tensor<1x4xf64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1 : tensor<1x4xf64>, tensor<f64>
   }

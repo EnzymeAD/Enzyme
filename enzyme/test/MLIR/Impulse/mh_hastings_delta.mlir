@@ -14,7 +14,7 @@ module {
 
   func.func @mh(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>, %trace : tensor<1x4xf64>, %weight : tensor<f64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>) {
     %step:4 = impulse.mh @test(%rng, %mean, %stddev) given %trace weight %weight
-        <{ name = "mh", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<1>]] }>
+        <{ name = "mh", all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], selection = [[#impulse.symbol<1>]] }>
         : (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>)
     return %step#0, %step#1, %step#2, %step#3 : tensor<1x4xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>
   }

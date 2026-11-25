@@ -13,7 +13,7 @@ module {
     return %s#0, %p#1, %s#1 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
   func.func @top(%r: tensor<2xui64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>) {
-    %t, %w, %rng, %p, %s = impulse.simulate @model(%r) <{selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]]}>
+    %t, %w, %rng, %p, %s = impulse.simulate @model(%r) <{all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]]}>
       : (tensor<2xui64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %t, %w, %rng : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
   }

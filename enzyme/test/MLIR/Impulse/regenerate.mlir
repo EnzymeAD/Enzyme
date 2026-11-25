@@ -14,7 +14,7 @@ module {
   func.func @test_base(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %prev_trace = arith.constant dense<[[0.5, 1.0]]> : tensor<1x2xf64>
     %res:4 = impulse.regenerate @model(%rng, %mean, %stddev) given %prev_trace
-        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<2>]] }>
+        <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], selection = [[#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -66,8 +66,8 @@ module {
   func.func @test_hier(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
     %prev_trace = arith.constant dense<[[0.5, 1.0, 2.0]]> : tensor<1x3xf64>
     %res:5 = impulse.regenerate @outer(%rng, %mean, %stddev) given %prev_trace
-        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>, #impulse.symbol<3>], [#impulse.symbol<2>, #impulse.symbol<4>]],
-          regenerate_addresses = [[#impulse.symbol<2>, #impulse.symbol<4>]] }>
+        <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>, #impulse.symbol<3>], [#impulse.symbol<2>, #impulse.symbol<4>]],
+          selection = [[#impulse.symbol<2>, #impulse.symbol<4>]] }>
         : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3, %res#4 : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
   }

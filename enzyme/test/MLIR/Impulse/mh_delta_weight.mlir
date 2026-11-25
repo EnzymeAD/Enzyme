@@ -16,7 +16,7 @@ module {
     %init_trace = arith.constant dense<[[0.5, 1.0, -0.9, -1.1]]> : tensor<1x4xf64>
     %init_weight = arith.constant dense<-2.0> : tensor<f64>
     %step:4 = impulse.mh @test(%rng, %mean, %stddev) given %init_trace weight %init_weight
-        <{ name = "mh_1", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<2>]] }>
+        <{ name = "mh_1", all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], selection = [[#impulse.symbol<2>]] }>
         : (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>)
     return %step#0, %step#1, %step#3 : tensor<1x4xf64>, tensor<f64>, tensor<2xui64>
   }

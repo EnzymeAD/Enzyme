@@ -12,7 +12,7 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<2xf64>
   }
   func.func @mvn_top(%r: tensor<2xui64>, %mu: tensor<2xf64>, %sig: tensor<2x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<2xf64>) {
-    %t, %w, %rng, %v = impulse.simulate @mvn_model(%r, %mu, %sig) <{selection = [[#impulse.symbol<1>]]}>
+    %t, %w, %rng, %v = impulse.simulate @mvn_model(%r, %mu, %sig) <{all_addresses = [[#impulse.symbol<1>]]}>
       : (tensor<2xui64>, tensor<2xf64>, tensor<2x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<2xf64>)
     return %t, %w, %rng, %v : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<2xf64>
   }

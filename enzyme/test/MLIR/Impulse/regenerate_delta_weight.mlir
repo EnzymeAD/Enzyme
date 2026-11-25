@@ -19,8 +19,8 @@ module {
   func.func @test(%rng : tensor<2xui64>, %c : tensor<f64>) -> (tensor<1x8xf64>, tensor<f64>) {
     %prev = arith.constant dense<[[0.1, 0.2, 0.3, 0.4, -1.1, -1.2, -1.3, -1.4]]> : tensor<1x8xf64>
     %res:4 = impulse.regenerate @model(%rng, %c) given %prev
-        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]],
-          regenerate_addresses = [[#impulse.symbol<2>]] }>
+        <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]],
+          selection = [[#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<f64>, tensor<1x8xf64>) -> (tensor<1x8xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1 : tensor<1x8xf64>, tensor<f64>
   }

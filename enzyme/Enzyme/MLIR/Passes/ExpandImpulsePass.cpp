@@ -2314,9 +2314,9 @@ static MHProposal proposeFlatMove(OpBuilder &b, Location loc,
   inputs[0] = rng;
   auto regen = impulse::RegenerateOp::create(
       b, loc, regenResultTypes, op.getFnAttr(), inputs, trace,
-      op.getConstraint(), /*selection=*/op.getAllAddressesAttr(),
-      /*regenerate_addresses=*/op.getSelectionAttr(),
-      op.getConstrainedAddressesAttr(), b.getStringAttr(""));
+      op.getConstraint(), /*all_addresses=*/op.getAllAddressesAttr(),
+      /*selection=*/op.getSelectionAttr(), op.getConstrainedAddressesAttr(),
+      b.getStringAttr(""));
   regen->setAttr(kMHHastingsAttr, b.getUnitAttr());
   auto [weight, corr] = unpackHastingsWeight(b, loc, regen.getWeight());
   return {regen.getNewTrace(), weight, corr, regen.getOutputs()[0],
@@ -3010,9 +3010,9 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      ArrayAttr selection = CI.getSelectionAttr();
+      ArrayAttr allAddresses = CI.getAllAddressesAttr();
       int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, selection, symbolTable);
+          computePositionSizeForSelection(CI, fn, allAddresses, symbolTable);
       if (positionSize <= 0) {
         CI.emitError("Impulse: failed to compute position size for simulate");
         return failure();
@@ -3060,7 +3060,7 @@ struct ExpandImpulsePass
                                                     weightAccumulator, logpdf);
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
-          if (addressInList(sampleOp, selection) &&
+          if (addressInList(sampleOp, allAddresses) &&
               failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
                                       currentOffset)))
             return failure();
@@ -3081,13 +3081,13 @@ struct ExpandImpulsePass
             return failure();
           }
 
-          ArrayAttr subSelection =
-              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
-          if (subSelection.empty()) {
+          ArrayAttr subAllAddresses = buildSubSelection(
+              rewriter, allAddresses, sampleOp.getSymbolAttr());
+          if (subAllAddresses.empty()) {
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subSelection, symbolTable);
+                sampleOp, genFn, subAllAddresses, symbolTable);
             if (subPositionSize <= 0) {
               sampleOp.emitError(
                   "Impulse: failed to compute sub-position size");
@@ -3105,7 +3105,7 @@ struct ExpandImpulsePass
 
             auto nestedSimulate = impulse::SimulateOp::create(
                 rewriter, sampleOp.getLoc(), simResultTypes,
-                sampleOp.getFnAttr(), sampleOp.getInputs(), subSelection);
+                sampleOp.getFnAttr(), sampleOp.getInputs(), subAllAddresses);
             auto subTrace = nestedSimulate.getTrace();
             auto subWeight = nestedSimulate.getWeight();
 
@@ -3113,7 +3113,8 @@ struct ExpandImpulsePass
                 rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
 
             int64_t mergeOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+                sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
+                symbolTable);
             if (mergeOffset < 0) {
               sampleOp.emitError("Impulse: failed to compute merge offset");
               return failure();
@@ -3975,7 +3976,7 @@ struct ExpandImpulsePass
       Value oldWeight = mhOp.getOriginalWeight();
       SmallVector<Value> inputs(mhOp.getInputs().begin(),
                                 mhOp.getInputs().end());
-      auto selection = mhOp.getSelectionAttr();
+      auto allAddresses = mhOp.getAllAddressesAttr();
 
       auto traceType = oldTrace.getType();
 
@@ -3983,11 +3984,11 @@ struct ExpandImpulsePass
       if (!nameAttr)
         nameAttr = rewriter.getStringAttr("");
 
-      auto regenerateAddresses = mhOp.getRegenerateAddressesAttr();
+      auto selection = mhOp.getSelectionAttr();
 
       // On a score-tail trace, regenerate returns the dirty-term weight delta.
       int64_t fullPositionSize =
-          computePositionSizeForSelection(mhOp, fn, selection, symbolTable);
+          computePositionSizeForSelection(mhOp, fn, allAddresses, symbolTable);
       bool delta =
           cast<RankedTensorType>(traceType).getShape()[1] > fullPositionSize;
 
@@ -4000,7 +4001,7 @@ struct ExpandImpulsePass
 
       auto regenerateOp = impulse::RegenerateOp::create(
           rewriter, loc, regenResultTypes, mhOp.getFnAttr(), inputs, oldTrace,
-          mhOp.getConstraint(), selection, regenerateAddresses,
+          mhOp.getConstraint(), allAddresses, selection,
           mhOp.getConstrainedAddressesAttr(), nameAttr);
 
       regenerateOp->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
@@ -4014,7 +4015,7 @@ struct ExpandImpulsePass
           emitMHDecision(rewriter, loc, oldWeight, proposal, delta);
       Value newTrace = writeBackMHWindows(
           rewriter, loc, oldTrace, proposal.trace, decision.accepted,
-          mhChangedColumnsFlat(mhOp, fn, selection, regenerateAddresses,
+          mhChangedColumnsFlat(mhOp, fn, allAddresses, selection,
                                cast<RankedTensorType>(traceType).getShape()[1],
                                symbolTable));
       Value newWeight = arith::SelectOp::create(
@@ -4045,9 +4046,9 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      ArrayAttr selection = CI.getSelectionAttr();
+      ArrayAttr allAddresses = CI.getAllAddressesAttr();
       int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, selection, symbolTable);
+          computePositionSizeForSelection(CI, fn, allAddresses, symbolTable);
       if (positionSize <= 0) {
         CI.emitError("Impulse: failed to compute position size for generate");
         return failure();
@@ -4126,7 +4127,7 @@ struct ExpandImpulsePass
                                                     weightAccumulator, logpdf);
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
-          if (addressInList(sampleOp, selection) &&
+          if (addressInList(sampleOp, allAddresses) &&
               failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
                                       currentTraceOffset)))
             return failure();
@@ -4147,17 +4148,17 @@ struct ExpandImpulsePass
             return failure();
           }
 
-          ArrayAttr subSelection =
-              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
+          ArrayAttr subAllAddresses = buildSubSelection(
+              rewriter, allAddresses, sampleOp.getSymbolAttr());
           ArrayAttr subConstrainedAddrs =
               buildSubSelection(rewriter, CI.getConstrainedAddressesAttr(),
                                 sampleOp.getSymbolAttr());
 
-          if (subSelection.empty()) {
+          if (subAllAddresses.empty()) {
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subSelection, symbolTable);
+                sampleOp, genFn, subAllAddresses, symbolTable);
             int64_t subConstraintSize = computePositionSizeForSelection(
                 sampleOp, genFn, subConstrainedAddrs, symbolTable);
             if (subPositionSize <= 0 || subConstraintSize < 0) {
@@ -4198,7 +4199,7 @@ struct ExpandImpulsePass
             auto nestedGenerate = impulse::GenerateOp::create(
                 rewriter, sampleOp.getLoc(), genResultTypes,
                 sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
-                subSelection, subConstrainedAddrs);
+                subAllAddresses, subConstrainedAddrs);
 
             Value subTrace = nestedGenerate.getTrace();
             Value subWeight = nestedGenerate.getWeight();
@@ -4207,7 +4208,8 @@ struct ExpandImpulsePass
                 rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
 
             int64_t mergeOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+                sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
+                symbolTable);
 
             currTrace = updateColumns(rewriter, sampleOp.getLoc(), currTrace,
                                       subTrace, mergeOffset);
@@ -4287,9 +4289,9 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      ArrayAttr selection = CI.getSelectionAttr();
+      ArrayAttr allAddresses = CI.getAllAddressesAttr();
       int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, selection, symbolTable);
+          computePositionSizeForSelection(CI, fn, allAddresses, symbolTable);
       if (positionSize <= 0) {
         CI.emitError("Impulse: failed to compute position size for regenerate");
         return failure();
@@ -4342,7 +4344,7 @@ struct ExpandImpulsePass
                        "a straight-line body of top-level distribution sites");
           return failure();
         }
-        tainted = computeRegenerateTaint(NewF, CI.getRegenerateAddressesAttr());
+        tainted = computeRegenerateTaint(NewF, CI.getSelectionAttr());
         // Non-regenerated values are unchanged: start from the previous trace.
         {
           auto valueSliceType = RankedTensorType::get(
@@ -4356,7 +4358,7 @@ struct ExpandImpulsePass
         }
       }
 
-      ArrayAttr regenAddrs = CI.getRegenerateAddressesAttr();
+      ArrayAttr selection = CI.getSelectionAttr();
       bool hastings = CI->hasAttr(kMHHastingsAttr);
       ArrayAttr siteScoresAttr =
           CI->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
@@ -4386,13 +4388,13 @@ struct ExpandImpulsePass
         initWeight = emitSplatConstant(entryBuilder, initLoc, scoresType, 0.0);
       } else if (hastings && !deltaMode) {
         // Sites whose old density cannot be evaluated inline at the new state.
-        hastingsTaint = computeRegenerateTaint(NewF, regenAddrs);
+        hastingsTaint = computeRegenerateTaint(NewF, selection);
         SmallVector<Attribute> oldInfoAddrs;
         NewF.getFunctionBody().walk([&](impulse::SampleOp s) {
           if (!s.getDistAttr() && !s.getLogpdfAttr())
             return;
           bool needsOld;
-          if (addressInList(s, regenAddrs))
+          if (addressInList(s, selection))
             needsOld =
                 !enclosingIfs(s).empty() ||
                 llvm::any_of(llvm::drop_begin(s.getInputs()), [&](Value v) {
@@ -4419,7 +4421,7 @@ struct ExpandImpulsePass
               NewF.getArguments().drop_front(hasConstraint ? 2 : 1));
           auto scoreOp = impulse::RegenerateOp::create(
               rewriter, CI.getLoc(), scoreTypes, CI.getFnAttr(), scoreInputs,
-              prevTrace, constraint, selection, rewriter.getArrayAttr({}),
+              prevTrace, constraint, allAddresses, rewriter.getArrayAttr({}),
               hasConstraint ? constrainedAddresses : ArrayAttr(),
               rewriter.getStringAttr(""));
           scoreOp->setAttr(kMHSiteScoresAttr,
@@ -4475,11 +4477,11 @@ struct ExpandImpulsePass
         SmallVector<Value> sampledValues;
         if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
           Location loc = sampleOp.getLoc();
-          if (failed(verifyTopLevelAddress(sampleOp, regenAddrs, "selected")))
+          if (failed(verifyTopLevelAddress(sampleOp, selection, "selected")))
             return failure();
-          bool isSelected = addressInList(sampleOp, regenAddrs);
+          bool isSelected = addressInList(sampleOp, selection);
           int64_t sampleOffset = computeOffsetForSampleInSelection(
-              CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+              CI, fn, allAddresses, sampleOp.getSymbolAttr(), symbolTable);
 
           int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
           Value oldLive;
@@ -4579,7 +4581,7 @@ struct ExpandImpulsePass
           }
           ++siteOrdinal;
 
-          if (addressInList(sampleOp, selection) &&
+          if (addressInList(sampleOp, allAddresses) &&
               failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
                                       currentTraceOffset,
                                       /*write=*/!deltaMode || isSelected)))
@@ -4596,22 +4598,21 @@ struct ExpandImpulsePass
             return failure();
           }
 
-          ArrayAttr subSelection =
-              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
-          ArrayAttr subRegenerateAddrs =
-              buildSubSelection(rewriter, CI.getRegenerateAddressesAttr(),
-                                sampleOp.getSymbolAttr());
+          ArrayAttr subAllAddresses = buildSubSelection(
+              rewriter, allAddresses, sampleOp.getSymbolAttr());
+          ArrayAttr subSelection = buildSubSelection(
+              rewriter, CI.getSelectionAttr(), sampleOp.getSymbolAttr());
           ArrayAttr subConstrainedAddrs =
               (constraint && constrainedAddresses)
                   ? buildSubSelection(rewriter, constrainedAddresses,
                                       sampleOp.getSymbolAttr())
                   : ArrayAttr();
 
-          if (subSelection.empty()) {
+          if (subAllAddresses.empty()) {
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subSelection, symbolTable);
+                sampleOp, genFn, subAllAddresses, symbolTable);
             if (subPositionSize <= 0) {
               sampleOp.emitError(
                   "Impulse: failed to compute sub-position size");
@@ -4619,7 +4620,8 @@ struct ExpandImpulsePass
             }
 
             int64_t mergeOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+                sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
+                symbolTable);
             if (mergeOffset < 0) {
               sampleOp.emitError("Impulse: failed to compute merge offset");
               return failure();
@@ -4664,8 +4666,7 @@ struct ExpandImpulsePass
                   llvm::drop_begin(sampleOp.getInputs()),
                   [&](Value v) { return hastingsTaint.contains(v); });
               if (inFlippableBranch(sampleOp) ||
-                  (inputsTainted &&
-                   (!subRegenerateAddrs.empty() || genHasIf))) {
+                  (inputsTainted && (!subSelection.empty() || genHasIf))) {
                 sampleOp.emitError(
                     "Impulse: MH over a generative call whose sites can "
                     "change liveness or parameters under the move is not "
@@ -4686,7 +4687,7 @@ struct ExpandImpulsePass
             auto nestedRegenerate = impulse::RegenerateOp::create(
                 rewriter, sampleOp.getLoc(), regenResultTypes,
                 sampleOp.getFnAttr(), sampleOp.getInputs(), subPrevTrace,
-                subConstraint, subSelection, subRegenerateAddrs,
+                subConstraint, subAllAddresses, subSelection,
                 subConstrainedForOp, rewriter.getStringAttr(""));
 
             Value subTrace = nestedRegenerate.getNewTrace();

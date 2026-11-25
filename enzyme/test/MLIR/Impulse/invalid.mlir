@@ -38,7 +38,7 @@ func.func @if_yield_count_mismatch(%pred : tensor<i1>, %a : tensor<f64>) -> tens
 
 func.func @simulate_missing_fn(%seed : tensor<2xui64>) -> tensor<1x1xf64> {
   // expected-error @below {{'impulse.simulate' op `fn` references '@missing', which is not a func.func}}
-  %res:3 = impulse.simulate @missing(%seed) <{ selection = [[#impulse.symbol<1>]] }> : (tensor<2xui64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>)
+  %res:3 = impulse.simulate @missing(%seed) <{ all_addresses = [[#impulse.symbol<1>]] }> : (tensor<2xui64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>)
   return %res#0 : tensor<1x1xf64>
 }
 

@@ -19,7 +19,7 @@ module {
 
   func.func @test(%rng : tensor<2xui64>, %pred : tensor<i1>, %l1 : tensor<f64>, %l2 : tensor<f64>, %trace : tensor<1x2xf64>, %constraint : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %res:4 = impulse.regenerate @model(%rng, %pred, %l1, %l2) given %trace constrained_by %constraint
-        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [], constrained_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }>
+        <{ all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], selection = [], constrained_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<i1>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
