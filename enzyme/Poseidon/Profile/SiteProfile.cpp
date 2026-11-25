@@ -974,36 +974,55 @@ struct Region {
 /// writes outlives the caller. Either is made at every execution of the call,
 /// because the object the call sees is a new one each time: its storage is
 /// reused, its value is not.
-static CallInst *withShadows(CallInst *CI, Function &clone,
-                             const MarkerArgs &marker, bool print) {
-  SmallVector<unsigned, 8> seedWidth;
-  collectOutputParams(clone, seedWidth);
-  SmallVector<bool, 8> holdsPointers;
-  collectPointerHolders(clone, holdsPointers);
-  Function *body = markerTargetOrNull(CI);
-  Function &caller = *CI->getFunction();
-  Module &M = *CI->getModule();
-  const DataLayout &DL = M.getDataLayout();
-  LLVMContext &C = CI->getContext();
-  const std::string site = perCallSiteName(body->getName());
-
+namespace {
+/// What withShadows makes for the pointers marked poseidon_shadow: a local
+/// object's shadow and seed width, per object; a shadow over an extent, per
+/// region; which marker argument takes which; and the pointers that need
+/// none (constant) or whose object the program does not read afterwards
+/// (unread).
+struct ShadowPlan {
   MapVector<Value *, std::pair<AllocaInst *, unsigned>> objects;
   DenseMap<unsigned, Value *> objectOf;
+  DenseMap<Value *, unsigned> objectParam;
   SmallVector<Region, 4> regions;
   DenseMap<unsigned, std::pair<unsigned, int64_t>> regionOf;
-  DenseMap<Value *, unsigned> objectParam;
   DenseSet<unsigned> constant;
+  SmallPtrSet<Value *, 4> unread;
+};
+
+/// The memory a shadow stands for: bytes from a pointer, the first parameter
+/// that reaches it, and whether the call writes floating-point data into it,
+/// for the overlap check.
+struct Reach {
+  Value *pointer;
+  int64_t lo, hi;
+  unsigned param;
+  bool written, fromExtent;
+};
+} // namespace
+
+/// Sorts each pointer `marker` marks into `plan`: one the call needs no
+/// shadow for, one into a local object of the caller, or one into the
+/// constant range the call reaches through it. False, with an error, if a
+/// pointer is none of these.
+static bool planShadows(CallInst *CI, Function &clone, const MarkerArgs &marker,
+                        ArrayRef<unsigned> seedWidth, StringRef site,
+                        ShadowPlan &plan) {
+  SmallVector<bool, 8> holdsPointers;
+  collectPointerHolders(clone, holdsPointers);
+  Function &caller = *CI->getFunction();
+  const DataLayout &DL = CI->getModule()->getDataLayout();
   for (const MarkerArgs::MadeShadow &S : marker.madeShadows) {
     Value *p = CI->getArgOperand(S.arg);
     if (pointsNowhere(p) || holdsPointers[S.param]) {
-      constant.insert(S.activity);
+      plan.constant.insert(S.activity);
       continue;
     }
     if (Value *obj = localObject(p, &caller)) {
-      unsigned &width = objects[obj].second;
+      unsigned &width = plan.objects[obj].second;
       width = std::max(width, seedWidth[S.param]);
-      objectOf[S.arg] = obj;
-      objectParam.try_emplace(obj, S.param);
+      plan.objectOf[S.arg] = obj;
+      plan.objectParam.try_emplace(obj, S.param);
       continue;
     }
     std::string why;
@@ -1017,14 +1036,15 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
                    "), so it cannot be a Poseidon site. Copy the argument "
                    "into a local object, or pass its shadow in the call: "
                    "enzyme_dup before the pointer and the shadow after it.");
-      return nullptr;
+      return false;
     }
     if (!ext->accessed()) {
-      constant.insert(S.activity);
+      plan.constant.insert(S.activity);
       continue;
     }
     Address addr = addressOf(p, DL);
     const int64_t at = addr.offset;
+    SmallVector<Region, 4> &regions = plan.regions;
     unsigned k =
         llvm::find_if(regions,
                       [&](const Region &R) {
@@ -1052,70 +1072,74 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
       R.writes.push_back({at + ext->writeLo, at + ext->writeHi});
       R.width = std::max(R.width, seedWidth[S.param]);
     }
-    regionOf[S.arg] = {k, at};
+    plan.regionOf[S.arg] = {k, at};
   }
-  // The memory each shadow stands for: bytes from a pointer, the first
-  // parameter that reaches it, and whether the call writes floating-point data
-  // into it, for the overlap check below.
-  struct Reach {
-    Value *pointer;
-    int64_t lo, hi;
-    unsigned param;
-    bool written, fromExtent;
-  };
+  return true;
+}
+
+/// The memory each shadow of `plan` stands for.
+static SmallVector<Reach, 8> reachesOf(const ShadowPlan &plan,
+                                       const DataLayout &DL) {
   SmallVector<Reach, 8> reaches;
-  for (auto &[obj, entry] : objects)
-    reaches.push_back({obj, 0, (int64_t)objectBytes(obj, DL), objectParam[obj],
-                       entry.second != 0, false});
-  for (const Region &R : regions)
+  for (auto &[obj, entry] : plan.objects)
+    reaches.push_back({obj, 0, (int64_t)objectBytes(obj, DL),
+                       plan.objectParam.lookup(obj), entry.second != 0, false});
+  for (const Region &R : plan.regions)
     reaches.push_back({R.pointer, R.lo - R.pointerAt, R.hi - R.pointerAt,
                        R.param, R.width != 0, true});
-  SmallPtrSet<Value *, 4> unread;
-  for (auto &[obj, entry] : objects)
-    if (entry.second && !readAfterCall(obj, CI)) {
-      entry.second = 0;
-      unread.insert(obj);
-    }
+  return reaches;
+}
 
-  auto seedType = [&](unsigned width) -> std::optional<Type *> {
-    if (width == 8)
-      return Type::getDoubleTy(C);
-    if (width == 4)
-      return Type::getFloatTy(C);
-    if (width) {
-      fail(CI, "no seed rule for a " + Twine(width) + "-byte output element");
-      return std::nullopt;
-    }
-    return nullptr;
-  };
-  // `n` elements of type `T` from `at` set to 1.0, at every execution.
-  auto seed = [&](Value *at, Type *T, uint64_t n) {
-    if (!n)
-      return;
-    auto [in, idx] = SplitBlockAndInsertSimpleForLoop(
-        ConstantInt::get(Type::getInt64Ty(C), n), CI->getIterator());
-    IRBuilder<> L(in);
-    L.CreateStore(ConstantFP::get(T, 1.0), L.CreateGEP(T, at, idx));
-  };
+/// The type a shadow of `width`-byte output elements is seeded as: null for
+/// no output; none, with an error at `CI`, for a width without a rule.
+static std::optional<Type *> seedTypeOf(CallInst *CI, unsigned width) {
+  LLVMContext &C = CI->getContext();
+  if (width == 8)
+    return Type::getDoubleTy(C);
+  if (width == 4)
+    return Type::getFloatTy(C);
+  if (width) {
+    fail(CI, "no seed rule for a " + Twine(width) + "-byte output element");
+    return std::nullopt;
+  }
+  return nullptr;
+}
 
-  for (auto &[obj, entry] : objects) {
+/// Sets `n` elements of type `T` from `at` to 1.0 before `CI`, at every
+/// execution.
+static void seedOnes(CallInst *CI, Value *at, Type *T, uint64_t n) {
+  if (!n)
+    return;
+  auto [in, idx] = SplitBlockAndInsertSimpleForLoop(
+      ConstantInt::get(Type::getInt64Ty(CI->getContext()), n),
+      CI->getIterator());
+  IRBuilder<> L(in);
+  L.CreateStore(ConstantFP::get(T, 1.0), L.CreateGEP(T, at, idx));
+}
+
+/// Makes the shadows of `plan` before `CI`, zero and seeded where the call
+/// writes; false, with an error, for an output element without a seed rule.
+static bool emitShadows(CallInst *CI, ShadowPlan &plan) {
+  const DataLayout &DL = CI->getModule()->getDataLayout();
+  for (auto &[obj, entry] : plan.objects) {
     auto &[shadow, width] = entry;
-    std::optional<Type *> T = seedType(width);
+    std::optional<Type *> T = seedTypeOf(CI, width);
     if (!T)
-      return nullptr;
+      return false;
     shadow = shadowObject(obj);
     uint64_t bytes = objectBytes(obj, DL);
     IRBuilder<> B(CI);
     B.CreateMemSet(shadow, B.getInt8(0), bytes, shadow->getAlign());
     if (*T)
-      seed(shadow, *T, bytes / width);
+      seedOnes(CI, shadow, *T, bytes / width);
   }
 
+  Function &caller = *CI->getFunction();
   IRBuilder<> entry(&*caller.getEntryBlock().getFirstInsertionPt());
-  for (Region &R : regions) {
-    std::optional<Type *> T = seedType(R.width);
+  for (Region &R : plan.regions) {
+    std::optional<Type *> T = seedTypeOf(CI, R.width);
     if (!T)
-      return nullptr;
+      return false;
     const int64_t align = R.align;
     R.start = ((R.lo - R.alignedAt) % align + align) % align;
     const uint64_t bytes = R.start + (R.hi - R.lo);
@@ -1127,16 +1151,22 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
     B.CreateMemSet(R.shadow, B.getInt8(0), bytes, Align(align));
     if (*T)
       for (auto [lo, hi] : R.writes)
-        seed(B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), R.shadow,
-                                          R.start + (lo - R.lo)),
-             *T, (hi - lo) / R.width);
+        seedOnes(CI,
+                 B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), R.shadow,
+                                              R.start + (lo - R.lo)),
+                 *T, (hi - lo) / R.width);
   }
+  return true;
+}
 
-  // A shadow made from an extent is an object of its own, which stands for the
-  // memory its pointers reach only where no other shadow's memory overlaps it:
-  // the reverse pass would miss what the call writes through one pointer and
-  // reads through the other. The profiling run stops at a call where such
-  // memory overlaps and the call writes into one of the two.
+/// A shadow made from an extent is an object of its own, which stands for the
+/// memory its pointers reach only where no other shadow's memory overlaps it:
+/// the reverse pass would miss what the call writes through one pointer and
+/// reads through the other. Stops the profiling run, before `CI`, where such
+/// memory overlaps and the call writes into one of the two.
+static void emitOverlapChecks(CallInst *CI, ArrayRef<Reach> reaches,
+                              StringRef site) {
+  Module &M = *CI->getModule();
   for (auto g = reaches.begin(); g != reaches.end(); ++g)
     for (auto h = std::next(g); h != reaches.end(); ++h) {
       if (!(g->fromExtent || h->fromExtent) || !(g->written || h->written))
@@ -1167,20 +1197,27 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
                             S.getInt32(std::min(g->param, h->param) + 1),
                             S.getInt32(std::max(g->param, h->param) + 1)});
     }
+}
 
+/// `CI` again, with each pointer `marker` marks followed by its shadow from
+/// `plan` and its activity marker made explicit; replaces `CI`.
+static CallInst *emitShadowedCall(CallInst *CI, const MarkerArgs &marker,
+                                  ShadowPlan &plan) {
+  LLVMContext &C = CI->getContext();
   IRBuilder<> B(CI);
   SmallVector<Value *, 32> args;
   for (unsigned i = 0; i < CI->arg_size(); ++i) {
     Value *a = CI->getArgOperand(i);
     if (llvm::any_of(marker.madeShadows,
                      [&](const auto &S) { return S.activity == i; }))
-      a = activityArg(C, constant.count(i) ? "enzyme_const" : "enzyme_dup");
+      a = activityArg(C,
+                      plan.constant.count(i) ? "enzyme_const" : "enzyme_dup");
     args.push_back(a);
-    if (Value *obj = objectOf.lookup(i))
-      args.push_back(intoShadow(a, obj, objects[obj].first, B));
-    if (auto it = regionOf.find(i); it != regionOf.end()) {
+    if (Value *obj = plan.objectOf.lookup(i))
+      args.push_back(intoShadow(a, obj, plan.objects[obj].first, B));
+    if (auto it = plan.regionOf.find(i); it != plan.regionOf.end()) {
       auto [k, at] = it->second;
-      const Region &R = regions[k];
+      const Region &R = plan.regions[k];
       args.push_back(B.CreatePointerBitCastOrAddrSpaceCast(
           B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), R.shadow,
                                        R.start + (at - R.lo)),
@@ -1196,22 +1233,51 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
       AttributeList::get(C, old.getFnAttrs(), old.getRetAttrs(), {}));
   CI->replaceAllUsesWith(NC);
   CI->eraseFromParent();
+  return NC;
+}
 
-  if (!print)
-    return NC;
-  errs() << "[poseidon] " << site << ": " << objects.size() + regions.size()
+/// Prints, under -poseidon-print, the shadows `plan` made for the site `site`.
+static void printShadows(StringRef site, const MarkerArgs &marker,
+                         const ShadowPlan &plan, ArrayRef<unsigned> seedWidth) {
+  errs() << "[poseidon] " << site << ": "
+         << plan.objects.size() + plan.regions.size()
          << " shadow object(s), output(s)";
   for (const MarkerArgs::MadeShadow &S : marker.madeShadows)
-    if (!constant.count(S.activity) && seedWidth[S.param] &&
-        !unread.count(objectOf.lookup(S.arg)))
+    if (!plan.constant.count(S.activity) && seedWidth[S.param] &&
+        !plan.unread.count(plan.objectOf.lookup(S.arg)))
       errs() << ' ' << S.param;
-  if (!unread.empty()) {
+  if (!plan.unread.empty()) {
     errs() << ", not read after the call:";
     for (const MarkerArgs::MadeShadow &S : marker.madeShadows)
-      if (unread.count(objectOf.lookup(S.arg)))
+      if (plan.unread.count(plan.objectOf.lookup(S.arg)))
         errs() << ' ' << S.param;
   }
   errs() << '\n';
+}
+
+static CallInst *withShadows(CallInst *CI, Function &clone,
+                             const MarkerArgs &marker, bool print) {
+  SmallVector<unsigned, 8> seedWidth;
+  collectOutputParams(clone, seedWidth);
+  const std::string site = perCallSiteName(markerTargetOrNull(CI)->getName());
+
+  ShadowPlan plan;
+  if (!planShadows(CI, clone, marker, seedWidth, site, plan))
+    return nullptr;
+  SmallVector<Reach, 8> reaches =
+      reachesOf(plan, CI->getModule()->getDataLayout());
+  // An object the program does not read after the call is no output of it.
+  for (auto &[obj, entry] : plan.objects)
+    if (entry.second && !readAfterCall(obj, CI)) {
+      entry.second = 0;
+      plan.unread.insert(obj);
+    }
+  if (!emitShadows(CI, plan))
+    return nullptr;
+  emitOverlapChecks(CI, reaches, site);
+  CallInst *NC = emitShadowedCall(CI, marker, plan);
+  if (print)
+    printShadows(site, marker, plan, seedWidth);
   return NC;
 }
 
