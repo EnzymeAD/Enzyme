@@ -20,7 +20,6 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
@@ -40,15 +39,6 @@ void diagnose(const Function &F, const DiagnosticLocation &Loc,
       F, "Poseidon: " + Message.str(), Loc, Severity));
 }
 
-// Ends the compile after its error diagnostic with status 1 and none of a
-// crash's reporting, removing the files registered for removal. LLVM's own
-// ways out, reportFatalUsageError and sys::Process::Exit, unwind clang's
-// in-process cc1 through a CrashRecoveryContext that dumps the stack.
-[[noreturn]] static void endCompile() {
-  sys::RunInterruptHandlers();
-  exit(1);
-}
-
 char UserError::ID = 0;
 
 Error userError(const Function &F, const DiagnosticLocation &Loc,
@@ -64,7 +54,7 @@ Error userError(const Twine &Message) {
   return make_error<UserError>(nullptr, DiagnosticLocation(), Message.str());
 }
 
-void reportUserErrors(LLVMContext &Ctx, Error E) {
+void diagnoseUserErrors(LLVMContext &Ctx, Error E) {
   handleAllErrors(
       std::move(E),
       [&](const UserError &U) {
@@ -78,28 +68,6 @@ void reportUserErrors(LLVMContext &Ctx, Error E) {
         Ctx.diagnose(
             DiagnosticInfoGeneric("Poseidon: " + Other.message(), DS_Error));
       });
-}
-
-void exitOnUserError(LLVMContext &Ctx, Error E) {
-  if (!E)
-    return;
-  reportUserErrors(Ctx, std::move(E));
-  endCompile();
-}
-
-void reportUserError(const Function &F, const DiagnosticLocation &Loc,
-                     const Twine &Message) {
-  diagnose(F, Loc, Message, DS_Error);
-  endCompile();
-}
-
-void reportUserError(const Instruction &I, const Twine &Message) {
-  reportUserError(*I.getFunction(), I.getDebugLoc(), Message);
-}
-
-void reportUserError(LLVMContext &Ctx, const Twine &Message) {
-  Ctx.diagnose(DiagnosticInfoGeneric("Poseidon: " + Message, DS_Error));
-  endCompile();
 }
 
 unsigned inlineCallsWhile(Function &F, function_ref<bool(CallBase &)> pick) {

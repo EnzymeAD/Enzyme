@@ -84,7 +84,7 @@ static void eraseUnloweredCalls(Module &M) {
 }
 
 PreservedAnalyses stopOnError(Session &S, Module &M, Error E) {
-  reportUserErrors(M.getContext(), std::move(E));
+  diagnoseUserErrors(M.getContext(), std::move(E));
   eraseUnloweredCalls(M);
   S.Stopped = true;
   return PreservedAnalyses::none();

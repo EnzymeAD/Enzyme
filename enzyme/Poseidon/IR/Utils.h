@@ -115,10 +115,17 @@ void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 void diagnose(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
               const llvm::Twine &Message, llvm::DiagnosticSeverity Severity);
 
-// A mistake in what the compile was given: where it is and what it is. A
-// function that finds one returns it as an Error up to the pass entry, which
-// reports it with reportUserErrors; the compile then fails through the
-// diagnostic handler's error count.
+// A mistake in what the compile was given: where it is and what it is.
+//
+// A function that finds one returns it, and every caller passes it on, up to
+// the entry of the running pass. There stopOnError (Pass/Session.h) reports it
+// once through diagnoseUserErrors, leaves the module valid, and marks the
+// session stopped, so that the session's later passes leave the module as it
+// is. The compile fails through the diagnostic handler's error count, and the
+// process that loaded the plugin is never ended by the pass. The one error
+// held rather than returned is a DeferredError (Techniques/Unit.h): the DP's
+// repricing of a candidate runs inside the search, which cannot unwind, so the
+// first error it meets is kept and solveSites returns it after the search.
 class UserError : public llvm::ErrorInfo<UserError> {
 public:
   static char ID;
@@ -146,31 +153,7 @@ llvm::Error userError(const llvm::Twine &Message);
 
 // Reports each error `E` holds as an error diagnostic in `Ctx`: a user error at
 // its location, any other as a mistake of the whole compile.
-void reportUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
-
-// Reports the errors `E` holds and ends the compile as reportUserError does;
-// returns when it holds none.
-void exitOnUserError(llvm::LLVMContext &Ctx, llvm::Error E);
-// The value `V` holds, or its error reported as exitOnUserError reports it.
-template <typename T>
-T exitOnUserError(llvm::LLVMContext &Ctx, llvm::Expected<T> V) {
-  if (!V)
-    exitOnUserError(Ctx, V.takeError());
-  return std::move(*V);
-}
-
-// A mistake in what the compile was given that leaves nothing to compile with:
-// an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1
-// and without crash diagnostics.
-[[noreturn]] void reportUserError(const llvm::Function &F,
-                                  const llvm::DiagnosticLocation &Loc,
-                                  const llvm::Twine &Message);
-[[noreturn]] void reportUserError(const llvm::Instruction &I,
-                                  const llvm::Twine &Message);
-// The same for a mistake no site is concerned in: a flag value, a plugin or a
-// file of the whole compile.
-[[noreturn]] void reportUserError(llvm::LLVMContext &Ctx,
-                                  const llvm::Twine &Message);
+void diagnoseUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
 
 } // namespace poseidon
 #endif // POSEIDON_UTILS_H

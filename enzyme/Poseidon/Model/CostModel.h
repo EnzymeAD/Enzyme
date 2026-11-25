@@ -79,10 +79,5 @@ llvm::Expected<double> compCost(
     const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
     uint64_t normalizer = 0);
 
-// instructionCost for a caller that does not unwind: a user error ends the
-// compile, as reportUserError does.
-double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I,
-                              const llvm::Instruction *At = nullptr);
-
 } // namespace poseidon
 #endif // POSEIDON_COST_MODEL_H

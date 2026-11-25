@@ -190,11 +190,6 @@ Expected<double> instructionCost(CostModelState &CM, const Instruction *I,
   return rowCost(CM, RowAt, **OpcodeName, PrecisionName);
 }
 
-double getInstructionCompCost(CostModelState &CM, const Instruction *I,
-                              const Instruction *At) {
-  return exitOnUserError(I->getContext(), instructionCost(CM, I, At));
-}
-
 Expected<double>
 profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
              function_ref<bool(const Instruction &, size_t &)> slotOf) {
