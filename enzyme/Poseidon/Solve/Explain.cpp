@@ -1742,12 +1742,11 @@ void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
   json::Object result{{"status", status}, {"reason", reason}};
   if (!profile.empty())
     result["profile"] = profile;
-  writeExplanation(
-      S, F, body ? bodyProfileStem(S, F) : siteFileStem(S, F),
-      json::Object{{"schema", kSchema},
-                   {"function", functionJSON(S, F)},
-                   {"target", targetJSON(S.Opts, tau, siteTarget)},
-                   {"result", std::move(result)}});
+  writeExplanation(S, F, body ? bodyProfileStem(S, F) : siteFileStem(S, F),
+                   json::Object{{"schema", kSchema},
+                                {"function", functionJSON(S, F)},
+                                {"target", targetJSON(S.Opts, tau, siteTarget)},
+                                {"result", std::move(result)}});
 }
 
 void explainNothingToOptimize(Session &S, Function &F, double tau,
