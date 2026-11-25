@@ -207,19 +207,8 @@ static_assert(
 
 MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
                                            EnzymeRngDistribution dist) {
-  mlir::impulse::RngDistribution rngDist;
-  switch (dist) {
-  case EnzymeRngDistribution_Uniform:
-    rngDist = mlir::impulse::RngDistribution::UNIFORM;
-    break;
-  case EnzymeRngDistribution_Normal:
-    rngDist = mlir::impulse::RngDistribution::NORMAL;
-    break;
-  case EnzymeRngDistribution_MultiNormal:
-    rngDist = mlir::impulse::RngDistribution::MULTINORMAL;
-    break;
-  }
-  return wrap(mlir::impulse::RngDistributionAttr::get(unwrap(ctx), rngDist));
+  return wrap(mlir::impulse::RngDistributionAttr::get(
+      unwrap(ctx), static_cast<mlir::impulse::RngDistribution>(dist)));
 }
 
 MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
@@ -227,31 +216,6 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
                                    bool hasUpperBound, double upperBound,
                                    int64_t eventSize) {
   auto *mlirCtx = unwrap(ctx);
-
-  mlir::impulse::SupportKind supportKind;
-  switch (kind) {
-  case EnzymeSupportKind_Real:
-    supportKind = mlir::impulse::SupportKind::REAL;
-    break;
-  case EnzymeSupportKind_Positive:
-    supportKind = mlir::impulse::SupportKind::POSITIVE;
-    break;
-  case EnzymeSupportKind_UnitInterval:
-    supportKind = mlir::impulse::SupportKind::UNIT_INTERVAL;
-    break;
-  case EnzymeSupportKind_Interval:
-    supportKind = mlir::impulse::SupportKind::INTERVAL;
-    break;
-  case EnzymeSupportKind_GreaterThan:
-    supportKind = mlir::impulse::SupportKind::GREATER_THAN;
-    break;
-  case EnzymeSupportKind_LessThan:
-    supportKind = mlir::impulse::SupportKind::LESS_THAN;
-    break;
-  case EnzymeSupportKind_Simplex:
-    supportKind = mlir::impulse::SupportKind::SIMPLEX;
-    break;
-  }
 
   mlir::FloatAttr lowerAttr;
   if (hasLowerBound)
@@ -268,26 +232,14 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
     eventSizeAttr =
         mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), eventSize);
 
-  return wrap(mlir::impulse::SupportAttr::get(mlirCtx, supportKind, lowerAttr,
-                                              upperAttr, eventSizeAttr));
+  return wrap(mlir::impulse::SupportAttr::get(
+      mlirCtx, static_cast<mlir::impulse::SupportKind>(kind), lowerAttr,
+      upperAttr, eventSizeAttr));
 }
 
 MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
-                                     bool adaptStepSize, bool adaptMassMatrix) {
-  auto *mlirCtx = unwrap(ctx);
-  auto trajectoryLengthAttr =
-      mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
-
-  return wrap(mlir::impulse::HMCConfigAttr::get(mlirCtx, trajectoryLengthAttr,
-                                                adaptStepSize, adaptMassMatrix,
-                                                /*num_steps=*/0));
-}
-
-MlirAttribute enzymeHMCConfigAttrGetWithNumSteps(MlirContext ctx,
-                                                 double trajectoryLength,
-                                                 bool adaptStepSize,
-                                                 bool adaptMassMatrix,
-                                                 int64_t numSteps) {
+                                     bool adaptStepSize, bool adaptMassMatrix,
+                                     int64_t numSteps) {
   auto *mlirCtx = unwrap(ctx);
   auto trajectoryLengthAttr =
       mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
@@ -312,13 +264,14 @@ MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
 }
 
 MlirAttribute enzymeVIConfigAttrGet(
-    MlirContext ctx, int32_t guideKind, int32_t optimizerKind,
-    int64_t numParticles, bool hasInitScale, double initScale, bool hasAdamB1,
-    double adamB1, bool hasAdamB2, double adamB2, bool hasAdamEps,
-    double adamEps, bool hasClipNorm, double clipNorm, bool hasInitRadius,
-    double initRadius, bool hasMomentumMass, double momentumMass,
-    bool hasRmspropGamma, double rmspropGamma, bool hasRmspropEps,
-    double rmspropEps, bool stableUpdate) {
+    MlirContext ctx, EnzymeGuideKind guideKind,
+    EnzymeOptimizerKind optimizerKind, int64_t numParticles, bool hasInitScale,
+    double initScale, bool hasAdamB1, double adamB1, bool hasAdamB2,
+    double adamB2, bool hasAdamEps, double adamEps, bool hasClipNorm,
+    double clipNorm, bool hasInitRadius, double initRadius,
+    bool hasMomentumMass, double momentumMass, bool hasRmspropGamma,
+    double rmspropGamma, bool hasRmspropEps, double rmspropEps,
+    bool stableUpdate) {
   auto *mlirCtx = unwrap(ctx);
   auto f64Ty = mlir::Float64Type::get(mlirCtx);
 

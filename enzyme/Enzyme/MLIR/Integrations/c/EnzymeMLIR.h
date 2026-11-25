@@ -125,15 +125,12 @@ enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
                      bool hasLowerBound, double lowerBound, bool hasUpperBound,
                      double upperBound, int64_t eventSize);
 
+/// `numSteps` = 0 derives the leapfrog step count from `trajectoryLength`.
 MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
                                                         double trajectoryLength,
                                                         bool adaptStepSize,
-                                                        bool adaptMassMatrix);
-
-/// `numSteps` = 0 derives the leapfrog step count from `trajectoryLength`.
-MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGetWithNumSteps(
-    MlirContext ctx, double trajectoryLength, bool adaptStepSize,
-    bool adaptMassMatrix, int64_t numSteps);
+                                                        bool adaptMassMatrix,
+                                                        int64_t numSteps);
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
     MlirContext ctx, int64_t maxTreeDepth, bool hasMaxDeltaEnergy,
@@ -157,13 +154,14 @@ typedef enum {
 } EnzymeOptimizerKind;
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeVIConfigAttrGet(
-    MlirContext ctx, int32_t guideKind, int32_t optimizerKind,
-    int64_t numParticles, bool hasInitScale, double initScale, bool hasAdamB1,
-    double adamB1, bool hasAdamB2, double adamB2, bool hasAdamEps,
-    double adamEps, bool hasClipNorm, double clipNorm, bool hasInitRadius,
-    double initRadius, bool hasMomentumMass, double momentumMass,
-    bool hasRmspropGamma, double rmspropGamma, bool hasRmspropEps,
-    double rmspropEps, bool stableUpdate);
+    MlirContext ctx, EnzymeGuideKind guideKind,
+    EnzymeOptimizerKind optimizerKind, int64_t numParticles, bool hasInitScale,
+    double initScale, bool hasAdamB1, double adamB1, bool hasAdamB2,
+    double adamB2, bool hasAdamEps, double adamEps, bool hasClipNorm,
+    double clipNorm, bool hasInitRadius, double initRadius,
+    bool hasMomentumMass, double momentumMass, bool hasRmspropGamma,
+    double rmspropGamma, bool hasRmspropEps, double rmspropEps,
+    bool stableUpdate);
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeMHConfigAttrGet(MlirContext ctx);
 
