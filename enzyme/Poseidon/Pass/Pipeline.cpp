@@ -57,6 +57,43 @@ using namespace llvm;
 
 namespace poseidon {
 
+// Erases what a stopped compile leaves no pass to lower: the markers and the
+// derivative requests Poseidon emits, whose metadata operands and parameters
+// the verifier accepts only until they are lowered. A call's result reads as
+// poison.
+static void eraseUnloweredCalls(Module &M) {
+  SmallVector<Function *, 4> callees;
+  for (Function &F : M)
+    if (F.isDeclaration() && (F.getName().starts_with(kAutodiffRequest) ||
+                              isMarkerCall(F.getName())))
+      callees.push_back(&F);
+  for (Function *F : callees) {
+    SmallVector<CallBase *, 8> calls;
+    for (User *U : F->users())
+      if (auto *CB = dyn_cast<CallBase>(U))
+        calls.push_back(CB);
+    for (CallBase *CB : calls) {
+      if (auto *II = dyn_cast<InvokeInst>(CB))
+        CB = changeToCall(II);
+      CB->replaceAllUsesWith(PoisonValue::get(CB->getType()));
+      CB->eraseFromParent();
+    }
+    if (F->use_empty())
+      F->eraseFromParent();
+  }
+}
+
+// The end of a pass a user error stopped: the error is reported, the module is
+// left valid for the passes after this one, and the session's later passes
+// leave it as it is. The pass may have changed the module before the error,
+// so no analysis is kept.
+static PreservedAnalyses stopOnError(Session &S, Module &M, Error E) {
+  reportUserErrors(M.getContext(), std::move(E));
+  eraseUnloweredCalls(M);
+  S.Stopped = true;
+  return PreservedAnalyses::none();
+}
+
 AnalysisKey SessionAnalysis::Key;
 
 SessionAnalysis::Result SessionAnalysis::run(Module &M,
@@ -65,9 +102,10 @@ SessionAnalysis::Result SessionAnalysis::run(Module &M,
   if (Given) {
     R.S = Given;
   } else {
-    validateOptions(*Opts, M.getContext());
     R.Owned = std::make_unique<Session>(*Opts, *PB);
     R.S = R.Owned.get();
+    if (Error E = validateOptions(*Opts))
+      stopOnError(*R.S, M, std::move(E));
   }
   return R;
 }
@@ -126,43 +164,6 @@ static Error requirePluginOrder(const Options &O, Module &M) {
   return userError("Enzyme's pass has already run on this module. The plugins "
                    "must be given in the order -fpass-plugin=<Poseidon>.so "
                    "-fpass-plugin=<ClangEnzyme>.so.");
-}
-
-// Erases what a stopped compile leaves no pass to lower: the markers and the
-// derivative requests Poseidon emits, whose metadata operands and parameters
-// the verifier accepts only until they are lowered. A call's result reads as
-// poison.
-static void eraseUnloweredCalls(Module &M) {
-  SmallVector<Function *, 4> callees;
-  for (Function &F : M)
-    if (F.isDeclaration() && (F.getName().starts_with(kAutodiffRequest) ||
-                              isMarkerCall(F.getName())))
-      callees.push_back(&F);
-  for (Function *F : callees) {
-    SmallVector<CallBase *, 8> calls;
-    for (User *U : F->users())
-      if (auto *CB = dyn_cast<CallBase>(U))
-        calls.push_back(CB);
-    for (CallBase *CB : calls) {
-      if (auto *II = dyn_cast<InvokeInst>(CB))
-        CB = changeToCall(II);
-      CB->replaceAllUsesWith(PoisonValue::get(CB->getType()));
-      CB->eraseFromParent();
-    }
-    if (F->use_empty())
-      F->eraseFromParent();
-  }
-}
-
-// The end of a pass a user error stopped: the error is reported, the module is
-// left valid for the passes after this one, and the session's later passes
-// leave it as it is. The pass may have changed the module before the error,
-// so no analysis is kept.
-static PreservedAnalyses stopOnError(Session &S, Module &M, Error E) {
-  reportUserErrors(M.getContext(), std::move(E));
-  eraseUnloweredCalls(M);
-  S.Stopped = true;
-  return PreservedAnalyses::none();
 }
 
 static void runAlwaysInliner(Module &M, ModuleAnalysisManager &MAM) {

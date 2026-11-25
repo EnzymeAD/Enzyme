@@ -17,14 +17,11 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 
 #include <string>
 #include <utility>
 #include <vector>
-
-namespace llvm {
-class LLVMContext;
-} // namespace llvm
 
 namespace poseidon {
 
@@ -141,9 +138,10 @@ struct Options {
 // the flags in Pass/Flags.cpp.
 Options readOptions();
 
-// Refuses, as an error of the compile, a number flag a solve reads that was
-// given no number. A compile that uses no profile reads none.
-void validateOptions(const Options &O, llvm::LLVMContext &Ctx);
+// The first mistake in the flags' values: a flag outside its choices, or a
+// number flag a solve reads that was given no number or an impossible one. A
+// compile that uses no profile reads no number flag.
+llvm::Error validateOptions(const Options &O);
 
 // Option values by flag name, the name without its leading dash.
 using FlagValue = std::pair<llvm::StringRef, std::string>;

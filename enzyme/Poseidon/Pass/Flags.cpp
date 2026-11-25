@@ -112,52 +112,51 @@ Options readOptions() {
   return O;
 }
 
-[[noreturn]] static void reportNoNumber(LLVMContext &Ctx, StringRef flag) {
-  reportUserError(Ctx, "-" + flag +
-                           " was given no number: its value is empty or nan. "
-                           "Write a number after '=', or leave the flag out "
-                           "for its default.");
+static Error noNumber(StringRef flag) {
+  return userError("-" + flag +
+                   " was given no number: its value is empty or nan. Write a "
+                   "number after '=', or leave the flag out for its default.");
 }
 
 // No solution saves more than the whole profiled cost, so a budget below -1 is
 // a mistake in the flag, not a solve that finds nothing. The DP's cost axis
 // puts the profiled cost below 2^33 of its units in 2^63, so it holds every
 // share up to 2^30.
-static void validateCostBudget(double budget, LLVMContext &Ctx) {
+static Error validateCostBudget(double budget) {
   if (std::isnan(budget))
-    reportNoNumber(Ctx, "poseidon-cost-budget");
+    return noNumber("poseidon-cost-budget");
   if (std::isfinite(budget) && budget > 0x1p30)
-    reportUserError(Ctx, "-poseidon-cost-budget=" + Twine(exactDouble(budget)) +
-                             " lets a solution add more than 2^30 times the "
-                             "profiled cost, which the DP's cost axis does "
-                             "not hold; give a share of at most 1073741824.");
+    return userError("-poseidon-cost-budget=" + Twine(exactDouble(budget)) +
+                     " lets a solution add more than 2^30 times the profiled "
+                     "cost, which the DP's cost axis does not hold; give a "
+                     "share of at most 1073741824.");
   if (std::isfinite(budget) && budget >= -1.0)
-    return;
-  reportUserError(
-      Ctx, "-poseidon-cost-budget=" + Twine(exactDouble(budget)) +
-               (std::isfinite(budget)
-                    ? " asks a solution to save more than the whole profiled "
-                      "cost"
-                    : " is not a finite number") +
-               ". It takes the share of a site's profiled cost a solution may "
-               "add, negative for one it has to save (-0.25 requires saving a "
-               "quarter), not a cost. The frontier of a site's solve, with "
-               "the budget that selects each point, is in the "
-               "<site>.explain.json -poseidon-explain=<dir> writes.");
+    return Error::success();
+  return userError(
+      "-poseidon-cost-budget=" + Twine(exactDouble(budget)) +
+      (std::isfinite(budget)
+           ? " asks a solution to save more than the whole profiled "
+             "cost"
+           : " is not a finite number") +
+      ". It takes the share of a site's profiled cost a solution may "
+      "add, negative for one it has to save (-0.25 requires saving a "
+      "quarter), not a cost. The frontier of a site's solve, with "
+      "the budget that selects each point, is in the "
+      "<site>.explain.json -poseidon-explain=<dir> writes.");
 }
 
-void validateOptions(const Options &O, LLVMContext &Ctx) {
+Error validateOptions(const Options &O) {
   const HerbieOptions &H = O.Herbie;
   if (!is_contained({"inputs", "executions"}, H.HerbieArrayGrouping))
-    reportUserError(
-        Ctx, "-poseidon-herbie-array-grouping=" + Twine(H.HerbieArrayGrouping) +
-                 " is not 'inputs' or 'executions'.");
+    return userError(
+        "-poseidon-herbie-array-grouping=" + Twine(H.HerbieArrayGrouping) +
+        " is not 'inputs' or 'executions'.");
   if (!is_contained({"sensitivity", "gradient", "none"}, H.HerbieArrayWeights))
-    reportUserError(
-        Ctx, "-poseidon-herbie-array-weights=" + Twine(H.HerbieArrayWeights) +
-                 " is not 'sensitivity', 'gradient' or 'none'.");
+    return userError(
+        "-poseidon-herbie-array-weights=" + Twine(H.HerbieArrayWeights) +
+        " is not 'sensitivity', 'gradient' or 'none'.");
   if (!O.Profiling.usesProfile())
-    return;
+    return Error::success();
   const std::pair<StringRef, double> numbers[] = {
       {"poseidon-tau", O.Solver.Tau},
       {"poseidon-min-cost-share", O.Profiling.MinCostShare},
@@ -165,10 +164,11 @@ void validateOptions(const Options &O, LLVMContext &Ctx) {
       {"poseidon-exponent-penalty", O.Model.ExponentPenalty}};
   for (const auto &[flag, value] : numbers)
     if (std::isnan(value))
-      reportNoNumber(Ctx, flag);
+      return noNumber(flag);
   // Only a solve with no accuracy target selects by the budget.
   if (O.Solver.Tau <= 0.0 && O.Solver.ApplyRewrites.empty())
-    validateCostBudget(O.Solver.CostBudget, Ctx);
+    return validateCostBudget(O.Solver.CostBudget);
+  return Error::success();
 }
 
 } // namespace poseidon
