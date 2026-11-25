@@ -1427,32 +1427,6 @@ static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
   return builder.getArrayAttr(subAddresses);
 }
 
-static int64_t
-computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
-                             ArrayAttr selection, Attribute targetSymbol,
-                             SymbolTableCollection &symbolTable) {
-  auto sampleMap = buildSampleOpMap(fn);
-  int64_t offset = 0;
-
-  for (auto addr : selection) {
-    auto address = cast<ArrayAttr>(addr);
-    if (address.empty())
-      continue;
-
-    if (address[0] == targetSymbol) {
-      return offset;
-    }
-
-    SmallVector<Attribute> tailAddresses(address.begin(), address.end());
-    if (!computePositionSizeForAddress(op, sampleMap, tailAddresses,
-                                       symbolTable, offset)) {
-      return -1;
-    }
-  }
-
-  return -1;
-}
-
 namespace {
 // `offset` advances over both `impulse.if` branches: disjoint trace columns.
 struct BranchCarry {
@@ -1827,6 +1801,26 @@ static bool addressInList(impulse::SampleOp sampleOp, ArrayAttr addresses) {
   return false;
 }
 
+/// Returns whether `addresses` holds the top-level address of `sampleOp`.
+/// Fails with a diagnostic naming `role` when the matching address is nested.
+static FailureOr<bool> findTopLevelAddress(impulse::SampleOp sampleOp,
+                                           ArrayAttr addresses,
+                                           StringRef role) {
+  for (Attribute attr : addresses) {
+    auto address = cast<ArrayAttr>(attr);
+    if (address.empty() || address[0] != sampleOp.getSymbolAttr())
+      continue;
+    if (address.size() != 1) {
+      sampleOp.emitError(
+          "Impulse: distribution function cannot have composite ")
+          << role << " address";
+      return failure();
+    }
+    return true;
+  }
+  return false;
+}
+
 /// Sample ops block taint: an unregenerated site's value comes from the trace.
 /// An op with regions is tainted if anything nested uses a tainted value.
 static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
@@ -2055,15 +2049,7 @@ struct ExpandImpulsePass
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
 
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-          if (inSelection) {
+          if (addressInList(sampleOp, selection)) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               auto sampleValue = sampledValues[i];
               auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
@@ -2138,16 +2124,7 @@ struct ExpandImpulsePass
             siteScores.push_back(logpdf.getResult(0));
 
           // A3. Check if this sample is in the selection and insert into trace
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-
-          if (inSelection) {
+          if (addressInList(sampleOp, selection)) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               auto sampleValue = sampledValues[i];
               auto sampleType = cast<RankedTensorType>(sampleValue.getType());
@@ -2228,7 +2205,7 @@ struct ExpandImpulsePass
             weightAccumulator = arith::AddFOp::create(
                 rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
 
-            int64_t mergeOffset = computeOffsetForNestedSample(
+            int64_t mergeOffset = computeOffsetForSampleInSelection(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
             if (mergeOffset < 0) {
               sampleOp.emitError("Impulse: failed to compute merge offset");
@@ -4226,23 +4203,16 @@ struct ExpandImpulsePass
           auto distSampleType =
               cast<RankedTensorType>(sampleOp.getResult(1).getType());
 
-          bool isConstrained = false;
-          int64_t constrainedOffset = -1;
-          for (auto addr : CI.getConstrainedAddressesAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError("Impulse: distribution function cannot have "
-                                   "composite constrained address");
-                return failure();
-              }
-              isConstrained = true;
-              constrainedOffset = computeOffsetForSampleInSelection(
-                  CI, fn, CI.getConstrainedAddressesAttr(),
-                  sampleOp.getSymbolAttr(), symbolTable);
-              break;
-            }
-          }
+          FailureOr<bool> constrained = findTopLevelAddress(
+              sampleOp, CI.getConstrainedAddressesAttr(), "constrained");
+          if (failed(constrained))
+            return failure();
+          bool isConstrained = *constrained;
+          int64_t constrainedOffset =
+              isConstrained ? computeOffsetForSampleInSelection(
+                                  CI, fn, CI.getConstrainedAddressesAttr(),
+                                  sampleOp.getSymbolAttr(), symbolTable)
+                            : -1;
 
           sampledValues.resize(sampleOp.getNumResults());
           if (isConstrained) {
@@ -4288,15 +4258,7 @@ struct ExpandImpulsePass
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
 
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-          if (inSelection) {
+          if (addressInList(sampleOp, selection)) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               auto sampleValue = sampledValues[i];
               auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
@@ -4329,24 +4291,16 @@ struct ExpandImpulsePass
 
         if (isDistribution) {
           // A1. Distribution function: call the distribution function.
-          bool isConstrained = false;
-          int64_t constrainedOffset = -1;
-          for (auto addr : CI.getConstrainedAddressesAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError(
-                    "Impulse: distribution function cannot have composite "
-                    "constrained address");
-                return failure();
-              }
-              isConstrained = true;
-              constrainedOffset = computeOffsetForSampleInSelection(
-                  CI, fn, CI.getConstrainedAddressesAttr(),
-                  sampleOp.getSymbolAttr(), symbolTable);
-              break;
-            }
-          }
+          FailureOr<bool> constrained = findTopLevelAddress(
+              sampleOp, CI.getConstrainedAddressesAttr(), "constrained");
+          if (failed(constrained))
+            return failure();
+          bool isConstrained = *constrained;
+          int64_t constrainedOffset =
+              isConstrained ? computeOffsetForSampleInSelection(
+                                  CI, fn, CI.getConstrainedAddressesAttr(),
+                                  sampleOp.getSymbolAttr(), symbolTable)
+                            : -1;
 
           if (isConstrained) {
             // Extract sampled values from constraint tensor
@@ -4448,16 +4402,7 @@ struct ExpandImpulsePass
               siteScores.push_back(logpdf.getResult(0));
           }
 
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-
-          if (inSelection) {
+          if (addressInList(sampleOp, selection)) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               auto sampleValue = sampledValues[i];
               auto sampleType = cast<RankedTensorType>(sampleValue.getType());
@@ -4530,7 +4475,7 @@ struct ExpandImpulsePass
                 {1, subConstraintSize}, rewriter.getF64Type());
 
             if (subConstraintSize > 0) {
-              int64_t subConstraintOffset = computeOffsetForNestedSample(
+              int64_t subConstraintOffset = computeOffsetForSampleInSelection(
                   sampleOp, fn, CI.getConstrainedAddressesAttr(),
                   sampleOp.getSymbolAttr(), symbolTable);
 
@@ -4566,7 +4511,7 @@ struct ExpandImpulsePass
             weightAccumulator = arith::AddFOp::create(
                 rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
 
-            int64_t mergeOffset = computeOffsetForNestedSample(
+            int64_t mergeOffset = computeOffsetForSampleInSelection(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
 
             Value row0 = i64Const(rewriter, sampleOp.getLoc(), 0);
@@ -4879,19 +4824,11 @@ struct ExpandImpulsePass
           auto distSampleType =
               cast<RankedTensorType>(sampleOp.getResult(1).getType());
 
-          bool isSelected = false;
-          for (auto addr : CI.getRegenerateAddressesAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError("Impulse: distribution function cannot have "
-                                   "composite selected address");
-                return failure();
-              }
-              isSelected = true;
-              break;
-            }
-          }
+          FailureOr<bool> selected = findTopLevelAddress(
+              sampleOp, CI.getRegenerateAddressesAttr(), "selected");
+          if (failed(selected))
+            return failure();
+          bool isSelected = *selected;
           int64_t sampleOffset = computeOffsetForSampleInSelection(
               CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
 
@@ -4921,25 +4858,18 @@ struct ExpandImpulsePass
             sampledValues = drawFresh();
           } else {
             bool isConstrained = false;
-            int64_t constrainedOffset = -1;
             if (readsConstraint(sampleOp)) {
-              for (auto addr : constrainedAddresses) {
-                auto address = cast<ArrayAttr>(addr);
-                if (!address.empty() &&
-                    address[0] == sampleOp.getSymbolAttr()) {
-                  if (address.size() != 1) {
-                    sampleOp.emitError("Impulse: distribution function cannot "
-                                       "have composite constrained address");
-                    return failure();
-                  }
-                  isConstrained = true;
-                  constrainedOffset = computeOffsetForSampleInSelection(
-                      CI, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
-                      symbolTable);
-                  break;
-                }
-              }
+              FailureOr<bool> constrained = findTopLevelAddress(
+                  sampleOp, constrainedAddresses, "constrained");
+              if (failed(constrained))
+                return failure();
+              isConstrained = *constrained;
             }
+            int64_t constrainedOffset =
+                isConstrained ? computeOffsetForSampleInSelection(
+                                    CI, fn, constrainedAddresses,
+                                    sampleOp.getSymbolAttr(), symbolTable)
+                              : -1;
             Value source = isConstrained ? constraint : prevTrace;
             int64_t extractOffset =
                 isConstrained ? constrainedOffset : sampleOffset;
@@ -5043,15 +4973,7 @@ struct ExpandImpulsePass
           }
           ++siteOrdinal;
 
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-          if (inSelection) {
+          if (addressInList(sampleOp, selection)) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               auto sampleValue = sampledValues[i];
               auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
@@ -5087,20 +5009,11 @@ struct ExpandImpulsePass
 
         if (isDistribution) {
           // A1. Distribution function: call the distribution function.
-          bool isSelected = false;
-          for (auto addr : CI.getRegenerateAddressesAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError(
-                    "Impulse: distribution function cannot have composite "
-                    "selected address");
-                return failure();
-              }
-              isSelected = true;
-              break;
-            }
-          }
+          FailureOr<bool> selected = findTopLevelAddress(
+              sampleOp, CI.getRegenerateAddressesAttr(), "selected");
+          if (failed(selected))
+            return failure();
+          bool isSelected = *selected;
 
           int64_t sampleOffset = computeOffsetForSampleInSelection(
               CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
@@ -5119,26 +5032,18 @@ struct ExpandImpulsePass
                                  distCall.getResults().end());
           } else {
             bool isConstrained = false;
-            int64_t constrainedOffset = -1;
             if (readsConstraint(sampleOp)) {
-              for (auto addr : constrainedAddresses) {
-                auto address = cast<ArrayAttr>(addr);
-                if (!address.empty() &&
-                    address[0] == sampleOp.getSymbolAttr()) {
-                  if (address.size() != 1) {
-                    sampleOp.emitError(
-                        "Impulse: distribution function cannot have composite "
-                        "constrained address");
-                    return failure();
-                  }
-                  isConstrained = true;
-                  constrainedOffset = computeOffsetForSampleInSelection(
-                      CI, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
-                      symbolTable);
-                  break;
-                }
-              }
+              FailureOr<bool> constrained = findTopLevelAddress(
+                  sampleOp, constrainedAddresses, "constrained");
+              if (failed(constrained))
+                return failure();
+              isConstrained = *constrained;
             }
+            int64_t constrainedOffset =
+                isConstrained ? computeOffsetForSampleInSelection(
+                                    CI, fn, constrainedAddresses,
+                                    sampleOp.getSymbolAttr(), symbolTable)
+                              : -1;
 
             Value source = isConstrained ? constraint : prevTrace;
             int64_t extractOffset =
@@ -5281,16 +5186,7 @@ struct ExpandImpulsePass
           }
           ++siteOrdinal;
 
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-
-          if (inSelection) {
+          if (addressInList(sampleOp, selection)) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               auto sampleValue = sampledValues[i];
               auto sampleType = cast<RankedTensorType>(sampleValue.getType());
@@ -5355,7 +5251,7 @@ struct ExpandImpulsePass
               return failure();
             }
 
-            int64_t mergeOffset = computeOffsetForNestedSample(
+            int64_t mergeOffset = computeOffsetForSampleInSelection(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
             if (mergeOffset < 0) {
               sampleOp.emitError("Impulse: failed to compute merge offset");
@@ -5377,7 +5273,7 @@ struct ExpandImpulsePass
                 !subConstrainedAddrs.empty()) {
               int64_t subConstraintSize = computePositionSizeForSelection(
                   sampleOp, genFn, subConstrainedAddrs, symbolTable);
-              int64_t subConstraintOffset = computeOffsetForNestedSample(
+              int64_t subConstraintOffset = computeOffsetForSampleInSelection(
                   sampleOp, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
                   symbolTable);
               if (subConstraintSize > 0 && subConstraintOffset >= 0) {
