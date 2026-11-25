@@ -3,6 +3,9 @@
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.s
 // RUN: diff %t/as_written.s %t/plain.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN %s -o %t/as_written.site.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %s -o %t/header.s
+// RUN: diff %t/as_written.site.s %t/header.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.nosite.s
 // RUN: diff %t/as_written.s %t/use.nosite.s
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
@@ -26,7 +29,8 @@
 // would write for a site it never executed (the static header the generating
 // compile embeds) is accepted by a use compile with Poseidon's plugin alone. A
 // compile that profiles or rewrites nothing emits the assembly of the source as
-// written (gfx942, and gfx90a).
+// written (gfx942, and gfx90a), as does one that includes poseidon.h without
+// the plugin and so without POSEIDON_DEVICE_MATH.
 
 #include <hip/hip_runtime.h>
 

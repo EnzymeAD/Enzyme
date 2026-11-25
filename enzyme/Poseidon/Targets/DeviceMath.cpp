@@ -35,7 +35,7 @@ namespace poseidon {
 
 namespace {
 
-// Defined by poseidon.h in device code.
+// Defined by poseidon.h in device code under POSEIDON_DEVICE_MATH.
 constexpr StringLiteral kKeepalive = "__poseidon_device_math";
 
 // What keepDeviceMath changed, for releaseDeviceMath to undo.
@@ -48,9 +48,11 @@ constexpr StringLiteral kUndefinedCallee = "poseidon.undefined.callee";
 
 static std::string includeAdvice(const Target &T) {
   return (" poseidon/poseidon.h links the " + T.mathLibrary() +
-          " functions a rewrite or a site's derivative may call: include it in "
-          "this translation unit (with -poseidon-kernels, pass -include "
-          "poseidon/poseidon.h).")
+          " functions a rewrite or a site's derivative may call when "
+          "POSEIDON_DEVICE_MATH is defined: include it in this translation "
+          "unit (with -poseidon-kernels, pass -include poseidon/poseidon.h) "
+          "and define the macro, as poseidon-clang and the Poseidon CMake "
+          "targets do.")
       .str();
 }
 

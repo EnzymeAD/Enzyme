@@ -5,8 +5,8 @@
 # clang the plugin is built against):
 #
 #   Poseidon::Plain            the plugin, -ffp-contract=on,
-#                              poseidon/poseidon.h; the annotations compile,
-#                              nothing is rewritten
+#                              poseidon/poseidon.h and POSEIDON_DEVICE_MATH;
+#                              the annotations compile, nothing is rewritten
 #   Poseidon::ProfileGenerate  the same with Enzyme's plugin,
 #                              -poseidon-profile-generate and the profiling
 #                              runtimes, the GPU's included
@@ -132,6 +132,10 @@ if(NOT TARGET Poseidon::Plain)
     target_include_directories(
       Poseidon::${_action}
       INTERFACE "${POSEIDON_INCLUDE_DIR}")
+    # poseidon.h then links the device math a rewrite or a derivative may call.
+    target_compile_definitions(
+      Poseidon::${_action}
+      INTERFACE POSEIDON_DEVICE_MATH)
   endforeach()
 
   add_library(Poseidon::EnzymeOptions INTERFACE IMPORTED)

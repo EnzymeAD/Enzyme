@@ -31,16 +31,16 @@
 
 // find_package(Poseidon) from the build tree and from an installation, and
 // one interface target per action: Poseidon's plugin, and Enzyme's after it to
-// generate a profile, the public header, statement-only contraction and the
-// runtimes each action links, for a project that names nothing else of
-// Poseidon's. The package leaves the
-// project's MPFR_FOUND alone (Inputs/package/CMakeLists.txt stops otherwise).
+// generate a profile, the public header and POSEIDON_DEVICE_MATH,
+// statement-only contraction and the runtimes each action links, for a project
+// that names nothing else of Poseidon's. The package leaves the project's
+// MPFR_FOUND alone (Inputs/package/CMakeLists.txt stops otherwise).
 
 // TREE: -- Poseidon 0.1 from [[DIR]]
 // TREE-NEXT: -- Poseidon plugins [[DIR]]/lib/Poseidon-{{[0-9]+}}.so {{.*}}/Enzyme/ClangEnzyme-{{[0-9]+}}.so
 // TREE-NEXT: -- Poseidon include {{.*}}/include
 
-// PLAINCMD: -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on
+// PLAINCMD: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on
 // PLAINCMD-NOT: ClangEnzyme
 
 // OUT: wave 348.384
@@ -60,7 +60,7 @@
 // INST-NEXT: -- Poseidon plugins [[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
 // INST-NEXT: -- Poseidon include [[PREFIX]]/include
 
-// INSTCMD: -fpass-plugin=[[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -ffp-contract=on
+// INSTCMD: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin=[[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -ffp-contract=on
 // INSTCMD: libposeidon_profile_host.a
 
 // The installed driver takes the plugins, the header and the runtimes from its

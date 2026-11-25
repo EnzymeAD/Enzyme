@@ -3,6 +3,9 @@
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.ptx
 // RUN: diff %t/as_written.ptx %t/plain.ptx
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DAS_WRITTEN %s -o %t/as_written.site.ptx
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %s -o %t/header.ptx
+// RUN: diff %t/as_written.site.ptx %t/header.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.nosite.ptx
 // RUN: diff %t/as_written.ptx %t/use.nosite.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
@@ -19,7 +22,9 @@
 // call, which Enzyme differentiates by name, and the profile the run would
 // write for a site it never executed (the static header the generating compile
 // embeds) is accepted by a use compile with Poseidon's plugin alone. A compile
-// that profiles or rewrites nothing emits the PTX of the source as written.
+// that profiles or rewrites nothing emits the PTX of the source as written, as
+// does one that includes poseidon.h without the plugin and so without
+// POSEIDON_DEVICE_MATH.
 
 #ifdef AS_WRITTEN
 #define POSEIDON_OPTIMIZE __attribute__((annotate("poseidon")))

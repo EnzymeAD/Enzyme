@@ -20,12 +20,15 @@ def clang_load(plugin):
     if int(config.llvm_ver) < 22:
         return '-fpass-plugin=' + plugin + ' -Xclang -load -Xclang ' + plugin
     return '-fpass-plugin=' + plugin
+# A compile that loads Poseidon's plugin defines POSEIDON_DEVICE_MATH, as
+# poseidon-clang does.
+clang_load_poseidon = clang_load(poseidon_plugin) + ' -DPOSEIDON_DEVICE_MATH'
 # Longest name first: lit applies substitutions in list order, so a shorter
 # name that is a prefix of a longer one has to come after it.
 config.substitutions.append(('%loadClangPoseidonEnzyme',
-                             clang_load(poseidon_plugin) + ' ' +
+                             clang_load_poseidon + ' ' +
                              clang_load(enzyme_clang_plugin)))
-config.substitutions.append(('%loadClangPoseidon', clang_load(poseidon_plugin)))
+config.substitutions.append(('%loadClangPoseidon', clang_load_poseidon))
 config.substitutions.append(('%loadClangEnzyme', clang_load(enzyme_clang_plugin)))
 # From LLVM 24 opt loads -load-pass-plugin only after parsing its command line,
 # so a plugin's options exist only if it is also loaded with -load.

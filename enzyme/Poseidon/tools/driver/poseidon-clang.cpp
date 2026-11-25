@@ -425,6 +425,9 @@ int main(int argc, char **argv) {
     // Error-free transformations survive only if the compiler contracts within
     // a statement and never across one.
     Cmd.push_back("-ffp-contract=on");
+    // poseidon.h then links the device math a rewrite or a derivative may
+    // call.
+    Cmd.push_back("-DPOSEIDON_DEVICE_MATH");
   }
   Cmd.append(User.begin(), User.end());
 

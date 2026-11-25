@@ -1,9 +1,9 @@
 // The driver's translation: Poseidon's pass plugin, and Enzyme's after it to
 // generate a profile, Poseidon's include directory, statement-only FP
-// contraction, every -poseidon-<flag> forwarded to the pass through -Xclang,
-// and the runtime the selected action needs. Naming the CUDA path and
-// dropping its headers and libdevice keeps clang's exit status, and -lcudart,
-// independent of the host's CUDA.
+// contraction, POSEIDON_DEVICE_MATH, every -poseidon-<flag> forwarded to the
+// pass through -Xclang, and the runtime the selected action needs. Naming the
+// CUDA path and dropping its headers and libdevice keeps clang's exit status,
+// and -lcudart, independent of the host's CUDA.
 //
 // REQUIRES: enzyme
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
@@ -87,7 +87,7 @@
 
 int main(void) { return 0; }
 
-// USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-isystem {{.*}}/include -ffp-contract=on
+// USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-isystem {{.*}}/include -ffp-contract=on -DPOSEIDON_DEVICE_MATH
 // USE-SAME: -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7 -Xclang -mllvm -Xclang -poseidon-cache=
 // USE-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.cuda/lib64 -lcudart -L{{[^ ]+}} -lposeidon_profile -lposeidon_rt -lcublas{{ ?$}}
 // USE: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7" "-mllvm" "-poseidon-cache={{[^"]+}}.cache"
@@ -162,7 +162,7 @@ int main(void) { return 0; }
 // HIPUSE-NOT: {{[="]}}-poseidon-
 // HIPUSE: "-lamdhip64" "-lposeidon_profile" "-lposeidon_rt_hip" "-lhipblas"
 
-// HIPGEN: clang{{.*}} -fpass-plugin={{[^ ]*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin={{[^ ]*}}Enzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -isystem {{[^ ]*}}/include -ffp-contract=on
+// HIPGEN: clang{{.*}} -fpass-plugin={{[^ ]*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin={{[^ ]*}}Enzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -isystem {{[^ ]*}}/include -ffp-contract=on -DPOSEIDON_DEVICE_MATH
 // HIPGEN-SAME: -Xclang -mllvm -Xclang -poseidon-profile-generate
 // HIPGEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.rocm/lib -lamdhip64 -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_hip)?}} -lposeidon_profile{{ ?$}}
 // HIPGEN: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so" "-fpass-plugin={{[^"]*}}Enzyme-{{[0-9]+}}.so"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"{{.*}} "-mllvm" "-poseidon-profile-generate"

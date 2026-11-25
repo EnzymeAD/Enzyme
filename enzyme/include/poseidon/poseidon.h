@@ -114,12 +114,14 @@ POSEIDON_SITE_TARGETS auto __poseidon_callee_of(long, _Ret (*)(_Params...),
 #endif
 
 // The libdevice (CUDA) or ocml (HIP) functions a rewrite or a derivative of a
-// device site may call, kept in every device module that includes this header.
-// Taking their addresses keeps them in the C calling convention; one only ever
-// called directly may become fastcc. Each address is stored by a statement of
-// its own: C++20 deprecates using the value of an assignment to a volatile
-// object.
-#if defined(__CUDA_ARCH__) && defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
+// device site may call, kept in a device module that includes this header
+// under POSEIDON_DEVICE_MATH, which a compile that loads the Poseidon plugin
+// defines. Taking their addresses keeps them in the C calling convention; one
+// only ever called directly may become fastcc. Each address is stored by a
+// statement of its own: C++20 deprecates using the value of an assignment to a
+// volatile object.
+#if defined(POSEIDON_DEVICE_MATH) && defined(__CUDA_ARCH__) &&                 \
+    defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
 #define POSEIDON_KEEP(fn)                                                      \
   keep = (void *)&__nv_##fn;                                                   \
   keep = (void *)&__nv_##fn##f
@@ -170,7 +172,7 @@ __poseidon_device_math(void) {
   (void)keep;
 }
 #undef POSEIDON_KEEP
-#elif defined(__HIP_DEVICE_COMPILE__) &&                                       \
+#elif defined(POSEIDON_DEVICE_MATH) && defined(__HIP_DEVICE_COMPILE__) &&      \
     defined(__CLANG_HIP_LIBDEVICE_DECLARES_H__)
 // HIP spells these as LLVM intrinsics, so its header does not declare them.
 extern "C" __device__ float __ocml_exp_f32(float);
