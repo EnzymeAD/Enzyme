@@ -30,30 +30,30 @@
 ; THREE: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
 ; THREE-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
 ; THREE-NEXT: %[[X:[0-9]+]] = load double, ptr %[[IN]], align 8
-; THREE-NEXT: %mfx.split = fptrunc double %[[X]] to float
-; THREE-NEXT: %mfx.splitb = fpext float %mfx.split to double
-; THREE-NEXT: %mfx.splitr = fsub double %[[X]], %mfx.splitb
-; THREE-NEXT: %mfx.split1 = fptrunc double %mfx.splitr to float
-; THREE-NEXT: %mfx.splitb2 = fpext float %mfx.split1 to double
-; THREE-NEXT: %mfx.splitr3 = fsub double %mfx.splitr, %mfx.splitb2
-; THREE-NEXT: %mfx.split4 = fptrunc double %mfx.splitr3 to float
-; THREE-NEXT: %tp.p = fmul float %mfx.split, [[K39:3\.900000e\+00|0x400F333340000000]]
-; THREE-NEXT: %tp.np = fneg float %tp.p
-; THREE-NEXT: %tp.e = {{.*}}call float @llvm.fma.f32(float %mfx.split, float [[K39]], float %tp.np)
+; THREE-NEXT: [[MFX_SPLIT:%[^ ,()]+]] = fptrunc double %[[X]] to float
+; THREE-NEXT: [[MFX_SPLITB:%[^ ,()]+]] = fpext float [[MFX_SPLIT]] to double
+; THREE-NEXT: [[MFX_SPLITR:%[^ ,()]+]] = fsub double %[[X]], [[MFX_SPLITB]]
+; THREE-NEXT: [[MFX_SPLIT1:%[^ ,()]+]] = fptrunc double [[MFX_SPLITR]] to float
+; THREE-NEXT: [[MFX_SPLITB2:%[^ ,()]+]] = fpext float [[MFX_SPLIT1]] to double
+; THREE-NEXT: [[MFX_SPLITR3:%[^ ,()]+]] = fsub double [[MFX_SPLITR]], [[MFX_SPLITB2]]
+; THREE-NEXT: [[MFX_SPLIT4:%[^ ,()]+]] = fptrunc double [[MFX_SPLITR3]] to float
+; THREE-NEXT: [[TP_P:%[^ ,()]+]] = fmul float [[MFX_SPLIT]], [[K39:3\.900000e\+00|0x400F333340000000]]
+; THREE-NEXT: [[TP_NP:%[^ ,()]+]] = fneg float [[TP_P]]
+; THREE-NEXT: [[TP_E:%[^ ,()]+]] = {{.*}}call float @llvm.fma.f32(float [[MFX_SPLIT]], float [[K39]], float [[TP_NP]])
 ; THREE-NOT: double
-; THREE: call float @llvm.fma.f32(float %mfx.split1, float [[K39]],
+; THREE: call float @llvm.fma.f32(float [[MFX_SPLIT1]], float [[K39]],
 ; THREE-NOT: double
-; THREE: call float @llvm.fma.f32(float %mfx.split4, float [[K39]],
+; THREE: call float @llvm.fma.f32(float [[MFX_SPLIT4]], float [[K39]],
 ; THREE-NOT: double
 ; THREE-NOT: fmul double
 ; THREE-NOT: poseidon.ds.join
-; THREE: %mfx.e = fpext float %[[C2:mfx.a[0-9]+]] to double
-; THREE-NEXT: %[[E1:mfx.e[0-9]+]] = fpext float %[[C1:mfx.a[0-9]+]] to double
-; THREE-NEXT: %mfx.tof64 = fadd double %[[E1]], %mfx.e
-; THREE-NEXT: %[[E2:mfx.e[0-9]+]] = fpext float %[[C0:mfx.a[0-9]+]] to double
-; THREE-NEXT: %[[OUT:mfx.tof64[0-9]+]] = fadd double %mfx.tof64, %[[E2]]
+; THREE: [[MFX_E:%[^ ,()]+]] = fpext float [[C2:%[^ ,()]+]] to double
+; THREE-NEXT: [[E1:%[^ ,()]+]] = fpext float [[C1:%[^ ,()]+]] to double
+; THREE-NEXT: [[MFX_TOF64:%[^ ,()]+]] = fadd double [[E1]], [[MFX_E]]
+; THREE-NEXT: [[E2:%[^ ,()]+]] = fpext float [[C0:%[^ ,()]+]] to double
+; THREE-NEXT: [[OUT:%[^ ,()]+]] = fadd double [[MFX_TOF64]], [[E2]]
 ; THREE-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
-; THREE-NEXT: store double %[[OUT]], ptr %[[OP]], align 8
+; THREE-NEXT: store double [[OUT]], ptr %[[OP]], align 8
 ; THREE-NEXT: ret void
 
 ; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
@@ -63,17 +63,17 @@
 ; LOOSE: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
 ; LOOSE-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
 ; LOOSE-NEXT: %[[X:[0-9]+]] = load double, ptr %[[IN]], align 8
-; LOOSE-NEXT: %ds.hi = fptrunc double %[[X]] to float
-; LOOSE-NEXT: %ds.hib = fpext float %ds.hi to double
-; LOOSE-NEXT: %ds.los = fsub double %[[X]], %ds.hib
-; LOOSE-NEXT: %ds.lo = fptrunc double %ds.los to float
-; LOOSE-NEXT: %tp.p = fmul float %ds.hi, [[K39:3\.900000e\+00|0x400F333340000000]]
+; LOOSE-NEXT: [[DS_HI:%[^ ,()]+]] = fptrunc double %[[X]] to float
+; LOOSE-NEXT: [[DS_HIB:%[^ ,()]+]] = fpext float [[DS_HI]] to double
+; LOOSE-NEXT: [[DS_LOS:%[^ ,()]+]] = fsub double %[[X]], [[DS_HIB]]
+; LOOSE-NEXT: [[DS_LO:%[^ ,()]+]] = fptrunc double [[DS_LOS]] to float
+; LOOSE-NEXT: [[TP_P:%[^ ,()]+]] = fmul float [[DS_HI]], [[K39:3\.900000e\+00|0x400F333340000000]]
 ; LOOSE-NOT: double
-; LOOSE: %ds.hi64 = fpext float %[[HI:[^ ]+]] to double
-; LOOSE-NEXT: %ds.lo64 = fpext float %[[LO:[^ ]+]] to double
-; LOOSE-NEXT: %ds.f64 = fadd double %ds.hi64, %ds.lo64, !poseidon.ds.join
+; LOOSE: [[DS_HI64:%[^ ,()]+]] = fpext float %[[HI:[^ ]+]] to double
+; LOOSE-NEXT: [[DS_LO64:%[^ ,()]+]] = fpext float %[[LO:[^ ]+]] to double
+; LOOSE-NEXT: [[DS_F64:%[^ ,()]+]] = fadd double [[DS_HI64]], [[DS_LO64]], !poseidon.ds.join
 ; LOOSE-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
-; LOOSE-NEXT: store double %ds.f64, ptr %[[OP]], align 8
+; LOOSE-NEXT: store double [[DS_F64]], ptr %[[OP]], align 8
 ; LOOSE-NEXT: ret void
 
 ; -poseidon-expansion-components=3 admits a three-component FP32 expansion

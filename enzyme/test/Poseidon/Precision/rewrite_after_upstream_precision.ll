@@ -45,8 +45,8 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; IR-LABEL: define void @preprocess_tester(
 ; IR: %[[T:[0-9]+]] = fsub float
 ; IR-NEXT: %[[TD:[0-9]+]] = fpext float %[[T]] to double
-; IR-NEXT: %u2 = fadd double %y, %[[TD]]
-; IR-NEXT: %u3 = fdiv double %[[TD]], %x
-; IR-NEXT: %herbie.fma = tail call double @llvm.fma.f64(double %[[TD]], double %x, double %u2)
-; IR-NEXT: %r2 = fmul double %u3, %u2
-; IR-NEXT: store double %herbie.fma, ptr %o1
+; IR-NEXT: [[U2:%[^ ,()]+]] = fadd double %y, %[[TD]]
+; IR-NEXT: [[U3:%[^ ,()]+]] = fdiv double %[[TD]], %x
+; IR-NEXT: [[HERBIE_FMA:%[^ ,()]+]] = tail call double @llvm.fma.f64(double %[[TD]], double %x, double [[U2]])
+; IR-NEXT: [[R2:%[^ ,()]+]] = fmul double [[U3]], [[U2]]
+; IR-NEXT: store double [[HERBIE_FMA]], ptr %o1

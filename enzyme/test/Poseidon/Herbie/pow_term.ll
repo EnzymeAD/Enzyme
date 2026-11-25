@@ -97,7 +97,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; HERBIE-LABEL: define void @preprocess_tester(
 ; HERBIE: %l = tail call double @llvm.log.f64(double %T)
-; HERBIE-NEXT: %herbie.pow = tail call double @llvm.pow.f64(double %T, double -1.620000e+00)
+; HERBIE-NEXT: [[HERBIE_POW:%[^ ,()]+]] = tail call double @llvm.pow.f64(double %T, double -1.620000e+00)
 
 ; PO: [poseidon] preprocess_tester: accuracy weighted per output (2 output profiles)
 ; PO-NOT: sensitivity floor raised

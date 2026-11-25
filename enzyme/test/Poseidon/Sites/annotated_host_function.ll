@@ -26,27 +26,27 @@
 
 ; GEN-LABEL: define void @scale(ptr %x, ptr %out)
 ; GEN-NEXT: entry:
-; GEN-NEXT: %poseidon.ptrs = alloca [2 x ptr]
-; GEN-NEXT: %poseidon.shadows = alloca [2 x ptr]
-; GEN-NEXT: [[P0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr %poseidon.ptrs, {{i64 0|i32 0, i32 0}}
+; GEN-NEXT: [[POSEIDON_PTRS:%[^ ,()]+]] = alloca [2 x ptr]
+; GEN-NEXT: [[POSEIDON_SHADOWS:%[^ ,()]+]] = alloca [2 x ptr]
+; GEN-NEXT: [[P0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[POSEIDON_PTRS]], {{i64 0|i32 0, i32 0}}
 ; GEN-NEXT: store ptr %x, ptr [[P0]]
-; GEN-NEXT: [[P1:%[0-9]+]] = getelementptr inbounds {{.*}}ptr %poseidon.ptrs, {{i64 8|i32 0, i32 1}}
+; GEN-NEXT: [[P1:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[POSEIDON_PTRS]], {{i64 8|i32 0, i32 1}}
 ; GEN-NEXT: store ptr %out, ptr [[P1]]
-; GEN-NEXT: call void @__poseidon_host_shadows(ptr [[SCN]], i32 0, i32 2, ptr %poseidon.ptrs, ptr [[SCP]], ptr [[SCW]], ptr [[SCNAMES]], ptr %poseidon.shadows)
-; GEN-NEXT: [[S0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr %poseidon.shadows, {{i64 0|i32 0, i32 0}}
+; GEN-NEXT: call void @__poseidon_host_shadows(ptr [[SCN]], i32 0, i32 2, ptr [[POSEIDON_PTRS]], ptr [[SCP]], ptr [[SCW]], ptr [[SCNAMES]], ptr [[POSEIDON_SHADOWS]])
+; GEN-NEXT: [[S0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[POSEIDON_SHADOWS]], {{i64 0|i32 0, i32 0}}
 ; GEN-NEXT: [[DX:%[0-9]+]] = load ptr, ptr [[S0]]
-; GEN-NEXT: [[S1:%[0-9]+]] = getelementptr inbounds {{.*}}ptr %poseidon.shadows, {{i64 8|i32 0, i32 1}}
+; GEN-NEXT: [[S1:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[POSEIDON_SHADOWS]], {{i64 8|i32 0, i32 1}}
 ; GEN-NEXT: [[DOUT:%[0-9]+]] = load ptr, ptr [[S1]]
 ; GEN-NEXT: call void @diffepreprocess_scale_poseidon_body(ptr %x, ptr [[DX]], ptr %out, ptr [[DOUT]])
 ; GEN-NEXT: ret void
 ; GEN-LABEL: define double @dot(ptr %x, double %s, i32 %n)
 ; GEN-NEXT: entry:
-; GEN-NEXT: %poseidon.ptrs = alloca [1 x ptr]
-; GEN-NEXT: %poseidon.shadows = alloca [1 x ptr]
-; GEN-NEXT: [[P0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr %poseidon.ptrs, {{i64 0|i32 0, i32 0}}
+; GEN-NEXT: [[POSEIDON_PTRS:%[^ ,()]+]] = alloca [1 x ptr]
+; GEN-NEXT: [[POSEIDON_SHADOWS:%[^ ,()]+]] = alloca [1 x ptr]
+; GEN-NEXT: [[P0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[POSEIDON_PTRS]], {{i64 0|i32 0, i32 0}}
 ; GEN-NEXT: store ptr %x, ptr [[P0]]
-; GEN-NEXT: call void @__poseidon_host_shadows(ptr [[DN]], i32 1, i32 1, ptr %poseidon.ptrs, ptr [[DP]], ptr [[DW]], ptr [[DNAMES]], ptr %poseidon.shadows)
-; GEN-NEXT: [[S0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr %poseidon.shadows, {{i64 0|i32 0, i32 0}}
+; GEN-NEXT: call void @__poseidon_host_shadows(ptr [[DN]], i32 1, i32 1, ptr [[POSEIDON_PTRS]], ptr [[DP]], ptr [[DW]], ptr [[DNAMES]], ptr [[POSEIDON_SHADOWS]])
+; GEN-NEXT: [[S0:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[POSEIDON_SHADOWS]], {{i64 0|i32 0, i32 0}}
 ; GEN-NEXT: [[DX:%[0-9]+]] = load ptr, ptr [[S0]]
 ; GEN-NEXT: [[R:%[0-9]+]] = call {{.*}}{ double, double } @diffepreprocess_dot_poseidon_body(ptr %x, ptr [[DX]], double %s, i32 %n, double 1.000000e+00)
 ; GEN-NEXT: [[P:%[0-9]+]] = extractvalue { double, double } [[R]], 0

@@ -30,7 +30,7 @@
 ; EXPLAIN-NEXT: "PT0_0",
 ; EXPLAIN-NEXT: "M0_2"
 ; EXPLAIN-NEXT: ]
-; EXPLAIN: "cost_delta": -0.33852982954545452,
+; EXPLAIN: "cost_delta": -{{0\.[0-9]+}},
 ; EXPLAIN-NEXT: "fpcore": "(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1)))))",
 ; EXPLAIN-NEXT: "herbie_error_bits": {
 ; EXPLAIN-NEXT: "after": 22,

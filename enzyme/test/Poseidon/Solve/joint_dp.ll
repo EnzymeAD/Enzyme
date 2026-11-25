@@ -2,7 +2,7 @@
 ; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)"
 ; DEFINE: %{prof} = -poseidon-profile-use=%S/../Inputs/joint_profiles
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
-; RUN: rm -rf %t && mkdir %t
+; RUN: rm -rf %t && split-file %s %t
 
 ; Two annotated sites solved under one shared budget (-poseidon-joint-dp).
 ; Their profiles come from running this module through the host profiler,
@@ -16,9 +16,9 @@
 ; of -0.4 rewrites both sites to FP32, a budget of -0.2 is spent on tester_b
 ; alone and site_a is restored to its original body.
 ; RUN: mkdir %t/sites
-; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
+; RUN: %opt %t/testers.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
 ; RUN: %poseidon_explain %t/sites/both/ex --format budgets | FileCheck --check-prefix=SITES-BUDGETS %s
-; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
+; RUN: %opt %t/testers.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
 
 ; SITES-BOTH: [poseidon] joint solve: collecting candidates from 2 marked function(s)
 ; SITES-BOTH: Critical computation cost range: [-4.500000e-01, 0.000000e+00]
@@ -73,19 +73,19 @@
 ; first site whose solve reads it, not 0 (what LLVM's parser of a double makes
 ; of an empty value): the budget is read by a solve that selects by it, the
 ; other number flags by every solve.
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-STALE %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONFINITE %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=1.0000000000000001e+300 %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget=2e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=2000000000 %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-max-broken-share %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-exponent-penalty= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-exponent-penalty %s
-; RUN: %opt %s %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -poseidon-exponent-penalty= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
-; RUN: %opt %s %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
-; RUN: %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-STALE %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONFINITE %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=1.0000000000000001e+300 %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget=2e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=2000000000 %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-max-broken-share %s
+; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false %{cm} -poseidon-cache= -poseidon-exponent-penalty= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-exponent-penalty %s
+; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -poseidon-exponent-penalty= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 
 ; SITES-STALE-NOT: Starting accuracy DP solver
 ; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. The frontier of a site's solve, with the budget that selects each point, is in the <site>.explain.json -poseidon-explain=<dir> writes.
@@ -104,12 +104,11 @@
 ; -poseidon-tau, else none. Different targets are a compile error naming each
 ; site; equal ones solve as one site would, wherever they are written.
 ; RUN: mkdir %t/targets
-; RUN: sed 's/@tester_a, double %x, double %y)/@tester_a, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %s > %t/targets/a.ll
-; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-03)/' %t/targets/a.ll > %t/targets/ab_diff.ll
-; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %t/targets/a.ll > %t/targets/ab_same.ll
-; RUN: not %opt %t/targets/a.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c1 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-NONE %s
+; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-03)/' %t/a.ll > %t/targets/ab_diff.ll
+; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %t/a.ll > %t/targets/ab_same.ll
+; RUN: not %opt %t/a.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c1 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-NONE %s
 ; RUN: not %opt %t/targets/ab_diff.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-DIFF %s
-; RUN: %opt %t/targets/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -poseidon-print -o %t/targets/flag.out.ll 2> %t/targets/flag.err
+; RUN: %opt %t/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -poseidon-print -o %t/targets/flag.out.ll 2> %t/targets/flag.err
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/targets/flag.err %t/targets/ex | FileCheck --check-prefix=TARGETS-JSON %s
 ; RUN: FileCheck --check-prefix=TARGETS-SITES %s < %t/targets/ex/tester_a.explain.json
 ; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c4 -S -poseidon-print -o %t/targets/site.out.ll 2> %t/targets/site.err
@@ -129,6 +128,7 @@
 ; TARGETS-SITES-NEXT: "preprocess_tester_b"
 ; TARGETS-SOLVE: [poseidon] preprocess_tester_a,preprocess_tester_b: tau=1.000000e-02 S=4.732407e+03 A0=1.003014e-13 selected cost=-4.500000e-01 accCost=1.154131e-04 rel=2.438782e-08
 
+;--- testers.ll
 define double @tester_a(double %x, double %y) #0 {
 entry:
   %add = fadd fast double %x, %y
@@ -147,6 +147,38 @@ entry:
 define double @site_a(double %x, double %y) {
 entry:
   %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_a, double %x, double %y)
+  ret double %0
+}
+
+define double @site_b(double %x, double %y) {
+entry:
+  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_b, double %x, double %y)
+  ret double %0
+}
+
+declare double @__poseidon_fp_optimize(double (double, double)*, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+;--- a.ll
+define double @tester_a(double %x, double %y) #0 {
+entry:
+  %add = fadd fast double %x, %y
+  %mul = fmul fast double %add, %x
+  ret double %mul
+}
+
+define double @tester_b(double %x, double %y) #0 {
+entry:
+  %mul = fmul fast double %x, %y
+  %sub = fsub fast double %mul, %y
+  %div = fdiv fast double %sub, %x
+  ret double %div
+}
+
+define double @site_a(double %x, double %y) {
+entry:
+  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_a, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)
   ret double %0
 }
 

@@ -3,7 +3,7 @@
 ; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
-; RUN: rm -rf %t && mkdir -p %t/prof
+; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
 
 ; The accuracy target of the site below, the kernel and profile of
@@ -17,11 +17,9 @@
 ; tolerance is refused rather than met with a made-up number, and the site
 ; keeps the original body bit for bit.
 ; RUN: mkdir %t/ladder
-; RUN: sed "s/double 1.000000e-07/double 1.000000e-12/" %s > %t/ladder/mid.ll
-; RUN: sed "s/double 1.000000e-07/double 1.000000e-18/" %s > %t/ladder/tight.ll
-; RUN: %opt %s %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/loose 2>&1 | tee %t/ladder/loose.log | FileCheck --check-prefix=LADDER-LOOSE %s
-; RUN: %opt %t/ladder/mid.ll %{opt} -poseidon-cache=%t/ladder/c 2>&1 | FileCheck --check-prefixes=LADDER-MID,EXP2 --implicit-check-not="Solving the DP" %s
-; RUN: %opt %t/ladder/tight.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/tight 2>&1 | tee %t/ladder/tight.log | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.ds.join" %s
+; RUN: %opt %t/fms_kernel.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/loose 2>&1 | tee %t/ladder/loose.log | FileCheck --check-prefix=LADDER-LOOSE %s
+; RUN: %opt %t/mid.ll %{opt} -poseidon-cache=%t/ladder/c 2>&1 | FileCheck --check-prefixes=LADDER-MID,EXP2 --implicit-check-not="Solving the DP" %s
+; RUN: %opt %t/tight.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/tight 2>&1 | tee %t/ladder/tight.log | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.ds.join" %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/loose.log %t/ladder/loose | FileCheck --check-prefix=LOOSE-JSON %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/tight.log %t/ladder/tight | FileCheck --check-prefix=TIGHT-JSON %s
 ; RUN: FileCheck --check-prefix=TIGHT-BEST %s < %t/ladder/tight/fms_kernel.explain.json
@@ -66,6 +64,7 @@
 ; EXP2-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; EXP2: fadd double %{{.+}}, %{{.+}}, !poseidon.ds.join
 
+;--- fms_kernel.ll
 source_filename = "annotated_kernel.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
@@ -73,6 +72,102 @@ target triple = "nvptx64-nvidia-cuda"
 @.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
 @.str.1 = private unnamed_addr constant [14 x i8] c"tau_ladder.cu\00", section "llvm.metadata"
 @.args = private unnamed_addr constant { double } { double 1.000000e-07 }, section "llvm.metadata"
+@llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @fms_kernel, ptr @.str, ptr @.str.1, i32 2, ptr @.args }], section "llvm.metadata"
+
+define dso_local ptx_kernel void @fms_kernel(ptr noundef readonly captures(none) %0, ptr noundef readonly captures(none) %1, ptr noundef writeonly captures(none) %2) #0 {
+  %4 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+  %5 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+  %6 = mul i32 %4, %5
+  %7 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+  %8 = add i32 %6, %7
+  %9 = zext i32 %8 to i64
+  %10 = getelementptr inbounds nuw [8 x i8], ptr %0, i64 %9
+  %11 = load double, ptr %10, align 8
+  %12 = getelementptr inbounds nuw [8 x i8], ptr %1, i64 %9
+  %13 = load double, ptr %12, align 8
+  %14 = tail call double @llvm.fmuladd.f64(double %11, double %13, double %11)
+  %15 = fneg double %13
+  %16 = tail call double @llvm.fmuladd.f64(double %14, double %14, double %15)
+  %17 = tail call double @llvm.fmuladd.f64(double %16, double %13, double %14)
+  %18 = fneg double %11
+  %19 = tail call double @llvm.fmuladd.f64(double %17, double %17, double %18)
+  %20 = tail call double @llvm.fmuladd.f64(double %19, double %16, double %17)
+  %21 = getelementptr inbounds nuw [8 x i8], ptr %2, i64 %9
+  store double %20, ptr %21, align 8
+  ret void
+}
+
+declare double @llvm.fmuladd.f64(double, double, double) #1
+
+declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #4
+
+declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #4
+
+declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
+
+attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
+attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+attributes #2 = { convergent mustprogress noinline norecurse nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
+attributes #3 = { convergent nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
+attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+attributes #5 = { convergent nounwind "uniform-work-group-size" }
+
+;--- mid.ll
+source_filename = "annotated_kernel.cu"
+target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+@.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
+@.str.1 = private unnamed_addr constant [14 x i8] c"tau_ladder.cu\00", section "llvm.metadata"
+@.args = private unnamed_addr constant { double } { double 1.000000e-12 }, section "llvm.metadata"
+@llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @fms_kernel, ptr @.str, ptr @.str.1, i32 2, ptr @.args }], section "llvm.metadata"
+
+define dso_local ptx_kernel void @fms_kernel(ptr noundef readonly captures(none) %0, ptr noundef readonly captures(none) %1, ptr noundef writeonly captures(none) %2) #0 {
+  %4 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+  %5 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+  %6 = mul i32 %4, %5
+  %7 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+  %8 = add i32 %6, %7
+  %9 = zext i32 %8 to i64
+  %10 = getelementptr inbounds nuw [8 x i8], ptr %0, i64 %9
+  %11 = load double, ptr %10, align 8
+  %12 = getelementptr inbounds nuw [8 x i8], ptr %1, i64 %9
+  %13 = load double, ptr %12, align 8
+  %14 = tail call double @llvm.fmuladd.f64(double %11, double %13, double %11)
+  %15 = fneg double %13
+  %16 = tail call double @llvm.fmuladd.f64(double %14, double %14, double %15)
+  %17 = tail call double @llvm.fmuladd.f64(double %16, double %13, double %14)
+  %18 = fneg double %11
+  %19 = tail call double @llvm.fmuladd.f64(double %17, double %17, double %18)
+  %20 = tail call double @llvm.fmuladd.f64(double %19, double %16, double %17)
+  %21 = getelementptr inbounds nuw [8 x i8], ptr %2, i64 %9
+  store double %20, ptr %21, align 8
+  ret void
+}
+
+declare double @llvm.fmuladd.f64(double, double, double) #1
+
+declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #4
+
+declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #4
+
+declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
+
+attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
+attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+attributes #2 = { convergent mustprogress noinline norecurse nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
+attributes #3 = { convergent nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
+attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+attributes #5 = { convergent nounwind "uniform-work-group-size" }
+
+;--- tight.ll
+source_filename = "annotated_kernel.cu"
+target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+@.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
+@.str.1 = private unnamed_addr constant [14 x i8] c"tau_ladder.cu\00", section "llvm.metadata"
+@.args = private unnamed_addr constant { double } { double 1.000000e-18 }, section "llvm.metadata"
 @llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @fms_kernel, ptr @.str, ptr @.str.1, i32 2, ptr @.args }], section "llvm.metadata"
 
 define dso_local ptx_kernel void @fms_kernel(ptr noundef readonly captures(none) %0, ptr noundef readonly captures(none) %1, ptr noundef writeonly captures(none) %2) #0 {

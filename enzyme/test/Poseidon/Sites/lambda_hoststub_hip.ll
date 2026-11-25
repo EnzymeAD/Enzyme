@@ -1,7 +1,6 @@
-; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
-; RUN: sed 's/@hipLaunchKernel(/@hipLaunchKernel_spt(/' %s > %t/spt.ll
+; RUN: rm -rf %t && split-file %s %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/hoststub.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/hoststub.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/spt.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SPT %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel (its source, with
 ; hip/hip_runtime.h, through clang -x hip --offload-arch=gfx942
@@ -130,6 +129,8 @@
 ; SPT: call noundef i32 @hipLaunchKernel_spt({{.*}}, ptr noundef %[[STREAM]])
 
 ; ModuleID = 'lambda_stub.hip'
+
+;--- hoststub.ll
 source_filename = "lambda_stub.hip"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -177,5 +178,56 @@ define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 n
 declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none), ptr noalias readonly captures(none), i64, i1 immarg)
 declare i32 @__hipPopCallConfiguration(ptr, ptr, ptr, ptr)
 declare i32 @hipLaunchKernel(ptr, i64, i32, i64, i32, ptr, i64, ptr)
+
+attributes #4 = { mustprogress noinline norecurse optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }
+
+;--- spt.ll
+source_filename = "lambda_stub.hip"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+%struct.DeviceTensor = type { i32, ptr, [2 x i32] }
+%class.anon = type { i32, i32, %struct.DeviceTensor, %struct.DeviceTensor, %struct.DeviceTensor }
+%struct.dim3 = type { i32, i32, i32 }
+
+@_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ = internal constant ptr @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, align 8
+
+define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 noundef %0, ptr noundef byval(%class.anon) align 8 %1) #4 {
+  %3 = alloca i32, align 4
+  %4 = alloca %struct.dim3, align 8
+  %5 = alloca %struct.dim3, align 8
+  %6 = alloca i64, align 8
+  %7 = alloca ptr, align 8
+  %8 = alloca { i64, i32 }, align 8
+  %9 = alloca { i64, i32 }, align 8
+  store i32 %0, ptr %3, align 4
+  %10 = alloca ptr, i64 2, align 16
+  %11 = getelementptr ptr, ptr %10, i32 0
+  store ptr %3, ptr %11, align 8
+  %12 = getelementptr ptr, ptr %10, i32 1
+  store ptr %1, ptr %12, align 8
+  %13 = call i32 @__hipPopCallConfiguration(ptr %4, ptr %5, ptr %6, ptr %7)
+  %14 = load i64, ptr %6, align 8
+  %15 = load ptr, ptr %7, align 8
+  call void @llvm.memcpy.p0.p0.i64(ptr align 8 %8, ptr align 8 %4, i64 12, i1 false)
+  %16 = getelementptr inbounds nuw { i64, i32 }, ptr %8, i32 0, i32 0
+  %17 = load i64, ptr %16, align 8
+  %18 = getelementptr inbounds nuw { i64, i32 }, ptr %8, i32 0, i32 1
+  %19 = load i32, ptr %18, align 8
+  call void @llvm.memcpy.p0.p0.i64(ptr align 8 %9, ptr align 8 %5, i64 12, i1 false)
+  %20 = getelementptr inbounds nuw { i64, i32 }, ptr %9, i32 0, i32 0
+  %21 = load i64, ptr %20, align 8
+  %22 = getelementptr inbounds nuw { i64, i32 }, ptr %9, i32 0, i32 1
+  %23 = load i32, ptr %22, align 8
+  %24 = call noundef i32 @hipLaunchKernel_spt(ptr noundef @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i64 %17, i32 %19, i64 %21, i32 %23, ptr noundef %10, i64 noundef %14, ptr noundef %15)
+  br label %25
+
+25:                                               ; preds = %2
+  ret void
+}
+
+declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none), ptr noalias readonly captures(none), i64, i1 immarg)
+declare i32 @__hipPopCallConfiguration(ptr, ptr, ptr, ptr)
+declare i32 @hipLaunchKernel_spt(ptr, i64, i32, i64, i32, ptr, i64, ptr)
 
 attributes #4 = { mustprogress noinline norecurse optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }

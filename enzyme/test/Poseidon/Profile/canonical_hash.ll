@@ -1,28 +1,11 @@
-; RUN: %if enzyme %{ %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
-; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t.drift.ll
-; RUN: not %opt < %t.drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
+; RUN: rm -rf %t && split-file %s %t
+; RUN: %if enzyme %{ %opt < %t/tester.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
+; RUN: %opt < %t/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -poseidon-print 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
+; RUN: not %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 
 ; The profile's slot indices are positions in the canonicalized clone's
 ; optimizable instruction sequence, so the profile carries a digest of that
 ; sequence and profile-use refuses a body that no longer produces it.
-
-define double @tester(double %x, double %y, double %z) #0 {
-entry:
-  %add = fadd fast double %x, %y
-  %mul = fmul fast double %add, %z
-  ret double %mul
-}
-
-define double @test_opt(double %x, double %y, double %z) {
-entry:
-  %0 = tail call double (double (double, double, double)*, ...) @__poseidon_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z, metadata !"poseidon_tau", double 0.5)
-  ret double %0
-}
-
-declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }
 
 ; The header the profile-gen compile registers for the site at startup carries,
 ; behind the site id, the digest the fixture holds.
@@ -44,3 +27,40 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; MATCH-NEXT: ret double [[R]]
 
 ; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}). Its slot indices do not name the same instructions; re-run profile generation.
+
+;--- tester.ll
+define double @tester(double %x, double %y, double %z) #0 {
+entry:
+  %add = fadd fast double %x, %y
+  %mul = fmul fast double %add, %z
+  ret double %mul
+}
+
+define double @test_opt(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (double (double, double, double)*, ...) @__poseidon_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z, metadata !"poseidon_tau", double 0.5)
+  ret double %0
+}
+
+declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+;--- drift.ll
+define double @tester(double %x, double %y, double %z) #0 {
+entry:
+  %add = fadd fast double %x, %y
+  %extra = fmul fast double %add, %add
+  %mul = fmul fast double %extra, %z
+  ret double %mul
+}
+
+define double @test_opt(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (double (double, double, double)*, ...) @__poseidon_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z, metadata !"poseidon_tau", double 0.5)
+  ret double %0
+}
+
+declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }

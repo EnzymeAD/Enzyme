@@ -4,11 +4,10 @@
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{profiles} = -poseidon-profile-use=%S/../Inputs/pow_term/profiles
 ; DEFINE: %{out0} = -poseidon-profile-use=%S/../Inputs/pow_term/out0
-; RUN: rm -rf %t && mkdir %t
+; RUN: rm -rf %t && split-file %s %t
 
-; The DP table cache of the site below. %t/noscale.ll is the module without
+; The DP table cache of the site in tester.ll. noscale.ll is the module without
 ; the call of scale_a.
-; RUN: sed -e '/%ys = call double @scale_a/d' -e 's/fmul double %k, %ys/fmul double %k, %y/' -e '/^declare double @scale_[ab]/d' %s > %t/noscale.ll
 
 ; A table is cached as an entry of its own, filed under the key of everything
 ; it is solved from. Solved under profile A and then, against the same cache,
@@ -72,25 +71,21 @@
 ; RUN: mkdir %t/parts %t/parts/p
 ; RUN: sed '0,/Exec = 64/s//Exec = 65/' %S/../Inputs/pow_term/profiles/tester.fpprofile > %t/parts/p/tester.fpprofile
 ; RUN: sed 's/^fadd,float,1$/fadd,float,2/' %cost_models/cm_cpu_native.csv > %t/parts/cm.csv
-; RUN: sed 's/fmul double %%p, 1.000000e-20/fmul double %%p, 2.000000e-20/' %s > %t/parts/const.ll
-; RUN: sed 's/call double @scale_a(/call double @scale_b(/' %s > %t/parts/callee.ll
 ; RUN: not cmp -s %S/../Inputs/pow_term/profiles/tester.fpprofile %t/parts/p/tester.fpprofile
 ; RUN: not cmp -s %cost_models/cm_cpu_native.csv %t/parts/cm.csv
-; RUN: not cmp -s %s %t/parts/const.ll
-; RUN: not cmp -s %s %t/parts/callee.ll
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/base 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/base 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/same
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/same 2>&1 | FileCheck --check-prefix=PARTS-HIT %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/same 2>&1 | FileCheck --check-prefix=PARTS-HIT %s
 ; RUN: cp -r %t/parts/base %t/parts/profile
-; RUN: %opt %s %{pass} -poseidon-profile-use=%t/parts/p %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/profile 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} -poseidon-profile-use=%t/parts/p %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/profile 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/costmodel
-; RUN: %opt %s %{pass} %{profiles} -poseidon-cost-model=%t/parts/cm.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/costmodel 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} -poseidon-cost-model=%t/parts/cm.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/costmodel 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/flag
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/flag -poseidon-random-seed=7 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/flag -poseidon-random-seed=7 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/const
-; RUN: %opt %t/parts/const.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/const 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/const.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/const 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: cp -r %t/parts/base %t/parts/callee
-; RUN: %opt %t/parts/callee.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/callee 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
+; RUN: %opt %t/callee.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/parts/callee 2>&1 | FileCheck --check-prefix=PARTS-SOLVED %s
 ; RUN: ls %t/parts/same/dp_*.json | count 1
 ; RUN: for d in profile costmodel flag const callee; do ls %t/parts/$d/dp_*.json | count 2; done
 
@@ -104,9 +99,9 @@
 ; A cached entry whose key has parts this compile does not names the first of
 ; them by name, whatever order the stored key object holds them in.
 ; RUN: mkdir %t/extra
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/extra/c 2>&1 | FileCheck --check-prefix=EXTRA-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/extra/c 2>&1 | FileCheck --check-prefix=EXTRA-SOLVED %s
 ; RUN: for f in %t/extra/c/dp_*.json; do sed -i 's/"key": {/"key": {"zz extra": "1", "aa extra": "1", "mm extra": "1",/' $f; done
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/extra/c 2>&1 | FileCheck --check-prefixes=EXTRA,EXTRA-SOLVED %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/extra/c 2>&1 | FileCheck --check-prefixes=EXTRA,EXTRA-SOLVED %s
 
 ; EXTRA: [poseidon] DP cache entry for preprocess_tester was solved for a different aa extra; re-solving.
 ; EXTRA-SOLVED: DP table for preprocess_tester cached to
@@ -151,11 +146,11 @@
 ; site with and without the call of scale_a, keep both tables: each is an
 ; entry of its own, and each compile after them reads its own back.
 ; RUN: mkdir %t/shared
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2> %t/shared/with.err & with=$!; %opt %t/noscale.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2> %t/shared/without.err; wait $with
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2> %t/shared/with.err & with=$!; %opt %t/noscale.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2> %t/shared/without.err; wait $with
 ; RUN: FileCheck --check-prefix=SHARED-SOLVE %s < %t/shared/with.err
 ; RUN: FileCheck --check-prefix=SHARED-SOLVE %s < %t/shared/without.err
 ; RUN: ls %t/shared/c/dp_*.json | count 2
-; RUN: %opt %s %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2>&1 | FileCheck --check-prefix=SHARED-HIT %s
+; RUN: %opt %t/tester.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2>&1 | FileCheck --check-prefix=SHARED-HIT %s
 ; RUN: %opt %t/noscale.ll %{pass} %{profiles} %{cm} -poseidon-cost-budget=-0.09 -poseidon-cache=%t/shared/c 2>&1 | FileCheck --check-prefix=SHARED-HIT %s
 
 ; SHARED-SOLVE: Solving the DP for preprocess_tester.
@@ -163,6 +158,7 @@
 ; SHARED-HIT-NOT: DP cache entry
 ; SHARED-HIT: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 
+;--- tester.ll
 define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
 entry:
   %l = call double @llvm.log.f64(double %T)
@@ -171,6 +167,99 @@ entry:
   %p = call double @llvm.pow.f64(double %T, double %e)
   %k = fmul double %p, 1.000000e-20
   %ys = call double @scale_a(double %y)
+  %r1 = fmul double %k, %ys
+  %h = fmul double %nl, %y
+  %r2 = fadd double %h, %T
+  store double %r1, ptr %o1, align 8
+  store double %r2, ptr %o2, align 8
+  ret void
+}
+
+define void @site(double %T, double %y, ptr %o1, ptr %do1, ptr %o2, ptr %do2) #0 {
+entry:
+  tail call void (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester, double %T, double %y, metadata !"enzyme_dup", ptr %o1, ptr %do1, metadata !"enzyme_dup", ptr %o2, ptr %do2)
+  ret void
+}
+
+declare double @scale_a(double)
+declare double @scale_b(double)
+declare double @llvm.log.f64(double)
+declare double @llvm.fma.f64(double, double, double)
+declare double @llvm.pow.f64(double, double)
+declare void @__poseidon_fp_optimize(ptr, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+;--- noscale.ll
+define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
+entry:
+  %l = call double @llvm.log.f64(double %T)
+  %nl = fneg double %l
+  %e = call double @llvm.fma.f64(double %nl, double 1.790000e-02, double -1.484800e+00)
+  %p = call double @llvm.pow.f64(double %T, double %e)
+  %k = fmul double %p, 1.000000e-20
+  %r1 = fmul double %k, %y
+  %h = fmul double %nl, %y
+  %r2 = fadd double %h, %T
+  store double %r1, ptr %o1, align 8
+  store double %r2, ptr %o2, align 8
+  ret void
+}
+
+define void @site(double %T, double %y, ptr %o1, ptr %do1, ptr %o2, ptr %do2) #0 {
+entry:
+  tail call void (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester, double %T, double %y, metadata !"enzyme_dup", ptr %o1, ptr %do1, metadata !"enzyme_dup", ptr %o2, ptr %do2)
+  ret void
+}
+
+declare double @llvm.log.f64(double)
+declare double @llvm.fma.f64(double, double, double)
+declare double @llvm.pow.f64(double, double)
+declare void @__poseidon_fp_optimize(ptr, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+;--- const.ll
+define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
+entry:
+  %l = call double @llvm.log.f64(double %T)
+  %nl = fneg double %l
+  %e = call double @llvm.fma.f64(double %nl, double 1.790000e-02, double -1.484800e+00)
+  %p = call double @llvm.pow.f64(double %T, double %e)
+  %k = fmul double %p, 2.000000e-20
+  %ys = call double @scale_a(double %y)
+  %r1 = fmul double %k, %ys
+  %h = fmul double %nl, %y
+  %r2 = fadd double %h, %T
+  store double %r1, ptr %o1, align 8
+  store double %r2, ptr %o2, align 8
+  ret void
+}
+
+define void @site(double %T, double %y, ptr %o1, ptr %do1, ptr %o2, ptr %do2) #0 {
+entry:
+  tail call void (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester, double %T, double %y, metadata !"enzyme_dup", ptr %o1, ptr %do1, metadata !"enzyme_dup", ptr %o2, ptr %do2)
+  ret void
+}
+
+declare double @scale_a(double)
+declare double @scale_b(double)
+declare double @llvm.log.f64(double)
+declare double @llvm.fma.f64(double, double, double)
+declare double @llvm.pow.f64(double, double)
+declare void @__poseidon_fp_optimize(ptr, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+;--- callee.ll
+define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
+entry:
+  %l = call double @llvm.log.f64(double %T)
+  %nl = fneg double %l
+  %e = call double @llvm.fma.f64(double %nl, double 1.790000e-02, double -1.484800e+00)
+  %p = call double @llvm.pow.f64(double %T, double %e)
+  %k = fmul double %p, 1.000000e-20
+  %ys = call double @scale_b(double %y)
   %r1 = fmul double %k, %ys
   %h = fmul double %nl, %y
   %r2 = fadd double %h, %T

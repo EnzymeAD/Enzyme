@@ -1,7 +1,7 @@
 ; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../Inputs/fma_opt_profiles \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie \
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-print -S
-; RUN: rm -rf %t && mkdir %t
+; RUN: rm -rf %t && split-file %s %t
 
 ; Herbie ranks its rewrite candidates by a platform cost table, so a cached
 ; result belongs to the platform it was searched under and its cache entry is
@@ -16,13 +16,12 @@
 ; either, since the platform's contents are part of the key (NV-RECALIBRATED).
 ; RUN: mkdir %t/nv %t/nv/cache %t/nv/nocm %t/nv/recal
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/nv/cache/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
-; RUN: sed "s/sm_120/sm_90/" %s > %t/nv/sm90.ll
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/nv/nocm/
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %cost_models/cm_sm_120_synthetic.herbie.rkt %t/nv/recal/ && echo ";; recalibrated" >> %t/nv/recal/cm_sm_120_synthetic.herbie.rkt
-; RUN: %opt < %s %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-MATCH %s
-; RUN: not %opt < %t/nv/sm90.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%cost_models/cm_sm_90_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-OTHERARCH %s
-; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/nocm-cache 2>&1 | FileCheck --check-prefix=NV-NOPLATFORM %s
-; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-RECALIBRATED %s
+; RUN: %opt < %t/kernel.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-MATCH %s
+; RUN: not %opt < %t/sm90.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%cost_models/cm_sm_90_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-OTHERARCH %s
+; RUN: not %opt < %t/kernel.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/nocm-cache 2>&1 | FileCheck --check-prefix=NV-NOPLATFORM %s
+; RUN: not %opt < %t/kernel.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-RECALIBRATED %s
 
 ; NV-MATCH: [poseidon] Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
 ; NV-MATCH: define double @preprocess_tester(double %x, double %y, double %z)
@@ -43,7 +42,6 @@
 ; costs (AMD-NOPLATFORM). The cost models are the sm_120 fixture with its
 ; native_arch rewritten. Needs the AMDGPU target.
 ; RUN: %if amdgpu-registered-target %{ mkdir %t/amd %t/amd/cm %t/amd/nocm %t/amd/cache %}
-; RUN: %if amdgpu-registered-target %{ sed -e 's/herbie_platform_key\.cu/herbie_platform_key.hip/' -e 's/nvptx64-nvidia-cuda/amdgcn-amd-amdhsa/' -e 's/"target-cpu"="sm_120"/"target-cpu"="gfx942"/' %s > %t/amd/k.ll %}
 ; RUN: %if amdgpu-registered-target %{ sed 's/^# native_arch=sm_120$/# native_arch=gfx942/' %cost_models/cm_sm_120_synthetic.csv > %t/amd/cm/cm_gfx942_Fixture.csv %}
 ; RUN: %if amdgpu-registered-target %{ cp %t/amd/cm/cm_gfx942_Fixture.csv %t/amd/nocm/ %}
 ; RUN: %if amdgpu-registered-target %{ %poseidon_calibrate --only herbie-platform --out %t/amd/cm/cm_gfx942_Fixture.csv | FileCheck --check-prefix=AMD-CALIBRATE %s %}
@@ -52,8 +50,8 @@
 ; RUN: %if amdgpu-registered-target %{ %poseidon_calibrate --only herbie-platform --out %t/amd/cm/cm_gfx90a_Fixture.csv > /dev/null %}
 ; RUN: %if amdgpu-registered-target %{ FileCheck --check-prefix=AMD-PLATFORM90A %s < %t/amd/cm/cm_gfx90a_Fixture.herbie.rkt %}
 ; RUN: %if amdgpu-registered-target %{ cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/amd/cache/cachedHerbieOutput_hip-gfx942_9E5CC014DF84A1D1.txt %}
-; RUN: %if amdgpu-registered-target %{ %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%t/amd/cm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/cache 2>&1 | FileCheck --check-prefix=AMD-MATCH %s %}
-; RUN: %if amdgpu-registered-target %{ not %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/amd/nocm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/nocm-cache 2>&1 | FileCheck --check-prefix=AMD-NOPLATFORM %s %}
+; RUN: %if amdgpu-registered-target %{ %opt < %t/amdgpu.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%t/amd/cm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/cache 2>&1 | FileCheck --check-prefix=AMD-MATCH %s %}
+; RUN: %if amdgpu-registered-target %{ not %opt < %t/amdgpu.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/amd/nocm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/nocm-cache 2>&1 | FileCheck --check-prefix=AMD-NOPLATFORM %s %}
 
 ; AMD-CALIBRATE: [calibrate] wrote {{.*}}cm_gfx942_Fixture.herbie.rkt
 
@@ -69,6 +67,7 @@
 
 ; AMD-NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'
 
+;--- kernel.ll
 source_filename = "herbie_platform_key.cu"
 target triple = "nvptx64-nvidia-cuda"
 
@@ -88,3 +87,45 @@ entry:
 declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 attributes #0 = { "target-cpu"="sm_120" }
+
+;--- sm90.ll
+source_filename = "herbie_platform_key.cu"
+target triple = "nvptx64-nvidia-cuda"
+
+define double @tester(double %x, double %y, double %z) #0 {
+entry:
+  %add = fadd fast double %x, %y
+  %mul = fmul fast double %add, %z
+  ret double %mul
+}
+
+define double @test_opt(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (double (double, double, double)*, ...) @__poseidon_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z, metadata !"poseidon_tau", double 0.5)
+  ret double %0
+}
+
+declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
+
+attributes #0 = { "target-cpu"="sm_90" }
+
+;--- amdgpu.ll
+source_filename = "herbie_platform_key.hip"
+target triple = "amdgcn-amd-amdhsa"
+
+define double @tester(double %x, double %y, double %z) #0 {
+entry:
+  %add = fadd fast double %x, %y
+  %mul = fmul fast double %add, %z
+  ret double %mul
+}
+
+define double @test_opt(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (double (double, double, double)*, ...) @__poseidon_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z, metadata !"poseidon_tau", double 0.5)
+  ret double %0
+}
+
+declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
+
+attributes #0 = { "target-cpu"="gfx942" }
