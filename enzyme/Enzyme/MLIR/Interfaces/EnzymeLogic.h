@@ -47,8 +47,9 @@ template <> struct ConcreteTypeTraits<mlir::Type> {
     return S;
   }
 
-  static mlir::Type parseFloat(llvm::StringRef Name, mlir::MLIRContext &Ctx) {
-    return mlir::parseType(Name, &Ctx);
+  static mlir::Type parseFloat(llvm::StringRef name,
+                               mlir::MLIRContext &context) {
+    return mlir::parseType(name, &context);
   }
 
   static bool less(mlir::Type A, mlir::Type B) {
