@@ -7,8 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
-#include "Interfaces/DistBuilder.h"
-#include "Passes/InferStateLayout.h"
+#include "Dialect/Impulse/InferStateLayout.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -26,8 +25,7 @@ static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
                            "STD_NORMAL and STD_UNIFORM bases");
   if (!dist || !support)
     return success();
-  SupportAttr derived = deriveSupportFromDist(op->getContext(), dist);
-  if (derived.getKind() != support.getKind())
+  if (dist.getSupport().getKind() != support.getKind())
     return op->emitOpError(
         "explicit support contradicts the support derived from its dist "
         "attribute");
@@ -92,7 +90,7 @@ LogicalResult SampleOp::verify() {
     SmallVector<Type> distArgTypes;
     for (unsigned i = 1; i < getInputs().size(); ++i)
       distArgTypes.push_back(getInputs()[i].getType());
-    RankedTensorType derived = deriveSampleValueType(dist, distArgTypes);
+    RankedTensorType derived = dist.getSampleType(distArgTypes);
     if (derived && getNumResults() >= 2 && getResult(1).getType() != derived)
       return emitOpError("distribution sample value type ")
              << getResult(1).getType()

@@ -13,13 +13,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
+#include "Dialect/Impulse/InferStateLayout.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/DistBuilder.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
 #include "Interfaces/VIUtils.h"
 #include "PassDetails.h"
-#include "Passes/InferStateLayout.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"

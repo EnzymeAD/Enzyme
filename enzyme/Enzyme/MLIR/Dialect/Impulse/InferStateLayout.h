@@ -1,7 +1,7 @@
 //===- InferStateLayout.h - Canonical impulse.infer state schema ---------===//
 
-#ifndef ENZYME_MLIR_PASSES_INFER_STATE_LAYOUT_H
-#define ENZYME_MLIR_PASSES_INFER_STATE_LAYOUT_H
+#ifndef ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H
+#define ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -192,4 +192,4 @@ inline mlir::Value stateInSlot(mlir::ArrayAttr schema, mlir::ValueRange stateIn,
 } // namespace impulse
 } // namespace mlir
 
-#endif // ENZYME_MLIR_PASSES_INFER_STATE_LAYOUT_H
+#endif // ENZYME_MLIR_DIALECT_IMPULSE_INFER_STATE_LAYOUT_H

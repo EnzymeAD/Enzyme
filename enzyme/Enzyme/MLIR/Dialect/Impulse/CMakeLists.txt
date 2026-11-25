@@ -26,5 +26,6 @@ add_mlir_dialect_library(
   MLIRImpulseAttributesIncGen
   LINK_LIBS
   PUBLIC
+  MLIRFuncDialect
   MLIRIR
   MLIREnzyme)

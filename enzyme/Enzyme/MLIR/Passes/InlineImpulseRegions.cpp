@@ -205,7 +205,7 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
   impulse::DistAttr dist = sampleOp.getDistAttr();
   impulse::SupportAttr support = sampleOp.getSupportAttr();
   if (dist && !support)
-    support = impulse::deriveSupportFromDist(ctx, dist);
+    support = dist.getSupport();
 
   auto sampleRegionOp = impulse::SampleRegionOp::create(
       builder, loc, sampleOp.getResultTypes(), mappedInputs,

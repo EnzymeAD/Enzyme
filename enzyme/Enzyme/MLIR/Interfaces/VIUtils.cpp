@@ -8,10 +8,10 @@
 #include "VIUtils.h"
 
 #include "Dialect/Impulse/Impulse.h"
+#include "Dialect/Impulse/InferStateLayout.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/DistBuilder.h"
 #include "Interfaces/ImpulseUtils.h"
-#include "Passes/InferStateLayout.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/IRMapping.h"

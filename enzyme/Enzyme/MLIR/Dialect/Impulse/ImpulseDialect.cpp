@@ -68,3 +68,86 @@ void mlir::impulse::ImpulseDialect::initialize() {
 #include "Dialect/Impulse/ImpulseAttributes.cpp.inc"
       >();
 }
+
+using namespace mlir;
+using namespace mlir::impulse;
+
+//===----------------------------------------------------------------------===//
+// DistAttr
+//===----------------------------------------------------------------------===//
+
+/// The support of the image of a value with support `in` under `xform`.
+static SupportKind applyXformToSupport(XformAttr xform, SupportKind in) {
+  switch (xform.getKind()) {
+  case XformKind::IDENTITY:
+    return in;
+  case XformKind::AFFINE:
+    // loc + scale * [0, 1] is an interval with operand bounds.
+    return in == SupportKind::UNIT_INTERVAL ? SupportKind::INTERVAL : in;
+  case XformKind::EXP:
+  case XformKind::SOFTPLUS:
+    return SupportKind::POSITIVE;
+  case XformKind::SIGMOID:
+    return SupportKind::UNIT_INTERVAL;
+  case XformKind::INTERVAL:
+    return SupportKind::INTERVAL;
+  case XformKind::GREATER_THAN:
+    return SupportKind::GREATER_THAN;
+  case XformKind::LESS_THAN:
+    return SupportKind::LESS_THAN;
+  case XformKind::STICK_BREAKING:
+    return SupportKind::SIMPLEX;
+  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
+    return SupportKind::REAL;
+  case XformKind::COMPOSE: {
+    SupportKind kind = in;
+    if (ArrayAttr components = xform.getComponents())
+      for (Attribute a : components)
+        kind = applyXformToSupport(cast<XformAttr>(a), kind);
+    return kind;
+  }
+  }
+  llvm_unreachable("unknown XformKind");
+}
+
+/// Support of the base distribution before its transform chain.
+static SupportKind baseSupport(DistBaseKind base) {
+  switch (base) {
+  case DistBaseKind::STD_UNIFORM:
+    return SupportKind::UNIT_INTERVAL;
+  case DistBaseKind::EXPONENTIAL:
+  case DistBaseKind::GAMMA:
+  case DistBaseKind::HALF_NORMAL:
+  case DistBaseKind::HALF_CAUCHY:
+  case DistBaseKind::HALF_STUDENT_T:
+    return SupportKind::POSITIVE;
+  case DistBaseKind::DIRICHLET:
+    return SupportKind::SIMPLEX;
+  case DistBaseKind::STD_NORMAL:
+  case DistBaseKind::STUDENT_T:
+  case DistBaseKind::BERNOULLI:
+  case DistBaseKind::POISSON:
+  case DistBaseKind::DISCRETE_UNIFORM:
+  case DistBaseKind::MVN:
+  case DistBaseKind::GUMBEL:
+  case DistBaseKind::CUSTOM:
+    return SupportKind::REAL;
+  }
+  llvm_unreachable("unknown DistBaseKind");
+}
+
+SupportAttr DistAttr::getSupport() const {
+  SupportKind kind = baseSupport(getBase());
+  if (ArrayAttr transforms = getTransforms())
+    for (Attribute a : transforms)
+      kind = applyXformToSupport(cast<XformAttr>(a), kind);
+  return SupportAttr::get(getContext(), kind, /*lower=*/FloatAttr(),
+                          /*upper=*/FloatAttr(), /*event_size=*/IntegerAttr());
+}
+
+RankedTensorType DistAttr::getSampleType(TypeRange paramTypes) const {
+  // An MVN sample has the type of its mean; no other base fixes the type.
+  if (getBase() != DistBaseKind::MVN || paramTypes.empty())
+    return RankedTensorType();
+  return dyn_cast<RankedTensorType>(paramTypes.front());
+}

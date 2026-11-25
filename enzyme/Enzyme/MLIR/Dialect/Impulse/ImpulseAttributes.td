@@ -74,6 +74,14 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
   );
   // Comma-led optional groups cannot parse `<base, event_dim = k>`.
   let assemblyFormat = "`<` $base `` custom<DistTail>($transforms, $event_dim) `>`";
+  let extraClassDeclaration = [{
+    /// The support of `base` mapped through each transform, without bounds
+    /// or an event size.
+    SupportAttr getSupport() const;
+    /// The type of a sample when the parameter types `paramTypes` fix it,
+    /// else null.
+    RankedTensorType getSampleType(TypeRange paramTypes) const;
+  }];
 }
 
 def SupportAttr : Impulse_Attr<"Support", "support"> {

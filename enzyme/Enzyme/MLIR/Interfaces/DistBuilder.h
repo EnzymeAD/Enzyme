@@ -19,12 +19,6 @@
 namespace mlir {
 namespace impulse {
 
-/// The base support pushed through each transform's codomain.
-SupportAttr deriveSupportFromDist(MLIRContext *ctx, DistAttr dist);
-
-/// Null when the operands do not pin the sample shape (scalar-param natives).
-RankedTensorType deriveSampleValueType(DistAttr dist, TypeRange distArgTypes);
-
 /// biject_to: the transform chain mapping unconstrained space onto `support`.
 SmallVector<XformAttr> bijectorFor(MLIRContext *ctx, SupportAttr support);
 
