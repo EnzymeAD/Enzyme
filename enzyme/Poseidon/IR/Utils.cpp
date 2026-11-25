@@ -169,9 +169,7 @@ void topoSort(const SetVector<Instruction *> &insts,
       return;
     onStack.insert(I);
 
-    auto operands =
-        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-    for (auto &op : operands) {
+    for (Value *op : fpOperands(*I)) {
       if (auto *oI = dyn_cast<Instruction>(op)) {
         if (insts.contains(oI)) {
           if (onStack.count(oI)) {

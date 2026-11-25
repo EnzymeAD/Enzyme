@@ -294,6 +294,8 @@ static void improveViaHerbie(
                          Runs.back().Failure + ")") +
               ". Point -poseidon-herbie-binary at a Herbie, or turn algebraic "
               "rewriting off with -poseidon-enable-herbie=0.");
+    if (!Runs.back().Warning.empty())
+      diagnose(F, F.getSubprogram(), Runs.back().Warning, DS_Warning);
     if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
         O.Model.StrictMode)
       reportUserError(F, F.getSubprogram(),
@@ -831,7 +833,7 @@ static void setUnifiedAccuracyCost(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   SubgraphSamples &samples = samplesOf(O, *CO.subgraph, valueToNodeMap);
-  ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
+  Expected<ArrayRef<SubgraphSamples::Point>> drawn = samples.points();
 
   // No usable sample means the output cannot be priced: drop its candidates and
   // keep the original body.
@@ -845,10 +847,11 @@ static void setUnifiedAccuracyCost(
     CO.candidates.clear();
     CO.initialAccCost = 0.0;
   };
-  if (sampledPoints.empty()) {
-    unpriceable("the profiled input box is empty or unbounded");
+  if (!drawn) {
+    unpriceable(toString(drawn.takeError()));
     return;
   }
+  ArrayRef<SubgraphSamples::Point> sampledPoints = *drawn;
 
   struct RootSamples {
     const FPNode *node;

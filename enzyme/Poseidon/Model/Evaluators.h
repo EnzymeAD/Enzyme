@@ -27,6 +27,9 @@
 
 namespace poseidon {
 
+// The highest MPFR precision getMPFRValues evaluates at, in bits.
+inline constexpr unsigned kMaxMPFRPrecision = 1024;
+
 class FPEvaluator {
 private:
   llvm::DenseMap<const FPNode *, double> cache;
@@ -40,6 +43,12 @@ private:
 
   bool evaluateExpansionNode(const FPNode *node, unsigned n);
   PrecisionChangeType getNodePrecision(const FPNode *node) const;
+  // An if, and, or, not, TRUE or FALSE; false for any other node.
+  bool evaluateLogic(const FPNode *node,
+                     const llvm::MapVector<llvm::Value *, double> &inputValues);
+  // Any other operation, its operands evaluated, at `nodePrec`.
+  double evaluateOperation(const FPNode *node,
+                           PrecisionChangeType nodePrec) const;
 
 public:
   FPEvaluator(llvm::ArrayRef<PrecisionChange> changes = {});
@@ -56,10 +65,11 @@ void getFPValues(llvm::ArrayRef<FPNode *> outputs,
 
 // The exact values, evaluated in MPFR at increasing precision until the first
 // 53 significand bits of each output stop changing; NaN for an output that
-// does not settle by 1024 bits.
-void getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
-                   const llvm::MapVector<llvm::Value *, double> &inputValues,
-                   llvm::SmallVectorImpl<double> &results);
+// does not settle by 1024 bits. Returns how many outputs did not.
+unsigned
+getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
+              const llvm::MapVector<llvm::Value *, double> &inputValues,
+              llvm::SmallVectorImpl<double> &results);
 
 } // namespace poseidon
 #endif // POSEIDON_EVALUATORS_H

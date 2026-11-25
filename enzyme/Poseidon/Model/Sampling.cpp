@@ -12,6 +12,7 @@
 #include "Core/UniformReal.h"
 #include "Evaluators.h"
 #include "FPNode.h"
+#include "IR/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -21,6 +22,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <random>
@@ -33,6 +35,12 @@ static constexpr double kCancellationThreshold = 1e-12;
 static constexpr double kCancellationFraction = 0.5;
 static constexpr size_t kJointDrawFactor = 64;
 static constexpr size_t kMinJointSamples = 32;
+// Draws and exact references are evaluated concurrently in tasks of this many.
+static constexpr size_t kDrawsPerTask = 64;
+static constexpr size_t kReferencesPerTask = 8;
+// The independent draws of one block exceed the points still missing at the
+// share kept so far by this factor.
+static constexpr double kDrawMargin = 1.25;
 
 double sampleError(double goldVal, double result) {
   return std::fabs(goldVal - result);
@@ -54,7 +62,7 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
                       const std::unordered_map<Value *, std::shared_ptr<FPNode>>
                           &valueToNodeMap) {
   CancellationPlan plan;
-  const auto &inputs = subgraph.inputs;
+  const SetVector<Value *> &inputs = subgraph.inputs;
 
   // Smallest magnitude the profiler observed for a node. A range straddling
   // zero can be arbitrarily small (treated as 0); otherwise the closer
@@ -118,80 +126,128 @@ static void collectLeaves(const FPNode *node,
     collectLeaves(operand.get(), seen, leaves);
 }
 
-// A subgraph's inputs are often functions of the same few values (every
-// intermediate a function of a temperature T, say), so drawing each in its
-// own profiled range pairs values that never occur together: terms
-// that cancel in the data overflow an exp, and an input and its log disagree.
-// Each sample draws the leaves the inputs are computed from (loads, arguments,
-// globals) in their profiled ranges, evaluates each input from them as the
-// program does, and is kept if every input lies in its own profiled range, the
-// box Herbie searched.
-static void getSampledPoints(
-    const Options &O, ArrayRef<Value *> inputs,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    SmallVectorImpl<MapVector<Value *, double>> &sampledPoints,
-    const CancellationPlan *plan, unsigned seedOffset = 0) {
-  const size_t numSamples = O.Model.NumSamples;
-  std::minstd_rand0 gen(O.Model.RandomSeed + seedOffset);
-  sampledPoints.clear();
+namespace {
+using Box = MapVector<Value *, SmallVector<double, 2>>;
 
-  MapVector<Value *, SmallVector<double, 2>> box;
+// Draws points for the inputs of a subgraph. A subgraph's inputs are often
+// functions of the same few values (every intermediate a function of a
+// temperature T, say), so drawing each in its own profiled range pairs values
+// that never occur together: terms that cancel in the data overflow an exp,
+// and an input and its log disagree. Each sample draws the leaves the inputs
+// are computed from (loads, arguments, globals) in their profiled ranges,
+// evaluates each input from them as the program does, and is kept if every
+// input lies in its own profiled range, the box Herbie searched.
+class JointSampler {
+public:
+  JointSampler(const Options &O,
+               const std::unordered_map<Value *, std::shared_ptr<FPNode>>
+                   &valueToNodeMap,
+               unsigned seedOffset)
+      : O(O), valueToNodeMap(valueToNodeMap),
+        gen(O.Model.RandomSeed + seedOffset) {}
+
+  // The boxes of `inputs` and of the leaves they are computed from; an error
+  // naming a value whose profiled range holds no interval of finite values.
+  Error collectBoxes(ArrayRef<Value *> inputs);
+  // Up to `target` points with each pair of `pairs` near-coincident.
+  void drawCoincident(ArrayRef<std::pair<Value *, Value *>> pairs,
+                      size_t target,
+                      SmallVectorImpl<SubgraphSamples::Point> &out);
+  // Points with independent leaves until `target` are kept.
+  void drawIndependent(size_t target,
+                       SmallVectorImpl<SubgraphSamples::Point> &out);
+
+  const Box &leafRanges() const { return leafBox; }
+  size_t numLeaves() const { return leafBox.size(); }
+  size_t draws() const { return drawn; }
+
+private:
+  // Whether the inputs computed from `leafPoint` lie in the box, then
+  // `point`.
+  bool evaluate(const SubgraphSamples::Point &leafPoint,
+                SubgraphSamples::Point &point,
+                SmallVectorImpl<double> &results) const;
+
+  const Options &O;
+  const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
+  std::minstd_rand0 gen;
+  Box box, leafBox;
+  SmallVector<FPNode *, 8> computed;
+  size_t drawn = 0;
+};
+} // namespace
+
+// An error unless [lower, upper] is an interval of finite values; the profile
+// gives an infinite bound when the run saw an infinity, and an empty range
+// when it saw no value but NaN.
+static Error checkFinite(double lower, double upper, const Value &V,
+                         StringRef what) {
+  if (std::isfinite(lower) && std::isfinite(upper) && lower <= upper)
+    return Error::success();
+  std::string text;
+  raw_string_ostream os(text);
+  os << "the profiled range [" << lower << ", " << upper << "] of " << what << V
+     << " is not an interval of finite values";
+  return createStringError(inconvertibleErrorCode(), text);
+}
+
+Error JointSampler::collectBoxes(ArrayRef<Value *> inputs) {
   SmallPtrSet<const FPNode *, 32> seen;
   SetVector<const FPLLValue *> leaves;
-  SmallVector<FPNode *, 8> computed;
-  for (const auto input : inputs) {
+  for (Value *input : inputs) {
     FPNode *node = valueToNodeMap.at(input).get();
-
-    double lower = node->getLowerBound();
-    double upper = node->getUpperBound();
-
-    if (!std::isfinite(lower) || !std::isfinite(upper) || lower > upper) {
-      // The profile gave the input this range: it saw an infinity, or no value
-      // but NaN, which leaves no interval of finite values to draw from.
-      llvm::errs() << "Poseidon: the profiled range [" << lower << ", " << upper
-                   << "] of the subgraph input " << *input
-                   << " is not an interval of finite values, so the subgraph "
-                      "cannot be sampled or priced and keeps its original "
-                      "body.\n";
-      return;
-    }
-
+    double lower = node->getLowerBound(), upper = node->getUpperBound();
+    if (Error E = checkFinite(lower, upper, *input, "the subgraph input "))
+      return E;
     box.insert({input, {lower, upper}});
     collectLeaves(node, seen, leaves);
     if (!node->operands.empty())
       computed.push_back(node);
   }
-
-  MapVector<Value *, SmallVector<double, 2>> leafBox;
   for (const FPLLValue *leaf : leaves) {
     double lower = leaf->getLowerBound(), upper = leaf->getUpperBound();
-    if (!std::isfinite(lower) || !std::isfinite(upper) || lower > upper) {
-      llvm::errs() << "Poseidon: the profiled range [" << lower << ", " << upper
-                   << "] of " << *leaf->value
-                   << ", which a subgraph input is computed from, is not an "
-                      "interval of finite values, so the subgraph cannot be "
-                      "sampled or priced and keeps its original body.\n";
-      return;
-    }
+    if (Error E = checkFinite(lower, upper, *leaf->value,
+                              "the value a subgraph input is computed from, "))
+      return E;
     leafBox.insert({leaf->value, {lower, upper}});
   }
+  return Error::success();
+}
 
-  // Two leaves the subgraph subtracts, drawn independently, never come close,
-  // so in a share of the samples each such pair is moved to a common
-  // near-coincident value, with one log-uniform separation scale shared across
-  // all pairs so every subtracted difference is small together.
-  SmallVector<std::pair<Value *, Value *>, 4> pairs;
-  if (plan && plan->active)
-    for (const auto &pr : plan->pairs)
-      if (leafBox.count(pr.first) && leafBox.count(pr.second))
-        pairs.push_back(pr);
-  const size_t numCoincidence =
-      pairs.empty() ? 0
-                    : static_cast<size_t>(kCancellationFraction *
-                                          static_cast<double>(numSamples));
+bool JointSampler::evaluate(const SubgraphSamples::Point &leafPoint,
+                            SubgraphSamples::Point &point,
+                            SmallVectorImpl<double> &results) const {
+  if (!computed.empty())
+    getFPValues(computed, leafPoint, results);
+  size_t next = 0;
+  for (const auto &[input, range] : box) {
+    FPNode *node = valueToNodeMap.at(input).get();
+    double v;
+    if (!node->operands.empty())
+      v = results[next++];
+    else if (isa<FPConst>(node))
+      v = node->getLowerBound();
+    else
+      v = leafPoint.lookup(input);
+    if (!(v >= range[0] && v <= range[1]))
+      return false;
+    point.insert({input, v});
+  }
+  return true;
+}
+
+// Two leaves the subgraph subtracts, drawn independently, never come close, so
+// each such pair is moved to a common near-coincident value, with one
+// log-uniform separation scale shared across all pairs so every subtracted
+// difference is small together. A draw takes more numbers from `gen` than an
+// independent one, so these draws run one at a time.
+void JointSampler::drawCoincident(
+    ArrayRef<std::pair<Value *, Value *>> pairs, size_t target,
+    SmallVectorImpl<SubgraphSamples::Point> &out) {
+  const size_t budget = kJointDrawFactor * O.Model.NumSamples;
   double maxRange = 0.0;
   for (const auto &pr : pairs) {
-    const auto &range = leafBox.find(pr.first)->second;
+    const SmallVector<double, 2> &range = leafBox.find(pr.first)->second;
     double r = range[1] - range[0];
     if (std::isfinite(r) && r > maxRange)
       maxRange = r;
@@ -199,79 +255,50 @@ static void getSampledPoints(
   if (!(maxRange > 0.0))
     maxRange = 1.0;
 
-  const size_t budget = kJointDrawFactor * numSamples;
-  size_t drawn = 0;
-  auto drawLeaves = [&](MapVector<Value *, double> &leafPoint) {
-    for (const auto &entry : leafBox)
-      leafPoint.insert(
-          {entry.first, uniformReal(gen, entry.second[0], entry.second[1])});
-  };
-  // Whether the inputs computed from `leafPoint` lie in the box, then
-  // `point`.
-  auto evaluate = [&](const MapVector<Value *, double> &leafPoint,
-                      MapVector<Value *, double> &point,
-                      SmallVectorImpl<double> &results) {
-    if (!computed.empty())
-      getFPValues(computed, leafPoint, results);
-    size_t next = 0;
-    for (const auto &entry : box) {
-      FPNode *node = valueToNodeMap.at(entry.first).get();
-      double v;
-      if (!node->operands.empty())
-        v = results[next++];
-      else if (isa<FPConst>(node))
-        v = node->getLowerBound();
-      else
-        v = leafPoint.lookup(entry.first);
-      if (!(v >= entry.second[0] && v <= entry.second[1]))
-        return false;
-      point.insert({entry.first, v});
-    }
-    return true;
-  };
-
-  // The coincidence stratum: a draw takes more numbers from `gen` while fewer
-  // than numCoincidence points are kept.
+  constexpr double kSmallestSeparation = 1e-18;
   SmallVector<double, 8> results;
-  while (sampledPoints.size() < numCoincidence &&
-         sampledPoints.size() < numSamples && drawn < budget) {
+  while (out.size() < target && drawn < budget) {
     ++drawn;
-    MapVector<Value *, double> leafPoint;
-    drawLeaves(leafPoint);
-
-    const double scaleLo = 1e-18;
-    double logScale = uniformReal(gen, std::log(scaleLo), std::log(maxRange));
-    double scale = std::exp(logScale);
+    SubgraphSamples::Point leafPoint;
+    for (const auto &[leaf, range] : leafBox)
+      leafPoint.insert({leaf, uniformReal(gen, range[0], range[1])});
+    double scale = std::exp(
+        uniformReal(gen, std::log(kSmallestSeparation), std::log(maxRange)));
     for (const auto &pr : pairs) {
       double anchor = leafPoint[pr.first];
       double jitter = uniformReal(gen, 0.5, 1.5);
       double sign = uniformReal(gen, 0.0, 1.0) < 0.5 ? -1.0 : 1.0;
       // Clamped into the leaf's own profiled range so no out-of-distribution
       // value is fabricated.
-      const auto &range = leafBox.find(pr.second)->second;
+      const SmallVector<double, 2> &range = leafBox.find(pr.second)->second;
       leafPoint[pr.second] =
           std::clamp(anchor + sign * scale * jitter, range[0], range[1]);
     }
-
-    MapVector<Value *, double> point;
+    SubgraphSamples::Point point;
     if (evaluate(leafPoint, point, results))
-      sampledPoints.push_back(std::move(point));
+      out.push_back(std::move(point));
   }
+}
 
-  // Past it every draw takes the same numbers from `gen`, so a block of draws
-  // is drawn in order ahead of its evaluations, which run concurrently, and
-  // kept in order up to the first numSamples in the box.
+// Every draw takes the same numbers from `gen`, so a block of draws is drawn in
+// order ahead of its evaluations, which run concurrently, and kept in order up
+// to the first `target` in the box.
+void JointSampler::drawIndependent(
+    size_t target, SmallVectorImpl<SubgraphSamples::Point> &out) {
+  const size_t budget = kJointDrawFactor * O.Model.NumSamples;
   const size_t numLeaves = leafBox.size();
   SmallVector<double, 0> leafValues;
-  SmallVector<MapVector<Value *, double>, 0> points;
+  SmallVector<SubgraphSamples::Point, 0> points;
   SmallVector<char, 0> inBox;
-  while (sampledPoints.size() < numSamples && drawn < budget) {
+  while (out.size() < target && drawn < budget) {
     // As many draws as the points still missing take at the share kept so
     // far, and a margin, so that few are evaluated past the last one kept.
-    const double missing = numSamples - sampledPoints.size();
-    const double kept = (sampledPoints.size() + 1.0) / (drawn + 1.0);
+    const double missing = target - out.size();
+    const double kept = (out.size() + 1.0) / (drawn + 1.0);
     const size_t n = std::min<size_t>(
-        budget - drawn, std::max(64.0, std::ceil(1.25 * missing / kept)));
+        budget - drawn,
+        std::max<double>(kDrawsPerTask,
+                         std::ceil(kDrawMargin * missing / kept)));
     leafValues.resize(n * numLeaves);
     for (size_t i = 0; i < n; ++i)
       for (auto [l, entry] : enumerate(leafBox))
@@ -279,33 +306,63 @@ static void getSampledPoints(
             uniformReal(gen, entry.second[0], entry.second[1]);
     points.assign(n, {});
     inBox.assign(n, 0);
-    forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
-      SmallVector<double, 8> blockResults;
-      for (size_t i = begin; i < end; ++i) {
-        MapVector<Value *, double> leafPoint;
-        for (auto [l, entry] : enumerate(leafBox))
-          leafPoint.insert({entry.first, leafValues[i * numLeaves + l]});
-        inBox[i] = evaluate(leafPoint, points[i], blockResults);
-      }
-    });
-    for (size_t i = 0; i < n && sampledPoints.size() < numSamples; ++i) {
+    forEachBlock(
+        O.Model.Threads, n, kDrawsPerTask, [&](size_t begin, size_t end) {
+          SmallVector<double, 8> blockResults;
+          for (size_t i = begin; i < end; ++i) {
+            SubgraphSamples::Point leafPoint;
+            for (auto [l, entry] : enumerate(leafBox))
+              leafPoint.insert({entry.first, leafValues[i * numLeaves + l]});
+            inBox[i] = evaluate(leafPoint, points[i], blockResults);
+          }
+        });
+    for (size_t i = 0; i < n && out.size() < target; ++i) {
       ++drawn;
       if (inBox[i])
-        sampledPoints.push_back(std::move(points[i]));
+        out.push_back(std::move(points[i]));
     }
   }
+}
+
+// -poseidon-num-samples points in the profiled box of `inputs`, the share
+// kCancellationFraction of them near the coincidences `plan` names when it is
+// active; an error saying why when the box holds too few.
+static Expected<SmallVector<SubgraphSamples::Point, 4>> drawPoints(
+    const Options &O, ArrayRef<Value *> inputs,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const CancellationPlan *plan, unsigned seedOffset = 0) {
+  const size_t numSamples = O.Model.NumSamples;
+  JointSampler sampler(O, valueToNodeMap, seedOffset);
+  if (Error E = sampler.collectBoxes(inputs))
+    return std::move(E);
+
+  SmallVector<std::pair<Value *, Value *>, 4> pairs;
+  if (plan && plan->active)
+    for (const auto &pr : plan->pairs)
+      if (sampler.leafRanges().count(pr.first) &&
+          sampler.leafRanges().count(pr.second))
+        pairs.push_back(pr);
+  SmallVector<SubgraphSamples::Point, 4> points;
+  if (!pairs.empty())
+    sampler.drawCoincident(
+        pairs,
+        std::min(numSamples,
+                 static_cast<size_t>(kCancellationFraction *
+                                     static_cast<double>(numSamples))),
+        points);
+  sampler.drawIndependent(numSamples, points);
 
   if (O.Diagnostics.Print)
-    llvm::errs() << "[poseidon] joint sampling: " << leaves.size()
-                 << " leaves, " << sampledPoints.size() << " of " << drawn
+    llvm::errs() << "[poseidon] joint sampling: " << sampler.numLeaves()
+                 << " leaves, " << points.size() << " of " << sampler.draws()
                  << " draws inside the profiled input box\n";
-  if (sampledPoints.size() < kMinJointSamples) {
-    llvm::errs() << "Poseidon: joint sampling kept " << sampledPoints.size()
-                 << " of " << drawn
-                 << " draws inside the subgraph's profiled input box; it "
-                    "cannot be priced and will keep its original body.\n";
-    sampledPoints.clear();
-  }
+  if (points.size() < kMinJointSamples)
+    return createStringError(inconvertibleErrorCode(),
+                             "joint sampling kept " + Twine(points.size()) +
+                                 " of " + Twine(sampler.draws()) +
+                                 " draws inside the subgraph's profiled "
+                                 "input box");
+  return points;
 }
 
 struct SubgraphSamples::RoundReference {
@@ -320,14 +377,20 @@ SubgraphSamples::SubgraphSamples(
 
 SubgraphSamples::~SubgraphSamples() = default;
 
-ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
+Expected<ArrayRef<SubgraphSamples::Point>> SubgraphSamples::points() {
   if (!sampled) {
     sampled = true;
     CancellationPlan plan = buildCancellationPlan(O, subgraph, valueToNodeMap);
-    getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap, base,
-                     &plan);
+    Expected<SmallVector<Point, 4>> drawn =
+        drawPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap, &plan);
+    if (drawn)
+      base = std::move(*drawn);
+    else
+      unsampled = toString(drawn.takeError());
   }
-  return base;
+  if (unsampled)
+    return createStringError(inconvertibleErrorCode(), *unsampled);
+  return ArrayRef<Point>(base);
 }
 
 // The exact and the as-written value of `node` at `point`, and the error of
@@ -345,14 +408,29 @@ std::optional<double> SubgraphSamples::Reference::meanError() const {
   return sum / count;
 }
 
-static void evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
+// Returns whether the exact value did not settle.
+static bool evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
                               SubgraphSamples::Reference &R, size_t i) {
   SmallVector<double, 1> results;
-  getMPFRValues({node}, point, results);
+  bool unsettled = getMPFRValues({node}, point, results);
   R.gold[i] = results[0];
   getFPValues({node}, point, results);
   R.value[i] = results[0];
   R.error[i] = sampleError(R.gold[i], R.value[i]);
+  return unsettled;
+}
+
+void SubgraphSamples::warnUnsettled(unsigned unsettled, size_t points) const {
+  if (!unsettled)
+    return;
+  const Instruction &At = *subgraph.outputs.front();
+  diagnose(*At.getFunction(), At.getDebugLoc(),
+           "the exact value of an expression of this subgraph did not settle "
+           "within " +
+               Twine(kMaxMPFRPrecision) + " bits at " + Twine(unsettled) +
+               " of " + Twine(points) +
+               " sample points, which the accuracy model counts as NaN",
+           DS_Warning);
 }
 
 const SubgraphSamples::Reference &
@@ -361,23 +439,32 @@ SubgraphSamples::reference(const FPNode *node) {
   Reference &R = it->second;
   if (!fresh)
     return R;
-  ArrayRef<Point> at = points();
+  ArrayRef<Point> at = cantFail(points());
   R.gold.resize(at.size());
   R.value.resize(at.size());
   R.error.resize(at.size());
-  forEachBlock(O.Model.Threads, at.size(), 8, [&](size_t begin, size_t end) {
-    for (size_t i = begin; i < end; ++i)
-      evaluateReference(const_cast<FPNode *>(node), at[i], R, i);
-  });
+  std::atomic<unsigned> unsettled{0};
+  forEachBlock(O.Model.Threads, at.size(), kReferencesPerTask,
+               [&](size_t begin, size_t end) {
+                 for (size_t i = begin; i < end; ++i)
+                   unsettled += evaluateReference(const_cast<FPNode *>(node),
+                                                  at[i], R, i);
+               });
+  warnUnsettled(unsettled, at.size());
   return R;
 }
 
 ArrayRef<SubgraphSamples::Point> SubgraphSamples::round(unsigned round) {
   assert(round > 0 && "round 0 is points()");
   while (rounds.size() < round) {
+    Expected<SmallVector<Point, 4>> drawn =
+        drawPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
+                   /*plan=*/nullptr, rounds.size() + 1);
     rounds.emplace_back();
-    getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
-                     rounds.back(), nullptr, rounds.size());
+    if (drawn)
+      rounds.back() = std::move(*drawn);
+    else
+      consumeError(drawn.takeError());
   }
   return rounds[round - 1];
 }
@@ -402,11 +489,15 @@ SubgraphSamples::roundReference(const FPNode *node, unsigned round,
       RR.computed[p] = 1;
       todo.push_back(p);
     }
-  forEachBlock(O.Model.Threads, todo.size(), 8, [&](size_t begin, size_t end) {
-    for (size_t i = begin; i < end; ++i)
-      evaluateReference(const_cast<FPNode *>(node), at[todo[i]], RR.values,
-                        todo[i]);
-  });
+  std::atomic<unsigned> unsettled{0};
+  forEachBlock(O.Model.Threads, todo.size(), kReferencesPerTask,
+               [&](size_t begin, size_t end) {
+                 for (size_t i = begin; i < end; ++i)
+                   unsettled +=
+                       evaluateReference(const_cast<FPNode *>(node),
+                                         at[todo[i]], RR.values, todo[i]);
+               });
+  warnUnsettled(unsettled, todo.size());
   return RR.values;
 }
 

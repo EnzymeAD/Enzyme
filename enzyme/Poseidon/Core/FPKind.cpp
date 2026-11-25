@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 using namespace llvm;
 
@@ -103,16 +104,25 @@ Rounding::Rounding(FPKind k) : kind(k) {
 // floating-point environment, and cheap enough for every multiply-accumulate
 // the matrix accuracy model simulates. memcpy rather than llvm::bit_cast keeps
 // this one call per value in a build without optimization.
+// The fields of an IEEE binary64: the stored fraction bits below the implicit
+// leading bit, the exponent bias, and the biased exponent of an infinity or a
+// NaN once unbiased.
+static constexpr int kF64Digits = std::numeric_limits<double>::digits;
+static constexpr int kF64FractionBits = kF64Digits - 1;
+static constexpr int kF64Bias = std::numeric_limits<double>::max_exponent - 1;
+static constexpr int kF64SpecialExponent = kF64Bias + 1;
+static constexpr unsigned kF64SignBit = 63;
+
 double Rounding::operator()(double x) const {
   if (precision == 0)
     return x;
   uint64_t bits;
   std::memcpy(&bits, &x, sizeof(bits));
-  const uint64_t sign = bits & (uint64_t(1) << 63);
+  const uint64_t sign = bits & (uint64_t(1) << kF64SignBit);
   const uint64_t mag = bits ^ sign;
-  const int exponent = int(mag >> 52) - 1023;
+  const int exponent = int(mag >> kF64FractionBits) - kF64Bias;
   uint64_t r;
-  if (exponent == 1024) {
+  if (exponent == kF64SpecialExponent) {
     // Infinity and NaN keep APFloat's encoding.
     bool losesInfo;
     APFloat ap(x);
@@ -123,19 +133,20 @@ double Rounding::operator()(double x) const {
   }
   if (exponent >= minExponent) {
     // A carry out of the kept significand bits moves the exponent up.
-    const unsigned drop = 53 - precision;
+    const unsigned drop = kF64Digits - precision;
     const uint64_t half = uint64_t(1) << (drop - 1);
     r = (mag + half - 1 + ((mag >> drop) & 1)) >> drop << drop;
     if (r > maxFinite)
-      r = uint64_t(0x7ff) << 52; // infinity
+      r = uint64_t(0x7ff) << kF64FractionBits; // infinity
   } else {
     // A subnormal result is a multiple of subnormalUlp. A binary64 subnormal
     // lies far below any of these formats' and rounds to zero here.
-    const int drop = 53 - precision + (minExponent - exponent);
+    const int drop = kF64Digits - precision + (minExponent - exponent);
     r = 0;
-    if (drop <= 63) {
+    if (drop <= int(kF64SignBit)) {
       const uint64_t significand =
-          (mag & ((uint64_t(1) << 52) - 1)) | (uint64_t(1) << 52);
+          (mag & ((uint64_t(1) << kF64FractionBits) - 1)) |
+          (uint64_t(1) << kF64FractionBits);
       const uint64_t half = uint64_t(1) << (drop - 1);
       const double ulps =
           (double)((significand + half - 1 + ((significand >> drop) & 1)) >>

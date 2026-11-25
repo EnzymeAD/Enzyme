@@ -20,8 +20,6 @@
 #include "llvm/Support/VCSRevision.h"
 #endif
 
-#include "BuildIdentity.h"
-
 using namespace llvm;
 
 namespace poseidon {
@@ -36,11 +34,10 @@ void CacheKey::add(StringRef name, StringRef value) {
   parts.emplace_back(name.str(), value.str());
 }
 
-void CacheKey::addCompiler() {
+void CacheKey::addCompiler(StringRef build) {
   // Two LLVM snapshots report one version string; the revision, which an LLVM
   // built without it does not define, tells them apart.
-  std::string compiler =
-      std::string(kPassIdentity) + " LLVM " + LLVM_VERSION_STRING;
+  std::string compiler = build.str() + " LLVM " + LLVM_VERSION_STRING;
 #ifdef LLVM_REVISION
   compiler += " " LLVM_REVISION;
 #endif

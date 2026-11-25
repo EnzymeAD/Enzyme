@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "BuildIdentity.h"
 #include "Core/CacheKey.h"
 #include "Core/Parallel.h"
 #include "Core/UniformReal.h"
@@ -552,7 +553,7 @@ Memo::Memo(const Options &O, const AbstractMatmul &m, const MatmulProfile &prof,
   SmallString<256> p(O.Herbie.Cache);
   sys::path::append(p, "matmulacc_" + key.digest() + ".json");
   path = p.str().str();
-  key.addCompiler();
+  key.addCompiler(kPassIdentity);
 }
 
 void Memo::store(const Options &O, double accuracyCost,

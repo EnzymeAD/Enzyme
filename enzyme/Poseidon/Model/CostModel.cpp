@@ -17,6 +17,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -26,6 +27,8 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <optional>
 
 using namespace llvm;
 
@@ -85,6 +88,68 @@ const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
                      Twine(Text));
 }
 
+// The row family pricing `Call`: the math function it computes, a device fmax
+// or fmin priced as the intrinsic it lowers to.
+static std::string callRowName(const CallInst &Call) {
+  const Function *Callee = Call.getCalledFunction();
+  if (!Callee)
+    unpriced(&Call);
+  if (Callee->isIntrinsic()) {
+    // The approximate F32 square root is priced as sqrt.
+    std::string Name = isApproxSqrtF32(Callee->getIntrinsicID())
+                           ? "sqrt"
+                           : intrinsicBaseName(*Callee).str();
+    if (!isLibmFunction(Name) &&
+        !is_contained({"fmuladd", "maxnum", "minnum"}, Name))
+      unpriced(&Call);
+    return Name;
+  }
+  if (StringRef DeviceMath = deviceMathName(Callee->getName());
+      !DeviceMath.empty())
+    return StringSwitch<std::string>(DeviceMath)
+        .Case("fmax", "maxnum")
+        .Case("fmin", "minnum")
+        .Default(DeviceMath.str());
+  StringRef Name = mathFunctionOf(Callee->getName());
+  if (!isLibmFunction(Name))
+    unpriced(&Call);
+  return Name.str();
+}
+
+// The row family pricing `I`; none for an instruction that costs nothing.
+static std::optional<std::string> rowName(const Instruction &I) {
+  switch (I.getOpcode()) {
+  case Instruction::FNeg:
+    return "fneg";
+  case Instruction::FAdd:
+    return "fadd";
+  case Instruction::FSub:
+    return "fsub";
+  case Instruction::FMul:
+    return "fmul";
+  case Instruction::FDiv:
+    return "fdiv";
+  // frem computes C's fmod and is priced by its row.
+  case Instruction::FRem:
+    return "fmod";
+  case Instruction::FCmp:
+    return "fcmp";
+  case Instruction::FPExt:
+    return "fpext";
+  case Instruction::FPTrunc:
+    return "fptrunc";
+  case Instruction::PHI:
+  case Instruction::Select:
+  case Instruction::Load:
+  case Instruction::ExtractValue:
+    return std::nullopt;
+  case Instruction::Call:
+    return callRowName(cast<CallInst>(I));
+  default:
+    unpriced(&I);
+  }
+}
+
 double getInstructionCompCost(CostModelState &CM, const Instruction *I,
                               const Instruction *At) {
   const Instruction &RowAt = At ? *At : *I;
@@ -101,93 +166,23 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I,
   // but runs on the FP pipe of its operands.
   if (!I->getType()->isFPOrFPVectorTy() && !isa<FCmpInst>(I))
     return 0.0;
-
-  std::string OpcodeName;
-  switch (I->getOpcode()) {
-  case Instruction::FNeg:
-    OpcodeName = "fneg";
-    break;
-  case Instruction::FAdd:
-    OpcodeName = "fadd";
-    break;
-  case Instruction::FSub:
-    OpcodeName = "fsub";
-    break;
-  case Instruction::FMul:
-    OpcodeName = "fmul";
-    break;
-  case Instruction::FDiv:
-    OpcodeName = "fdiv";
-    break;
-  // frem computes C's fmod and is priced by its row.
-  case Instruction::FRem:
-    OpcodeName = "fmod";
-    break;
-  case Instruction::FCmp:
-    OpcodeName = "fcmp";
-    break;
-  case Instruction::FPExt:
-    OpcodeName = "fpext";
-    break;
-  case Instruction::FPTrunc:
-    OpcodeName = "fptrunc";
-    break;
-  case Instruction::PHI:
-  case Instruction::Select:
-  case Instruction::Load:
-  case Instruction::ExtractValue:
+  std::optional<std::string> OpcodeName = rowName(*I);
+  if (!OpcodeName)
     return 0;
-  case Instruction::Call: {
-    auto *Call = cast<CallInst>(I);
-    if (auto *CalledFunc = Call->getCalledFunction()) {
-      if (CalledFunc->isIntrinsic()) {
-        // The approximate F32 square root is priced as sqrt.
-        if (isApproxSqrtF32(CalledFunc->getIntrinsicID()))
-          OpcodeName = "sqrt";
-        else
-          OpcodeName = intrinsicBaseName(*CalledFunc).str();
-        if (!isLibmFunction(OpcodeName) &&
-            !is_contained({"fmuladd", "maxnum", "minnum"}, OpcodeName))
-          unpriced(I);
-      } else if (StringRef deviceMath = deviceMathName(CalledFunc->getName());
-                 !deviceMath.empty()) {
-        OpcodeName = deviceMath.str();
-        // fmax and fmin are priced by the rows of the intrinsics they lower
-        // to, llvm.maxnum and llvm.minnum.
-        if (OpcodeName == "fmax")
-          OpcodeName = "maxnum";
-        else if (OpcodeName == "fmin")
-          OpcodeName = "minnum";
-      } else {
-        OpcodeName = mathFunctionOf(CalledFunc->getName()).str();
-        if (!isLibmFunction(OpcodeName))
-          unpriced(I);
-      }
-    } else {
-      unpriced(I);
-    }
-    break;
-  }
-  default:
-    unpriced(I);
-  }
 
-  Type *Ty = I->getOpcode() == Instruction::FCmp ? I->getOperand(0)->getType()
-                                                 : I->getType();
+  Type *Ty = isa<FCmpInst>(I) ? I->getOperand(0)->getType() : I->getType();
   StringRef PrecisionName = costType(Ty);
   if (PrecisionName.empty())
     unpriced(I);
-
-  if (I->getOpcode() == Instruction::FPExt ||
-      I->getOpcode() == Instruction::FPTrunc) {
+  // A conversion's row is named for both formats and typed by its source.
+  if (isa<FPExtInst, FPTruncInst>(I)) {
     StringRef SrcPrecisionName = costType(I->getOperand(0)->getType());
     if (SrcPrecisionName.empty())
       unpriced(I);
-    OpcodeName += ("_" + SrcPrecisionName + "_to_" + PrecisionName).str();
+    *OpcodeName += ("_" + SrcPrecisionName + "_to_" + PrecisionName).str();
     PrecisionName = SrcPrecisionName;
   }
-
-  return rowCost(CM, RowAt, OpcodeName, PrecisionName);
+  return rowCost(CM, RowAt, *OpcodeName, PrecisionName);
 }
 
 double profiledCost(CostModelState &CM, const Function &F,
@@ -244,7 +239,7 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
     if (I.isTerminator())
       continue;
 
-    auto instCost = getInstructionCompCost(CM, &I, At);
+    double instCost = getInstructionCompCost(CM, &I, At);
     if (Weight)
       instCost *= Weight(I);
 
@@ -291,7 +286,7 @@ double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
 
   todo.insert(todo.end(), outputs.begin(), outputs.end());
   while (!todo.empty()) {
-    auto cur = todo.pop_back_val();
+    Value *cur = todo.pop_back_val();
     if (!seen.insert(cur).second)
       continue;
 
@@ -299,7 +294,7 @@ double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      auto instCost = getInstructionCompCost(CM, I);
+      double instCost = getInstructionCompCost(CM, I);
       if (opExec && normalizer) {
         auto it = opExec->find(I);
         if (it != opExec->end())
@@ -307,11 +302,8 @@ double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
       }
       cost += instCost;
 
-      auto operands =
-          isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-      for (auto &operand : operands) {
+      for (Value *operand : fpOperands(*I))
         todo.push_back(operand);
-      }
     }
   }
 

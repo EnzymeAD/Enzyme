@@ -32,6 +32,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace poseidon {
 
@@ -53,11 +54,10 @@ public:
   double grad = std::numeric_limits<double>::quiet_NaN();
   uint64_t executions = 0;
 
-  explicit FPNode(const std::string &op, const std::string &dtype)
-      : ntype(NodeType::Node), op(op), dtype(dtype) {}
-  explicit FPNode(NodeType ntype, const std::string &op,
-                  const std::string &dtype)
-      : ntype(ntype), op(op), dtype(dtype) {}
+  explicit FPNode(std::string op, std::string dtype)
+      : ntype(NodeType::Node), op(std::move(op)), dtype(std::move(dtype)) {}
+  explicit FPNode(NodeType ntype, std::string op, std::string dtype)
+      : ntype(ntype), op(std::move(op)), dtype(std::move(dtype)) {}
   virtual ~FPNode() = default;
 
   NodeType getType() const;
@@ -81,6 +81,10 @@ public:
              const llvm::ValueToValueMapTy *VMap = nullptr);
 
 protected:
+  // An if: a select between its arms, both at the node's precision.
+  llvm::Value *lowerChoice(llvm::IRBuilder<> &builder,
+                           const llvm::ValueToValueMapTy *VMap);
+
   double lb = std::numeric_limits<double>::infinity();
   double ub = -std::numeric_limits<double>::infinity();
 };
@@ -103,9 +107,9 @@ class FPLLValue : public FPNode {
 public:
   llvm::Value *value;
 
-  explicit FPLLValue(llvm::Value *value, const std::string &op,
-                     const std::string &dtype)
-      : FPNode(NodeType::LLValue, op, dtype), value(value) {}
+  explicit FPLLValue(llvm::Value *value, std::string op, std::string dtype)
+      : FPNode(NodeType::LLValue, std::move(op), std::move(dtype)),
+        value(value) {}
 
   llvm::Value *
   getLLValue(llvm::IRBuilder<> &builder,
@@ -123,8 +127,9 @@ private:
   static double literalValue(const std::string &strValue);
 
 public:
-  explicit FPConst(const std::string &strValue, const std::string &dtype)
-      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {
+  explicit FPConst(std::string literal, std::string dtype)
+      : FPNode(NodeType::Const, "__const", std::move(dtype)),
+        strValue(std::move(literal)) {
     lb = ub = literalValue(strValue);
   }
 
@@ -144,10 +149,6 @@ emitSharedElements(llvm::ArrayRef<std::shared_ptr<FPNode>> elements,
                    llvm::function_ref<llvm::IRBuilder<> &(size_t)> at,
                    llvm::ValueToValueMapTy *VMap,
                    const llvm::DominatorTree *DT);
-
-// The fcmp predicate of FPCore comparison operator `Op`: IEEE's, under which
-// only != holds when an operand is NaN. None for another operator.
-std::optional<llvm::CmpInst::Predicate> fpcoreComparison(llvm::StringRef Op);
 
 class SubgraphSamples;
 

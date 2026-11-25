@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Solvers.h"
+#include "BuildIdentity.h"
 #include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Optimize.h"
@@ -144,7 +145,7 @@ static void keySiteTable(Session &S, const FunctionFPState &st,
   SmallString<128> path(O.Herbie.Cache);
   sys::path::append(path, "dp_" + key.digest() + ".json");
   table.path = path.str().str();
-  key.addCompiler();
+  key.addCompiler(kPassIdentity);
 }
 
 // Binds the cached frontier `points` to `units` in `table`; false when a step

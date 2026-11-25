@@ -26,6 +26,8 @@
 
 #include <cassert>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <regex>
 #include <string>
 
@@ -55,87 +57,197 @@ static SmallVector<StringRef, 4> splitTopLevel(StringRef S) {
   return Items;
 }
 
-namespace {
-struct FPCoreOperator {
-  StringLiteral Op;
-  // The operand count; an array takes any positive number.
-  unsigned Arity;
-  bool Boolean;
-};
-} // namespace
+using MPFRUnary = int (*)(mpfr_ptr, mpfr_srcptr, mpfr_rnd_t);
+using MPFRBinary = int (*)(mpfr_ptr, mpfr_srcptr, mpfr_srcptr, mpfr_rnd_t);
+using MPFRConstant = int (*)(mpfr_ptr, mpfr_rnd_t);
 
-// The operators the evaluators and the lowering model, as Herbie names them.
+// A math function: its intrinsic (none for a library call), and its binary64,
+// binary32 and MPFR forms.
+static constexpr FPCoreOperator unary(StringLiteral Name, Intrinsic::ID ID,
+                                      double (*F64)(double),
+                                      float (*F32)(float), MPFRUnary MPFR) {
+  FPCoreOperator O{Name, 1};
+  O.Intrinsic = ID;
+  O.LibraryCall = ID == Intrinsic::not_intrinsic;
+  O.F64Unary = F64;
+  O.F32Unary = F32;
+  O.MPFRUnary = MPFR;
+  return O;
+}
+
+static constexpr FPCoreOperator binary(StringLiteral Name, Intrinsic::ID ID,
+                                       double (*F64)(double, double),
+                                       float (*F32)(float, float),
+                                       MPFRBinary MPFR) {
+  FPCoreOperator O{Name, 2};
+  O.Intrinsic = ID;
+  O.LibraryCall = ID == Intrinsic::not_intrinsic;
+  O.F64Binary = F64;
+  O.F32Binary = F32;
+  O.MPFRBinary = MPFR;
+  return O;
+}
+
+// An operation the lowering emits by name, with its evaluation.
+static constexpr FPCoreOperator arithmetic(StringLiteral Name,
+                                           double (*F64)(double),
+                                           float (*F32)(float),
+                                           MPFRUnary MPFR) {
+  FPCoreOperator O = unary(Name, Intrinsic::not_intrinsic, F64, F32, MPFR);
+  O.LibraryCall = false;
+  return O;
+}
+
+static constexpr FPCoreOperator arithmetic(StringLiteral Name,
+                                           double (*F64)(double, double),
+                                           float (*F32)(float, float),
+                                           MPFRBinary MPFR) {
+  FPCoreOperator O = binary(Name, Intrinsic::not_intrinsic, F64, F32, MPFR);
+  O.LibraryCall = false;
+  return O;
+}
+
+static constexpr FPCoreOperator comparison(StringLiteral Name,
+                                           CmpInst::Predicate Predicate,
+                                           StringLiteral LoweredName) {
+  FPCoreOperator O{Name, 2, /*Boolean=*/true};
+  O.Predicate = Predicate;
+  O.LoweredName = LoweredName;
+  return O;
+}
+
+static constexpr FPCoreOperator constant(StringLiteral Name, double Value,
+                                         MPFRConstant MPFR) {
+  FPCoreOperator O{Name, 0};
+  O.Constant = Value;
+  O.MPFRConstant = MPFR;
+  return O;
+}
+
+// An operator every consumer treats by name.
+static constexpr FPCoreOperator special(StringLiteral Name, unsigned Arity,
+                                        bool Boolean = false) {
+  return FPCoreOperator{Name, Arity, Boolean};
+}
+
+static double identity(double x) { return x; }
+static float identityF(float x) { return x; }
+
+// Herbie's operators, as the parser, the evaluators and the lowering model
+// them. A conversion is the identity at the precision of its node, its
+// destination; lgamma is the logarithm of |Gamma|, as C's lgamma.
 static constexpr FPCoreOperator kOperators[] = {
-    {"neg", 1, false},
-    {"sin", 1, false},
-    {"cos", 1, false},
-    {"tan", 1, false},
-    {"exp", 1, false},
-    {"expm1", 1, false},
-    {"log", 1, false},
-    {"log1p", 1, false},
-    {"sqrt", 1, false},
-    {"cbrt", 1, false},
-    {"asin", 1, false},
-    {"acos", 1, false},
-    {"atan", 1, false},
-    {"sinh", 1, false},
-    {"cosh", 1, false},
-    {"tanh", 1, false},
-    {"asinh", 1, false},
-    {"acosh", 1, false},
-    {"atanh", 1, false},
-    {"ceil", 1, false},
-    {"floor", 1, false},
-    {"exp2", 1, false},
-    {"log10", 1, false},
-    {"log2", 1, false},
-    {"rint", 1, false},
-    {"round", 1, false},
-    {"trunc", 1, false},
-    {"fabs", 1, false},
-    {"erf", 1, false},
-    {"lgamma", 1, false},
-    {"tgamma", 1, false},
-    {"binary64->binary32", 1, false},
-    {"binary32->binary64", 1, false},
-    {"+", 2, false},
-    {"-", 2, false},
-    {"*", 2, false},
-    {"/", 2, false},
-    {"pow", 2, false},
-    {"hypot", 2, false},
-    {"atan2", 2, false},
-    {"copysign", 2, false},
-    {"fmax", 2, false},
-    {"fmin", 2, false},
-    {"fdim", 2, false},
-    {"fmod", 2, false},
-    {"remainder", 2, false},
-    {"fma", 3, false},
-    {"PI", 0, false},
-    {"E", 0, false},
-    {"INFINITY", 0, false},
-    {"NAN", 0, false},
-    {"==", 2, true},
-    {"!=", 2, true},
-    {"<", 2, true},
-    {">", 2, true},
-    {"<=", 2, true},
-    {">=", 2, true},
-    {"and", 2, true},
-    {"or", 2, true},
-    {"not", 1, true},
-    {"TRUE", 0, true},
-    {"FALSE", 0, true},
-    {"if", 3, false},
-    {"array", 0, false},
+    arithmetic(
+        "neg", [](double x) { return -x; }, [](float x) { return -x; },
+        mpfr_neg),
+    arithmetic(
+        "+", [](double a, double b) { return a + b; },
+        [](float a, float b) { return a + b; }, mpfr_add),
+    arithmetic(
+        "-", [](double a, double b) { return a - b; },
+        [](float a, float b) { return a - b; }, mpfr_sub),
+    arithmetic(
+        "*", [](double a, double b) { return a * b; },
+        [](float a, float b) { return a * b; }, mpfr_mul),
+    arithmetic(
+        "/", [](double a, double b) { return a / b; },
+        [](float a, float b) { return a / b; }, mpfr_div),
+    arithmetic("pow", std::pow, powf, mpfr_pow),
+    unary("sin", Intrinsic::sin, std::sin, sinf, mpfr_sin),
+    unary("cos", Intrinsic::cos, std::cos, cosf, mpfr_cos),
+    unary("tan", Intrinsic::tan, std::tan, tanf, mpfr_tan),
+    unary("exp", Intrinsic::exp, std::exp, expf, mpfr_exp),
+    unary("log", Intrinsic::log, std::log, logf, mpfr_log),
+    unary("sqrt", Intrinsic::sqrt, std::sqrt, sqrtf, mpfr_sqrt),
+    unary("fabs", Intrinsic::fabs, std::fabs, fabsf, mpfr_abs),
+    unary("asin", Intrinsic::asin, std::asin, asinf, mpfr_asin),
+    unary("acos", Intrinsic::acos, std::acos, acosf, mpfr_acos),
+    unary("atan", Intrinsic::atan, std::atan, atanf, mpfr_atan),
+    unary("sinh", Intrinsic::sinh, std::sinh, sinhf, mpfr_sinh),
+    unary("cosh", Intrinsic::cosh, std::cosh, coshf, mpfr_cosh),
+    unary("tanh", Intrinsic::tanh, std::tanh, tanhf, mpfr_tanh),
+    unary(
+        "ceil", Intrinsic::ceil, std::ceil, ceilf,
+        [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_ceil(r, x); }),
+    unary(
+        "floor", Intrinsic::floor, std::floor, floorf,
+        [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_floor(r, x); }),
+    unary("exp2", Intrinsic::exp2, std::exp2, exp2f, mpfr_exp2),
+    unary("log10", Intrinsic::log10, std::log10, log10f, mpfr_log10),
+    unary("log2", Intrinsic::log2, std::log2, log2f, mpfr_log2),
+    unary("rint", Intrinsic::rint, std::rint, rintf, mpfr_rint),
+    unary(
+        "round", Intrinsic::round, std::round, roundf,
+        [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_round(r, x); }),
+    unary(
+        "trunc", Intrinsic::trunc, std::trunc, truncf,
+        [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_trunc(r, x); }),
+    unary("expm1", Intrinsic::not_intrinsic, std::expm1, expm1f, mpfr_expm1),
+    unary("log1p", Intrinsic::not_intrinsic, std::log1p, log1pf, mpfr_log1p),
+    unary("cbrt", Intrinsic::not_intrinsic, std::cbrt, cbrtf, mpfr_cbrt),
+    unary("asinh", Intrinsic::not_intrinsic, std::asinh, asinhf, mpfr_asinh),
+    unary("acosh", Intrinsic::not_intrinsic, std::acosh, acoshf, mpfr_acosh),
+    unary("atanh", Intrinsic::not_intrinsic, std::atanh, atanhf, mpfr_atanh),
+    unary("erf", Intrinsic::not_intrinsic, std::erf, erff, mpfr_erf),
+    unary("lgamma", Intrinsic::not_intrinsic, std::lgamma, lgammaf,
+          [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t rnd) {
+            int sign;
+            return mpfr_lgamma(r, &sign, x, rnd);
+          }),
+    unary("tgamma", Intrinsic::not_intrinsic, std::tgamma, tgammaf, mpfr_gamma),
+    binary("fmin", Intrinsic::minnum, std::fmin, fminf, mpfr_min),
+    binary("fmax", Intrinsic::maxnum, std::fmax, fmaxf, mpfr_max),
+    binary("atan2", Intrinsic::atan2, std::atan2, atan2f, mpfr_atan2),
+    binary("copysign", Intrinsic::copysign, std::copysign, copysignf,
+           mpfr_copysign),
+    binary("hypot", Intrinsic::not_intrinsic, std::hypot, hypotf, mpfr_hypot),
+    binary("fdim", Intrinsic::not_intrinsic, std::fdim, fdimf, mpfr_dim),
+    binary("fmod", Intrinsic::not_intrinsic, std::fmod, fmodf, mpfr_fmod),
+    binary("remainder", Intrinsic::not_intrinsic, std::remainder, remainderf,
+           mpfr_remainder),
+    special("fma", 3),
+    // IEEE comparisons, as FPCore's: with a NaN operand only != holds.
+    comparison("==", CmpInst::FCMP_OEQ, "eq"),
+    comparison("!=", CmpInst::FCMP_UNE, "ne"),
+    comparison("<", CmpInst::FCMP_OLT, "lt"),
+    comparison(">", CmpInst::FCMP_OGT, "gt"),
+    comparison("<=", CmpInst::FCMP_OLE, "le"),
+    comparison(">=", CmpInst::FCMP_OGE, "ge"),
+    constant("PI", M_PI, mpfr_const_pi),
+    constant("E", M_E,
+             [](mpfr_ptr r, mpfr_rnd_t rnd) {
+               mpfr_set_ui(r, 1, rnd);
+               return mpfr_exp(r, r, rnd);
+             }),
+    constant("INFINITY", INFINITY,
+             [](mpfr_ptr r, mpfr_rnd_t) {
+               mpfr_set_inf(r, 1);
+               return 0;
+             }),
+    constant("NAN", NAN,
+             [](mpfr_ptr r, mpfr_rnd_t) {
+               mpfr_set_nan(r);
+               return 0;
+             }),
+    arithmetic("binary64->binary32", identity, identityF, nullptr),
+    arithmetic("binary32->binary64", identity, identityF, nullptr),
+    special("and", 2, /*Boolean=*/true),
+    special("or", 2, /*Boolean=*/true),
+    special("not", 1, /*Boolean=*/true),
+    special("TRUE", 0, /*Boolean=*/true),
+    special("FALSE", 0, /*Boolean=*/true),
+    special("if", 3),
+    special("array", 0),
 };
 
-static const FPCoreOperator *fpcoreOperator(StringRef Op) {
-  const FPCoreOperator *O =
-      find_if(kOperators, [&](const FPCoreOperator &O) { return O.Op == Op; });
-  return O == std::end(kOperators) ? nullptr : O;
+const FPCoreOperator *fpcoreOperator(StringRef Name) {
+  static const StringMap<const FPCoreOperator *> ByName = [] {
+    StringMap<const FPCoreOperator *> Map;
+    for (const FPCoreOperator &O : kOperators)
+      Map[O.Name] = &O;
+    return Map;
+  }();
+  return ByName.lookup(Name);
 }
 
 // Whether `N` is a truth value: a comparison, a logical operation, or a choice
@@ -154,6 +266,10 @@ static Error malformed(const Twine &Why, StringRef Expr) {
                            Why + " in '" + Expr + "'");
 }
 
+// How an approx form and an element projection begin.
+static constexpr StringLiteral kApproxHead = "#s(approx";
+static constexpr StringLiteral kProjectionHead = "ref.";
+
 namespace {
 struct FPCoreParser {
   std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap;
@@ -161,6 +277,7 @@ struct FPCoreParser {
   SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs;
   const SetVector<Value *> *subgraphInputs;
 
+  // `expr`, an array only when it is the whole expression (`top`).
   Expected<std::shared_ptr<FPNode>> parse(StringRef expr, bool top);
   // `expr` parsed as a number, not a truth value or an array.
   Expected<std::shared_ptr<FPNode>> parseNumber(StringRef expr) {
@@ -169,6 +286,19 @@ struct FPCoreParser {
       return malformed("a truth value where a number is expected", expr);
     return N;
   }
+
+private:
+  // A literal, `#s(literal v format)` or a bare number; null for any other
+  // text.
+  Expected<std::shared_ptr<FPNode>> parseLiteral(const std::string &expr);
+  // `#s(approx spec result)`: the result, the pair kept in approxSpecs.
+  Expected<std::shared_ptr<FPNode>> parseApprox(StringRef expr, bool top);
+  // `(ref.N.array<...> e)`: element N of the array or sincos e.
+  Expected<std::shared_ptr<FPNode>>
+  parseProjection(StringRef expr, StringRef head, StringRef args);
+  // `(op.dtype operands...)`.
+  Expected<std::shared_ptr<FPNode>>
+  parseOperation(StringRef expr, StringRef head, StringRef args, bool top);
 };
 } // namespace
 
@@ -177,18 +307,32 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
   const std::string trimmedExpr = expr.trim(' ').str();
   if (trimmedExpr.empty())
     return malformed("an empty expression", expr);
-
-  if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
-    if (auto node = valueToNodeMap[symbolToValueMap[trimmedExpr]]) {
+  if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#')
+    if (std::shared_ptr<FPNode> node =
+            valueToNodeMap[symbolToValueMap[trimmedExpr]])
       return node;
-    }
-  }
+  Expected<std::shared_ptr<FPNode>> literal = parseLiteral(trimmedExpr);
+  if (!literal || *literal)
+    return literal;
+  if (StringRef(trimmedExpr).starts_with(kApproxHead))
+    return parseApprox(trimmedExpr, top);
+  if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')')
+    return malformed("an unknown symbol or an unparenthesized operation",
+                     trimmedExpr);
+  StringRef body = StringRef(trimmedExpr).drop_front().drop_back();
+  StringRef head = body.take_until([](char c) { return c == ' '; });
+  StringRef args = body.drop_front(head.size());
+  if (head.starts_with(kProjectionHead))
+    return parseProjection(trimmedExpr, head, args);
+  return parseOperation(trimmedExpr, head, args, top);
+}
 
+Expected<std::shared_ptr<FPNode>>
+FPCoreParser::parseLiteral(const std::string &expr) {
   static const std::regex constantPattern(
       "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+(\\w+)\\)$");
   static const std::regex plainConstantPattern(
       R"(^([-+]?(\d+(\.\d+)?)(/\d+)?|[-+]?inf\.0))");
-
   // Herbie writes a literal as an exact rational of a representable value and
   // an infinity as inf.0, so a zero denominator is no value it can mean.
   auto zeroDenominator = [](StringRef Literal) {
@@ -196,99 +340,90 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
     return !Denominator.empty() &&
            Denominator.find_first_not_of('0') == StringRef::npos;
   };
-  {
-    std::smatch matches;
-    if (std::regex_match(trimmedExpr, matches, constantPattern)) {
-      std::string value = matches[1].str();
-      std::string dtype = matches[3].str();
-      if (zeroDenominator(value))
-        return malformed("a rational literal with denominator 0", trimmedExpr);
-      if (dtype == "binary64")
-        dtype = "f64";
-      else if (dtype == "binary32")
-        dtype = "f32";
-      else
-        return malformed("a literal of the unmodelled format " + dtype,
-                         trimmedExpr);
-      return std::make_shared<FPConst>(value, dtype);
-    }
-    if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
-      std::string value = matches[1].str();
-      if (zeroDenominator(value))
-        return malformed("a rational literal with denominator 0", trimmedExpr);
-      std::string dtype = "f64";
-      return std::make_shared<FPConst>(value, dtype);
+  std::smatch matches;
+  std::string dtype;
+  if (std::regex_match(expr, matches, constantPattern)) {
+    dtype = StringSwitch<std::string>(matches[3].str())
+                .Case("binary64", "f64")
+                .Case("binary32", "f32")
+                .Default("");
+    if (dtype.empty())
+      return malformed("a literal of the unmodelled format " + matches[3].str(),
+                       expr);
+  } else if (std::regex_match(expr, matches, plainConstantPattern)) {
+    dtype = "f64";
+  } else {
+    return nullptr;
+  }
+  std::string value = matches[1].str();
+  if (zeroDenominator(value))
+    return malformed("a rational literal with denominator 0", expr);
+  return std::make_shared<FPConst>(value, dtype);
+}
+
+Expected<std::shared_ptr<FPNode>> FPCoreParser::parseApprox(StringRef expr,
+                                                            bool top) {
+  StringRef inner = expr.drop_front(kApproxHead.size()).drop_back().trim(' ');
+  SmallVector<StringRef, 4> parts = splitTopLevel(inner);
+  if (expr.back() != ')' || parts.size() < 2)
+    return malformed("an approx form without its specification and result",
+                     expr);
+  StringRef resultPart = inner.drop_front(parts[0].size() + 1).trim(' ');
+  if (approxSpecs)
+    approxSpecs->push_back({parts[0].str(), resultPart.str()});
+  return parse(resultPart, top);
+}
+
+Expected<std::shared_ptr<FPNode>>
+FPCoreParser::parseProjection(StringRef expr, StringRef head, StringRef args) {
+  unsigned idx;
+  StringRef inner = args.trim(' ');
+  if (!head.drop_front(kProjectionHead.size())
+           .take_until([](char c) { return c == '.'; })
+           .getAsInteger(10, idx) &&
+      !inner.empty() && inner.front() == '(' && inner.back() == ')') {
+    StringRef projected = inner.drop_front().drop_back();
+    StringRef of = projected.take_until([](char c) { return c == ' '; });
+    SmallVector<StringRef, 4> elems =
+        splitTopLevel(projected.drop_front(of.size()));
+    if (of == "array" && idx < elems.size())
+      return parseNumber(elems[idx]);
+    if ((of == "sincos.f64" || of == "sincos.f32") && elems.size() == 1 &&
+        idx < 2) {
+      auto node = std::make_shared<FPNode>(idx == 0 ? "sin" : "cos",
+                                           of.split('.').second.str());
+      Expected<std::shared_ptr<FPNode>> operand = parseNumber(elems[0]);
+      if (!operand)
+        return operand.takeError();
+      node->addOperand(*operand);
+      return node;
     }
   }
+  return malformed("an array projection of no array element", expr);
+}
 
-  if (StringRef(trimmedExpr).starts_with("#s(approx")) {
-    StringRef inner =
-        StringRef(trimmedExpr).drop_front(9).drop_back().trim(' ');
-    SmallVector<StringRef, 4> parts = splitTopLevel(inner);
-    if (trimmedExpr.back() != ')' || parts.size() < 2)
-      return malformed("an approx form without its specification and result",
-                       trimmedExpr);
-    StringRef resultPart = inner.drop_front(parts[0].size() + 1).trim(' ');
-    if (approxSpecs)
-      approxSpecs->push_back({parts[0].str(), resultPart.str()});
-    return parse(resultPart, top);
-  }
-
-  if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')')
-    return malformed("an unknown symbol or an unparenthesized operation",
-                     trimmedExpr);
-
-  StringRef body = StringRef(trimmedExpr).drop_front().drop_back();
-  StringRef fullOp = body.take_until([](char c) { return c == ' '; });
-  StringRef args = body.drop_front(fullOp.size());
-
-  // An array projection, `(ref.N.array<...> (array e0 e1 ...))` or
-  // `(ref.N.array<...> (sincos.fXX x))`: the N-th element is what is wanted.
-  if (fullOp.starts_with("ref.")) {
-    unsigned idx;
-    StringRef inner = args.trim(' ');
-    if (!fullOp.drop_front(4)
-             .take_until([](char c) { return c == '.'; })
-             .getAsInteger(10, idx) &&
-        !inner.empty() && inner.front() == '(' && inner.back() == ')') {
-      StringRef projected = inner.drop_front().drop_back();
-      StringRef head = projected.take_until([](char c) { return c == ' '; });
-      SmallVector<StringRef, 4> elems =
-          splitTopLevel(projected.drop_front(head.size()));
-      if (head == "array" && idx < elems.size())
-        return parseNumber(elems[idx]);
-      if ((head == "sincos.f64" || head == "sincos.f32") && elems.size() == 1 &&
-          idx < 2) {
-        auto node = std::make_shared<FPNode>(idx == 0 ? "sin" : "cos",
-                                             head.drop_front(7).str());
-        Expected<std::shared_ptr<FPNode>> operand = parseNumber(elems[0]);
-        if (!operand)
-          return operand.takeError();
-        node->addOperand(*operand);
-        return node;
-      }
-    }
-    return malformed("an array projection of no array element", trimmedExpr);
-  }
-
+Expected<std::shared_ptr<FPNode>> FPCoreParser::parseOperation(StringRef expr,
+                                                               StringRef head,
+                                                               StringRef args,
+                                                               bool top) {
   std::string dtype;
   std::string op;
-  if (fullOp.starts_with("array<")) {
+  if (head.starts_with("array<")) {
     op = "array";
-  } else if (size_t pos = fullOp.find('.'); pos != StringRef::npos) {
-    op = fullOp.substr(0, pos).str();
-    dtype = fullOp.substr(pos + 1).str();
+  } else if (size_t pos = head.find('.'); pos != StringRef::npos) {
+    op = head.substr(0, pos).str();
+    dtype = head.substr(pos + 1).str();
     if (dtype != "f64" && dtype != "f32")
-      return malformed("the operator " + fullOp + " of an unmodelled format",
-                       trimmedExpr);
+      return malformed("the operator " + head + " of an unmodelled format",
+                       expr);
   } else {
-    op = fullOp.str();
+    op = head.str();
   }
 
   const FPCoreOperator *O = fpcoreOperator(op);
   if (!O)
     return malformed("the operator " + op + ", which Poseidon does not model",
-                     trimmedExpr);
+                     expr);
   SmallVector<StringRef, 4> operandTexts = splitTopLevel(args);
   if (op == "array" ? !top || operandTexts.empty()
                     : operandTexts.size() != O->Arity)
@@ -297,7 +432,7 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
                          : "the operator " + op + " with " +
                                Twine(operandTexts.size()) +
                                " operand(s), not " + Twine(O->Arity),
-                     trimmedExpr);
+                     expr);
 
   // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
   // destination precision, which makes it an identity at that precision.
@@ -324,14 +459,12 @@ Expected<std::shared_ptr<FPNode>> FPCoreParser::parse(StringRef expr,
   }
   if (op == "if" &&
       isBoolean(*node->operands[1]) != isBoolean(*node->operands[2]))
-    return malformed("a choice between a number and a truth value",
-                     trimmedExpr);
+    return malformed("a choice between a number and a truth value", expr);
 
   if (subgraphInputs)
-    if (auto existing =
+    if (std::shared_ptr<FPNode> existing =
             existingDefinition(*node, *subgraphInputs, valueToNodeMap))
       return existing;
-
   return node;
 }
 
@@ -397,13 +530,13 @@ static std::string cLiteral(double v, StringRef dtype) {
   std::string s;
   if (dtype == "f32") {
     float f = (float)v;
-    for (int p = 1; p <= 9; ++p) {
+    for (int p = 1; p <= std::numeric_limits<float>::max_digits10; ++p) {
       s = printG(p, (double)f);
       if (strtof(s.c_str(), nullptr) == f)
         break;
     }
   } else {
-    for (int p = 1; p <= 17; ++p) {
+    for (int p = 1; p <= std::numeric_limits<double>::max_digits10; ++p) {
       s = printG(p, v);
       if (strtod(s.c_str(), nullptr) == v)
         break;
@@ -499,105 +632,156 @@ public:
     --budget;
     if (auto *C = dyn_cast<FPConst>(&N))
       return literal(*C, C->dtype.empty() ? StringRef("f64") : C->dtype);
-    if (isLeaf(N)) {
-      auto *LL = cast<FPLLValue>(&N);
-      std::string name =
-          how.leafName && LL->value ? how.leafName(LL->value) : "";
-      if (name.empty())
-        name = N.symbol.empty() ? "?" : N.symbol;
-      return {name, kPrecPrimary, dtypeOf(N)};
-    }
-
-    const std::string &op = N.op;
+    if (isLeaf(N))
+      return leaf(cast<FPLLValue>(N));
     std::string dt = dtypeOf(N);
-    const std::string want = isFPDtype(dt) ? dt : "";
+    return renderOperation(N, isFPDtype(dt) ? dt : "");
+  }
 
-    if (op == "binary64->binary32" || op == "binary32->binary64") {
-      CExpr inner = render(*N.operands[0]);
-      std::string target = op == "binary64->binary32" ? "f32" : "f64";
-      return inner.dtype == target ? inner : castTo(inner, target);
-    }
-    if (op == "if" && N.operands.size() == 3) {
-      CExpr cond = render(*N.operands[0]);
-      CExpr a = operand(*N.operands[1], want);
-      CExpr b = operand(*N.operands[2], want.empty() ? a.dtype : want);
-      return {paren(cond, kPrecOr) + " ? " + paren(a, kPrecOr) + " : " +
-                  paren(b, kPrecTernary),
-              kPrecTernary, want.empty() ? a.dtype : want};
-    }
-    static const StringMap<int> infix = {
-        {"<", kPrecRel}, {"<=", kPrecRel}, {">", kPrecRel},   {">=", kPrecRel},
-        {"==", kPrecEq}, {"!=", kPrecEq},  {"and", kPrecAnd}, {"or", kPrecOr}};
-    auto inf = infix.find(op);
-    if (inf != infix.end() && N.operands.size() >= 2) {
-      SmallVector<CExpr, 3> es = operands(N, want);
-      StringRef sym = op == "and" ? "&&" : op == "or" ? "||" : StringRef(op);
-      std::string t;
-      for (auto [k, e] : llvm::enumerate(es))
-        t += (k ? " " + sym.str() + " " : "") + paren(e, inf->second + 1);
-      return {t, inf->second, "bool"};
-    }
+private:
+  CExpr leaf(const FPLLValue &LL) {
+    std::string name = how.leafName && LL.value ? how.leafName(LL.value) : "";
+    if (name.empty())
+      name = LL.symbol.empty() ? "?" : LL.symbol;
+    return {name, kPrecPrimary, dtypeOf(LL)};
+  }
+
+  // The operation `N`, its result wanted as `want`, a format's dtype or empty.
+  CExpr renderOperation(const FPNode &N, const std::string &want) {
+    const std::string &op = N.op;
+    if (op == "binary64->binary32" || op == "binary32->binary64")
+      return renderConversion(N);
+    if (op == "if" && N.operands.size() == 3)
+      return renderChoice(N, want);
+    if (int P = infixPrecedence(op); P && N.operands.size() >= 2)
+      return renderInfix(N, want, P);
     if (op == "not" && N.operands.size() == 1)
       return {"!" + paren(render(*N.operands[0]), kPrecUnary), kPrecUnary,
               "bool"};
-    if (N.operands.empty()) {
-      std::string t = StringSwitch<std::string>(op)
-                          .Case("PI", "M_PI")
-                          .Case("E", "M_E")
-                          .Case("INFINITY", "INFINITY")
-                          .Case("NAN", "NAN")
-                          .Case("TRUE", "true")
-                          .Case("FALSE", "false")
-                          .Default(op);
-      bool isBool = op == "TRUE" || op == "FALSE";
-      CExpr e{t, kPrecPrimary, isBool ? "bool" : "f64"};
-      if (!isBool && !want.empty() && want != "f64")
-        e = castTo(e, want);
-      return e;
-    }
-    if (op == "neg" || (op == "-" && N.operands.size() == 1)) {
-      CExpr e = operand(*N.operands[0], want);
-      std::string t = paren(e, kPrecUnary);
-      if (t[0] == '-')
-        t = "(" + t + ")";
-      return {"-" + t, kPrecUnary, want.empty() ? e.dtype : want};
-    }
-    if (op == "fma" && N.operands.size() == 3 && isFMulAdd(N)) {
-      SmallVector<CExpr, 3> es = operands(N, want);
-      CExpr m{paren(es[0], kPrecMul) + " * " + paren(es[1], kPrecMul + 1),
-              kPrecMul, firstFP(es)};
-      return {paren(m, kPrecAdd) + " + " + paren(es[2], kPrecAdd + 1), kPrecAdd,
-              want.empty() ? firstFP(es) : want};
-    }
-    if ((op == "+" || op == "-") && N.operands.size() == 2)
-      if (auto *C = dyn_cast<FPConst>(N.operands[1].get()))
-        if (C->getLowerBound() < 0.0) {
-          CExpr a = operand(*N.operands[0], want);
-          std::string rdt = want.empty() ? a.dtype : want;
-          std::string lit = cLiteral(-C->getLowerBound(),
-                                     rdt.empty() ? StringRef("f64") : rdt);
-          return {paren(a, kPrecAdd) + (op == "+" ? " - " : " + ") + lit,
-                  kPrecAdd, rdt};
-        }
+    if (N.operands.empty())
+      return renderConstant(op, want);
+    if (op == "neg" || (op == "-" && N.operands.size() == 1))
+      return renderNegation(N, want);
+    if (op == "fma" && N.operands.size() == 3 && isFMulAdd(N))
+      return renderFMulAdd(N, want);
+    if (std::optional<CExpr> e = renderNegativeLiteralTerm(N, want))
+      return *e;
     if ((op == "+" || op == "-" || op == "*" || op == "/") &&
-        N.operands.size() >= 2) {
-      int P = (op == "+" || op == "-") ? kPrecAdd : kPrecMul;
-      SmallVector<CExpr, 3> es = operands(N, want);
-      std::string rdt = want.empty() ? firstFP(es) : want;
-      CExpr acc = es[0];
-      for (size_t k = 1; k < es.size(); ++k)
-        acc = {paren(acc, P) + " " + op + " " + paren(es[k], P + 1), P, rdt};
-      return acc;
-    }
-    if (op == "array") {
-      std::string t = "{";
-      for (auto [k, e] : llvm::enumerate(N.operands))
-        t += (k ? ", " : "") + render(*e).text;
-      return {t + "}", kPrecPrimary, ""};
-    }
+        N.operands.size() >= 2)
+      return renderArithmetic(N, want);
+    if (op == "array")
+      return renderArray(N);
+    return renderCall(N, want);
+  }
+
+  static int infixPrecedence(StringRef op) {
+    return StringSwitch<int>(op)
+        .Case("<", kPrecRel)
+        .Case("<=", kPrecRel)
+        .Case(">", kPrecRel)
+        .Case(">=", kPrecRel)
+        .Case("==", kPrecEq)
+        .Case("!=", kPrecEq)
+        .Case("and", kPrecAnd)
+        .Case("or", kPrecOr)
+        .Default(0);
+  }
+
+  CExpr renderConversion(const FPNode &N) {
+    CExpr inner = render(*N.operands[0]);
+    std::string target = N.op == "binary64->binary32" ? "f32" : "f64";
+    return inner.dtype == target ? inner : castTo(inner, target);
+  }
+
+  CExpr renderChoice(const FPNode &N, const std::string &want) {
+    CExpr cond = render(*N.operands[0]);
+    CExpr a = operand(*N.operands[1], want);
+    CExpr b = operand(*N.operands[2], want.empty() ? a.dtype : want);
+    return {paren(cond, kPrecOr) + " ? " + paren(a, kPrecOr) + " : " +
+                paren(b, kPrecTernary),
+            kPrecTernary, want.empty() ? a.dtype : want};
+  }
+
+  CExpr renderInfix(const FPNode &N, const std::string &want, int P) {
+    SmallVector<CExpr, 3> es = operands(N, want);
+    StringRef sym = N.op == "and"  ? "&&"
+                    : N.op == "or" ? "||"
+                                   : StringRef(N.op);
+    std::string t;
+    for (auto [k, e] : llvm::enumerate(es))
+      t += (k ? " " + sym.str() + " " : "") + paren(e, P + 1);
+    return {t, P, "bool"};
+  }
+
+  CExpr renderConstant(const std::string &op, const std::string &want) {
+    std::string t = StringSwitch<std::string>(op)
+                        .Case("PI", "M_PI")
+                        .Case("E", "M_E")
+                        .Case("INFINITY", "INFINITY")
+                        .Case("NAN", "NAN")
+                        .Case("TRUE", "true")
+                        .Case("FALSE", "false")
+                        .Default(op);
+    bool isBool = op == "TRUE" || op == "FALSE";
+    CExpr e{t, kPrecPrimary, isBool ? "bool" : "f64"};
+    if (!isBool && !want.empty() && want != "f64")
+      e = castTo(e, want);
+    return e;
+  }
+
+  CExpr renderNegation(const FPNode &N, const std::string &want) {
+    CExpr e = operand(*N.operands[0], want);
+    std::string t = paren(e, kPrecUnary);
+    if (t[0] == '-')
+      t = "(" + t + ")";
+    return {"-" + t, kPrecUnary, want.empty() ? e.dtype : want};
+  }
+
+  CExpr renderFMulAdd(const FPNode &N, const std::string &want) {
+    SmallVector<CExpr, 3> es = operands(N, want);
+    CExpr m{paren(es[0], kPrecMul) + " * " + paren(es[1], kPrecMul + 1),
+            kPrecMul, firstFP(es)};
+    return {paren(m, kPrecAdd) + " + " + paren(es[2], kPrecAdd + 1), kPrecAdd,
+            want.empty() ? firstFP(es) : want};
+  }
+
+  // `a + c` or `a - c` with a negative literal c, as `a - |c|` or `a + |c|`.
+  std::optional<CExpr> renderNegativeLiteralTerm(const FPNode &N,
+                                                 const std::string &want) {
+    if ((N.op != "+" && N.op != "-") || N.operands.size() != 2)
+      return std::nullopt;
+    auto *C = dyn_cast<FPConst>(N.operands[1].get());
+    if (!C || !(C->getLowerBound() < 0.0))
+      return std::nullopt;
+    CExpr a = operand(*N.operands[0], want);
+    std::string rdt = want.empty() ? a.dtype : want;
+    std::string lit =
+        cLiteral(-C->getLowerBound(), rdt.empty() ? StringRef("f64") : rdt);
+    return CExpr{paren(a, kPrecAdd) + (N.op == "+" ? " - " : " + ") + lit,
+                 kPrecAdd, rdt};
+  }
+
+  CExpr renderArithmetic(const FPNode &N, const std::string &want) {
+    int P = (N.op == "+" || N.op == "-") ? kPrecAdd : kPrecMul;
     SmallVector<CExpr, 3> es = operands(N, want);
     std::string rdt = want.empty() ? firstFP(es) : want;
-    std::string name = op;
+    CExpr acc = es[0];
+    for (size_t k = 1; k < es.size(); ++k)
+      acc = {paren(acc, P) + " " + N.op + " " + paren(es[k], P + 1), P, rdt};
+    return acc;
+  }
+
+  CExpr renderArray(const FPNode &N) {
+    std::string t = "{";
+    for (auto [k, e] : llvm::enumerate(N.operands))
+      t += (k ? ", " : "") + render(*e).text;
+    return {t + "}", kPrecPrimary, ""};
+  }
+
+  CExpr renderCall(const FPNode &N, const std::string &want) {
+    SmallVector<CExpr, 3> es = operands(N, want);
+    std::string rdt = want.empty() ? firstFP(es) : want;
+    std::string name = N.op;
     if (hasFloatSuffixInC(name) && rdt == "f32")
       name += "f";
     std::string t = name + "(";
@@ -728,7 +912,9 @@ std::string getHerbieOperator(const Instruction &I) {
 }
 
 StringRef intrinsicBaseName(const Function &Callee) {
-  return Intrinsic::getBaseName(Callee.getIntrinsicID()).drop_front(5);
+  StringRef Name = Intrinsic::getBaseName(Callee.getIntrinsicID());
+  Name.consume_front("llvm.");
+  return Name;
 }
 
 void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {

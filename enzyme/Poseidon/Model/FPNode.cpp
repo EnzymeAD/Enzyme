@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPNode.h"
+#include "FPCore.h"
 #include "FPFormat.h"
 #include "IR/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -74,75 +75,6 @@ void FPNode::updateBounds(double lower, double upper) {
   ub = std::max(ub, upper);
 }
 
-namespace {
-struct IntrinsicOp {
-  StringLiteral Op;
-  Intrinsic::ID ID;
-};
-struct ComparisonOp {
-  StringLiteral Op;
-  CmpInst::Predicate Pred;
-  StringLiteral Name;
-};
-struct ConstantOp {
-  StringLiteral Op;
-  double Value;
-};
-} // namespace
-
-static constexpr IntrinsicOp kUnaryIntrinsics[] = {
-    {"sin", Intrinsic::sin},     {"cos", Intrinsic::cos},
-    {"tan", Intrinsic::tan},     {"exp", Intrinsic::exp},
-    {"log", Intrinsic::log},     {"sqrt", Intrinsic::sqrt},
-    {"fabs", Intrinsic::fabs},   {"asin", Intrinsic::asin},
-    {"acos", Intrinsic::acos},   {"atan", Intrinsic::atan},
-    {"sinh", Intrinsic::sinh},   {"cosh", Intrinsic::cosh},
-    {"tanh", Intrinsic::tanh},   {"ceil", Intrinsic::ceil},
-    {"floor", Intrinsic::floor}, {"exp2", Intrinsic::exp2},
-    {"log10", Intrinsic::log10}, {"log2", Intrinsic::log2},
-    {"rint", Intrinsic::rint},   {"round", Intrinsic::round},
-    {"trunc", Intrinsic::trunc},
-};
-
-static constexpr IntrinsicOp kBinaryIntrinsics[] = {
-    {"fmin", Intrinsic::minnum},
-    {"fmax", Intrinsic::maxnum},
-    {"atan2", Intrinsic::atan2},
-    {"copysign", Intrinsic::copysign},
-};
-
-// Operators without an intrinsic every target lowers.
-static constexpr StringLiteral kLibraryCalls[] = {
-    "expm1", "log1p",  "cbrt",   "hypot", "fdim",  "fmod",  "remainder",
-    "erf",   "lgamma", "tgamma", "asinh", "acosh", "atanh",
-};
-
-// IEEE comparisons, as FPCore's: with a NaN operand only != holds.
-static constexpr ComparisonOp kComparisons[] = {
-    {"==", CmpInst::FCMP_OEQ, "eq"}, {"!=", CmpInst::FCMP_UNE, "ne"},
-    {"<", CmpInst::FCMP_OLT, "lt"},  {">", CmpInst::FCMP_OGT, "gt"},
-    {"<=", CmpInst::FCMP_OLE, "le"}, {">=", CmpInst::FCMP_OGE, "ge"},
-};
-
-static constexpr ConstantOp kConstants[] = {
-    {"PI", M_PI},
-    {"E", M_E},
-    {"INFINITY", INFINITY},
-    {"NAN", NAN},
-};
-
-template <typename Row, size_t N>
-static const Row *findOp(const Row (&Table)[N], StringRef Op) {
-  const Row *R = find_if(Table, [&](const Row &R) { return R.Op == Op; });
-  return R == std::end(Table) ? nullptr : R;
-}
-
-std::optional<CmpInst::Predicate> fpcoreComparison(StringRef Op) {
-  if (const ComparisonOp *C = findOp(kComparisons, Op))
-    return C->Pred;
-  return std::nullopt;
-}
-
 static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
   if (auto *CF = dyn_cast<ConstantFP>(ops[1])) {
     double value = CF->getValueAPF().convertToDouble();
@@ -167,27 +99,66 @@ static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
   return mathLibraryCall(b, M, "pow", ops);
 }
 
+// The operation `op` on `ops`, for an operator the table lowers by name.
+static Value *lowerByName(IRBuilder<> &b, Module *M, StringRef op,
+                          ArrayRef<Value *> ops) {
+  if (op == "neg")
+    return b.CreateFNeg(ops[0], "herbie.neg");
+  if (op == "+")
+    return b.CreateFAdd(ops[0], ops[1], "herbie.add");
+  if (op == "-")
+    return b.CreateFSub(ops[0], ops[1], "herbie.sub");
+  if (op == "*")
+    return b.CreateFMul(ops[0], ops[1], "herbie.mul");
+  if (op == "/")
+    return b.CreateFDiv(ops[0], ops[1], "herbie.div");
+  if (op == "pow")
+    return lowerPow(b, M, ops);
+  if (op == "fma")
+    return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()}, ops, nullptr,
+                             "herbie.fma");
+  if (op == "and")
+    return b.CreateAnd(ops[0], ops[1], "herbie.and");
+  if (op == "or")
+    return b.CreateOr(ops[0], ops[1], "herbie.or");
+  if (op == "not")
+    return b.CreateNot(ops[0], "herbie.not");
+  if (op == "TRUE" || op == "FALSE")
+    return ConstantInt::getBool(b.getContext(), op == "TRUE");
+  // CreateFPCast rather than FPTrunc/FPExt: the operand may already carry the
+  // destination type, coerced to the node's dtype, and FPCast is then the
+  // identity.
+  if (op == "binary64->binary32")
+    return b.CreateFPCast(ops[0], b.getFloatTy(), "herbie.f64tof32");
+  assert(op == "binary32->binary64" && "the parser admits no other operator");
+  return b.CreateFPCast(ops[0], b.getDoubleTy(), "herbie.f32tof64");
+}
+
+Value *FPNode::lowerChoice(IRBuilder<> &builder,
+                           const ValueToValueMapTy *VMap) {
+  Value *condValue = operands[0]->getLLValue(builder, VMap);
+  Value *trueValue = operands[1]->getLLValue(builder, VMap);
+  Value *falseValue = operands[2]->getLLValue(builder, VMap);
+  // A regime split at one precision may fall back to a bare input of
+  // another; both arms take the split's precision.
+  Type *armTy = fpTypeFromDtype(dtype, builder);
+  if (!armTy)
+    armTy = trueValue->getType();
+  if (trueValue->getType() != armTy)
+    trueValue = builder.CreateFPCast(trueValue, armTy);
+  if (falseValue->getType() != armTy)
+    falseValue = builder.CreateFPCast(falseValue, armTy);
+  return builder.CreateSelect(condValue, trueValue, falseValue,
+                              "herbie.select");
+}
+
 Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
   Module *M = builder.GetInsertBlock()->getModule();
   if (op == "array")
     report_fatal_error("Poseidon: an array rewrite is lowered element by "
                        "element at its outputs, never as one value");
-  if (op == "if") {
-    Value *condValue = operands[0]->getLLValue(builder, VMap);
-    Value *trueValue = operands[1]->getLLValue(builder, VMap);
-    Value *falseValue = operands[2]->getLLValue(builder, VMap);
-    // A regime split at one precision may fall back to a bare input of
-    // another; both arms take the split's precision.
-    Type *armTy = fpTypeFromDtype(dtype, builder);
-    if (!armTy)
-      armTy = trueValue->getType();
-    if (trueValue->getType() != armTy)
-      trueValue = builder.CreateFPCast(trueValue, armTy);
-    if (falseValue->getType() != armTy)
-      falseValue = builder.CreateFPCast(falseValue, armTy);
-    return builder.CreateSelect(condValue, trueValue, falseValue,
-                                "herbie.select");
-  }
+  if (op == "if")
+    return lowerChoice(builder, VMap);
 
   SmallVector<Value *, 3> operandValues;
   Type *targetTy = fpTypeFromDtype(dtype, builder);
@@ -206,56 +177,23 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
       Target::of(*M).callsMathLibrary(op, operandValues[0]->getType()))
     return mathLibraryCall(builder, M, op, operandValues);
 
-  if (const IntrinsicOp *I = findOp(kUnaryIntrinsics, op))
-    return builder.CreateUnaryIntrinsic(I->ID, operandValues[0], nullptr,
+  const FPCoreOperator *O = fpcoreOperator(op);
+  assert(O && "the parser admits only modelled operators");
+  if (O->Intrinsic != Intrinsic::not_intrinsic && O->Arity == 1)
+    return builder.CreateUnaryIntrinsic(O->Intrinsic, operandValues[0], nullptr,
                                         "herbie." + op);
-  if (const IntrinsicOp *I = findOp(kBinaryIntrinsics, op))
-    return builder.CreateBinaryIntrinsic(
-        I->ID, operandValues[0], operandValues[1], nullptr, "herbie." + op);
-  if (is_contained(kLibraryCalls, op))
+  if (O->Intrinsic != Intrinsic::not_intrinsic)
+    return builder.CreateBinaryIntrinsic(O->Intrinsic, operandValues[0],
+                                         operandValues[1], nullptr,
+                                         "herbie." + op);
+  if (O->LibraryCall)
     return mathLibraryCall(builder, M, op, operandValues);
-  if (const ComparisonOp *C = findOp(kComparisons, op))
-    return builder.CreateFCmp(C->Pred, operandValues[0], operandValues[1],
-                              "herbie." + C->Name);
-  if (const ConstantOp *C = findOp(kConstants, op))
-    return ConstantFP::get(builder.getDoubleTy(), C->Value);
-  if (op == "neg")
-    return builder.CreateFNeg(operandValues[0], "herbie.neg");
-  if (op == "+")
-    return builder.CreateFAdd(operandValues[0], operandValues[1], "herbie.add");
-  if (op == "-")
-    return builder.CreateFSub(operandValues[0], operandValues[1], "herbie.sub");
-  if (op == "*")
-    return builder.CreateFMul(operandValues[0], operandValues[1], "herbie.mul");
-  if (op == "/")
-    return builder.CreateFDiv(operandValues[0], operandValues[1], "herbie.div");
-  if (op == "pow")
-    return lowerPow(builder, M, operandValues);
-  if (op == "fma")
-    return builder.CreateIntrinsic(Intrinsic::fma,
-                                   {operandValues[0]->getType()}, operandValues,
-                                   nullptr, "herbie.fma");
-  if (op == "and")
-    return builder.CreateAnd(operandValues[0], operandValues[1], "herbie.and");
-  if (op == "or")
-    return builder.CreateOr(operandValues[0], operandValues[1], "herbie.or");
-  if (op == "not")
-    return builder.CreateNot(operandValues[0], "herbie.not");
-  if (op == "TRUE")
-    return ConstantInt::getTrue(builder.getContext());
-  if (op == "FALSE")
-    return ConstantInt::getFalse(builder.getContext());
-  // CreateFPCast rather than FPTrunc/FPExt: the operand may already carry the
-  // destination type, coerced to the node's dtype above, and FPCast is then the
-  // identity.
-  if (op == "binary64->binary32")
-    return builder.CreateFPCast(operandValues[0], builder.getFloatTy(),
-                                "herbie.f64tof32");
-  if (op == "binary32->binary64")
-    return builder.CreateFPCast(operandValues[0], builder.getDoubleTy(),
-                                "herbie.f32tof64");
-  std::string msg = "FPNode getLLValue: Unexpected operator " + op;
-  llvm_unreachable(msg.c_str());
+  if (O->Predicate != CmpInst::BAD_FCMP_PREDICATE)
+    return builder.CreateFCmp(O->Predicate, operandValues[0], operandValues[1],
+                              "herbie." + O->LoweredName);
+  if (O->MPFRConstant)
+    return ConstantFP::get(builder.getDoubleTy(), O->Constant);
+  return lowerByName(builder, M, op, operandValues);
 }
 
 // Memoized: an input is consulted once per input defined over it, so a chain

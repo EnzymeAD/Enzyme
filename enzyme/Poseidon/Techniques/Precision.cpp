@@ -456,7 +456,7 @@ static void setUnifiedAccuracyCost(
     const Options &O, PrecisionUnit &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
   SubgraphSamples &samples = samplesOf(O, *CS.subgraph, valueToNodeMap);
-  ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
+  Expected<ArrayRef<SubgraphSamples::Point>> drawn = samples.points();
 
   // No usable sample means the subgraph cannot be priced: drop its candidates
   // and keep the original body.
@@ -468,10 +468,11 @@ static void setUnifiedAccuracyCost(
     CS.candidates.clear();
     CS.initialAccCost = 0.0;
   };
-  if (sampledPoints.empty()) {
-    unpriceable("the profiled input box is empty or unbounded");
+  if (!drawn) {
+    unpriceable(toString(drawn.takeError()));
     return;
   }
+  ArrayRef<SubgraphSamples::Point> sampledPoints = *drawn;
 
   SmallVector<FPNode *, 4> outputs;
   SmallVector<const SubgraphSamples::Reference *, 4> refs;

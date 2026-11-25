@@ -36,9 +36,10 @@ public:
 
   CacheKey();
   void add(llvm::StringRef name, llvm::StringRef value);
-  // Part "compiler": this build of the pass (the digest of its sources) and the
-  // LLVM it is built against, so that a result another build computed misses.
-  void addCompiler();
+  // Part "compiler": `build`, which names the build of the program computing
+  // the result, and the LLVM it is built against, so that a result another
+  // build computed misses.
+  void addCompiler(llvm::StringRef build);
   // For a part too large to store, such as a file: kept as its digest.
   void addContent(llvm::StringRef name, llvm::StringRef bytes);
 

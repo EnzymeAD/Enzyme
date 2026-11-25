@@ -20,6 +20,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Error.h"
 
 #include <deque>
 #include <memory>
@@ -58,14 +59,17 @@ public:
   ~SubgraphSamples();
 
   // -poseidon-num-samples points in the profiled box of the subgraph's inputs,
-  // with a share near the cancellations it divides by or takes the root of;
-  // empty when the box cannot be sampled.
-  llvm::ArrayRef<Point> points();
-  // `node` at every one of points().
+  // with a share near the cancellations it divides by or takes the root of; an
+  // error saying why when the box cannot be sampled.
+  llvm::Expected<llvm::ArrayRef<Point>> points();
+  // `node` at every one of points(), which has succeeded. A reference that
+  // does not settle within 1024 bits counts as NaN, and is reported once, with
+  // a count, as a warning at the subgraph's first output.
   const Reference &reference(const FPNode *node);
 
   // As many points drawn without the cancellation share, from the seed offset
-  // by `round`, for `round` >= 1.
+  // by `round`, for `round` >= 1; empty when that draw keeps too few, which
+  // ends the search for more points.
   llvm::ArrayRef<Point> round(unsigned round);
   // `node` at the points of `round` listed in `which`; an entry at any other
   // point of the round is not computed.
@@ -75,12 +79,18 @@ public:
 private:
   struct RoundReference;
 
+  // A warning, when `unsettled` of the `points` references just computed did
+  // not settle.
+  void warnUnsettled(unsigned unsettled, size_t points) const;
+
   const Options &O;
   const Subgraph &subgraph;
   const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
       &valueToNodeMap;
   bool sampled = false;
   llvm::SmallVector<Point, 4> base;
+  // Why points() has none.
+  std::optional<std::string> unsampled;
   std::unordered_map<const FPNode *, Reference> references;
   // rounds[r - 1] holds round r; a deque, as a round's points are read while
   // later rounds are drawn.

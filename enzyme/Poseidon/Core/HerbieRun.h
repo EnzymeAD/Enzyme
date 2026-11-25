@@ -70,7 +70,8 @@ struct HerbieRunOptions {
   bool Print = false;
 };
 
-// The digest of a file's contents, or "" when it cannot be read.
+// The digest of a file's contents, which is never empty; "" when the file
+// cannot be read.
 std::string readFileDigest(llvm::StringRef Path);
 
 // The digests of the Herbie binaries a compile ran, by path.
@@ -111,6 +112,10 @@ struct HerbieRunResult {
   std::string CacheFile;
   std::string Crash;
   std::string Failure;
+  // What the caller reports as a warning: why a timeout or a crash left the
+  // cores without an answer, or that Herbie exited with a nonzero status after
+  // writing a usable answer. Empty when there is nothing to report.
+  std::string Warning;
 };
 
 // Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache: the

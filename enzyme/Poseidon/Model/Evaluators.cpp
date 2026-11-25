@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Evaluators.h"
+#include "FPCore.h"
 #include "FPFormat.h"
 #include "FPNode.h"
 #include "Targets/Target.h"
@@ -18,9 +19,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
-#include <cstring>
 #include <limits>
 #include <mpfr.h>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,6 @@ using namespace llvm;
 
 namespace poseidon {
 
-static constexpr unsigned kMaxMPFRPrec = 1024;
 // The significand bits of the reference that have to agree between two
 // precisions for it to count as converged: those of a binary64 result.
 static constexpr unsigned kGroundTruthPrec = 53;
@@ -117,84 +117,6 @@ PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
   return F->Precision;
 }
 
-namespace {
-struct UnaryFn {
-  StringLiteral Op;
-  double (*F64)(double);
-  float (*F32)(float);
-};
-struct BinaryFn {
-  StringLiteral Op;
-  double (*F64)(double, double);
-  float (*F32)(float, float);
-};
-struct ConstantOp {
-  StringLiteral Op;
-  double Value;
-};
-} // namespace
-
-static double identity(double x) { return x; }
-static float identityF(float x) { return x; }
-
-// The functions an operator is evaluated with in binary64 and in binary32. A
-// conversion is the identity at the precision of its node, its destination.
-static constexpr UnaryFn kUnaryFns[] = {
-    {"neg", [](double x) { return -x; }, [](float x) { return -x; }},
-    {"sin", std::sin, sinf},
-    {"cos", std::cos, cosf},
-    {"tan", std::tan, tanf},
-    {"exp", std::exp, expf},
-    {"expm1", std::expm1, expm1f},
-    {"log", std::log, logf},
-    {"log1p", std::log1p, log1pf},
-    {"sqrt", std::sqrt, sqrtf},
-    {"cbrt", std::cbrt, cbrtf},
-    {"asin", std::asin, asinf},
-    {"acos", std::acos, acosf},
-    {"atan", std::atan, atanf},
-    {"sinh", std::sinh, sinhf},
-    {"cosh", std::cosh, coshf},
-    {"tanh", std::tanh, tanhf},
-    {"asinh", std::asinh, asinhf},
-    {"acosh", std::acosh, acoshf},
-    {"atanh", std::atanh, atanhf},
-    {"ceil", std::ceil, ceilf},
-    {"floor", std::floor, floorf},
-    {"exp2", std::exp2, exp2f},
-    {"log10", std::log10, log10f},
-    {"log2", std::log2, log2f},
-    {"rint", std::rint, rintf},
-    {"round", std::round, roundf},
-    {"trunc", std::trunc, truncf},
-    {"fabs", std::fabs, fabsf},
-    {"erf", std::erf, erff},
-    {"lgamma", std::lgamma, lgammaf},
-    {"tgamma", std::tgamma, tgammaf},
-    {"binary64->binary32", identity, identityF},
-    {"binary32->binary64", identity, identityF},
-};
-
-static constexpr BinaryFn kBinaryFns[] = {
-    {"+", [](double a, double b) { return a + b; },
-     [](float a, float b) { return a + b; }},
-    {"-", [](double a, double b) { return a - b; },
-     [](float a, float b) { return a - b; }},
-    {"*", [](double a, double b) { return a * b; },
-     [](float a, float b) { return a * b; }},
-    {"/", [](double a, double b) { return a / b; },
-     [](float a, float b) { return a / b; }},
-    {"pow", std::pow, powf},
-    {"hypot", std::hypot, hypotf},
-    {"atan2", std::atan2, atan2f},
-    {"copysign", std::copysign, copysignf},
-    {"fmax", std::fmax, fmaxf},
-    {"fmin", std::fmin, fminf},
-    {"fdim", std::fdim, fdimf},
-    {"fmod", std::fmod, fmodf},
-    {"remainder", std::remainder, remainderf},
-};
-
 // Whether comparison `pred` holds between two values whose order is `order`
 // (negative, zero or positive), or which are unordered when it is none.
 static bool comparisonHolds(CmpInst::Predicate pred, std::optional<int> order) {
@@ -224,159 +146,100 @@ template <typename T> static std::optional<int> orderOf(T a, T b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-static constexpr ConstantOp kConstants[] = {
-    {"PI", M_PI},
-    {"E", M_E},
-    {"INFINITY", INFINITY},
-    {"NAN", NAN},
-};
+bool FPEvaluator::evaluateLogic(const FPNode *node,
+                                const MapVector<Value *, double> &inputValues) {
+  auto truth = [&](unsigned i) {
+    evaluateNode(node->operands[i].get(), inputValues);
+    return getResult(node->operands[i].get()) == 1.0;
+  };
+  double res;
+  if (node->op == "if") {
+    unsigned arm = truth(0) ? 1 : 2;
+    evaluateNode(node->operands[arm].get(), inputValues);
+    res = getResult(node->operands[arm].get());
+  } else if (node->op == "and") {
+    res = truth(0) && truth(1);
+  } else if (node->op == "or") {
+    res = truth(0) || truth(1);
+  } else if (node->op == "not") {
+    res = !truth(0);
+  } else if (node->op == "TRUE" || node->op == "FALSE") {
+    res = node->op == "TRUE";
+  } else {
+    return false;
+  }
+  cache.try_emplace(node, res);
+  return true;
+}
 
-template <typename Row, size_t N>
-static const Row *findOp(const Row (&Table)[N], StringRef Op) {
-  const Row *R = find_if(Table, [&](const Row &R) { return R.Op == Op; });
-  return R == std::end(Table) ? nullptr : R;
+double FPEvaluator::evaluateOperation(const FPNode *node,
+                                      PrecisionChangeType nodePrec) const {
+  const bool useReducedFloat = nodePrec == PrecisionChangeType::FP32 ||
+                               nodePrec == PrecisionChangeType::FP16 ||
+                               nodePrec == PrecisionChangeType::BF16;
+  const FPKind kind = formatOf(nodePrec).Kind;
+  // A binary16 or bfloat16 operation is computed in binary32 and rounded.
+  auto truncToPrec = [&](float val) -> float {
+    if (kind != FPKind::BF16 && kind != FPKind::F16)
+      return val;
+    return static_cast<float>(roundToPrec((double)val, kind));
+  };
+  auto toF = [&](double v) { return truncToPrec(static_cast<float>(v)); };
+  auto operand = [&](unsigned i) { return getResult(node->operands[i].get()); };
+
+  if (auto approx = approxSqrtError.find(node);
+      node->op == "sqrt" && approx != approxSqrtError.end())
+    return approxSqrtModel(toF(operand(0)), approx->second);
+  const FPCoreOperator *O = fpcoreOperator(node->op);
+  assert(O && "the parser admits only modelled operators");
+  if (O->F64Unary)
+    return useReducedFloat ? (double)truncToPrec(O->F32Unary(toF(operand(0))))
+                           : O->F64Unary(operand(0));
+  if (O->F64Binary)
+    return useReducedFloat ? (double)truncToPrec(
+                                 O->F32Binary(toF(operand(0)), toF(operand(1))))
+                           : O->F64Binary(operand(0), operand(1));
+  if (node->op == "fma")
+    return useReducedFloat
+               ? (double)truncToPrec(
+                     fmaf(toF(operand(0)), toF(operand(1)), toF(operand(2))))
+               : std::fma(operand(0), operand(1), operand(2));
+  if (O->Predicate != CmpInst::BAD_FCMP_PREDICATE) {
+    std::optional<int> order = useReducedFloat
+                                   ? orderOf(toF(operand(0)), toF(operand(1)))
+                                   : orderOf(operand(0), operand(1));
+    return comparisonHolds(O->Predicate, order) ? 1.0 : 0.0;
+  }
+  assert(O->MPFRConstant && "every other operator is a constant");
+  return O->Constant;
 }
 
 void FPEvaluator::evaluateNode(const FPNode *node,
                                const MapVector<Value *, double> &inputValues) {
   if (cache.count(node))
     return;
-
   if (isa<FPConst>(node)) {
-    double constVal = node->getLowerBound();
-    cache.try_emplace(node, constVal);
+    cache.try_emplace(node, node->getLowerBound());
     return;
   }
-
-  if (isa<FPLLValue>(node) && inputValues.count(cast<FPLLValue>(node)->value)) {
-    double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
-    cache.try_emplace(node, inputValue);
+  if (auto *LL = dyn_cast<FPLLValue>(node);
+      LL && inputValues.count(LL->value)) {
+    cache.try_emplace(node, inputValues.lookup(LL->value));
     return;
   }
-
-  if (node->op == "if") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    double cond = getResult(node->operands[0].get());
-
-    if (cond == 1.0) {
-      evaluateNode(node->operands[1].get(), inputValues);
-      double then_val = getResult(node->operands[1].get());
-      cache.try_emplace(node, then_val);
-    } else {
-      evaluateNode(node->operands[2].get(), inputValues);
-      double else_val = getResult(node->operands[2].get());
-      cache.try_emplace(node, else_val);
-    }
+  if (evaluateLogic(node, inputValues))
     return;
-  }
-  if (node->op == "and") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    double op0 = getResult(node->operands[0].get());
-    if (op0 != 1.0) {
-      cache.try_emplace(node, 0.0);
-      return;
-    }
-    evaluateNode(node->operands[1].get(), inputValues);
-    double op1 = getResult(node->operands[1].get());
-    if (op1 != 1.0) {
-      cache.try_emplace(node, 0.0);
-      return;
-    }
-    cache.try_emplace(node, 1.0);
-    return;
-  }
-  if (node->op == "or") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    double op0 = getResult(node->operands[0].get());
-    if (op0 == 1.0) {
-      cache.try_emplace(node, 1.0);
-      return;
-    }
-    evaluateNode(node->operands[1].get(), inputValues);
-    double op1 = getResult(node->operands[1].get());
-    if (op1 == 1.0) {
-      cache.try_emplace(node, 1.0);
-      return;
-    }
-    cache.try_emplace(node, 0.0);
-    return;
-  }
-  if (node->op == "not") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    double op = getResult(node->operands[0].get());
-    cache.try_emplace(node, (op == 1.0) ? 0.0 : 1.0);
-    return;
-  }
-  if (node->op == "TRUE") {
-    cache.try_emplace(node, 1.0);
-    return;
-  }
-  if (node->op == "FALSE") {
-    cache.try_emplace(node, 0.0);
-    return;
-  }
 
   PrecisionChangeType nodePrec = getNodePrecision(node);
-
-  for (const auto &operand : node->operands) {
+  for (const auto &operand : node->operands)
     evaluateNode(operand.get(), inputValues);
-  }
-
   if (nodePrec == PrecisionChangeType::FP80 ||
       nodePrec == PrecisionChangeType::FP128)
     llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
-
   if (const unsigned nExp = expansionComponents(nodePrec))
     if (evaluateExpansionNode(node, nExp))
       return;
-
-  double res = 0.0;
-
-  bool useReducedFloat = (nodePrec == PrecisionChangeType::FP32 ||
-                          nodePrec == PrecisionChangeType::FP16 ||
-                          nodePrec == PrecisionChangeType::BF16);
-
-  auto truncToPrec = [&](float val) -> float {
-    FPKind k = formatOf(nodePrec).Kind;
-    if (k != FPKind::BF16 && k != FPKind::F16)
-      return val;
-    return static_cast<float>(roundToPrec((double)val, k));
-  };
-
-  auto toF = [&](double v) -> float {
-    return truncToPrec(static_cast<float>(v));
-  };
-
-  auto operand = [&](unsigned i) { return getResult(node->operands[i].get()); };
-  auto approx = approxSqrtError.find(node);
-  if (node->op == "sqrt" && approx != approxSqrtError.end()) {
-    res = approxSqrtModel(toF(operand(0)), approx->second);
-  } else if (const UnaryFn *F = findOp(kUnaryFns, node->op)) {
-    res = useReducedFloat ? (double)truncToPrec(F->F32(toF(operand(0))))
-                          : F->F64(operand(0));
-  } else if (const BinaryFn *F = findOp(kBinaryFns, node->op)) {
-    res = useReducedFloat
-              ? (double)truncToPrec(F->F32(toF(operand(0)), toF(operand(1))))
-              : F->F64(operand(0), operand(1));
-  } else if (node->op == "fma") {
-    res = useReducedFloat
-              ? (double)truncToPrec(
-                    fmaf(toF(operand(0)), toF(operand(1)), toF(operand(2))))
-              : std::fma(operand(0), operand(1), operand(2));
-  } else if (std::optional<CmpInst::Predicate> pred =
-                 fpcoreComparison(node->op)) {
-    std::optional<int> order = useReducedFloat
-                                   ? orderOf(toF(operand(0)), toF(operand(1)))
-                                   : orderOf(operand(0), operand(1));
-    res = comparisonHolds(*pred, order) ? 1.0 : 0.0;
-  } else if (const ConstantOp *C = findOp(kConstants, node->op)) {
-    res = C->Value;
-  } else {
-    std::string msg = "FPEvaluator: Unexpected operator " + node->op;
-    llvm_unreachable(msg.c_str());
-  }
-
-  cache.try_emplace(node, res);
+  cache.try_emplace(node, evaluateOperation(node, nodePrec));
 }
 
 double FPEvaluator::getResult(const FPNode *node) const {
@@ -398,7 +261,7 @@ class MPFREvaluator {
     CachedValue(const CachedValue &) = delete;
     CachedValue &operator=(const CachedValue &) = delete;
     CachedValue(CachedValue &&other) noexcept;
-    CachedValue &operator=(CachedValue &&other) noexcept;
+    CachedValue &operator=(CachedValue &&) = delete;
     ~CachedValue();
   };
 
@@ -411,80 +274,19 @@ public:
   void evaluateNode(const FPNode *node,
                     const MapVector<Value *, double> &inputValues);
   mpfr_t &getResult(const FPNode *node);
-};
 
-using MPFRUnary = int (*)(mpfr_ptr, mpfr_srcptr, mpfr_rnd_t);
-using MPFRBinary = int (*)(mpfr_ptr, mpfr_srcptr, mpfr_srcptr, mpfr_rnd_t);
-
-struct MPFRUnaryFn {
-  StringLiteral Op;
-  MPFRUnary Fn;
-};
-struct MPFRBinaryFn {
-  StringLiteral Op;
-  MPFRBinary Fn;
+private:
+  // An if: the value of the arm its condition picks, at that arm's
+  // precision.
+  void evaluateChoice(const FPNode *node,
+                      const MapVector<Value *, double> &inputValues);
+  // Any other operation, into `res`.
+  void evaluateOperation(const FPNode *node,
+                         const MapVector<Value *, double> &inputValues,
+                         mpfr_t &res);
 };
 
 } // namespace
-
-// lgamma is the logarithm of |Gamma|, as C's lgamma.
-static constexpr MPFRUnaryFn kMPFRUnaryFns[] = {
-    {"neg", mpfr_neg},
-    {"sin", mpfr_sin},
-    {"cos", mpfr_cos},
-    {"tan", mpfr_tan},
-    {"asin", mpfr_asin},
-    {"acos", mpfr_acos},
-    {"atan", mpfr_atan},
-    {"exp", mpfr_exp},
-    {"expm1", mpfr_expm1},
-    {"log", mpfr_log},
-    {"log1p", mpfr_log1p},
-    {"sqrt", mpfr_sqrt},
-    {"cbrt", mpfr_cbrt},
-    {"fabs", mpfr_abs},
-    {"asinh", mpfr_asinh},
-    {"acosh", mpfr_acosh},
-    {"atanh", mpfr_atanh},
-    {"sinh", mpfr_sinh},
-    {"cosh", mpfr_cosh},
-    {"tanh", mpfr_tanh},
-    {"ceil",
-     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_ceil(r, x); }},
-    {"floor",
-     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_floor(r, x); }},
-    {"erf", mpfr_erf},
-    {"exp2", mpfr_exp2},
-    {"log10", mpfr_log10},
-    {"log2", mpfr_log2},
-    {"rint", mpfr_rint},
-    {"round",
-     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_round(r, x); }},
-    {"trunc",
-     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t) { return mpfr_trunc(r, x); }},
-    {"lgamma",
-     [](mpfr_ptr r, mpfr_srcptr x, mpfr_rnd_t rnd) {
-       int sign;
-       return mpfr_lgamma(r, &sign, x, rnd);
-     }},
-    {"tgamma", mpfr_gamma},
-};
-
-static constexpr MPFRBinaryFn kMPFRBinaryFns[] = {
-    {"+", mpfr_add},
-    {"-", mpfr_sub},
-    {"*", mpfr_mul},
-    {"/", mpfr_div},
-    {"atan2", mpfr_atan2},
-    {"pow", mpfr_pow},
-    {"hypot", mpfr_hypot},
-    {"copysign", mpfr_copysign},
-    {"fdim", mpfr_dim},
-    {"fmod", mpfr_fmod},
-    {"remainder", mpfr_remainder},
-    {"fmax", mpfr_max},
-    {"fmin", mpfr_min},
-};
 
 MPFREvaluator::CachedValue::CachedValue(unsigned prec) : prec(prec) {
   mpfr_init2(value, prec);
@@ -497,60 +299,47 @@ MPFREvaluator::CachedValue::CachedValue(CachedValue &&other) noexcept
   mpfr_swap(value, other.value);
 }
 
-MPFREvaluator::CachedValue &
-MPFREvaluator::CachedValue::operator=(CachedValue &&other) noexcept {
-  if (this != &other) {
-    mpfr_set_prec(value, other.prec);
-    prec = other.prec;
-    mpfr_swap(value, other.value);
-  }
-  return *this;
-}
-
 MPFREvaluator::CachedValue::~CachedValue() { mpfr_clear(value); }
 
 void MPFREvaluator::evaluateNode(
     const FPNode *node, const MapVector<Value *, double> &inputValues) {
   if (cache.count(node))
     return;
-
+  double leaf;
   if (isa<FPConst>(node)) {
-    double constVal = node->getLowerBound();
-    CachedValue cv(53);
-    mpfr_set_d(cv.value, constVal, MPFR_RNDN);
-    cache.emplace(node, CachedValue(std::move(cv)));
+    leaf = node->getLowerBound();
+  } else if (auto *LL = dyn_cast<FPLLValue>(node);
+             LL && inputValues.count(LL->value)) {
+    leaf = inputValues.lookup(LL->value);
+  } else if (node->op == "if") {
+    evaluateChoice(node, inputValues);
+    return;
+  } else {
+    cache.emplace(node, CachedValue(prec));
+    evaluateOperation(node, inputValues, cache.at(node).value);
     return;
   }
+  CachedValue cv(std::numeric_limits<double>::digits);
+  mpfr_set_d(cv.value, leaf, MPFR_RNDN);
+  cache.emplace(node, std::move(cv));
+}
 
-  if (isa<FPLLValue>(node) && inputValues.count(cast<FPLLValue>(node)->value)) {
-    double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
-    CachedValue cv(53);
-    mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
-    cache.emplace(node, std::move(cv));
-    return;
-  }
+void MPFREvaluator::evaluateChoice(
+    const FPNode *node, const MapVector<Value *, double> &inputValues) {
+  evaluateNode(node->operands[0].get(), inputValues);
+  const FPNode *arm =
+      node->operands[0 == mpfr_cmp_ui(getResult(node->operands[0].get()), 1)
+                         ? 1
+                         : 2]
+          .get();
+  evaluateNode(arm, inputValues);
+  cache.emplace(node, CachedValue(cache.at(arm).prec));
+  mpfr_set(cache.at(node).value, getResult(arm), MPFR_RNDN);
+}
 
-  if (node->op == "if") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &cond = getResult(node->operands[0].get());
-    if (0 == mpfr_cmp_ui(cond, 1)) {
-      evaluateNode(node->operands[1].get(), inputValues);
-      mpfr_t &then_val = getResult(node->operands[1].get());
-      cache.emplace(node, CachedValue(cache.at(node->operands[1].get()).prec));
-      mpfr_set(cache.at(node).value, then_val, MPFR_RNDN);
-    } else {
-      evaluateNode(node->operands[2].get(), inputValues);
-      mpfr_t &else_val = getResult(node->operands[2].get());
-      cache.emplace(node, CachedValue(cache.at(node->operands[2].get()).prec));
-      mpfr_set(cache.at(node).value, else_val, MPFR_RNDN);
-    }
-    return;
-  }
-
-  unsigned nodePrec = prec;
-  cache.emplace(node, CachedValue(nodePrec));
-  mpfr_t &res = cache.at(node).value;
-
+void MPFREvaluator::evaluateOperation(
+    const FPNode *node, const MapVector<Value *, double> &inputValues,
+    mpfr_t &res) {
   // The operands, evaluated in order and rounded to this precision.
   auto rounded = [&]() {
     SmallVector<mpfr_ptr, 3> ops;
@@ -558,63 +347,54 @@ void MPFREvaluator::evaluateNode(
       evaluateNode(operand.get(), inputValues);
     for (const auto &operand : node->operands) {
       mpfr_ptr op = getResult(operand.get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op, prec, MPFR_RNDN);
       ops.push_back(op);
     }
     return ops;
   };
+  // The operands as they are, evaluated in order.
+  auto operands = [&]() {
+    SmallVector<mpfr_ptr, 2> ops;
+    for (const auto &operand : node->operands)
+      evaluateNode(operand.get(), inputValues);
+    for (const auto &operand : node->operands)
+      ops.push_back(getResult(operand.get()));
+    return ops;
+  };
+  auto truth = [](mpfr_srcptr x) { return 0 == mpfr_cmp_ui(x, 1); };
 
-  if (const MPFRUnaryFn *F = findOp(kMPFRUnaryFns, node->op)) {
-    F->Fn(res, rounded()[0], MPFR_RNDN);
-  } else if (const MPFRBinaryFn *F = findOp(kMPFRBinaryFns, node->op)) {
+  const FPCoreOperator *O = fpcoreOperator(node->op);
+  assert(O && "the parser admits only modelled operators");
+  if (O->MPFRUnary) {
+    O->MPFRUnary(res, rounded()[0], MPFR_RNDN);
+  } else if (O->MPFRBinary) {
     SmallVector<mpfr_ptr, 3> ops = rounded();
-    F->Fn(res, ops[0], ops[1], MPFR_RNDN);
+    O->MPFRBinary(res, ops[0], ops[1], MPFR_RNDN);
   } else if (node->op == "fma") {
     SmallVector<mpfr_ptr, 3> ops = rounded();
     mpfr_fma(res, ops[0], ops[1], ops[2], MPFR_RNDN);
-  } else if (std::optional<CmpInst::Predicate> pred =
-                 fpcoreComparison(node->op)) {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    mpfr_t &a = getResult(node->operands[0].get());
-    mpfr_t &b = getResult(node->operands[1].get());
+  } else if (O->Predicate != CmpInst::BAD_FCMP_PREDICATE) {
+    SmallVector<mpfr_ptr, 2> ops = operands();
     std::optional<int> order;
-    if (!mpfr_unordered_p(a, b))
-      order = mpfr_cmp(a, b);
-    mpfr_set_ui(res, comparisonHolds(*pred, order), MPFR_RNDN);
+    if (!mpfr_unordered_p(ops[0], ops[1]))
+      order = mpfr_cmp(ops[0], ops[1]);
+    mpfr_set_ui(res, comparisonHolds(O->Predicate, order), MPFR_RNDN);
+  } else if (O->MPFRConstant) {
+    O->MPFRConstant(res, MPFR_RNDN);
   } else if (node->op == "and" || node->op == "or") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    evaluateNode(node->operands[1].get(), inputValues);
-    bool a = 0 == mpfr_cmp_ui(getResult(node->operands[0].get()), 1);
-    bool b = 0 == mpfr_cmp_ui(getResult(node->operands[1].get()), 1);
+    SmallVector<mpfr_ptr, 2> ops = operands();
+    bool a = truth(ops[0]), b = truth(ops[1]);
     mpfr_set_ui(res, node->op == "and" ? a && b : a || b, MPFR_RNDN);
   } else if (node->op == "not") {
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_t &op = getResult(node->operands[0].get());
-    mpfr_set_prec(res, nodePrec);
-    mpfr_set_ui(res, 0 == mpfr_cmp_ui(op, 1) ? 0 : 1, MPFR_RNDN);
-  } else if (node->op == "TRUE") {
-    mpfr_set_ui(res, 1, MPFR_RNDN);
-  } else if (node->op == "FALSE") {
-    mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else if (node->op == "PI") {
-    mpfr_const_pi(res, MPFR_RNDN);
-  } else if (node->op == "E") {
-    mpfr_set_ui(res, 1, MPFR_RNDN);
-    mpfr_exp(res, res, MPFR_RNDN);
-  } else if (node->op == "INFINITY") {
-    mpfr_set_inf(res, 1);
-  } else if (node->op == "NAN") {
-    mpfr_set_nan(res);
-  } else if (node->op == "binary64->binary32" ||
-             node->op == "binary32->binary64") {
-    // Identity on the value: the ground truth does not narrow.
-    evaluateNode(node->operands[0].get(), inputValues);
-    mpfr_set_prec(res, nodePrec);
-    mpfr_set(res, getResult(node->operands[0].get()), MPFR_RNDN);
+    mpfr_set_ui(res, !truth(operands()[0]), MPFR_RNDN);
+  } else if (node->op == "TRUE" || node->op == "FALSE") {
+    mpfr_set_ui(res, node->op == "TRUE", MPFR_RNDN);
   } else {
-    llvm::errs() << "MPFREvaluator: Unexpected operator '" << node->op << "'\n";
-    llvm_unreachable("Unexpected operator encountered");
+    // A conversion is the identity on the value: the reference does not
+    // narrow.
+    assert(node->op == "binary64->binary32" ||
+           node->op == "binary32->binary64");
+    mpfr_set(res, operands()[0], MPFR_RNDN);
   }
 }
 
@@ -641,76 +421,61 @@ void getFPValues(ArrayRef<FPNode *> outputs,
   }
 }
 
-void getMPFRValues(ArrayRef<FPNode *> outputs,
-                   const MapVector<Value *, double> &inputValues,
-                   SmallVectorImpl<double> &results) {
+namespace {
+// What has to agree between two precisions for a value to count as settled:
+// its sign, its exponent and its leading kGroundTruthPrec bits.
+struct LeadingBits {
+  int sign;
+  mpfr_exp_t exponent;
+  std::string digits;
+  bool operator==(const LeadingBits &other) const {
+    return sign == other.sign && exponent == other.exponent &&
+           digits == other.digits;
+  }
+};
+} // namespace
+
+static LeadingBits leadingBits(mpfr_srcptr x) {
+  mpfr_exp_t exponent;
+  char *digits =
+      mpfr_get_str(nullptr, &exponent, 2, kGroundTruthPrec, x, MPFR_RNDN);
+  LeadingBits bits{mpfr_sgn(x), exponent, digits};
+  mpfr_free_str(digits);
+  return bits;
+}
+
+// The MPFR precision getMPFRValues evaluates at first, in bits.
+static constexpr unsigned kFirstMPFRPrecision = 64;
+
+unsigned getMPFRValues(ArrayRef<FPNode *> outputs,
+                       const MapVector<Value *, double> &inputValues,
+                       SmallVectorImpl<double> &results) {
   assert(!outputs.empty() && "no outputs to evaluate");
-  results.resize(outputs.size());
-
-  unsigned curPrec = 64;
-  std::vector<mpfr_exp_t> prevResExp(outputs.size(), 0);
-  std::vector<char *> prevResStr(outputs.size(), nullptr);
-  std::vector<int> prevResSign(outputs.size(), 0);
-  BitVector converged(outputs.size());
-  size_t numConverged = 0;
-
-  while (true) {
-    MPFREvaluator evaluator(curPrec);
-
-    for (const auto *output : outputs) {
+  const size_t n = outputs.size();
+  results.resize(n);
+  SmallVector<std::optional<LeadingBits>, 4> previous(n);
+  BitVector settled(n);
+  for (unsigned prec = kFirstMPFRPrecision;; prec *= 2) {
+    MPFREvaluator evaluator(prec);
+    for (const FPNode *output : outputs)
       evaluator.evaluateNode(output, inputValues);
-    }
-
-    for (size_t i = 0; i < outputs.size(); ++i) {
-      if (converged[i])
+    for (size_t i = 0; i < n; ++i) {
+      if (settled[i])
         continue;
-
-      mpfr_t &res = evaluator.getResult(outputs[i]);
-      int resSign = mpfr_sgn(res);
-      mpfr_exp_t resExp;
-      char *resStr =
-          mpfr_get_str(nullptr, &resExp, 2, kGroundTruthPrec, res, MPFR_RNDN);
-
-      if (prevResStr[i] != nullptr && resSign == prevResSign[i] &&
-          resExp == prevResExp[i] && strcmp(resStr, prevResStr[i]) == 0) {
-        converged[i] = true;
-        numConverged++;
-        mpfr_free_str(resStr);
-        mpfr_free_str(prevResStr[i]);
-        prevResStr[i] = nullptr;
-        continue;
-      }
-
-      if (prevResStr[i]) {
-        mpfr_free_str(prevResStr[i]);
-      }
-      prevResStr[i] = resStr;
-      prevResExp[i] = resExp;
-      prevResSign[i] = resSign;
+      LeadingBits now = leadingBits(evaluator.getResult(outputs[i]));
+      if (previous[i] == now)
+        settled.set(i);
+      else
+        previous[i] = std::move(now);
     }
-
-    if (numConverged == outputs.size()) {
-      for (size_t i = 0; i < outputs.size(); ++i) {
-        results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
-      }
-      break;
-    }
-
-    curPrec *= 2;
-
-    if (curPrec > kMaxMPFRPrec) {
-      llvm::errs() << "getMPFRValues: MPFR precision limit reached for some "
-                      "outputs, returning NaN\n";
-      for (size_t i = 0; i < outputs.size(); ++i) {
-        if (!converged[i]) {
-          mpfr_free_str(prevResStr[i]);
-          results[i] = std::numeric_limits<double>::quiet_NaN();
-        } else {
-          results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
-        }
-      }
-      return;
-    }
+    if (!settled.all() && prec * 2 <= kMaxMPFRPrecision)
+      continue;
+    // Every value is read at the last precision evaluated.
+    for (size_t i = 0; i < n; ++i)
+      results[i] = settled[i]
+                       ? mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN)
+                       : std::numeric_limits<double>::quiet_NaN();
+    return n - settled.count();
   }
 }
 

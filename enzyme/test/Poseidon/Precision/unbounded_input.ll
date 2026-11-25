@@ -83,10 +83,9 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; BUDGET: Poseidon: the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values, so the subgraph cannot be sampled or priced and keeps its original body.
-; BUDGET-NEXT: [poseidon] subgraph cannot be priced (the profiled input box is empty or unbounded); discarding its 2 precision candidate(s) and keeping the original body.
+; BUDGET: [poseidon] subgraph cannot be priced (the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values); discarding its 2 precision candidate(s) and keeping the original body.
 ; BUDGET: No solution found within the computation cost budget!
-; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left (? + ?) * ? as written: its candidates could not be priced: the profiled input box is empty or unbounded and the algebraic search is disabled
+; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left (? + ?) * ? as written: its candidates could not be priced: the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values and the algebraic search is disabled
 ; BUDGET: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; BUDGET: [poseidon] subgraph cannot be priced (every sample of the original expression scored NaN); discarding its 4 precision candidate(s) and keeping the original body.
 ; BUDGET: No solution found within the computation cost budget!
