@@ -8,6 +8,7 @@
 
 #include "Diagnostics.h"
 
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/LLVMContext.h"
@@ -20,6 +21,16 @@ void diagnose(const Function &F, const DiagnosticLocation &Loc,
               const Twine &Message, DiagnosticSeverity Severity) {
   F.getContext().diagnose(DiagnosticInfoUnsupported(
       F, "Poseidon: " + Message.str(), Loc, Severity));
+}
+
+void remarkMissed(const Function &F, const DiagnosticLocation &Loc,
+                  StringRef Name, const Twine &Message) {
+  OptimizationRemarkEmitter ORE(&F);
+  ORE.emit([&]() {
+    OptimizationRemarkMissed R(kRemarkPass, Name, Loc, &F.getEntryBlock());
+    R << Message.str();
+    return R;
+  });
 }
 
 char UserError::ID = 0;

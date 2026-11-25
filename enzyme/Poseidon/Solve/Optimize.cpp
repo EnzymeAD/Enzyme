@@ -441,8 +441,6 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   if (Error E = attachProfile(O, profile.map, st, st.subgraphs))
     return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
-  if (O.Candidates.EnablePrecision && !O.Candidates.MergeSharedStaging)
-    hintSharedStaging(S, F, st.subgraphs);
 
   if (st.subgraphs.empty() && st.abstractMatmuls.empty())
     return false;

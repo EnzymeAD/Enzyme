@@ -3,12 +3,17 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -poseidon-print -S 2>&1 | FileCheck --check-prefixes=CHECK,CHEAPEST %s
 ; RUN: mkdir -p %t/c2 && cp %S/../../Inputs/fma_opt_cache/herbie_*.json %t/c2/
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c2 -poseidon-tau-cheapest=false -poseidon-print -S 2>&1 | FileCheck --check-prefixes=CHECK,ACCURATE %s
+; RUN: %opt < %s %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/long -poseidon-herbie-max-expr-length=1 -pass-remarks-missed=poseidon -o /dev/null 2>&1 | FileCheck --check-prefix=LONG %s
 
 ; Cached Herbie output replayed from Inputs/fma_opt_cache without invoking Herbie: (x + y) * z  -->  fma(x, z, y * z)
 ;
 ; The site's tolerance of 0.5 is an enormous per-operation relative rounding
 ; level, so the two arms take opposite ends of the same cached frontier:
 ; CHEAPEST (the default) takes the binary32 core, ACCURATE the binary64 one.
+; An expression over -poseidon-herbie-max-expr-length is not sent to Herbie,
+; which a missed-optimization remark says.
+
+; LONG: remark: <unknown>:0:0: Poseidon does not send Herbie an output expression of {{[0-9]+}} characters, over -poseidon-herbie-max-expr-length=1{{$}}
 
 define double @tester(double %x, double %y, double %z) #0 {
 entry:

@@ -10,9 +10,7 @@
 #include "Optimize.h"
 #include "Pass/Diagnostics.h"
 #include "Pass/Options.h"
-#include "Pass/Session.h"
 #include "Sites/Canonicalize.h"
-#include "Sites/SiteIdentity.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -62,8 +60,8 @@ static bool executed(const Instruction &I, const ProfileMap &profileMap) {
   return it != profileMap.end() && it->second.exec != 0;
 }
 
-// Names the operations of F the profiling run never executed, which are left
-// as written, by their source lines.
+// Names in a missed-optimization remark the operations of F the profiling run
+// never executed, which are left as written, by their source lines.
 static void reportUnexecuted(const Function &F,
                              ArrayRef<const Instruction *> unexecuted) {
   std::set<std::pair<std::string, unsigned>> lines;
@@ -77,12 +75,11 @@ static void reportUnexecuted(const Function &F,
   ListSeparator sep;
   for (const auto &[file, line] : lines)
     os << sep << sys::path::filename(file) << ':' << line;
-  diagnose(F, F.getSubprogram(),
-           Twine(unexecuted.size()) +
-               " floating-point operation(s) the profiling run never executed "
-               "are left as written (" +
-               where + "); profile an input that runs them to optimize them",
-           DS_Warning);
+  remarkMissed(F, F.getSubprogram(), "Unexecuted",
+               "Poseidon left " + Twine(unexecuted.size()) +
+                   " floating-point operation(s) as written that the "
+                   "profiling run never executed (" +
+                   where + "); profile an input that runs them");
 }
 
 void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
@@ -561,40 +558,6 @@ static void mergeSharedStagingSubgraphs(const Options &O,
   subgraphs.clear();
   for (auto &M : merged)
     subgraphs.push_back(std::move(M));
-}
-
-void hintSharedStaging(const Session &S, Function &F,
-                       ArrayRef<Subgraph> subgraphs) {
-  // The addrspace(3) global a pointer reaches: directly, or through the
-  // parameter of F the site binds to it.
-  auto sharedBufferOf = [&](const Value *Ptr) -> const Value * {
-    const Value *Obj = getUnderlyingObject(Ptr);
-    if (auto *A = dyn_cast_or_null<Argument>(Obj))
-      if (Value *SA = siteArg(S.Sites, &F, A->getArgNo()))
-        Obj = getUnderlyingObject(SA->stripPointerCasts());
-    auto *GV = dyn_cast_or_null<GlobalVariable>(Obj);
-    return GV && Target::of(*GV->getParent()).isShared(*GV) ? GV : nullptr;
-  };
-  MapVector<const Value *, unsigned> units;
-  for (const Subgraph &subgraph : subgraphs)
-    for (const Value *G : touchedObjects(subgraph, sharedBufferOf))
-      ++units[G];
-  std::string shared;
-  raw_string_ostream os(shared);
-  ListSeparator sep;
-  for (const auto &[G, n] : units)
-    if (n > 1)
-      os << sep << '@' << G->getName() << " (" << n << " units)";
-  if (shared.empty())
-    return;
-  diagnose(F, F.getSubprogram(),
-           "more than one optimization unit reads or writes the shared "
-           "buffer(s) " +
-               shared +
-               ", which a precision change narrows only when all its units "
-               "pick one tier; -poseidon-subgraph-merge-staging makes them one "
-               "unit",
-           DS_Warning);
 }
 
 static void splitSubgraphs(const Options &O,

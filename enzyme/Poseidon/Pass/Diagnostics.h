@@ -24,10 +24,20 @@ class LLVMContext;
 
 namespace poseidon {
 
+/// The pass name of the pass's optimization remarks, which
+/// -Rpass=poseidon, -Rpass-missed=poseidon and -Rpass-analysis=poseidon
+/// enable.
+constexpr const char *kRemarkPass = "poseidon";
+
 /// A diagnostic of `Severity` at `Loc` in `F`, its message prefixed with
 /// "Poseidon: ".
 void diagnose(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
               const llvm::Twine &Message, llvm::DiagnosticSeverity Severity);
+
+/// A missed-optimization remark `Name` at `Loc` in `F`: what the pass left as
+/// written there, and why.
+void remarkMissed(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
+                  llvm::StringRef Name, const llvm::Twine &Message);
 
 /// A mistake in what the compile was given: where it is and what it is.
 ///

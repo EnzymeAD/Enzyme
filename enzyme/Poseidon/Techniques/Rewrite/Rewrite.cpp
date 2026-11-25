@@ -750,12 +750,12 @@ SubgraphCores::eligible(Instruction *output) const {
     return spelled.takeError();
   std::string &expr = *spelled;
   if (expr.length() > O.Candidates.MaxExprLength) {
-    diagnose(*output->getFunction(), output->getDebugLoc(),
-             "an output expression of " + Twine(expr.length()) +
-                 " characters is over -poseidon-herbie-max-expr-length=" +
-                 Twine(O.Candidates.MaxExprLength) +
-                 " and is not sent to Herbie",
-             DS_Warning);
+    remarkMissed(*output->getFunction(), output->getDebugLoc(),
+                 "ExpressionTooLong",
+                 "Poseidon does not send Herbie an output expression of " +
+                     Twine(expr.length()) +
+                     " characters, over -poseidon-herbie-max-expr-length=" +
+                     Twine(O.Candidates.MaxExprLength));
     return std::nullopt;
   }
 

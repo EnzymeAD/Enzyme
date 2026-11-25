@@ -62,7 +62,6 @@ using namespace llvm;
 
 namespace poseidon {
 
-static constexpr const char *kPass = "poseidon";
 static constexpr size_t kMaxRejectedRemarks = 3;
 static constexpr size_t kRemarkExprChars = 160;
 static constexpr size_t kMaxListedOps = 6;
@@ -1608,7 +1607,8 @@ void Explainer::emitRemarks() {
       nApplied += A.status == "applied";
 
   ORE.emit([&]() {
-    OptimizationRemarkAnalysis R(kPass, "Site", siteLoc, &F.getEntryBlock());
+    OptimizationRemarkAnalysis R(kRemarkPass, "Site", siteLoc,
+                                 &F.getEntryBlock());
     R << "Poseidon site " << ore::NV("Site", siteName) << ": ";
     if (tau > 0.0)
       R << "target " << ore::NV("Tau", num(tau));
@@ -1642,7 +1642,7 @@ void Explainer::emitRemarks() {
   });
   if (nApplied == 0)
     ORE.emit([&]() {
-      OptimizationRemarkMissed R(kPass, "SiteLeftAsWritten", siteLoc,
+      OptimizationRemarkMissed R(kRemarkPass, "SiteLeftAsWritten", siteLoc,
                                  &F.getEntryBlock());
       R << "Poseidon left site " << ore::NV("Site", siteName)
         << " as written: " << ore::NV("Reason", siteLeftReason());
@@ -1653,7 +1653,7 @@ void Explainer::emitRemarks() {
     if (!U.root)
       continue;
     ORE.emit([&]() {
-      OptimizationRemarkAnalysis R(kPass, "Profile", U.root);
+      OptimizationRemarkAnalysis R(kRemarkPass, "Profile", U.root);
       if (U.kind == "matmul") {
         R << "Poseidon profile of the " << ore::NV("Shape", U.shape)
           << " matrix product: " << ore::NV("Executions", U.executions)
@@ -1696,7 +1696,7 @@ void Explainer::emitRemarks() {
           std::string orig = o < U.outC.size() ? U.outC[o] : "";
           std::string now = k < A.c.size() ? A.c[k] : A.fpcore;
           ORE.emit([&]() {
-            OptimizationRemark R(kPass, "Rewritten", at);
+            OptimizationRemark R(kRemarkPass, "Rewritten", at);
             R << "Poseidon rewrote " << ore::NV("Expr", clip(orig)) << " as "
               << ore::NV("Rewritten", clip(now));
             std::string how = A.approxNote;
@@ -1715,7 +1715,7 @@ void Explainer::emitRemarks() {
         }
       } else if (A.kind == "precision" || A.kind == "expansion") {
         ORE.emit([&]() {
-          OptimizationRemark R(kPass, "PrecisionChanged", A.at);
+          OptimizationRemark R(kRemarkPass, "PrecisionChanged", A.at);
           R << "Poseidon runs " << ore::NV("Ops", joinWords(A.changedOps))
             << " in " << ore::NV("Type", A.changedTo);
           if (A.c.size() == 1 && !A.c[0].empty())
@@ -1729,7 +1729,7 @@ void Explainer::emitRemarks() {
         });
       } else if (A.kind == "matmul") {
         ORE.emit([&]() {
-          OptimizationRemark R(kPass, "MatmulRaised", A.at);
+          OptimizationRemark R(kRemarkPass, "MatmulRaised", A.at);
           R << "Poseidon raised the " << ore::NV("Shape", U.shape)
             << " matrix product to " << ore::NV("Technique", A.summary);
           if (A.domainError)
@@ -1748,7 +1748,7 @@ void Explainer::emitRemarks() {
       continue;
     if (!U.applied)
       ORE.emit([&]() {
-        OptimizationRemarkMissed R(kPass, "LeftAsWritten", U.root);
+        OptimizationRemarkMissed R(kRemarkPass, "LeftAsWritten", U.root);
         R << "Poseidon left "
           << ore::NV("Expr", U.kind == "matmul"
                                  ? "the " + U.shape + " matrix product"
@@ -1772,7 +1772,7 @@ void Explainer::emitRemarks() {
       const Alt &A = *rejected[k];
       const Instruction *at = A.at ? A.at : U.root;
       ORE.emit([&]() {
-        OptimizationRemarkMissed R(kPass, "Rejected", at);
+        OptimizationRemarkMissed R(kRemarkPass, "Rejected", at);
         R << "Poseidon "
           << (A.status == "pareto" ? "did not select " : "rejected ")
           << ore::NV("Kind", kindWords(A.kind));
@@ -1800,7 +1800,7 @@ void Explainer::emitRemarks() {
 
 bool explainWanted(const Options &O, const Function &F) {
   return !O.Diagnostics.Explain.empty() ||
-         OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
+         OptimizationRemarkEmitter::allowExtraAnalysis(F, kRemarkPass);
 }
 
 void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
@@ -1827,7 +1827,7 @@ void explainNothingToOptimize(Session &S, Function &F, double tau,
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
     DiagnosticLocation loc = siteLocation(S, F);
-    OptimizationRemarkMissed R(kPass, "NothingToOptimize", loc,
+    OptimizationRemarkMissed R(kRemarkPass, "NothingToOptimize", loc,
                                &F.getEntryBlock());
     R << reason;
     return R;
@@ -1840,7 +1840,8 @@ void explainUnprofiled(Session &S, Function &F, double tau, bool siteTarget,
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
     DiagnosticLocation loc = siteLocation(S, F);
-    OptimizationRemarkMissed R(kPass, "Unprofiled", loc, &F.getEntryBlock());
+    OptimizationRemarkMissed R(kRemarkPass, "Unprofiled", loc,
+                               &F.getEntryBlock());
     R << "Poseidon left the site unchanged: " << ore::NV("Cause", cause);
     return R;
   });
@@ -1854,7 +1855,7 @@ void remarkNoHerbie(Session &S, Function &F) {
   const std::string program = herbieProgram(S.Opts.Herbie);
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
-    OptimizationRemarkMissed R(kPass, "NoHerbie", siteLocation(S, F),
+    OptimizationRemarkMissed R(kRemarkPass, "NoHerbie", siteLocation(S, F),
                                &F.getEntryBlock());
     R << "Poseidon proposes no algebraic rewrites: "
       << (program.empty() ? kBuiltWithoutHerbie.str()
@@ -1865,7 +1866,8 @@ void remarkNoHerbie(Session &S, Function &F) {
 
 Error explainSolve(Session &S, Function &F, SiteState &st,
                    ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
-  const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
+  const bool remarks =
+      OptimizationRemarkEmitter::allowExtraAnalysis(F, kRemarkPass);
   const bool write = !explanationDir(S.Opts).empty();
   if (!remarks && !write)
     return Error::success();

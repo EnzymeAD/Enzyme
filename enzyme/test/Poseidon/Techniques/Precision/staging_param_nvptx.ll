@@ -12,8 +12,6 @@
 ; RUN:   | FileCheck --check-prefix=IR %s
 ; RUN: %{opt} -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-precision-frequency-weighted -poseidon-cache=%t/f32 -poseidon-pin=P0_0 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=F32 %s
-; RUN: %{opt} -poseidon-subgraph-reductions -poseidon-precision-frequency-weighted -poseidon-cache=%t/hint -poseidon-pin=P0_0 -o /dev/null 2>&1 \
-; RUN:   | FileCheck --check-prefix=HINT %s
 
 ; OFF: Skipping trivial subgraph
 ; OFF: [poseidon] Found 1 initial subgraphs in preprocess_staged_body
@@ -43,14 +41,11 @@
 ; F32: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; F32: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
-; HINT: warning: {{.*}}preprocess_staged_body{{.*}}: Poseidon: more than one optimization unit reads or writes the shared buffer(s) @_ZZ13staged_kernelPKdS0_PdS1_E1s (2 units), which a precision change narrows only when all its units pick one tier; -poseidon-subgraph-merge-staging makes them one unit{{$}}
-
 ; Two contractions staged through one __shared__ buffer that reaches the body
 ; as a pointer parameter, then a once-per-thread epilogue. The chosen tier
 ; narrows the buffer through the parameter. Without the subgraph flags the first
 ; contraction is a trivial 1-op subgraph; with them the contractions join one
-; optimization unit priced per loop depth, which the merge implies. Kept apart,
-; the two units sharing the buffer are named by a hint.
+; optimization unit priced per loop depth, which the merge implies.
 ; The IR is from
 ;   template <typename R, typename... T>
 ;   __device__ R __poseidon_fp_optimize(void *, T...);

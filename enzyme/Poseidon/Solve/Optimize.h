@@ -148,13 +148,6 @@ llvm::Error attachProfile(const Options &O, const ProfileMap &profileMap,
 void shapeSubgraphs(const Options &O, llvm::Function &F,
                     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 
-/// Names, once for the site clone F, the shared buffers that more than one of
-/// its optimization units reads or writes: a precision change narrows such a
-/// buffer only when all of them pick one tier, which
-/// -poseidon-subgraph-merge-staging makes them do.
-void hintSharedStaging(const Session &S, llvm::Function &F,
-                       llvm::ArrayRef<Subgraph> subgraphs);
-
 /// The steps of `steps` that are applied, in order: a step whose outputs an
 /// earlier step already rewrote is skipped. The binary64 and binary32 searches
 /// of one output are separate units, and the first rewrite erases the output
