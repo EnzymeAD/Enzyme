@@ -30,6 +30,7 @@
 #include "EnzymeLogic.h"
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
+#include "CApi.h"
 #include "EnzymeLogic.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "llvm/IR/Constant.h"

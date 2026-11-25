@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AdjointGenerator.h"
+#include "CApi.h"
 #include "FlangRuntime.h"
 
 using namespace llvm;

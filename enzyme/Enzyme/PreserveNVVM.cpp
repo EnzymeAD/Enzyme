@@ -50,6 +50,7 @@
 
 #include <map>
 
+#include "CApi.h"
 #include "PreserveNVVM.h"
 #include "Utils.h"
 
