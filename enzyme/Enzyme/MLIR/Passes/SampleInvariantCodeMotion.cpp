@@ -8,7 +8,7 @@
 
 #include "Analysis/SampleDependenceAnalysis.h"
 #include "Dialect/Impulse/Impulse.h"
-#include "Interfaces/ImpulseRegionUtils.h"
+#include "Interfaces/LogpdfRegion.h"
 #include "Interfaces/SICMRuleSetInterface.h"
 #include "Interfaces/Utils.h"
 #include "Passes/Passes.h"

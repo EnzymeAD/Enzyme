@@ -17,7 +17,7 @@ add_mlir_library(
   HMCUtils.cpp
   VIUtils.cpp
   ImpulseUtils.cpp
-  ImpulseRegionUtils.cpp
+  LogpdfRegion.cpp
   DistBuilder.cpp
   TransformUtils.cpp
   EnzymeLogic.cpp
