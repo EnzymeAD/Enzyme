@@ -34,7 +34,11 @@ struct Site;
 bool profileSite(Session &S, const Site &site,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
                  unsigned &nextSiteId);
+/// Registers with the host profiler, around each call that passes a stack
+/// object, that object's extent, so that a site reached through it can size
+/// its shadow.
 void registerStackArrays(Session &S, llvm::Module &M);
+/// Registers before main the extent of every global the module defines.
 void registerGlobals(llvm::Module &M);
 
 } // namespace poseidon

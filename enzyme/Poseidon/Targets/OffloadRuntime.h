@@ -34,6 +34,7 @@ class Value;
 
 namespace poseidon {
 
+/// The offload runtime a host module registers its device code with.
 enum class OffloadRuntime { None, CUDA, HIP };
 
 /// The runtime whose host half `M` is, from what clang records on every such
@@ -76,8 +77,11 @@ llvm::CallInst *findPopConfig(llvm::Function &F);
 llvm::CallInst *findLaunchCall(llvm::Function &F);
 /// The pop of the runtime `M` declares one of, CUDA's otherwise.
 llvm::FunctionCallee popCallConfiguration(llvm::Module &M);
+/// The grid and block dimensions the configuration pop `pop` writes.
 llvm::Value *poppedGrid(llvm::CallBase &pop);
 llvm::Value *poppedBlock(llvm::CallBase &pop);
+/// The kernel handle, argument array, dynamic shared memory size and stream
+/// of the launch `launch`.
 llvm::Value *launchedKernel(llvm::CallBase &launch);
 llvm::Value *launchArguments(llvm::CallBase &launch);
 llvm::Value *launchSharedBytes(llvm::CallBase &launch);
@@ -96,6 +100,8 @@ struct VariableRegistration {
   OffloadRuntime Runtime;
   llvm::Function *RegisterGlobals;
 };
+/// How host module `M` registers a device variable; none if it offloads
+/// nothing.
 std::optional<VariableRegistration> variableRegistration(llvm::Module &M);
 /// What clang emits for a __constant__ variable `V` of the unit.
 void registerDeviceVariable(llvm::Module &M, const VariableRegistration &R,

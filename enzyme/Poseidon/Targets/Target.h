@@ -64,8 +64,11 @@ struct ProbeABI {
   llvm::StringRef OverlappingArguments = "";
 };
 
+/// What the pass needs to know of the processor a module is compiled for:
+/// its probes, math library, address spaces and launch geometry.
 class Target {
 public:
+  /// The target of `M`, or of the module `F` is in.
   static const Target &of(const llvm::Module &M);
   static const Target &of(const llvm::Function &F);
   /// The target of the processors named like `processor`, such as a cost
@@ -74,7 +77,9 @@ public:
 
   /// Identity.
   virtual bool isDevice() const = 0;
+  /// The target's name, as diagnostics and cost models give it.
   virtual llvm::StringRef name() const = 0;
+  /// The processor `F` is compiled for.
   virtual llvm::StringRef processor(const llvm::Function &F) const;
   /// The Herbie platform of a cost model measured on `processor`.
   virtual std::string herbiePlatform(llvm::StringRef processor) const = 0;
@@ -84,9 +89,11 @@ public:
   /// Bounds the block a profiled kernel `K` may be launched with to the
   /// device's limit, where the target has no bound of its own on `K`.
   virtual void boundProfiledLaunch(llvm::Function &K) const {}
+  /// The address space the target's globals live in.
   virtual unsigned globalAddressSpace() const = 0;
   /// A workgroup's shared memory; none on the host.
   virtual std::optional<unsigned> sharedAddressSpace() const = 0;
+  /// Whether `G` is in the target's shared (workgroup) memory.
   bool isShared(const llvm::GlobalValue &G) const;
   /// The most static shared memory one kernel can declare.
   virtual uint64_t maxStaticSharedBytes() const = 0;
@@ -143,10 +150,11 @@ public:
   /// none for this target.
   virtual llvm::StringRef profilerBitcode() const { return ""; }
   /// Why this build's device profiler cannot serve the probes of `F` (it
-  /// carries none for this target, or one for another processor), empty if it
+  /// carries none for this target, or one for another processor); none if it
   /// can.
-  virtual std::string profilerMismatch(const llvm::Function &F) const {
-    return "";
+  virtual std::optional<std::string>
+  profilerMismatch(const llvm::Function &F) const {
+    return std::nullopt;
   }
 
 protected:
@@ -170,6 +178,7 @@ LaunchGeometry launchGeometryOf(const llvm::Value *V);
 
 /// For the definitions in Targets/ only.
 const Target &hostTarget();
+/// The targets Poseidon knows, and the probe sets of host and device code.
 const Target &nvptxTarget();
 const Target &amdgpuTarget();
 const ProbeABI &hostProbes();

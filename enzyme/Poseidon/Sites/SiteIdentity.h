@@ -97,6 +97,8 @@ std::string perCallSiteName(llvm::StringRef symbol);
 struct DemangledFunction {
   std::string BaseName, Context;
 };
+/// The base name and context `mangled` demangles to; none if it names no
+/// function.
 std::optional<DemangledFunction> demangleFunction(llvm::StringRef mangled);
 
 /// Records that `clone` was cut from `origin` for a call that passes it
@@ -104,6 +106,7 @@ std::optional<DemangledFunction> demangleFunction(llvm::StringRef mangled);
 void noteSiteClone(SiteRecords &T, llvm::Function *clone,
                    llvm::Function *origin,
                    llvm::ArrayRef<llvm::Value *> primalArgs);
+/// The body the site clone `clone` was cut from; null if it was not.
 const llvm::Function *siteOriginOf(const SiteRecords &T,
                                    const llvm::Function &clone);
 /// The profile stem and file name of the site cut from `body`.
@@ -119,6 +122,7 @@ std::string siteProfileFile(const SiteRecords &T, const llvm::Function &clone);
 /// cut from (an annotated kernel or host function, a marker's target, the copy
 /// made for one __poseidon_optimize call), the one its profile is named after.
 std::string siteKeyOfBody(const llvm::Function &body);
+/// The key of the site `clone` was cut for, as siteKeyOfBody gives it.
 std::string siteKey(const SiteRecords &T, const llvm::Function &clone);
 /// The other names a site answers to when no other site of the module does:
 /// the function a per-call copy was made of, and the unqualified name the

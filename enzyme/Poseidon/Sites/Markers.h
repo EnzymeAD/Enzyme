@@ -42,9 +42,14 @@ bool isMarkerCall(llvm::StringRef calleeName);
 /// lowers; LLVM uniques a second declaration's name with a suffix.
 constexpr llvm::StringLiteral kAutodiffRequest = "__enzyme_autodiff_poseidon";
 
+/// Reports `message` as a warning at the marker call `CI`.
 void warn(llvm::CallBase *CI, const llvm::Twine &message);
+/// Reports `message` as an error at the marker call `CI`.
 void fail(llvm::CallBase *CI, const llvm::Twine &message);
+/// The function the marker call `CI` names, or null, without a diagnostic.
 llvm::Function *markerTargetOrNull(llvm::CallInst *CI);
+/// The function the marker call `CI` names; null, with an error, if it names
+/// none or one without a body.
 llvm::Function *markerTarget(llvm::CallInst *CI);
 /// The argument of a marker call or an Enzyme request that says what the
 /// argument after it is, as enzyme_dup does.
@@ -102,11 +107,16 @@ bool isAccuracyTarget(double tau);
 std::optional<double> readTarget(llvm::CallBase *call, llvm::Value *value,
                                  const llvm::Function &fn);
 
+/// Inlines into the deferred `body` the functions Enzyme generated for it;
+/// how many calls were inlined.
 unsigned foldEnzymeGenerated(llvm::Function &body);
 llvm::Function *
 asLeftByPipeline(llvm::Function &body,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &copies);
+/// Whether `F`, or a function it calls, is still an __enzyme_* request.
 bool callsEnzymeRequest(llvm::Function &F);
+/// Whether the marker call `CI` is the late run's, its body still being a
+/// derivative request; marks the body so that both runs agree.
 bool deferSite(const Options &O, llvm::CallInst *CI);
 /// The marker calls of the module, in module order.
 void collectMarkerCalls(llvm::Module &M,
@@ -120,7 +130,9 @@ bool isDeferredBody(const llvm::Function &F);
 /// module because the two runs are different pass instances.
 constexpr llvm::StringLiteral kNextSiteIdMD = "poseidon.next.site.id";
 
+/// The next site id of `M`, which the early run leaves for the late one.
 unsigned getNextSiteId(llvm::Module &M);
+/// Records `next` as the next site id of `M`.
 void setNextSiteId(llvm::Module &M, unsigned next);
 
 /// What the marker call says about one site: the caller value behind each of

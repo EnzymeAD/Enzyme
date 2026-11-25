@@ -113,8 +113,9 @@ public:
                                                 Type *Ty) const override {
     if (name.size() <= 5 || !name.starts_with("__nv_"))
       return std::nullopt;
-    std::string libm = retypeLibmFunction(name.drop_front(5), Ty);
-    return libm.empty() ? libm : "__nv_" + libm;
+    std::optional<std::string> libm =
+        retypeLibmFunction(name.drop_front(5), Ty);
+    return libm ? "__nv_" + *libm : std::string();
   }
   bool needsMathLibrary(Intrinsic::ID ID, Type *Ty) const override {
     switch (ID) {
@@ -164,9 +165,9 @@ public:
     return "";
 #endif
   }
-  std::string profilerMismatch(const Function &) const override {
+  std::optional<std::string> profilerMismatch(const Function &) const override {
 #ifdef POSEIDON_DEVICE_PROFILER
-    return "";
+    return std::nullopt;
 #else
     return "this build of Poseidon has no NVPTX device profiler, so it cannot "
            "profile CUDA device code; configure it where CMake finds a CUDA "

@@ -30,6 +30,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DerivedTypes.h"
 
+#include <optional>
 #include <string>
 
 namespace llvm {
@@ -121,6 +122,8 @@ bool isLibmFunction(llvm::StringRef Name);
 /// Whether a call to `Name` is one of a function isOptimizable accepts.
 bool isOptimizableLibmCall(llvm::StringRef Name);
 
+/// Whether the C library spells the single-precision form of `Name` with an
+/// 'f' suffix.
 bool hasFloatSuffixInC(llvm::StringRef Name);
 
 /// Whether both GPU targets select the device math library's function for
@@ -128,8 +131,9 @@ bool hasFloatSuffixInC(llvm::StringRef Name);
 /// llvm.minnum/llvm.maxnum.
 bool isDeviceMathBase(llvm::StringRef Name);
 
-/// libm's `name` at `Ty`, empty if it is none Poseidon can retype.
-std::string retypeLibmFunction(llvm::StringRef name, llvm::Type *Ty);
+/// libm's `name` at `Ty`; none if it is none Poseidon can retype.
+std::optional<std::string> retypeLibmFunction(llvm::StringRef name,
+                                              llvm::Type *Ty);
 
 /// Herbie's operators a rewrite writes as math-library calls on either GPU
 /// target: their intrinsics mostly have no instruction there and fail
@@ -138,8 +142,8 @@ bool deviceCallsMathLibrary(llvm::StringRef op, llvm::Type *Ty);
 
 /// The libm name behind a CUDA libdevice or ROCm ocml entry point Poseidon
 /// handles, for both the f64 and the f32 form ("__nv_sqrt", "__nv_sqrtf" and
-/// "__ocml_sqrt_f64" all give "sqrt"), or the empty string.
-llvm::StringRef deviceMathName(llvm::StringRef fnName);
+/// "__ocml_sqrt_f64" all give "sqrt"); none for any other function.
+std::optional<llvm::StringRef> deviceMathName(llvm::StringRef fnName);
 
 /// `funcName`, a libm, libdevice or ocml function, at `newType`; empty if it is
 /// none Poseidon can retype.

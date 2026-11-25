@@ -176,7 +176,8 @@ public:
   }
   /// The library carries the ROCm device libraries of one processor, so a
   /// probe compiled for another cannot call into it.
-  std::string profilerMismatch(const Function &F) const override {
+  std::optional<std::string>
+  profilerMismatch(const Function &F) const override {
 #ifdef POSEIDON_DEVICE_PROFILER_AMDGPU
     if (processor(F) != POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH)
       return (Twine("the AMDGPU device profiler was built for '") +
@@ -187,7 +188,7 @@ public:
               "'; build Poseidon for this processor, or compile the profiling "
               "build for that one")
           .str();
-    return "";
+    return std::nullopt;
 #else
     return "this build of Poseidon has no AMDGPU device profiler, so it cannot "
            "profile HIP device code; configure it with POSEIDON_ROCM_PATH and "

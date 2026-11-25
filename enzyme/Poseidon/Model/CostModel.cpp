@@ -104,12 +104,11 @@ static std::string callRowName(const CallInst &Call) {
       unpriced(&Call);
     return Name;
   }
-  if (StringRef DeviceMath = deviceMathName(Callee->getName());
-      !DeviceMath.empty())
-    return StringSwitch<std::string>(DeviceMath)
+  if (std::optional<StringRef> DeviceMath = deviceMathName(Callee->getName()))
+    return StringSwitch<std::string>(*DeviceMath)
         .Case("fmax", "maxnum")
         .Case("fmin", "minnum")
-        .Default(DeviceMath.str());
+        .Default(DeviceMath->str());
   StringRef Name = mathFunctionOf(Callee->getName());
   if (!isLibmFunction(Name))
     unpriced(&Call);

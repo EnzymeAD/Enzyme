@@ -47,7 +47,7 @@ public:
   }
   std::optional<std::string> retypeMathFunction(StringRef name,
                                                 Type *Ty) const override {
-    return retypeLibmFunction(name, Ty);
+    return retypeLibmFunction(name, Ty).value_or("");
   }
 };
 

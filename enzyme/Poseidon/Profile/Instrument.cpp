@@ -514,7 +514,7 @@ static const Function &userFunctionOf(const Function &F) {
 [[noreturn]] static void refuseProbe(const Target &target,
                                      const Function &caller) {
   const Function &F = userFunctionOf(caller);
-  reportUserError(F, F.getSubprogram(), target.profilerMismatch(F));
+  reportUserError(F, F.getSubprogram(), *target.profilerMismatch(F));
 }
 
 bool linkDeviceProfiler(Module &M, bool profileGenerate) {
@@ -562,7 +562,7 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
       continue;
     for (const User *U : probe->users())
       if (const auto *call = dyn_cast<CallBase>(U))
-        if (!target.profilerMismatch(*call->getFunction()).empty())
+        if (target.profilerMismatch(*call->getFunction()))
           refuseProbe(target, *call->getFunction());
   }
 

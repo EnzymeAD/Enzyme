@@ -351,7 +351,7 @@ bool propagateDeviceSites(const Options &O, Module &M) {
 static bool foldsIntoSite(const Target &T, CallBase &CB) {
   Function *callee = CB.getCalledFunction();
   return callee && !callee->isDeclaration() && !T.isKernel(*callee) &&
-         deviceMathName(callee->getName()).empty();
+         !deviceMathName(callee->getName());
 }
 
 /// At OptimizerEarly: the kernel is the site, so what the inliner left of the
@@ -475,7 +475,7 @@ static bool isHostScalar(Type *T) {
 /// differentiated with one activity per parameter, which a pointer, a
 /// floating-point scalar and an integer have, and its value comes back only as
 /// one of the latter two.
-std::string hostSiteRefusal(Function &F) {
+std::optional<std::string> hostSiteRefusal(Function &F) {
   if (F.isVarArg())
     return "is variadic";
   Type *R = F.getReturnType();
@@ -496,7 +496,7 @@ std::string hostSiteRefusal(Function &F) {
     if (auto *CB = dyn_cast<CallBase>(&I))
       if (getFunctionFromCall(CB) == &F)
         return "calls itself";
-  return "";
+  return std::nullopt;
 }
 
 /// The body a site's call targets must not reach codegen as a call: under
@@ -733,11 +733,11 @@ bool outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
       F->addFnAttr(kNotASite);
       continue;
     }
-    std::string why = hostSiteRefusal(*F);
-    if (!why.empty()) {
-      diagnoseSite(
-          *F, displayName(*F) + " " + why + ", so it cannot be a Poseidon site",
-          DS_Error);
+    if (std::optional<std::string> why = hostSiteRefusal(*F)) {
+      diagnoseSite(*F,
+                   displayName(*F) + " " + *why +
+                       ", so it cannot be a Poseidon site",
+                   DS_Error);
       continue;
     }
     noteSiteTarget(O, *F, tau);

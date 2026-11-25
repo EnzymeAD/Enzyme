@@ -36,11 +36,15 @@ namespace poseidon {
 
 struct Options;
 
+/// A launch descriptor: its manifest line and the message printed when the
+/// manifest is written.
 struct Recorded {
   std::string line;
   std::string message;
 };
 
+/// The header of a device site's profile, which the host half registers
+/// under the profile's name.
 struct ProfileHeader {
   std::string profileName;
   std::string header;
@@ -58,6 +62,7 @@ struct LaunchManifest {
   unsigned ProfiledFunctions = 0, ProfiledSlots = 0;
 };
 
+/// The two kinds of launch a device module hands its host half.
 enum class LaunchKind {
   /// A raised GEMM the host stub dispatches to a library.
   HostDispatch,

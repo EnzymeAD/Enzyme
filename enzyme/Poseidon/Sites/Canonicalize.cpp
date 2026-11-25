@@ -75,7 +75,7 @@ static bool isOptimizableOperation(const Instruction *I) {
     if (!Callee)
       return false;
     // The libdevice and ocml entry points Poseidon handles.
-    if (!deviceMathName(Callee->getName()).empty())
+    if (deviceMathName(Callee->getName()))
       return true;
     if (!I->getType()->isFloatTy() && !I->getType()->isDoubleTy())
       return false;

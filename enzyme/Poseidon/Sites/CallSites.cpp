@@ -366,20 +366,21 @@ bool lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
       asWritten();
       continue;
     }
-    std::string why = fn->isDeclaration()
-                          ? "has no body in this translation unit"
-                          : hostSiteRefusal(*fn);
+    std::optional<std::string> why =
+        fn->isDeclaration() ? "has no body in this translation unit"
+                            : hostSiteRefusal(*fn);
     if (call->getFunctionType() != fn->getFunctionType())
       why = "is called with another signature";
-    if (!why.empty() && active)
-      fail(call, name + " " + why + ", so this call cannot be a Poseidon site");
-    else if (!why.empty())
-      warn(call, name + " " + why +
+    if (why && active)
+      fail(call,
+           name + " " + *why + ", so this call cannot be a Poseidon site");
+    else if (why)
+      warn(call, name + " " + *why +
                      ", so this call is not a Poseidon site. The call runs as "
                      "written.");
     else if (!active)
       warn(call, Twine(kNoProfileAction) + " The call runs as written.");
-    if (!why.empty() || !active) {
+    if (why || !active) {
       asWritten();
       continue;
     }

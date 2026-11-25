@@ -45,6 +45,8 @@ bool isOptimizable(const llvm::Value &V);
 /// profile-use compiles share.
 constexpr llvm::StringLiteral kSlotMD = "poseidon.prof.idx";
 
+/// Numbers the optimizable instructions of the canonical clone `F` in order,
+/// the slots its profile records are indexed by.
 void setSlotMetadata(llvm::Function &F);
 /// The slot of `I`; false if it is null or has none.
 bool tryReadProfIdxMetadata(const llvm::Instruction *I, size_t &out);

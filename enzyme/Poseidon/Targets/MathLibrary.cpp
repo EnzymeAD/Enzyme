@@ -69,8 +69,8 @@ static bool hasRow(StringRef Name, bool MathFunction::*Column) {
 }
 
 StringRef mathFunctionOf(StringRef Name) {
-  if (StringRef Device = deviceMathName(Name); !Device.empty())
-    return Device;
+  if (std::optional<StringRef> Device = deviceMathName(Name))
+    return *Device;
   auto IsRow = [](StringRef N) {
     return any_of(mathFunctions(),
                   [&](const MathFunction &F) { return F.Name == N; });
@@ -98,17 +98,17 @@ bool isDeviceMathBase(StringRef Name) {
   return hasRow(Name, &MathFunction::Device);
 }
 
-std::string retypeLibmFunction(StringRef name, Type *newType) {
+std::optional<std::string> retypeLibmFunction(StringRef name, Type *newType) {
   StringRef baseName = mathFunctionOf(name);
   if (!isLibmFunction(baseName))
-    return "";
+    return std::nullopt;
   if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())
     return (baseName + "f").str();
   if (newType->isDoubleTy())
     return baseName.str();
   if (newType->isFP128Ty() || newType->isX86_FP80Ty())
     return (baseName + "l").str();
-  return "";
+  return std::nullopt;
 }
 
 bool deviceCallsMathLibrary(StringRef op, Type *Ty) {
@@ -116,11 +116,11 @@ bool deviceCallsMathLibrary(StringRef op, Type *Ty) {
          (Ty->isFloatTy() || Ty->isDoubleTy());
 }
 
-StringRef deviceMathName(StringRef fnName) {
+std::optional<StringRef> deviceMathName(StringRef fnName) {
   for (const Target *T : {&amdgpuTarget(), &nvptxTarget()})
     if (std::optional<StringRef> base = T->mathBase(fnName))
-      return *base;
-  return "";
+      return base;
+  return std::nullopt;
 }
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
@@ -134,7 +134,7 @@ std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
 bool keepDeviceMath(Module &M) {
   bool changed = false;
   for (Function &F : M) {
-    if (F.isDeclaration() || deviceMathName(F.getName()).empty() ||
+    if (F.isDeclaration() || !deviceMathName(F.getName()) ||
         F.hasFnAttribute(Attribute::NoInline))
       continue;
     if (F.hasFnAttribute(Attribute::AlwaysInline)) {
@@ -220,8 +220,7 @@ void inlineDeviceMath(Function &F) {
   inlineCallsWhile(F, [&](CallBase &CB) {
     Function *callee = CB.getCalledFunction();
     return callee && !callee->isDeclaration() &&
-           !deviceMathName(callee->getName()).empty() &&
-           T.inlinesMathCall(*callee);
+           deviceMathName(callee->getName()) && T.inlinesMathCall(*callee);
   });
 }
 
