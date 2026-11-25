@@ -573,6 +573,10 @@ private:
   /// the values it carries to the next one.
   WarmupCarry emitWarmupStep(const WarmupCarry &carry, Value iteration,
                              const WarmupSchedule &schedule);
+  /// Emits the end of a middle adaptation window: when `atMiddleWindowEnd`
+  /// holds, the mass matrix is re-estimated from `next.welford` and the
+  /// adapted accumulators restart. Updates `next` to the selected values.
+  void emitWindowEndRestart(WarmupCarry &next, Value atMiddleWindowEnd);
   /// Emits the sampling loop from `state`, leaves the chain's final state in
   /// `state` and returns the collected samples and diagnostics.
   ChainResult emitSampling(ChainState &state, Value stepSize, Value invMass,
@@ -605,6 +609,7 @@ private:
   Value initInvMass;
   /// Whether the inverse mass matrix and its Welford estimate are diagonal.
   bool diagonal = true;
+  WelfordConfig welfordConfig;
 
   bool isHMC;
   bool isNUTS;
@@ -772,6 +777,7 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
   if (initInvMass)
     diagonal = impulse::isDiagonalInverseMass(
         cast<RankedTensorType>(initInvMass.getType()));
+  welfordConfig.diagonal = diagonal;
 }
 
 SmallVector<ChainResult> MCMCChainEmitter::emitChains(Value rng) {
@@ -1057,9 +1063,6 @@ MCMCChainEmitter::emitWarmup(const ChainState &start, Value stepSize,
 WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
                                              Value iteration,
                                              const WarmupSchedule &schedule) {
-  WelfordConfig welfordConfig;
-  welfordConfig.diagonal = diagonal;
-
   auto sample = runKernel(carry.chain, carry.stepSize, carry.invMass,
                           carry.massMatrixSqrt);
 
@@ -1169,6 +1172,12 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
     next.welford = conditionalWelford;
   next.windowIdx = windowIdxAfterIncrement;
 
+  emitWindowEndRestart(next, atMiddleWindowEnd);
+  return next;
+}
+
+void MCMCChainEmitter::emitWindowEndRestart(WarmupCarry &next,
+                                            Value atMiddleWindowEnd) {
   auto windowEndValues = [](const WarmupCarry &c) {
     SmallVector<Value> values = {c.invMass, c.massMatrixSqrt};
     if (c.welford)
@@ -1184,23 +1193,22 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
   WarmupCarry restarted = next;
   if (adaptMassMatrix) {
     Value newInvMass =
-        finalizeWelford(builder, loc, conditionalWelford, welfordConfig);
+        finalizeWelford(builder, loc, *next.welford, welfordConfig);
     Value newMassMatrixSqrt =
         computeMassMatrixSqrt(builder, loc, newInvMass, positionType);
     // finalizeWelford returns rank-1 diagonals; match the carried type.
-    if (newInvMass.getType() != carry.invMass.getType())
+    if (newInvMass.getType() != next.invMass.getType())
       newInvMass = impulse::ReshapeOp::create(
-          builder, loc, carry.invMass.getType(), newInvMass);
-    if (newMassMatrixSqrt.getType() != carry.massMatrixSqrt.getType())
+          builder, loc, next.invMass.getType(), newInvMass);
+    if (newMassMatrixSqrt.getType() != next.massMatrixSqrt.getType())
       newMassMatrixSqrt = impulse::ReshapeOp::create(
-          builder, loc, carry.massMatrixSqrt.getType(), newMassMatrixSqrt);
+          builder, loc, next.massMatrixSqrt.getType(), newMassMatrixSqrt);
     restarted.invMass = newInvMass;
     restarted.massMatrixSqrt = newMassMatrixSqrt;
     restarted.welford = initWelford(builder, loc, model.positionSize, diagonal);
   }
   if (adaptStepSize)
-    restarted.dualAveraging =
-        initDualAveraging(builder, loc, adaptedStepSizeInLoop);
+    restarted.dualAveraging = initDualAveraging(builder, loc, next.stepSize);
   impulse::YieldOp::create(builder, loc, windowEndValues(restarted));
 
   builder.setInsertionPointToStart(builder.createBlock(&ifOp.getFalseBranch()));
@@ -1215,7 +1223,6 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
         WelfordState::fromValues(ArrayRef<Value>(updated).slice(2, 3));
   next.dualAveraging =
       DualAveragingState::fromValues(ArrayRef<Value>(updated).take_back(5));
-  return next;
 }
 
 ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
