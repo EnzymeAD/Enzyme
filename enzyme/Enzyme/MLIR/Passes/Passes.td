@@ -130,6 +130,7 @@ def SICMPass : Pass<"sicm"> {
     that is isolated from above, merging equal constants.
   }];
   let dependentDialects = [
+    "arith::ArithDialect",
     "impulse::ImpulseDialect",
   ];
   let options = [
