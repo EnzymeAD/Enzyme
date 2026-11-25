@@ -24,6 +24,7 @@ add_mlir_dialect_library(
   PrintActivityAnalysis.cpp
   PrintAliasAnalysis.cpp
   PrintBaseObject.cpp
+  TestTypeTreeAttr.cpp
   EnzymeToMemRef.cpp
   SimplifyMath.cpp
   SplitMultiResults.cpp
@@ -46,6 +47,7 @@ add_mlir_dialect_library(
   MLIRAffineDialect
   MLIRArithDialect
   MLIRArithUtils
+  MLIRAsmParser
   MLIRAsyncDialect
   MLIRAffineUtils
   MLIRFuncDialect
