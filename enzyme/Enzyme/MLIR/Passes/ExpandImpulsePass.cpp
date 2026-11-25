@@ -37,6 +37,7 @@
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <type_traits>
 
@@ -4953,6 +4954,34 @@ struct ExpandImpulsePass
 
 } // end anonymous namespace
 
+/// Applies `patterns` to `root` and fails when they do not converge, a pattern
+/// emits an error or an inference op is left. A pattern that fails after an
+/// error leaves its op in place, and the driver can visit the op again and
+/// repeat the error, so each error is reported once.
+static LogicalResult lowerInferenceOps(Operation *root,
+                                       RewritePatternSet &&patterns) {
+  bool hadError = false;
+  llvm::StringSet<> reported;
+  ScopedDiagnosticHandler reportOnce(root->getContext(), [&](Diagnostic &diag) {
+    if (diag.getSeverity() != DiagnosticSeverity::Error)
+      return failure();
+    hadError = true;
+    std::string key;
+    llvm::raw_string_ostream os(key);
+    os << diag.getLocation() << ": " << diag;
+    return success(!reported.insert(key).second);
+  });
+  if (failed(applyPatternsGreedily(root, std::move(patterns))) || hadError)
+    return failure();
+  root->walk([](Operation *op) {
+    if (isa<impulse::UntracedCallOp, impulse::SimulateOp, impulse::GenerateOp,
+            impulse::RegenerateOp, impulse::MHOp, impulse::InferOp,
+            impulse::InferRegionOp>(op))
+      op->emitError("Impulse: expand-impulse could not lower this op");
+  });
+  return failure(hadError);
+}
+
 void ExpandImpulsePass::runOnOperation() {
   // Must run before the per-op MH patterns lower these moves.
   batchMHRuns(getOperation());
@@ -4971,7 +5000,7 @@ void ExpandImpulsePass::runOnOperation() {
                LowerMHInferPattern<impulse::InferRegionOp>>(&getContext());
   patterns.add<LowerGibbsRegionPattern, RejectFlatGibbsPattern>(&getContext());
 
-  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+  if (failed(lowerInferenceOps(getOperation(), std::move(patterns)))) {
     signalPassFailure();
     return;
   }
