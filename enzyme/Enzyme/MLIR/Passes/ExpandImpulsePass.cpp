@@ -1464,7 +1464,7 @@ struct BranchCarry {
 } // namespace
 
 using ProcessSampleFn =
-    llvm::function_ref<WalkResult(impulse::SampleOp, BranchCarry &)>;
+    llvm::function_ref<LogicalResult(impulse::SampleOp, BranchCarry &)>;
 
 // kMHHastingsAttr: weight = [weight, log q(fresh) - log q(replaced)].
 // kMHSiteScoresAttr: weight = [liveness; masked log density] per address.
@@ -1561,8 +1561,7 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
 static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
                                           ArrayAttr layout,
                                           ArrayAttr regenerateAddresses,
-                                          ArrayAttr constrainedAddresses,
-                                          bool hasConstraint, int64_t width,
+                                          int64_t width,
                                           SymbolTableCollection &symbolTable) {
   auto sampleMap = buildSampleOpMap(fn);
   int64_t positionSize =
@@ -1593,71 +1592,55 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
   return mergeColumnWindows(windows);
 }
 
-static LogicalResult
-processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
-                    RankedTensorType traceType, ProcessSampleFn processSample,
-                    SmallVectorImpl<Operation *> &toErase);
+static LogicalResult processImpulseBlock(Block &block,
+                                         PatternRewriter &rewriter,
+                                         BranchCarry &carry,
+                                         ProcessSampleFn processSample);
 
 /// Branches start from the pre-if snapshot; untaken slots stay zero.
 static LogicalResult processImpulseIf(impulse::IfOp ifOp,
                                       PatternRewriter &rewriter,
                                       BranchCarry &carry,
-                                      RankedTensorType traceType,
-                                      ProcessSampleFn processSample,
-                                      SmallVectorImpl<Operation *> &toErase) {
+                                      ProcessSampleFn processSample) {
   Location loc = ifOp.getLoc();
-
-  Value snapTrace = carry.currTrace;
-  Value snapWeight = carry.weight;
-  Value snapCorr = carry.corr;
+  BranchCarry before = carry;
 
   Block &trueBlock = ifOp.getTrueBranch().front();
-  carry.currTrace = snapTrace;
-  carry.weight = snapWeight;
-  carry.corr = snapCorr;
-  if (failed(processImpulseBlock(trueBlock, rewriter, carry, traceType,
-                                 processSample, toErase)))
+  if (failed(processImpulseBlock(trueBlock, rewriter, carry, processSample)))
     return failure();
-  Value trueTrace = carry.currTrace;
-  Value trueWeight = carry.weight;
-  Value trueCorr = carry.corr;
+  BranchCarry afterTrue = carry;
 
-  // Keep `carry.offset`: the branches get disjoint trace columns.
   Block &falseBlock = ifOp.getFalseBranch().front();
-  carry.currTrace = snapTrace;
-  carry.weight = snapWeight;
-  carry.corr = snapCorr;
-  if (failed(processImpulseBlock(falseBlock, rewriter, carry, traceType,
-                                 processSample, toErase)))
+  carry.currTrace = before.currTrace;
+  carry.weight = before.weight;
+  carry.corr = before.corr;
+  if (failed(processImpulseBlock(falseBlock, rewriter, carry, processSample)))
     return failure();
-  Value falseTrace = carry.currTrace;
-  Value falseWeight = carry.weight;
-  Value falseCorr = carry.corr;
 
-  auto extendYield = [&](Block &b, Value t, Value w, Value c) {
-    auto yield = cast<impulse::YieldOp>(b.getTerminator());
-    OpBuilder::InsertionGuard g(rewriter);
+  auto extendYield = [&](Block &block, const BranchCarry &branch) {
+    auto yield = cast<impulse::YieldOp>(block.getTerminator());
+    OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(yield);
-    SmallVector<Value> ops(yield.getOperands().begin(),
-                           yield.getOperands().end());
-    ops.push_back(t);
-    ops.push_back(w);
-    if (c)
-      ops.push_back(c);
-    impulse::YieldOp::create(rewriter, yield.getLoc(), ops);
+    SmallVector<Value> operands(yield.getOperands().begin(),
+                                yield.getOperands().end());
+    operands.push_back(branch.currTrace);
+    operands.push_back(branch.weight);
+    if (branch.corr)
+      operands.push_back(branch.corr);
+    impulse::YieldOp::create(rewriter, yield.getLoc(), operands);
     rewriter.eraseOp(yield);
   };
-  extendYield(trueBlock, trueTrace, trueWeight, trueCorr);
-  extendYield(falseBlock, falseTrace, falseWeight, falseCorr);
+  extendYield(trueBlock, afterTrue);
+  extendYield(falseBlock, carry);
 
   SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
                                    ifOp.getResultTypes().end());
   unsigned oldNumResults = ifOp.getNumResults();
-  newResultTypes.push_back(traceType);
+  newResultTypes.push_back(before.currTrace.getType());
   // Not always scalar: an MH site-scores regenerate carries a vector.
-  newResultTypes.push_back(snapWeight.getType());
-  if (snapCorr)
-    newResultTypes.push_back(snapCorr.getType());
+  newResultTypes.push_back(before.weight.getType());
+  if (before.corr)
+    newResultTypes.push_back(before.corr.getType());
 
   rewriter.setInsertionPoint(ifOp);
   auto newIf =
@@ -1669,36 +1652,36 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
 
   carry.currTrace = newIf.getResult(oldNumResults);
   carry.weight = newIf.getResult(oldNumResults + 1);
-  if (snapCorr)
+  if (before.corr)
     carry.corr = newIf.getResult(oldNumResults + 2);
 
   rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
   return success();
 }
 
-static LogicalResult
-processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
-                    RankedTensorType traceType, ProcessSampleFn processSample,
-                    SmallVectorImpl<Operation *> &toErase) {
+static LogicalResult processImpulseBlock(Block &block,
+                                         PatternRewriter &rewriter,
+                                         BranchCarry &carry,
+                                         ProcessSampleFn processSample) {
   SmallVector<Operation *> ops;
   for (Operation &op : block)
     ops.push_back(&op);
 
   for (Operation *op : ops) {
     if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
-      if (processSample(sampleOp, carry).wasInterrupted())
+      if (failed(processSample(sampleOp, carry)))
         return failure();
     } else if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
       bool hasSample = false;
       ifOp->walk([&](impulse::SampleOp) { hasSample = true; });
-      if (hasSample && failed(processImpulseIf(ifOp, rewriter, carry, traceType,
-                                               processSample, toErase)))
+      if (hasSample &&
+          failed(processImpulseIf(ifOp, rewriter, carry, processSample)))
         return failure();
     } else {
-      for (Region &r : op->getRegions())
-        for (Block &b : r.getBlocks())
-          if (failed(processImpulseBlock(b, rewriter, carry, traceType,
-                                         processSample, toErase)))
+      for (Region &region : op->getRegions())
+        for (Block &nested : region.getBlocks())
+          if (failed(
+                  processImpulseBlock(nested, rewriter, carry, processSample)))
             return failure();
     }
   }
@@ -1833,23 +1816,20 @@ struct ExpandImpulsePass
       auto zeroWeight =
           arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
                                     DenseElementsAttr::get(scalarType, 0.0));
-      Value weightAccumulator = zeroWeight;
 
       auto traceType =
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
       auto zeroTrace =
           arith::ConstantOp::create(entryBuilder, initLoc, traceType,
                                     DenseElementsAttr::get(traceType, 0.0));
-      Value currTrace = zeroTrace;
-      int64_t currentOffset = 0;
 
       SmallVector<Operation *> toErase;
-      BranchCarry carry{currTrace, weightAccumulator, currentOffset};
+      BranchCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
       auto processSample = [&](impulse::SampleOp sampleOp,
-                               BranchCarry &carry) -> WalkResult {
-        Value &currTrace = carry.currTrace;
-        Value &weightAccumulator = carry.weight;
-        int64_t &currentOffset = carry.offset;
+                               BranchCarry &branch) -> LogicalResult {
+        Value &currTrace = branch.currTrace;
+        Value &weightAccumulator = branch.weight;
+        int64_t &currentOffset = branch.offset;
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -1899,7 +1879,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
               auto flatSampleType = RankedTensorType::get(
                   {1, numElements}, sampleTy.getElementType());
@@ -1923,7 +1903,7 @@ struct ExpandImpulsePass
 
           rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
-          return WalkResult::advance();
+          return success();
         }
 
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
@@ -1957,7 +1937,7 @@ struct ExpandImpulsePass
           if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
             sampleOp.emitError("Impulse: failed to construct logpdf call; "
                                "logpdf function has wrong number of arguments");
-            return WalkResult::interrupt();
+            return failure();
           }
 
           // A2. Compute and accumulate weight.
@@ -1988,7 +1968,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
 
               auto flatSampleType = RankedTensorType::get(
@@ -2015,7 +1995,7 @@ struct ExpandImpulsePass
           if (scoreTailSize > 0) {
             sampleOp.emitError("Impulse: score-tail traces do not support "
                                "nested generative sites");
-            return WalkResult::interrupt();
+            return failure();
           }
           auto genFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
@@ -2025,7 +2005,7 @@ struct ExpandImpulsePass
             sampleOp.emitError(
                 "Impulse: generative function body is empty; "
                 "if this is a distribution, add a logpdf attribute");
-            return WalkResult::interrupt();
+            return failure();
           }
 
           ArrayAttr subSelection =
@@ -2044,7 +2024,7 @@ struct ExpandImpulsePass
             if (subPositionSize <= 0) {
               sampleOp.emitError(
                   "Impulse: failed to compute sub-position size");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             // Build result types: (trace, weight, original_returns...)
@@ -2070,7 +2050,7 @@ struct ExpandImpulsePass
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
             if (mergeOffset < 0) {
               sampleOp.emitError("Impulse: failed to compute merge offset");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
@@ -2097,15 +2077,11 @@ struct ExpandImpulsePass
         sampleOp.replaceAllUsesWith(sampledValues);
 
         toErase.push_back(sampleOp);
-        return WalkResult::advance();
+        return success();
       };
 
-      auto result =
-          processImpulseBlock(NewF.getFunctionBody().front(), rewriter, carry,
-                              traceType, processSample, toErase);
-      currTrace = carry.currTrace;
-      weightAccumulator = carry.weight;
-      currentOffset = carry.offset;
+      LogicalResult result = processImpulseBlock(
+          NewF.getFunctionBody().front(), rewriter, carry, processSample);
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
@@ -2120,7 +2096,7 @@ struct ExpandImpulsePass
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
         SmallVector<Value> newRetVals;
-        Value outTrace = currTrace;
+        Value outTrace = carry.currTrace;
         if (scoreTailSize > 0) {
           auto fullType =
               RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
@@ -2133,7 +2109,7 @@ struct ExpandImpulsePass
               DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
           Value acc = impulse::DynamicUpdateSliceOp::create(
                           rewriter, retOp.getLoc(), fullType, zeroFull,
-                          currTrace, ValueRange{c0, c0})
+                          carry.currTrace, ValueRange{c0, c0})
                           .getResult();
           for (auto [i, s] : llvm::enumerate(siteScores)) {
             auto s11 = impulse::ReshapeOp::create(
@@ -2151,7 +2127,7 @@ struct ExpandImpulsePass
           outTrace = acc;
         }
         newRetVals.push_back(outTrace);
-        newRetVals.push_back(weightAccumulator);
+        newRetVals.push_back(carry.weight);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
 
@@ -2845,10 +2821,9 @@ struct ExpandImpulsePass
       // The region form fills this in during the proposal.
       ColumnWindows changedColumns;
       if constexpr (!isRegionForm)
-        changedColumns = mhChangedColumnsFlat(
-            op, fn, allAddresses, selection, op.getConstrainedAddressesAttr(),
-            static_cast<bool>(op.getConstraint()), traceType.getShape()[1],
-            symbolTable);
+        changedColumns =
+            mhChangedColumnsFlat(op, fn, allAddresses, selection,
+                                 traceType.getShape()[1], symbolTable);
 
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
                          Value rng) -> std::array<Value, 4> {
@@ -4159,8 +4134,6 @@ struct ExpandImpulsePass
       Value selectedTrace = writeBackMHWindows(
           rewriter, loc, oldTrace, newTrace, accepted,
           mhChangedColumnsFlat(mhOp, fn, selection, regenerateAddresses,
-                               mhOp.getConstrainedAddressesAttr(),
-                               static_cast<bool>(mhOp.getConstraint()),
                                cast<RankedTensorType>(traceType).getShape()[1],
                                symbolTable));
       auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
@@ -4220,24 +4193,21 @@ struct ExpandImpulsePass
       auto zeroWeight =
           arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
                                     DenseElementsAttr::get(scalarType, 0.0));
-      Value weightAccumulator = zeroWeight;
 
       auto traceType =
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
       auto zeroTrace =
           arith::ConstantOp::create(entryBuilder, initLoc, traceType,
                                     DenseElementsAttr::get(traceType, 0.0));
-      Value currTrace = zeroTrace;
       Value constraint = NewF.getArgument(0);
-      int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
-      BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset};
+      BranchCarry carry{zeroTrace, zeroWeight, /*offset=*/0};
       auto processSample = [&](impulse::SampleOp sampleOp,
-                               BranchCarry &carry) -> WalkResult {
-        Value &currTrace = carry.currTrace;
-        Value &weightAccumulator = carry.weight;
-        int64_t &currentTraceOffset = carry.offset;
+                               BranchCarry &branch) -> LogicalResult {
+        Value &currTrace = branch.currTrace;
+        Value &weightAccumulator = branch.weight;
+        int64_t &currentTraceOffset = branch.offset;
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -4259,7 +4229,7 @@ struct ExpandImpulsePass
               if (address.size() != 1) {
                 sampleOp.emitError("Impulse: distribution function cannot have "
                                    "composite constrained address");
-                return WalkResult::interrupt();
+                return failure();
               }
               isConstrained = true;
               constrainedOffset = computeOffsetForSampleInSelection(
@@ -4279,7 +4249,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
               auto sliceType = RankedTensorType::get(
                   {1, numElements}, resultType.getElementType());
@@ -4298,7 +4268,7 @@ struct ExpandImpulsePass
             if (!impulse::distSamplerEmittable(dist)) {
               sampleOp.emitError("Impulse: distribution sampler is not "
                                  "emittable; the site must be constrained");
-              return WalkResult::interrupt();
+              return failure();
             }
             auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
                                                distArgs, distSampleType);
@@ -4329,7 +4299,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
               auto flatSampleType = RankedTensorType::get(
                   {1, numElements}, sampleTy.getElementType());
@@ -4353,7 +4323,7 @@ struct ExpandImpulsePass
 
           rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
-          return WalkResult::advance();
+          return success();
         }
 
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
@@ -4369,7 +4339,7 @@ struct ExpandImpulsePass
                 sampleOp.emitError(
                     "Impulse: distribution function cannot have composite "
                     "constrained address");
-                return WalkResult::interrupt();
+                return failure();
               }
               isConstrained = true;
               constrainedOffset = computeOffsetForSampleInSelection(
@@ -4391,7 +4361,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
 
               auto sliceType = RankedTensorType::get(
@@ -4426,7 +4396,7 @@ struct ExpandImpulsePass
               sampleOp.emitError(
                   "Impulse: failed to construct logpdf call for constrained "
                   "sample; logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             auto logpdf = func::CallOp::create(
@@ -4466,7 +4436,7 @@ struct ExpandImpulsePass
               sampleOp.emitError(
                   "Impulse: failed to construct logpdf call; "
                   "logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             auto logpdf = func::CallOp::create(
@@ -4496,7 +4466,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
 
               auto flatSampleType = RankedTensorType::get(
@@ -4523,7 +4493,7 @@ struct ExpandImpulsePass
           if (scoreTailSize > 0) {
             sampleOp.emitError("Impulse: score-tail traces do not support "
                                "nested generative sites");
-            return WalkResult::interrupt();
+            return failure();
           }
           auto genFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
@@ -4533,7 +4503,7 @@ struct ExpandImpulsePass
             sampleOp.emitError(
                 "Impulse: generative function body is empty; "
                 "if this is a distribution, add a logpdf attribute");
-            return WalkResult::interrupt();
+            return failure();
           }
 
           ArrayAttr subSelection =
@@ -4558,7 +4528,7 @@ struct ExpandImpulsePass
             if (subPositionSize <= 0 || subConstraintSize < 0) {
               sampleOp.emitError("Impulse: failed to compute sub-position or "
                                  "sub-constraint size");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             Value subConstraint;
@@ -4628,15 +4598,11 @@ struct ExpandImpulsePass
 
         sampleOp.replaceAllUsesWith(sampledValues);
         toErase.push_back(sampleOp);
-        return WalkResult::advance();
+        return success();
       };
 
-      auto result =
-          processImpulseBlock(NewF.getFunctionBody().front(), rewriter, carry,
-                              traceType, processSample, toErase);
-      currTrace = carry.currTrace;
-      weightAccumulator = carry.weight;
-      currentTraceOffset = carry.offset;
+      LogicalResult result = processImpulseBlock(
+          NewF.getFunctionBody().front(), rewriter, carry, processSample);
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
@@ -4652,7 +4618,7 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
-        Value outTrace = currTrace;
+        Value outTrace = carry.currTrace;
         if (scoreTailSize > 0) {
           auto fullType =
               RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
@@ -4665,7 +4631,7 @@ struct ExpandImpulsePass
               DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
           Value acc = impulse::DynamicUpdateSliceOp::create(
                           rewriter, retOp.getLoc(), fullType, zeroFull,
-                          currTrace, ValueRange{c0, c0})
+                          carry.currTrace, ValueRange{c0, c0})
                           .getResult();
           for (auto [i, s] : llvm::enumerate(siteScores)) {
             auto s11 = impulse::ReshapeOp::create(
@@ -4683,7 +4649,7 @@ struct ExpandImpulsePass
           outTrace = acc;
         }
         newRetVals.push_back(outTrace);
-        newRetVals.push_back(weightAccumulator);
+        newRetVals.push_back(carry.weight);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
 
@@ -4828,18 +4794,17 @@ struct ExpandImpulsePass
       auto zeroWeight =
           arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
                                     DenseElementsAttr::get(scalarType, 0.0));
-      Value weightAccumulator = zeroWeight;
+      Value initWeight = zeroWeight;
 
       auto traceType =
           RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
       auto zeroTrace =
           arith::ConstantOp::create(entryBuilder, initLoc, traceType,
                                     DenseElementsAttr::get(traceType, 0.0));
-      Value currTrace = zeroTrace;
+      Value initTrace = zeroTrace;
 
       Value prevTrace = NewF.getArgument(0);
       Value constraint = hasConstraint ? NewF.getArgument(1) : Value();
-      int64_t currentTraceOffset = 0;
 
       // Taint is computed up front; fresh draws are added as they are created.
       bool deltaMode = scoreTailSize > 0;
@@ -4855,7 +4820,7 @@ struct ExpandImpulsePass
         {
           auto valueSliceType = RankedTensorType::get(
               {1, positionSize}, entryBuilder.getF64Type());
-          currTrace = impulse::SliceOp::create(
+          initTrace = impulse::SliceOp::create(
                           entryBuilder, initLoc, valueSliceType, prevTrace,
                           entryBuilder.getDenseI64ArrayAttr({0, 0}),
                           entryBuilder.getDenseI64ArrayAttr({1, positionSize}),
@@ -4891,7 +4856,7 @@ struct ExpandImpulsePass
           siteIndex[cast<ArrayAttr>(addr)[0]] = k;
         auto kType = RankedTensorType::get({2, (int64_t)siteScoresAttr.size()},
                                            entryBuilder.getF64Type());
-        weightAccumulator = arith::ConstantOp::create(
+        initWeight = arith::ConstantOp::create(
             entryBuilder, initLoc, kType, DenseElementsAttr::get(kType, 0.0));
       } else if (hastings && !deltaMode) {
         // Sites whose old density cannot be evaluated inline at the new state.
@@ -4992,13 +4957,13 @@ struct ExpandImpulsePass
       };
 
       SmallVector<Operation *> toErase;
-      BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset,
+      BranchCarry carry{initTrace, initWeight, /*offset=*/0,
                         hastings ? Value(zeroWeight) : Value()};
       auto processSample = [&](impulse::SampleOp sampleOp,
-                               BranchCarry &carry) -> WalkResult {
-        Value &currTrace = carry.currTrace;
-        Value &weightAccumulator = carry.weight;
-        int64_t &currentTraceOffset = carry.offset;
+                               BranchCarry &branch) -> LogicalResult {
+        Value &currTrace = branch.currTrace;
+        Value &weightAccumulator = branch.weight;
+        int64_t &currentTraceOffset = branch.offset;
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -5019,7 +4984,7 @@ struct ExpandImpulsePass
               if (address.size() != 1) {
                 sampleOp.emitError("Impulse: distribution function cannot have "
                                    "composite selected address");
-                return WalkResult::interrupt();
+                return failure();
               }
               isSelected = true;
               break;
@@ -5063,7 +5028,7 @@ struct ExpandImpulsePass
                   if (address.size() != 1) {
                     sampleOp.emitError("Impulse: distribution function cannot "
                                        "have composite constrained address");
-                    return WalkResult::interrupt();
+                    return failure();
                   }
                   isConstrained = true;
                   constrainedOffset = computeOffsetForSampleInSelection(
@@ -5084,7 +5049,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
               auto sliceType = RankedTensorType::get(
                   {1, numElements}, resultType.getElementType());
@@ -5163,24 +5128,24 @@ struct ExpandImpulsePass
               siteScores.push_back(logpdf);
             if (hastings && isSelected) {
               // A prior draw's proposal density cancels its own term.
-              carry.corr = arith::AddFOp::create(rewriter, loc, carry.corr,
-                                                 contribution);
+              branch.corr = arith::AddFOp::create(rewriter, loc, branch.corr,
+                                                  contribution);
               if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
                 SmallVector<Value> oldVals =
                     sliceOldValues(sampleOp, sampleOffset);
                 Value oldLp = impulse::emitDistLogpdf(rewriter, loc, dist,
                                                       oldVals[1], distArgs);
-                carry.corr =
-                    arith::SubFOp::create(rewriter, loc, carry.corr, oldLp);
+                branch.corr =
+                    arith::SubFOp::create(rewriter, loc, branch.corr, oldLp);
               }
             } else if (flipIdx >= 0) {
               // Kept: old density, cancelled via oldInfo; fresh: new density.
               Value term = arith::SelectOp::create(
                   rewriter, loc, oldLive,
                   scalarAt(rewriter, loc, oldInfo, {1, flipIdx}), logpdf);
-              carry.corr =
-                  arith::AddFOp::create(rewriter, loc, carry.corr, term);
+              branch.corr =
+                  arith::AddFOp::create(rewriter, loc, branch.corr, term);
             }
           } else {
             siteScores.push_back(oldScore);
@@ -5203,7 +5168,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
               // The offset advances even when the value is not rewritten.
               if (!deltaMode || isSelected) {
@@ -5231,7 +5196,7 @@ struct ExpandImpulsePass
 
           rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
           toErase.push_back(sampleOp);
-          return WalkResult::advance();
+          return success();
         }
 
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
@@ -5246,7 +5211,7 @@ struct ExpandImpulsePass
                 sampleOp.emitError(
                     "Impulse: distribution function cannot have composite "
                     "selected address");
-                return WalkResult::interrupt();
+                return failure();
               }
               isSelected = true;
               break;
@@ -5280,7 +5245,7 @@ struct ExpandImpulsePass
                     sampleOp.emitError(
                         "Impulse: distribution function cannot have composite "
                         "constrained address");
-                    return WalkResult::interrupt();
+                    return failure();
                   }
                   isConstrained = true;
                   constrainedOffset = computeOffsetForSampleInSelection(
@@ -5304,7 +5269,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
 
               auto sliceType = RankedTensorType::get(
@@ -5357,7 +5322,7 @@ struct ExpandImpulsePass
           if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
             sampleOp.emitError("Impulse: failed to construct logpdf call; "
                                "logpdf function has wrong number of arguments");
-            return WalkResult::interrupt();
+            return failure();
           }
 
           bool termDirty = isSelected;
@@ -5413,8 +5378,8 @@ struct ExpandImpulsePass
               siteScores.push_back(logpdf.getResult(0));
             if (hastings && isSelected) {
               // A prior draw's proposal density cancels its own term.
-              carry.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                 carry.corr, contribution);
+              branch.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                  branch.corr, contribution);
               if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
                 SmallVector<Value> oldOperands =
@@ -5425,9 +5390,9 @@ struct ExpandImpulsePass
                 auto oldLp = func::CallOp::create(
                     rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                     logpdfFn.getResultTypes(), oldOperands);
-                carry.corr =
+                branch.corr =
                     arith::SubFOp::create(rewriter, sampleOp.getLoc(),
-                                          carry.corr, oldLp.getResult(0));
+                                          branch.corr, oldLp.getResult(0));
               }
             } else if (flipIdx >= 0) {
               // Kept: old density, cancelled via oldInfo; fresh: new density.
@@ -5435,8 +5400,8 @@ struct ExpandImpulsePass
                   rewriter, sampleOp.getLoc(), oldLive,
                   scalarAt(rewriter, sampleOp.getLoc(), oldInfo, {1, flipIdx}),
                   contribution);
-              carry.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                 carry.corr, term);
+              branch.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                  branch.corr, term);
             }
           } else {
             siteScores.push_back(oldScore);
@@ -5460,7 +5425,7 @@ struct ExpandImpulsePass
               if (numElements < 0) {
                 sampleOp.emitError(
                     "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
+                return failure();
               }
               if (!deltaMode || isSelected) {
                 auto flatSampleType = RankedTensorType::get(
@@ -5494,7 +5459,7 @@ struct ExpandImpulsePass
             sampleOp.emitError(
                 "Impulse: generative function body is empty; "
                 "if this is a distribution, add a logpdf attribute");
-            return WalkResult::interrupt();
+            return failure();
           }
 
           ArrayAttr subSelection =
@@ -5520,14 +5485,14 @@ struct ExpandImpulsePass
             if (subPositionSize <= 0) {
               sampleOp.emitError(
                   "Impulse: failed to compute sub-position size");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             int64_t mergeOffset = computeOffsetForNestedSample(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
             if (mergeOffset < 0) {
               sampleOp.emitError("Impulse: failed to compute merge offset");
-              return WalkResult::interrupt();
+              return failure();
             }
 
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
@@ -5575,7 +5540,7 @@ struct ExpandImpulsePass
                     "Impulse: MH over a generative call whose sites can "
                     "change liveness or parameters under the move is not "
                     "supported");
-                return WalkResult::interrupt();
+                return failure();
               }
             }
 
@@ -5605,8 +5570,8 @@ struct ExpandImpulsePass
                   unpackHastingsWeight(rewriter, sampleOp.getLoc(), subWeight);
               weightAccumulator = arith::AddFOp::create(
                   rewriter, sampleOp.getLoc(), weightAccumulator, w);
-              carry.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                 carry.corr, c);
+              branch.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                  branch.corr, c);
             } else if (!scoring) {
               weightAccumulator = arith::AddFOp::create(
                   rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
@@ -5634,16 +5599,11 @@ struct ExpandImpulsePass
 
         sampleOp.replaceAllUsesWith(sampledValues);
         toErase.push_back(sampleOp);
-        return WalkResult::advance();
+        return success();
       };
 
-      auto result =
-          processImpulseBlock(NewF.getFunctionBody().front(), rewriter, carry,
-                              traceType, processSample, toErase);
-      currTrace = carry.currTrace;
-      weightAccumulator = carry.weight;
-      currentTraceOffset = carry.offset;
-      Value corrAccumulator = carry.corr;
+      LogicalResult result = processImpulseBlock(
+          NewF.getFunctionBody().front(), rewriter, carry, processSample);
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
@@ -5658,7 +5618,7 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
-        Value outTrace = currTrace;
+        Value outTrace = carry.currTrace;
         if (scoreTailSize > 0) {
           auto fullType =
               RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
@@ -5671,7 +5631,7 @@ struct ExpandImpulsePass
               DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
           Value acc = impulse::DynamicUpdateSliceOp::create(
                           rewriter, retOp.getLoc(), fullType, zeroFull,
-                          currTrace, ValueRange{c0, c0})
+                          carry.currTrace, ValueRange{c0, c0})
                           .getResult();
           for (auto [i, s] : llvm::enumerate(siteScores)) {
             auto s11 = impulse::ReshapeOp::create(
@@ -5690,7 +5650,7 @@ struct ExpandImpulsePass
         }
         newRetVals.push_back(outTrace);
         if (hastings) {
-          Value corr = corrAccumulator;
+          Value corr = carry.corr;
           if (oldInfo)
             for (int64_t k = 0, e = cast<RankedTensorType>(oldInfo.getType())
                                         .getShape()[1];
@@ -5698,10 +5658,10 @@ struct ExpandImpulsePass
               corr = arith::SubFOp::create(
                   rewriter, retOp.getLoc(), corr,
                   scalarAt(rewriter, retOp.getLoc(), oldInfo, {1, k}));
-          newRetVals.push_back(packHastingsWeight(rewriter, retOp.getLoc(),
-                                                  weightAccumulator, corr));
+          newRetVals.push_back(
+              packHastingsWeight(rewriter, retOp.getLoc(), carry.weight, corr));
         } else {
-          newRetVals.push_back(weightAccumulator);
+          newRetVals.push_back(carry.weight);
         }
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
