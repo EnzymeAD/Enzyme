@@ -339,17 +339,24 @@ static Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
   return reduceSumToScalar(b, loc, kernel);
 }
 
-Value impulse::emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
-                               RankedTensorType sampleType) {
+/// Draws `sampleType` values from `distribution` with parameters 0 and 1,
+/// that is uniform on [0, 1) or standard normal, and advances `rng`.
+static Value emitRandomDraw(OpBuilder &b, Location loc, Value &rng,
+                            RankedTensorType sampleType,
+                            RngDistribution distribution) {
   Type elemType = sampleType.getElementType();
   Value zero = scalarConst(b, loc, elemType, 0.0);
   Value one = scalarConst(b, loc, elemType, 1.0);
   auto op = impulse::RandomOp::create(
       b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
-      impulse::RngDistributionAttr::get(b.getContext(),
-                                        impulse::RngDistribution::UNIFORM));
+      impulse::RngDistributionAttr::get(b.getContext(), distribution));
   rng = op.getOutputRngState();
   return op.getResult();
+}
+
+Value impulse::emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
+                               RankedTensorType sampleType) {
+  return emitRandomDraw(b, loc, rng, sampleType, RngDistribution::UNIFORM);
 }
 
 /// Standard exponential sample -log1p(-u) from a uniform sample `u`.
@@ -366,6 +373,8 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     return broadcastToSample(b, loc, v, sampleType);
   };
   switch (base) {
+  case DistBaseKind::STD_NORMAL:
+    return emitRandomDraw(b, loc, rng, sampleType, RngDistribution::NORMAL);
   case DistBaseKind::STD_UNIFORM:
     return emitUniformDraw(b, loc, rng, sampleType);
   case DistBaseKind::EXPONENTIAL: {
@@ -397,16 +406,8 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     return arith::AddFOp::create(b, loc, low, fl);
   }
   case DistBaseKind::HALF_NORMAL: {
-    Type elemType = sampleType.getElementType();
-    Value zero = scalarConst(b, loc, elemType, 0.0);
-    Value one = scalarConst(b, loc, elemType, 1.0);
-    auto op = impulse::RandomOp::create(
-        b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
-        impulse::RngDistributionAttr::get(b.getContext(),
-                                          impulse::RngDistribution::NORMAL));
-    rng = op.getOutputRngState();
-    Value scaled =
-        arith::MulFOp::create(b, loc, bcast(distArgs[0]), op.getResult());
+    Value z = emitRandomDraw(b, loc, rng, sampleType, RngDistribution::NORMAL);
+    Value scaled = arith::MulFOp::create(b, loc, bcast(distArgs[0]), z);
     return math::AbsFOp::create(b, loc, scaled);
   }
   case DistBaseKind::HALF_CAUCHY: {
@@ -431,14 +432,7 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     Value sigma = distArgs[1];
     int64_t n = sampleType.getNumElements();
     Type elemType = sampleType.getElementType();
-    Value zero = scalarConst(b, loc, elemType, 0.0);
-    Value one = scalarConst(b, loc, elemType, 1.0);
-    auto zop = impulse::RandomOp::create(
-        b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
-        impulse::RngDistributionAttr::get(b.getContext(),
-                                          impulse::RngDistribution::NORMAL));
-    rng = zop.getOutputRngState();
-    Value z = zop.getResult();
+    Value z = emitRandomDraw(b, loc, rng, sampleType, RngDistribution::NORMAL);
     auto matType = cast<RankedTensorType>(sigma.getType());
     Value upperChol = impulse::CholeskyOp::create(
         b, loc, matType, sigma, b.getBoolAttr(/*lower=*/false));
@@ -736,34 +730,15 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &b, Location loc,
                                             DistAttr dist, Value rng,
                                             ValueRange distArgs,
                                             RankedTensorType sampleType) {
-  Type elemType = sampleType.getElementType();
-  MLIRContext *ctx = b.getContext();
-
-  if (dist.getBase() != DistBaseKind::STD_NORMAL) {
-    Value val =
-        emitNativeSampler(b, loc, dist.getBase(), rng, distArgs, sampleType);
-    // The verifier allows chains only on STD_UNIFORM: distArgs are the chain's.
-    if (ArrayAttr transforms = dist.getTransforms())
-      for (Attribute a : transforms)
-        val = emitXformForward(b, loc, cast<XformAttr>(a), val, distArgs,
-                               sampleType);
-    return {rng, val};
-  }
-
-  Value zero = scalarConst(b, loc, elemType, 0.0);
-  Value one = scalarConst(b, loc, elemType, 1.0);
-  auto randomOp = impulse::RandomOp::create(
-      b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
-      impulse::RngDistributionAttr::get(ctx, impulse::RngDistribution::NORMAL));
-  Value newRng = randomOp.getOutputRngState();
-  Value val = randomOp.getResult();
-
+  Value val =
+      emitNativeSampler(b, loc, dist.getBase(), rng, distArgs, sampleType);
+  // The verifier allows chains only on parameterless bases, so the distArgs
+  // belong to the chain.
   if (ArrayAttr transforms = dist.getTransforms())
     for (Attribute a : transforms)
       val = emitXformForward(b, loc, cast<XformAttr>(a), val, distArgs,
                              sampleType);
-
-  return {newRng, val};
+  return {rng, val};
 }
 
 Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
