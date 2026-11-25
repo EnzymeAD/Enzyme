@@ -132,10 +132,8 @@ bool SampleDependenceAnalysis::isSelectedSite(SampleRegionOp site) {
 }
 
 void SampleDependenceAnalysis::raise(Value value) {
-  if (!sampleDependentValues.insert(value).second)
-    return;
-  ++stats.raised;
-  raisedWorklist.push_back(value);
+  if (sampleDependentValues.insert(value).second)
+    raisedWorklist.push_back(value);
 }
 
 /// Site results are dependent only if the site is a source (selected).
@@ -145,16 +143,13 @@ void SampleDependenceAnalysis::raiseUser(Operation *user) {
       raise(result);
   for (Operation *parent = user->getParentOp();
        parent && parent != regionOp.getOperation();
-       parent = parent->getParentOp()) {
-    ++stats.ancestorSteps;
+       parent = parent->getParentOp())
     if (!isa<SampleRegionOp>(parent))
       for (Value result : parent->getResults())
         raise(result);
-  }
 }
 
 void SampleDependenceAnalysis::updateOperation(Operation *op) {
-  ++stats.opsVisited;
   auto site = dyn_cast<SampleRegionOp>(op);
   bool dependentSite =
       site && target == AnalysisTarget::Sampling && isSelectedSite(site);
@@ -170,11 +165,9 @@ void SampleDependenceAnalysis::updateOperation(Operation *op) {
 void SampleDependenceAnalysis::propagateRaised() {
   while (!raisedWorklist.empty()) {
     Value value = raisedWorklist.pop_back_val();
-    for (Operation *user : value.getUsers()) {
-      ++stats.useVisits;
+    for (Operation *user : value.getUsers())
       if (isInTargetRegion(user))
         raiseUser(user);
-    }
   }
 }
 
@@ -201,11 +194,9 @@ void SampleDependenceAnalysis::notifyOperationReplaced(Operation *op,
   for (auto [result, newValue] : llvm::zip(op->getResults(), replacement)) {
     if (!newValue || !isSampleDependent(newValue) || isSampleDependent(result))
       continue;
-    for (Operation *user : result.getUsers()) {
-      ++stats.useVisits;
+    for (Operation *user : result.getUsers())
       if (isInTargetRegion(user))
         raiseUser(user);
-    }
   }
   propagateRaised();
 }
@@ -395,14 +386,12 @@ SampleDependenceCache::get(InferRegionOp regionOp, AnalysisTarget target) {
   return analysis;
 }
 
-unsigned SampleDependenceCache::drop(Operation *regionOp,
-                                     bool onlyIfSourcesChanged) {
-  unsigned before = entries.size();
+void SampleDependenceCache::drop(Operation *regionOp,
+                                 bool onlyIfSourcesChanged) {
   llvm::erase_if(entries, [&](auto &entry) {
     return entry.first.first == regionOp &&
            (!onlyIfSourcesChanged || entry.second->sourcesChanged());
   });
-  return before - entries.size();
 }
 
 ScopedSampleDependenceCache::ScopedSampleDependenceCache(

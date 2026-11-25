@@ -46,14 +46,6 @@ public:
     return sampleDependentValues;
   }
 
-  struct UpdateStats {
-    uint64_t raised = 0;        ///< values raised to sample-dependent
-    uint64_t useVisits = 0;     ///< uses visited from raised values
-    uint64_t ancestorSteps = 0; ///< enclosing operations visited
-    uint64_t opsVisited = 0;    ///< operations whose transfer was evaluated
-  };
-  const UpdateStats &getUpdateStats() const { return stats; }
-
 private:
   InferRegionOp regionOp;
   AnalysisTarget target;
@@ -64,7 +56,6 @@ private:
   uint64_t builtNumPositionArgs = 0;
 
   SmallVector<Value> raisedWorklist;
-  UpdateStats stats;
 
   void runSamplingAnalysis();
   void runLogpdfAnalysis();
@@ -94,8 +85,9 @@ public:
       fn(*entry.second);
   }
 
-  /// Returns the number of analyses dropped.
-  unsigned drop(Operation *regionOp, bool onlyIfSourcesChanged);
+  /// Drops the analyses of `regionOp`, only those whose sources changed if
+  /// `onlyIfSourcesChanged`.
+  void drop(Operation *regionOp, bool onlyIfSourcesChanged);
 
 private:
   SmallVector<std::pair<std::pair<Operation *, AnalysisTarget>,

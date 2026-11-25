@@ -150,8 +150,8 @@ def SICMPass : Pass<"sicm"> {
            "false",
            "Debug: after every IR change of a rewrite step, compare the "
            "incrementally updated sample-dependence analyses with a fresh "
-           "analysis of the IR, and fail if one misses a sample-dependent "
-           "value. Prints a summary per round to stderr.">,
+           "analysis of the IR, and fail with an error if one misses a "
+           "sample-dependent value.">,
   ];
 }
 
