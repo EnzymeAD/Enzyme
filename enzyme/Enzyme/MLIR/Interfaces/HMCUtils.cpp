@@ -404,6 +404,24 @@ static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
   return mapping.lookupOrDefault(entry.getTerminator()->getOperand(0));
 }
 
+/// Attributes of a gradient region with one active argument whose results are
+/// the active potential and a constant RNG state, followed by `extra`.
+static SmallVector<NamedAttribute> gradientRegionAttrs(Builder &builder,
+                                                       DictionaryAttr extra) {
+  auto active = enzyme::ActivityAttr::get(builder.getContext(),
+                                          enzyme::Activity::enzyme_active);
+  auto constant = enzyme::ActivityAttr::get(builder.getContext(),
+                                            enzyme::Activity::enzyme_const);
+  SmallVector<NamedAttribute> attrs{
+      builder.getNamedAttr("activity", builder.getArrayAttr({active})),
+      builder.getNamedAttr("ret_activity",
+                           builder.getArrayAttr({active, constant})),
+  };
+  if (extra)
+    llvm::append_range(attrs, extra);
+  return attrs;
+}
+
 GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                                     Location loc,
                                                     Value position, Value rng,
@@ -430,26 +448,9 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   }
 
   SmallVector<Value> autodiffInputs{autodiffPosition, gradSeed};
-  SmallVector<NamedAttribute> adAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr({enzyme::ActivityAttr::get(
-              builder.getContext(), enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto attr : ctx.autodiffAttrs)
-      adAttrs.push_back(attr);
-  }
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{scalarType, rng.getType(), autodiffGradType},
-      autodiffInputs, adAttrs);
+      autodiffInputs, gradientRegionAttrs(builder, ctx.autodiffAttrs));
 
   Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
   autodiffBlock->addArgument(autodiffPositionType, loc);
@@ -853,27 +854,10 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
   SmallVector<Value> autodiffInputs{autodiffQ0, gradSeedInit};
-  SmallVector<NamedAttribute> adInitAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr({enzyme::ActivityAttr::get(
-              builder.getContext(), enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto attr : ctx.autodiffAttrs)
-      adInitAttrs.push_back(attr);
-  }
   auto autodiffInit = enzyme::AutoDiffRegionOp::create(
       builder, loc,
       TypeRange{scalarType, rngForAutodiff.getType(), autodiffGradType},
-      autodiffInputs, adInitAttrs);
+      autodiffInputs, gradientRegionAttrs(builder, ctx.autodiffAttrs));
 
   Block *autodiffInitBlock = builder.createBlock(&autodiffInit.getBody());
   autodiffInitBlock->addArgument(autodiffQ0Type, loc);
