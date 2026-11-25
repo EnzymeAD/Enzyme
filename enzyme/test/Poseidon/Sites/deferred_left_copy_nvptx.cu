@@ -1,4 +1,4 @@
-// REQUIRES: enzyme, cuda-runtime, nvptx-registered-target
+// REQUIRES: enzyme, cuda-toolkit, nvptx-registered-target
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o - | FileCheck --implicit-check-not=jvp_body.left %s
 

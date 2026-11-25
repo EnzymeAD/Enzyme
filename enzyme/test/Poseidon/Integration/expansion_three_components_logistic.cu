@@ -6,7 +6,7 @@
 // the binary128 result than FP64 does; at 1e-15 the two-component rewrite
 // is selected and is the least accurate of the three.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe

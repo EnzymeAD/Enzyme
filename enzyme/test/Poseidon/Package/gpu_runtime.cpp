@@ -4,7 +4,7 @@
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_options -B %t/hip.build -DPoseidon_DIR=%t/hip -DPOSEIDON_GPU_RUNTIME=HIP > %t/hip.log
 // RUN: FileCheck --check-prefix=HIP -DARCH=%amdgpu_arch %s < %t/hip.log
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_options -B %t/cuda.build -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_GPU_RUNTIME=CUDA > %t/cuda.log
-// RUN: FileCheck --check-prefixes=CUDA,%if cuda-runtime %{CUDATK%} %else %{NOCUDATK%} \
+// RUN: FileCheck --check-prefixes=CUDA,%if cuda-toolkit %{CUDATK%} %else %{NOCUDATK%} \
 // RUN:   --implicit-check-not=enzyme-lto-prelink %s < %t/cuda.log
 
 // The action targets of this build tree's package for either GPU runtime,

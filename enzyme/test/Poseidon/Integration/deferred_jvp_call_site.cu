@@ -1,4 +1,4 @@
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEFER %s

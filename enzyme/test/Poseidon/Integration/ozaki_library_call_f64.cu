@@ -5,7 +5,7 @@
 // compared elementwise with cublasDgemm on the same operands. The bound the
 // optimized binary is held to is tau itself.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe -lcublas

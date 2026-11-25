@@ -5,7 +5,7 @@
 // fails), every other row is kept, and a product the model already has is not
 // measured again.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: cp %gpu_cost_model %t/cm.csv
 // RUN: %poseidon_calibrate --out %t/cm.csv --only inkernel --n 256 --reps 3 --product 256x32x256:bcolmajor \

@@ -6,7 +6,7 @@
 // multiplies them in one mma and widens the product into D, with no FP
 // arithmetic of its own left.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
 // RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg \

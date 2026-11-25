@@ -1,5 +1,6 @@
 # -*- Python -*-
 
+import glob
 import os
 import platform
 import subprocess
@@ -139,17 +140,25 @@ if subprocess.run([config.poseidon_calibrate_python, '-c',
                    'import llvmlite.binding'],
                   capture_output=True).returncode == 0:
     config.available_features.add('cpu-calibration')
-# The CUDA and the HIP builds of the GPU runtimes: the runtime libraries and
-# the device profiler the plugin carries (profile generation for a GPU without
-# one stops at its first probe), and a device to run what links them. HIP
-# compiles also need the device libraries of the ROCm installation.
+# The CUDA and the HIP builds of the GPU runtimes: the runtime libraries, built
+# against the CUDA toolkit or the ROCm installation, and the device profiler the
+# plugin carries (profile generation for a GPU without one stops at its first
+# probe); and, for the tests that run what links them, a device the driver
+# shows and the *_VISIBLE_DEVICES variable does not hide. HIP compiles also
+# need the device libraries of the ROCm installation.
+def device_visible(variable, nodes):
+    return os.environ.get(variable, None) != '' and any(
+        os.path.exists(node) for node in nodes)
 if config.poseidon_has_cuda:
-    config.available_features.add('cuda-runtime')
+    config.available_features.add('cuda-toolkit')
     config.available_features.add('nvptx-device-profiler')
+    if device_visible('CUDA_VISIBLE_DEVICES',
+                      glob.glob('/dev/nvidia[0-9]*')):
+        config.available_features.add('cuda-device')
 if config.poseidon_has_hip:
     config.available_features.add('amdgpu-device-profiler')
-    if os.path.exists('/dev/kfd'):
-        config.available_features.add('hip-runtime')
+    if device_visible('HIP_VISIBLE_DEVICES', ['/dev/kfd']):
+        config.available_features.add('hip-device')
 if config.rocm_path and os.path.isdir(
         os.path.join(config.rocm_path, 'amdgcn', 'bitcode')):
     config.available_features.add('rocm')

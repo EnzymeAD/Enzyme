@@ -5,7 +5,7 @@
 // scales C by beta, calls on two streams return the bits they return alone,
 // and a negative extent stops the program.
 //
-// REQUIRES: hip-runtime
+// REQUIRES: hip-device
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -O2 \
 // RUN:     -I%poseidon_runtime_inc %S/../Inputs/gemm_runtime.cpp -x none \
 // RUN:     %poseidon_gemm_hip_lib -L%rocm_path/lib -lhipblas -lamdhip64 \

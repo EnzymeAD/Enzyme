@@ -23,7 +23,7 @@
 // RUN:     -### -o %t.exe 2>&1 | FileCheck --check-prefix=CLINK %s
 // RUN: env POSEIDON_ECHO=1 %poseidon_clang -poseidon-profile-use -stdlib=libc++ \
 // RUN:     %t.link.o -### -o %t.exe 2>&1 | FileCheck --check-prefix=CLINKCXX %s
-// RUN: %if cuda-runtime %{ env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
+// RUN: %if cuda-toolkit %{ env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     %t.link.o -### -o %t.exe 2>&1 | FileCheck --check-prefix=OBJCUDA %s %}
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -poseidon-cache=%t.cache \

@@ -1,7 +1,7 @@
 // ozaki_moduli_counts.cu compiled as HIP, against the HIP Ozaki-II runtime on
 // hipBLAS: every modulus count gives the simulation's bits there too.
 //
-// REQUIRES: hip-runtime
+// REQUIRES: hip-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
 // RUN:     -I%S/../../../Poseidon -c \

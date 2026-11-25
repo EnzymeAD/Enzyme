@@ -9,7 +9,7 @@
 //     C entry is 1 + 2^-36 exactly (a max-based shift of 35 drops that bit);
 //   row 2 = 0: C = 0.
 //
-// REQUIRES: cuda-runtime
+// REQUIRES: cuda-device
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
 // RUN:     %s -x none \
 // RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart \

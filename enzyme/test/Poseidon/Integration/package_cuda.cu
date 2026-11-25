@@ -1,4 +1,4 @@
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/gen -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_CUDA_COMPILER=%clang++ -DCMAKE_CUDA_ARCHITECTURES=OFF "-DCMAKE_CUDA_FLAGS=--cuda-gpu-arch=%gpu_arch -O3" -DCUDAToolkit_ROOT=/usr/local/cuda -DWITH_CUDA=ON -DTWO_TU=%S/../Inputs/two_tu -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=instrument > /dev/null
 // RUN: %cmake --build %t/gen

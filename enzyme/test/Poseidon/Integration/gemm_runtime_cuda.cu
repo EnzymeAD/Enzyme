@@ -8,7 +8,7 @@
 // scales C by beta, calls on two streams return the bits they return alone,
 // and a negative extent stops the program.
 //
-// REQUIRES: cuda-runtime
+// REQUIRES: cuda-device
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
 // RUN:     %S/../Inputs/gemm_runtime.cpp -x none %poseidon_gemm_cuda_lib \
 // RUN:     -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm -o %t.exe

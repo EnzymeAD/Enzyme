@@ -8,7 +8,7 @@
 // bound captured next to it, which the stub checks at the launch: a padded
 // tensor runs the kernel as written.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe

@@ -14,7 +14,7 @@
 // nest differently from the profile-generate build and the slot indices then do
 // not name the same instructions.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/exe

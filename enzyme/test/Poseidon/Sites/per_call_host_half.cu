@@ -1,5 +1,5 @@
 // REQUIRES: enzyme
-// REQUIRES: cuda-runtime || (amdgpu-registered-target && rocm)
+// REQUIRES: cuda-toolkit || (amdgpu-registered-target && rocm)
 // Without a CUDA installation clang emits the old cudaLaunch API in the host
 // half of a CUDA compile.
 // DEFINE: %{nvptx} = %clang -x cuda --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %s
@@ -10,16 +10,16 @@
 // DEFINE:   -e '/__poseidon_profile/d' -e '/__hipRegisterVar/d' -e '/@llvm.global_ctors/d' \
 // DEFINE:   -e '/^; Function Attrs/d' -e '/^attributes #/d' -e '/^$/d' -e 's/ #[0-9][0-9]*//g'
 // RUN: rm -rf %t && mkdir %t
-// RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only -o %t/nvptx-plain.ll %}
-// RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/nvptx-u -o %t/nvptx-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
-// RUN: %if cuda-runtime %{ diff %t/nvptx-plain.ll %t/nvptx-use.ll %}
-// RUN: %if cuda-runtime %{ %{nvptx} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-g -mllvm -poseidon-print -o %t/nvptx-gen.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
-// RUN: %if cuda-runtime %{ FileCheck --check-prefix=GENIR %s < %t/nvptx-gen.ll %}
-// RUN: %if cuda-runtime %{ FileCheck --check-prefix=BIND %s < %t/nvptx-gen.ll %}
-// RUN: %if cuda-runtime %{ %{nvptx_body} %t/nvptx-plain.ll > %t/nvptx-plain.body %}
-// RUN: %if cuda-runtime %{ %{nvptx_body} %t/nvptx-gen.ll > %t/nvptx-gen.body %}
-// RUN: %if cuda-runtime %{ diff %t/nvptx-plain.body %t/nvptx-gen.body %}
-// RUN: %if cuda-runtime %{ %{nvptx} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-d -mllvm -poseidon-print -o %t/nvptx-dev.ll 2>&1 | FileCheck --check-prefix=DEV %s %}
+// RUN: %if cuda-toolkit %{ %{nvptx} --cuda-host-only -o %t/nvptx-plain.ll %}
+// RUN: %if cuda-toolkit %{ %{nvptx} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/nvptx-u -o %t/nvptx-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
+// RUN: %if cuda-toolkit %{ diff %t/nvptx-plain.ll %t/nvptx-use.ll %}
+// RUN: %if cuda-toolkit %{ %{nvptx} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-g -mllvm -poseidon-print -o %t/nvptx-gen.ll 2>&1 | FileCheck --check-prefix=GEN %s %}
+// RUN: %if cuda-toolkit %{ FileCheck --check-prefix=GENIR %s < %t/nvptx-gen.ll %}
+// RUN: %if cuda-toolkit %{ FileCheck --check-prefix=BIND %s < %t/nvptx-gen.ll %}
+// RUN: %if cuda-toolkit %{ %{nvptx_body} %t/nvptx-plain.ll > %t/nvptx-plain.body %}
+// RUN: %if cuda-toolkit %{ %{nvptx_body} %t/nvptx-gen.ll > %t/nvptx-gen.body %}
+// RUN: %if cuda-toolkit %{ diff %t/nvptx-plain.body %t/nvptx-gen.body %}
+// RUN: %if cuda-toolkit %{ %{nvptx} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/nvptx-d -mllvm -poseidon-print -o %t/nvptx-dev.ll 2>&1 | FileCheck --check-prefix=DEV %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only -o %t/amdgpu-plain.ll %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/amdgpu-u -o %t/amdgpu-use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ diff %t/amdgpu-plain.ll %t/amdgpu-use.ll %}

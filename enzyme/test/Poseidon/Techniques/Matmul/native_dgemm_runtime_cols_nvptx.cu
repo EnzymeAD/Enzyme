@@ -1,4 +1,4 @@
-// REQUIRES: cuda-runtime
+// REQUIRES: cuda-toolkit
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t/prof
 // RUN: sed -e 's/^MaxGridDims = 192 1 1$/MaxGridDims = 1536 1 1/' -e 's/^LaunchCount = 192$/LaunchCount = 1536/' %S/../../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile > %t/prof/_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~5cd777597848c628.fpprofile

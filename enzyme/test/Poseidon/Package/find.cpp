@@ -23,7 +23,7 @@
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/igen -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_PREFIX_PATH=%t/inst -DPOSEIDON_MODE=instrument > %t/igen.log
 // RUN: FileCheck --check-prefix=INST -DLIBDIR=%install_libdir -DPREFIX=%t/inst %s < %t/igen.log
 // RUN: %cmake --build %t/igen -v > %t/igen.build.log
-// RUN: FileCheck %if cuda-runtime || !amdgpu-device-profiler %{--check-prefixes=INSTCMD,INSTCMD-NOLTO --implicit-check-not=enzyme-lto-prelink%} %else %{--check-prefixes=INSTCMD,INSTCMD-LTO%} -DLIBDIR=%install_libdir -DPREFIX=%t/inst %s < %t/igen.build.log
+// RUN: FileCheck %if cuda-toolkit || !amdgpu-device-profiler %{--check-prefixes=INSTCMD,INSTCMD-NOLTO --implicit-check-not=enzyme-lto-prelink%} %else %{--check-prefixes=INSTCMD,INSTCMD-LTO%} -DLIBDIR=%install_libdir -DPREFIX=%t/inst %s < %t/igen.build.log
 // RUN: env POSEIDON_PROFILE_DIR=%t/iprof %t/igen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/iprof | FileCheck --check-prefix=PROF %s
 // RUN: test -x %t/inst/bin/poseidon-clang++

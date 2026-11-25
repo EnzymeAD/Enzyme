@@ -12,7 +12,7 @@
 // writes is another file; the source is compiled from a copy under a fixed
 // name, which the manifest's file name follows.
 //
-// REQUIRES: enzyme, hip-runtime
+// REQUIRES: enzyme, hip-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-generate \

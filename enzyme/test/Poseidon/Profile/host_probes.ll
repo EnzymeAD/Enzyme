@@ -62,31 +62,31 @@ entry:
 
 define double @test_profile_maxnum_zero(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__poseidon_fp_optimize(double (double)* nonnull @test_maxnum_zero, double %x)
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_zero, double %x)
   ret double %0
 }
 
 define double @test_profile_maxnum_zero_reversed(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__poseidon_fp_optimize(double (double)* nonnull @test_maxnum_zero_reversed, double %x)
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_zero_reversed, double %x)
   ret double %0
 }
 
 define double @test_profile_maxnum(double %x, double %y) {
 entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @test_maxnum_general, double %x, double %y)
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_general, double %x, double %y)
   ret double %0
 }
 
 define double @test_profile_minnum(double %x, double %y) {
 entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @test_minnum_general, double %x, double %y)
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_minnum_general, double %x, double %y)
   ret double %0
 }
 
 define double @test_profile_combined(double %x, double %y, double %z) {
 entry:
-  %0 = tail call double (double (double, double, double)*, ...) @__poseidon_fp_optimize(double (double, double, double)* nonnull @test_combined, double %x, double %y, double %z)
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_combined, double %x, double %y, double %z)
   ret double %0
 }
 

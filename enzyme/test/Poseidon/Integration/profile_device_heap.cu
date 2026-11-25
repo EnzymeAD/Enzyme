@@ -4,7 +4,7 @@
 // the device heap, far more than CUDA's default 8 MiB; the profiler sizes the
 // heap before the first kernel runs.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/cache %s -o %t/exe

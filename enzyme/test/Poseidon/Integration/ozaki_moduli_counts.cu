@@ -10,7 +10,7 @@
 // log-uniform over the 40 binades below the largest (the tolerance path) or
 // uniform (the budget path), at every modulus count the compiler proposes.
 //
-// REQUIRES: cuda-runtime
+// REQUIRES: cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
 // RUN:     -I%S/../../../Poseidon -c \

@@ -1,4 +1,4 @@
-// REQUIRES: cuda-runtime
+// REQUIRES: cuda-toolkit
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // DEFINE: %{compile} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul
 // RUN: rm -rf %t && mkdir %t
@@ -11,7 +11,9 @@
 // dimension: the column count as a kernel parameter, or the row count as a
 // field of the lambda. The host stub reads each dimension from the launch as
 // a 32-bit integer, so recognition refuses the product and no dispatch is
-// written.
+// written. The profile is the HIP build's (Inputs/host_gemm_hip), filed under
+// each CUDA kernel's name: both builds compile the kernel to one canonical
+// form, which the compile checks against the profile's CanonicalHash.
 
 #include "poseidon/poseidon.h"
 

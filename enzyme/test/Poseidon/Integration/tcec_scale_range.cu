@@ -15,7 +15,7 @@
 //             error FP16TCEC has there. cuMpSGEMM's products differ call to
 //             call for some shapes, so their bits are not compared.
 //
-// REQUIRES: cuda-runtime, tcec-cumpsgemm
+// REQUIRES: cuda-device, tcec-cumpsgemm
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
 // RUN:     %s -x none \
 // RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart \

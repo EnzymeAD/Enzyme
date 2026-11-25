@@ -1,4 +1,4 @@
-// REQUIRES: enzyme, cuda-runtime, nvptx-registered-target
+// REQUIRES: enzyme, cuda-toolkit, nvptx-registered-target
 // DEFINE: %{use} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch \
 // DEFINE:   -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon \
 // DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-tau=1e-3 \

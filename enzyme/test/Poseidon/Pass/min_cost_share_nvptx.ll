@@ -1,4 +1,4 @@
-; REQUIRES: cuda-runtime, nvptx-registered-target
+; REQUIRES: cuda-toolkit, nvptx-registered-target
 ; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 ; DEFINE: %{use} = -poseidon-kernels=.*_kernel \
 ; DEFINE:   -poseidon-profile-use=%t/prof \

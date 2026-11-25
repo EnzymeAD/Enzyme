@@ -2,7 +2,7 @@
 // profile is generated with Enzyme's plugin and used without it, so the form
 // the profile names must be the form the use compile sees.
 //
-// REQUIRES: enzyme, cuda-runtime
+// REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
