@@ -125,7 +125,13 @@ bool collectThreadIndexBounds(const llvm::Value *cond, bool holds,
                               ThreadIndexBounds &bound);
 
 // Emit the tensor-core code of the in-kernel direct or split scheme in place
-// of a scalar-loop matmul; aborts on any precondition violation.
+// of a scalar-loop matmul; aborts on any precondition violation. The split
+// scheme's two-slice case is the split of an FP32 operand into a rounded high
+// part and a scaled, rounded residual of S. Markidis et al., NVIDIA Tensor
+// Core Programmability, Performance & Precision (IPDPSW 2018), with the
+// residual scaled as H. Ootomo and R. Yokota (IJHPCA 36(4), 2022) scale it;
+// the N-slice generalization is Poseidon's own, and no code is taken from
+// cuMpSGEMM.
 void materializeInKernelRaise(const AbstractMatmul &m,
                               const MatmulUnit::Option &opt);
 

@@ -1,5 +1,5 @@
 // ozaki_published_shift.cu compiled as HIP, against the HIP Ozaki-II runtime
-// on hipBLAS: the same published shifts and truncation, so the same three rows.
+// on hipBLAS: the same shifts and truncation, so the same three rows.
 //
 // REQUIRES: hip-runtime
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -O2 \

@@ -3,6 +3,76 @@
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// Portions of this file are under other licenses, whose terms follow:
+// - twoSum, dsFastTwoSum, twoProd, dsAdd, dsSub, dsNeg, dsMul and dsSqrt are a
+//   subset of MultiFloats.jl (https://github.com/dzhang314/MultiFloats.jl,
+//   commit 28041a3), MIT License, unchanged except translated from Julia into
+//   C++ over Arith, operation for operation.
+// - dsDiv and the three- and four-component routines (expansionAdd through
+//   expansionNeg, with the routines they call) are a subset of mX_real
+//   (https://github.com/RIKEN-RCCS/mX_real, commit 72a35d6), BSD 2-Clause
+//   License, unchanged except translated into C++ over Arith, operation for
+//   operation, with twoSum in place of QxW's TwoSum (the same sum, error and
+//   sign of zero).
+// The remaining routines are Poseidon's own.
+//
+// MultiFloats.jl is distributed under the following license.
+//
+//   MIT License
+//
+//   Copyright (c) 2019-2026 David K. Zhang
+//
+//   Permission is hereby granted, free of charge, to any person obtaining a
+//   copy of this software and associated documentation files (the
+//   "Software"), to deal in the Software without restriction, including
+//   without limitation the rights to use, copy, modify, merge, publish,
+//   distribute, sublicense, and/or sell copies of the Software, and to permit
+//   persons to whom the Software is furnished to do so, subject to the
+//   following conditions:
+//
+//   The above copyright notice and this permission notice shall be included
+//   in all copies or substantial portions of the Software.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+//   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+//   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+//   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+//   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+//   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+//   USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+// mX_real is distributed under the following license.
+//
+//   BSD 2-Clause License
+//
+//   Copyright (c) 2023-24, RIKEN
+//   All rights reserved.
+//
+//   Redistribution and use in source and binary forms, with or without
+//   modification, are permitted provided that the following conditions are
+//   met:
+//
+//   1. Redistributions of source code must retain the above copyright
+//      notice, this list of conditions and the following disclaimer.
+//
+//   2. Redistributions in binary form must reproduce the above copyright
+//      notice, this list of conditions and the following disclaimer in the
+//      documentation and/or other materials provided with the distribution.
+//
+//   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//   IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+//   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+//   PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+//   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 //===----------------------------------------------------------------------===//
 //
@@ -39,17 +109,15 @@ public:
 
   explicit ExpansionRoutines(Arith A) : A(A) {}
 
-  // Two components. Each routine but division and the fused multiply-add
-  // reproduces, operation for operation, a MultiFloats.jl routine at Val{2}
-  // (MultiFloats.jl commit 28041a3, MIT License): twoSum two_sum
-  // (src/MultiFloats.jl 313-321), dsFastTwoSum fast_two_sum (1047-1052),
-  // twoProd two_prod (1070-1074), dsAdd mfadd (src/mfadd.jl 10-24), dsSub
-  // x + (-y) (src/MultiFloats.jl 1102, 1020), dsMul mfmul (src/mfmul.jl
-  // 10-23), dsSqrt sqrt_r, i.e. mfsqrt (src/MultiFloats.jl 1416-1421) under
-  // sqrt_r's zero test (1448-1449). dsDiv reproduces mX_real's division of its
+  // Two components. The MultiFloats.jl routines at Val{2} these translate
+  // (see the file header): twoSum two_sum (src/MultiFloats.jl 313-321),
+  // dsFastTwoSum fast_two_sum (1047-1052), twoProd two_prod (1070-1074), dsAdd
+  // mfadd (src/mfadd.jl 10-24), dsSub x + (-y) and dsNeg limbwise -
+  // (src/MultiFloats.jl 1102, 1020), dsMul mfmul (src/mfmul.jl 10-23), dsSqrt
+  // sqrt_r, i.e. mfsqrt (src/MultiFloats.jl 1416-1421) under sqrt_r's zero
+  // test (1448-1449). dsDiv translates mX_real's division of its
   // two-component type at Algorithm::Sloppy, QxW's div_PA_PA_PA followed by
-  // Normalize<Regular>, i.e. QxW's FastTwoSum (RIKEN-RCCS/mX_real, which
-  // contains the QxW generator, is BSD-2-Clause). dsFma is Poseidon's own
+  // Normalize<Regular>, i.e. QxW's FastTwoSum. dsFma is Poseidon's own
   // routine, with no library counterpart; it is checked against the accuracy
   // model only.
 
@@ -175,12 +243,11 @@ public:
   // To FP32: the sum of the halves, as accurate as FP32 allows.
   F32 dsToF32(Pair x) { return A.add(x.hi, x.lo, "ds.f32"); }
 
-  // Three and four components. Each component sequence reproduces, operation
-  // for operation, a routine of the QxW generator as instantiated by mX_real
-  // at Algorithm::Sloppy (the add/mul/sqr/div/sqrt _QTW_ and _QQW_ variants,
-  // each followed by Normalize<Regular>, and the special cases of mX_real's
-  // sqrt operator; RIKEN-RCCS/mX_real, which contains the generator, is
-  // BSD-2-Clause). twoSum forms its error from s - b where QxW's starts from
+  // Three and four components. Each component sequence translates a routine
+  // of the QxW generator as instantiated by mX_real at Algorithm::Sloppy (the
+  // add/mul/sqr/div/sqrt _QTW_ and _QQW_ variants, each followed by
+  // Normalize<Regular>, and the special cases of mX_real's sqrt operator; see
+  // the file header). twoSum forms its error from s - b where QxW's starts from
   // s - a, which gives the same sum, error and sign of zero. Subtraction is
   // addition of the negated operand, and a product of a value with itself is
   // the square routine (mX_real squares when both operands are one object).

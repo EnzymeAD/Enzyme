@@ -6,23 +6,23 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Provenance: this file is an independent implementation of the published
-// Ozaki Scheme II algorithm (K. Ozaki, Y. Uchino, T. Imamura,
-// arXiv:2504.08009), fast mode (Cauchy-Schwarz operand scaling). No code is
-// derived from the reference GEMMul8 library (MIT licensed). The paper leaves
-// the scaling constants and the CRT working precision to the implementation;
-// for those this file follows GEMMul8 v3.1.1's fast mode (the authors'
-// implementation): the same moduli, the same shift formula and rounding, the
-// same truncation, residue representatives and CRT constants, each computed
-// here from its defining formula, so that the same operands give the same
-// result bit for bit. Residues are computed by GEMMul8's byte-weight method
-// (OzakiII.h). The pipeline layout (one strided-batched INT8 GEMM per chunk
-// of columns, operands read in their own layouts) is original to this
-// implementation.
+// This file reimplements the algorithm of K. Ozaki, Y. Uchino and T. Imamura,
+// Ozaki Scheme II (arXiv:2504.08009), in the fast mode of GEMMul8 v3.1.1,
+// whose operand scaling GEMMul8's documentation attributes to S. Kawakami and
+// D. Takahashi, Improved Scaling for Fast Mode of Ozaki Scheme II
+// (arXiv:2606.29129); no code is taken from GEMMul8
+// (https://github.com/RIKEN-RCCS/GEMMul8, RIKEN R-CCS, MIT License). Where
+// the algorithm leaves a choice to the implementation, the choice is GEMMul8
+// v3.1.1's, each value computed here from its defining formula, so that the
+// same operands give the same result bit for bit:
+// - the moduli, the scaling constants and the CRT constants
+//   (src/oz2/common/table.hpp);
+// - the shift formula, its rounding and the truncation (src/oz2/scaling/fast);
+// - the residue representatives and the byte-weight residue method
+//   (src/oz2/mod/mod_core.hpp; OzakiII.h).
 //
-// GEMMul8 (https://github.com/RIKEN-RCCS/GEMMul8): Copyright (c) 2025- RIKEN
-// R-CCS, MIT License. Its numerical conventions are followed with
-// acknowledgment.
+// The pipeline layout (one strided-batched INT8 GEMM per chunk of columns,
+// operands read in their own layouts) is this implementation's own.
 //
 // An FP64 GEMM as row/column scaling shifts -> num_moduli int8 residue planes
 // -> one strided-batched INT8 tensor-core GEMM -> double-double CRT. The
@@ -30,7 +30,7 @@
 // (kOzakiIIMinModuli..14), with the moduli and their byte weights as
 // immediates.
 //
-// Operand scaling (the published fast mode). For each row a of A and each
+// Operand scaling (GEMMul8 v3.1.1's fast mode). For each row a of A and each
 // column b of B, s = ||a||_2^2 is accumulated in FP64 with every operation
 // rounded upward, and the shift is
 //   sft = floor(log2P(nm) - log2(s)/2),  log2P(nm) = rd(log2(P-1)/2 - 1/2),
@@ -39,9 +39,9 @@
 // ||a'||_2 <= 2^log2P <= sqrt((P-1)/2) and, by Cauchy-Schwarz, every entry of
 // the integer product lies in the symmetric CRT window [-(P-1)/2, (P-1)/2].
 // The sum-of-squares reduction order is fixed per operand layout (contiguous
-// or strided vector, matching the reference's), so the shifts are
-// reproducible. A row whose sum of squares overflows (|a| beyond ~1e154) or
-// underflows to zero is outside the fast mode's range, as in the reference.
+// or strided vector, matching GEMMul8's), so the shifts are reproducible. A
+// row whose sum of squares overflows (|a| beyond ~1e154) or underflows to zero
+// is outside the fast mode's range, as in GEMMul8.
 //
 // The per-modulus products are one cublasGemmStridedBatchedEx(CUBLAS_OP_T,
 // CUBLAS_OP_N, CUDA_R_8I -> CUDA_R_32I, CUBLAS_COMPUTE_32I) call. Residues are

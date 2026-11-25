@@ -11,9 +11,9 @@
 // WMMA fragments, stores the accumulators to a shared output tile and reads
 // each thread's element back where the reduction loop's result was used. The
 // direct scheme fills one rounded copy of each operand and carries one
-// accumulator per output tile. The split scheme fills N Veltkamp slices of
-// each operand, accumulates a[i] * b[j] into group i + j for i + j < N, and
-// reads back sum_k d[k] / SCALE^k.
+// accumulator per output tile. The split scheme fills N slices of each
+// operand (MatmulInternal.h), accumulates a[i] * b[j] into group i + j for
+// i + j < N, and reads back sum_k d[k] / SCALE^k.
 //
 //===----------------------------------------------------------------------===//
 
@@ -147,7 +147,7 @@ static Value *emitSliceToF32(IRBuilder<> &B, Value *slice, FPKind kind) {
   return B.CreateFPExt(slice, f32Ty);
 }
 
-// N-slice Veltkamp split:
+// N-slice split by rounding to the slice format (not Veltkamp's split):
 //   s[0]  = quantize(v)
 //   r[k]  = (r[k-1] - s[k-1]_f32) * SCALE ; s[k] = quantize(r[k])
 // Reconstruction: v ~ sum_k s[k] / SCALE^k, each slice capturing the

@@ -4,8 +4,11 @@
 // and the division of its two-component type (df_Real_sloppy), which the
 // two-component division reproduces.
 //
-// Provenance: RIKEN-RCCS/mX_real, https://github.com/RIKEN-RCCS/mX_real,
-// commit 72a35d697b247fb44400a282a88e22ea3211a327 (2025-01-04).
+// A subset of mX_real (https://github.com/RIKEN-RCCS/mX_real, commit
+// 72a35d697b247fb44400a282a88e22ea3211a327, 2025-01-04), BSD 2-Clause
+// License, unchanged except that the two macros and the constant QxW takes
+// from elsewhere in mX_real are defined in place and the operators in
+// namespace mxref condense mX_real's dispatch:
 // - The QxW routines in namespace QxW are copied verbatim from
 //   Ozaki-QW/qxw.hpp, each at the line range given above it: the routines the
 //   three- and four-component types' +, -, *, / and sqrt and the

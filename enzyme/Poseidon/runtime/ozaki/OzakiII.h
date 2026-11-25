@@ -11,6 +11,12 @@
 // simulates, and the values of its entry's Mode argument (GemmDispatch.inc).
 // Included by both, in host and device code: keep it free of LLVM.
 //
+// The Ozaki-II constants and residue arithmetic reimplement those of the
+// algorithm of K. Ozaki, Y. Uchino and T. Imamura (arXiv:2504.08009) as
+// GEMMul8 v3.1.1 instantiates it (ozaki_rt.cu); no code is taken from GEMMul8
+// (https://github.com/RIKEN-RCCS/GEMMul8, RIKEN R-CCS, MIT License). The TCEC
+// scaling and the direct modes are Poseidon's own.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_OZAKI_II_H
@@ -44,16 +50,16 @@ constexpr int32_t kOzakiIIModuli[kOzakiIIMaxModuli] = {
 // (poseidon-calibrate covers 8..14).
 constexpr unsigned kOzIIModuliCounts[] = {8, 9, 10, 11, 12, 13, 14};
 
-// Smallest modulus count the runtime accepts: the published scaling constant
-// below is defined from nm = 3 on (the reference implementation's nm = 2
-// entry does not follow its own formula, so nm = 2 is not offered).
+// Smallest modulus count the runtime accepts: the scaling constant below is
+// defined from nm = 3 on (GEMMul8's nm = 2 entry does not follow its own
+// formula, so nm = 2 is not offered).
 constexpr unsigned kOzakiIIMinModuli = 3;
 
 // Up to this many moduli P is exact in one double and the CRT runs in plain
 // FP64; above it the CRT constants are split into a double-double.
 constexpr unsigned kOzakiIIPIsDouble = 6;
 
-// Published fast-mode scaling constant, indexed by nm:
+// GEMMul8 v3.1.1's fast-mode scaling constant, indexed by nm:
 // log2P(nm) = round-down-to-float(log2(P - 1)/2 - 1/2), P = the product of the
 // first nm moduli, so 2^(2*log2P) <= (P - 1)/2. A row a of A (column b of B)
 // is scaled by 2^floor(log2P - log2||a||_2), which by Cauchy-Schwarz keeps
@@ -227,8 +233,8 @@ POSEIDON_HD inline uint32_t ozakiIIReduceByteSum(uint32_t s, OzakiIIModulus m) {
 }
 
 // The representative of r = |a| mod p for a of sign `neg`: [-(p-1)/2, (p-1)/2]
-// for odd p, [-128, 127] for p = 256 (the int8 wraparound of the published
-// scheme). The CRT constants assume these.
+// for odd p, [-128, 127] for p = 256 (the int8 wraparound of GEMMul8's INT8
+// backend). The CRT constants assume these.
 POSEIDON_HD inline int ozakiIISymmetric(uint32_t r, bool neg, uint32_t p) {
   const uint32_t t = (neg && r != 0) ? p - r : r;
   return (int)t - (t > (p - 1) / 2 ? (int)p : 0);
@@ -292,7 +298,11 @@ POSEIDON_HD inline double tcecScale(double x, int n) {
   return x * tcecPow2(n);
 }
 
-// The last argument of __poseidon_tcec_dgemm: cuMpSGEMM's compute mode.
+// The last argument of __poseidon_tcec_dgemm: cuMpSGEMM's compute mode. The
+// TCEC runtime links cuMpSGEMM (https://github.com/enp1s0/cuMpSGEMM, MIT
+// License) and includes none of it: the authors' implementation of the scheme
+// of H. Ootomo and R. Yokota, IJHPCA 36(4), 2022
+// (doi:10.1177/10943420221090256).
 enum PoseidonTcecMode : int {
   kTcecFp16Tcec = 1,
   kTcecTf32Tcec = 2,

@@ -3,9 +3,10 @@
 // Val{2}), which the materializer's two-component addition, subtraction,
 // multiplication and square root reproduce.
 //
-// Provenance: MultiFloats.jl, https://github.com/dzhang314/MultiFloats.jl,
-// commit 28041a3e17e8ba0d6d3e75c49cc83f737c5e8701 (version 3.2.6+8),
-// transcribed from Julia into C++ statement for statement:
+// A subset of MultiFloats.jl (https://github.com/dzhang314/MultiFloats.jl,
+// commit 28041a3e17e8ba0d6d3e75c49cc83f737c5e8701, version 3.2.6+8), MIT
+// License, unchanged except translated from Julia into C++ statement for
+// statement:
 //   two_sum         src/MultiFloats.jl 313-321
 //   fast_two_sum    src/MultiFloats.jl 1047-1052
 //   one_prod        src/MultiFloats.jl 1064

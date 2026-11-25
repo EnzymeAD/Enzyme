@@ -238,6 +238,57 @@ metric names the command to measure it from `/proc/self/cmdline`, and
 `poseidon-probe` runs the program with POSIX `fork` and `exec`. The GPU
 runtimes and profilers take CUDA or ROCm; a HIP build is for one processor.
 
+## Third-party code and references
+
+### Code under other licenses
+
+These passages are a subset of another project. Each file says so in its
+header, with the project's license text.
+
+| Code | Location | Source | License | Relation |
+| --- | --- | --- | --- | --- |
+| Two-component expansion routines | `Core/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
+| Three- and four-component expansion routines, two-component division | `Core/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
+| Herbie platform declarations | `tools/calibrate/herbie_platform.py` | [Herbie](https://github.com/herbie-fp/herbie) `src/platforms/c.rkt`, commit 73ba1fe | MIT | The declarations' form, with the cost model's costs and operations |
+| Reference routines of a test | `test/Poseidon/Inputs/expansion_match/multifloats_subset.h` | MultiFloats.jl, commit 28041a3 | MIT | Translated from Julia, statement for statement |
+| Reference routines of a test | `test/Poseidon/Inputs/expansion_match/mx_real_subset.h` | mX_real, commit 72a35d6 | BSD 2-Clause | QxW routines verbatim; mX_real's operator dispatch condensed |
+
+The expansion routines are compiled into the plugin, so a binary distribution
+of it carries mX_real's notice, as its license's second clause asks.
+
+### Published algorithms
+
+These reimplement a published algorithm; no code is taken from the reference
+implementation named.
+
+| Code | Location | Algorithm | Reference implementation |
+| --- | --- | --- | --- |
+| Ozaki-II GEMM runtime | `runtime/ozaki/ozaki_rt.cu`, `runtime/ozaki/OzakiII.h` | K. Ozaki, Y. Uchino, T. Imamura, [arXiv:2504.08009](https://arxiv.org/abs/2504.08009); fast-mode scaling as in GEMMul8 v3.1.1, which attributes it to S. Kawakami, D. Takahashi, [arXiv:2606.29129](https://arxiv.org/abs/2606.29129) | [GEMMul8](https://github.com/RIKEN-RCCS/GEMMul8) v3.1.1 (MIT): its constants and residue method, computed from their definitions, so that results agree bit for bit |
+| Host simulation of the GEMM runtimes | `Techniques/Matmul/MatmulSimulation.cpp` | The Ozaki-II runtime above; TCEC, H. Ootomo, R. Yokota, IJHPCA 36(4), 2022 | GEMMul8 v3.1.1, cuMpSGEMM (MIT): their arithmetic, modeled |
+| In-kernel split scheme | `Techniques/Matmul/InKernelRaise.cpp` | The two-slice split of S. Markidis et al. (IPDPSW 2018), with the residual scaled as Ootomo and Yokota scale it, generalized to N slices | none |
+
+The tests that take the shape of MFEM's kernels (`mfem::forall`,
+`DeviceTensor`, partial-assembly applies) are written for these tests; what
+they share with MFEM's code is the three-statement body of its launch
+wrappers (`CuKernel1D`, `CuKernel2D`).
+
+### Dependencies
+
+| Dependency | License | Used for | Needed |
+| --- | --- | --- | --- |
+| LLVM and Clang | Apache-2.0 WITH LLVM-exception | The pass plugin's IR and the drivers | Always |
+| Enzyme | Apache-2.0 WITH LLVM-exception | Differentiating the profiling probes, as a co-loaded plugin | To build; to profile |
+| MPFR | LGPL-3.0-or-later | The accuracy model's high-precision reference; linked into the plugin | Always |
+| GMP | LGPL-3.0-or-later or GPL-2.0-or-later | MPFR's arithmetic; linked into the plugin | Always |
+| Herbie | MIT | Algebraic rewrites; run as a separate process, with FPCore in and out | Optional: without it, no algebraic rewrites |
+| CUDA toolkit: CUDA runtime, cuBLAS | NVIDIA CUDA Toolkit EULA | The CUDA runtimes and profiler, linked | For CUDA targets |
+| ROCm: HIP runtime, hipBLAS | MIT | The HIP runtimes and profiler, linked | For HIP targets |
+| cuMpSGEMM | MIT | The TCEC GEMM runtime, linked | Optional (`POSEIDON_CUMPSGEMM_ROOT`): without it, no TCEC candidate |
+| llvmlite | BSD 2-Clause | `poseidon-calibrate`'s host CPU microbenchmark | For host CPU cost models |
+| Python 3 | PSF-2.0 | `poseidon-calibrate`'s scripts, `poseidon-explain`, the tests | For those tools |
+
 ## License
 
-Apache License v2.0 with LLVM Exceptions, the repository's `LICENSE`.
+Apache License v2.0 with LLVM Exceptions, the repository's `LICENSE`, except
+the passages listed under
+[Code under other licenses](#code-under-other-licenses).

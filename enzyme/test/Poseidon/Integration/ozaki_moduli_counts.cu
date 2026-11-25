@@ -1,6 +1,6 @@
 // Every modulus count the Ozaki-II runtime accepts (3..14), each of which runs
 // its own instantiation of the residue and CRT kernels, against the accuracy
-// model's simulation of the published scheme (simulateOzakiIIDgemm), bit for
+// model's simulation of the scheme (simulateOzakiIIDgemm), bit for
 // bit: __poseidon_ozaki_dgemm in every A/B/C storage order, with beta = 0.5
 // on one, at 37 x 50 x 61, at 20 x 24 x 1100, whose strided operands take the
 // chunked sum of squares, and at the square 48 x 48 x 48. Rows and columns of
