@@ -9,7 +9,7 @@
 #ifndef IMPULSE_OPS
 #define IMPULSE_OPS
 
-include "ImpulseEnums.td"
+include "ImpulseAttributes.td"
 include "Dialect.td"
 
 include "mlir/IR/SymbolInterfaces.td"
@@ -19,23 +19,6 @@ include "mlir/IR/AttrTypeBase.td"
 
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-
-//===----------------------------------------------------------------------===//
-// Attributes
-//===----------------------------------------------------------------------===//
-
-def SymbolAttr : Impulse_Attr<"Symbol", "symbol"> {
-  let summary = "Name of a sample site within its model";
-  let description = [{
-    An opaque integer that names a sample site within its model; the sites of
-    one model have distinct symbols.
-  }];
-  let parameters = (ins "uint64_t":$ptr);
-  let assemblyFormat = "`<` $ptr `>`";
-}
-
-def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
-def AddressArrayAttr : TypedArrayAttrBase<AddressAttr, "Array of addresses">;
 
 //===----------------------------------------------------------------------===//
 // Probabilistic programming ops

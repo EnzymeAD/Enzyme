@@ -447,6 +447,7 @@ td_library(
     name = "ImpulseDialectTdFiles",
     srcs = [
         "Enzyme/MLIR/Dialect/Impulse/Dialect.td",
+        "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.td",
         "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.td",
     ],
     includes = ["."],
@@ -746,7 +747,7 @@ gentbl_cc_library(
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.td",
     deps = [":ImpulseDialectTdFiles"],
 )
 
@@ -759,7 +760,7 @@ gentbl_cc_library(
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.td",
     deps = [":ImpulseDialectTdFiles"],
 )
 
