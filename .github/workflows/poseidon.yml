@@ -1,10 +1,12 @@
 # Builds Enzyme with the Poseidon plugin against an apt LLVM and runs
-# check-poseidon. No CUDA or ROCm is installed, so the tests that need them are
-# unsupported; check-poseidon-integration launches CUDA kernels, which a
-# GitHub-hosted runner cannot. On a push and in the merge queue one more job
-# builds Herbie from source as well, to check that it builds and that the pass
-# runs it and reads its output; a pull request skips that job, which takes
-# Racket, Rust and most of the job's time.
+# check-poseidon, on a change to the paths below. No CUDA or ROCm is installed,
+# so the tests that need them are unsupported; check-poseidon-integration
+# launches CUDA kernels, which a GitHub-hosted runner cannot. A merge group
+# cannot be filtered by path, so there the first step compares the group with
+# its base and skips the rest when no path below changed. Weekly and on demand
+# one more job builds Herbie from source as well, to check that it builds and
+# that the pass runs it and reads its output; that job takes Racket, Rust and
+# most of the run's time.
 name: Poseidon CI
 
 on:
@@ -29,6 +31,9 @@ on:
       - 'enzyme/cmake/**'
       - 'enzyme/CMakeLists.txt'
   merge_group:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -49,12 +54,36 @@ jobs:
         build: ["Release"]
         os: [ubuntu-22.04]
         herbie: ["OFF"]
-        include: ${{ github.event_name == 'pull_request' && fromJSON('[]') || fromJSON('[{"llvm":"22","build":"Release","os":"ubuntu-22.04","herbie":"ON"}]') }}
+        include: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('[{"llvm":"22","build":"Release","os":"ubuntu-22.04","herbie":"ON"}]') || fromJSON('[]') }}
 
     timeout-minutes: ${{ matrix.herbie == 'ON' && 40 || 30 }}
 
     steps:
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
+
+    # The paths of the push and pull_request filters above.
+    - name: Check for changes to Poseidon
+      id: changes
+      env:
+        EVENT: ${{ github.event_name }}
+        BASE: ${{ github.event.merge_group.base_sha }}
+      run: |
+          if [ "$EVENT" = merge_group ]; then
+            git fetch --no-tags --depth=1 origin "$BASE"
+            if git diff --quiet "$BASE" HEAD -- .github/workflows/poseidon.yml \
+                enzyme/Enzyme enzyme/Poseidon enzyme/include/poseidon \
+                enzyme/test/Poseidon enzyme/cmake enzyme/CMakeLists.txt; then
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
     - name: Install dependencies
+      if: steps.changes.outputs.run == 'true'
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
@@ -64,17 +93,13 @@ jobs:
 
     # Racket as Herbie's own CI pins it; Rust comes with the runner image.
     - name: Install Racket
-      if: matrix.herbie == 'ON'
+      if: steps.changes.outputs.run == 'true' && matrix.herbie == 'ON'
       run: |
           wget -O /tmp/racket.sh https://download.racket-lang.org/installers/9.3/racket-9.3-x86_64-linux-cs.sh
           sudo sh /tmp/racket.sh --unix-style --dest /usr/local
 
-    - name: Checkout Enzyme repository
-      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      with:
-        persist-credentials: false
-
     - name: Configure
+      if: steps.changes.outputs.run == 'true'
       run: |
           cmake -G Ninja -S enzyme -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build }} \
@@ -84,7 +109,9 @@ jobs:
             -DPOSEIDON_BUILD_HERBIE=${{ matrix.herbie }}
 
     - name: Build
+      if: steps.changes.outputs.run == 'true'
       run: cmake --build build
 
     - name: check-poseidon
+      if: steps.changes.outputs.run == 'true'
       run: cmake --build build --target check-poseidon
