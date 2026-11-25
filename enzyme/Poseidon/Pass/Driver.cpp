@@ -348,7 +348,9 @@ static double profiledSiteCost(Session &S, Function &body) {
   requireCostModel(S.CostModel, *clone);
   double cost = profiledCost(S.CostModel, *clone, profileMap,
                              [](const Instruction &I, size_t &slot) {
-                               return tryReadProfIdxMetadata(&I, slot);
+                               std::optional<size_t> found = slotOf(&I);
+                               slot = found.value_or(0);
+                               return found.has_value();
                              });
   clone->eraseFromParent();
   return cost;

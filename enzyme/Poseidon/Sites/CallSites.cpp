@@ -599,12 +599,10 @@ struct ExtentWalk {
 
 } // namespace
 
-std::optional<PointerExtent> accessedExtent(Argument &A, std::string &why) {
+Expected<PointerExtent> accessedExtent(Argument &A) {
   ExtentWalk W{A.getParent()->getParent()->getDataLayout(), {}};
-  if (!W.enter(A, 0)) {
-    why = W.why;
-    return std::nullopt;
-  }
+  if (!W.enter(A, 0))
+    return createStringError(inconvertibleErrorCode(), W.why);
   return W.ext;
 }
 
@@ -636,15 +634,17 @@ bool lowerDeviceCallSites(const Options &O, Module &M) {
       }
       std::string why;
       for (Use &U : CB->args()) {
-        std::string reason;
         if (!U->getType()->isPointerTy() || pointsNowhere(U.get()) ||
-            localObject(U.get(), CB->getFunction()) ||
-            accessedExtent(*B->getArg(U.getOperandNo()), reason))
+            localObject(U.get(), CB->getFunction()))
           continue;
-        why +=
-            (Twine(why.empty() ? "" : "; ") + "argument " +
-             Twine(U.getOperandNo() + 1) + " is a pointer the call " + reason)
-                .str();
+        Expected<PointerExtent> ext =
+            accessedExtent(*B->getArg(U.getOperandNo()));
+        if (ext)
+          continue;
+        why += (Twine(why.empty() ? "" : "; ") + "argument " +
+                Twine(U.getOperandNo() + 1) + " is a pointer the call " +
+                toString(ext.takeError()))
+                   .str();
       }
       if (!why.empty()) {
         fail(CB, perCallSiteName(B->getName()) +

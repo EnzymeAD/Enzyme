@@ -1025,14 +1025,13 @@ static bool planShadows(CallInst *CI, Function &clone, const MarkerArgs &marker,
       plan.objectParam.try_emplace(obj, S.param);
       continue;
     }
-    std::string why;
-    std::optional<PointerExtent> ext =
-        accessedExtent(*clone.getArg(S.param), why);
+    Expected<PointerExtent> ext = accessedExtent(*clone.getArg(S.param));
     if (!ext) {
       fail(CI, site +
                    " no longer reaches a constant range of memory through "
                    "argument " +
-                   Twine(S.param + 1) + " (a pointer the call " + why +
+                   Twine(S.param + 1) + " (a pointer the call " +
+                   toString(ext.takeError()) +
                    "), so it cannot be a Poseidon site. Copy the argument "
                    "into a local object, or pass its shadow in the call: "
                    "enzyme_dup before the pointer and the shadow after it.");

@@ -366,7 +366,9 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
   requireCostModel(S.CostModel, F);
   st.profiledCost = profiledCost(S.CostModel, F, profile.map,
                                  [](const Instruction &I, size_t &slot) {
-                                   return tryReadProfIdxMetadata(&I, slot);
+                                   std::optional<size_t> found = slotOf(&I);
+                                   slot = found.value_or(0);
+                                   return found.has_value();
                                  });
 
   buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st, st.subgraphs);

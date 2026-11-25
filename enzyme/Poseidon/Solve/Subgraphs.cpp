@@ -54,10 +54,10 @@ static const FPFormatInfo *nodeFormat(Type *T) {
 // Whether the profiling run executed `I`, an optimizable instruction of the
 // canonical clone.
 static bool executed(const Instruction &I, const ProfileMap &profileMap) {
-  size_t idx;
-  if (!tryReadProfIdxMetadata(&I, idx))
+  std::optional<size_t> slot = slotOf(&I);
+  if (!slot)
     return true;
-  auto it = profileMap.find(idx);
+  auto it = profileMap.find(*slot);
   return it != profileMap.end() && it->second.exec != 0;
 }
 
@@ -239,10 +239,10 @@ void attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
   auto &valueToNodeMap = G.valueToNodeMap;
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
-      size_t idx;
-      if (!tryReadProfIdxMetadata(op, idx))
+      std::optional<size_t> slot = slotOf(op);
+      if (!slot)
         continue;
-      auto it = profileMap.find(idx);
+      auto it = profileMap.find(*slot);
       assert(it != profileMap.end() &&
              "an operation without a profile record is in no subgraph");
       const auto &profileInfo = it->second;

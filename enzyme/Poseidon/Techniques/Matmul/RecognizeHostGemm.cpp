@@ -1178,12 +1178,12 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
 
   uint64_t macs = 0;
   for (const RgMember &m : chain) {
-    size_t idx;
-    if (!tryReadProfIdxMetadata(m.fma, idx)) {
+    std::optional<size_t> slot = slotOf(m.fma);
+    if (!slot) {
       why = "a chain member's fma carries no profile index";
       return false;
     }
-    auto it = prof.find(idx);
+    auto it = prof.find(*slot);
     if (it == prof.end() || it->second.exec == 0) {
       why = "a chain member's fma has no profiled execution count";
       return false;
@@ -1194,10 +1194,9 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
 
   uint64_t rowsTimesCols = 0;
   if (epilogue) {
-    size_t idx;
     auto it = prof.end();
-    if (tryReadProfIdxMetadata(epilogue, idx))
-      it = prof.find(idx);
+    if (std::optional<size_t> slot = slotOf(epilogue))
+      it = prof.find(*slot);
     if (it == prof.end() || it->second.exec == 0) {
       why = "the accumulating epilogue has no profiled execution count, and it "
             "is the only exact source for the row extent";

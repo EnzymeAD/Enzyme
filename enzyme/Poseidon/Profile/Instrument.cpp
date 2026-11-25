@@ -204,9 +204,10 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
 
   SmallVector<std::pair<Instruction *, size_t>, 32> targets;
   for (Instruction &I : instructions(clone)) {
-    size_t idx;
-    if (isOptimizable(I) && tryReadProfIdxMetadata(&I, idx))
-      targets.emplace_back(&I, idx);
+    if (!isOptimizable(I))
+      continue;
+    if (std::optional<size_t> slot = slotOf(&I))
+      targets.emplace_back(&I, *slot);
   }
   if (targets.empty())
     return 0;

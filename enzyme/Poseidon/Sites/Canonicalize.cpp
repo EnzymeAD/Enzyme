@@ -141,20 +141,19 @@ bool isOptimizable(const llvm::Value &V) {
                 [](const Use &U) { return isModelledOperand(U.get()); });
 }
 
-bool tryReadProfIdxMetadata(const Instruction *I, size_t &out) {
+std::optional<size_t> slotOf(const Instruction *I) {
   MDNode *md = I ? I->getMetadata(kSlotMD) : nullptr;
   if (!md)
-    return false;
-  out = mdconst::extract<ConstantInt>(md->getOperand(0))->getZExtValue();
-  return true;
+    return std::nullopt;
+  return mdconst::extract<ConstantInt>(md->getOperand(0))->getZExtValue();
 }
 
-size_t readProfIdxMetadata(const Instruction *I) {
-  size_t out;
-  if (!tryReadProfIdxMetadata(I, out))
+size_t requireSlot(const Instruction *I) {
+  std::optional<size_t> slot = slotOf(I);
+  if (!slot)
     report_fatal_error("Poseidon: an instruction of a canonical clone has no "
                        "slot");
-  return out;
+  return *slot;
 }
 
 void setSlotMetadata(Function &F) {

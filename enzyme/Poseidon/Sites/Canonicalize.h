@@ -12,6 +12,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/OptimizationLevel.h"
 
+#include <optional>
 #include <string>
 
 namespace llvm {
@@ -48,10 +49,10 @@ constexpr llvm::StringLiteral kSlotMD = "poseidon.prof.idx";
 /// Numbers the optimizable instructions of the canonical clone `F` in order,
 /// the slots its profile records are indexed by.
 void setSlotMetadata(llvm::Function &F);
-/// The slot of `I`; false if it is null or has none.
-bool tryReadProfIdxMetadata(const llvm::Instruction *I, size_t &out);
+/// The slot of `I`; none if it is null or has none.
+std::optional<size_t> slotOf(const llvm::Instruction *I);
 /// The slot of `I`, which has one.
-size_t readProfIdxMetadata(const llvm::Instruction *I);
+size_t requireSlot(const llvm::Instruction *I);
 
 /// The passes of the canonical prefix before and after its always-inliner (none
 /// before it at O0).

@@ -15,6 +15,8 @@
 #ifndef POSEIDON_CALL_SITES_H
 #define POSEIDON_CALL_SITES_H
 
+#include "llvm/Support/Error.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -62,10 +64,9 @@ struct PointerExtent {
   bool accessed() const { return lo < hi; }
   bool written() const { return writeLo < writeHi; }
 };
-/// The extent of `A`, or none, with in `why` what the function does with the
-/// pointer that defeats it, phrased to follow "a pointer the call".
-std::optional<PointerExtent> accessedExtent(llvm::Argument &A,
-                                            std::string &why);
+/// The extent of `A`; otherwise an error saying what the function does with
+/// the pointer that defeats it, phrased to follow "a pointer the call".
+llvm::Expected<PointerExtent> accessedExtent(llvm::Argument &A);
 
 } // namespace poseidon
 

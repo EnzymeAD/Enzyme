@@ -51,7 +51,7 @@ namespace poseidon {
 static std::optional<MatmulProfile>
 loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
   const ScalarLoopHandle *h = &m.scalarLoop;
-  size_t fmaIdx = readProfIdxMetadata(h->fma);
+  size_t fmaIdx = requireSlot(h->fma);
   auto fmaIt = profile.find(fmaIdx);
   if (fmaIt == profile.end() || fmaIt->second.exec == 0)
     return std::nullopt;
@@ -60,7 +60,7 @@ loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
   const ProfileInfo *abInfo = &fmaInfo;
   size_t abIdx = fmaIdx;
   if (h->fmul) {
-    size_t fmulIdx = readProfIdxMetadata(h->fmul);
+    size_t fmulIdx = requireSlot(h->fmul);
     auto it = profile.find(fmulIdx);
     if (it == profile.end())
       report_fatal_error("no scalar profile record for fmul instIdx " +
@@ -93,7 +93,7 @@ static std::optional<MatmulProfile>
 loadProfileHostGemm(const AbstractMatmul &m, const ProfileMap &profile) {
   const RuntimeGemmHandle &h = *m.hostGemm;
   for (Instruction *fma : h.fmas) {
-    auto it = profile.find(readProfIdxMetadata(fma));
+    auto it = profile.find(requireSlot(fma));
     if (it == profile.end() || it->second.exec == 0)
       return std::nullopt;
   }
@@ -105,7 +105,7 @@ loadProfileHostGemm(const AbstractMatmul &m, const ProfileMap &profile) {
   uint64_t exec = 0;
   for (unsigned r = 0; r < h.fmas.size(); ++r) {
     Instruction *ab = h.fmuls[r] ? h.fmuls[r] : h.fmas[r];
-    size_t abIdx = readProfIdxMetadata(ab);
+    size_t abIdx = requireSlot(ab);
     auto abIt = profile.find(abIdx);
     if (abIt == profile.end())
       report_fatal_error("no scalar profile record for host-GEMM member " +
@@ -117,7 +117,7 @@ loadProfileHostGemm(const AbstractMatmul &m, const ProfileMap &profile) {
                    " operand range(s) of instruction " + Twine(abIdx) +
                    ", the multiply of a matrix product, which "
                    "has two; re-run profile generation.");
-    auto fIt = profile.find(readProfIdxMetadata(h.fmas[r]));
+    auto fIt = profile.find(requireSlot(h.fmas[r]));
     // Operand 0 of the fma is whichever load the source wrote first; the A/B
     // roles were settled by the address analysis, so map through it.
     bool aIsOp0 = (h.aLoads[r] == ab->getOperand(0));

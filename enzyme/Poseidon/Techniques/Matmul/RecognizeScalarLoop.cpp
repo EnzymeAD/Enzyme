@@ -647,9 +647,8 @@ void collectScalarLoopReductionTrips(
 
   forEachScalarLoopReduction(
       O, F, SE, LI, [&](Loop *, ScalarLoopHandle &h, FPKind, unsigned trip) {
-        size_t idx;
-        if (tryReadProfIdxMetadata(h.fma, idx))
-          trips.emplace_back(idx, trip);
+        if (std::optional<size_t> slot = slotOf(h.fma))
+          trips.emplace_back(*slot, trip);
       });
   if (O.Diagnostics.Print && !trips.empty())
     llvm::errs() << "[raise-wmma] recorded " << trips.size()
@@ -798,9 +797,8 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         am.outputValue = h.fma;
         // Profile-scale reduction length; 0 when the header has none.
         {
-          size_t sidx;
-          if (tryReadProfIdxMetadata(h.fma, sidx)) {
-            auto it = redTrip.find(sidx);
+          if (std::optional<size_t> slot = slotOf(h.fma)) {
+            auto it = redTrip.find(*slot);
             am.globalK = it == redTrip.end() ? 0u : it->second;
           }
         }
