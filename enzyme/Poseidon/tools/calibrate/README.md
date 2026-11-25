@@ -106,10 +106,11 @@ error-corrected dispatch (no HIP runtime) and `library_direct_rel,tf32_f32`
 Every `*_rel` row is one number in one unit: the candidate's wall clock over the
 scalar-FP64 GEMM's, at the same shape on the same device, so the DP compares an
 in-kernel raise against a library dispatch directly. The in-kernel arm learns
-which candidates the pass proposes from a profile of its harness (installed
-under `share/poseidon/tools/calibrate`), which it records itself at extents of
-at most 128 with B in the layout it measures; the profile decides which
-candidates exist, never what they measure. A class with no measured row is not
+which candidates the pass proposes from the explanation (`-poseidon-explain`)
+of a compile of its harness (installed under `share/poseidon/tools/calibrate`),
+whose profile it records itself at extents of at most 128 with B in the layout
+it measures; the profile decides which candidates exist, never what they
+measure. A class with no measured row is not
 proposed. The pass does not compose a price
 for it out of per-MMA rows: a materialized raise also pays a scratch fill,
 shared-memory staging and accumulator traffic that no per-MMA row contains.

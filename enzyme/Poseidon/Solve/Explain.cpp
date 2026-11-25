@@ -387,6 +387,7 @@ namespace {
 
 struct Alt {
   std::string id, kind, summary, fpcore, precision, status, reason;
+  std::string inKernelClass;
   SmallVector<std::string, 1> c;
   SmallVector<unsigned, 1> outputs;
   bool approx = false, series = false;
@@ -1278,6 +1279,8 @@ Error Explainer::buildMatmul(size_t m) {
     A.id = formatv("M{0}_{1}", m, j).str();
     A.kind = "matmul";
     A.summary = matmulOptionLabel(o);
+    if (o.realization == Realization::InKernel)
+      A.inKernelClass = inKernelCostClass(o.variant);
     A.item = &MU;
     A.index = j;
     A.at = U.root;
@@ -1496,6 +1499,8 @@ json::Object Explainer::toJSON() {
         a["id"] = A.id;
       a["kind"] = A.kind;
       a["summary"] = A.summary;
+      if (!A.inKernelClass.empty())
+        a["inkernel_class"] = A.inKernelClass;
       if (!A.precision.empty())
         a["precision"] = A.precision;
       if (!A.outputs.empty() && U.kind == "subgraph") {

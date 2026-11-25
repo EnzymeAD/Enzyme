@@ -496,6 +496,10 @@ public:
 /// The label of `opt` in candidate names and diagnostics.
 std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
+/// The class whose inkernel_rel cost-model row prices an in-kernel raise of
+/// `v`, such as "f16_f32" or "tcec_n2_f16_f32".
+std::string inKernelCostClass(const SchemeVariant &v);
+
 /// Appends to `out` a unit with priced candidates for each product of
 /// `matmuls` the profiling run executed. `sampleLogBits`: 0 samples operands
 /// uniformly over the profiled [min, max]; B > 0 log-uniformly in magnitude

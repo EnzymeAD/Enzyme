@@ -14,7 +14,7 @@
 // RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/cm.csv
 // RUN: env FAKE_CLANG_LOG=%t/clang.log %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor,64x32x16 \
 // RUN:   | FileCheck --check-prefix=FIRST %s
-// RUN: FileCheck --check-prefix=ARGS %s < %t/clang.log
+// RUN: FileCheck --check-prefix=ARGS --implicit-check-not=-poseidon-print %s < %t/clang.log
 // RUN: grep '^inkernel_rel,' %t/cm.csv | FileCheck --check-prefix=ROWS %s
 // RUN: not grep 'm64n32k16' %t/cm.csv
 // RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor \

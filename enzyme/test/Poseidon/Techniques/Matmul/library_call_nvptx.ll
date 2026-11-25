@@ -22,7 +22,8 @@
 ; row for every candidate of the product (each class row also as the row of
 ; this shape), it has nothing to warn about: the device half that dispatches
 ; the product, the host half that applies the dispatch and a device half that
-; raises the product in-kernel print nothing.
+; raises the product in-kernel print nothing. The explanation names the cost
+; row class of each in-kernel candidate, which poseidon-calibrate measures.
 ; RUN: cp %gpu_cost_model %t/rows.csv
 ; RUN: printf 'wmma_mma_m8n8k4,f64_f64,1024\ninkernel_rel,f64_f64,1\nlibrary_direct_rel,f32_f32,1\n' >> %t/rows.csv
 ; RUN: sed -n 'p; s/^\(inkernel_rel,[a-z0-9_]*\),/\1_m16n16k16_browmajor,/p' %t/rows.csv > %t/complete.csv
@@ -30,8 +31,14 @@
 ; RUN: ls %t/quiet/launches_*.json
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-cache=%t/quiet -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -o %t/quiet_host.ll 2>&1 | count 0
 ; RUN: grep -q __poseidon_ozakiii_dgemm %t/quiet_host.ll
-; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-matmul-library-calls=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet_raise -poseidon-tau=1e-6 -S -o %t/quiet_raise.ll 2>&1 | count 0
+; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-matmul-library-calls=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet_raise -poseidon-tau=1e-6 -poseidon-explain=%t/quiet_raise -S -o %t/quiet_raise.ll 2>&1 | count 0
 ; RUN: grep -q llvm.nvvm.wmma %t/quiet_raise.ll
+; RUN: FileCheck --check-prefix=CLASS %s < %t/quiet_raise/matmul_body.explain.json
+
+; CLASS: "id": "M0_1",
+; CLASS-NEXT: "inkernel_class": "f16_f32",
+; CLASS: "id": "M0_5",
+; CLASS-NEXT: "inkernel_class": "tcec_n2_f16_f32",
 
 ; TAU12: [poseidon] matmul[0] pricing: baseline/MAC=5.120000e+02 executions=8192
 ; TAU12-NEXT: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=3.137966e-04

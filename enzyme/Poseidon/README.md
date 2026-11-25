@@ -230,7 +230,7 @@ compiles are therefore run without either.
 |---|---|---|---|
 | Profile, `<site>.fpprofile` and `metric.txt` | profiler runtime; `poseidon-kappa` adds the condition number | plugin | `runtime/profile/ProfileFormat.h` |
 | Cost model, `cm_<arch>_<device>.csv` and its Herbie platform | `poseidon-calibrate` | plugin | `tools/calibrate/README.md` |
-| Explanation, `<function>.explain.json` | plugin (`-poseidon-explain`) | `poseidon-explain` | `Solve/Explain.h` |
+| Explanation, `<function>.explain.json` | plugin (`-poseidon-explain`) | `poseidon-explain`, `poseidon-calibrate` | `Solve/Explain.h` |
 | Launch manifest | device half of a GPU compile | host half | `Sites/LaunchManifest.h` |
 | Herbie answer, in the cache directory | plugin | plugin | `Techniques/Rewrite/HerbieRun.cpp` |
 | Solved table (DP), in the cache directory | plugin | plugin | `Solve/SolveSites.cpp`, `Support/CacheKey.h` |

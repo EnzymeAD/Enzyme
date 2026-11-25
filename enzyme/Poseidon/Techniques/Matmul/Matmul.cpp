@@ -93,13 +93,10 @@ std::string matmulOptionLabel(const MatmulUnit::Option &opt) {
                    "realization");
 }
 
-// The class an in-kernel candidate's measured row is keyed by, in the same unit
-// as library_ozaki_rel (candidate wall clock / scalar FP64 baseline wall
-// clock):
+// The row is in the same unit as library_ozaki_rel (candidate wall clock /
+// scalar FP64 baseline wall clock):
 //     inkernel_rel,<class>,<rel>
-// with <class> naming the candidate as the solver's table does ("f16_f32",
-// "tcec_n2_f16_f32").
-static std::string inKernelCostClass(const SchemeVariant &v) {
+std::string inKernelCostClass(const SchemeVariant &v) {
   switch (v.scheme) {
   case Scheme::Direct:
     return schemeFormats(v, '_');

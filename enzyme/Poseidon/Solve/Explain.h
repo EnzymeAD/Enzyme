@@ -51,7 +51,9 @@
 //              inputs, outputs, original, herbie, left_as_written, and
 //              alternatives: each candidate with id, kind ("algebraic",
 //              "precision", "expansion", "matmul"), summary (for a product,
-//              the realization the solve names it by), precision, outputs,
+//              the realization the solve names it by), inkernel_class (for an
+//              in-kernel raise of a product, the class of the inkernel_rel
+//              cost-model row that prices it), precision, outputs,
 //              fpcore, c, approx, approx_note, changes (each with from, to
 //              and the indices of its ops), cost_delta, modelled_error,
 //              modelled_domain_error (of a product: under the "error-budget"

@@ -26,6 +26,7 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
@@ -827,29 +828,40 @@ static std::optional<double> timeOf(StringRef Exe) {
   return Ms;
 }
 
-/// The in-kernel classes of the candidate table a compile printed to `Log`,
-/// each with the index of the candidate that applies it.
-static std::map<std::string, std::string> inKernelClasses(StringRef Log) {
-  // "[poseidon]   #8 tcec n=2 wmma m16n16k8 tf32/f32  compCost/MAC=..."
-  Regex Candidate("^\\[poseidon\\][ ]+#([0-9]+) (.*)  compCost/MAC");
-  Regex Direct("^wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
-  Regex Tcec(
-      "^tcec n=([0-9]+) wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
+/// The in-kernel classes the explanations a compile wrote into `Dir` propose,
+/// each with the id of the candidate that applies it; none when it wrote none.
+static std::map<std::string, std::string> inKernelClasses(StringRef Dir) {
   std::map<std::string, std::string> Classes;
-  const std::string Text = readFile(Log);
-  for (StringRef Line : llvm::split(Text, '\n')) {
-    SmallVector<StringRef, 3> Match;
-    if (!Candidate.match(Line, &Match))
+  std::error_code EC;
+  for (sys::fs::directory_iterator It(Dir, EC), End; It != End && !EC;
+       It.increment(EC)) {
+    if (!StringRef(It->path()).ends_with(".explain.json"))
       continue;
-    StringRef Label = Match[2].trim();
-    SmallVector<StringRef, 4> Parts;
-    if (Direct.match(Label, &Parts))
-      Classes.emplace((Parts[1] + "_" + Parts[2]).str(), Match[1].str());
-    else if (Tcec.match(Label, &Parts))
-      Classes.emplace(
-          ("tcec_n" + Parts[1] + "_" + Parts[2] + "_" + Parts[3]).str(),
-          Match[1].str());
+    Expected<json::Value> Doc = json::parse(readFile(It->path()));
+    if (!Doc)
+      fail("cannot read the explanation " + It->path() + ": " +
+           toString(Doc.takeError()));
+    const json::Object *Root = Doc->getAsObject();
+    const json::Array *Units = Root ? Root->getArray("subgraphs") : nullptr;
+    if (!Units)
+      continue;
+    for (const json::Value &Unit : *Units) {
+      const json::Object *U = Unit.getAsObject();
+      const json::Array *Alts = U ? U->getArray("alternatives") : nullptr;
+      if (!Alts)
+        continue;
+      for (const json::Value &Alt : *Alts) {
+        const json::Object *A = Alt.getAsObject();
+        std::optional<StringRef> Class =
+            A ? A->getString("inkernel_class") : std::nullopt;
+        std::optional<StringRef> Id = A ? A->getString("id") : std::nullopt;
+        if (Class && Id)
+          Classes.emplace(Class->str(), Id->str());
+      }
+    }
   }
+  if (EC && EC != std::errc::no_such_file_or_directory)
+    fail("cannot list " + Dir + ": " + EC.message());
   return Classes;
 }
 
@@ -920,30 +932,33 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
   outs() << "poseidon-calibrate: scalar-FP64 baseline "
          << formatv("{0:F4}", *BaseMs) << " ms\n";
 
-  // One compile prints the candidate table; -poseidon-pin is
-  // mandatory under -poseidon-matmul-calibration, so a placeholder price can
-  // never reach a DP solve.
+  // One compile explains the candidates; -poseidon-pin is mandatory under
+  // -poseidon-matmul-calibration, so a placeholder price can never reach a DP
+  // solve.
   SmallVector<std::string, 16> Common = Timed;
   Common.append({"-poseidon-profile-use=" + ProfDir,
                  "-poseidon-cache=" + Dir + "/cache",
                  "-poseidon-cost-model=" + Csv, "-poseidon-enable-rewrite=0",
                  "-poseidon-enable-precision=0", "-poseidon-enable-matmul",
-                 "-poseidon-print", "-poseidon-matmul-calibration"});
-  auto compile = [&](StringRef Apply, StringRef Exe, StringRef Log) {
+                 "-poseidon-matmul-calibration"});
+  auto compile = [&](ArrayRef<std::string> Apply, StringRef Exe,
+                     StringRef Log) {
     SmallVector<std::string, 16> Flags = Common;
-    Flags.push_back(Apply.str());
+    Flags.append(Apply.begin(), Apply.end());
     return build(Flags, Exe, Log);
   };
-  std::string EnumLog = Dir + "/enumerate.log";
-  compile("-poseidon-pin=M0_0", "/dev/null", EnumLog);
-  std::map<std::string, std::string> Classes = inKernelClasses(EnumLog);
+  std::string EnumLog = Dir + "/enumerate.log", Explained = Dir + "/explain";
+  sys::fs::remove_directories(Explained);
+  compile({"-poseidon-pin=M0_0", "-poseidon-explain=" + Explained}, "/dev/null",
+          EnumLog);
+  std::map<std::string, std::string> Classes = inKernelClasses(Explained);
   if (Classes.empty())
     fail("no in-kernel class was proposed on this device; see " + EnumLog);
   outs() << "poseidon-calibrate: " << Classes.size()
          << " in-kernel class(es) proposed\n";
 
   std::string Rows;
-  for (const auto &[Class, Index] : Classes) {
+  for (const auto &[Class, Id] : Classes) {
     const std::string Row = "inkernel_rel," + Class + Suffix.str();
     if (!Force && StringRef(Content).contains(Row + ",")) {
       outs() << "  = " << Class << Suffix << " already calibrated\n";
@@ -951,7 +966,7 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
     }
     std::string Exe = Dir + "/cand_" + Class + ".exe";
     std::string Log = Dir + "/build_" + Class + ".log";
-    if (compile("-poseidon-pin=M0_" + Index, Exe, Log)) {
+    if (compile({"-poseidon-pin=" + Id}, Exe, Log)) {
       outs() << "  ! " << Class << Suffix << " did not build (" << Log << ")\n";
       Unmeasured.push_back(Row);
       continue;
