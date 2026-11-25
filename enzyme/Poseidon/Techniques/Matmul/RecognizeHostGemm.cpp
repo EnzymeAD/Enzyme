@@ -45,6 +45,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -73,6 +74,11 @@ std::string runtimeDimString(const RuntimeDim &d) {
   if (d.add)
     s += (d.add > 0 ? "+" : "") + std::to_string(d.add);
   return s;
+}
+
+/// Why a reduction chain is not a dispatchable runtime-shape product.
+static Error refuse(const Twine &why) {
+  return createStringError(inconvertibleErrorCode(), why);
 }
 
 namespace {
@@ -155,37 +161,42 @@ static RgPoly rgMul(const RgPoly &a, const RgPoly &b) {
     }
   return r;
 }
-// Exact division by a nonzero integer. A non-integral result is a recognition
-// failure (a fractional leading dimension), never a rounded guess.
-static bool rgDivExact(const RgPoly &a, int64_t d, RgPoly &out) {
+/// `a` divided by the nonzero integer `d`; none when a coefficient is not a
+/// multiple of `d` (a fractional leading dimension), never a rounded guess.
+static std::optional<RgPoly> rgDivExact(const RgPoly &a, int64_t d) {
   if (d == 0)
-    return false;
-  out = RgPoly{};
+    return std::nullopt;
+  RgPoly out;
   for (auto &kv : a.t) {
     if (kv.second % d)
-      return false;
+      return std::nullopt;
     out.addTerm(kv.first, kv.second / d);
   }
-  return true;
+  return out;
 }
-// Divide out one occurrence of `atom` from every monomial that contains it;
-// the quotient is returned in `q` and the untouched terms in `rest`. Refuses a
-// monomial carrying the atom to a power > 1 (a quadratic index is not a matrix
-// subscript).
-static bool rgDivideByAtom(const RgPoly &p, unsigned atom, RgPoly &q,
-                           RgPoly &rest) {
-  q = RgPoly{};
-  rest = RgPoly{};
+
+namespace {
+/// `p` as quotient * atom + rest, with `rest` free of the atom.
+struct AtomSplit {
+  RgPoly quotient, rest;
+};
+} // namespace
+
+/// Divides one occurrence of `atom` out of every monomial of `p` that has it.
+/// None when a monomial has the atom to a power above 1: a quadratic index is
+/// not a matrix subscript.
+static std::optional<AtomSplit> rgDivideByAtom(const RgPoly &p, unsigned atom) {
+  AtomSplit s;
   for (auto &kv : p.t) {
     unsigned n = 0;
     for (unsigned a : kv.first)
       n += (a == atom);
     if (n == 0) {
-      rest.addTerm(kv.first, kv.second);
+      s.rest.addTerm(kv.first, kv.second);
       continue;
     }
     if (n > 1)
-      return false;
+      return std::nullopt;
     RgMono m;
     bool dropped = false;
     for (unsigned a : kv.first) {
@@ -195,9 +206,9 @@ static bool rgDivideByAtom(const RgPoly &p, unsigned atom, RgPoly &q,
       }
       m.push_back(a);
     }
-    q.addTerm(m, kv.second);
+    s.quotient.addTerm(m, kv.second);
   }
-  return true;
+  return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,14 +228,15 @@ static LaunchRef rgLaunchValue(const Value *v) {
   return launchFieldOf(v);
 }
 
-// Why the host cannot read the launch value `v` (at `r`) as a dimension or an
-// assumed-equal operand, which it loads as an i32: a narrower integer would be
-// read past its end, and a wider one would lose the bits it reads past 32,
-// which the dispatch's int dimensions could not take anyway. Empty when it can.
-static std::string rgHostReadRefusal(const Value *v, const LaunchRef &r) {
+/// Why the host cannot read the launch value `v` (at `r`) as a dimension or an
+/// assumed-equal operand, which it loads as an i32: a narrower integer would be
+/// read past its end, and a wider one would lose the bits it reads past 32,
+/// which the dispatch's int dimensions could not take anyway. None when it can.
+static std::optional<std::string> rgHostReadRefusal(const Value *v,
+                                                    const LaunchRef &r) {
   auto *T = dyn_cast<IntegerType>(v->getType());
   if (T && T->getBitWidth() == 32)
-    return "";
+    return std::nullopt;
   std::string what = T ? ", an i" + std::to_string(T->getBitWidth()) + ","
                        : ", which is not an integer,";
   return launchRefString(r, "param") + what +
@@ -271,64 +283,51 @@ struct RgAtoms {
     counterOf[L] = n;
     return n;
   }
-};
 
-struct RgExpand {
-  ScalarEvolution &SE;
-  RgAtoms &A;
-  std::string err;
-
-  bool expand(const SCEV *S, RgPoly &out) {
-    if (auto *C = dyn_cast<SCEVConstant>(S)) {
-      out = RgPoly::constant(C->getAPInt().getSExtValue());
-      return true;
-    }
+  /// `S` as a polynomial over this table's atoms, adding the atoms it meets.
+  Expected<RgPoly> expand(ScalarEvolution &SE, const SCEV *S) {
+    if (auto *C = dyn_cast<SCEVConstant>(S))
+      return RgPoly::constant(C->getAPInt().getSExtValue());
     if (auto *Cast = dyn_cast<SCEVCastExpr>(S)) {
       // zext / sext / trunc are transparent: each one here comes from index
       // arithmetic LLVM proved non-wrapping (the nsw/nneg flags on the source
       // adds and muls), so it preserves the value.
-      return expand(Cast->getOperand(), out);
+      return expand(SE, Cast->getOperand());
     }
     if (auto *Add = dyn_cast<SCEVAddExpr>(S)) {
-      out = RgPoly{};
+      RgPoly out;
       for (const SCEV *Op : Add->operands()) {
-        RgPoly p;
-        if (!expand(Op, p))
-          return false;
-        out = rgAdd(out, p);
+        Expected<RgPoly> p = expand(SE, Op);
+        if (!p)
+          return p.takeError();
+        out = rgAdd(out, *p);
       }
-      return true;
+      return out;
     }
     if (auto *Mul = dyn_cast<SCEVMulExpr>(S)) {
-      out = RgPoly::constant(1);
+      RgPoly out = RgPoly::constant(1);
       for (const SCEV *Op : Mul->operands()) {
-        RgPoly p;
-        if (!expand(Op, p))
-          return false;
-        out = rgMul(out, p);
+        Expected<RgPoly> p = expand(SE, Op);
+        if (!p)
+          return p.takeError();
+        out = rgMul(out, *p);
       }
-      return true;
+      return out;
     }
     if (auto *Rec = dyn_cast<SCEVAddRecExpr>(S)) {
-      if (!Rec->isAffine()) {
-        err = "non-affine add-recurrence";
-        return false;
-      }
-      RgPoly start;
-      if (!expand(Rec->getStart(), start))
-        return false;
-      RgPoly step;
-      if (!expand(Rec->getStepRecurrence(SE), step))
-        return false;
-      out = rgAdd(start, rgMul(step, RgPoly::atom(A.counter(Rec->getLoop()))));
-      return true;
+      if (!Rec->isAffine())
+        return refuse("non-affine add-recurrence");
+      Expected<RgPoly> start = expand(SE, Rec->getStart());
+      if (!start)
+        return start.takeError();
+      Expected<RgPoly> step = expand(SE, Rec->getStepRecurrence(SE));
+      if (!step)
+        return step.takeError();
+      return rgAdd(*start, rgMul(*step, RgPoly::atom(counter(Rec->getLoop()))));
     }
-    if (isa<SCEVUnknown>(S)) {
-      out = RgPoly::atom(A.id(S));
-      return true;
-    }
-    err = "unsupported SCEV node (udiv / min / max)";
-    return false;
+    if (isa<SCEVUnknown>(S))
+      return RgPoly::atom(id(S));
+    return refuse("unsupported SCEV node (udiv / min / max)");
   }
 };
 
@@ -337,46 +336,37 @@ struct RgExpand {
 // A GEMM dimension is usable only if it is one monomial over launch values of
 // the optimized body plus a constant, mul*v0*v1*... + add, which the host-side
 // stub rewrite evaluates from the launch arguments.
-static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
-                           std::string &why) {
-  out = RuntimeDim{};
+static Expected<RuntimeDim> rgToRuntimeDim(const RgPoly &p, const RgAtoms &A) {
+  RuntimeDim out;
   bool haveTerm = false;
   for (auto &kv : p.t) {
-    if (kv.second < -kMaxDimConstant || kv.second > kMaxDimConstant) {
-      why = "a GEMM dimension has the constant " + std::to_string(kv.second) +
-            ", out of the range a dispatch dimension takes";
-      return false;
-    }
+    if (kv.second < -kMaxDimConstant || kv.second > kMaxDimConstant)
+      return refuse("a GEMM dimension has the constant " +
+                    std::to_string(kv.second) +
+                    ", out of the range a dispatch dimension takes");
     if (kv.first.empty()) {
       out.add = kv.second;
       continue;
     }
-    if (kv.first.size() > kMaxDimFactors) {
-      why = "a GEMM dimension is a product of " +
-            std::to_string(kv.first.size()) + " launch values, more than the " +
-            std::to_string(kMaxDimFactors) + " a descriptor holds";
-      return false;
-    }
-    if (haveTerm) {
-      why = "a GEMM dimension is not expressible as mul*arg+add: value "
-            "depends on more than one runtime term";
-      return false;
-    }
+    if (kv.first.size() > kMaxDimFactors)
+      return refuse("a GEMM dimension is a product of " +
+                    std::to_string(kv.first.size()) +
+                    " launch values, more than the " +
+                    std::to_string(kMaxDimFactors) + " a descriptor holds");
+    if (haveTerm)
+      return refuse("a GEMM dimension is not expressible as mul*arg+add: value "
+                    "depends on more than one runtime term");
     for (unsigned a : kv.first) {
       const SCEV *S = A.byId[a];
       auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
       LaunchRef r = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
-      if (r.param < 0) {
-        why = "a GEMM dimension is not expressible as mul*arg+add: value "
-              "depends on a term that is not a parameter of the optimized "
-              "body or a field of one passed by value";
-        return false;
-      }
-      if (std::string refusal = rgHostReadRefusal(U->getValue(), r);
-          !refusal.empty()) {
-        why = "a GEMM dimension depends on " + refusal;
-        return false;
-      }
+      if (r.param < 0)
+        return refuse("a GEMM dimension is not expressible as mul*arg+add: "
+                      "value depends on a term that is not a parameter of the "
+                      "optimized body or a field of one passed by value");
+      if (std::optional<std::string> refusal =
+              rgHostReadRefusal(U->getValue(), r))
+        return refuse("a GEMM dimension depends on " + *refusal);
       out.factors.push_back(r);
     }
     // In launch order rather than in the order the atoms were met.
@@ -384,13 +374,13 @@ static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
     out.mul = kv.second;
     haveTerm = true;
   }
-  return true;
+  return out;
 }
 
-// The launch value `p` is, when it is exactly one (coefficient 1, no constant)
-// that the host can read; `why` receives the reason when the host cannot.
-static std::optional<LaunchRef>
-rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A, std::string &why) {
+/// The launch value `p` is, when it is exactly one (coefficient 1, no
+/// constant); none when it is not one; an error when the host cannot read it.
+static Expected<std::optional<LaunchRef>>
+rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A) {
   if (p.t.size() != 1 || p.t.begin()->first.size() != 1 ||
       p.t.begin()->second != 1)
     return std::nullopt;
@@ -399,9 +389,8 @@ rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A, std::string &why) {
   LaunchRef r = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
   if (r.param < 0 || !U->getType()->isIntegerTy())
     return std::nullopt;
-  why = rgHostReadRefusal(U->getValue(), r);
-  if (!why.empty())
-    return std::nullopt;
+  if (std::optional<std::string> refusal = rgHostReadRefusal(U->getValue(), r))
+    return refuse(*refusal);
   return r;
 }
 
@@ -446,32 +435,35 @@ struct RgIndex {
   std::string name;
 };
 
+/// `p` as coef * idx.form + rest, with `rest` free of every atom of `idx`.
+struct IndexSplit {
+  RgPoly coef, rest;
+};
+
 } // namespace
 
-// Peel the index `idx` out of an address polynomial:
-//     p == coef * idx.form + rest,  with rest free of every atom of `idx`.
-// Returns false when p is not of that form: the address is not a matrix
-// subscript in this index.
-static bool rgSplitIndex(const RgPoly &p, const RgIndex &idx, RgPoly &coef,
-                         RgPoly &rest) {
-  RgPoly q, r;
-  if (!rgDivideByAtom(p, idx.sigAtom, q, r))
-    return false;
+/// Peels the index `idx` out of an address polynomial; none when `p` is not
+/// coef * idx.form + rest: the address is not a matrix subscript in `idx`.
+static std::optional<IndexSplit> rgSplitIndex(const RgPoly &p,
+                                              const RgIndex &idx) {
+  std::optional<AtomSplit> s = rgDivideByAtom(p, idx.sigAtom);
+  if (!s)
+    return std::nullopt;
+  RgPoly q = s->quotient;
   // Peel off the rest of the signature monomial (the ntid factor of a CTA
   // linearization); anything left over means the address does not carry the
   // index in the shape the index actually has.
   for (unsigned a : idx.sigMono) {
-    RgPoly q2, r2;
-    if (!rgDivideByAtom(q, a, q2, r2) || !r2.isZero())
-      return false;
-    q = q2;
+    std::optional<AtomSplit> s2 = rgDivideByAtom(q, a);
+    if (!s2 || !s2->rest.isZero())
+      return std::nullopt;
+    q = s2->quotient;
   }
-  coef = q;
-  rest = rgSub(p, rgMul(coef, idx.form));
+  IndexSplit out{q, rgSub(p, rgMul(q, idx.form))};
   for (unsigned a : idx.ownAtoms)
-    if (rest.contains(a))
-      return false;
-  return true;
+    if (out.rest.contains(a))
+      return std::nullopt;
+  return out;
 }
 
 namespace {
@@ -519,48 +511,53 @@ static const SCEV *rgStripSCEVCasts(const SCEV *S) {
   return S;
 }
 
-// A block-strided thread loop,
-//     for (int i = threadIdx.k; i < N; i += blockDim.k)
-// Returns the index value, its upper bound N, and the thread axis k.
-static bool rgMatchStridedThreadLoop(Loop *L, ScalarEvolution &SE,
-                                     Value *&idxVal, Value *&bound, int &axis) {
+namespace {
+/// A block-strided thread loop, for (i = threadIdx.k; i < bound; i +=
+/// blockDim.k).
+struct StridedThreadLoop {
+  Value *index;
+  Value *bound;
+  int axis;
+};
+} // namespace
+
+/// `L` as a block-strided thread loop; none when it is not one.
+static std::optional<StridedThreadLoop>
+rgMatchStridedThreadLoop(Loop *L, ScalarEvolution &SE) {
   BasicBlock *latch = L->getLoopLatch();
   if (!latch)
-    return false;
+    return std::nullopt;
   Instruction *br = latch->getTerminator();
   Value *cond;
   if (!match(br,
              m_Br(m_Value(cond), m_Specific(L->getHeader()), m_BasicBlock())))
-    return false;
+    return std::nullopt;
   auto *cmp = dyn_cast<ICmpInst>(cond);
   if (!cmp)
-    return false;
+    return std::nullopt;
   auto pred = cmp->getPredicate();
   if (pred != ICmpInst::ICMP_SLT && pred != ICmpInst::ICMP_ULT)
-    return false;
+    return std::nullopt;
   auto *nextIdx = dyn_cast<BinaryOperator>(cmp->getOperand(0));
   if (!nextIdx || nextIdx->getOpcode() != Instruction::Add)
-    return false;
+    return std::nullopt;
   int a0 = rgNtidAxis(nextIdx->getOperand(0));
   int a1 = rgNtidAxis(nextIdx->getOperand(1));
   if ((a0 < 0) == (a1 < 0))
-    return false; // need exactly one blockDim operand
-  axis = a0 >= 0 ? a0 : a1;
-  idxVal = a0 >= 0 ? nextIdx->getOperand(1) : nextIdx->getOperand(0);
-  bound = cmp->getOperand(1);
+    return std::nullopt; // need exactly one blockDim operand
+  StridedThreadLoop S{a0 >= 0 ? nextIdx->getOperand(1) : nextIdx->getOperand(0),
+                      cmp->getOperand(1), a0 >= 0 ? a0 : a1};
 
-  const SCEV *S = rgStripSCEVCasts(SE.getSCEV(idxVal));
-  auto *Rec = dyn_cast<SCEVAddRecExpr>(S);
+  auto *Rec = dyn_cast<SCEVAddRecExpr>(rgStripSCEVCasts(SE.getSCEV(S.index)));
   if (!Rec || Rec->getLoop() != L || !Rec->isAffine())
-    return false;
+    return std::nullopt;
   auto *st = dyn_cast<SCEVUnknown>(rgStripSCEVCasts(Rec->getStart()));
   auto *sp =
       dyn_cast<SCEVUnknown>(rgStripSCEVCasts(Rec->getStepRecurrence(SE)));
-  if (!st || !sp)
-    return false;
-  if (rgTidAxis(st->getValue()) != axis || rgNtidAxis(sp->getValue()) != axis)
-    return false;
-  return true;
+  if (!st || !sp || rgTidAxis(st->getValue()) != S.axis ||
+      rgNtidAxis(sp->getValue()) != S.axis)
+    return std::nullopt;
+  return S;
 }
 
 // Fill in an RgIndex from its symbolic form: pick the signature atom (a CTA id
@@ -670,50 +667,102 @@ rgProfileExtent(const RgIndex &idx, const RgAtoms &A,
   return (unsigned)(maxVal + 1);
 }
 
-// Reconstruct one contraction chain into a RuntimeGemmHandle. Returns false
-// with `why` set on any non-match; the caller prints it under -poseidon-print.
-// Nothing is defaulted: every field below is either derived or the whole site
-// is refused.
-static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
-                           const FunctionProfileHeader &hdr,
-                           const ProfileMap &prof, ArrayRef<RgMember> chain,
-                           RuntimeGemmHandle &H, std::string &why) {
-  const DataLayout &DL = F.getParent()->getDataLayout();
-  const unsigned R = chain.size();
-  Type *eltTy = chain[0].aLoad->getType();
-  const int64_t elemSize = (int64_t)DL.getTypeAllocSize(eltTy).getFixedValue();
+namespace {
 
-  for (const RgMember &m : chain) {
-    if (m.aLoad->getType() != eltTy || m.bLoad->getType() != eltTy) {
-      why = "chain members disagree on element type";
-      return false;
-    }
-  }
-
+/// What the steps recognizing one contraction chain share: the chain, the
+/// atoms its addresses are expanded over, and the index sources the product's
+/// rows and columns run along. Atoms are numbered in the order the steps meet
+/// them, which orders every polynomial, so the steps run in a fixed order.
+struct ChainAnalysis {
+  ScalarEvolution &SE;
+  ArrayRef<RgMember> chain;
   RgAtoms atoms;
-  RgExpand EX{SE, atoms, {}};
   SmallVector<RgIndex, 4> indices;
-  for (Loop *L = chain[0].L->getParentLoop(); L; L = L->getParentLoop()) {
-    Value *idxVal = nullptr, *bound = nullptr;
-    int axis = -1;
-    if (!rgMatchStridedThreadLoop(L, SE, idxVal, bound, axis))
+  /// Per member, the atom of its reduction loop's iteration counter.
+  SmallVector<unsigned, 8> redCounter;
+
+  Expected<RgPoly> expand(const SCEV *S) { return atoms.expand(SE, S); }
+};
+
+/// The address polynomial of each member's two operands at reduction index 0,
+/// and the operands' byte steps along the reduction, which all members share.
+struct OperandAddresses {
+  SmallVector<RgPoly, 8> at[2];
+  int64_t step[2] = {0, 0};
+};
+
+/// An address split over every index source: a coefficient per source and
+/// the base the sources leave.
+struct AddressSplit {
+  SmallVector<RgPoly, 4> coef;
+  RgPoly base;
+};
+
+/// The store of the product and the fadd that accumulates into it, if any.
+struct OutputStore {
+  StoreInst *store = nullptr;
+  Instruction *epilogue = nullptr;
+};
+
+/// One side's index sources fused into one matrix index.
+struct FusedIndex {
+  RgPoly unitStride, extent;
+  SmallVector<unsigned, 2> order;
+};
+
+/// Which operand is A and how the product is laid out, in bytes.
+struct Orientation {
+  bool aIsOp0;
+  RgPoly lda, rows, ldb, cols, ldc;
+  SmallVector<unsigned, 2> rowOrder, colOrder;
+  bool bColMajor;
+};
+
+/// The product's shape at profile scale, and the profile counts it is
+/// reconstructed from.
+struct ProfileShape {
+  unsigned M = 0, N = 0, K = 0;
+  /// Per-CTA tile of the product, the size the accuracy model simulates.
+  unsigned tileM = 0, tileN = 0;
+  unsigned launches = 0, ctaPerLaunch = 0;
+  uint64_t macs = 0;
+};
+
+/// A recognized chain: its library-call handle and its profile-scale shape.
+struct RecognizedChain {
+  RuntimeGemmHandle H;
+  ProfileShape profile;
+};
+
+} // namespace
+
+/// Finds the index sources dominating the contraction: block-strided thread
+/// loops around it and guards of a launch index against a bound. Returns the
+/// guard branches the sources come from.
+static Expected<SmallPtrSet<const Instruction *, 8>>
+collectIndexSources(ChainAnalysis &C, Function &F, DominatorTree &DT) {
+  ScalarEvolution &SE = C.SE;
+  for (Loop *L = C.chain[0].L->getParentLoop(); L; L = L->getParentLoop()) {
+    std::optional<StridedThreadLoop> S = rgMatchStridedThreadLoop(L, SE);
+    if (!S)
       continue;
     RgIndex idx;
-    if (!EX.expand(SE.getSCEV(idxVal), idx.form) ||
-        !EX.expand(SE.getSCEV(bound), idx.extent)) {
-      why = "cannot expand a strided-thread-loop index or its bound (" +
-            EX.err + ")";
-      return false;
-    }
-    if (!rgFinishIndex(idx, atoms)) {
-      why = "strided-thread-loop index has no usable signature term";
-      return false;
-    }
-    idx.name = ("tid." + Twine("xyz"[axis]) + "-strided").str();
-    indices.push_back(idx);
+    Expected<RgPoly> form = C.expand(SE.getSCEV(S->index));
+    if (!form)
+      return refuse("cannot expand a strided-thread-loop index or its bound (" +
+                    toString(form.takeError()) + ")");
+    Expected<RgPoly> extent = C.expand(SE.getSCEV(S->bound));
+    if (!extent)
+      return refuse("cannot expand a strided-thread-loop index or its bound (" +
+                    toString(extent.takeError()) + ")");
+    idx.form = std::move(*form);
+    idx.extent = std::move(*extent);
+    if (!rgFinishIndex(idx, C.atoms))
+      return refuse("strided-thread-loop index has no usable signature term");
+    idx.name = ("tid." + Twine("xyz"[S->axis]) + "-strided").str();
+    C.indices.push_back(idx);
   }
-  BasicBlock *anchorBB = chain.back().fma->getParent();
-  // The branches the index sources come from.
+  BasicBlock *anchorBB = C.chain.back().fma->getParent();
   SmallPtrSet<const Instruction *, 8> indexBranches;
   for (BasicBlock &BB : F) {
     Instruction *br = BB.getTerminator();
@@ -734,15 +783,24 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
     const SCEV *SX = SE.getSCEV(cmp->getOperand(0));
     if (!rgMentionsLaunchReg(SX))
       continue;
+    // An unexpandable guard is simply not an index source.
     RgIndex idx;
-    if (!EX.expand(SX, idx.form))
-      continue; // an unexpandable guard is simply not an index source
-    if (!EX.expand(SE.getSCEV(cmp->getOperand(1)), idx.extent))
+    Expected<RgPoly> form = C.expand(SX);
+    if (!form) {
+      consumeError(form.takeError());
       continue;
+    }
+    Expected<RgPoly> extent = C.expand(SE.getSCEV(cmp->getOperand(1)));
+    if (!extent) {
+      consumeError(extent.takeError());
+      continue;
+    }
+    idx.form = std::move(*form);
+    idx.extent = std::move(*extent);
     // The guard a rotated strided loop is entered through, on the loop's own
     // bound. A guard of the same index with another bound is a second source
     // of that index, which the signature check below refuses.
-    if (llvm::any_of(indices, [&](const RgIndex &prev) {
+    if (llvm::any_of(C.indices, [&](const RgIndex &prev) {
           return (prev.form == idx.form ||
                   idx.form == RgPoly::atom(prev.sigAtom)) &&
                  prev.extent == idx.extent;
@@ -750,579 +808,628 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
       indexBranches.insert(br);
       continue;
     }
-    if (!rgFinishIndex(idx, atoms))
+    if (!rgFinishIndex(idx, C.atoms))
       continue;
     idx.name = "guarded";
-    indices.push_back(idx);
+    C.indices.push_back(idx);
     indexBranches.insert(br);
   }
-  if (indices.empty()) {
-    why = "no thread/CTA index source dominates the contraction";
-    return false;
-  }
+  if (C.indices.empty())
+    return refuse("no thread/CTA index source dominates the contraction");
   // Signature atoms must be distinct, or peeling one index out of an address
   // would consume another's contribution.
-  for (unsigned i = 0; i < indices.size(); ++i)
-    for (unsigned j = i + 1; j < indices.size(); ++j)
-      if (indices[i].sigAtom == indices[j].sigAtom) {
-        why = "two index sources share a signature term";
-        return false;
-      }
+  for (unsigned i = 0; i < C.indices.size(); ++i)
+    for (unsigned j = i + 1; j < C.indices.size(); ++j)
+      if (C.indices[i].sigAtom == C.indices[j].sigAtom)
+        return refuse("two index sources share a signature term");
+  return indexBranches;
+}
 
-  auto splitAll = [&](const RgPoly &p, SmallVectorImpl<RgPoly> &coefs,
-                      RgPoly &base) -> bool {
-    coefs.assign(indices.size(), RgPoly{});
-    RgPoly cur = p;
-    for (unsigned i = 0; i < indices.size(); ++i) {
-      RgPoly c, rest;
-      if (!rgSplitIndex(cur, indices[i], c, rest))
-        return false;
-      coefs[i] = c;
-      cur = rest;
-    }
-    base = cur;
-    return true;
-  };
-  auto isBasePointer = [&](const RgPoly &b, LaunchRef &ref) -> bool {
-    if (b.t.size() != 1)
-      return false;
-    auto &kv = *b.t.begin();
-    if (kv.first.size() != 1 || kv.second != 1)
-      return false;
-    const SCEV *S = atoms.byId[kv.first[0]];
-    auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
-    if (!U || !U->getType()->isPointerTy())
-      return false;
-    ref = tracePointerRoot(U->getValue());
-    return ref.param >= 0;
-  };
-  // Exact equality, or two launch values the dense reading needs equal and
-  // nothing here can prove so (e.g. a captured tensor's extent and the loop
-  // bound next to it): kept for the dispatch to check at the launch.
-  std::string assumedWhy;
-  auto sameOrAssumed = [&](const RgPoly &a, const RgPoly &b) -> bool {
-    if (a == b)
-      return true;
-    std::optional<LaunchRef> x = rgSingleLaunchValue(a, atoms, assumedWhy);
-    if (!x)
-      return false;
-    std::optional<LaunchRef> y = rgSingleLaunchValue(b, atoms, assumedWhy);
-    if (!y)
-      return false;
-    std::pair<LaunchRef, LaunchRef> eq = std::minmax(*x, *y);
-    if (!llvm::is_contained(H.assumedEqual, eq))
-      H.assumedEqual.push_back(eq);
-    return true;
-  };
-
-  SmallVector<RgPoly, 8> op0Poly(R), op1Poly(R);
-  SmallVector<int64_t, 8> step0(R), step1(R);
-  SmallVector<unsigned, 8> redCounter(R);
+/// Each member's operand addresses at reduction index 0 and their byte steps
+/// along the reduction, the coefficient of the member's iteration counter.
+static Expected<OperandAddresses> operandAddresses(ChainAnalysis &C) {
+  const unsigned R = C.chain.size();
   for (unsigned r = 0; r < R; ++r)
-    redCounter[r] = atoms.counter(chain[r].L);
+    C.redCounter.push_back(C.atoms.counter(C.chain[r].L));
+  OperandAddresses ops;
   for (unsigned r = 0; r < R; ++r) {
-    RgPoly full0, full1;
-    if (!EX.expand(chain[r].aAddr, full0) ||
-        !EX.expand(chain[r].bAddr, full1)) {
-      why = "cannot expand an operand address (" + EX.err + ")";
-      return false;
+    int64_t step[2];
+    const SCEV *addr[2] = {C.chain[r].aAddr, C.chain[r].bAddr};
+    RgPoly full[2];
+    for (unsigned o = 0; o < 2; ++o) {
+      Expected<RgPoly> p = C.expand(addr[o]);
+      if (!p)
+        return refuse("cannot expand an operand address (" +
+                      toString(p.takeError()) + ")");
+      full[o] = std::move(*p);
     }
-    // The reduction byte step is the coefficient of this loop's iteration
-    // counter; the remainder is the address at reduction index 0.
-    RgPoly q0, q1;
-    if (!rgDivideByAtom(full0, redCounter[r], q0, op0Poly[r]) ||
-        !rgDivideByAtom(full1, redCounter[r], q1, op1Poly[r])) {
-      why = "an operand address is not affine in the reduction index";
-      return false;
+    std::optional<AtomSplit> split[2];
+    for (unsigned o = 0; o < 2; ++o)
+      if (!(split[o] = rgDivideByAtom(full[o], C.redCounter[r])))
+        return refuse("an operand address is not affine in the reduction "
+                      "index");
+    for (unsigned o = 0; o < 2; ++o)
+      if (!split[o]->quotient.isConstant(&step[o]) || !step[o])
+        return refuse("an operand's reduction-axis byte stride is zero or not "
+                      "a compile-time constant");
+    if (r == 0) {
+      ops.step[0] = step[0];
+      ops.step[1] = step[1];
     }
-    if (!q0.isConstant(&step0[r]) || !q1.isConstant(&step1[r]) || !step0[r] ||
-        !step1[r]) {
-      why = "an operand's reduction-axis byte stride is zero or not a "
-            "compile-time constant";
-      return false;
-    }
-    if (step0[r] != step0[0] || step1[r] != step1[0]) {
-      why = "chain members disagree on the reduction-axis byte stride";
-      return false;
-    }
+    if (step[0] != ops.step[0] || step[1] != ops.step[1])
+      return refuse("chain members disagree on the reduction-axis byte stride");
+    for (unsigned o = 0; o < 2; ++o)
+      ops.at[o].push_back(split[o]->rest);
     for (unsigned q = 0; q < R; ++q)
-      if (q != r && (op0Poly[r].contains(redCounter[q]) ||
-                     op1Poly[r].contains(redCounter[q]))) {
-        why = "an operand address mixes two members' reduction indices";
-        return false;
-      }
+      if (q != r && (ops.at[0][r].contains(C.redCounter[q]) ||
+                     ops.at[1][r].contains(C.redCounter[q])))
+        return refuse("an operand address mixes two members' reduction "
+                      "indices");
   }
+  return ops;
+}
 
-  RgPoly tripPoly;
-  if (!EX.expand(chain[0].trip, tripPoly)) {
-    why = "cannot expand the reduction trip count (" + EX.err + ")";
-    return false;
-  }
-  for (unsigned r = 1; r < R; ++r) {
-    RgPoly t;
-    if (!EX.expand(chain[r].trip, t) || !(t == tripPoly)) {
-      why = "chain members have different reduction lengths";
-      return false;
+/// The reduction length every member runs.
+static Expected<RgPoly> reductionLength(ChainAnalysis &C) {
+  Expected<RgPoly> trip = C.expand(C.chain[0].trip);
+  if (!trip)
+    return refuse("cannot expand the reduction trip count (" +
+                  toString(trip.takeError()) + ")");
+  for (unsigned r = 1; r < C.chain.size(); ++r) {
+    Expected<RgPoly> t = C.expand(C.chain[r].trip);
+    if (!t || !(*t == *trip)) {
+      if (!t)
+        consumeError(t.takeError());
+      return refuse("chain members have different reduction lengths");
     }
   }
+  return trip;
+}
 
-  // Flattening: member r starts exactly r * trip elements after member 0.
-  for (unsigned r = 1; r < R; ++r) {
-    RgPoly along0, along1;
-    if (!rgDivExact(rgSub(op0Poly[r], op0Poly[0]), (int64_t)r * step0[0],
-                    along0) ||
-        !rgDivExact(rgSub(op1Poly[r], op1Poly[0]), (int64_t)r * step1[0],
-                    along1) ||
-        !sameOrAssumed(along0, tripPoly) || !sameOrAssumed(along1, tripPoly)) {
-      if (!assumedWhy.empty())
-        why = "chain member " + std::to_string(r) +
-              " is contiguous with member 0 only under an equality the host "
-              "cannot check: " +
-              assumedWhy;
-      else
-        why = "chain member " + std::to_string(r) +
-              " is not contiguous with member 0 along the reduction axis, so "
-              "the two contraction levels do not flatten into one index";
-      return false;
+/// Whether `a` and `b` are equal, or two launch values the dense reading
+/// needs equal and nothing here can prove so (e.g. a captured tensor's extent
+/// and the loop bound next to it), which joins `assumed` for the dispatch to
+/// check at the launch. An error when the host cannot read one of them.
+static Expected<bool>
+sameOrAssumed(const RgPoly &a, const RgPoly &b, const RgAtoms &A,
+              SmallVectorImpl<std::pair<LaunchRef, LaunchRef>> &assumed) {
+  if (a == b)
+    return true;
+  Expected<std::optional<LaunchRef>> x = rgSingleLaunchValue(a, A);
+  if (!x)
+    return x.takeError();
+  if (!*x)
+    return false;
+  Expected<std::optional<LaunchRef>> y = rgSingleLaunchValue(b, A);
+  if (!y)
+    return y.takeError();
+  if (!*y)
+    return false;
+  std::pair<LaunchRef, LaunchRef> eq = std::minmax(**x, **y);
+  if (!llvm::is_contained(assumed, eq))
+    assumed.push_back(eq);
+  return true;
+}
+
+/// Checks that the members flatten into one reduction index: member r starts
+/// exactly r * trip elements after member 0 in both operands.
+static Error
+flattenMembers(const ChainAnalysis &C, const OperandAddresses &ops,
+               const RgPoly &trip,
+               SmallVectorImpl<std::pair<LaunchRef, LaunchRef>> &assumed) {
+  for (unsigned r = 1; r < C.chain.size(); ++r) {
+    auto notContiguous = [&] {
+      return refuse("chain member " + std::to_string(r) +
+                    " is not contiguous with member 0 along the reduction "
+                    "axis, so the two contraction levels do not flatten into "
+                    "one index");
+    };
+    std::optional<RgPoly> along[2];
+    for (unsigned o = 0; o < 2; ++o)
+      if (!(along[o] = rgDivExact(rgSub(ops.at[o][r], ops.at[o][0]),
+                                  (int64_t)r * ops.step[o])))
+        return notContiguous();
+    for (unsigned o = 0; o < 2; ++o) {
+      Expected<bool> same = sameOrAssumed(*along[o], trip, C.atoms, assumed);
+      if (!same)
+        return refuse("chain member " + std::to_string(r) +
+                      " is contiguous with member 0 only under an equality "
+                      "the host cannot check: " +
+                      toString(same.takeError()));
+      if (!*same)
+        return notContiguous();
     }
   }
+  if (assumed.size() > kMaxAssumedEqual)
+    return refuse("the dense reading takes " + std::to_string(assumed.size()) +
+                  " pairs of launch values to be equal, more than the " +
+                  std::to_string(kMaxAssumedEqual) + " a descriptor holds");
+  return Error::success();
+}
 
-  if (H.assumedEqual.size() > kMaxAssumedEqual) {
-    why = "the dense reading takes " + std::to_string(H.assumedEqual.size()) +
-          " pairs of launch values to be equal, more than the " +
-          std::to_string(kMaxAssumedEqual) + " a descriptor holds";
-    return false;
+/// `p` split over every index source in turn; none when one does not split.
+static std::optional<AddressSplit> splitAll(const RgPoly &p,
+                                            ArrayRef<RgIndex> indices) {
+  AddressSplit out;
+  RgPoly cur = p;
+  for (const RgIndex &idx : indices) {
+    std::optional<IndexSplit> s = rgSplitIndex(cur, idx);
+    if (!s)
+      return std::nullopt;
+    out.coef.push_back(s->coef);
+    cur = s->rest;
   }
+  out.base = cur;
+  return out;
+}
 
-  SmallVector<RgPoly, 4> c0, c1, cC;
-  RgPoly b0, b1, bC;
-  if (!splitAll(op0Poly[0], c0, b0) || !splitAll(op1Poly[0], c1, b1)) {
-    why = "an operand address is not affine in the recognized index sources";
-    return false;
+/// The store the final accumulator reaches, through phis, casts and at most
+/// one accumulating fadd.
+static Expected<OutputStore> findOutputStore(ArrayRef<RgMember> chain) {
+  // The chain's own phis/fmas are internal recurrences, not consumers.
+  SmallPtrSet<const Value *, 24> internal;
+  for (const RgMember &m : chain) {
+    internal.insert(m.fma);
+    internal.insert(m.phi);
+    if (m.fmul)
+      internal.insert(m.fmul);
   }
-
-  // Consumer: the (accumulating) store of the final accumulator.
-  Instruction *last = chain.back().fma;
-  StoreInst *cStore = nullptr;
-  Instruction *epilogue = nullptr;
-  {
-    // The chain's own phis/fmas are internal recurrences, not consumers.
-    SmallPtrSet<const Value *, 24> internal;
-    for (const RgMember &m : chain) {
-      internal.insert(m.fma);
-      internal.insert(m.phi);
-      if (m.fmul)
-        internal.insert(m.fmul);
-    }
-    SmallVector<Value *, 8> wl{last};
-    SmallPtrSet<Value *, 16> seen;
-    while (!wl.empty()) {
-      Value *v = wl.pop_back_val();
-      if (!seen.insert(v).second)
+  OutputStore out;
+  SmallVector<Value *, 8> wl{chain.back().fma};
+  SmallPtrSet<Value *, 16> seen;
+  while (!wl.empty()) {
+    Value *v = wl.pop_back_val();
+    if (!seen.insert(v).second)
+      continue;
+    for (User *U : v->users()) {
+      if (internal.count(U))
         continue;
-      for (User *U : v->users()) {
-        if (internal.count(U))
-          continue;
-        if (auto *S = dyn_cast<StoreInst>(U)) {
-          if (S->getValueOperand() != v) {
-            why = "the accumulator is used as a store ADDRESS";
-            return false;
-          }
-          if (cStore && cStore != S) {
-            why = "the accumulator reaches more than one store";
-            return false;
-          }
-          cStore = S;
-          continue;
-        }
-        auto *I = dyn_cast<Instruction>(U);
-        if (!I)
-          continue;
-        if (isa<PHINode>(I) || isa<CastInst>(I)) {
-          wl.push_back(I);
-          continue;
-        }
-        if (I->getOpcode() == Instruction::FAdd && !epilogue) {
-          epilogue = I;
-          wl.push_back(I);
-          continue;
-        }
-        why = "the accumulator has a consumer that is not a store or a single "
-              "accumulating fadd (fused epilogue: not a dispatchable GEMM)";
-        return false;
-      }
-    }
-  }
-  if (!cStore) {
-    why = "no store consumes the accumulator";
-    return false;
-  }
-  // The library call writes every element of the product, so the output store
-  // may be gated only by the bounds of the index sources and by the exits of
-  // the contraction's own loops.
-  {
-    SmallPtrSet<const Instruction *, 8> loopExits;
-    for (const RgMember &m : chain)
-      loopExits.insert(m.L->getLoopLatch()->getTerminator());
-    const BasicBlock *storeBB = cStore->getParent();
-    for (BasicBlock &BB : F) {
-      const Instruction *T = BB.getTerminator();
-      if (T->getNumSuccessors() < 2 || indexBranches.contains(T) ||
-          loopExits.contains(T))
+      if (auto *S = dyn_cast<StoreInst>(U)) {
+        if (S->getValueOperand() != v)
+          return refuse("the accumulator is used as a store ADDRESS");
+        if (out.store && out.store != S)
+          return refuse("the accumulator reaches more than one store");
+        out.store = S;
         continue;
-      if (llvm::any_of(successors(&BB), [&](const BasicBlock *S) {
-            return DT.dominates(BasicBlockEdge(&BB, S), storeBB);
-          })) {
-        why = "the output store is gated by a condition that is not a bound "
-              "of the product's indices";
-        return false;
       }
+      auto *I = dyn_cast<Instruction>(U);
+      if (!I)
+        continue;
+      if (isa<PHINode>(I) || isa<CastInst>(I)) {
+        wl.push_back(I);
+        continue;
+      }
+      if (I->getOpcode() == Instruction::FAdd && !out.epilogue) {
+        out.epilogue = I;
+        wl.push_back(I);
+        continue;
+      }
+      return refuse("the accumulator has a consumer that is not a store or a "
+                    "single accumulating fadd (fused epilogue: not a "
+                    "dispatchable GEMM)");
     }
   }
-  H.beta = 0.0;
-  if (epilogue) {
-    Value *other = epilogue->getOperand(0);
-    if (rgReaches(other, last))
-      other = epilogue->getOperand(1);
-    auto *ld = dyn_cast<LoadInst>(other);
-    if (!ld || ld->getPointerOperand() != cStore->getPointerOperand()) {
-      why = "the epilogue fadd does not add the output element itself "
-            "(C = alpha*A*B + beta*C with beta != 1 is not representable)";
-      return false;
-    }
-    H.beta = 1.0;
-  }
-  RgPoly cPoly;
-  if (!EX.expand(SE.getSCEV(cStore->getPointerOperand()), cPoly)) {
-    why = "cannot expand the output address (" + EX.err + ")";
-    return false;
-  }
-  for (unsigned r = 0; r < R; ++r)
-    if (cPoly.contains(redCounter[r])) {
-      why = "the output address moves with the reduction index";
-      return false;
-    }
-  if (!splitAll(cPoly, cC, bC)) {
-    why = "the output address is not affine in the recognized index sources";
-    return false;
-  }
+  if (!out.store)
+    return refuse("no store consumes the accumulator");
+  return out;
+}
 
-  // Partition the indices by which operand they move. Which group is "M" is
-  // not decided here: both assignments describe the same product (one is the
-  // transpose of the other).
+/// The library call writes every element of the product, so the output store
+/// may be gated only by the bounds of the index sources (`indexBranches`) and
+/// by the exits of the contraction's own loops.
+static Error
+checkOutputGuards(Function &F, DominatorTree &DT, ArrayRef<RgMember> chain,
+                  const SmallPtrSetImpl<const Instruction *> &indexBranches,
+                  const StoreInst *store) {
+  SmallPtrSet<const Instruction *, 8> loopExits;
+  for (const RgMember &m : chain)
+    loopExits.insert(m.L->getLoopLatch()->getTerminator());
+  const BasicBlock *storeBB = store->getParent();
+  for (BasicBlock &BB : F) {
+    const Instruction *T = BB.getTerminator();
+    if (T->getNumSuccessors() < 2 || indexBranches.contains(T) ||
+        loopExits.contains(T))
+      continue;
+    if (llvm::any_of(successors(&BB), [&](const BasicBlock *S) {
+          return DT.dominates(BasicBlockEdge(&BB, S), storeBB);
+        }))
+      return refuse("the output store is gated by a condition that is not a "
+                    "bound of the product's indices");
+  }
+  return Error::success();
+}
+
+/// beta of C = A*B + beta*C: 1 when the epilogue adds the output element
+/// itself, 0 without an epilogue.
+static Expected<double> betaOf(ArrayRef<RgMember> chain,
+                               const OutputStore &out) {
+  if (!out.epilogue)
+    return 0.0;
+  Value *other = out.epilogue->getOperand(0);
+  if (rgReaches(other, chain.back().fma))
+    other = out.epilogue->getOperand(1);
+  auto *ld = dyn_cast<LoadInst>(other);
+  if (!ld || ld->getPointerOperand() != out.store->getPointerOperand())
+    return refuse("the epilogue fadd does not add the output element itself "
+                  "(C = alpha*A*B + beta*C with beta != 1 is not "
+                  "representable)");
+  return 1.0;
+}
+
+/// The output address split over the index sources.
+static Expected<AddressSplit> outputAddress(ChainAnalysis &C,
+                                            StoreInst *store) {
+  Expected<RgPoly> cPoly = C.expand(C.SE.getSCEV(store->getPointerOperand()));
+  if (!cPoly)
+    return refuse("cannot expand the output address (" +
+                  toString(cPoly.takeError()) + ")");
+  for (unsigned counter : C.redCounter)
+    if (cPoly->contains(counter))
+      return refuse("the output address moves with the reduction index");
+  std::optional<AddressSplit> split = splitAll(*cPoly, C.indices);
+  if (!split)
+    return refuse("the output address is not affine in the recognized index "
+                  "sources");
+  return std::move(*split);
+}
+
+/// Fuses a side's (one or two) index sources into one matrix index: the slow
+/// index's stride must be exactly the fast one's times the fast extent, which
+/// is what makes the pair a dense numbering of one matrix dimension.
+static std::optional<FusedIndex> fuseIndices(ArrayRef<unsigned> ids,
+                                             ArrayRef<RgPoly> coef,
+                                             ArrayRef<RgIndex> indices) {
+  if (ids.size() == 1)
+    return FusedIndex{coef[ids[0]], indices[ids[0]].extent, {ids[0]}};
+  for (unsigned f = 0; f < 2; ++f) {
+    unsigned fast = ids[f], slow = ids[1 - f];
+    if (rgMul(coef[fast], indices[fast].extent) == coef[slow])
+      return FusedIndex{coef[fast],
+                        rgMul(indices[fast].extent, indices[slow].extent),
+                        {fast, slow}};
+  }
+  return std::nullopt;
+}
+
+/// Partitions the index sources by the operand they move, fuses each side into
+/// one matrix index, and orients the product so that the output is
+/// column-major.
+static Expected<Orientation>
+orient(ArrayRef<RgIndex> indices, const AddressSplit &op0,
+       const AddressSplit &op1, const AddressSplit &out,
+       const OperandAddresses &ops, int64_t elemSize) {
+  // Which group is "M" is not decided here: both assignments describe the
+  // same product (one is the transpose of the other).
   SmallVector<unsigned, 2> g0, g1;
   for (unsigned i = 0; i < indices.size(); ++i) {
-    bool in0 = !c0[i].isZero(), in1 = !c1[i].isZero(), inC = !cC[i].isZero();
+    bool in0 = !op0.coef[i].isZero(), in1 = !op1.coef[i].isZero(),
+         inC = !out.coef[i].isZero();
     if (!in0 && !in1 && !inC)
       continue;
-    if (in0 && in1) {
-      why = "an index moves BOTH operands: this is not a matrix product";
-      return false;
-    }
-    if (!inC) {
-      why = "an index moves an operand but not the output: the contraction is "
-            "not fully reduced";
-      return false;
-    }
+    if (in0 && in1)
+      return refuse("an index moves BOTH operands: this is not a matrix "
+                    "product");
+    if (!inC)
+      return refuse("an index moves an operand but not the output: the "
+                    "contraction is not fully reduced");
     (in0 ? g0 : g1).push_back(i);
   }
-  if (g0.empty() || g1.empty()) {
-    why = "could not separate the two operands' free indices";
-    return false;
-  }
-  if (g0.size() > 2 || g1.size() > 2) {
-    why = "more than two fused indices on one side (unsupported; refusing to "
-          "guess the fusion order)";
-    return false;
-  }
+  if (g0.empty() || g1.empty())
+    return refuse("could not separate the two operands' free indices");
+  if (g0.size() > 2 || g1.size() > 2)
+    return refuse("more than two fused indices on one side (unsupported; "
+                  "refusing to guess the fusion order)");
 
-  // Fuse a (possibly two-index) side into one matrix index: the slow index's
-  // stride must be exactly the fast one's times the fast extent, which is what
-  // makes the pair a dense numbering of one matrix dimension.
-  auto fuse = [&](ArrayRef<unsigned> ids, ArrayRef<RgPoly> coef,
-                  RgPoly &unitStride, RgPoly &extent,
-                  SmallVectorImpl<unsigned> &order) -> bool {
-    if (ids.size() == 1) {
-      unitStride = coef[ids[0]];
-      extent = indices[ids[0]].extent;
-      order.assign(1, ids[0]);
-      return true;
-    }
-    for (unsigned f = 0; f < 2; ++f) {
-      unsigned fast = ids[f], slow = ids[1 - f];
-      if (rgMul(coef[fast], indices[fast].extent) == coef[slow]) {
-        unitStride = coef[fast];
-        extent = rgMul(indices[fast].extent, indices[slow].extent);
-        order.assign({fast, slow});
-        return true;
-      }
-    }
-    return false;
-  };
-  RgPoly s0, e0, s1, e1;
-  SmallVector<unsigned, 2> ord0, ord1;
-  if (!fuse(g0, c0, s0, e0, ord0) || !fuse(g1, c1, s1, e1, ord1)) {
-    why = "an operand's two free indices are not a dense fused numbering "
-          "(stride/extent mismatch)";
-    return false;
-  }
-  RgPoly sc0, sc1, dummyExtent;
-  SmallVector<unsigned, 2> ord;
-  if (!fuse(ord0, cC, sc0, dummyExtent, ord) || ord != ord0 ||
-      !fuse(ord1, cC, sc1, dummyExtent, ord) || ord != ord1) {
-    why = "the output does not use the same fused numbering as the operands";
-    return false;
-  }
+  std::optional<FusedIndex> f0 = fuseIndices(g0, op0.coef, indices);
+  std::optional<FusedIndex> f1 =
+      f0 ? fuseIndices(g1, op1.coef, indices) : std::nullopt;
+  if (!f0 || !f1)
+    return refuse("an operand's two free indices are not a dense fused "
+                  "numbering (stride/extent mismatch)");
+  std::optional<FusedIndex> c0 = fuseIndices(f0->order, out.coef, indices);
+  std::optional<FusedIndex> c1;
+  if (c0 && c0->order == f0->order)
+    c1 = fuseIndices(f1->order, out.coef, indices);
+  if (!c1 || c1->order != f1->order)
+    return refuse("the output does not use the same fused numbering as the "
+                  "operands");
 
   // Canonical orientation: the index group that is contiguous in the output is
   // M, which makes the output column-major with ldc = M, the form every host
   // GEMM entry point takes, and makes the choice independent of source order.
   int64_t k0 = 0, k1 = 0;
-  bool op0IsRow = sc0.isConstant(&k0) && k0 == elemSize;
-  bool op1IsRow = sc1.isConstant(&k1) && k1 == elemSize;
-  if (op0IsRow == op1IsRow) {
-    why = "no operand's free index is contiguous in the output (or both are), "
-          "so the output is not a dense M x Ncols matrix";
-    return false;
-  }
+  bool op0IsRow = c0->unitStride.isConstant(&k0) && k0 == elemSize;
+  bool op1IsRow = c1->unitStride.isConstant(&k1) && k1 == elemSize;
+  if (op0IsRow == op1IsRow)
+    return refuse("no operand's free index is contiguous in the output (or "
+                  "both are), so the output is not a dense M x Ncols matrix");
   const bool aIsOp0 = op0IsRow;
-  RgPoly rowStride = aIsOp0 ? s0 : s1;  // lda, in bytes
-  RgPoly rowExtent = aIsOp0 ? e0 : e1;  // M
-  RgPoly colStrideB = aIsOp0 ? s1 : s0; // ldb, in bytes
-  RgPoly colExtent = aIsOp0 ? e1 : e0;  // Ncols
-  RgPoly ldcBytes = aIsOp0 ? sc1 : sc0; // ldc, in bytes
-  SmallVector<unsigned, 2> rowOrder = aIsOp0 ? ord0 : ord1;
-  SmallVector<unsigned, 2> colOrder = aIsOp0 ? ord1 : ord0;
-  RgPoly &aBasePoly = aIsOp0 ? b0 : b1;
-  RgPoly &bBasePoly = aIsOp0 ? b1 : b0;
-  const int64_t aStep = aIsOp0 ? step0[0] : step1[0];
-  const int64_t bStep = aIsOp0 ? step1[0] : step0[0];
+  const FusedIndex &row = aIsOp0 ? *f0 : *f1, &col = aIsOp0 ? *f1 : *f0;
+  Orientation O{aIsOp0,         row.unitStride, row.extent,
+                col.unitStride, col.extent,     (aIsOp0 ? c1 : c0)->unitStride,
+                row.order,      col.order,      false};
+  const int64_t aStep = ops.step[aIsOp0 ? 0 : 1];
+  const int64_t bStep = ops.step[aIsOp0 ? 1 : 0];
 
   // A must be K-contiguous: the host runtimes read A as an M x K row-major
   // block (aColMajor == 0). If the other operand were the K-contiguous one the
   // product would have to be emitted transposed, which is not implemented.
-  if (aStep != elemSize) {
-    why = "the operand carrying the output's contiguous index is not "
-          "contiguous along the reduction axis; emitting this product would "
-          "require the transposed orientation, which is not implemented";
-    return false;
-  }
-  H.aColMajor = false;
-  H.cColMajor = true; // by construction of the orientation choice above
-  H.bColMajor = (bStep == elemSize);
-  if (!H.bColMajor) {
+  if (aStep != elemSize)
+    return refuse("the operand carrying the output's contiguous index is not "
+                  "contiguous along the reduction axis; emitting this product "
+                  "would require the transposed orientation, which is not "
+                  "implemented");
+  O.bColMajor = (bStep == elemSize);
+  if (!O.bColMajor) {
     // K-strided B: the reduction step is ldb and the column step must be one
     // element.
     int64_t cs = 0;
-    if (!colStrideB.isConstant(&cs) || cs != elemSize) {
-      why = "B is K-strided but its column step is not one element";
-      return false;
-    }
-    colStrideB = RgPoly::constant(bStep);
+    if (!O.ldb.isConstant(&cs) || cs != elemSize)
+      return refuse("B is K-strided but its column step is not one element");
+    O.ldb = RgPoly::constant(bStep);
   }
+  return O;
+}
 
-  // Dimensions, in elements.
-  RgPoly kPoly = rgMul(RgPoly::constant((int64_t)R), tripPoly);
-  RgPoly ldaElems, ldbElems, ldcElems;
-  if (!rgDivExact(rowStride, elemSize, ldaElems) ||
-      !rgDivExact(colStrideB, elemSize, ldbElems) ||
-      !rgDivExact(ldcBytes, elemSize, ldcElems)) {
-    why = "a leading dimension is not a whole number of elements";
-    return false;
+/// Fills the extents and leading dimensions of `H`, in elements.
+static Error runtimeDims(const ChainAnalysis &C, const Orientation &O,
+                         const RgPoly &kPoly, int64_t elemSize,
+                         RuntimeGemmHandle &H) {
+  std::optional<RgPoly> lda = rgDivExact(O.lda, elemSize);
+  std::optional<RgPoly> ldb = lda ? rgDivExact(O.ldb, elemSize) : std::nullopt;
+  std::optional<RgPoly> ldc = ldb ? rgDivExact(O.ldc, elemSize) : std::nullopt;
+  if (!ldc)
+    return refuse("a leading dimension is not a whole number of elements");
+  std::pair<const RgPoly *, RuntimeDim *> dims[] = {
+      {&O.rows, &H.M}, {&O.cols, &H.Ncols}, {&kPoly, &H.K},
+      {&*lda, &H.lda}, {&*ldb, &H.ldb},     {&*ldc, &H.ldc}};
+  for (auto [poly, dim] : dims) {
+    Expected<RuntimeDim> d = rgToRuntimeDim(*poly, C.atoms);
+    if (!d)
+      return d.takeError();
+    *dim = std::move(*d);
   }
-  if (!rgToRuntimeDim(rowExtent, atoms, H.M, why) ||
-      !rgToRuntimeDim(colExtent, atoms, H.Ncols, why) ||
-      !rgToRuntimeDim(kPoly, atoms, H.K, why) ||
-      !rgToRuntimeDim(ldaElems, atoms, H.lda, why) ||
-      !rgToRuntimeDim(ldbElems, atoms, H.ldb, why) ||
-      !rgToRuntimeDim(ldcElems, atoms, H.ldc, why))
-    return false;
+  return Error::success();
+}
 
-  if (!isBasePointer(aBasePoly, H.aRef) || !isBasePointer(bBasePoly, H.bRef) ||
-      !isBasePointer(bC, H.cRef)) {
-    why = "an operand does not root in a parameter of the optimized body";
-    return false;
-  }
-  H.cStore = cStore;
-  H.epilogue = epilogue;
-  for (const RgMember &m : chain) {
-    H.fmas.push_back(m.fma);
-    H.fmuls.push_back(m.fmul);
-    H.aLoads.push_back(aIsOp0 ? m.aLoad : m.bLoad);
-  }
+/// The launch value an operand's base polynomial is, when it is one pointer
+/// that roots in a parameter of the optimized body.
+static std::optional<LaunchRef> basePointer(const RgPoly &b, const RgAtoms &A) {
+  if (b.t.size() != 1)
+    return std::nullopt;
+  auto &kv = *b.t.begin();
+  if (kv.first.size() != 1 || kv.second != 1)
+    return std::nullopt;
+  const SCEV *S = A.byId[kv.first[0]];
+  auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
+  if (!U || !U->getType()->isPointerTy())
+    return std::nullopt;
+  LaunchRef ref = tracePointerRoot(U->getValue());
+  if (ref.param < 0)
+    return std::nullopt;
+  return ref;
+}
 
-  // Column extents must be fixed by the launch geometry (a CTA span, or a
-  // compile-time bound); the row extent then follows exactly from the
-  // profiled execution counts. A missing count refuses the site.
-  unsigned ctaPerLaunch = std::max(1u, hdr.maxGridDim[0]) *
-                          std::max(1u, hdr.maxGridDim[1]) *
-                          std::max(1u, hdr.maxGridDim[2]);
-  if (!hdr.launchCount || hdr.launchCount % ctaPerLaunch) {
-    why = "profile header launch count is not a whole number of grids";
-    return false;
-  }
-  H.ctaPerLaunch = ctaPerLaunch;
-  H.launches = (unsigned)(hdr.launchCount / ctaPerLaunch);
+/// The product's shape at profile scale. Column extents must be fixed by the
+/// launch geometry (a CTA span, or a compile-time bound); the row extent then
+/// follows exactly from the profiled execution counts. A missing count refuses
+/// the site.
+static Expected<ProfileShape>
+profileShape(const ChainAnalysis &C, const FunctionProfileHeader &hdr,
+             const ProfileMap &prof, const Orientation &O,
+             const Instruction *epilogue, const RgPoly &trip,
+             const RgPoly &kPoly) {
+  ProfileShape P;
+  P.ctaPerLaunch = std::max(1u, hdr.maxGridDim[0]) *
+                   std::max(1u, hdr.maxGridDim[1]) *
+                   std::max(1u, hdr.maxGridDim[2]);
+  if (!hdr.launchCount || hdr.launchCount % P.ctaPerLaunch)
+    return refuse("profile header launch count is not a whole number of "
+                  "grids");
+  P.launches = (unsigned)(hdr.launchCount / P.ctaPerLaunch);
 
   uint64_t profNcols = 1;
-  for (unsigned i : colOrder) {
-    std::optional<unsigned> e = rgProfileExtent(indices[i], atoms, hdr);
-    if (!e || *e == 0) {
-      why = "the profile does not fix the extent of a column index (launch "
-            "geometry gives no bound for " +
-            indices[i].name + ")";
-      return false;
-    }
+  for (unsigned i : O.colOrder) {
+    std::optional<unsigned> e = rgProfileExtent(C.indices[i], C.atoms, hdr);
+    if (!e || *e == 0)
+      return refuse("the profile does not fix the extent of a column index "
+                    "(launch geometry gives no bound for " +
+                    C.indices[i].name + ")");
     profNcols *= *e;
   }
 
-  uint64_t macs = 0;
-  for (const RgMember &m : chain) {
+  for (const RgMember &m : C.chain) {
     std::optional<size_t> slot = slotOf(m.fma);
-    if (!slot) {
-      why = "a chain member's fma carries no profile index";
-      return false;
-    }
+    if (!slot)
+      return refuse("a chain member's fma carries no profile index");
     auto it = prof.find(*slot);
-    if (it == prof.end() || it->second.exec == 0) {
-      why = "a chain member's fma has no profiled execution count";
-      return false;
-    }
-    macs += it->second.exec;
+    if (it == prof.end() || it->second.exec == 0)
+      return refuse("a chain member's fma has no profiled execution count");
+    P.macs += it->second.exec;
   }
-  H.profMacs = macs;
 
   uint64_t rowsTimesCols = 0;
   if (epilogue) {
     auto it = prof.end();
     if (std::optional<size_t> slot = slotOf(epilogue))
       it = prof.find(*slot);
-    if (it == prof.end() || it->second.exec == 0) {
-      why = "the accumulating epilogue has no profiled execution count, and it "
-            "is the only exact source for the row extent";
-      return false;
-    }
+    if (it == prof.end() || it->second.exec == 0)
+      return refuse("the accumulating epilogue has no profiled execution "
+                    "count, and it is the only exact source for the row "
+                    "extent");
     const uint64_t profEpilogue = it->second.exec;
-    if (profEpilogue % H.launches) {
-      why = "profiled epilogue count is not a whole number of launches";
-      return false;
-    }
-    rowsTimesCols = profEpilogue / H.launches;
+    if (profEpilogue % P.launches)
+      return refuse("profiled epilogue count is not a whole number of "
+                    "launches");
+    rowsTimesCols = profEpilogue / P.launches;
   } else {
     // beta == 0: no epilogue to count, so K must be a compile-time trip count.
     int64_t tripConst = 0;
-    if (!tripPoly.isConstant(&tripConst) || tripConst <= 0) {
-      why = "no accumulating epilogue and a runtime reduction length: the "
-            "profile cannot fix M and K separately";
-      return false;
-    }
-    uint64_t k = (uint64_t)R * (uint64_t)tripConst;
-    if (macs % ((uint64_t)H.launches * k)) {
-      why = "profiled MAC count is not divisible by launches*K";
-      return false;
-    }
-    rowsTimesCols = macs / ((uint64_t)H.launches * k);
+    if (!trip.isConstant(&tripConst) || tripConst <= 0)
+      return refuse("no accumulating epilogue and a runtime reduction length: "
+                    "the profile cannot fix M and K separately");
+    uint64_t k = (uint64_t)C.chain.size() * (uint64_t)tripConst;
+    if (P.macs % ((uint64_t)P.launches * k))
+      return refuse("profiled MAC count is not divisible by launches*K");
+    rowsTimesCols = P.macs / ((uint64_t)P.launches * k);
   }
-  if (rowsTimesCols == 0 || rowsTimesCols % profNcols) {
-    why = "profiled output-element count " + std::to_string(rowsTimesCols) +
-          " is not a multiple of the reconstructed column count " +
-          std::to_string(profNcols);
-    return false;
-  }
-  H.profN = (unsigned)profNcols;
-  H.profM = (unsigned)(rowsTimesCols / profNcols);
-  uint64_t denom = (uint64_t)H.launches * rowsTimesCols;
-  if (!denom || macs % denom) {
-    why = "profiled MAC count is not divisible by launches*M*Ncols";
-    return false;
-  }
-  H.profK = (unsigned)(macs / denom);
-  if (!H.profM || !H.profN || !H.profK) {
-    why = "a reconstructed profile-scale extent is zero";
-    return false;
-  }
-  // Per-CTA tile: drop the index factors that are spread across blocks.
-  {
-    auto hasCta = [&](const RgIndex &ix) {
-      for (auto &kv : ix.form.t)
-        for (unsigned a : kv.first) {
-          const SCEV *S = atoms.byId[a];
-          auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
-          if (U && rgCtaidAxis(U->getValue()) >= 0)
-            return true;
-        }
-      return false;
-    };
-    uint64_t colSpread = 1, rowSpread = 1;
-    for (unsigned i : colOrder)
-      if (hasCta(indices[i])) {
-        std::optional<unsigned> e = rgProfileExtent(indices[i], atoms, hdr);
-        if (!e || !*e) {
-          why = "cannot size the per-CTA column tile";
-          return false;
-        }
-        colSpread *= *e;
-      }
-    for (unsigned i : rowOrder)
-      if (hasCta(indices[i])) {
-        std::optional<unsigned> e = rgProfileExtent(indices[i], atoms, hdr);
-        if (!e || !*e) {
-          why = "cannot size the per-CTA row tile";
-          return false;
-        }
-        rowSpread *= *e;
-      }
-    if (!colSpread || !rowSpread || H.profN % colSpread ||
-        H.profM % rowSpread) {
-      why = "the product does not divide evenly into per-CTA tiles";
-      return false;
-    }
-    H.tileN = (unsigned)(H.profN / colSpread);
-    H.tileM = (unsigned)(H.profM / rowSpread);
-    if (!H.tileM || !H.tileN) {
-      why = "a per-CTA tile extent is zero";
-      return false;
-    }
-  }
-  // Cross-check the symbolic K against the profile when K is compile-time.
-  {
-    int64_t kc = 0;
-    if (kPoly.isConstant(&kc) && kc > 0 && (unsigned)kc != H.profK) {
-      why = "compile-time K (" + std::to_string(kc) +
-            ") disagrees with the profiled reduction length (" +
-            std::to_string(H.profK) + ")";
-      return false;
-    }
-  }
+  if (rowsTimesCols == 0 || rowsTimesCols % profNcols)
+    return refuse("profiled output-element count " +
+                  std::to_string(rowsTimesCols) +
+                  " is not a multiple of the reconstructed column count " +
+                  std::to_string(profNcols));
+  P.N = (unsigned)profNcols;
+  P.M = (unsigned)(rowsTimesCols / profNcols);
+  uint64_t denom = (uint64_t)P.launches * rowsTimesCols;
+  if (!denom || P.macs % denom)
+    return refuse("profiled MAC count is not divisible by launches*M*Ncols");
+  P.K = (unsigned)(P.macs / denom);
+  if (!P.M || !P.N || !P.K)
+    return refuse("a reconstructed profile-scale extent is zero");
 
-  return true;
+  // Per-CTA tile: drop the index factors that are spread across blocks.
+  auto hasCta = [&](const RgIndex &ix) {
+    for (auto &kv : ix.form.t)
+      for (unsigned a : kv.first) {
+        const SCEV *S = C.atoms.byId[a];
+        auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
+        if (U && rgCtaidAxis(U->getValue()) >= 0)
+          return true;
+      }
+    return false;
+  };
+  uint64_t colSpread = 1, rowSpread = 1;
+  for (unsigned i : O.colOrder)
+    if (hasCta(C.indices[i])) {
+      std::optional<unsigned> e = rgProfileExtent(C.indices[i], C.atoms, hdr);
+      if (!e || !*e)
+        return refuse("cannot size the per-CTA column tile");
+      colSpread *= *e;
+    }
+  for (unsigned i : O.rowOrder)
+    if (hasCta(C.indices[i])) {
+      std::optional<unsigned> e = rgProfileExtent(C.indices[i], C.atoms, hdr);
+      if (!e || !*e)
+        return refuse("cannot size the per-CTA row tile");
+      rowSpread *= *e;
+    }
+  if (!colSpread || !rowSpread || P.N % colSpread || P.M % rowSpread)
+    return refuse("the product does not divide evenly into per-CTA tiles");
+  P.tileN = (unsigned)(P.N / colSpread);
+  P.tileM = (unsigned)(P.M / rowSpread);
+  if (!P.tileM || !P.tileN)
+    return refuse("a per-CTA tile extent is zero");
+  // Cross-check the symbolic K against the profile when K is compile-time.
+  int64_t kc = 0;
+  if (kPoly.isConstant(&kc) && kc > 0 && (unsigned)kc != P.K)
+    return refuse("compile-time K (" + std::to_string(kc) +
+                  ") disagrees with the profiled reduction length (" +
+                  std::to_string(P.K) + ")");
+  return P;
 }
 
-// One reduction loop of a contraction chain: a closed fma/phi cycle over two
-// loads whose addresses are affine in the loop with constant byte steps. The
-// trip count may be a runtime value.
-#define RG_REJECT(msg)                                                         \
-  do {                                                                         \
-    if (O.Diagnostics.Print && phi.getType()->isFloatingPointTy())             \
-      llvm::errs() << "[poseidon]   reject phi in "                            \
-                   << L->getHeader()->getName() << ": " << (msg) << '\n';      \
-    return false;                                                              \
-  } while (0)
+/// Reconstructs one contraction chain into a library-call handle and its
+/// profile-scale shape. Nothing is defaulted: every field is either derived or
+/// the chain is refused, with the reason as the error.
+static Expected<RecognizedChain>
+rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
+               const FunctionProfileHeader &hdr, const ProfileMap &prof,
+               ArrayRef<RgMember> chain) {
+  const DataLayout &DL = F.getParent()->getDataLayout();
+  Type *eltTy = chain[0].aLoad->getType();
+  const int64_t elemSize = (int64_t)DL.getTypeAllocSize(eltTy).getFixedValue();
+  for (const RgMember &m : chain)
+    if (m.aLoad->getType() != eltTy || m.bLoad->getType() != eltTy)
+      return refuse("chain members disagree on element type");
 
-static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
-                                ScalarEvolution &SE, BasicBlock *latch,
-                                RgMember &out) {
-  if (!phi.getType()->isFloatingPointTy())
-    return false;
-  StringRef why;
-  std::optional<ReductionCycle> rc = matchReductionCycle(L, phi, latch, &why);
+  ChainAnalysis C{SE, chain, {}, {}, {}};
+  RecognizedChain out;
+  RuntimeGemmHandle &H = out.H;
+  Expected<SmallPtrSet<const Instruction *, 8>> indexBranches =
+      collectIndexSources(C, F, DT);
+  if (!indexBranches)
+    return indexBranches.takeError();
+  Expected<OperandAddresses> ops = operandAddresses(C);
+  if (!ops)
+    return ops.takeError();
+  Expected<RgPoly> trip = reductionLength(C);
+  if (!trip)
+    return trip.takeError();
+  if (Error E = flattenMembers(C, *ops, *trip, H.assumedEqual))
+    return std::move(E);
+  std::optional<AddressSplit> op0 = splitAll(ops->at[0][0], C.indices);
+  std::optional<AddressSplit> op1 =
+      op0 ? splitAll(ops->at[1][0], C.indices) : std::nullopt;
+  if (!op1)
+    return refuse("an operand address is not affine in the recognized index "
+                  "sources");
+
+  Expected<OutputStore> store = findOutputStore(chain);
+  if (!store)
+    return store.takeError();
+  if (Error E = checkOutputGuards(F, DT, chain, *indexBranches, store->store))
+    return std::move(E);
+  Expected<double> beta = betaOf(chain, *store);
+  if (!beta)
+    return beta.takeError();
+  H.beta = *beta;
+  Expected<AddressSplit> cSplit = outputAddress(C, store->store);
+  if (!cSplit)
+    return cSplit.takeError();
+
+  Expected<Orientation> O =
+      orient(C.indices, *op0, *op1, *cSplit, *ops, elemSize);
+  if (!O)
+    return O.takeError();
+  H.aColMajor = false;
+  H.cColMajor = true; // by construction of the orientation
+  H.bColMajor = O->bColMajor;
+  const RgPoly kPoly = rgMul(RgPoly::constant((int64_t)chain.size()), *trip);
+  if (Error E = runtimeDims(C, *O, kPoly, elemSize, H))
+    return std::move(E);
+
+  std::optional<LaunchRef> aRef =
+      basePointer(O->aIsOp0 ? op0->base : op1->base, C.atoms);
+  std::optional<LaunchRef> bRef =
+      basePointer(O->aIsOp0 ? op1->base : op0->base, C.atoms);
+  std::optional<LaunchRef> cRef = basePointer(cSplit->base, C.atoms);
+  if (!aRef || !bRef || !cRef)
+    return refuse("an operand does not root in a parameter of the optimized "
+                  "body");
+  H.aRef = *aRef;
+  H.bRef = *bRef;
+  H.cRef = *cRef;
+  H.cStore = store->store;
+  H.epilogue = store->epilogue;
+  for (const RgMember &m : chain) {
+    H.fmas.push_back(m.fma);
+    H.fmuls.push_back(m.fmul);
+    H.aLoads.push_back(O->aIsOp0 ? m.aLoad : m.bLoad);
+  }
+
+  Expected<ProfileShape> P =
+      profileShape(C, hdr, prof, *O, store->epilogue, *trip, kPoly);
+  if (!P)
+    return P.takeError();
+  out.profile = *P;
+  return std::move(out);
+}
+
+/// One reduction loop of a contraction chain: a closed fma/phi cycle over two
+/// loads whose addresses are affine in the loop with constant byte steps. The
+/// trip count may be a runtime value.
+static Expected<RgMember> rgMatchReductionPhi(Loop *L, PHINode &phi,
+                                              ScalarEvolution &SE,
+                                              BasicBlock *latch) {
+  Expected<ReductionCycle> rc = matchReductionCycle(L, phi, latch);
   if (!rc)
-    RG_REJECT(why);
-  if (StringRef shape = reductionLoopShapeRefusal(*L); !shape.empty())
-    RG_REJECT(shape);
+    return rc.takeError();
+  if (std::optional<StringRef> shape = reductionLoopShapeRefusal(*L))
+    return refuse(*shape);
   const SCEV *btc = SE.getBackedgeTakenCount(L);
   if (isa<SCEVCouldNotCompute>(btc))
-    RG_REJECT("backedge-taken count is not computable");
+    return refuse("backedge-taken count is not computable");
+  RgMember out;
   out.L = L;
   out.phi = &phi;
   out.fma = rc->fma;
@@ -1333,9 +1440,8 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
   out.bAddr = SE.getSCEV(rc->bLoad->getPointerOperand());
   out.trip = SE.getAddExpr(btc, SE.getOne(btc->getType()));
   out.init = phi.getIncomingValueForBlock(L->getLoopPreheader());
-  return true;
+  return out;
 }
-#undef RG_REJECT
 
 void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                            LoopInfo &LI,
@@ -1374,9 +1480,17 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     if (!latch)
       return;
     for (PHINode &phi : L->getHeader()->phis()) {
-      RgMember m;
-      if (rgMatchReductionPhi(O, L, phi, SE, latch, m))
-        members.push_back(m);
+      if (!phi.getType()->isFloatingPointTy())
+        continue;
+      Expected<RgMember> m = rgMatchReductionPhi(L, phi, SE, latch);
+      if (m) {
+        members.push_back(*m);
+        continue;
+      }
+      std::string why = toString(m.takeError());
+      if (O.Diagnostics.Print)
+        llvm::errs() << "[poseidon]   reject phi in "
+                     << L->getHeader()->getName() << ": " << why << '\n';
     }
   });
   if (O.Diagnostics.Print)
@@ -1458,17 +1572,14 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
             chain, [&](const RgMember &m) { return claimed.contains(m.fma); }))
       continue;
 
-    RuntimeGemmHandle H;
-    std::string why;
-    bool dispatchable =
-        rgAnalyzeChain(F, SE, DT, profileHeader, prof, chain, H, why);
-    if (dispatchable && argStores != 1) {
-      why = "the body performs " + std::to_string(argStores) +
-            " argument-rooted stores, and only a pure GEMM body can be "
-            "replaced by a library dispatch";
-      dispatchable = false;
-    }
-    if (!dispatchable) {
+    Expected<RecognizedChain> R =
+        rgAnalyzeChain(F, SE, DT, profileHeader, prof, chain);
+    if (R && argStores != 1)
+      R = refuse("the body performs " + std::to_string(argStores) +
+                 " argument-rooted stores, and only a pure GEMM body can be "
+                 "replaced by a library dispatch");
+    if (!R) {
+      std::string why = toString(R.takeError());
       if (O.Diagnostics.Print)
         llvm::errs() << "[poseidon] " << F.getName() << ": reduction chain of "
                      << chain.size()
@@ -1476,22 +1587,22 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                      << why << '\n';
       continue;
     }
+    const ProfileShape &P = R->profile;
 
     AbstractMatmul am;
     am.id = nextId++;
     // M/N are the per-CTA tile the accuracy model simulates; the full product
     // is globalM/globalN/globalK.
-    am.M = H.tileM;
-    am.N = H.tileN;
-    am.K = H.profK;
-    am.globalM = H.profM;
-    am.globalN = H.profN;
-    am.globalK = H.profK;
-    am.gridCTAs = H.ctaPerLaunch;
-    FPKind k = fpKindFromType(chain[0].aLoad->getType());
-    am.elemType = k;
+    am.M = P.tileM;
+    am.N = P.tileN;
+    am.K = P.K;
+    am.globalM = P.M;
+    am.globalN = P.N;
+    am.globalK = P.K;
+    am.gridCTAs = P.ctaPerLaunch;
+    am.elemType = fpKindFromType(chain[0].aLoad->getType());
     am.origin = AbstractMatmul::Origin::HostGemmLoopNest;
-    am.hostGemm = std::make_shared<RuntimeGemmHandle>(std::move(H));
+    am.hostGemm = std::make_shared<RuntimeGemmHandle>(std::move(R->H));
     am.outputValue = chain.back().fma;
     for (const RgMember &m : chain)
       for (BasicBlock *BB : m.L->blocks())
@@ -1522,12 +1633,11 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                      << launchRefString(x, "param")
                      << " == " << launchRefString(y, "param")
                      << " (checked at the launch)\n";
-      llvm::errs() << "[poseidon]   profile shape M=" << g.profM
-                   << " Ncols=" << g.profN << " K=" << g.profK
-                   << " (per-CTA tile " << g.tileM << 'x' << g.tileN
-                   << ", launches=" << g.launches
-                   << " CTAs/launch=" << g.ctaPerLaunch
-                   << " MACs=" << g.profMacs << ")\n";
+      llvm::errs() << "[poseidon]   profile shape M=" << P.M << " Ncols=" << P.N
+                   << " K=" << P.K << " (per-CTA tile " << P.tileM << 'x'
+                   << P.tileN << ", launches=" << P.launches
+                   << " CTAs/launch=" << P.ctaPerLaunch << " MACs=" << P.macs
+                   << ")\n";
     }
     out.push_back(std::move(am));
   }

@@ -103,13 +103,10 @@ static bool isClosedFmaPhiCycle(const Loop *L, Instruction *fma, PHINode *phi) {
   return hasOnlyInLoopUser(L, fma, phi) && hasOnlyInLoopUser(L, phi, fma);
 }
 
-std::optional<ReductionCycle> matchReductionCycle(const Loop *L, PHINode &phi,
-                                                  BasicBlock *latch,
-                                                  StringRef *why) {
-  auto fail = [&](StringRef reason) -> std::optional<ReductionCycle> {
-    if (why)
-      *why = reason;
-    return std::nullopt;
+Expected<ReductionCycle> matchReductionCycle(const Loop *L, PHINode &phi,
+                                             BasicBlock *latch) {
+  auto fail = [](const Twine &reason) {
+    return createStringError(inconvertibleErrorCode(), reason);
   };
   Value *backedgeVal = phi.getIncomingValueForBlock(latch);
   if (!backedgeVal)
@@ -150,7 +147,7 @@ bool isPositiveZeroSeed(const Value *V) {
   return true;
 }
 
-StringRef reductionLoopShapeRefusal(const Loop &L) {
+std::optional<StringRef> reductionLoopShapeRefusal(const Loop &L) {
   BasicBlock *latch = L.getLoopLatch();
   if (!latch)
     return "the loop has no unique latch";
@@ -160,7 +157,7 @@ StringRef reductionLoopShapeRefusal(const Loop &L) {
     return "the loop has no unique exit block";
   if (!L.getLoopPreheader())
     return "the loop has no preheader";
-  return {};
+  return std::nullopt;
 }
 
 void forEachInnermostLoop(LoopInfo &LI, function_ref<void(Loop *)> fn) {
@@ -435,22 +432,16 @@ static const SCEV *extendedAddress(ScalarEvolution &SE, const DataLayout &DL,
       SE.getMulExpr(size, idx));
 }
 
-// The matmul handle of one header phi of an innermost loop whose phi+FMA chain
-// is matmul-shaped (A K-stride, B K-stride, tid-axis invariants). None
-// otherwise; `why` says why when the phi is a multiply-add reduction, and
-// stays empty when it is not one.
-static std::optional<ScalarLoopHandle>
-tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
-                       const DataLayout &DL, unsigned trip, BasicBlock *latch,
-                       std::string &why) {
-  Type *phiTy = phi.getType();
-  if (fpKindFromType(phiTy) == FPKind::Invalid)
-    return std::nullopt;
-  std::optional<ReductionCycle> rc = matchReductionCycle(L, phi, latch);
-  if (!rc)
-    return std::nullopt;
-  LoadInst *aLoad = rc->aLoad;
-  LoadInst *bLoad = rc->bLoad;
+// The handle of the reduction `rc` of `L` when its operands index a matrix
+// product: A steps by one element and B by whole elements along the
+// reduction, and A's row and B's column are thread indices. An error saying
+// why otherwise.
+static Expected<ScalarLoopHandle>
+scalarLoopHandle(Loop *L, const ReductionCycle &rc, ScalarEvolution &SE,
+                 const DataLayout &DL, unsigned trip) {
+  Type *phiTy = rc.aLoad->getType();
+  LoadInst *aLoad = rc.aLoad;
+  LoadInst *bLoad = rc.bLoad;
 
   // An address ScalarEvolution does not see as a recurrence of L may still
   // be one once its index's extension is distributed.
@@ -464,9 +455,8 @@ tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   const SCEV *bAddr = address(bLoad);
   auto *aRec = dyn_cast<SCEVAddRecExpr>(aAddr);
   auto *bRec = dyn_cast<SCEVAddRecExpr>(bAddr);
-  auto refuse = [&](const Twine &reason) -> std::optional<ScalarLoopHandle> {
-    why = reason.str();
-    return std::nullopt;
+  auto refuse = [](const Twine &reason) {
+    return createStringError(inconvertibleErrorCode(), reason);
   };
   if (!aRec || !bRec || aRec->getLoop() != L || bRec->getLoop() != L)
     return refuse("an operand's address is not an affine function of the "
@@ -531,8 +521,8 @@ tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   h.exitBB = L->getExitBlock();
   for (BasicBlock *BB : L->blocks())
     h.blocks.insert(BB);
-  h.fma = rc->fma;
-  h.fmul = rc->fmul;
+  h.fma = rc.fma;
+  h.fmul = rc.fmul;
   h.aPtr = aLoad->getPointerOperand();
   h.bPtr = bLoad->getPointerOperand();
   h.aStartSCEV = aRec->getStart();
@@ -602,19 +592,23 @@ static void forEachScalarLoopReduction(
     // Each header phi is tested independently, so a loop with several
     // reductions yields one matmul each; the loop's refusals are reported for
     // the phis that are products.
-    StringRef shape = reductionLoopShapeRefusal(*L);
+    std::optional<StringRef> shape = reductionLoopShapeRefusal(*L);
     unsigned trip = SE.getSmallConstantTripCount(L);
     for (PHINode &phi : L->getHeader()->phis()) {
-      std::string why;
-      std::optional<ScalarLoopHandle> h =
-          tryAnalyzeReductionPhi(L, phi, SE, DL, trip, latch, why);
-      if (!h) {
-        if (!why.empty())
-          reject(why);
+      if (fpKindFromType(phi.getType()) == FPKind::Invalid)
+        continue;
+      Expected<ReductionCycle> rc = matchReductionCycle(L, phi, latch);
+      if (!rc) {
+        consumeError(rc.takeError());
         continue;
       }
-      if (!shape.empty()) {
-        reject(shape);
+      Expected<ScalarLoopHandle> h = scalarLoopHandle(L, *rc, SE, DL, trip);
+      if (!h) {
+        reject(toString(h.takeError()));
+        continue;
+      }
+      if (shape) {
+        reject(*shape);
         continue;
       }
       if (trip == 0) {

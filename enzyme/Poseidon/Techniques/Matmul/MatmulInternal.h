@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <array>
@@ -48,20 +49,20 @@ struct ReductionCycle {
   llvm::LoadInst *aLoad, *bLoad;
 };
 // A header phi of `L` whose `latch` value is a multiply-add of two loads of the
-// phi's type into the phi, the two each other's only users inside `L`. On a
-// mismatch `why` receives the reason.
-std::optional<ReductionCycle>
-matchReductionCycle(const llvm::Loop *L, llvm::PHINode &phi,
-                    llvm::BasicBlock *latch, llvm::StringRef *why = nullptr);
+// phi's type into the phi, the two each other's only users inside `L`; an
+// error saying why `phi` is not one.
+llvm::Expected<ReductionCycle> matchReductionCycle(const llvm::Loop *L,
+                                                   llvm::PHINode &phi,
+                                                   llvm::BasicBlock *latch);
 
 // Whether `V`, through phis, is +0.0 on every path: a product's accumulator
 // has to start there, since both realizations compute the product alone.
 bool isPositiveZeroSeed(const llvm::Value *V);
 
-// Why a realization cannot take the place of the reduction loop `L`, empty
+// Why a realization cannot take the place of the reduction loop `L`, none
 // when it can: the product is the loop's value after its latch, and the
 // in-kernel raise runs in the preheader and reads back in the exit block.
-llvm::StringRef reductionLoopShapeRefusal(const llvm::Loop &L);
+std::optional<llvm::StringRef> reductionLoopShapeRefusal(const llvm::Loop &L);
 
 // The coefficients of threadIdx.x, .y and .z in `S`.
 std::array<int64_t, 3> threadIndexCoefficients(const llvm::SCEV *S);
