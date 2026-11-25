@@ -33,3 +33,21 @@ func.func @if_yield_count_mismatch(%pred : tensor<i1>, %a : tensor<f64>) -> tens
   }) : (tensor<i1>) -> tensor<f64>
   return %r : tensor<f64>
 }
+
+// -----
+
+func.func @simulate_missing_fn(%seed : tensor<2xui64>) -> tensor<1x1xf64> {
+  // expected-error @below {{'impulse.simulate' op `fn` references '@missing', which is not a func.func}}
+  %res:3 = impulse.simulate @missing(%seed) <{ selection = [[#impulse.symbol<1>]] }> : (tensor<2xui64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>)
+  return %res#0 : tensor<1x1xf64>
+}
+
+// -----
+
+func.func private @sampler(%seed : tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
+
+func.func @sample_missing_logpdf(%seed : tensor<2xui64>) -> tensor<f64> {
+  // expected-error @below {{'impulse.sample' op `logpdf` references '@missing', which is not a func.func}}
+  %r:2 = impulse.sample @sampler(%seed) <{ logpdf = @missing, symbol = #impulse.symbol<1> }> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
+  return %r#1 : tensor<f64>
+}

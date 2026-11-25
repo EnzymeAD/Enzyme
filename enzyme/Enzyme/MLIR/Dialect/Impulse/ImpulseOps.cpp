@@ -35,29 +35,54 @@ static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
 }
 
 //===----------------------------------------------------------------------===//
-// SampleOp
+// Symbol uses
 //===----------------------------------------------------------------------===//
 
-LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  if (getFnAttr()) {
-    auto global =
-        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-    if (!global)
-      return emitOpError("'")
-             << getFn().value() << "' does not reference a valid global funcOp";
-  }
-
-  if (getLogpdfAttr()) {
-    auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
-        *this, getLogpdfAttr());
-    if (!global)
-      return emitOpError("'")
-             << getLogpdf().value() << "' does not reference a valid global "
-             << "funcOp";
-  }
-
-  return success();
+/// Checks that `callee`, the value of the attribute `attrName` of `op`,
+/// references a func.func. A null `callee` passes.
+static LogicalResult verifyCallee(Operation *op,
+                                  SymbolTableCollection &symbolTable,
+                                  FlatSymbolRefAttr callee,
+                                  StringAttr attrName) {
+  if (!callee || symbolTable.lookupNearestSymbolFrom<func::FuncOp>(op, callee))
+    return success();
+  return op->emitOpError("`") << attrName.getValue() << "` references '"
+                              << callee << "', which is not a func.func";
 }
+
+LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName())))
+    return failure();
+  return verifyCallee(*this, symbolTable, getLogpdfAttr(), getLogpdfAttrName());
+}
+
+LogicalResult GenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  return verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName());
+}
+
+LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  return verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName());
+}
+
+LogicalResult
+RegenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  return verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName());
+}
+
+LogicalResult MHOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  return verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName());
+}
+
+LogicalResult InferOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName())))
+    return failure();
+  return verifyCallee(*this, symbolTable, getLogpdfFnAttr(),
+                      getLogpdfFnAttrName());
+}
+
+//===----------------------------------------------------------------------===//
+// SampleOp
+//===----------------------------------------------------------------------===//
 
 LogicalResult SampleOp::verify() {
   if (!getFnAttr() && !getDistAttr())
@@ -82,85 +107,8 @@ LogicalResult SampleRegionOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// GenerateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult GenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// SimulateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// RegenerateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult
-RegenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// MHOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult MHOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
 // InferOp
 //===----------------------------------------------------------------------===//
-
-LogicalResult InferOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  if (auto fnAttr = getFnAttr()) {
-    auto global =
-        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, fnAttr);
-    if (!global)
-      return emitOpError("'")
-             << getFn().value() << "' does not reference a valid global funcOp";
-  }
-
-  if (auto logpdfAttr = getLogpdfFnAttr()) {
-    auto global =
-        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, logpdfAttr);
-    if (!global)
-      return emitOpError("'") << logpdfAttr.getValue()
-                              << "' does not reference a valid global funcOp";
-  }
-
-  return success();
-}
 
 LogicalResult InferOp::verify() {
   bool hasHMC = getHmcConfig().has_value();
