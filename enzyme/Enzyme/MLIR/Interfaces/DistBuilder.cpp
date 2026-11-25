@@ -162,22 +162,29 @@ static Value broadcastToSample(OpBuilder &b, Location loc, Value v,
   return emitBroadcastScalar(b, loc, scalar, sampleType);
 }
 
+/// Sums the rank-1 `vector` to a rank-0 tensor by a dot product with ones.
+static Value sumVector(OpBuilder &builder, Location loc, Value vector) {
+  auto type = cast<RankedTensorType>(vector.getType());
+  Value ones = emitSplatConstant(builder, loc, type, 1.0);
+  return impulse::DotOp::create(
+      builder, loc, RankedTensorType::get({}, type.getElementType()), vector,
+      ones, builder.getDenseI64ArrayAttr({0}),
+      builder.getDenseI64ArrayAttr({0}));
+}
+
+/// Sums `v` to a rank-0 tensor; a one-element `v` is reshaped, not summed.
 static Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
   auto vt = cast<RankedTensorType>(v.getType());
   Type elemType = vt.getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
   int64_t n = vt.getNumElements();
   if (n == 1)
-    return impulse::ReshapeOp::create(b, loc, scalarType, v);
-
-  auto flatType = RankedTensorType::get({n}, elemType);
+    return impulse::ReshapeOp::create(b, loc,
+                                      RankedTensorType::get({}, elemType), v);
   Value flat = v;
-  if (vt.getRank() != 1 || vt.getShape()[0] != n)
-    flat = impulse::ReshapeOp::create(b, loc, flatType, v);
-  Value ones = emitSplatConstant(b, loc, flatType, 1.0);
-  return impulse::DotOp::create(b, loc, scalarType, flat, ones,
-                                b.getDenseI64ArrayAttr({0}),
-                                b.getDenseI64ArrayAttr({0}));
+  if (vt.getRank() != 1)
+    flat = impulse::ReshapeOp::create(b, loc,
+                                      RankedTensorType::get({n}, elemType), v);
+  return sumVector(b, loc, flat);
 }
 
 static Value reduceLastAxis(OpBuilder &b, Location loc, Value v,
@@ -343,13 +350,9 @@ static Value logDetSimplex(OpBuilder &builder, Location loc,
   Value term = arith::AddFOp::create(builder, loc, logZ, log1mZ);
   term = arith::AddFOp::create(builder, loc, term, logPexcl);
 
-  auto flatType = RankedTensorType::get({d.m * d.n}, elemType);
-  Value flat = impulse::ReshapeOp::create(builder, loc, flatType, term);
-  Value ones = emitSplatConstant(builder, loc, flatType, 1.0);
-  auto scalarType = RankedTensorType::get({}, elemType);
-  return impulse::DotOp::create(builder, loc, scalarType, flat, ones,
-                                builder.getDenseI64ArrayAttr({0}),
-                                builder.getDenseI64ArrayAttr({0}));
+  Value flat = impulse::ReshapeOp::create(
+      builder, loc, RankedTensorType::get({d.m * d.n}, elemType), term);
+  return sumVector(builder, loc, flat);
 }
 
 static SimplexDims simplexDimsFromConstrained(SupportAttr support,
@@ -1052,32 +1055,25 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
   auto elemType = zType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  auto sumToScalar = [&](Value v) -> Value {
-    Value ones = emitSplatConstant(builder, loc,
-                                   cast<RankedTensorType>(v.getType()), 1.0);
-    return impulse::DotOp::create(builder, loc, scalarType, v, ones,
-                                  builder.getDenseI64ArrayAttr({0}),
-                                  builder.getDenseI64ArrayAttr({0}));
-  };
-
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
     return emitSplatConstant(builder, loc, scalarType, 0.0);
   case XformKind::EXP:
   case XformKind::GREATER_THAN:
   case XformKind::LESS_THAN:
-    return sumToScalar(unconstrained);
+    return sumVector(builder, loc, unconstrained);
   case XformKind::SOFTPLUS: {
     Value logSigZ = impulse::emitLogSigmoid(builder, loc, unconstrained);
-    return sumToScalar(logSigZ);
+    return sumVector(builder, loc, logSigZ);
   }
   case XformKind::SIGMOID:
-    return sumToScalar(emitLogSigmoidDerivative(builder, loc, unconstrained));
+    return sumVector(builder, loc,
+                     emitLogSigmoidDerivative(builder, loc, unconstrained));
   case XformKind::INTERVAL: {
     double scale = support.getUpperBound().getValueAsDouble() -
                    support.getLowerBound().getValueAsDouble();
-    Value sumLogProduct =
-        sumToScalar(emitLogSigmoidDerivative(builder, loc, unconstrained));
+    Value sumLogProduct = sumVector(
+        builder, loc, emitLogSigmoidDerivative(builder, loc, unconstrained));
 
     int64_t n = zType.getNumElements();
     double logScaleTerm = n * std::log(scale);
@@ -1145,10 +1141,7 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
   Value diag = impulse::emitSoftplus(builder, loc, diagPre);
 
   Value logDiag = math::LogOp::create(builder, loc, diag);
-  Value onesD = emitSplatConstant(builder, loc, diagTy, 1.0);
-  Value sumLogDiag = impulse::DotOp::create(
-      builder, loc, scalarTy, logDiag, onesD, builder.getDenseI64ArrayAttr({0}),
-      builder.getDenseI64ArrayAttr({0}));
+  Value sumLogDiag = sumVector(builder, loc, logDiag);
 
   Value scaleTril = emitSplatConstant(builder, loc, matTy, 0.0);
 
