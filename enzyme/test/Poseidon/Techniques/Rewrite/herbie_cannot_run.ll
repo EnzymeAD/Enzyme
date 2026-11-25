@@ -68,3 +68,17 @@
 ; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys not %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE %s
 
 ; UNWRITABLE: error: {{.*}}preprocess_tester{{.*}}: Poseidon: cannot create the Herbie cache directory {{.*}}file/c: Not a directory. Herbie's answers are kept in the -poseidon-cache directory, which has to be writable.
+
+; Herbie's input files and output directories are made in the temporary
+; directory and removed after the run, so a read-only working directory does
+; not keep Herbie from running; a temporary directory they cannot be made in
+; stops the compile naming it.
+; RUN: mkdir %t/ro %t/rotmp && chmod 555 %t/ro
+; RUN: cd %t/ro && env TMPDIR=%t/rotmp FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/rocache -poseidon-print 2>&1 | FileCheck --check-prefix=READONLY %s
+; RUN: chmod 755 %t/ro && ls -A %t/ro | count 0 && ls -A %t/rotmp | count 0
+; RUN: env TMPDIR=%t/file FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys not %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/tmpfile 2>&1 | FileCheck --check-prefix=NOTMP %s
+
+; READONLY: [poseidon] Saved Herbie output to cache file
+; READONLY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
+
+; NOTMP: error: {{.*}}preprocess_tester{{.*}}: Poseidon: cannot create a Herbie input file in the temporary directory {{.*}}file: Not a directory{{$}}

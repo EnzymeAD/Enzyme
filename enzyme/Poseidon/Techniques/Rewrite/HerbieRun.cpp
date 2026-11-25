@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <fstream>
 #include <optional>
 
 using namespace llvm;
@@ -128,16 +127,20 @@ struct AnswerCache {
   SmallVector<StringRef, 1> unchecked;
 };
 
-// One input file and one output directory per shard, removed with it.
+// One input file and one output directory per shard, in the temporary
+// directory, removed with it.
 class ShardFiles {
 public:
-  ShardFiles(ArrayRef<std::string> cores, unsigned shards);
+  explicit ShardFiles(unsigned shards)
+      : inputs(shards), outputs(shards), removeInputs(shards) {}
   ~ShardFiles();
-  bool created() const { return ok; }
+  // Creates the files and directories and writes `cores` into the input
+  // files, round-robin; an error names what could not be created or written.
+  Error create(ArrayRef<std::string> cores);
   SmallVector<SmallString<64>> inputs, outputs;
 
 private:
-  bool ok = true;
+  std::vector<FileRemover> removeInputs;
 };
 
 // How the processes of a run ended.
@@ -286,34 +289,49 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
   return std::nullopt;
 }
 
-ShardFiles::ShardFiles(ArrayRef<std::string> cores, unsigned shards)
-    : inputs(shards), outputs(shards) {
-  for (unsigned s = 0; s < shards && ok; ++s) {
-    if (sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", inputs[s],
-                                  sys::fs::perms::owner_all) ||
-        sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
-                                       outputs[s])) {
-      ok = false;
-      break;
+// An error that `what`, in the temporary directory, could not be created.
+static Error notCreated(const Twine &what, std::error_code EC) {
+  SmallString<128> tmp;
+  sys::path::system_temp_directory(/*ErasedOnReboot=*/true, tmp);
+  return createStringError(EC, "cannot create " + what +
+                                   " in the temporary directory " + tmp + ": " +
+                                   EC.message());
+}
+
+Error ShardFiles::create(ArrayRef<std::string> cores) {
+  const size_t shards = inputs.size();
+  for (size_t s = 0; s < shards; ++s) {
+    int fd;
+    if (std::error_code EC = sys::fs::createTemporaryFile(
+            "herbie_input", "fpcore", fd, inputs[s])) {
+      inputs[s].clear();
+      return notCreated("a Herbie input file", EC);
     }
-    std::ofstream input(inputs[s].c_str());
+    removeInputs[s].setFile(inputs[s]);
+    raw_fd_ostream input(fd, /*shouldClose=*/true);
     for (size_t k = s; k < cores.size(); k += shards)
       input << cores[k] << "\n";
     input.close();
-    if (!input)
-      ok = false;
+    if (std::error_code EC = input.error()) {
+      input.clear_error();
+      return createStringError(EC, "cannot write the Herbie input file " +
+                                       inputs[s] + ": " + EC.message());
+    }
+    if (std::error_code EC = sys::fs::createUniqueDirectory(
+            "herbie_output_%%%%%%%%%%%%%%%%", outputs[s])) {
+      outputs[s].clear();
+      return notCreated("a Herbie output directory", EC);
+    }
   }
+  return Error::success();
 }
 
 ShardFiles::~ShardFiles() {
-  for (unsigned s = 0; s < inputs.size(); ++s) {
-    if (!inputs[s].empty())
-      sys::fs::remove(inputs[s]);
-    // A temporary directory left behind is harmless; llvm::FileRemover
-    // ignores the same failure.
-    if (!outputs[s].empty())
-      sys::fs::remove_directories(outputs[s]);
-  }
+  // A temporary directory left behind is harmless; llvm::FileRemover ignores
+  // the same failure.
+  for (const SmallString<64> &output : outputs)
+    if (!output.empty())
+      sys::fs::remove_directories(output);
 }
 
 // Starts one process per shard and waits for them within the wall budget,
@@ -520,12 +538,10 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
       return std::move(**cached);
   }
 
+  ShardFiles files(plan.shards);
+  if (Error E = files.create(Cores))
+    return std::move(E);
   HerbieRunResult Run;
-  ShardFiles files(Cores, plan.shards);
-  if (!files.created()) {
-    Run.Failure = "its input files or output directories could not be created";
-    return Run;
-  }
   announceRun(Opts, Label, Cores.size(), plan, command, keyDigest);
   ProcessOutcome ran = runShards(files, command, Opts.Program, plan.wallBudget);
   if (ran.executionFailed) {

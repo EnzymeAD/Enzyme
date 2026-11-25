@@ -222,7 +222,7 @@ compiles are therefore run without either.
 | `POSEIDON_ECHO` | `poseidon-clang` | Prints the clang command it runs |
 | `HIP_PATH`, `ROCM_PATH` | `poseidon-clang` | The ROCm installation of a HIP compile without `--hip-path` or `--rocm-path` |
 | `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` | `poseidon-calibrate` | The GPU to measure without `--gpu` |
-| `TMPDIR` | `poseidon-kappa` | Where the runs of the measurement keep their scratch directories; default `/tmp` |
+| `TMPDIR` | `poseidon-kappa`, plugin | Where the runs of the measurement keep their scratch directories, and a compile the input files and output directories of its Herbie runs; default `/tmp` |
 
 ### File formats
 

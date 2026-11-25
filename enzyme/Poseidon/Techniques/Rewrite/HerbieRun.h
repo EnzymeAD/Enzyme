@@ -121,8 +121,8 @@ struct HerbieRunResult {
     /// Herbie ended by a signal the runner did not send; `Crash` names it.
     /// Nothing is cached.
     Crashed,
-    /// Herbie could not be started, its input files could not be written, or
-    /// it exited without a usable results.json; `Failure` says which.
+    /// Herbie could not be started, or it exited without a usable
+    /// results.json; `Failure` says which.
     Failed,
   };
   /// How this run ended.
@@ -151,7 +151,8 @@ struct HerbieRunResult {
 /// With `Opts.CacheOnly`, the cached answer is the one any Herbie gave, and a
 /// question the cache does not answer is an error naming its cache file.
 /// `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". A cache
-/// that cannot be written is an error that names the path.
+/// file, or a temporary file or directory for Herbie, that cannot be written is
+/// an error that names the path.
 llvm::Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                                           const HerbieRunOptions &Opts,
                                           llvm::StringRef Label,
