@@ -426,6 +426,29 @@ static SmallVector<NamedAttribute> gradientRegionAttrs(Builder &builder,
   return attrs;
 }
 
+/// Emits the potential U(q) = -log p(qConstrained) - log|det J(q)|, with the
+/// log density from the logpdf region or else from a generate op of the model.
+/// Returns U and the RNG state after it.
+static std::pair<Value, Value> emitPotential(OpBuilder &builder, Location loc,
+                                             Value q, Value qConstrained,
+                                             Value rng, const HMCContext &ctx) {
+  Value logDensity;
+  if (ctx.hasLogpdfRegion()) {
+    logDensity = cloneLogpdfRegionAt(builder, loc, qConstrained, ctx);
+  } else {
+    impulse::GenerateOp generateOp =
+        emitGenerateAt(builder, loc, qConstrained, rng, ctx);
+    logDensity = generateOp.getWeight();
+    rng = generateOp.getResult(2);
+  }
+  Value negLogDensity = arith::NegFOp::create(builder, loc, logDensity);
+  Value jacobianCorrection =
+      computeTotalJacobianCorrection(builder, loc, q, ctx.supports);
+  Value potentialEnergy =
+      arith::SubFOp::create(builder, loc, negLogDensity, jacobianCorrection);
+  return {potentialEnergy, rng};
+}
+
 GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                                     Location loc,
                                                     Value position, Value rng,
@@ -438,8 +461,7 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  bool isCustomLogpdf = ctx.hasCustomLogpdf();
-  bool useSymbol = isCustomLogpdf && !ctx.hasLogpdfRegion();
+  bool useSymbol = ctx.hasCustomLogpdf() && !ctx.hasLogpdfRegion();
   auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
   Value autodiffPosition = position;
   auto autodiffPositionType = positionType;
@@ -462,35 +484,17 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   builder.setInsertionPointToStart(autodiffBlock);
   Value qArg = autodiffBlock->getArgument(0);
 
-  if (ctx.hasLogpdfRegion()) {
-    // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
-    Value qConstrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    Value logDensity = cloneLogpdfRegionAt(builder, loc, qConstrained, ctx);
-    Value negWeight = arith::NegFOp::create(builder, loc, logDensity);
-    Value jacobianCorrection =
-        computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
-    Value potentialEnergy =
-        arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
-    enzyme::YieldOp::create(builder, loc, ValueRange{potentialEnergy, rng});
-  } else if (isCustomLogpdf) {
+  if (useSymbol) {
     Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
     Value potentialEnergy = arith::NegFOp::create(builder, loc, logDensity);
     // TODO(#2695): handle hybrid case
     enzyme::YieldOp::create(builder, loc, {potentialEnergy, rng});
   } else {
-    Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    impulse::GenerateOp generateOp =
-        emitGenerateAt(builder, loc, q_constrained, rng, ctx);
-
-    Value negWeight =
-        arith::NegFOp::create(builder, loc, generateOp.getWeight());
-    Value jacobianCorrection =
-        computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
-    Value U =
-        arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
-
-    SmallVector<Value> yieldValues{U, generateOp.getResult(2)};
-    enzyme::YieldOp::create(builder, loc, yieldValues);
+    // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
+    Value qConstrained = constrainPosition(builder, loc, qArg, ctx.supports);
+    auto [potentialEnergy, rngOut] =
+        emitPotential(builder, loc, qArg, qConstrained, rng, ctx);
+    enzyme::YieldOp::create(builder, loc, {potentialEnergy, rngOut});
   }
 
   builder.setInsertionPointAfter(autodiffOp);
@@ -764,51 +768,31 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   Value q0;
   Value U0;
 
-  if (ctx.hasCustomLogpdf()) {
+  bool useSymbol = ctx.hasCustomLogpdf() && !ctx.hasLogpdfRegion();
+  if (useSymbol) {
     q0 = initialPosition;
-    if (ctx.hasLogpdfRegion()) {
-      Value q0Constrained = constrainPosition(builder, loc, q0, ctx.supports);
-      Value weight0 = cloneLogpdfRegionAt(builder, loc, q0Constrained, ctx);
-      Value negWeight0 = arith::NegFOp::create(builder, loc, weight0);
-      Value jacobian0 =
-          computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
-      U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
-    } else {
-      auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-      auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-      SmallVector<Value> callArgs;
-      callArgs.push_back(q0Flat);
-      callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-      auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                         TypeRange{scalarType}, callArgs);
-      U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
-    }
+    auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
+    auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
+    SmallVector<Value> callArgs;
+    callArgs.push_back(q0Flat);
+    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                       TypeRange{scalarType}, callArgs);
+    U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
   } else {
-    // 1. Extract initial position vector (constrained)
-    auto q0_constrained =
-        gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
-
-    // 2. Unconstrain to get position vector for HMC
-    q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
-
-    // 3. Compute initial potential energy: U0 = -weight + correction
-    Value weight0;
-    if (ctx.hasLogpdfRegion()) {
-      weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
+    Value q0Constrained;
+    if (ctx.hasCustomLogpdf()) {
+      q0 = initialPosition;
+      q0Constrained = constrainPosition(builder, loc, q0, ctx.supports);
     } else {
-      weight0 =
-          emitGenerateAt(builder, loc, q0_constrained, rngForAutodiff, ctx)
-              .getWeight();
+      q0Constrained =
+          gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
+      q0 = unconstrainPosition(builder, loc, q0Constrained, ctx.supports);
     }
-    auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
-    auto jacobian0 =
-        computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
-    U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+    U0 = emitPotential(builder, loc, q0, q0Constrained, rngForAutodiff, ctx)
+             .first;
   }
 
-  // 4. Compute initial gradient at q0
-  bool isCustomLogpdf = ctx.hasCustomLogpdf();
-  bool useSymbol = isCustomLogpdf && !ctx.hasLogpdfRegion();
   auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
   Value autodiffQ0 = q0;
   auto autodiffQ0Type = positionType;
@@ -834,39 +818,18 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   builder.setInsertionPointToStart(autodiffInitBlock);
   auto q0Arg = autodiffInitBlock->getArgument(0);
 
-  if (ctx.hasLogpdfRegion()) {
-    auto q0ArgConstrained =
-        constrainPosition(builder, loc, q0Arg, ctx.supports);
-    Value logDensityInit =
-        cloneLogpdfRegionAt(builder, loc, q0ArgConstrained, ctx);
-    auto negWeightInit = arith::NegFOp::create(builder, loc, logDensityInit);
-    auto jacobianInit =
-        computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
-    auto potentialEnergyInit =
-        arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
-    enzyme::YieldOp::create(builder, loc,
-                            ValueRange{potentialEnergyInit, rngForAutodiff});
-  } else if (isCustomLogpdf) {
+  if (useSymbol) {
     Value logDensityInit = emitLogpdfFnInAutodiff(builder, loc, q0Arg, ctx);
     auto potentialEnergyInit =
         arith::NegFOp::create(builder, loc, logDensityInit);
     enzyme::YieldOp::create(builder, loc,
                             {potentialEnergyInit, rngForAutodiff});
   } else {
-    auto q0Arg_constrained =
+    Value q0ArgConstrained =
         constrainPosition(builder, loc, q0Arg, ctx.supports);
-    impulse::GenerateOp generateOpInner =
-        emitGenerateAt(builder, loc, q0Arg_constrained, rngForAutodiff, ctx);
-
-    auto negWeightInit =
-        arith::NegFOp::create(builder, loc, generateOpInner.getWeight());
-    auto jacobianInit =
-        computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
-    auto U0_init =
-        arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
-
-    SmallVector<Value> yieldValues{U0_init, generateOpInner.getResult(2)};
-    enzyme::YieldOp::create(builder, loc, yieldValues);
+    auto [potentialEnergyInit, rngOut] = emitPotential(
+        builder, loc, q0Arg, q0ArgConstrained, rngForAutodiff, ctx);
+    enzyme::YieldOp::create(builder, loc, {potentialEnergyInit, rngOut});
   }
   builder.setInsertionPointAfter(autodiffInit);
 
