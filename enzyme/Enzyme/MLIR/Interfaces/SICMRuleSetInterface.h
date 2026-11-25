@@ -9,7 +9,6 @@
 #ifndef ENZYME_MLIR_INTERFACES_SICM_RULE_SET_INTERFACE_H
 #define ENZYME_MLIR_INTERFACES_SICM_RULE_SET_INTERFACE_H
 
-#include "Dialect/Impulse/Impulse.h"
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/StringMap.h"

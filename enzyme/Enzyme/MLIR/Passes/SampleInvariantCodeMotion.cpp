@@ -182,6 +182,17 @@ static bool hoistSampleInvariantOps(SampleDependenceAnalysis &analysis) {
   return !sortedToHoist.empty();
 }
 
+/// Hoists the constants under `root` and merges equal ones, as a greedy
+/// rewrite of `root` would.
+static void uniqueConstants(Operation *root) {
+  OperationFolder folder(root->getContext());
+  root->walk([&](Operation *op) {
+    Attribute value;
+    if (matchPattern(op, m_Constant(&value)))
+      folder.insertKnownConstant(op, value);
+  });
+}
+
 namespace {
 
 /// Applies every IR change it is notified of to the analyses of `cache`.
@@ -413,15 +424,7 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
       anyChanged |= patternChanged;
       if (checker && checker->foundMissedValue())
         signalPassFailure();
-      // CSE and hoist constants, as a module-wide greedy rewrite would.
-      {
-        OperationFolder folder(getOperation()->getContext());
-        getOperation()->walk([&](Operation *op) {
-          Attribute value;
-          if (matchPattern(op, m_Constant(&value)))
-            folder.insertKnownConstant(op, value);
-        });
-      }
+      uniqueConstants(getOperation());
 
       SampleDependenceAnalysis hoistAnalysis(regionOp, target);
       anyChanged |= hoistSampleInvariantOps(hoistAnalysis);
