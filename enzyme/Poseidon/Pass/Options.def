@@ -229,13 +229,11 @@ POSEIDON_MODEL_OPTION(
     "within 1; the gradient-weighted accuracy model is first order and cannot "
     "price such a change (negative = off)")
 POSEIDON_MODEL_OPTION(
-    ExponentPenalty, Number, 1e30, "poseidon-matmul-exponent-penalty", Hidden,
-    SolveInput, "",
-    "Penalty added to a matrix-product candidate's accuracy cost when its "
-    "input format flushes the smallest nonzero operand magnitude the profile "
-    "recorded to zero; no point of that accuracy cost or more is selected, so "
-    "the default keeps such a candidate out of every solution. 0 prices it "
-    "at its modelled error")
+    ExcludeOutOfRange, Bool, true, "poseidon-matmul-exclude-out-of-range",
+    Hidden, SolveInput, "",
+    "Leave out of the solve a matrix-product candidate whose format flushes "
+    "the smallest nonzero operand magnitude the profile recorded to zero or "
+    "overflows on a sampled product; false offers it at its modelled error")
 POSEIDON_MODEL_OPTION(Threads, Unsigned, 1, "poseidon-threads", Hidden, Other,
                       "",
                       "Threads the accuracy model runs on (0 = all hardware "

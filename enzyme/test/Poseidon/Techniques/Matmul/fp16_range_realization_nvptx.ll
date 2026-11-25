@@ -13,17 +13,16 @@
 ; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget -poseidon-print 2>&1 | FileCheck --check-prefix=ANOTHER %s
 
 ; Operand A of the product of library_call_nvptx.ll is profiled at 1e-9
-; (Inputs/fp16_range/matmul_tiny), below FP16's smallest subnormal: every
-; realization that converts it to FP16 unscaled has domainError=INF (the
-; exponent-range check in Techniques/Matmul/Accuracy.cpp). The split
+; (Inputs/fp16_range/matmul_tiny), below FP16's smallest subnormal: no
+; realization that converts it to FP16 unscaled is offered. The split
 ; library call scales its operands first, clears tolerance 1e-6, and is keyed
 ; by its TCEC backend in the accuracy memo and the DP table.
 
 ; TAU: [poseidon] domain error tcec library p95_relErr=1.106362e-07
-; TAU: #10 tcec-dispatch wmma m16n16k16 f16/f32  compCost/MAC=1.400000e+01  rel=2.734375e-02  domainError=[[ERR:[0-9.e+-]+]]
-; TAU-NEXT: #11 direct-dispatch cublas f16/f32  {{.*}}  domainError=INF
+; TAU: #7 tcec-dispatch wmma m16n16k16 f16/f32  compCost/MAC=1.400000e+01  rel=2.734375e-02  domainError=[[ERR:[0-9.e+-]+]]
+; TAU: not offered: direct-dispatch cublas f16/f32: f16 flushes the smallest profiled operand magnitude, 1e-09, to zero
 ; TAU: tau=1.000000e-06 {{.*}} rel=[[ERR]]{{$}}
-; TAU: Applying solution for matmul[0] -> tcec-dispatch wmma m16n16k16 f16/f32 (#10)
+; TAU: Applying solution for matmul[0] -> tcec-dispatch wmma m16n16k16 f16/f32 (#7)
 
 ; KEY: "TCEC backend": "cuMpSGEMM",
 ; KEY-NOT: TCEC backend

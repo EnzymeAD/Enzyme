@@ -202,8 +202,8 @@ static Error proposeSubgraphCandidates(Session &S, Function &F,
 // operation of the site; the profile predicts eps times the site's total
 // sensitivity for the same noise. Their ratio cancels the propagation within
 // the site and leaves the downstream condition per unit of accuracy cost. A
-// site whose probe run diverged gets a large finite factor, so none of its
-// candidates is traded against precision.
+// site whose probe run diverged has no finite condition number: it is solved
+// with no candidate (solveAndApply), under a target and under a budget.
 static Error putOnApplicationScale(Session &S, Function &F,
                                    const SiteProfileData &P, SiteState &st) {
   const Options &O = S.Opts;
@@ -254,9 +254,15 @@ static Error putOnApplicationScale(Session &S, Function &F,
                            "total sensitivity, so the accuracy costs cannot "
                            "be put on the scale the condition number was "
                            "measured against; re-run profile generation");
-    factor = profileHeader.kappaMark == KappaMark::Diverged
-                 ? 1e30
-                 : profileHeader.kappa / sumSens;
+    if (profileHeader.kappaMark == KappaMark::Diverged)
+      diagnose(F, F.getSubprogram(),
+               Twine("the profiling runs of ") + F.getName() +
+                   " diverged under the smallest perturbation, so no "
+                   "candidate can be traded against its accuracy and the "
+                   "site is left as written",
+               DS_Warning);
+    else
+      factor = profileHeader.kappa / sumSens;
     st.kappa = profileHeader.kappa;
     st.kappaMark = profileHeader.kappaMark;
     if (O.Diagnostics.Print)
@@ -573,15 +579,26 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
                                     ArrayRef<SiteState *> sites, double tau,
                                     bool siteTarget, bool joint) {
   const Options &O = S.Opts;
+  // A site whose condition number diverged offers no candidate.
+  SmallVector<SiteState *, 4> solved;
+  SmallVector<ArrayRef<SiteUnit *>, 4> units;
+  for (SiteState *st : sites)
+    if (st->kappaMark != KappaMark::Diverged) {
+      solved.push_back(st);
+      units.push_back(st->units);
+    }
   SolveRecord record;
   record.tau = tau;
   record.siteTarget = siteTarget;
-  for (SiteState *st : sites) {
+  const ArrayRef<SiteState *> scaled =
+      solved.empty() ? sites : ArrayRef<SiteState *>(solved);
+  for (SiteState *st : scaled) {
     record.profiledCost += st->profiledCost;
     record.accScale += st->accScale;
-    if (joint)
-      record.sites.push_back(st->F->getName().str());
   }
+  if (joint)
+    for (SiteState *st : sites)
+      record.sites.push_back(st->F->getName().str());
   const bool explain = llvm::any_of(
       sites, [&](SiteState *st) { return explainWanted(O, *st->F); });
   SolveRecord *rec = explain ? &record : nullptr;
@@ -595,15 +612,12 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
       append_range(steps, *pinned);
     }
     record.selector = SolveSelector::Pinned;
-  } else {
-    SmallVector<ArrayRef<SiteUnit *>, 4> units;
-    for (SiteState *st : sites)
-      units.push_back(st->units);
-    Expected<SmallVector<SolutionStep>> solved =
-        solveSites(S, sites, units, tau, joint, rec);
-    if (!solved)
-      return solved.takeError();
-    steps = std::move(*solved);
+  } else if (!solved.empty()) {
+    Expected<SmallVector<SolutionStep>> selected =
+        solveSites(S, solved, units, tau, joint, rec);
+    if (!selected)
+      return selected.takeError();
+    steps = std::move(*selected);
   }
 
   std::unordered_map<SiteState *, SmallVector<SolutionStep>> perSite;

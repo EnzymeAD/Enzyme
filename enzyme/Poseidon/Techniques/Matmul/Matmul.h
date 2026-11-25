@@ -443,7 +443,8 @@ public:
   uint64_t executions = 0;
   /// The candidates, indexed as the solver indexes them.
   llvm::SmallVector<Option, 8> candidates;
-  /// Candidates this build cannot offer, by name, each with why.
+  /// Candidates not offered, by name, each with why: this build cannot realize
+  /// them, or their formats cannot hold the profiled operands.
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
   /// Under an accuracy target, the site's accuracy scale
   /// (SiteState::accScale), which a candidate's domainError is multiplied by

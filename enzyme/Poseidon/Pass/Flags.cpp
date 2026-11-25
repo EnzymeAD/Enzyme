@@ -186,8 +186,7 @@ Error validateOptions(const Options &O) {
   const std::pair<StringRef, double> numbers[] = {
       {"poseidon-tau", O.Solver.Tau},
       {"poseidon-min-cost-share", O.Profiling.MinCostShare},
-      {"poseidon-rewrite-max-broken-share", O.Model.MaxBrokenShare},
-      {"poseidon-matmul-exponent-penalty", O.Model.ExponentPenalty}};
+      {"poseidon-rewrite-max-broken-share", O.Model.MaxBrokenShare}};
   for (const auto &[flag, value] : numbers)
     if (std::isnan(value))
       return noNumber(flag);

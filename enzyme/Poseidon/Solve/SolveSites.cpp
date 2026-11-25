@@ -370,10 +370,7 @@ StringRef selectorName(SolveSelector selector) {
   llvm_unreachable("every selector has a name");
 }
 
-bool selectable(const Options &O, double accCost) {
-  return std::isfinite(accCost) &&
-         (O.Model.ExponentPenalty <= 0.0 || accCost < O.Model.ExponentPenalty);
-}
+bool selectable(double accCost) { return std::isfinite(accCost); }
 
 // The most accurate selectable point within the budget. The frontier's
 // accuracy cost falls as its cost rises, so each selectable point is the
@@ -384,7 +381,7 @@ static std::optional<DPCost> selectWithinBudget(const Options &O,
   const DPCost budget = scale.fromShare(O.Solver.CostBudget);
   std::optional<DPCost> best;
   for (const auto &[cost, acc] : frontier)
-    if (cost <= budget && selectable(O, acc) &&
+    if (cost <= budget && selectable(acc) &&
         (!best || acc < frontier.at(*best)))
       best = cost;
   return best;
@@ -401,7 +398,7 @@ selectUnderTarget(const Options &O, const CostScale &scale,
                   const CostMap &frontier, const SolutionMap &solutions,
                   double baseline, double accScale, double tau) {
   auto meets = [&](double acc) {
-    return selectable(O, acc) && (baseline + acc) / accScale <= tau;
+    return selectable(acc) && (baseline + acc) / accScale <= tau;
   };
   std::optional<DPCost> best;
   for (const auto &[cost, acc] : frontier) {

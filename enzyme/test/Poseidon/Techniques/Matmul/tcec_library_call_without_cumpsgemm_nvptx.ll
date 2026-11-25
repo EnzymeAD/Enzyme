@@ -14,5 +14,6 @@
 ; PRICED-NOT: TCEC dispatch not proposed
 ; PRICED: #9 ozaki-ii nm=14 wmma m16n16k16 s8/s32
 ; PRICED-NEXT: #10 direct-dispatch cublas f16/f32
+; PRICED: [poseidon]   not offered: tcec-dispatch wmma m16n16k16 f16/f32: this compiler was built without cuMpSGEMM, on which the error-corrected dispatch runs; configure it with -DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>{{$}}
 ; KEY: "TCEC backend": "none",
 ; PIN: error: {{.*}}Poseidon: -poseidon-pin: matmul_body: M0 has no candidate named 'tcec-dispatch wmma m16n16k16 f16/f32': pricing dropped it, because this compiler was built without cuMpSGEMM, on which the error-corrected dispatch runs; configure it with -DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>

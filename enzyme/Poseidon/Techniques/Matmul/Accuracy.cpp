@@ -27,6 +27,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -505,9 +506,8 @@ public:
        const MatmulAccuracyQuery &q);
 
   // The stored result; false when the model has to compute it.
-  bool lookup(const Options &O, double &accuracyCost,
-              double &domainError) const;
-  void store(const Options &O, double accuracyCost, double domainError) const;
+  bool lookup(const Options &O, MatmulAccuracy &result) const;
+  void store(const Options &O, const MatmulAccuracy &result) const;
   // The entry's file in -poseidon-cache: two memos of one file hold one
   // result.
   const std::string &file() const { return path; }
@@ -558,7 +558,6 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
   key.add("samples", std::to_string(numSamples));
   key.add("seed", std::to_string(O.Model.RandomSeed));
   key.add("sampling log bits", std::to_string(sampleLogBits));
-  key.add("exponent penalty", exactDouble(O.Model.ExponentPenalty));
   key.add("confidence", exactDouble(kDefaultConfidence));
   SmallString<256> p(O.Herbie.Cache);
   sys::path::append(p, "matmul_accuracy_" + key.digest() + ".json");
@@ -566,15 +565,15 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
   key.addCompiler(kPassIdentity);
 }
 
-void Memo::store(const Options &O, double accuracyCost,
-                 double domainError) const {
+void Memo::store(const Options &O, const MatmulAccuracy &result) const {
   if (O.Herbie.Cache.empty())
     return;
   (void)sys::fs::create_directories(O.Herbie.Cache, true);
   // As text: a domain error can be infinite, which JSON cannot hold.
   json::Object value;
-  value["accuracy cost"] = exactDouble(accuracyCost);
-  value["domain error"] = exactDouble(domainError);
+  value["accuracy cost"] = exactDouble(result.accuracyCost);
+  value["domain error"] = exactDouble(result.domainError);
+  value["out of range"] = result.outOfRange;
   if (Error E = writeCacheEntry(path, key, std::move(value))) {
     std::string why = toString(std::move(E));
     if (O.Diagnostics.Print)
@@ -589,16 +588,20 @@ static bool parseAccNumber(const json::Object &value, StringRef name,
   return text && !text->getAsDouble(out);
 }
 
-bool Memo::lookup(const Options &O, double &accuracyCost,
-                  double &domainError) const {
+bool Memo::lookup(const Options &O, MatmulAccuracy &result) const {
   if (O.Herbie.Cache.empty())
     return false;
   CacheEntryRead read = readCacheEntry(path, key);
   if (read.value) {
     const json::Object *value = read.value->getAsObject();
-    if (value && parseAccNumber(*value, "accuracy cost", accuracyCost) &&
-        parseAccNumber(*value, "domain error", domainError))
+    std::optional<StringRef> outOfRange =
+        value ? value->getString("out of range") : std::nullopt;
+    if (outOfRange &&
+        parseAccNumber(*value, "accuracy cost", result.accuracyCost) &&
+        parseAccNumber(*value, "domain error", result.domainError)) {
+      result.outOfRange = outOfRange->str();
       return true;
+    }
     read.unreadable = "its value does not parse";
   }
   if (!O.Diagnostics.Print)
@@ -620,50 +623,35 @@ bool Memo::lookup(const Options &O, double &accuracyCost,
 // accuracy cost is its mean over the samples where it is finite, and the
 // domain error (call-site budget) the kDefaultConfidence percentile of its
 // ratio to the weighted result, which cancels the size/exec scaling of the bare
-// sum.
+// sum. A format that overflowed on a sample, or flushes the smallest operand
+// magnitude the profile recorded, is out of range: the absolute error is blind
+// to a flushed operand.
 static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
                              const MatmulAccuracyQuery &q,
                              const SampledError &e) {
-  MatmulAccuracy r{e.accuracyCost, e.domainError};
-  auto printDomainError = [&] {
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] domain error " << describe(q) << ' '
-                   << percentileLabel(kDefaultConfidence)
-                   << "_relErr=" << r.domainError
-                   << " (sumcost=" << r.accuracyCost << ")\n";
-  };
-  bool outOfRange = e.nonFinite;
-  switch (q.model) {
-  case MatmulAccuracyQuery::Model::Rounded: {
-    // Before the exponent-range charge below.
-    printDomainError();
-    // Exponent-range adequacy: the absolute error above is blind to a format
-    // that flushes the smallest operands to zero, so if the exponent format
-    // cannot represent the smallest nonzero operand magnitude the profiler
-    // observed, charge -poseidon-matmul-exponent-penalty. The operands reach
-    // `exponentPrec` (Invalid = inputPrec) unscaled: a scheme that scales
-    // them first has its own simulation.
+  MatmulAccuracy r{e.accuracyCost, e.domainError, {}};
+  if (O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] domain error " << describe(q) << ' '
+                 << percentileLabel(kDefaultConfidence)
+                 << "_relErr=" << r.domainError
+                 << " (sumcost=" << r.accuracyCost << ")\n";
+  if (e.nonFinite)
+    r.outOfRange = "a sampled product overflows its format";
+  // The operands reach `exponentPrec` (Invalid = inputPrec) unscaled: a
+  // scheme that scales them first has its own simulation.
+  if (q.model == MatmulAccuracyQuery::Model::Rounded) {
     FPKind expK =
         (q.exponentPrec == FPKind::Invalid) ? q.inputPrec : q.exponentPrec;
     double minSub = minSubnormalForKind(expK);
     if (minSub > 0.0)
       for (const CellStat *c : {&prof.a, &prof.b})
         if (c->minMag > 0.0 && c->minMag < minSub)
-          outOfRange = true;
-    break;
+          r.outOfRange = (Twine(fpKindName(expK)) +
+                          " flushes the smallest profiled operand "
+                          "magnitude, " +
+                          shortDouble(c->minMag) + ", to zero")
+                             .str();
   }
-  case MatmulAccuracyQuery::Model::TcecLibrary:
-  case MatmulAccuracyQuery::Model::OzakiII:
-    break;
-  }
-  // A format that overflowed or flushed a profiled operand is refused on the
-  // tolerance path as well, not only priced out of the budget path.
-  if (outOfRange) {
-    r.accuracyCost += O.Model.ExponentPenalty;
-    r.domainError = std::numeric_limits<double>::infinity();
-  }
-  if (q.model != MatmulAccuracyQuery::Model::Rounded)
-    printDomainError();
   return r;
 }
 
@@ -690,7 +678,7 @@ Error evaluateMatmulAccuracy(Session &S, const RecognizedMatmul &m,
         }
     if (sameEntryAs[i])
       continue;
-    if (memos[i].lookup(O, results[i].accuracyCost, results[i].domainError))
+    if (memos[i].lookup(O, results[i]))
       continue;
     computed.push_back(i);
   }
@@ -713,7 +701,7 @@ Error evaluateMatmulAccuracy(Session &S, const RecognizedMatmul &m,
     if (!error)
       return error.takeError();
     results[i] = finish(O, prof, queries[i], *error);
-    memos[i].store(O, results[i].accuracyCost, results[i].domainError);
+    memos[i].store(O, results[i]);
   }
   for (size_t i = 0; i < queries.size(); ++i)
     if (sameEntryAs[i])

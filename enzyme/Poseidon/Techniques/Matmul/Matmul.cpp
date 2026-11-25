@@ -1043,10 +1043,18 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
     if (Error E = evaluateMatmulAccuracy(S, m, *prof, sampleLogBits, queries,
                                          accuracy))
       return E;
+    // A candidate whose formats cannot hold the profiled operands is not
+    // offered: its modelled error does not see what it loses.
+    SmallVector<MatmulUnit::Option, 8> offered;
     for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
       opt.accuracyCost = a.accuracyCost;
       opt.domainError = a.domainError;
+      if (a.outOfRange.empty() || !S.Opts.Model.ExcludeOutOfRange)
+        offered.push_back(opt);
+      else
+        cm.dropped.push_back({matmulOptionLabel(opt), a.outOfRange});
     }
+    cm.candidates = std::move(offered);
 
     if (m.origin == RecognizedMatmul::Origin::RuntimeShape &&
         S.Opts.Diagnostics.Print)
@@ -1068,6 +1076,9 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
                              : -1.0)
                      << "  domainError=" << o.domainError << '\n';
       }
+      for (const auto &[label, why] : cm.dropped)
+        llvm::errs() << "[poseidon]   not offered: " << label << ": " << why
+                     << '\n';
     }
 
     out.push_back(std::move(cm));

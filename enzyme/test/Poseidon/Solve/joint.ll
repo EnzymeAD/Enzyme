@@ -82,8 +82,7 @@
 ; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
 ; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
 ; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-rewrite-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-rewrite-max-broken-share %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-matmul-exponent-penalty= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-matmul-exponent-penalty %s
-; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -poseidon-matmul-exponent-penalty= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 ; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 ; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 

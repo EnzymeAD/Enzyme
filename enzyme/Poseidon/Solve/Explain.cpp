@@ -1280,6 +1280,16 @@ Error Explainer::buildMatmul(size_t m) {
     A.baseCost = U.baseCost;
     U.alts.push_back(std::move(A));
   }
+  for (const auto &[label, why] : MU.dropped) {
+    Alt A;
+    A.kind = "matmul";
+    A.summary = label;
+    A.at = U.root;
+    A.status = "rejected";
+    A.reason = "not offered: " + why;
+    A.rank = 4;
+    U.alts.push_back(std::move(A));
+  }
   judge(U);
   U.left = leftReason(U, nullptr);
   units.push_back(std::move(U));
@@ -1530,7 +1540,7 @@ json::Object Explainer::toJSON() {
     for (const auto &[cost, acc] : rec.table) {
       json::Object p;
       int64_t b = cost;
-      if (selectable(Sess.Opts, acc))
+      if (selectable(acc))
         p["budget"] = scale.share(b);
       if (before)
         p["cost"] = scale.share(*before + b);
@@ -1562,6 +1572,9 @@ std::string Explainer::siteLeftReason() const {
   }
   if (rec.selector == SolveSelector::Pinned)
     return "no -poseidon-pin item names a candidate of this site";
+  if (st.kappaMark == KappaMark::Diverged)
+    return "the profiling runs diverged under the smallest perturbation, so "
+           "the site offers no candidate";
   return "the selected frontier point leaves the site as written";
 }
 

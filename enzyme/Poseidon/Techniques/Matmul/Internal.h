@@ -23,6 +23,7 @@
 #include <cassert>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace poseidon {
 
@@ -227,6 +228,9 @@ struct MatmulAccuracy {
   /// The relative domain error at kDefaultConfidence: the gradient-weighted
   /// error over the same weighting of the FP64 output.
   double domainError = 0.0;
+  /// Why the candidate's formats cannot hold the profiled operands or their
+  /// product; empty when they can.
+  std::string outOfRange;
 };
 
 /// The profiled range of the elements of one operand.

@@ -14,6 +14,8 @@
 ; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c2 2>&1 \
 ; RUN:   | FileCheck --check-prefix=PLAIN %s
 ; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-tau=1e-3 -poseidon-cache=%t/c5 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-precision=false -poseidon-solve-jointly -poseidon-cache=%t/c6 2>&1 | FileCheck --check-prefix=DIVERGED %s
 ; RUN: %{opt} -poseidon-profile-use=%t/noise -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c4 > %t/noise.log 2>&1
 ; RUN: FileCheck --check-prefix=PLAIN %s < %t/noise.log
 ; RUN: FileCheck --check-prefix=NOISE %s < %t/noise.log
@@ -51,14 +53,13 @@
 ; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; measure it with larger perturbation steps in POSEIDON_KAPPA_LADDER{{$}}
 ; NOISE: warning: {{.*}}condition number of preprocess_matmul_body
 
-; A site whose probe run diverged carries no measured kappa; its candidates are
-; priced at 1e30, the order of the exponent penalty, so a joint budget is spent
-; on any other site before this one's precision is traded away.
-; DIVERGED: [poseidon] preprocess_matmul_body: measured condition number 1.000000e+03 (diverged), profiled sensitivity 4.903078e+04, error scale 1.000000e+30
-; DIVERGED-NEXT: [poseidon] matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
-; DIVERGED-NEXT: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=1.633821e+33
-; DIVERGED-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=1.460363e+30
-; DIVERGED-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=1.245725e+30
+; A site whose probe run diverged has no finite condition number: no candidate
+; of it is offered, under a budget, under a target and in a joint solve, and
+; the site is left as written. Its errors are not scaled.
+; DIVERGED: warning: {{.*}}Poseidon: the profiling runs of preprocess_matmul_body diverged under the smallest perturbation, so no candidate can be traded against its accuracy and the site is left as written{{$}}
+; DIVERGED: [poseidon] preprocess_matmul_body: measured condition number 1.000000e+03 (diverged), profiled sensitivity 4.903078e+04, error scale 1.000000e+00
+; DIVERGED-NOT: Applying solution for matmul
+; DIVERGED: no rewrite applied for preprocess_matmul_body
 
 ; Two annotated sites in one module, each carrying its condition number in its
 ; profile header: the accuracy cost of every candidate of a site, the matrix

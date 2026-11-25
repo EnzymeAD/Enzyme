@@ -24,11 +24,13 @@
 ; -poseidon-cost-budget, selects the frontier point it was written for, in a
 ; site's solve and in a joint one. The product of
 ; fp16_range_realization_nvptx.ll, whose operand A lies below FP16's smallest
-; subnormal: the FP16 library call is the cheapest point of the frontier and
-; carries the exponent penalty, so no budget selects it and it lists none.
+; subnormal: the FP16 library call, which would be the cheapest point, is not
+; offered, and the frontier starts at the BF16 one.
 
-; TABLE: computation cost -9.921875e-01, accuracy cost 1.000000e+30, steps:
-; TABLE-NEXT: matmul[0] -> direct-dispatch cublas f16/f32
+; TABLE: not offered: direct-dispatch cublas f16/f32: f16 flushes the smallest profiled operand magnitude, 1e-09, to zero
+; TABLE-NOT: cublas f16/f32 (#
+; TABLE: computation cost -9.882812e-01, accuracy cost 1.254595e-05, steps:
+; TABLE-NEXT: matmul[0] -> direct-dispatch cublas bf16/f32 (#7)
 
 ; BUDGETS-NOT: -0.9921875
 ; BUDGETS: {{^}}-0.98828125,
