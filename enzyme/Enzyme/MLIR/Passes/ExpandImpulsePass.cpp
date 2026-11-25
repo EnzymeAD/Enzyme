@@ -2055,20 +2055,22 @@ struct SiteDependence {
     if (isa<impulse::SampleRegionOp>(op))
       return;
     if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
-      llvm::BitVector pred = get(ifOp.getPredicate());
-      Block &tb = ifOp.getTrueBranch().front();
-      Block &fb = ifOp.getFalseBranch().front();
-      run(tb);
-      run(fb);
-      Operation *ty = tb.getTerminator(), *fy = fb.getTerminator();
-      for (auto [i, r] : llvm::enumerate(ifOp.getResults())) {
-        Value a = ty->getOperand(i), b = fy->getOperand(i);
-        llvm::BitVector s = get(a);
-        s |= get(b);
-        if (a != b)
-          s |= pred;
-        if (s.any())
-          sites[r] = s;
+      llvm::BitVector predicateSites = get(ifOp.getPredicate());
+      Block &trueBlock = ifOp.getTrueBranch().front();
+      Block &falseBlock = ifOp.getFalseBranch().front();
+      run(trueBlock);
+      run(falseBlock);
+      Operation *trueYield = trueBlock.getTerminator();
+      Operation *falseYield = falseBlock.getTerminator();
+      for (auto [i, result] : llvm::enumerate(ifOp.getResults())) {
+        Value trueValue = trueYield->getOperand(i);
+        Value falseValue = falseYield->getOperand(i);
+        llvm::BitVector resultSites = get(trueValue);
+        resultSites |= get(falseValue);
+        if (trueValue != falseValue)
+          resultSites |= predicateSites;
+        if (resultSites.any())
+          sites[result] = resultSites;
       }
       return;
     }
@@ -2180,16 +2182,16 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   ArrayAttr selection = op.getSelectionAttr();
   Region &sampler = op.getSampling();
   Region &logpdf = op.getLogpdf();
-  Block &sBlock = sampler.front();
+  Block &samplerBlock = sampler.front();
   auto traceType = cast<RankedTensorType>(trace.getType());
   int64_t positionSize = layout.positionSize;
 
   DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
 
   IRMapping map;
-  map.map(sBlock.getArgument(0), rng);
-  for (unsigned i = 1, e = sBlock.getNumArguments(); i < e; ++i)
-    map.map(sBlock.getArgument(i), op.getInputs()[i]);
+  map.map(samplerBlock.getArgument(0), rng);
+  for (unsigned i = 1, e = samplerBlock.getNumArguments(); i < e; ++i)
+    map.map(samplerBlock.getArgument(i), op.getInputs()[i]);
 
   Value curRng = rng;
   Value newTrace = trace;
@@ -2198,18 +2200,19 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   SmallVector<int64_t> selectedOrdinals;
   int64_t siteOrdinal = -1;
 
-  for (Operation &o : sBlock.without_terminator()) {
-    auto site = dyn_cast<impulse::SampleRegionOp>(&o);
+  for (Operation &bodyOp : samplerBlock.without_terminator()) {
+    auto site = dyn_cast<impulse::SampleRegionOp>(&bodyOp);
     if (!site) {
-      b.clone(o, map);
+      b.clone(bodyOp, map);
       continue;
     }
     ++siteOrdinal;
     Attribute addr = site.getAddressAttr();
-    int64_t siteOff = layout.columnOf.lookup(addr);
+    int64_t siteColumn = layout.columnOf.lookup(addr);
     if (selectedSet.contains(addr)) {
       selectedOrdinals.push_back(siteOrdinal);
-      changedColumns.push_back({siteOff, siteOff + sampleRegionSize(site)});
+      changedColumns.push_back(
+          {siteColumn, siteColumn + sampleRegionSize(site)});
       Block &sub = site.getSampling().front();
       IRMapping subMap;
       subMap.map(sub.getArgument(0), curRng);
@@ -2228,23 +2231,24 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
         }
         b.clone(subOp, subMap);
       }
-      Operation *y = sub.getTerminator();
-      curRng = subMap.lookupOrDefault(y->getOperand(0));
+      Operation *samplerYield = sub.getTerminator();
+      curRng = subMap.lookupOrDefault(samplerYield->getOperand(0));
       map.map(site.getResult(0), curRng);
-      SmallVector<Value> vals;
-      int64_t wOff = siteOff;
+      SmallVector<Value> values;
+      int64_t column = siteColumn;
       for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
-        Value v = subMap.lookupOrDefault(y->getOperand(k));
+        Value v = subMap.lookupOrDefault(samplerYield->getOperand(k));
         map.map(site.getResult(k), v);
-        vals.push_back(v);
-        newTrace = writeTraceColumns(b, loc, newTrace, v, wOff);
-        wOff += computeTensorElementCount(cast<RankedTensorType>(v.getType()));
+        values.push_back(v);
+        newTrace = writeTraceColumns(b, loc, newTrace, v, column);
+        column +=
+            computeTensorElementCount(cast<RankedTensorType>(v.getType()));
       }
-      proposedSelected[addr] = vals;
+      proposedSelected[addr] = values;
     } else {
       map.map(site.getResult(0), curRng);
       map.map(site.getResults().drop_front(),
-              sliceTraceValues(b, loc, trace, siteOff,
+              sliceTraceValues(b, loc, trace, siteColumn,
                                TypeRange(site->getResultTypes()).drop_front()));
     }
   }
@@ -2255,8 +2259,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   for (Attribute addr : selection)
     for (Value v : proposedSelected[addr])
       lpMap.map(lpBlock.getArgument(argIdx++), v);
-  for (Operation &lo : lpBlock.without_terminator())
-    b.clone(lo, lpMap);
+  for (Operation &lpOp : lpBlock.without_terminator())
+    b.clone(lpOp, lpMap);
   Operation *lpTerm = lpBlock.getTerminator();
   Value newWeight = lpMap.lookupOrDefault(lpTerm->getOperand(0));
   SmallVector<bool> dirty =
@@ -2266,12 +2270,12 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
   // A trace wider than positionSize carries a per-site score tail.
   if (traceType.getShape()[1] > positionSize) {
     Value row0 = i64Const(b, loc, 0);
-    auto s11 = RankedTensorType::get({1, 1}, traceType.getElementType());
+    auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
     for (unsigned j = 1, e = lpTerm->getNumOperands(); j < e; ++j) {
       if (!dirty[j - 1])
         continue;
       Value score = lpMap.lookupOrDefault(lpTerm->getOperand(j));
-      Value flat = impulse::ReshapeOp::create(b, loc, s11, score);
+      Value flat = impulse::ReshapeOp::create(b, loc, cellType, score);
       Value col = i64Const(b, loc, positionSize + (int64_t)j - 1);
       newTrace = impulse::DynamicUpdateSliceOp::create(
                      b, loc, traceType, newTrace, flat, ValueRange{row0, col})
@@ -2287,8 +2291,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
            sliceTraceValues(b, loc, trace, layout.columnOf.lookup(addr),
                             ValueRange(proposedSelected[addr]).getTypes()))
         oldLpMap.map(lpBlock.getArgument(oldArgIdx++), oldValue);
-    for (Operation &lo : lpBlock.without_terminator())
-      b.clone(lo, oldLpMap);
+    for (Operation &lpOp : lpBlock.without_terminator())
+      b.clone(lpOp, oldLpMap);
   }
   Value corr;
   Value logRatio;
@@ -2297,30 +2301,33 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     Value oldScore = traceType.getShape()[1] == positionSize
                          ? oldLpMap.lookupOrDefault(lpTerm->getOperand(1 + j))
                          : scalarAt(b, loc, trace, {0, positionSize + j});
-    Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
-    corr = corr ? arith::AddFOp::create(b, loc, corr, d).getResult() : d;
+    Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
+    corr =
+        corr ? arith::AddFOp::create(b, loc, corr, change).getResult() : change;
   }
 
   if (delta) {
-    SmallVector<int64_t> dirtyIdx;
+    SmallVector<int64_t> dirtyTerms;
     for (auto [j, isDirty] : llvm::enumerate(dirty))
       if (isDirty)
-        dirtyIdx.push_back(j);
+        dirtyTerms.push_back(j);
     // Selected sites' own terms cancel against the proposal density, so log
     // alpha is the sum of the remaining dirty terms.
     bool splitRatio = withLogRatio && selectedOrdinals.size() >= 2 &&
                       traceType.getShape()[1] > positionSize;
-    llvm::SmallDenseSet<int64_t> own(selectedOrdinals.begin(),
-                                     selectedOrdinals.end());
+    llvm::SmallDenseSet<int64_t> ownTerms(selectedOrdinals.begin(),
+                                          selectedOrdinals.end());
     Value ratio;
     Value sum;
-    for (int64_t j : dirtyIdx) {
+    for (int64_t j : dirtyTerms) {
       Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
       Value oldScore = scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
-      Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
-      sum = sum ? arith::AddFOp::create(b, loc, sum, d).getResult() : d;
-      if (splitRatio && !own.contains(j))
-        ratio = ratio ? arith::AddFOp::create(b, loc, ratio, d).getResult() : d;
+      Value change = arith::SubFOp::create(b, loc, newScore, oldScore);
+      sum =
+          sum ? arith::AddFOp::create(b, loc, sum, change).getResult() : change;
+      if (splitRatio && !ownTerms.contains(j))
+        ratio = ratio ? arith::AddFOp::create(b, loc, ratio, change).getResult()
+                      : change;
     }
     if (splitRatio) {
       if (!ratio) {
@@ -2507,21 +2514,21 @@ struct MHRunBatcher {
     SetVector<Value> escaping;
   };
 
-  static Between analyzeBetween(ArrayRef<Move> ms) {
-    Between bt;
-    unsigned numMoves = ms.size();
-    Block *block = ms.front().op->getBlock();
-    Operation *first = ms.front().op, *last = ms.back().op;
+  static Between analyzeBetween(ArrayRef<Move> moves) {
+    Between between;
+    unsigned numMoves = moves.size();
+    Block *block = moves.front().op->getBlock();
+    Operation *first = moves.front().op, *last = moves.back().op;
     DenseSet<Operation *> moveOps;
-    for (const Move &m : ms)
+    for (const Move &m : moves)
       moveOps.insert(m.op);
     for (unsigned i = 0; i + 1 < numMoves; ++i)
-      bt.intermediate[ms[i].op.getTrace()] = i;
+      between.intermediate[moves[i].op.getTrace()] = i;
     auto writtenBy = [&](int64_t c, unsigned from, unsigned to) {
       llvm::BitVector s(numMoves);
       for (unsigned i = from; i < to; ++i)
-        for (auto [ws, we] : ms[i].windows)
-          if (c >= ws && c < we)
+        for (auto [windowStart, windowEnd] : moves[i].windows)
+          if (c >= windowStart && c < windowEnd)
             s.set(i);
       return s;
     };
@@ -2534,28 +2541,29 @@ struct MHRunBatcher {
       bool fromIntermediate = false, safe = true;
       llvm::BitVector s(numMoves);
       auto addValue = [&](Value v) {
-        if (bt.intermediate.count(v)) {
+        if (between.intermediate.count(v)) {
           fromIntermediate = true;
           safe = false;
           s.set();
         } else if (Operation *d = v.getDefiningOp();
-                   d && bt.derivedSet.contains(d)) {
+                   d && between.derivedSet.contains(d)) {
           fromIntermediate = true;
           safe &= finalSafe.lookup(d);
-          s |= bt.outer.lookup(v);
+          s |= between.outer.lookup(v);
         }
       };
       auto slice = dyn_cast<impulse::SliceOp>(o);
-      if (slice && bt.intermediate.count(slice.getOperand())) {
-        ArrayRef<int64_t> st = slice.getStartIndices(),
-                          li = slice.getLimitIndices(), sd = slice.getStrides();
-        if (st.size() != 2) {
-          bt.ok = false;
-          return bt;
+      if (slice && between.intermediate.count(slice.getOperand())) {
+        ArrayRef<int64_t> starts = slice.getStartIndices(),
+                          limits = slice.getLimitIndices(),
+                          strides = slice.getStrides();
+        if (starts.size() != 2) {
+          between.ok = false;
+          return between;
         }
-        unsigned i = bt.intermediate.lookup(slice.getOperand());
+        unsigned i = between.intermediate.lookup(slice.getOperand());
         fromIntermediate = true;
-        for (int64_t c = st[1]; c < li[1]; c += sd[1]) {
+        for (int64_t c = starts[1]; c < limits[1]; c += strides[1]) {
           s |= writtenBy(c, 0, numMoves);
           safe &= writtenBy(c, i + 1, numMoves).none();
         }
@@ -2572,80 +2580,80 @@ struct MHRunBatcher {
       if (!fromIntermediate)
         continue;
       if (!isMemoryEffectFree(o)) {
-        bt.ok = false;
-        return bt;
+        between.ok = false;
+        return between;
       }
-      bt.derived.push_back(o);
-      bt.derivedSet.insert(o);
+      between.derived.push_back(o);
+      between.derivedSet.insert(o);
       finalSafe[o] = safe;
       for (Value r : o->getResults())
-        bt.outer[r] = s;
+        between.outer[r] = s;
     }
     for (unsigned i = 0; i + 1 < numMoves; ++i)
-      for (OpOperand &u : ms[i].op.getTrace().getUses()) {
-        if (u.getOwner() == ms[i + 1].op.getOperation() &&
+      for (OpOperand &u : moves[i].op.getTrace().getUses()) {
+        if (u.getOwner() == moves[i + 1].op.getOperation() &&
             u.getOperandNumber() ==
-                ms[i + 1].op.getOriginalTraceMutable()[0].getOperandNumber())
+                moves[i + 1].op.getOriginalTraceMutable()[0].getOperandNumber())
           continue;
         Operation *anc = block->findAncestorOpInBlock(*u.getOwner());
-        if (!anc || !bt.derivedSet.contains(anc)) {
-          bt.ok = false;
-          return bt;
+        if (!anc || !between.derivedSet.contains(anc)) {
+          between.ok = false;
+          return between;
         }
       }
-    for (Operation *o : bt.derived)
+    for (Operation *o : between.derived)
       for (Value r : o->getResults())
         for (OpOperand &u : r.getUses()) {
           Operation *anc = block->findAncestorOpInBlock(*u.getOwner());
           if (!anc || (moveOps.contains(anc) && anc == u.getOwner())) {
-            bt.ok = false; // an operand of a move, not a region capture
-            return bt;
+            between.ok = false; // an operand of a move, not a region capture
+            return between;
           }
           if (last->isBeforeInBlock(anc)) {
             if (!finalSafe.lookup(o)) {
-              bt.ok = false;
-              return bt;
+              between.ok = false;
+              return between;
             }
-            bt.escaping.insert(r);
+            between.escaping.insert(r);
           }
         }
-    return bt;
+    return between;
   }
 
-  static bool batchable(ArrayRef<Move> ms) {
-    unsigned numMoves = ms.size();
-    Block *block = ms.front().op->getBlock();
-    Operation *last = ms.back().op;
-    impulse::RandomOp d0 = ms.front().draw;
-    for (const Move &m : ms) {
-      if (m.draw.getRngDistribution() != d0.getRngDistribution() ||
-          m.draw.getResult().getType() != d0.getResult().getType() ||
-          !sameValueOrConstant(m.draw.getA(), d0.getA()) ||
-          !sameValueOrConstant(m.draw.getB(), d0.getB()))
+  static bool batchable(ArrayRef<Move> moves) {
+    unsigned numMoves = moves.size();
+    Block *block = moves.front().op->getBlock();
+    Operation *last = moves.back().op;
+    impulse::RandomOp firstDraw = moves.front().draw;
+    for (const Move &m : moves) {
+      if (m.draw.getRngDistribution() != firstDraw.getRngDistribution() ||
+          m.draw.getResult().getType() != firstDraw.getResult().getType() ||
+          !sameValueOrConstant(m.draw.getA(), firstDraw.getA()) ||
+          !sameValueOrConstant(m.draw.getB(), firstDraw.getB()))
         return false;
     }
     ColumnWindows all;
-    for (const Move &m : ms)
+    for (const Move &m : moves)
       for (auto w : m.windows)
         all.push_back(w);
     llvm::sort(all);
     for (unsigned i = 1; i < all.size(); ++i)
       if (all[i].first < all[i - 1].second)
         return false;
-    for (const Move &m : ms)
+    for (const Move &m : moves)
       for (Value v : {m.op.getDiagnostics(), m.op.getLogDensities()})
         for (OpOperand &u : v.getUses()) {
           Operation *anc = block->findAncestorOpInBlock(*u.getOwner());
           if (!anc || !last->isBeforeInBlock(anc))
             return false;
         }
-    Between bt = analyzeBetween(ms);
-    if (!bt.ok)
+    Between between = analyzeBetween(moves);
+    if (!between.ok)
       return false;
-    DenseMap<Value, unsigned> &intermediate = bt.intermediate;
-    DenseMap<Value, llvm::BitVector> &outer = bt.outer;
+    DenseMap<Value, unsigned> &intermediate = between.intermediate;
+    DenseMap<Value, llvm::BitVector> &outer = between.outer;
     for (unsigned k = 0; k < numMoves; ++k) {
-      impulse::InferRegionOp op = ms[k].op;
+      impulse::InferRegionOp op = moves[k].op;
       auto seedCaptured = [&](SiteDependence &dep, Region &r) {
         SetVector<Value> captured;
         getUsedValuesDefinedAbove(r, captured);
@@ -2674,11 +2682,11 @@ struct MHRunBatcher {
       for (Operation &o : sBlock)
         if (auto s = dyn_cast<impulse::SampleRegionOp>(&o))
           for (unsigned j = 0; j < numMoves; ++j)
-            if (s.getAddressAttr() == ms[j].address)
+            if (s.getAddressAttr() == moves[j].address)
               for (Value r : llvm::drop_begin(s.getResults()))
                 sDep.seed(r, j);
       sDep.run(sBlock);
-      for (Value param : llvm::drop_begin(ms[k].site->getOperands())) {
+      for (Value param : llvm::drop_begin(moves[k].site->getOperands())) {
         llvm::BitVector p = sDep.get(param);
         p.reset(k);
         if (p.any())
@@ -2688,9 +2696,9 @@ struct MHRunBatcher {
     return true;
   }
 
-  static void emit(ArrayRef<Move> ms, MLIRContext *ctx) {
-    unsigned numMoves = ms.size();
-    impulse::InferRegionOp first = ms.front().op, last = ms.back().op;
+  static void emit(ArrayRef<Move> moves, MLIRContext *ctx) {
+    unsigned numMoves = moves.size();
+    impulse::InferRegionOp first = moves.front().op, last = moves.back().op;
     Location loc = last.getLoc();
     Value trace0 = first.getOriginalTrace();
     Value weight0 = first.getStateIn()[0];
@@ -2698,31 +2706,32 @@ struct MHRunBatcher {
     auto traceType = cast<RankedTensorType>(trace0.getType());
     auto weightType = cast<RankedTensorType>(weight0.getType());
     Type rngType = rng0.getType();
-    Between bt = analyzeBetween(ms);
+    Between between = analyzeBetween(moves);
     DenseMap<Operation *, SmallVector<unsigned>> readsIntermediate;
-    for (Operation *o : bt.derived)
+    for (Operation *o : between.derived)
       for (OpOperand &u : o->getOpOperands())
-        if (bt.intermediate.count(u.get()))
+        if (between.intermediate.count(u.get()))
           readsIntermediate[o].push_back(u.getOperandNumber());
     for (unsigned i = 0; i + 1 < numMoves; ++i)
-      ms[i].op.getTrace().replaceUsesWithIf(trace0, [&](OpOperand &u) {
-        return !(
-            u.getOwner() == ms[i + 1].op.getOperation() &&
-            u.getOperandNumber() ==
-                ms[i + 1].op.getOriginalTraceMutable()[0].getOperandNumber());
+      moves[i].op.getTrace().replaceUsesWithIf(trace0, [&](OpOperand &u) {
+        return !(u.getOwner() == moves[i + 1].op.getOperation() &&
+                 u.getOperandNumber() == moves[i + 1]
+                                             .op.getOriginalTraceMutable()[0]
+                                             .getOperandNumber());
       });
 
     OpBuilder b(last);
 
-    impulse::RandomOp d0 = ms.front().draw;
-    auto drawType = cast<RankedTensorType>(d0.getResult().getType());
+    impulse::RandomOp firstDraw = moves.front().draw;
+    auto drawType = cast<RankedTensorType>(firstDraw.getResult().getType());
     SmallVector<int64_t> batchedShape{(int64_t)numMoves};
     batchedShape.append(drawType.getShape().begin(), drawType.getShape().end());
     auto proposals = impulse::RandomOp::create(
         b, loc,
         TypeRange{rngType, RankedTensorType::get(batchedShape,
                                                  drawType.getElementType())},
-        rng0, d0.getA(), d0.getB(), d0.getRngDistributionAttr());
+        rng0, firstDraw.getA(), firstDraw.getB(),
+        firstDraw.getRngDistributionAttr());
     auto vecType =
         RankedTensorType::get({(int64_t)numMoves}, weightType.getElementType());
     Value zero = f64Const(b, loc, weightType, 0.0);
@@ -2745,11 +2754,12 @@ struct MHRunBatcher {
           b.getDenseI64ArrayAttr({1, c + 1}), b.getDenseI64ArrayAttr({1, 1}));
     };
     for (unsigned k = 0; k < numMoves; ++k) {
-      DenseMap<Operation *, Value> override;
-      override[ms[k].draw] = takeLeading(b, loc, proposals.getResult(), k);
+      DenseMap<Operation *, Value> drawOverride;
+      drawOverride[moves[k].draw] =
+          takeLeading(b, loc, proposals.getResult(), k);
       MHProposal proposal = proposeRegionMove(
-          b, loc, ms[k].op, ms[k].layout, trace0, rng0, /*delta=*/true,
-          /*withLogRatio=*/false, changed[k], &override);
+          b, loc, moves[k].op, moves[k].layout, trace0, rng0, /*delta=*/true,
+          /*withLogRatio=*/false, changed[k], &drawOverride);
       newTraces.push_back(proposal.trace);
       deltaCells.push_back(proposal.weight);
       corrCells.push_back(proposal.corr);
@@ -2757,8 +2767,8 @@ struct MHRunBatcher {
 
     SmallVector<SmallVector<int64_t>> cols(numMoves);
     for (unsigned k = 0; k < numMoves; ++k)
-      for (auto [ws, we] : changed[k])
-        for (int64_t c = ws; c < we; ++c)
+      for (auto [windowStart, windowEnd] : changed[k])
+        for (int64_t c = windowStart; c < windowEnd; ++c)
           cols[k].push_back(c);
     // Slotted: all moves write the same column kinds, own score at one slot.
     size_t numCols = cols.front().size();
@@ -2767,11 +2777,11 @@ struct MHRunBatcher {
     for (unsigned k = 0; k < numMoves && slotted; ++k) {
       slotted = cols[k].size() == numCols;
       for (size_t s = 0; s < numCols && slotted; ++s)
-        slotted = (cols[k][s] >= ms[k].layout.positionSize) ==
-                  (cols[0][s] >= ms[0].layout.positionSize);
+        slotted = (cols[k][s] >= moves[k].layout.positionSize) ==
+                  (cols[0][s] >= moves[0].layout.positionSize);
       int64_t own = -1;
       for (size_t s = 0; s < numCols && slotted; ++s)
-        if (cols[k][s] == ms[k].layout.positionSize + ms[k].ordinal)
+        if (cols[k][s] == moves[k].layout.positionSize + moves[k].ordinal)
           own = s;
       slotted = slotted && own >= 0 && (k == 0 || own == ownSlot);
       ownSlot = own;
@@ -2804,7 +2814,7 @@ struct MHRunBatcher {
         }
       }
       for (size_t s = 0; s < numCols; ++s) {
-        if (cols[0][s] < ms[0].layout.positionSize)
+        if (cols[0][s] < moves[0].layout.positionSize)
           continue;
         Value d = arith::SubFOp::create(b, loc, newOf[s], oldOf[s]);
         deltaVec = deltaVec
@@ -2901,16 +2911,16 @@ struct MHRunBatcher {
       }
     }
 
-    if (!bt.escaping.empty()) {
-      IRMapping fm;
-      for (Operation *o : bt.derived) {
-        Operation *c = b.clone(*o, fm);
+    if (!between.escaping.empty()) {
+      IRMapping cloneMap;
+      for (Operation *o : between.derived) {
+        Operation *c = b.clone(*o, cloneMap);
         for (unsigned i : readsIntermediate.lookup(o))
           c->setOperand(i, trace);
       }
-      for (Value v : bt.escaping) {
-        Value nv = fm.lookup(v);
-        v.replaceUsesWithIf(nv, [&](OpOperand &u) {
+      for (Value v : between.escaping) {
+        Value clonedValue = cloneMap.lookup(v);
+        v.replaceUsesWithIf(clonedValue, [&](OpOperand &u) {
           Operation *anc =
               last->getBlock()->findAncestorOpInBlock(*u.getOwner());
           return anc && last->isBeforeInBlock(anc);
@@ -2919,7 +2929,7 @@ struct MHRunBatcher {
     }
 
     for (unsigned k = 0; k < numMoves; ++k) {
-      impulse::InferRegionOp op = ms[k].op;
+      impulse::InferRegionOp op = moves[k].op;
       op.getDiagnostics().replaceAllUsesWith(acceptedOf[k]);
       auto ldType = cast<ShapedType>(op.getLogDensities().getType());
       if (!op.getLogDensities().use_empty())
@@ -2932,7 +2942,7 @@ struct MHRunBatcher {
     last.getOutputRngState().replaceAllUsesWith(accepts.getOutputRngState());
     last.getStateOut()[0].replaceAllUsesWith(weight);
     for (unsigned k = numMoves; k-- > 0;)
-      ms[k].op->erase();
+      moves[k].op->erase();
   }
 
   static void run(Operation *root, MLIRContext *ctx) {
@@ -3516,7 +3526,7 @@ struct ExpandImpulsePass
       auto traceType = cast<RankedTensorType>(initTrace.getType());
       auto weightType = cast<RankedTensorType>(initWeight.getType());
       Type rngType = initRng.getType();
-      auto i1Scalar = RankedTensorType::get({}, rewriter.getI1Type());
+      auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
 
       ArrayAttr selection = op.getSelectionAttr();
       ArrayAttr allAddresses = op.getAllAddressesAttr();
@@ -3596,9 +3606,10 @@ struct ExpandImpulsePass
               cN = i64Const(rewriter, loc, numSamples),
               c1 = i64Const(rewriter, loc, 1);
         Value falseC = arith::ConstantOp::create(
-            rewriter, loc, i1Scalar,
-            DenseElementsAttr::get(i1Scalar, rewriter.getBoolAttr(false)));
-        SmallVector<Type> loopTypes{traceType, weightType, rngType, i1Scalar};
+            rewriter, loc, i1TensorType,
+            DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
+        SmallVector<Type> loopTypes{traceType, weightType, rngType,
+                                    i1TensorType};
         SmallVector<Value> initArgs{initTrace, initWeight, initRng, falseC};
         auto forOp = impulse::ForOp::create(rewriter, loc, loopTypes, c0, cN,
                                             c1, initArgs);
@@ -4445,7 +4456,7 @@ struct ExpandImpulsePass
       // Site symbol -> column of the scores vector or of `oldInfo`.
       DenseMap<Attribute, int64_t> siteIndex;
       Value oldInfo;
-      DenseSet<Value> hTaint;
+      DenseSet<Value> hastingsTaint;
       auto enclosingIfs = [&](Operation *op) {
         SmallVector<impulse::IfOp> ifs;
         for (Operation *p = op->getParentOp(); p && p != NewF.getOperation();
@@ -4456,19 +4467,19 @@ struct ExpandImpulsePass
       };
       auto inFlippableBranch = [&](Operation *op) {
         return llvm::any_of(enclosingIfs(op), [&](impulse::IfOp ifOp) {
-          return hTaint.contains(ifOp.getPredicate());
+          return hastingsTaint.contains(ifOp.getPredicate());
         });
       };
       if (scoring) {
         for (auto [k, addr] : llvm::enumerate(siteScoresAttr))
           siteIndex[cast<ArrayAttr>(addr)[0]] = k;
-        auto kType = RankedTensorType::get({2, (int64_t)siteScoresAttr.size()},
-                                           entryBuilder.getF64Type());
-        initWeight = f64Const(entryBuilder, initLoc, kType, 0.0);
+        auto scoresType = RankedTensorType::get(
+            {2, (int64_t)siteScoresAttr.size()}, entryBuilder.getF64Type());
+        initWeight = f64Const(entryBuilder, initLoc, scoresType, 0.0);
       } else if (hastings && !deltaMode) {
         // Sites whose old density cannot be evaluated inline at the new state.
-        hTaint = computeRegenerateTaint(NewF, regenAddrs);
-        SmallVector<Attribute> kAddrs;
+        hastingsTaint = computeRegenerateTaint(NewF, regenAddrs);
+        SmallVector<Attribute> oldInfoAddrs;
         NewF.getFunctionBody().walk([&](impulse::SampleOp s) {
           if (!s.getDistAttr() && !s.getLogpdfAttr())
             return;
@@ -4476,23 +4487,24 @@ struct ExpandImpulsePass
           if (addressInList(s, regenAddrs))
             needsOld =
                 !enclosingIfs(s).empty() ||
-                llvm::any_of(llvm::drop_begin(s.getInputs()),
-                             [&](Value v) { return hTaint.contains(v); });
+                llvm::any_of(llvm::drop_begin(s.getInputs()), [&](Value v) {
+                  return hastingsTaint.contains(v);
+                });
           else
             needsOld = !(constraint && constrainedAddresses &&
                          addressInList(s, constrainedAddresses)) &&
                        inFlippableBranch(s);
           if (!needsOld)
             return;
-          siteIndex[s.getSymbolAttr()] = kAddrs.size();
-          kAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
+          siteIndex[s.getSymbolAttr()] = oldInfoAddrs.size();
+          oldInfoAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
         });
-        if (!kAddrs.empty()) {
+        if (!oldInfoAddrs.empty()) {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPointToStart(&NewF.getFunctionBody().front());
-          auto kType = RankedTensorType::get({2, (int64_t)kAddrs.size()},
-                                             rewriter.getF64Type());
-          SmallVector<Type> scoreTypes{prevTrace.getType(), kType};
+          auto scoresType = RankedTensorType::get(
+              {2, (int64_t)oldInfoAddrs.size()}, rewriter.getF64Type());
+          SmallVector<Type> scoreTypes{prevTrace.getType(), scoresType};
           scoreTypes.append(fn.getResultTypes().begin(),
                             fn.getResultTypes().end());
           SmallVector<Value> scoreInputs(
@@ -4502,7 +4514,8 @@ struct ExpandImpulsePass
               prevTrace, constraint, selection, rewriter.getArrayAttr({}),
               hasConstraint ? constrainedAddresses : ArrayAttr(),
               rewriter.getStringAttr(""));
-          scoreOp->setAttr(kMHSiteScoresAttr, rewriter.getArrayAttr(kAddrs));
+          scoreOp->setAttr(kMHSiteScoresAttr,
+                           rewriter.getArrayAttr(oldInfoAddrs));
           oldInfo = scoreOp.getWeight();
         }
       }
@@ -4594,7 +4607,7 @@ struct ExpandImpulsePass
           }
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
           if (hastings && !deltaMode && (isSelected || flipIdx >= 0))
-            hTaint.insert(values.begin(), values.end());
+            hastingsTaint.insert(values.begin(), values.end());
           if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
             return failure();
 
@@ -4737,9 +4750,9 @@ struct ExpandImpulsePass
               bool genHasIf = false;
               genFn.getFunctionBody().walk(
                   [&](impulse::IfOp) { genHasIf = true; });
-              bool inputsTainted =
-                  llvm::any_of(llvm::drop_begin(sampleOp.getInputs()),
-                               [&](Value v) { return hTaint.contains(v); });
+              bool inputsTainted = llvm::any_of(
+                  llvm::drop_begin(sampleOp.getInputs()),
+                  [&](Value v) { return hastingsTaint.contains(v); });
               if (inFlippableBranch(sampleOp) ||
                   (inputsTainted &&
                    (!subRegenerateAddrs.empty() || genHasIf))) {
