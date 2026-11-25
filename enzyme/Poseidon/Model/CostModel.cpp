@@ -74,11 +74,6 @@ scalarTypes(CostModelState &CM, const Function &F) {
   return &CM.ScalarTypes;
 }
 
-const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
-                                                      const Function &F) {
-  return *exitOnUserError(F.getContext(), scalarTypes(CM, F));
-}
-
 // An instruction of the program no row family prices.
 static Error unpriced(const Instruction *I) {
   std::string Text;
@@ -250,11 +245,6 @@ Expected<const std::unordered_set<std::string> *> ptFuncs(CostModelState &CM,
   return &*CM.PTFuncs;
 }
 
-const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
-                                                  const Function &F) {
-  return *exitOnUserError(F.getContext(), ptFuncs(CM, F));
-}
-
 static Expected<double> computeMaxCost(CostModelState &CM, BasicBlock *BB,
                                        DenseMap<BasicBlock *, double> &MaxCost,
                                        SmallPtrSetImpl<BasicBlock *> &Visited,
@@ -308,11 +298,6 @@ Expected<double> compCost(CostModelState &CM, Function *F, InstWeight Weight,
   return computeMaxCost(CM, &F->getEntryBlock(), MaxCost, Visited, Weight, At);
 }
 
-double getCompCost(CostModelState &CM, Function *F, InstWeight Weight,
-                   const Instruction *At) {
-  return exitOnUserError(F->getContext(), compCost(CM, F, Weight, At));
-}
-
 Expected<double> compCost(CostModelState &CM, ArrayRef<Value *> outputs,
                           const SetVector<Value *> &inputs,
                           const DenseMap<const Instruction *, uint64_t> *opExec,
@@ -348,14 +333,6 @@ Expected<double> compCost(CostModelState &CM, ArrayRef<Value *> outputs,
   }
 
   return cost;
-}
-
-double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
-                   const SetVector<Value *> &inputs,
-                   const DenseMap<const Instruction *, uint64_t> *opExec,
-                   uint64_t normalizer) {
-  return exitOnUserError(outputs.front()->getContext(),
-                         compCost(CM, outputs, inputs, opExec, normalizer));
 }
 
 } // namespace poseidon

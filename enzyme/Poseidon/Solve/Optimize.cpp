@@ -168,7 +168,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
 
 // Each technique's candidates for every FP subgraph, one subgraph at a time:
 // Herbie's rewrites into st.COs, precision assignments into st.CSs.
-static void
+static Error
 proposeSubgraphCandidates(Session &S, Function &F,
                           const FunctionProfileHeader &profileHeader,
                           bool expansionSafe, FunctionFPState &st) {
@@ -181,14 +181,17 @@ proposeSubgraphCandidates(Session &S, Function &F,
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
     if (O.Candidates.EnableHerbie)
-      proposeHerbieCandidates(S, F, subgraph, subgraphCounter, symbolCounter,
-                              st, st.COs);
+      if (Error E = proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
+                                            symbolCounter, st, st.COs))
+        return E;
 
     if (O.Candidates.EnablePT)
-      proposePrecisionCandidates(S, F, subgraph, st, profileHeader,
-                                 expansionSafe, st.CSs);
+      if (Error E = proposePrecisionCandidates(
+              S, F, subgraph, st, profileHeader, expansionSafe, st.CSs))
+        return E;
     ++subgraphCounter;
   }
+  return Error::success();
 }
 
 // Puts this site's error on the application's scale. kappa is the measured
@@ -280,11 +283,13 @@ static void printCandidates(Session &S, FunctionFPState &st) {
       unit->printPriced(llvm::errs());
 }
 
-static void priceCandidates(FunctionFPState &st) {
+static Error priceCandidates(FunctionFPState &st) {
   for (SiteUnit *unit : st.units)
-    unit->price();
+    if (Error E = unit->price())
+      return E;
   for (Subgraph &subgraph : st.subgraphs)
     subgraph.samples.reset();
+  return Error::success();
 }
 
 // Candidates are priced, and repriced by the solve, on scratch copies of the
@@ -350,8 +355,7 @@ static Error priceUnlessCached(Session &S, FunctionFPState &st,
     if (st.table->hit)
       return Error::success();
   }
-  priceCandidates(st);
-  return Error::success();
+  return priceCandidates(st);
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its
@@ -400,9 +404,13 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
   if (st.subgraphs.empty() && st.abstractMatmuls.empty())
     return false;
 
-  const bool expansionSafe =
+  Expected<bool> expansionSafe =
       expansionsRoundedAsWritten(O, F, !st.subgraphs.empty());
-  proposeSubgraphCandidates(S, F, profile.header, expansionSafe, st);
+  if (!expansionSafe)
+    return expansionSafe.takeError();
+  if (Error E =
+          proposeSubgraphCandidates(S, F, profile.header, *expansionSafe, st))
+    return std::move(E);
 
   if (Error E = generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
                                          sampleLogBits, st.CMs))

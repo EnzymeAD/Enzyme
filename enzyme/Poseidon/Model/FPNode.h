@@ -87,11 +87,6 @@ public:
   fullExpression(const FPGraph &G,
                  const llvm::SetVector<llvm::Value *> &subgraphInputs,
                  unsigned depth = 0);
-  // fullExpression for a caller that does not unwind: a user error ends the
-  // compile, as reportUserError does.
-  std::string
-  toFullExpression(const FPGraph &G,
-                   const llvm::SetVector<llvm::Value *> &subgraphInputs);
   // Widens the profiled range of a value to [lower, upper]; a literal's range
   // stays its value.
   void updateBounds(double lower, double upper);

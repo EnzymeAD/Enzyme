@@ -139,7 +139,10 @@ public:
 
   // Prices the candidates and drops those the accuracy model refuses; a unit
   // priced when proposed does nothing.
-  virtual void price() {}
+  virtual llvm::Error price() { return llvm::Error::success(); }
+  // The first error the solve met pricing the unit's candidates, which ends
+  // the compile once the solve returns.
+  virtual llvm::Error takePricingError() { return llvm::Error::success(); }
   // Multiplies every error the unit carries by `factor`.
   virtual void scaleErrors(double factor) = 0;
   // The -poseidon-print block of the priced candidates.
@@ -156,6 +159,35 @@ private:
   FunctionFPState *boundSite = nullptr;
   FPGraph *boundGraph = nullptr;
   size_t boundIndex = 0;
+};
+
+// An error met where it cannot be returned, kept until it can be; the first
+// of several is kept.
+class DeferredError {
+public:
+  DeferredError() = default;
+  DeferredError(DeferredError &&) = default;
+  DeferredError &operator=(DeferredError &&) = default;
+  ~DeferredError() {
+    if (E)
+      llvm::consumeError(std::move(*E));
+  }
+  void set(llvm::Error New) {
+    if (E)
+      llvm::consumeError(std::move(New));
+    else
+      E = std::move(New);
+  }
+  llvm::Error take() {
+    if (!E)
+      return llvm::Error::success();
+    llvm::Error Out = std::move(*E);
+    E.reset();
+    return Out;
+  }
+
+private:
+  std::optional<llvm::Error> E;
 };
 
 // A subgraph's outputs as written, priced on its samples.

@@ -59,11 +59,11 @@ namespace poseidon {
 
 // The Herbie platform this compile searches against. It is the device's, so it
 // is derived from the resolved cost model.
-static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
+static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
+                                                       const Function &F) {
   HerbiePlatform &P = S.Herbie.Platform;
   if (S.Herbie.PlatformResolved)
-    return P;
-  S.Herbie.PlatformResolved = true;
+    return &P;
 
   const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
   const Target &T = Target::measuredOn(NativeArch);
@@ -85,7 +85,7 @@ static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
     P.Path =
         (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
     if (!sys::fs::exists(P.Path))
-      reportUserError(
+      return userError(
           F, F.getSubprogram(),
           Twine("the Herbie algebraic search needs the platform generated "
                 "from this device's cost model, and ") +
@@ -100,15 +100,15 @@ static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
   if (!P.Path.empty()) {
     P.Digest = readFileDigest(P.Path);
     if (P.Digest.empty())
-      reportUserError(F, F.getSubprogram(),
-                      Twine("cannot read the Herbie platform ") + P.Path +
-                          "; -poseidon-herbie-platform names a platform file "
-                          "or a platform compiled into Herbie.");
+      return userError(F, F.getSubprogram(),
+                       Twine("cannot read the Herbie platform ") + P.Path +
+                           "; -poseidon-herbie-platform names a platform file "
+                           "or a platform compiled into Herbie.");
   }
-  return P;
+  S.Herbie.PlatformResolved = true;
+  return &P;
 }
 
-// How this compile runs Herbie: its -poseidon-herbie-* flags.
 // Herbie's --timeout has no unbounded value; this one stands for no limit of
 // Poseidon's.
 static constexpr unsigned kUnboundedCoreTimeout = 9999;
@@ -123,13 +123,18 @@ static unsigned herbieCoreTimeout(const Options &O) {
   return kUnboundedCoreTimeout;
 }
 
-static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
+// How this compile runs Herbie: its -poseidon-herbie-* flags.
+static Expected<HerbieRunOptions> herbieRunOptions(Session &S,
+                                                   const Function &F) {
   const Options &O = S.Opts;
   HerbieRunOptions Opts;
   Opts.Program = O.Herbie.HerbieBinary.empty()
                      ? std::string(POSEIDON_HERBIE_DEFAULT_BINARY)
                      : O.Herbie.HerbieBinary;
-  Opts.Platform = getHerbiePlatform(S, F);
+  Expected<const HerbiePlatform *> Platform = herbiePlatform(S, F);
+  if (!Platform)
+    return Platform.takeError();
+  Opts.Platform = **Platform;
   Opts.Seed = O.Model.RandomSeed;
   Opts.NumPoints = O.Herbie.HerbieNumPts;
   Opts.NumIters = O.Herbie.HerbieNumIters;
@@ -283,14 +288,17 @@ struct HerbieAnswers {
 // and reads what each run answered. A Herbie that cannot run is an error at
 // the site `F`; under -poseidon-strict-mode so are a crash and an unreadable
 // answer, which otherwise mean no candidate from that run.
-static HerbieAnswers askHerbie(Session &S,
-                               const std::vector<std::string> &cores,
-                               StringRef label, const Function &F) {
+static Expected<HerbieAnswers> askHerbie(Session &S,
+                                         const std::vector<std::string> &cores,
+                                         StringRef label, const Function &F) {
   const Options &O = S.Opts;
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] using Herbie binary '" << O.Herbie.HerbieBinary
                  << "'\n";
-  HerbieRunOptions Opts = herbieRunOptions(S, F);
+  Expected<HerbieRunOptions> RunOpts = herbieRunOptions(S, F);
+  if (!RunOpts)
+    return RunOpts.takeError();
+  HerbieRunOptions &Opts = *RunOpts;
 
   SmallVector<std::optional<unsigned>, 2> TermCounts(
       O.Herbie.HerbieNumTaylorTerms.begin(),
@@ -306,12 +314,12 @@ static HerbieAnswers askHerbie(Session &S,
     Expected<HerbieRunResult> Run =
         runHerbie(cores, Opts, RunLabel, S.Herbie.HerbieDigests);
     if (!Run)
-      reportUserError(F, F.getSubprogram(), toString(Run.takeError()));
+      return userError(F, F.getSubprogram(), toString(Run.takeError()));
     const HerbieRunResult &R = H.runs.emplace_back(std::move(*Run));
     // A timeout is Herbie's answer for these cores; a Herbie that does not
     // start gives none.
     if (R.Result == HerbieRunResult::Outcome::Failed)
-      reportUserError(
+      return userError(
           F, F.getSubprogram(),
           Twine(Opts.CacheDir.empty() ? "no cache is kept"
                                       : "the cache " + Opts.CacheDir +
@@ -326,11 +334,11 @@ static HerbieAnswers askHerbie(Session &S,
     if (!R.Warning.empty())
       diagnose(F, F.getSubprogram(), R.Warning, DS_Warning);
     if (R.Result == HerbieRunResult::Outcome::Crashed && O.Model.StrictMode)
-      reportUserError(F, F.getSubprogram(),
-                      Twine("strict mode: Herbie crashed (") + R.Crash +
-                          ") on " + RunLabel +
-                          ". Without -poseidon-strict-mode the subgraph is "
-                          "left as written.");
+      return userError(F, F.getSubprogram(),
+                       Twine("strict mode: Herbie crashed (") + R.Crash +
+                           ") on " + RunLabel +
+                           ". Without -poseidon-strict-mode the subgraph is "
+                           "left as written.");
     if (R.Result != HerbieRunResult::Outcome::Ok)
       continue;
     const bool cached = R.From == HerbieRunResult::Origin::Cache;
@@ -341,11 +349,11 @@ static HerbieAnswers askHerbie(Session &S,
     if (!Read) {
       std::string Why = toString(Read.takeError());
       if (O.Model.StrictMode)
-        reportUserError(F, F.getSubprogram(),
-                        "strict mode: " + Origin + " for " + RunLabel +
-                            " is not a Herbie results file (" + Why +
-                            "); without -poseidon-strict-mode the subgraph is "
-                            "left as written");
+        return userError(F, F.getSubprogram(),
+                         "strict mode: " + Origin + " for " + RunLabel +
+                             " is not a Herbie results file (" + Why +
+                             "); without -poseidon-strict-mode the subgraph "
+                             "is left as written");
       diagnose(F, F.getSubprogram(),
                Origin + " for " + RunLabel + " is not a Herbie results file (" +
                    Why +
@@ -392,45 +400,52 @@ static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
       add(alternative.Point, *alternative.Expr);
 }
 
-// Stops the compile at the site `F` if an expression of `answer`, for the
-// unit `CO` and read from `source` (its run's label and cache file), is one
-// the model cannot read: an answer is external input, checked before
-// anything evaluates or lowers it.
-static void checkAnswer(const HerbieCoreAnswer &answer,
-                        const std::pair<std::string, std::string> &source,
-                        const RewriteUnit &CO, const Function &F, FPGraph &G) {
-  auto check = [&](const std::string &expr) {
+// An error at the site `F` if an expression of `answer`, for the unit `CO`
+// and read from `source` (its run's label and cache file), is one the model
+// cannot read: an answer is external input, checked before anything evaluates
+// or lowers it.
+static Error checkAnswer(const HerbieCoreAnswer &answer,
+                         const std::pair<std::string, std::string> &source,
+                         const RewriteUnit &CO, const Function &F, FPGraph &G) {
+  auto check = [&](const std::string &expr) -> Error {
     Expected<FPNode *> parsed =
         parseHerbieExpr(expr, G, nullptr, &CO.subgraph->inputs);
-    if (!parsed)
-      reportUserError(
-          F, F.getSubprogram(),
-          "the Herbie answer for " + source.first + " in " +
-              (source.second.empty() ? std::string("no cache file")
-                                     : source.second) +
-              " has, for core \"" + answer.Name + "\", " +
-              toString(parsed.takeError()) +
-              "; Poseidon cannot model that expression. Remove the "
-              "file to search again, or turn algebraic rewriting off "
-              "with -poseidon-enable-herbie=0.");
+    if (parsed)
+      return Error::success();
+    return userError(
+        F, F.getSubprogram(),
+        "the Herbie answer for " + source.first + " in " +
+            (source.second.empty() ? std::string("no cache file")
+                                   : source.second) +
+            " has, for core \"" + answer.Name + "\", " +
+            toString(parsed.takeError()) +
+            "; Poseidon cannot model that expression. Remove the "
+            "file to search again, or turn algebraic rewriting off "
+            "with -poseidon-enable-herbie=0.");
   };
-  check(answer.Rewrites->BestExpr);
+  if (Error E = check(answer.Rewrites->BestExpr))
+    return E;
   for (const HerbieAlternative &alternative :
        answer.Rewrites->CostAccuracy.Alternatives)
     if (alternative.Expr)
-      check(*alternative.Expr);
+      if (Error E = check(*alternative.Expr))
+        return E;
+  return Error::success();
 }
 
 // Collects Herbie's rewrites of `cores`, cores of the subgraph `subgraphIdx`
 // of the site `F` over the graph `G`, into their units `COs`, unpriced.
-static void collectHerbieRewrites(Session &S,
-                                  const std::vector<std::string> &cores,
-                                  std::vector<RewriteUnit> &COs,
-                                  int subgraphIdx, const Function &F,
-                                  FPGraph &G) {
+static Error collectHerbieRewrites(Session &S,
+                                   const std::vector<std::string> &cores,
+                                   std::vector<RewriteUnit> &COs,
+                                   int subgraphIdx, const Function &F,
+                                   FPGraph &G) {
   const std::string label =
       "subgraph " + std::to_string(subgraphIdx) + " of " + F.getName().str();
-  HerbieAnswers H = askHerbie(S, cores, label, F);
+  Expected<HerbieAnswers> Asked = askHerbie(S, cores, label, F);
+  if (!Asked)
+    return Asked.takeError();
+  HerbieAnswers &H = *Asked;
 
   const bool print = S.Opts.Diagnostics.Print;
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
@@ -454,7 +469,8 @@ static void collectHerbieRewrites(Session &S,
                        << "); no algebraic candidate from this core\n";
       }
       if (answer.Rewrites)
-        checkAnswer(answer, source, COs[answer.Core], F, G);
+        if (Error E = checkAnswer(answer, source, COs[answer.Core], F, G))
+          return E;
       addAnswer(answer, status, COs[answer.Core], seenExprs[answer.Core]);
     }
 
@@ -468,6 +484,7 @@ static void collectHerbieRewrites(Session &S,
                               ? "timeout"
                               : "crashed";
   }
+  return Error::success();
 }
 
 void reportHerbieAnswers(Session &S) {
@@ -561,8 +578,9 @@ static std::string rangePrecondition(const Options &O,
 // The outputs' expressions with every subterm used more than once bound by
 // let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
 // output.
-static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
-                                 const SetVector<Value *> &inputs) {
+static Expected<std::string> arrayCoreBody(ArrayRef<Instruction *> outputs,
+                                           FPGraph &G,
+                                           const SetVector<Value *> &inputs) {
   auto isLeaf = [&](FPNode *N) {
     if (isa<FPConst>(N))
       return true;
@@ -572,7 +590,22 @@ static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
   DenseMap<FPNode *, unsigned> uses;
   SmallVector<FPNode *, 32> order;
   SmallPtrSet<FPNode *, 32> visited;
+  // The leaves are spelled out first: spelling one out can fail.
+  DenseMap<FPNode *, std::string> leafText;
+  Error leafError = Error::success();
+  auto spell = [&](FPNode *N) {
+    if (leafError || leafText.count(N))
+      return;
+    Expected<std::string> text = N->fullExpression(G, inputs);
+    if (!text) {
+      leafError = text.takeError();
+      return;
+    }
+    leafText[N] = std::move(*text);
+  };
   std::function<void(FPNode *)> walk = [&](FPNode *N) {
+    if (isLeaf(N))
+      spell(N);
     if (!visited.insert(N).second || isLeaf(N))
       return;
     for (auto &operand : N->operands) {
@@ -587,6 +620,8 @@ static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
     ++uses[N];
     walk(N);
   }
+  if (leafError)
+    return std::move(leafError);
 
   DenseMap<FPNode *, std::string> names;
   std::function<std::string(FPNode *)> ref;
@@ -599,7 +634,7 @@ static std::string arrayCoreBody(ArrayRef<Instruction *> outputs, FPGraph &G,
   };
   ref = [&](FPNode *N) -> std::string {
     if (isLeaf(N))
-      return N->toFullExpression(G, inputs);
+      return leafText.lookup(N);
     auto It = names.find(N);
     if (It != names.end())
       return It->second;
@@ -654,11 +689,11 @@ public:
 
   // `output` as an output Herbie is asked about, unless its gradient is zero
   // or its expression is a single operation or too long.
-  std::optional<EligibleOutput> eligible(Instruction *output) const;
+  Expected<std::optional<EligibleOutput>> eligible(Instruction *output) const;
 
   // A core of `E` at each of `precs`, into `batch`.
-  void addPerOutputCores(const EligibleOutput &E, ArrayRef<const char *> precs,
-                         CoreBatch &batch) const;
+  Error addPerOutputCores(const EligibleOutput &E, ArrayRef<const char *> precs,
+                          CoreBatch &batch) const;
 
   // The groups of `eligible` that form array cores: outputs that read the
   // same inputs (hence the same precondition) and execute equally often, of
@@ -667,8 +702,8 @@ public:
   arrayGroups(ArrayRef<EligibleOutput> eligible) const;
 
   // A core of `group` at each precision, into `batch`.
-  void addArrayCores(ArrayRef<const EligibleOutput *> group,
-                     CoreBatch &batch) const;
+  Error addArrayCores(ArrayRef<const EligibleOutput *> group,
+                      CoreBatch &batch) const;
 
 private:
   // The :herbie-weights property of an array core of `outputs`, which weighs
@@ -698,7 +733,7 @@ void SubgraphCores::nameInputs(int &symbolCounter) {
   }
 }
 
-std::optional<EligibleOutput>
+Expected<std::optional<EligibleOutput>>
 SubgraphCores::eligible(Instruction *output) const {
   FPNode &node = *G.valueToNodeMap[output];
   if (node.grad == 0.) {
@@ -708,7 +743,10 @@ SubgraphCores::eligible(Instruction *output) const {
     return std::nullopt;
   }
 
-  std::string expr = node.toFullExpression(G, subgraph.inputs);
+  Expected<std::string> spelled = node.fullExpression(G, subgraph.inputs);
+  if (!spelled)
+    return spelled.takeError();
+  std::string &expr = *spelled;
   if (expr.length() > O.Candidates.MaxExprLength) {
     diagnose(*output->getFunction(), output->getDebugLoc(),
              "an output expression of " + Twine(expr.length()) +
@@ -730,15 +768,16 @@ SubgraphCores::eligible(Instruction *output) const {
   return EligibleOutput{output, std::move(expr), node.grad, node.executions};
 }
 
-void SubgraphCores::addPerOutputCores(const EligibleOutput &E,
-                                      ArrayRef<const char *> precs,
-                                      CoreBatch &batch) const {
+Error SubgraphCores::addPerOutputCores(const EligibleOutput &E,
+                                       ArrayRef<const char *> precs,
+                                       CoreBatch &batch) const {
   SmallSet<std::string, 8> args;
   getUniqueArgs(E.expr, args);
   std::string precondition = rangePrecondition(O, args, G);
   for (const char *prec : precs) {
-    RewriteUnit CO(S.CostModel, subgraph, {E.output}, {E.grad}, E.expr,
-                   E.executions);
+    RewriteUnit CO(subgraph, {E.output}, {E.grad}, E.expr, E.executions);
+    if (Error Err = CO.priceAsWritten(S.CostModel))
+      return Err;
     CO.herbiePrecision = prec;
     std::string herbieInput =
         fpcoreText(args, prec, precondition, "", batch.units.size(), E.expr);
@@ -747,6 +786,7 @@ void SubgraphCores::addPerOutputCores(const EligibleOutput &E,
     batch.inputs.push_back(herbieInput);
     batch.units.push_back(CO);
   }
+  return Error::success();
 }
 
 SmallVector<SmallVector<const EligibleOutput *, 8>, 2>
@@ -811,8 +851,8 @@ std::string SubgraphCores::arrayWeights(ArrayRef<Instruction *> outputs) const {
   return weights;
 }
 
-void SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
-                                  CoreBatch &batch) const {
+Error SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
+                                   CoreBatch &batch) const {
   SmallVector<Instruction *, 8> outputs;
   SmallVector<Value *, 8> roots;
   SmallVector<double, 8> grads;
@@ -821,7 +861,10 @@ void SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
     roots.push_back(E->output);
     grads.push_back(E->grad);
   }
-  std::string body = arrayCoreBody(outputs, G, subgraph.inputs);
+  Expected<std::string> core = arrayCoreBody(outputs, G, subgraph.inputs);
+  if (!core)
+    return core.takeError();
+  const std::string &body = *core;
   SmallSet<std::string, 8> args;
   getUniqueArgs(body, args);
   std::string precondition = rangePrecondition(O, args, G);
@@ -832,15 +875,19 @@ void SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Herbie array input:\n" << herbieInput << '\n';
     batch.inputs.push_back(herbieInput);
-    batch.units.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
-                             grads, body, group.front()->executions);
-    batch.units.back().herbiePrecision = prec;
+    RewriteUnit &CO =
+        batch.units.emplace_back(subgraph, ArrayRef<Value *>(roots), grads,
+                                 body, group.front()->executions);
+    if (Error Err = CO.priceAsWritten(S.CostModel))
+      return Err;
+    CO.herbiePrecision = prec;
   }
+  return Error::success();
 }
 
-void proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
-                             int subgraphCounter, int &symbolCounter,
-                             FPGraph &G, SmallVectorImpl<RewriteUnit> &COs) {
+Error proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
+                              int subgraphCounter, int &symbolCounter,
+                              FPGraph &G, SmallVectorImpl<RewriteUnit> &COs) {
   SubgraphCores cores(S, subgraph, subgraphCounter, G);
   cores.nameInputs(symbolCounter);
 
@@ -848,13 +895,18 @@ void proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
   CoreBatch perOutput;
   SmallVector<EligibleOutput, 8> eligible;
   assert(!subgraph.outputs.empty() && "No outputs found for subgraph");
-  for (Instruction *output : subgraph.outputs)
-    if (std::optional<EligibleOutput> E = cores.eligible(output)) {
-      if (S.Opts.Herbie.HerbieArrays)
-        eligible.push_back(std::move(*E));
-      else
-        cores.addPerOutputCores(*E, kHerbiePrecisions, perOutput);
-    }
+  for (Instruction *output : subgraph.outputs) {
+    Expected<std::optional<EligibleOutput>> E = cores.eligible(output);
+    if (!E)
+      return E.takeError();
+    if (!*E)
+      continue;
+    if (S.Opts.Herbie.HerbieArrays)
+      eligible.push_back(std::move(**E));
+    else if (Error Err =
+                 cores.addPerOutputCores(**E, kHerbiePrecisions, perOutput))
+      return Err;
+  }
 
   // The array cores, then the outputs no array covers, are searched in one
   // invocation; per-output cores stand in for an array core that returned
@@ -865,7 +917,8 @@ void proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
   SmallVector<SmallVector<const EligibleOutput *, 8>, 2> groups =
       cores.arrayGroups(eligible);
   for (const SmallVector<const EligibleOutput *, 8> &group : groups) {
-    cores.addArrayCores(group, arrays);
+    if (Error Err = cores.addArrayCores(group, arrays))
+      return Err;
     groupOf.append(std::size(kHerbiePrecisions), &group);
   }
   const size_t numArrayCores = arrays.units.size();
@@ -876,11 +929,13 @@ void proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
   };
   for (const EligibleOutput &E : eligible)
     if (!inArray(E))
-      cores.addPerOutputCores(E, kHerbiePrecisions,
-                              numArrayCores ? arrays : perOutput);
+      if (Error Err = cores.addPerOutputCores(
+              E, kHerbiePrecisions, numArrayCores ? arrays : perOutput))
+        return Err;
   if (numArrayCores)
-    collectHerbieRewrites(S, arrays.inputs, arrays.units, subgraphCounter, F,
-                          G);
+    if (Error Err = collectHerbieRewrites(S, arrays.inputs, arrays.units,
+                                          subgraphCounter, F, G))
+      return Err;
   for (const EligibleOutput &E : eligible) {
     SmallVector<const char *, 2> sendAt;
     for (size_t k = 0; k < numArrayCores; ++k)
@@ -892,17 +947,20 @@ void proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
       llvm::errs() << "[poseidon] Herbie subgraph " << subgraphCounter
                    << ": array core returned nothing for " << *E.output
                    << "; sending it separately\n";
-    cores.addPerOutputCores(E, sendAt, perOutput);
+    if (Error Err = cores.addPerOutputCores(E, sendAt, perOutput))
+      return Err;
   }
   COs.append(std::make_move_iterator(arrays.units.begin()),
              std::make_move_iterator(arrays.units.end()));
 
   if (!perOutput.inputs.empty()) {
-    collectHerbieRewrites(S, perOutput.inputs, perOutput.units, subgraphCounter,
-                          F, G);
+    if (Error Err = collectHerbieRewrites(S, perOutput.inputs, perOutput.units,
+                                          subgraphCounter, F, G))
+      return Err;
     COs.append(std::make_move_iterator(perOutput.units.begin()),
                std::make_move_iterator(perOutput.units.end()));
   }
+  return Error::success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1612,15 +1670,15 @@ double BoundaryWeights::operator()(const Instruction &I) const {
 // The cost of the Herbie expression `expr` that replaces `Site`, priced in a
 // scratch function of its module simplified by `PB`'s pipeline; a missing
 // cost-model row is an error at `Site`.
-static double priceRewrite(CostModelState &CM, PassBuilder &PB,
-                           const std::string &expr, Instruction &Site,
-                           FPGraph &G, const FastMathFlags &FMF,
-                           const SetVector<Value *> &subgraphInputs,
-                           const BoundaryCastFreq &Boundary) {
+static Expected<double> priceRewrite(CostModelState &CM, PassBuilder &PB,
+                                     const std::string &expr, Instruction &Site,
+                                     FPGraph &G, const FastMathFlags &FMF,
+                                     const SetVector<Value *> &subgraphInputs,
+                                     const BoundaryCastFreq &Boundary) {
   ScratchFunction Scratch(*Site.getModule(), expr, FMF, G, subgraphInputs);
   simplifyFunction(Scratch.function(), PB, OptimizationLevel::O3);
   BoundaryWeights weight(Scratch, Boundary);
-  return getCompCost(CM, &Scratch.function(), weight, &Site);
+  return compCost(CM, &Scratch.function(), weight, &Site);
 }
 
 BoundaryCastFreq RewriteUnit::boundaryCastFreq(const LoopInfo &LI) const {
@@ -1774,10 +1832,22 @@ Error RewriteUnit::materialize(size_t candidateIndex) {
   return Error::success();
 }
 
+Error RewriteUnit::priceAsWritten(CostModelState &CM) {
+  Expected<double> cost = compCost(CM, roots, subgraph->inputs);
+  if (!cost)
+    return cost.takeError();
+  initialCompCost = *cost;
+  erasableCost = 0.0;
+  for (Instruction *I : erasableInsts) {
+    Expected<double> price = instructionCost(CM, I);
+    if (!price)
+      return price.takeError();
+    erasableCost += *price;
+  }
+  return Error::success();
+}
+
 double RewriteUnit::getCompCostDelta(size_t candidateIndex) {
-  double erasableCost = 0.0;
-  for (Instruction *I : erasableInsts)
-    erasableCost += getInstructionCompCost(session().CostModel, I);
   return (candidates[candidateIndex].CompCost - erasableCost) *
          (double)executions;
 }
@@ -1849,19 +1919,25 @@ std::string RewriteUnit::choiceText(size_t i) const {
   return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
 }
 
-void RewriteUnit::price() {
+Error RewriteUnit::price() {
   if (!herbieAnswered)
-    return;
+    return Error::success();
   FPGraph &st = graph();
   auto *output = cast<Instruction>(roots.front());
   const FastMathFlags FMF = output->getFastMathFlags();
   DominatorTree DT(*st.F);
   LoopInfo LI(DT);
   const BoundaryCastFreq Boundary = boundaryCastFreq(LI);
-  for (RewriteCandidate &c : candidates)
-    c.CompCost = priceRewrite(session().CostModel, session().PB, c.expr,
-                              *output, st, FMF, subgraph->inputs, Boundary);
+  for (RewriteCandidate &c : candidates) {
+    Expected<double> cost =
+        priceRewrite(session().CostModel, session().PB, c.expr, *output, st,
+                     FMF, subgraph->inputs, Boundary);
+    if (!cost)
+      return cost.takeError();
+    c.CompCost = *cost;
+  }
   RewriteAccuracy(session().Opts, *this, st).price();
+  return Error::success();
 }
 
 void RewriteUnit::printPriced(raw_ostream &OS) {

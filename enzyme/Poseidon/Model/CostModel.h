@@ -79,21 +79,10 @@ llvm::Expected<double> compCost(
     const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
     uint64_t normalizer = 0);
 
-// instructionCost, scalarTypes, ptFuncs and compCost for a caller that does
-// not unwind: a user error ends the compile, as reportUserError does.
+// instructionCost for a caller that does not unwind: a user error ends the
+// compile, as reportUserError does.
 double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I,
                               const llvm::Instruction *At = nullptr);
-const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
-                                                      const llvm::Function &F);
-const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
-                                                  const llvm::Function &F);
-double getCompCost(CostModelState &CM, llvm::Function *F, InstWeight Weight,
-                   const llvm::Instruction *At);
-double getCompCost(
-    CostModelState &CM, llvm::ArrayRef<llvm::Value *> outputs,
-    const llvm::SetVector<llvm::Value *> &inputs,
-    const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
-    uint64_t normalizer = 0);
 
 } // namespace poseidon
 #endif // POSEIDON_COST_MODEL_H

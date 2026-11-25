@@ -92,7 +92,7 @@ public:
 
   // The unit of `outputs` with their gradients `grads`; its gradient is that
   // of a single output, and the sum of magnitudes of an array's.
-  explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
+  explicit RewriteUnit(Subgraph &subgraph,
                        llvm::ArrayRef<llvm::Value *> outputs,
                        llvm::ArrayRef<double> grads, std::string expr,
                        uint64_t executions)
@@ -106,11 +106,11 @@ public:
       for (double g : grads)
         grad += std::fabs(g);
     }
-    initialCompCost = getCompCost(
-        CM, llvm::SmallVector<llvm::Value *>(outputs.begin(), outputs.end()),
-        subgraph.inputs);
     findErasableInstructions();
   }
+
+  // Prices the outputs as written and the operations a candidate erases.
+  llvm::Error priceAsWritten(CostModelState &CM);
 
   bool isArray() const { return roots.size() > 1; }
 
@@ -134,7 +134,7 @@ public:
   }
   std::string choiceText(size_t i) const override;
   llvm::Error materialize(size_t i) override;
-  void price() override;
+  llvm::Error price() override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {
     return "CO " + herbiePrecision + " " + expr;
@@ -145,6 +145,8 @@ public:
 
 private:
   void findErasableInstructions();
+  // What the operations a candidate erases cost per execution.
+  double erasableCost = std::numeric_limits<double>::quiet_NaN();
 };
 
 // Prints how many Herbie answers the compile ran fresh and read from the
@@ -154,10 +156,10 @@ void reportHerbieAnswers(Session &S);
 // Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
 // `subgraphCounter`, appended to `COs` unpriced. Its inputs are named from
 // `symbolCounter`, which the site's subgraphs share.
-void proposeHerbieCandidates(Session &S, llvm::Function &F, Subgraph &subgraph,
-                             int subgraphCounter, int &symbolCounter,
-                             FPGraph &G,
-                             llvm::SmallVectorImpl<RewriteUnit> &COs);
+llvm::Error proposeHerbieCandidates(Session &S, llvm::Function &F,
+                                    Subgraph &subgraph, int subgraphCounter,
+                                    int &symbolCounter, FPGraph &G,
+                                    llvm::SmallVectorImpl<RewriteUnit> &COs);
 
 } // namespace poseidon
 #endif // POSEIDON_HERBIE_H

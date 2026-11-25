@@ -652,8 +652,8 @@ static std::optional<std::string> fastFPReason(const Function &F) {
 }
 #endif
 
-bool expansionsRoundedAsWritten(const Options &O, Function &F,
-                                bool hasSubgraphs) {
+Expected<bool> expansionsRoundedAsWritten(const Options &O, Function &F,
+                                          bool hasSubgraphs) {
   bool expansionSafe = true;
 #if LLVM_VERSION_MAJOR < 24
   if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat &&
@@ -667,10 +667,10 @@ bool expansionsRoundedAsWritten(const Options &O, Function &F,
                    "without -ffast-math",
                DS_Warning);
       if (O.Model.StrictMode)
-        reportUserError(F, F.getSubprogram(),
-                        "strict mode: site '" + F.getName() + "': " + *reason +
-                            "; floating-point expansions need "
-                            "-ffp-contract=on or -ffp-contract=off");
+        return userError(F, F.getSubprogram(),
+                         "strict mode: site '" + F.getName() + "': " + *reason +
+                             "; floating-point expansions need "
+                             "-ffp-contract=on or -ffp-contract=off");
     }
   }
 #endif

@@ -576,7 +576,8 @@ public:
 
   // The cost of the cone of outputs[i] for each i in `which`, in that order,
   // and of the expansion roots. Only for a clone that can be priced.
-  double cost(Session &S, const Subgraph &subgraph, ArrayRef<size_t> which);
+  Expected<double> cost(Session &S, const Subgraph &subgraph,
+                        ArrayRef<size_t> which);
 
 private:
   // Applies `pt` to the clone with the materializer's clean-ups, and holds
@@ -858,8 +859,8 @@ CandidateClone::cone(ArrayRef<size_t> roots) const {
   return coneInsts;
 }
 
-double CandidateClone::cost(Session &S, const Subgraph &subgraph,
-                            ArrayRef<size_t> which) {
+Expected<double> CandidateClone::cost(Session &S, const Subgraph &subgraph,
+                                      ArrayRef<size_t> which) {
   assert(unpricedReason.empty() && "the clone cannot be priced");
   const Options &O = S.Opts;
 
@@ -883,10 +884,14 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
       freqWeightedPricing(O) && subgraph.depthExec.size() > 1;
   double cost = 0.0;
   for (Instruction *I : coneInsts) {
-    auto [price, fresh] = prices.try_emplace(I);
-    if (fresh)
-      price->second = getInstructionCompCost(S.CostModel, I);
-    double c = price->second;
+    auto It = prices.find(I);
+    if (It == prices.end()) {
+      Expected<double> price = instructionCost(S.CostModel, I);
+      if (!price)
+        return price.takeError();
+      It = prices.try_emplace(I, *price).first;
+    }
+    double c = It->second;
     unsigned d = cloneLI->getLoopDepth(I->getParent());
     if (freqWeighted) {
       // The measured frequency of this depth subsumes the boundary-cast scale
@@ -901,7 +906,8 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
   return cost;
 }
 
-// The cost of `pt` per execution of `subgraph`, or why it cannot be computed.
+// The cost of `pt` per execution of `subgraph`; a UserError for a cost-model
+// row it lacks, any other error saying why the clone cannot be priced.
 static Expected<double> priceCandidate(Session &S, Subgraph &subgraph,
                                        PTCandidate &pt) {
   CandidateClone clone(S, subgraph, subgraph.outputs.getArrayRef(), pt);
@@ -1186,11 +1192,11 @@ void TierSweep::threeTier(TierTriple tiers, ArrayRef<FPLLValue *> sortedAsc,
   }
 }
 
-void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
-                                FPGraph &G,
-                                const FunctionProfileHeader &profileHeader,
-                                bool expansionSafe,
-                                SmallVectorImpl<PrecisionUnit> &CSs) {
+Error proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
+                                 FPGraph &G,
+                                 const FunctionProfileHeader &profileHeader,
+                                 bool expansionSafe,
+                                 SmallVectorImpl<PrecisionUnit> &CSs) {
   const Options &O = S.Opts;
   const uint64_t o0Exec = G.valueToNodeMap[subgraph.outputs[0]]->executions;
 
@@ -1201,7 +1207,9 @@ void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
   if (freqWeightedPricing(O))
     measureFrequencies(O, F, subgraph, G);
 
-  PrecisionUnit CS(S.CostModel, subgraph);
+  PrecisionUnit CS(subgraph);
+  if (Error E = CS.priceAsWritten(S.CostModel))
+    return E;
   CS.executions = o0Exec;
   if (std::optional<double> scale =
           outBoundaryFreqScale(profileHeader, CS.executions))
@@ -1210,7 +1218,11 @@ void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
   // The operations, and the calls of the library functions the cost model
   // prices per precision, by ascending sensitivity. Stable: which tier an
   // operation of a tied sensitivity lands in follows the subgraph's order.
-  const std::unordered_set<std::string> &PTFuncs = getPTFuncs(S.CostModel, F);
+  Expected<const std::unordered_set<std::string> *> funcs =
+      ptFuncs(S.CostModel, F);
+  if (!funcs)
+    return funcs.takeError();
+  const std::unordered_set<std::string> &PTFuncs = **funcs;
   SetVector<FPLLValue *> funcsSet, allSet;
   for (Instruction *I : subgraph.operations) {
     auto *node = cast<FPLLValue>(G.valueToNodeMap[I]);
@@ -1231,8 +1243,14 @@ void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
   stable_sort(sortedAllOps, bySens);
 
   const bool gpuMode = Target::of(F).isDevice();
-  const std::unordered_set<std::string> *hwScalar =
-      gpuMode ? &getScalarTypes(S.CostModel, F) : nullptr;
+  const std::unordered_set<std::string> *hwScalar = nullptr;
+  if (gpuMode) {
+    Expected<const std::unordered_set<std::string> *> types =
+        scalarTypes(S.CostModel, F);
+    if (!types)
+      return types.takeError();
+    hwScalar = *types;
+  }
   TierSweep sweep(O, CS,
                   getPrecisionChangeType(subgraph.outputs[0]->getType()));
   for (TierPair tp : kCanonicalPairs) {
@@ -1258,12 +1276,23 @@ void proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
          "scalar_types header")
             .str();
     if (O.Model.StrictMode)
-      reportUserError(F, F.getSubprogram(), "strict mode: " + msg);
-    else
-      diagnose(F, F.getSubprogram(), msg, DS_Warning);
+      return userError(F, F.getSubprogram(), "strict mode: " + msg);
+    diagnose(F, F.getSubprogram(), msg, DS_Warning);
   }
 
   CSs.push_back(std::move(CS));
+  return Error::success();
+}
+
+Error PrecisionUnit::priceAsWritten(CostModelState &CM) {
+  Expected<double> cost = compCost(
+      CM,
+      SmallVector<Value *>(subgraph->outputs.begin(), subgraph->outputs.end()),
+      subgraph->inputs, &subgraph->opExec, subgraph->execNormalizer);
+  if (!cost)
+    return cost.takeError();
+  initialCompCost = *cost;
+  return Error::success();
 }
 
 double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
@@ -1378,13 +1407,28 @@ void PrecisionUnit::priceRequests(
                          clone.unpriceable() +
                          ". Refusing to fabricate a cost.");
     for (Request &R : G.requests) {
+      // The solve cannot unwind: a cost it cannot compute is taken as 0 and
+      // its error kept for the caller of the solve.
       auto [initial, fresh] = initialCompCosts.try_emplace(R.outputs);
-      if (fresh)
-        initial->second =
-            getCompCost(S.CostModel, R.outputs, subgraph->inputs,
-                        &subgraph->opExec, subgraph->execNormalizer);
+      if (fresh) {
+        Expected<double> cost =
+            compCost(S.CostModel, R.outputs, subgraph->inputs,
+                     &subgraph->opExec, subgraph->execNormalizer);
+        if (cost) {
+          initial->second = *cost;
+        } else {
+          pricingError.set(cost.takeError());
+          initial->second = 0.0;
+        }
+      }
       double initialCompCost = initial->second;
-      double candidateCompCost = clone.cost(S, *subgraph, R.which);
+      Expected<double> clonePrice = clone.cost(S, *subgraph, R.which);
+      if (!clonePrice) {
+        pricingError.set(clonePrice.takeError());
+        compCostDeltaCache[R.key] = 0.0;
+        continue;
+      }
+      double candidateCompCost = *clonePrice;
       double adjustedCostDelta =
           (candidateCompCost - initialCompCost) * (double)executions;
       // With a one-point frontier these lines record why each candidate lost.
@@ -1467,7 +1511,7 @@ Error PrecisionUnit::materialize(size_t i) {
   return Error::success();
 }
 
-void PrecisionUnit::price() {
+Error PrecisionUnit::price() {
   SmallVector<PTCandidate, 8> priced;
   std::string firstWhy;
   for (PTCandidate &c : candidates) {
@@ -1477,8 +1521,10 @@ void PrecisionUnit::price() {
       priced.push_back(std::move(c));
       continue;
     }
-    std::string why =
-        "its cost cannot be computed: " + toString(cost.takeError());
+    Error E = cost.takeError();
+    if (E.isA<UserError>())
+      return E;
+    std::string why = "its cost cannot be computed: " + toString(std::move(E));
     if (firstWhy.empty())
       firstWhy = why;
     dropped.push_back({c.desc, std::move(why)});
@@ -1492,6 +1538,7 @@ void PrecisionUnit::price() {
                  << firstWhy << '\n';
   candidates = std::move(priced);
   priceAccuracy(session().Opts, *this, graph());
+  return Error::success();
 }
 
 void PrecisionUnit::scaleErrors(double factor) {

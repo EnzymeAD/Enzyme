@@ -71,11 +71,10 @@ bool demoteFPCastPHIs(llvm::Function &F);
 // The precision candidates of `subgraph`, appended to `CSs` unpriced: two- and
 // three-tier assignments of its operations by profiled sensitivity, over the
 // formats and expansions the target, the cost model and the options allow.
-void proposePrecisionCandidates(Session &S, llvm::Function &F,
-                                Subgraph &subgraph, FPGraph &G,
-                                const FunctionProfileHeader &profileHeader,
-                                bool expansionSafe,
-                                llvm::SmallVectorImpl<PrecisionUnit> &CSs);
+llvm::Error proposePrecisionCandidates(
+    Session &S, llvm::Function &F, Subgraph &subgraph, FPGraph &G,
+    const FunctionProfileHeader &profileHeader, bool expansionSafe,
+    llvm::SmallVectorImpl<PrecisionUnit> &CSs);
 
 class PrecisionUnit : public SubgraphUnit<PTCandidate> {
 public:
@@ -94,14 +93,11 @@ public:
   std::map<RepriceKey, double> compCostDeltaCache;
   std::map<RepriceKey, double> accCostDeltaCache;
 
-  explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
-      : SubgraphUnit(UnitKind::PT, subgraph) {
-    initialCompCost =
-        getCompCost(CM,
-                    llvm::SmallVector<llvm::Value *>(subgraph.outputs.begin(),
-                                                     subgraph.outputs.end()),
-                    subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
-  }
+  explicit PrecisionUnit(Subgraph &subgraph)
+      : SubgraphUnit(UnitKind::PT, subgraph) {}
+
+  // Prices the subgraph as written.
+  llvm::Error priceAsWritten(CostModelState &CM);
 
   double getCompCostDelta(size_t candidateIndex);
   // Memoizes the cost delta of each (candidate, steps) request.
@@ -127,13 +123,18 @@ public:
   }
   std::string choiceText(size_t i) const override;
   llvm::Error materialize(size_t i) override;
-  void price() override;
+  llvm::Error price() override;
+  llvm::Error takePricingError() override { return pricingError.take(); }
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override { return "CS"; }
   std::string selectionText(size_t i) const override {
     return candidates[i].desc;
   }
+
+private:
+  // What a repricing by the solve could not price, whose cost it took as 0.
+  DeferredError pricingError;
 };
 
 } // namespace poseidon

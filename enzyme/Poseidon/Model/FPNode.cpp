@@ -296,16 +296,6 @@ FPNode::fullExpression(const FPGraph &G,
   return expr;
 }
 
-std::string FPNode::toFullExpression(const FPGraph &G,
-                                     const SetVector<Value *> &subgraphInputs) {
-  Expected<std::string> expr = fullExpression(G, subgraphInputs);
-  // Only a node of the program spells out operations, and so can fail.
-  if (!expr)
-    exitOnUserError(cast<FPLLValue>(this)->value->getContext(),
-                    expr.takeError());
-  return std::move(*expr);
-}
-
 Value *FPLLValue::getLLValue(IRBuilder<> &builder,
                              const ValueToValueMapTy *VMap) {
   assert(value && "a rewrite names a value an earlier step erased");

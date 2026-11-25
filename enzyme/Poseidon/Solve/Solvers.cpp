@@ -508,6 +508,10 @@ solveSites(Session &S, ArrayRef<FunctionFPState *> sites,
     else
       solvePruned(solveOrder(O, units), scale, costToAccuracyMap,
                   costToSolutionMap, /*progress=*/print);
+    for (ArrayRef<SiteUnit *> site : units)
+      for (SiteUnit *unit : site)
+        if (Error E = unit->takePricingError())
+          return std::move(E);
 
     if (table)
       writeSiteTable(O, *sites.front()->F, *table, names, costToAccuracyMap,

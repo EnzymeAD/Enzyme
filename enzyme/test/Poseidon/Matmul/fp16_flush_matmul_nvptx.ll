@@ -1,6 +1,8 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-cache=%t/normal 2>&1 | FileCheck --check-prefix=NORMAL %s
 ; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/tiny 2>&1 | FileCheck --check-prefix=TINY %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-0.5 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/budget 2>&1 | FileCheck --check-prefix=BUDGET %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-0.5 -poseidon-exponent-penalty=0 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/nopenalty 2>&1 | FileCheck --check-prefix=NOPENALTY %s
 
 ; NORMAL: [poseidon] domain error matmul in=f16 acc=f32 p95_relErr=3.137966e-04
 ; NORMAL: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=9.867296e+00
@@ -19,6 +21,15 @@
 ; TINY-NOT: Applying solution for matmul[0]
 ; TINY: error budget: matmul -> baseline F64 (no rewrite clears 1.000000e-03
 ; TINY: Finished optimizing preprocess_matmul_body
+
+; On the budget path the penalty keeps every flushing format out of the
+; solution; -poseidon-exponent-penalty=0 prices each at its modelled error, and
+; the cheapest one that reaches the budget is selected.
+; BUDGET: [poseidon] No solution found within the computation cost budget
+; BUDGET-NOT: Applying solution for matmul[0]
+; NOPENALTY: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=2.435977e-02
+; NOPENALTY: Computation cost budget used: -9.062500e-01
+; NOPENALTY: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 
 ; FP16 flush pricing of a matrix-product raise. The product of raise_scalar_tcec_nvptx.ll
 ; (Inputs/stale_cache/matmul_device.ll) under two profiles: Inputs/raise_tcec (A in [1, 1.255]) and Inputs/fp16_range/matmul_tiny (A scaled by 1e-9,

@@ -98,8 +98,9 @@ bool foldDSPairRoundtrip(llvm::Function &F,
 
 // Whether expansion candidates may be proposed for F: false when this LLVM
 // does not round F's floating-point operations as written.
-bool expansionsRoundedAsWritten(const Options &O, llvm::Function &F,
-                                bool hasSubgraphs);
+llvm::Expected<bool> expansionsRoundedAsWritten(const Options &O,
+                                                llvm::Function &F,
+                                                bool hasSubgraphs);
 
 } // namespace poseidon
 #endif // POSEIDON_EXPANSION_H
