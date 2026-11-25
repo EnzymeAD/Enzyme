@@ -85,9 +85,9 @@ static void run(const char *name, void (*kernel)(const double *,
                 int rows) {
   double hA[ALLOC_ROWS * K], hB[K * COLS], hC[ALLOC_ROWS * COLS];
   for (int i = 0; i < ALLOC_ROWS * K; ++i)
-    hA[i] = 1.0 + 0.25 * (i % 5);
+    hA[i] = 1.0 + 0.3 * (i % 5);
   for (int i = 0; i < K * COLS; ++i)
-    hB[i] = 0.5 + 0.125 * (i % 7);
+    hB[i] = 0.5 + 0.1 * (i % 7);
   for (int i = 0; i < ALLOC_ROWS * COLS; ++i)
     hC[i] = -1.0;
 
