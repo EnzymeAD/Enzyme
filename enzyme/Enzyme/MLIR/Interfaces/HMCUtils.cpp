@@ -609,8 +609,8 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
           .rng = rngOut};
 }
 
-InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
-                                 const HMCContext &ctx, Value initialPosition) {
+ChainPoint impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
+                            const HMCContext &ctx, Value initialPosition) {
   RankedTensorType scalarType = ctx.getScalarType();
 
   auto initSplit = impulse::RandomSplitOp::create(
@@ -650,13 +650,13 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   GradientResult gradient = emitPotentialGradient(
       builder, loc, autodiffQ0, gradSeed, rngForAutodiff, ctx);
 
-  return {q0, U0, gradient.grad, rngForSampleKernel};
+  return {q0, gradient.grad, U0, rngForSampleKernel};
 }
 
 namespace {
-/// RNG states, momentum and Hamiltonian at the start of one MCMC transition.
+/// The RNG state, momentum and Hamiltonian of the trajectory of one MCMC
+/// transition.
 struct TransitionStart {
-  Value rngNext;
   Value rngKernel;
   Value momentum;
   Value hamiltonian;
@@ -664,10 +664,10 @@ struct TransitionStart {
 } // namespace
 
 /// Splits `rng`, samples a fresh momentum and adds its kinetic energy to
-/// `potentialEnergy`. `rngNext` seeds the next transition and `rngKernel` the
-/// trajectory of this one.
+/// `potentialEnergy`. Advances `rng` to the key of the next transition;
+/// `rngKernel` seeds the trajectory of this one.
 static TransitionStart startTransition(OpBuilder &builder, Location loc,
-                                       Value potentialEnergy, Value rng,
+                                       Value potentialEnergy, Value &rng,
                                        const HMCContext &ctx) {
   RankedTensorType positionType = ctx.getPositionType();
   auto split = impulse::RandomSplitOp::create(
@@ -687,11 +687,12 @@ static TransitionStart startTransition(OpBuilder &builder, Location loc,
       computeKineticEnergy(builder, loc, momentum, ctx.invMass, positionType);
   Value hamiltonian =
       arith::AddFOp::create(builder, loc, potentialEnergy, kineticEnergy);
-  return {split.getResult(0), split.getResult(2), momentum, hamiltonian};
+  rng = split.getResult(0);
+  return {split.getResult(2), momentum, hamiltonian};
 }
 
-MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
-                                    Value grad, Value U, Value rng,
+MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc,
+                                    const ChainPoint &start,
                                     const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -713,8 +714,9 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
 
   auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 
-  auto [rngNext, rngTransition, p0, initialHamiltonian] =
-      startTransition(builder, loc, U, rng, ctx);
+  Value rngNext = start.rng;
+  auto [rngTransition, p0, initialHamiltonian] =
+      startTransition(builder, loc, start.potentialEnergy, rngNext, ctx);
 
   Value direction = emitI1ScalarConstant(builder, loc, true);
 
@@ -725,7 +727,8 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                        scalarType, rngTransition.getType()};
   auto forLoopOp =
       impulse::ForOp::create(builder, loc, loopResultTypes, c0, numSteps, c1,
-                             ValueRange{q, p0, grad, U, rngTransition});
+                             ValueRange{start.q, p0, start.grad,
+                                        start.potentialEnergy, rngTransition});
 
   Block *loopBody = builder.createBlock(&forLoopOp.getRegion());
   loopBody->addArgument(i64TensorType, loc);
@@ -777,23 +780,27 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   Value falseConst = emitI1ScalarConstant(builder, loc, false);
 
   auto qFinal = impulse::SelectOp::create(builder, loc, positionType,
-                                          acceptedTensor, qProposal, q);
+                                          acceptedTensor, qProposal, start.q);
   auto gradFinal = impulse::SelectOp::create(
-      builder, loc, positionType, acceptedTensor, gradProposal, grad);
-  auto UFinal = impulse::SelectOp::create(builder, loc, scalarType,
-                                          acceptedTensor, UProposal, U);
+      builder, loc, positionType, acceptedTensor, gradProposal, start.grad);
+  auto potentialEnergyFinal =
+      impulse::SelectOp::create(builder, loc, scalarType, acceptedTensor,
+                                UProposal, start.potentialEnergy);
 
-  return {qFinal,     gradFinal, UFinal, acceptedTensor,
-          falseConst, accProb,   rngNext};
+  return {{qFinal, gradFinal, potentialEnergyFinal, rngNext},
+          acceptedTensor,
+          falseConst,
+          accProb};
 }
 
-MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
-                                     Value grad, Value U, Value rng,
+MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc,
+                                     const ChainPoint &start,
                                      const NUTSContext &ctx) {
   auto scalarType = ctx.getScalarType();
 
-  auto [rngNext, rngTree, p0, initialHamiltonian] =
-      startTransition(builder, loc, U, rng, ctx);
+  Value rngNext = start.rng;
+  auto [rngTree, p0, initialHamiltonian] =
+      startTransition(builder, loc, start.potentialEnergy, rngNext, ctx);
 
   auto iterCtx = ctx.withH0(initialHamiltonian);
 
@@ -801,15 +808,15 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   Value falseConst = emitI1ScalarConstant(builder, loc, false);
   Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
 
-  NUTSTreeState initialTree = {.q_left = q,
+  NUTSTreeState initialTree = {.q_left = start.q,
                                .p_left = p0,
-                               .grad_left = grad,
-                               .q_right = q,
+                               .grad_left = start.grad,
+                               .q_right = start.q,
                                .p_right = p0,
-                               .grad_right = grad,
-                               .q_proposal = q,
-                               .grad_proposal = grad,
-                               .U_proposal = U,
+                               .grad_right = start.grad,
+                               .q_proposal = start.q,
+                               .grad_proposal = start.grad,
+                               .U_proposal = start.potentialEnergy,
                                .H_proposal = initialHamiltonian,
                                .depth = zeroI64,
                                .weight = zeroConst,
@@ -833,13 +840,11 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto meanAcceptProb = arith::DivFOp::create(
       builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
 
-  return {finalTree.q_proposal,
-          finalTree.grad_proposal,
-          finalTree.U_proposal,
+  return {{finalTree.q_proposal, finalTree.grad_proposal, finalTree.U_proposal,
+           rngNext},
           trueConst,
           finalTree.diverging,
-          meanAcceptProb,
-          rngNext};
+          meanAcceptProb};
 }
 
 NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,

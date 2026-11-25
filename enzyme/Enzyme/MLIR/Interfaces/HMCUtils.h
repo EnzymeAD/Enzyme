@@ -60,22 +60,25 @@ struct GradientResult {
   Value rng;  // Updated RNG state
 };
 
-struct InitialHMCState {
-  Value q0;    // Flattened position vector
-  Value U0;    // Initial potential energy
-  Value grad0; // Initial gradient at position q0
-  Value rng;   // RNG state for SampleHMC
+/// The state of an HMC or NUTS chain between two transitions: the `1xN`
+/// position, the gradient and the potential energy there, and the RNG state
+/// the next transition draws from.
+struct ChainPoint {
+  Value q;
+  Value grad;
+  Value potentialEnergy;
+  Value rng;
 };
 
-/// Result of one MCMC kernel step
+/// The outcome of one HMC or NUTS transition.
 struct MCMCKernelResult {
-  Value q;           // New position vector
-  Value grad;        // Gradient at new position
-  Value U;           // Potential energy at new position
-  Value accepted;    // Whether proposal was accepted
-  Value divergent;   // Whether the trajectory diverged; false for HMC
-  Value accept_prob; // Mean acceptance probability
-  Value rng;         // Updated RNG state
+  ChainPoint next;
+  /// Whether the proposal was accepted.
+  Value accepted;
+  /// Whether the trajectory diverged; false for HMC.
+  Value divergent;
+  /// Mean acceptance probability of the proposals.
+  Value acceptProb;
 };
 
 struct DualAveragingState {
@@ -307,18 +310,16 @@ NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
 /// Returns the starting position, its potential energy and gradient, and the
 /// key for the first transition. The position is `initialPosition` with a
 /// custom log density, else read from the trace and unconstrained.
-InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
-                        const HMCContext &ctx, Value initialPosition = Value());
+ChainPoint InitHMC(OpBuilder &builder, Location loc, Value rng,
+                   const HMCContext &ctx, Value initialPosition = Value());
 
 /// Single HMC iteration: momentum sampling + leapfrog + MH accept/reject
-MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
-                           Value grad, Value U, Value rng,
-                           const HMCContext &ctx);
+MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc,
+                           const ChainPoint &start, const HMCContext &ctx);
 
 /// Single NUTS iteration: momentum sampling + tree building
-MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc, Value q,
-                            Value grad, Value U, Value rng,
-                            const NUTSContext &ctx);
+MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc,
+                            const ChainPoint &start, const NUTSContext &ctx);
 
 /// Builds a base tree (leaf node) by taking one leapfrog step.
 NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,

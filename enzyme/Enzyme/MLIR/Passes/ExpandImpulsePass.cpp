@@ -478,18 +478,10 @@ struct AdaptationState {
   }
 };
 
-/// What one HMC/NUTS chain carries from one transition to the next.
-struct ChainState {
-  Value q;
-  Value grad;
-  Value potentialEnergy;
-  Value rng;
-};
-
 /// Values carried by the HMC/NUTS warmup loop. `welford` is carried only
 /// while the mass matrix is adapted.
 struct WarmupCarry {
-  ChainState chain;
+  ChainPoint chain;
   Value stepSize;
   Value invMass;
   Value massMatrixSqrt;
@@ -598,11 +590,11 @@ private:
   NUTSContext makeNUTSContext(Value invMass, Value massMatrixSqrt,
                               Value stepSize, Value potentialEnergy) const;
   /// One HMC or NUTS transition from `state`.
-  MCMCKernelResult runKernel(const ChainState &state, Value stepSize,
+  MCMCKernelResult runKernel(const ChainPoint &state, Value stepSize,
                              Value invMass, Value massMatrixSqrt);
 
   /// The chain's resumed state, or the initial state computed by InitHMC.
-  ChainState initChainState(Value rng, int64_t chainIdx, Value stepSize,
+  ChainPoint initChainState(Value rng, int64_t chainIdx, Value stepSize,
                             Value invMass, Value massMatrixSqrt);
   /// Returns `saved` when set, else a fresh adaptation state for `stepSize`;
   /// a fresh state gets Welford accumulators only if `withWelford`.
@@ -610,7 +602,7 @@ private:
   loadOrInitAdaptation(Value stepSize, bool withWelford,
                        const std::optional<AdaptationState> &saved);
   /// Emits the warmup loop and returns its results.
-  WarmupCarry emitWarmup(const ChainState &start, Value stepSize, Value invMass,
+  WarmupCarry emitWarmup(const ChainPoint &start, Value stepSize, Value invMass,
                          Value massMatrixSqrt,
                          const std::optional<AdaptationState> &saved,
                          int64_t chainIdx);
@@ -624,11 +616,11 @@ private:
   void emitWindowEndRestart(WarmupCarry &next, Value atMiddleWindowEnd);
   /// Emits the sampling loop from `state`, leaves the chain's final state in
   /// `state` and returns the collected samples and diagnostics.
-  ChainResult emitSampling(ChainState &state, Value stepSize, Value invMass,
+  ChainResult emitSampling(ChainPoint &state, Value stepSize, Value invMass,
                            Value massMatrixSqrt);
   /// The chain's `state_out` values in `state_schema` order.
   SmallVector<Value>
-  packStateOut(const ChainState &state, Value stepSize, Value invMass,
+  packStateOut(const ChainPoint &state, Value stepSize, Value invMass,
                const std::optional<AdaptationState> &adaptation,
                int64_t chainIdx);
 
@@ -882,7 +874,7 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
 
   Value massMatrixSqrt =
       computeMassMatrixSqrt(builder, loc, invMass, positionType);
-  ChainState state =
+  ChainPoint state =
       initChainState(rng, chainIdx, stepSize, invMass, massMatrixSqrt);
 
   if (!invMass) {
@@ -970,20 +962,18 @@ NUTSContext MCMCChainEmitter::makeNUTSContext(Value invMass,
                      potentialEnergy, maxDeltaEnergy, maxTreeDepth};
 }
 
-MCMCKernelResult MCMCChainEmitter::runKernel(const ChainState &state,
+MCMCKernelResult MCMCChainEmitter::runKernel(const ChainPoint &state,
                                              Value stepSize, Value invMass,
                                              Value massMatrixSqrt) {
   if (isHMC)
-    return SampleHMC(builder, loc, state.q, state.grad, state.potentialEnergy,
-                     state.rng,
+    return SampleHMC(builder, loc, state,
                      makeHMCContext(invMass, massMatrixSqrt, stepSize));
-  return SampleNUTS(builder, loc, state.q, state.grad, state.potentialEnergy,
-                    state.rng,
+  return SampleNUTS(builder, loc, state,
                     makeNUTSContext(invMass, massMatrixSqrt, stepSize,
                                     state.potentialEnergy));
 }
 
-ChainState MCMCChainEmitter::initChainState(Value rng, int64_t chainIdx,
+ChainPoint MCMCChainEmitter::initChainState(Value rng, int64_t chainIdx,
                                             Value stepSize, Value invMass,
                                             Value massMatrixSqrt) {
   Value position = chainStateInSlot(state_slot::kPosition, chainIdx);
@@ -1000,8 +990,7 @@ ChainState MCMCChainEmitter::initChainState(Value rng, int64_t chainIdx,
     if (numChains > 1)
       chainInitPosition = sliceChain(chainInitPosition, chainIdx);
   }
-  InitialHMCState init = InitHMC(builder, loc, rng, ctx, chainInitPosition);
-  return {init.q0, init.grad0, init.U0, init.rng};
+  return InitHMC(builder, loc, rng, ctx, chainInitPosition);
 }
 
 AdaptationState MCMCChainEmitter::loadOrInitAdaptation(
@@ -1019,7 +1008,7 @@ AdaptationState MCMCChainEmitter::loadOrInitAdaptation(
 }
 
 WarmupCarry
-MCMCChainEmitter::emitWarmup(const ChainState &start, Value stepSize,
+MCMCChainEmitter::emitWarmup(const ChainPoint &start, Value stepSize,
                              Value invMass, Value massMatrixSqrt,
                              const std::optional<AdaptationState> &saved,
                              int64_t chainIdx) {
@@ -1090,7 +1079,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
 
   if (adaptStepSize) {
     updatedDaState = updateDualAveraging(builder, loc, carry.dualAveraging,
-                                         sample.accept_prob, daConfig);
+                                         sample.acceptProb, daConfig);
     currentStepSizeFromDA =
         getStepSizeFromDualAveraging(builder, loc, updatedDaState);
     finalStepSizeFromDA =
@@ -1136,7 +1125,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
   if (adaptMassMatrix) {
     auto sampleType1D = RankedTensorType::get({model.positionSize}, elemType);
     Value sample1D =
-        impulse::ReshapeOp::create(builder, loc, sampleType1D, sample.q);
+        impulse::ReshapeOp::create(builder, loc, sampleType1D, sample.next.q);
     const WelfordState &welford = *carry.welford;
     WelfordState updatedWelfordAfterSample =
         updateWelford(builder, loc, welford, sample1D, welfordConfig);
@@ -1175,7 +1164,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
       arith::AndIOp::create(builder, loc, atWindowEnd, isMiddleWindow);
 
   WarmupCarry next;
-  next.chain = {sample.q, sample.grad, sample.U, sample.rng};
+  next.chain = sample.next;
   next.stepSize = adaptedStepSizeInLoop;
   next.invMass = carry.invMass;
   next.massMatrixSqrt = carry.massMatrixSqrt;
@@ -1237,7 +1226,7 @@ void MCMCChainEmitter::emitWindowEndRestart(WarmupCarry &next,
       DualAveragingState::fromValues(ArrayRef<Value>(updated).take_back(5));
 }
 
-ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
+ChainResult MCMCChainEmitter::emitSampling(ChainPoint &state, Value stepSize,
                                            Value invMass,
                                            Value massMatrixSqrt) {
   int64_t collectionSize = numSamples / thinning;
@@ -1282,7 +1271,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
 
   builder.setInsertionPointToStart(loopBody);
   Value iterIdx = loopBody->getArgument(0);
-  ChainState chainLoop = {loopBody->getArgument(1), loopBody->getArgument(2),
+  ChainPoint chainLoop = {loopBody->getArgument(1), loopBody->getArgument(2),
                           loopBody->getArgument(3), loopBody->getArgument(4)};
   Value samplesBufferLoop = loopBody->getArgument(5);
   Value diagnosticsBufferLoop = loopBody->getArgument(6);
@@ -1290,7 +1279,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
 
   auto sample = runKernel(chainLoop, stepSize, invMass, massMatrixSqrt);
   auto qConstrained =
-      impulse::constrainPosition(builder, loc, sample.q, model.supports);
+      impulse::constrainPosition(builder, loc, sample.next.q, model.supports);
 
   auto iMinusStart =
       arith::SubIOp::create(builder, loc, iterIdx, startIdxConst);
@@ -1330,7 +1319,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
       builder, loc, diagnosticsBufferType, shouldStore,
       updatedDiagnosticsBuffer, diagnosticsBufferLoop);
 
-  auto negU = arith::NegFOp::create(builder, loc, sample.U);
+  auto negU = arith::NegFOp::create(builder, loc, sample.next.potentialEnergy);
   auto logDensity1D = impulse::ReshapeOp::create(
       builder, loc, RankedTensorType::get({1}, elemType), negU);
   auto updatedLogDensityBuffer = impulse::DynamicUpdateSliceOp::create(
@@ -1340,11 +1329,11 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
       impulse::SelectOp::create(builder, loc, logDensityBufferType, shouldStore,
                                 updatedLogDensityBuffer, logDensityBufferLoop);
 
-  impulse::YieldOp::create(builder, loc,
-                           ValueRange{sample.q, sample.grad, sample.U,
-                                      sample.rng, selectedSamplesBuffer,
-                                      selectedDiagnosticsBuffer,
-                                      selectedLogDensityBuffer});
+  impulse::YieldOp::create(
+      builder, loc,
+      ValueRange{sample.next.q, sample.next.grad, sample.next.potentialEnergy,
+                 sample.next.rng, selectedSamplesBuffer,
+                 selectedDiagnosticsBuffer, selectedLogDensityBuffer});
 
   builder.setInsertionPointAfter(forLoopOp);
   state = {forLoopOp.getResult(0), forLoopOp.getResult(1),
@@ -1357,7 +1346,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainState &state, Value stepSize,
 }
 
 SmallVector<Value> MCMCChainEmitter::packStateOut(
-    const ChainState &state, Value stepSize, Value invMass,
+    const ChainPoint &state, Value stepSize, Value invMass,
     const std::optional<AdaptationState> &adaptation, int64_t chainIdx) {
   Value warmupOffsetIn = chainStateInSlot(state_slot::kWarmupOffset, chainIdx);
   if (!warmupOffsetIn)
