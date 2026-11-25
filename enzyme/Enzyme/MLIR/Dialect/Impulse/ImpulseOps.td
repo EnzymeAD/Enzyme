@@ -25,9 +25,10 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 //===----------------------------------------------------------------------===//
 
 def SymbolAttr : Impulse_Attr<"Symbol", "symbol"> {
-  let summary = "Symbol associated with a Sample op";
+  let summary = "Name of a sample site within its model";
   let description = [{
-  Symbol associated with a Sample op.
+    An opaque integer that names a sample site within its model; the sites of
+    one model have distinct symbols.
   }];
   let parameters = (ins "uint64_t":$ptr);
   let assemblyFormat = "`<` $ptr `>`";
@@ -44,21 +45,20 @@ def SampleOp : Impulse_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
   let description = [{
-  Sample from a distribution. By convention, the 0th operand in `inputs`
-  or `outputs` is the initial RNG state (seed).
+    Draws the value of one sample site of a model. `inputs` are the RNG state
+    followed by the parameters of the distribution, and `outputs` are the
+    advanced RNG state followed by the sampled values.
 
-  The sampler symbol `fn` is optional: a site that carries a `#impulse.dist`
-  attribute derives its sampler and logpdf from the shared distribution builder,
-  so it needs no traced `fn`/`logpdf` symbols and its result types are the ones
-  the frontend constructs directly from the distribution's shape. A site with a
-  traced sampler (the rejection-loop natives, generative sub-calls, or the
-  custom-logpdf escape hatch) carries `fn`; a custom-logpdf site additionally
-  carries `logpdf`. The verifier requires either `fn` or `dist` to be present.
+    With `dist`, the distribution is `dist`, and `fn`, when present, is a
+    sampler for it with the signature of this op. Without `dist`, `fn` is
+    required. If `logpdf` is present, `fn` is the sampler and `logpdf` its log
+    density: a function of the sampled values followed by the parameters that
+    returns a scalar. If not, `fn` is a model that this site runs, and the
+    sites of `fn` are nested under the address of this site.
 
-  With `fn` absent the pretty form is `impulse.sample(%inputs) ...`. The callee
-  is parsed by the `OptionalCallee` directive, which only consumes a `@symbol`,
-  so both spellings round-trip (the same holds for `impulse.infer` and
-  `impulse.infer_region` in custom-logpdf mode).
+    `symbol` names the site within its model. `support`, when present, is the
+    support of the sampled values; with `dist`, it must be of the same kind as
+    the support of `dist`.
   }];
 
   let arguments = (ins
@@ -83,8 +83,8 @@ def SampleOp : Impulse_Op<"sample",
 def UntracedCallOp : Impulse_Op<"untraced_call"> {
   let summary = "Call a probabilistic function without tracing";
   let description = [{
-  Call a probabilistic function without tracing. By convention, the 0th operand in `inputs`
-  or `outputs` is the initial RNG state (seed).
+    Calls the model `fn` on `inputs`; `outputs` are its results. Every site of
+    `fn` draws a new value, and no trace or weight is computed.
   }];
 
   let arguments = (ins
@@ -103,17 +103,9 @@ def UntracedCallOp : Impulse_Op<"untraced_call"> {
 def SimulateOp : Impulse_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Simulate a generative function";
   let description = [{
-    Simulates a generative function, building a trace tensor containing all
-    sampled values and computing the accumulated log probability weight.
-
-    The `selection` attribute specifies all sample addresses in order,
-    determining the trace tensor layout.
-
-    Returns: (trace, weight, rng, retvals...)
-    - trace: tensor<1 x position_size x f64> - flattened samples
-    - weight: tensor<f64> - accumulated log probability
-    - rng: updated RNG state
-    - retvals: original function return values
+    Runs the model `fn` on `inputs`, every site drawing a new value. `trace`
+    is the trace of `selection` and `weight` the joint log density of the run.
+    `outputs` are the results of `fn`.
   }];
 
   let arguments = (ins
@@ -137,11 +129,11 @@ def SimulateOp : Impulse_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpI
 def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Constrained generation from a generative function";
   let description = [{
-    Generates from a generative function with some addresses constrained.
-    The constraint tensor contains flattened constrained values in the order
-    specified by constrained_addresses.
-
-    Returns: (trace, weight, rng, retvals...)
+    Runs the model `fn` on `inputs`. A site in `constrained_addresses` takes
+    its value from `constraint`, a trace of `constrained_addresses`; every
+    other site draws a new value. `trace` is the trace of `selection` and
+    `weight` the joint log density of the run. `outputs` are the results of
+    `fn`.
   }];
 
   let arguments = (ins
@@ -168,35 +160,18 @@ def RegenerateOp : Impulse_Op<"regenerate",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Regenerate selected addresses in a trace";
   let description = [{
-    Regenerates selected addresses while keeping others fixed.
-    Used internally by MH.
+    Runs the model `fn` on `inputs` again, the sites in `regenerate_addresses`
+    drawing new values. Every other site takes its value from
+    `original_trace`, a trace of `selection`, except that a site in
+    `constrained_addresses` takes it from `constraint`, a trace of
+    `constrained_addresses`, whenever the site runs. `new_trace` has the type
+    of `original_trace` and holds the values of the new run; `outputs` are the
+    results of `fn`.
 
-    Takes explicit old_trace and returns new trace with weight.
-
-    An optional `constraint` tensor (with `constrained_addresses` describing its
-    layout) supplies observed values for constrained sample sites. Constrained
-    sites are always scored/written from the constraint value when their branch
-    is taken, rather than reused from the old trace slot. This is what keeps MH
-    correct when a proposed value flips which `impulse.if` branch executes: a
-    site that was previously not taken (its trace slot is stale) is refreshed
-    from the constraint instead of the stale slot.
-
-    The trace TYPE selects the weight semantics. A bare trace
-    (tensor<1 x position_size x f64>) yields the full joint log probability.
-    A score-tail trace (width = position_size + one memoized score scalar per
-    site) yields the accept-ratio DELTA sum_dirty(logp_new - stored_score): a
-    density term is dirty iff its site is regenerated or its parameters are
-    dataflow-reachable from a regenerated site's value; clean terms cancel in
-    the Metropolis--Hastings ratio and are never emitted, and old scores are
-    read from the tail instead of recomputed. The caller maintains the carried
-    weight as `w + delta` on accept, and the returned trace carries refreshed
-    scores.
-
-    Returns: (new_trace, weight, retvals...)
-    - new_trace: same type as the given trace - flattened samples
-      (plus refreshed site scores for score-tail traces)
-    - weight: tensor<f64> - full joint or delta, per the trace type
-    - retvals: original function return values
+    With a plain trace, `weight` is the joint log density of the new run. With
+    a score-tail trace, `weight` is the joint log density of the new run minus
+    that of `original_trace`, taken from the log densities it holds, and
+    `new_trace` holds the log densities of the new run.
   }];
 
   let arguments = (ins
@@ -225,11 +200,16 @@ def MHOp : Impulse_Op<"mh",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Metropolis-Hastings step for probabilistic inference";
   let description = [{
-    Performs one MH step: regenerates selected addresses and accepts/rejects
-    based on weight ratio.
-
-    An optional `constraint` tensor (with `constrained_addresses`) supplies
-    observed values, forwarded verbatim to the internal `regenerate`.
+    One Metropolis-Hastings step on `original_trace`, a trace of `selection`
+    whose joint log density is `original_weight`. The proposal is the
+    `impulse.regenerate` of `original_trace` with the same `fn`, `inputs`,
+    `selection`, `regenerate_addresses`, `constraint` and
+    `constrained_addresses`, and it is accepted with the Metropolis-Hastings
+    probability for a proposal that draws the regenerated sites from their
+    distributions. If `accepted` is true, `new_trace` and `new_weight` are the
+    trace of the proposal and its joint log density; otherwise they are
+    `original_trace` and `original_weight`. `output_rng` is the advanced RNG
+    state.
   }];
 
   let arguments = (ins
@@ -256,21 +236,17 @@ def MHOp : Impulse_Op<"mh",
   }];
 }
 
-// The `init_*` operands are read only on a cold start (empty `state_in`).
 class Impulse_InferSignatureArgs {
   dag args = (ins
     OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
     Variadic<AnyRankedTensor>:$state_in,
     Optional<AnyRankedTensor>:$original_trace,
-
-    // MH and Gibbs only; packed in `constrained_addresses` order.
     Optional<AnyRankedTensor>:$constraint,
 
     Optional<AnyRankedTensor>:$init_inverse_mass_matrix,
     Optional<AnyRankedTensor>:$init_step_size,
     Optional<AnyRankedTensor>:$init_position,
-    // VI guide scale in constrained (positive) space, not softplus space.
     Optional<AnyRankedTensor>:$init_scale,
 
     AddressArrayAttr:$selection,
@@ -279,8 +255,6 @@ class Impulse_InferSignatureArgs {
     DefaultValuedAttr<I64Attr, "0">:$num_warmup,
     DefaultValuedAttr<I64Attr, "1">:$num_samples,
     DefaultValuedAttr<I64Attr, "1">:$thinning,
-
-    // Values > 1 add a leading chain dim to trace, diagnostics and state_out.
     DefaultValuedAttr<I64Attr, "1">:$num_chains,
 
     OptionalAttr<I64Attr>:$total_warmup,
@@ -302,7 +276,6 @@ class Impulse_InferSignatureArgs {
   );
 }
 
-// `diagnostics` columns are [accepted, diverging].
 class Impulse_InferSignatureResults {
   dag outputs = (outs
     AnyRankedTensor:$trace,
@@ -316,25 +289,57 @@ class Impulse_InferSignatureResults {
 def InferOp : Impulse_Op<"infer",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]>,
     Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
-  let summary = "MCMC inference for probabilistic programs";
+  let summary = "Inference over the sample sites of a model";
   let description = [{
-    Runs MCMC inference on selected addresses.
+    Runs the inference algorithm selected by exactly one of `hmc_config`,
+    `nuts_config`, `mh_config`, `gibbs_config` and `vi_config`. `inputs[0]` is
+    the RNG state and `output_rng_state` the advanced state.
 
-    Two modes of operation:
-    1. Trace-based mode: `fn` and `original_trace` are provided. The model
-       function with `impulse.sample` ops defines the density.
-    2. Custom logpdf mode: `logpdf_fn` and `init_position` are provided.
-       The logpdf function maps position -> scalar log-density directly.
+    The target is either the model `fn` or the log density `logpdf_fn`. With
+    `fn`, `original_trace` is a trace of `all_addresses`, the sites in
+    `selection` are inferred, and the other sites keep their values in
+    `original_trace`. With `logpdf_fn`, the target is `logpdf_fn` applied to a
+    flat position vector followed by `inputs[1:]`; the position has as many
+    elements as `init_position`, or as one chain of it when `num_chains` > 1.
 
-    The `selection` attribute determines which addresses to sample via HMC/NUTS.
-    All sample addresses are included in the trace tensor for consistency.
+    HMC and NUTS run `num_warmup` warmup iterations, which adapt the step size
+    and the inverse mass matrix as the config requests, then `num_samples`
+    iterations, of which they keep every `thinning`-th. `trace` has one row
+    per kept sample with the values of the sites in `selection`, in that
+    order (with `logpdf_fn`, the position); `log_densities` holds the log
+    density of each kept sample in unconstrained coordinates, and
+    `diagnostics` its [accepted, diverging] flags. With `fn`, the chain starts
+    from the values in `original_trace`; with `logpdf_fn`, at
+    `init_position`. `init_step_size` is the initial step size, and
+    `init_inverse_mass_matrix` the initial inverse mass matrix (a vector for a
+    diagonal matrix, the identity when absent). `total_warmup`, when set, is
+    the length of the warmup schedule of which this op runs `num_warmup`
+    iterations, starting at the iteration in the `warmup_offset` state slot.
+    `num_chains` > 1 runs independent chains: `trace`, `diagnostics`,
+    `log_densities` and `state_out` get a leading chain dimension, and the
+    `rng` state slot holds the RNG state of every chain.
 
-    Resumable algorithm state (adapted step size, inverse mass matrix, dual
-    averaging / Welford accumulators, warmup progress, and the final
-    position/gradient/potential energy) is carried opaquely as a bundle:
-    `state_in` warm-starts a run (empty = cold start), `state_out` returns it,
-    and `state_schema` names each slot. `trace`, `diagnostics`,
-    `log_densities`, and `output_rng_state` are the only universal results.
+    MH runs `num_samples` Metropolis-Hastings steps, each redrawing the sites
+    in `selection` from their distributions, and Gibbs runs `num_samples`
+    sweeps, each redrawing every site in `selection` from its distribution
+    given the other sites. `trace` is the resulting trace, of the type of
+    `original_trace`, `diagnostics` the acceptance flag of the last step
+    (always true for Gibbs), and `log_densities` is zero. `state_in` and
+    `state_out` hold one slot, `weight`, the joint log density of the trace.
+    `constraint` is a trace of `constrained_addresses` with observed values.
+
+    VI runs `num_samples` optimizer steps with learning rate `init_step_size`.
+    `trace` holds the location of the guide in unconstrained coordinates after
+    each step, `diagnostics` the ELBO estimate of each step, and
+    `log_densities` is zero. `init_position` is the initial location of the
+    guide, and `init_scale` the initial scale of an AUTO_NORMAL guide.
+
+    `state_out` is the state of the algorithm after the run, one tensor per
+    name in `state_schema`; passing it as `state_in` continues the run. A
+    non-empty `state_in` takes the place of the initial values that
+    `init_inverse_mass_matrix`, `init_step_size` (except as the learning rate
+    of VI), `init_position` and `init_scale` give. `autodiff_attrs` are added
+    to the attributes of the differentiation of the log density.
   }];
 
   let arguments = args;
@@ -362,16 +367,20 @@ def InferOp : Impulse_Op<"infer",
 //===----------------------------------------------------------------------===//
 
 def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
-  let summary = "Sample from a distribution with inlined sampler and logpdf regions";
+  let summary = "Region form of impulse.sample";
   let description = [{
-    Region-form of `impulse.sample`: the sampler and logpdf function bodies are
-    inlined as nested regions, enabling sample-invariant code motion (SICM) to
-    analyze across sample sites. The `logpdf` region is cleared once its body has
-    been merged into the enclosing `infer_region`'s joint logpdf.
+    `impulse.sample` with its sampler and its log density in regions.
+    `sampling` takes `inputs` as block arguments and yields `outputs`.
+    `logpdf` takes the non-RNG results followed by the non-RNG inputs as block
+    arguments and yields their log density as a scalar. `logpdf` is empty when
+    the site runs a model, whose sites are then nested in `sampling`, and in
+    an `impulse.infer_region` whose own `logpdf` region is not empty, since
+    that region then holds the density of every site.
 
-    The `address` attribute is the site's full address as an array of symbols;
-    submodel dissolution prepends the enclosing site's address, so entries of
-    the `infer_region`'s `selection`/`all_addresses` match by attribute equality.
+    `address` is the full address of the site, as listed in the `selection`
+    and `all_addresses` of the enclosing `impulse.infer_region`. `fn`,
+    `support`, `dist` and `name` mean what they mean on `impulse.sample`, and
+    `logpdf_fn` what `logpdf` means there.
   }];
 
   let arguments = (ins
@@ -399,26 +408,29 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
 def InferRegionOp : Impulse_Op<"infer_region",
     [AutomaticAllocationScope, AttrSizedOperandSegments]>,
     Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
-  let summary = "MCMC inference region with sampler and joint logpdf";
+  let summary = "Region form of impulse.infer";
   let description = [{
-    Region-form of `impulse.infer`, produced by `inline-infer-regions` and
-    consumed directly by `expand-impulse`:
+    `impulse.infer` with the model or the log density in regions. The
+    operands, the results and the attributes shared with `impulse.infer` mean
+    what they mean there.
 
-    - `sampling`: the model computation (with `sample_region` ops), the target of
-      sampling-region SICM and the source for proposal-based algorithms.
-    - `logpdf`: the joint logpdf, constructed by the `sicm` pass (after
-      sampling-region SICM, so it is born optimized). Its block arguments are
-      the position values, one per non-RNG sample result of each selected
-      address in `selection` order; everything else it references is captured
-      from the enclosing scope and is sample-invariant by construction
-      (hoisted invariants, model inputs, and pinned trace values of unselected
-      sites). SICM runs a second time on this region; `expand-impulse` then
-      clones it as the potential-energy body inside the materialized
-      HMC/NUTS loop.
+    `sampling` holds the body of `fn`: its block arguments are `inputs`, and
+    its sample sites are `impulse.sample_region` ops, each with its full
+    address. It is empty with `logpdf_fn`.
 
-    Mirrors `impulse.infer`'s operands/results/attributes (created by a
-    wholesale attribute copy) plus the two regions and the
-    `num_position_args`/`position_size` bookkeeping for the joint logpdf.
+    `logpdf` computes the log density of the position given by its block
+    arguments. With `fn`, these are the values of the sites in `selection`,
+    one argument per non-RNG result of each site, in that order; the other
+    sites keep their values from `original_trace` or `constraint`. It then
+    yields the joint log density followed by the log density of each site of
+    `sampling`, in the order the sites appear, with zero for a site in an
+    `impulse.if` arm that does not run. With `logpdf_fn`, its one argument is
+    the position and it yields the value of `logpdf_fn`. Every other value
+    that `logpdf` uses is defined outside the op. An empty `logpdf` stands for
+    the density that `sampling` defines.
+
+    `num_position_args` is the number of leading `logpdf` block arguments
+    that form the position, and `position_size` the number of their elements.
   }];
 
   let arguments = !con(args, (ins
@@ -453,32 +465,16 @@ def InferRegionOp : Impulse_Op<"infer_region",
 def RandomOp : Impulse_Op<"random"> {
   let summary = "Generate random numbers using specified distribution";
   let description = [{
-  Draws a result tensor of random numbers from `rng_state` and returns the
-  advanced RNG state alongside the samples. Uniform bits are produced by a
-  counter-based bit generator keyed by `rng_state`; the parametric distributions
-  below are constructed deterministically from those bits, so the same input
-  state reproduces the same samples.
+    Draws `result` from `rng_distribution` with the parameters `a` and `b`,
+    and returns the advanced RNG state as `output_rng_state`. `result` is a
+    deterministic function of `rng_state`, `a` and `b`; the op fixes its
+    distribution, not the value that a given `rng_state` yields.
 
-  If rng_distribution = UNIFORM, samples are drawn from the uniform distribution
-  over [a, b). A base draw in [0, 1) is formed from the raw bits (assembling the
-  mantissa of a float in [1, 2) and subtracting 1) and affine-mapped to
-  [a, b). If a >= b, the behavior is undefined.
-
-  If rng_distribution = NORMAL, samples follow the normal distribution with
-  mean = a and standard deviation = b, formed from a uniform draw u in [0, 1)
-  via the probit `sqrt(2) * erfinv(2u - 1)`, then scaled by b and shifted by a.
-  If b < 0, the behavior is undefined.
-
-  If rng_distribution = MULTINORMAL, samples follow the multivariate normal with
-  mean = a (scalar or vector) and covariance matrix = b: a standard-normal vector
-  is drawn as above and mapped through the Cholesky factor of b, then shifted by
-  a. The parameter b must be positive definite.
-
-  By convention, the 0th operand in inputs is the initial RNG state and the
-  0th operand in results is the updated RNG state.
-
-  The bit generator is chosen by the lowering: two lowerings may draw different
-  samples from the same `rng_state`.
+    - UNIFORM: uniform on [a, b). The behavior is undefined if a >= b.
+    - NORMAL: normal with mean a and standard deviation b. The behavior is
+      undefined if b < 0.
+    - MULTINORMAL: multivariate normal with mean a (a scalar or a vector) and
+      covariance matrix b, which must be positive definite.
   }];
 
   let arguments = (ins
@@ -498,11 +494,10 @@ def RandomOp : Impulse_Op<"random"> {
 def RandomSplitOp : Impulse_Op<"random_split"> {
   let summary = "Split RNG state into multiple independent states";
   let description = [{
-    Derives N independent RNG states (N = number of results) from a single input
-    `rng_state` by hashing it with the Threefry2x32 counter-based PRF (five
-    rounds), matching JAX's `random.split`. Each output state is statistically
-    independent and deterministically reproducible from the input state.
-    Reference: https://github.com/jax-ml/jax/blob/c25e095fcec9678a4ce5f723afce0c6a3c48a5e7/jax/_src/random.py#L281-L294
+    Derives one RNG state per result from `rng_state` with the Threefry2x32
+    block cipher keyed by `rng_state`. The results are statistically
+    independent of each other and of `rng_state`, and a given `rng_state`
+    always yields the same results.
   }];
 
   let arguments = (ins AnyType:$rng_state);
@@ -589,7 +584,7 @@ def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> 
 
 def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,
     ParentOneOf<["ForOp", "WhileOp", "IfOp", "InferRegionOp", "SampleRegionOp"]>]> {
-  let summary = "Yield values at the end of a loop or if op";
+  let summary = "Terminator of the regions of impulse ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
@@ -680,7 +675,7 @@ def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
 //===----------------------------------------------------------------------===//
 
 def SelectOp : Impulse_Op<"select", [Pure]> {
-  let summary = "Exteneded select operation";
+  let summary = "Select between two values";
   let description = [{
     Elementwise selection between `true_value` and `false_value`: each result
     element is the corresponding `true_value` element where `condition` is true,

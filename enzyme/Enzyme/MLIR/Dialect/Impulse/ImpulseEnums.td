@@ -106,21 +106,19 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
     [
       I32EnumAttrCase<"STD_NORMAL", 0>,
       I32EnumAttrCase<"CUSTOM", 1>,
-      // Parameters are read positionally from the site's non-RNG operands.
-      I32EnumAttrCase<"STD_UNIFORM", 2>,      // U[0, 1), no parameters
-      I32EnumAttrCase<"EXPONENTIAL", 3>,      // rate
-      I32EnumAttrCase<"GAMMA", 4>,            // concentration, rate
-      I32EnumAttrCase<"STUDENT_T", 5>,        // df, loc, scale
-      I32EnumAttrCase<"BERNOULLI", 6>,        // logits
-      I32EnumAttrCase<"POISSON", 7>,          // rate
-      I32EnumAttrCase<"DISCRETE_UNIFORM", 8>, // low, high
-      // Folded natives: abs is not a bijection, so no base + bijector form.
-      I32EnumAttrCase<"HALF_NORMAL", 9>,      // scale
-      I32EnumAttrCase<"HALF_CAUCHY", 10>,     // scale
-      I32EnumAttrCase<"DIRICHLET", 11>,       // concentration
-      I32EnumAttrCase<"MVN", 12>,             // mean, covariance
-      I32EnumAttrCase<"GUMBEL", 13>,          // loc, scale
-      I32EnumAttrCase<"HALF_STUDENT_T", 14>,  // df, scale
+      I32EnumAttrCase<"STD_UNIFORM", 2>,
+      I32EnumAttrCase<"EXPONENTIAL", 3>,
+      I32EnumAttrCase<"GAMMA", 4>,
+      I32EnumAttrCase<"STUDENT_T", 5>,
+      I32EnumAttrCase<"BERNOULLI", 6>,
+      I32EnumAttrCase<"POISSON", 7>,
+      I32EnumAttrCase<"DISCRETE_UNIFORM", 8>,
+      I32EnumAttrCase<"HALF_NORMAL", 9>,
+      I32EnumAttrCase<"HALF_CAUCHY", 10>,
+      I32EnumAttrCase<"DIRICHLET", 11>,
+      I32EnumAttrCase<"MVN", 12>,
+      I32EnumAttrCase<"GUMBEL", 13>,
+      I32EnumAttrCase<"HALF_STUDENT_T", 14>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";
@@ -131,18 +129,25 @@ def DistBaseKindAttr : EnumAttr<Impulse_Dialect, DistBaseKind, "dist_base_kind">
 def DistAttr : Impulse_Attr<"Dist", "dist"> {
   let summary = "Distribution as a primitive base plus a transform chain";
   let description = [{
-    A distribution described as a primitive base distribution followed by a
-    (possibly empty) chain of `#impulse.xform` bijectors, applied base-first.
-    `Normal(mu, sigma)` is `#impulse.dist<std_normal, [#impulse.xform<affine>]>`;
+    The distribution of a draw from `base` mapped through the bijections of
+    `transforms`, applied in order. For example, `Normal(mu, sigma)` is
+    `#impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>]>` and
     `LogNormal(mu, sigma)` is
-    `#impulse.dist<std_normal, [#impulse.xform<affine>, #impulse.xform<exp>]>`.
+    `#impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>, #impulse.xform<EXP>]>`.
 
-    The support of the site is DERIVED from this attribute (base support pushed
-    through each transform's codomain); the derived support is the single source
-    of truth that both the emitted logpdf's change of variables and the HMC/VI
-    reparameterization share. `event_dim` is the rank of one event (0 for a
-    scalar site); currently carried for round-tripping only and not yet read by
-    the emitters.
+    The parameters are the non-RNG inputs of the sample site. Only the
+    parameterless bases STD_NORMAL and STD_UNIFORM take a non-empty
+    `transforms`, whose bijections read the parameters (AFFINE reads loc and
+    scale, the first two). The other bases read them in this order:
+    EXPONENTIAL (rate), GAMMA (concentration, rate), STUDENT_T (df, loc,
+    scale), BERNOULLI (logits), POISSON (rate), DISCRETE_UNIFORM (low, high),
+    HALF_NORMAL (scale), HALF_CAUCHY (scale), DIRICHLET (concentration), MVN
+    (mean, covariance), GUMBEL (loc, scale) and HALF_STUDENT_T (df, scale).
+    The value of an MVN site has the type of its mean.
+
+    The support of the distribution is the support of `base` mapped through
+    each bijection. `event_dim` (default 0) is the rank of one event; it does
+    not change the distribution.
   }];
   let parameters = (ins
     "DistBaseKind":$base,
@@ -154,14 +159,13 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
 }
 
 def SupportAttr : Impulse_Attr<"Support", "support"> {
-  let summary = "Distribution support specification for constraint transforms";
+  let summary = "Support of a distribution";
   let description = [{
-    Distribution support specification for constraint transforms.
-
-    `event_size` is the constrained length K of one simplex block for the
-    SIMPLEX support (the stick-breaking bijector maps K constrained values to
-    K-1 unconstrained ones); a slice of length m*K is treated as m independent
-    K-blocks. It is unused (null) for the dimension-preserving supports.
+    The set of values on which a density is nonzero. INTERVAL reads
+    `lower_bound` and `upper_bound`, GREATER_THAN reads `lower_bound`, and
+    LESS_THAN reads `upper_bound`. For SIMPLEX, `event_size` is the length K
+    of one simplex, and a value of m*K elements holds m simplices. The other
+    kinds take no parameters.
   }];
   let parameters = (ins
     "SupportKind":$kind,
@@ -175,15 +179,17 @@ def SupportAttr : Impulse_Attr<"Support", "support"> {
 def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {
   let summary = "Configuration for HMC inference";
   let description = [{
-    HMC-specific parameters for fixed-trajectory Hamiltonian Monte Carlo.
-    - trajectory_length: Total trajectory length for leapfrog integration.
-    - adapt_step_size (default: true): Whether to adapt step size during warmup using dual averaging.
-    - adapt_mass_matrix (default: true): Whether to adapt the mass matrix during warmup using Welford covariance.
-    - num_steps (default: 0): when positive, every transition takes exactly
-      this many leapfrog steps of the given step size (Gen's L, GenJAX's
-      n_steps), and trajectory_length is ignored. When 0, the count is
-      ceil(trajectory_length / step_size) and the step size is adjusted to
-      trajectory_length / count (NumPyro's convention).
+    Parameters of Hamiltonian Monte Carlo with a fixed trajectory.
+    - trajectory_length: the integration time of one transition.
+    - adapt_step_size (default true): adapt the step size during warmup by
+      dual averaging.
+    - adapt_mass_matrix (default true): adapt the inverse mass matrix during
+      warmup to the covariance of the warmup samples.
+    - num_steps (default 0): when positive, each transition takes exactly
+      `num_steps` leapfrog steps of the current step size and
+      `trajectory_length` is ignored; when 0, it takes
+      ceil(trajectory_length / step_size) steps of size
+      trajectory_length / ceil(trajectory_length / step_size).
   }];
   let parameters = (ins
     "FloatAttr":$trajectory_length,
@@ -197,12 +203,15 @@ def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {
 def NUTSConfigAttr : Impulse_Attr<"NUTSConfig", "nuts_config"> {
   let summary = "Configuration for NUTS inference";
   let description = [{
-    NUTS-specific parameters for No-U-Turn Sampler with adaptive path length.
-    - max_tree_depth: Maximum tree depth, controls max leapfrog steps (2^max_tree_depth).
-    - max_delta_energy: Threshold for trajectory divergence (rejected if energy change exceeds this).
-                        Default: 1000.0
-    - adapt_step_size (default: true): Whether to adapt step size during warmup using dual averaging.
-    - adapt_mass_matrix (default: true): Whether to adapt the mass matrix during warmup using Welford covariance.
+    Parameters of the No-U-Turn Sampler.
+    - max_tree_depth (default 10): the maximum depth of the trajectory tree; a
+      transition takes at most 2^max_tree_depth - 1 leapfrog steps.
+    - max_delta_energy (default 1000): a leapfrog step whose energy exceeds
+      the initial energy of the transition by more than this diverges.
+    - adapt_step_size (default true): adapt the step size during warmup by
+      dual averaging.
+    - adapt_mass_matrix (default true): adapt the inverse mass matrix during
+      warmup to the covariance of the warmup samples.
   }];
   let parameters = (ins
     DefaultValuedParameter<"int64_t", "10">:$max_tree_depth,
@@ -247,19 +256,24 @@ def OptimizerKindAttr : EnumAttr<Impulse_Dialect, OptimizerKind, "optimizer_kind
 def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
   let summary = "Configuration for variational inference";
   let description = [{
-    VI-specific parameters for stochastic variational inference.
-    Matches NumPyro's `SVI(model, guide, optim, loss=Trace_ELBO(num_particles=K))`
-    semantics with pointwise-identical RNG splitting.
-
-    - guide_kind: Variational family (AutoNormal, AutoMultivariateNormal, Custom).
-    - optimizer_kind: Parameter update rule (Adam, SGD).
-    - num_particles (default: 1): Number of Monte Carlo particles used to
-      estimate the ELBO at each update step. When K > 1, one `split(key, K)`
-      is emitted and each particle receives an independent key.
-    - init_scale: Initial scale for auto guides (default: 0.1, matches NumPyro).
-    - adam_b1, adam_b2, adam_eps: Adam hyperparameters. Defaults match
-      `jax.example_libraries.optimizers.adam`: b1=0.9, b2=0.999, eps=1e-8.
-      Only meaningful when optimizer_kind = ADAM.
+    Stochastic variational inference: fits the family `guide_kind` over the
+    unconstrained position by maximizing a Monte Carlo estimate of the ELBO
+    with the update rule `optimizer_kind`.
+    - num_particles (default 1): draws per ELBO estimate.
+    - init_scale (default 0.1): the initial scale of the AUTO_NORMAL and
+      AUTO_MULTIVARIATE_NORMAL guides.
+    - adam_b1, adam_b2, adam_eps (defaults 0.9, 0.999, 1e-8): parameters of
+      ADAM and CLIPPED_ADAM.
+    - clip_norm (default 10): CLIPPED_ADAM clamps each gradient element to
+      [-clip_norm, clip_norm].
+    - momentum_mass (default 0.9): parameter of MOMENTUM, ADAGRAD and
+      RMSPROP_MOMENTUM.
+    - rmsprop_gamma, rmsprop_eps (defaults 0.9, 1e-8): parameters of RMSPROP
+      and RMSPROP_MOMENTUM.
+    - init_radius (default 2): without `init_position`, each element of the
+      initial location is drawn uniformly from [-init_radius, init_radius).
+    - stable_update (default false): skip an update whose ELBO estimate or
+      gradient is not finite.
   }];
   let parameters = (ins
     EnumAttrParameter<GuideKindAttr>:$guide_kind,
@@ -270,12 +284,10 @@ def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
     OptionalParameter<"FloatAttr">:$adam_b2,
     OptionalParameter<"FloatAttr">:$adam_eps,
     OptionalParameter<"FloatAttr">:$clip_norm,
-    // Used only when no `init_position` operand is given.
     OptionalParameter<"FloatAttr">:$init_radius,
     OptionalParameter<"FloatAttr">:$momentum_mass,
     OptionalParameter<"FloatAttr">:$rmsprop_gamma,
     OptionalParameter<"FloatAttr">:$rmsprop_eps,
-    // Skips non-finite updates, as `numpyro.SVI.stable_update`.
     DefaultValuedParameter<"bool", "false">:$stable_update
   );
   let assemblyFormat = "`<` struct(params) `>`";
