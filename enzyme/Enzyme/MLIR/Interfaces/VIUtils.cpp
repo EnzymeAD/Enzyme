@@ -24,6 +24,7 @@
 #include "mlir/IR/IRMapping.h"
 
 #include <cmath>
+#include <optional>
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -497,13 +498,9 @@ static ParamState applyMomentumUpdate(OpBuilder &builder, Location loc,
                                       Value param, Value gradElbo, Value m,
                                       Value v, Value lr, double mass) {
   auto paramType = cast<RankedTensorType>(param.getType());
-  auto elemType = paramType.getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
 
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
-  Value massBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, mass),
-      paramType);
+  Value massBcast = emitBroadcastConstant(builder, loc, paramType, mass);
   Value mScaled = arith::MulFOp::create(builder, loc, massBcast, m);
   Value mNew = arith::AddFOp::create(builder, loc, mScaled, g);
   Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
@@ -512,27 +509,24 @@ static ParamState applyMomentumUpdate(OpBuilder &builder, Location loc,
   return {paramNew, mNew, v};
 }
 
-/// RMSProp step; `m` is the running squared-gradient average and `v` passes
-/// through.
+/// RMSProp step; `m` is the running squared-gradient average. With
+/// `momentumMass`, `v` is the momentum, else it passes through.
 static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
                                      Value param, Value gradElbo, Value m,
                                      Value v, Value lr, double gamma,
-                                     double eps) {
+                                     double eps,
+                                     std::optional<double> momentumMass) {
   auto paramType = cast<RankedTensorType>(param.getType());
-  auto elemType = paramType.getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
 
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
 
-  Value gammaBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, gamma),
-      paramType);
-  Value oneMinusGammaBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, 1.0 - gamma),
-      paramType);
-  Value epsBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, eps),
-      paramType);
+  Value gammaBcast = emitBroadcastConstant(builder, loc, paramType, gamma);
+  Value oneMinusGammaBcast =
+      emitBroadcastConstant(builder, loc, paramType, 1.0 - gamma);
+  Value epsBcast = emitBroadcastConstant(builder, loc, paramType, eps);
+  Value momBcast;
+  if (momentumMass)
+    momBcast = emitBroadcastConstant(builder, loc, paramType, *momentumMass);
 
   Value gSq = arith::MulFOp::create(builder, loc, g, g);
   Value oneMinusGammaGSq =
@@ -546,8 +540,14 @@ static ParamState applyRMSPropUpdate(OpBuilder &builder, Location loc,
   Value gOverSqrt = arith::DivFOp::create(builder, loc, g, sqrtAvgPlusEps);
   Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
   Value update = arith::MulFOp::create(builder, loc, lrBcast, gOverSqrt);
-  Value paramNew = arith::SubFOp::create(builder, loc, param, update);
-  return {paramNew, avgNew, v};
+  if (!momentumMass) {
+    Value paramNew = arith::SubFOp::create(builder, loc, param, update);
+    return {paramNew, avgNew, v};
+  }
+  Value momTimesMom = arith::MulFOp::create(builder, loc, momBcast, v);
+  Value momNew = arith::AddFOp::create(builder, loc, momTimesMom, update);
+  Value paramNew = arith::SubFOp::create(builder, loc, param, momNew);
+  return {paramNew, avgNew, momNew};
 }
 
 /// Adagrad step with momentum; `m` is the squared-gradient sum and `v` the
@@ -556,8 +556,6 @@ static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
                                      Value param, Value gradElbo, Value m,
                                      Value v, Value lr, double momentum) {
   auto paramType = cast<RankedTensorType>(param.getType());
-  auto elemType = paramType.getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
 
   Value g = arith::NegFOp::create(builder, loc, gradElbo);
 
@@ -579,12 +577,9 @@ static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
   Value lrG = arith::MulFOp::create(builder, loc, lrBcast, gTimesInv);
   Value dx = arith::NegFOp::create(builder, loc, lrG);
 
-  Value momBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, momentum),
-      paramType);
-  Value oneMinusMomBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, 1.0 - momentum),
-      paramType);
+  Value momBcast = emitBroadcastConstant(builder, loc, paramType, momentum);
+  Value oneMinusMomBcast =
+      emitBroadcastConstant(builder, loc, paramType, 1.0 - momentum);
   Value oneMinusMomDx =
       arith::MulFOp::create(builder, loc, oneMinusMomBcast, dx);
   Value momTimesV = arith::MulFOp::create(builder, loc, momBcast, v);
@@ -592,51 +587,6 @@ static ParamState applyAdagradUpdate(OpBuilder &builder, Location loc,
 
   Value paramNew = arith::AddFOp::create(builder, loc, param, vNew);
   return {paramNew, gSqNew, vNew};
-}
-
-/// RMSProp step with momentum; `m` is the running squared-gradient average and
-/// `v` the momentum.
-static ParamState applyRMSPropMomentumUpdate(OpBuilder &builder, Location loc,
-                                             Value param, Value gradElbo,
-                                             Value m, Value v, Value lr,
-                                             double gamma, double eps,
-                                             double momentumMass) {
-  auto paramType = cast<RankedTensorType>(param.getType());
-  auto elemType = paramType.getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
-
-  Value g = arith::NegFOp::create(builder, loc, gradElbo);
-
-  Value gammaBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, gamma),
-      paramType);
-  Value oneMinusGammaBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, 1.0 - gamma),
-      paramType);
-  Value epsBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, eps),
-      paramType);
-  Value momBcast = emitBroadcastScalar(
-      builder, loc, emitSplatConstant(builder, loc, scalarType, momentumMass),
-      paramType);
-
-  Value gSq = arith::MulFOp::create(builder, loc, g, g);
-  Value oneMinusGammaGSq =
-      arith::MulFOp::create(builder, loc, oneMinusGammaBcast, gSq);
-  Value gammaAvg = arith::MulFOp::create(builder, loc, gammaBcast, m);
-  Value avgNew =
-      arith::AddFOp::create(builder, loc, gammaAvg, oneMinusGammaGSq);
-
-  Value avgPlusEps = arith::AddFOp::create(builder, loc, avgNew, epsBcast);
-  Value sqrtAvgPlusEps = math::SqrtOp::create(builder, loc, avgPlusEps);
-  Value gOverSqrt = arith::DivFOp::create(builder, loc, g, sqrtAvgPlusEps);
-  Value lrBcast = emitBroadcastScalar(builder, loc, lr, paramType);
-  Value lrGOverSqrt = arith::MulFOp::create(builder, loc, lrBcast, gOverSqrt);
-  Value momTimesMom = arith::MulFOp::create(builder, loc, momBcast, v);
-  Value momNew = arith::AddFOp::create(builder, loc, momTimesMom, lrGOverSqrt);
-
-  Value paramNew = arith::SubFOp::create(builder, loc, param, momNew);
-  return {paramNew, avgNew, momNew};
 }
 
 /// Applies `ctx.optimizerKind` to `param` with gradient `gradElbo` and state
@@ -658,14 +608,15 @@ static ParamState applyOptimizer(OpBuilder &builder, Location loc,
                                ctx.stepSize, ctx.momentumMass);
   case OptimizerKind::RMSPROP:
     return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
-                              ctx.rmspropGamma, ctx.rmspropEps);
+                              ctx.rmspropGamma, ctx.rmspropEps,
+                              /*momentumMass=*/std::nullopt);
   case OptimizerKind::ADAGRAD:
     return applyAdagradUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
                               ctx.momentumMass);
   case OptimizerKind::RMSPROP_MOMENTUM:
-    return applyRMSPropMomentumUpdate(builder, loc, param, gradElbo, m, v,
-                                      ctx.stepSize, ctx.rmspropGamma,
-                                      ctx.rmspropEps, ctx.momentumMass);
+    return applyRMSPropUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize,
+                              ctx.rmspropGamma, ctx.rmspropEps,
+                              ctx.momentumMass);
   case OptimizerKind::SGD:
     return applySGDUpdate(builder, loc, param, gradElbo, m, v, ctx.stepSize);
   }

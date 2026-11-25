@@ -59,6 +59,11 @@ Value emitI1ScalarConstant(OpBuilder &builder, Location loc, bool value);
 Value emitBroadcastScalar(OpBuilder &builder, Location loc, Value scalar,
                           RankedTensorType type);
 
+/// Creates a rank-0 constant `value` of the element type of `type` and
+/// broadcasts it to `type`.
+Value emitBroadcastConstant(OpBuilder &builder, Location loc,
+                            RankedTensorType type, double value);
+
 /// log(exp(lhs) + exp(rhs)), or lhs + rhs where lhs - rhs is NaN.
 Value emitLogAddExp(OpBuilder &builder, Location loc, Value lhs, Value rhs);
 

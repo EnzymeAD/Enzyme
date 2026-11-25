@@ -141,6 +141,13 @@ Value impulse::emitBroadcastScalar(OpBuilder &builder, Location loc,
       builder.getDenseI64ArrayAttr(type.getShape()));
 }
 
+Value impulse::emitBroadcastConstant(OpBuilder &builder, Location loc,
+                                     RankedTensorType type, double value) {
+  Value scalar = emitSplatConstant(
+      builder, loc, RankedTensorType::get({}, type.getElementType()), value);
+  return emitBroadcastScalar(builder, loc, scalar, type);
+}
+
 Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
                              Value rhs) {
   auto amax = arith::MaximumFOp::create(builder, loc, lhs, rhs);
