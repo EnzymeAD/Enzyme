@@ -191,6 +191,24 @@ static Value reduceLastAxis(OpBuilder &b, Location loc, Value v,
                                 b.getDenseI64ArrayAttr({0}));
 }
 
+/// Creates a matrix constant of `type` whose (i, j) entry is 1 where
+/// `isOne(i, j)` holds and 0 elsewhere.
+static Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
+                                 RankedTensorType type,
+                                 function_ref<bool(int64_t, int64_t)> isOne) {
+  const llvm::fltSemantics &semantics =
+      cast<FloatType>(type.getElementType()).getFloatSemantics();
+  APFloat zero(semantics, 0);
+  APFloat one(semantics, 1);
+  SmallVector<APFloat> values;
+  values.reserve(type.getNumElements());
+  for (int64_t i = 0, rows = type.getDimSize(0); i < rows; ++i)
+    for (int64_t j = 0, cols = type.getDimSize(1); j < cols; ++j)
+      values.push_back(isOne(i, j) ? one : zero);
+  return arith::ConstantOp::create(builder, loc, type,
+                                   DenseElementsAttr::get(type, values));
+}
+
 static Value emitXformForward(OpBuilder &b, Location loc, XformAttr xform,
                               Value z, ValueRange distArgs,
                               RankedTensorType sampleType) {
@@ -684,15 +702,8 @@ static Value emitNativeLogpdf(OpBuilder &b, Location loc, DistBaseKind base,
     Value unnormed = arith::MulFOp::create(
         b, loc, scalarConst(b, loc, elemType, -0.5), maha);
 
-    SmallVector<APFloat> ident;
-    ident.reserve(n * n);
-    APFloat zeroF(cast<FloatType>(elemType).getFloatSemantics(), 0);
-    APFloat oneF(cast<FloatType>(elemType).getFloatSemantics(), 1);
-    for (int64_t i = 0; i < n; ++i)
-      for (int64_t j = 0; j < n; ++j)
-        ident.push_back(i == j ? oneF : zeroF);
-    Value identity = arith::ConstantOp::create(
-        b, loc, matType, DenseElementsAttr::get(matType, ident));
+    Value identity = emitIndicatorMatrix(
+        b, loc, matType, [](int64_t i, int64_t j) { return i == j; });
     Value upperCholMasked = arith::MulFOp::create(b, loc, upperChol, identity);
     Value onesN = emitSplatConstant(b, loc, vecType, 1.0);
     Value diagU = impulse::DotOp::create(b, loc, vecType, upperCholMasked,
@@ -815,20 +826,12 @@ static Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
                                    DenseElementsAttr::get(ty, vals));
 }
 
+/// The n x n matrix of ones above the diagonal, and on it unless `strict`.
 static Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
                      Type elemType) {
-  auto ty = RankedTensorType::get({n, n}, elemType);
-  SmallVector<APFloat> vals;
-  vals.reserve(n * n);
-  for (int64_t i = 0; i < n; ++i)
-    for (int64_t j = 0; j < n; ++j) {
-      bool one = strict ? (i < j) : (i <= j);
-      vals.push_back(
-          cast<FloatAttr>(builder.getFloatAttr(elemType, one ? 1.0 : 0.0))
-              .getValue());
-    }
-  return arith::ConstantOp::create(builder, loc, ty,
-                                   DenseElementsAttr::get(ty, vals));
+  return emitIndicatorMatrix(
+      builder, loc, RankedTensorType::get({n, n}, elemType),
+      [&](int64_t i, int64_t j) { return strict ? i < j : i <= j; });
 }
 
 static Value prefixSum(OpBuilder &builder, Location loc, Value mat, Value tri) {
