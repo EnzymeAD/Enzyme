@@ -4,8 +4,11 @@
 if(NOT ENZYME_ENABLE_PLUGINS)
   message(FATAL_ERROR "ENZYME_POSEIDON needs ENZYME_ENABLE_PLUGINS")
 endif()
-if(LLVM_VERSION_MAJOR LESS 20)
-  message(FATAL_ERROR "ENZYME_POSEIDON needs LLVM 20 or newer")
+if(LLVM_VERSION_MAJOR LESS 21)
+  message(FATAL_ERROR "ENZYME_POSEIDON needs LLVM 21 or newer")
+endif()
+if(NOT MPFR_LIB_PATH OR NOT HAS_MPFR_H)
+  message(FATAL_ERROR "ENZYME_POSEIDON needs MPFR (libmpfr and mpfr.h)")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -18,7 +21,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
 set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
 set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 
-find_package(MPFR REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
 include(CheckLanguage)
@@ -143,7 +145,7 @@ target_include_directories(
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler)
-target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
+target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE ${MPFR_LIB_PATH})
 
 # What a cached result was computed by: the pass's own sources. Hashed when
 # they change, not when the build is configured.

@@ -293,9 +293,12 @@ static bool improveViaHerbie(Session &S,
           Twine(Opts.CacheDir.empty() ? "no cache is kept"
                                       : "the cache " + Opts.CacheDir +
                                             " holds no Herbie answer") +
-              " for " + RunLabel + ", and the Herbie at " + Opts.Program +
-              " cannot run (" + Runs.back().Failure +
-              "). Point -poseidon-herbie-binary at a Herbie, replay the "
+              " for " + RunLabel +
+              (Opts.Program.empty()
+                   ? ", and this Poseidon was built without Herbie"
+                   : ", and the Herbie at " + Opts.Program + " cannot run (" +
+                         Runs.back().Failure + ")") +
+              ". Point -poseidon-herbie-binary at a Herbie, replay the "
               "answers another Herbie gave with "
               "-poseidon-import-herbie-answers, or turn algebraic rewriting "
               "off with -poseidon-enable-herbie=0.");

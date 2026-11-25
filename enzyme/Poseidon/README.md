@@ -9,9 +9,9 @@ Project website: <https://prontolab.github.io/numerics/>
 
 ## Build
 
-Poseidon needs LLVM 20 or newer and MPFR. It builds Herbie from source, which
-takes Rust and Racket, unless `-DPOSEIDON_HERBIE_BINARY=<herbie>` names a
-prebuilt one.
+Poseidon needs LLVM 21 or newer and MPFR. Its algebraic rewrites run Herbie:
+`-DPOSEIDON_HERBIE_BINARY=<herbie>` names a prebuilt one, and
+`-DPOSEIDON_BUILD_HERBIE=ON` builds it from source, which takes Rust and Racket.
 
 ```sh
 cmake -G Ninja -S enzyme -B build \

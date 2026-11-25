@@ -84,10 +84,8 @@ endif()
 set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 llvm_map_components_to_libnames(POSEIDON_TEST_PROGRAM_LLVM_LIBS support)
 
-# The pass headers include mpfr.h, from where the pass itself takes it.
 function(poseidon_configure_test_program name)
   target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
-  target_include_directories(${name} SYSTEM PRIVATE ${MPFR_INCLUDE_DIR})
   target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
   set_target_properties(
     ${name}
@@ -217,6 +215,9 @@ if(TARGET poseidon_rt)
 endif()
 if(TARGET poseidon_rt_hip)
   list(APPEND POSEIDON_TEST_DEPS poseidon_rt_hip poseidon_profile_hip)
+endif()
+if(TARGET herbie)
+  list(APPEND POSEIDON_TEST_DEPS herbie)
 endif()
 
 # check-poseidon needs no device; the tests under Integration/ compile and

@@ -12,9 +12,6 @@ set(POSEIDON_FLAGS "" CACHE STRING "Additional -poseidon-<flag>s")
 set(POSEIDON_MIN_VERSION 0.1 CACHE STRING "Version find_package asks for")
 
 find_package(Poseidon ${POSEIDON_MIN_VERSION} CONFIG REQUIRED)
-if(DEFINED MPFR_FOUND)
-  message(FATAL_ERROR "find_package(Poseidon) defined MPFR_FOUND")
-endif()
 get_target_property(plugin Poseidon::Poseidon-${POSEIDON_LLVM_VERSION_MAJOR}
                     LOCATION)
 message(STATUS "Poseidon ${Poseidon_VERSION} from ${Poseidon_DIR}")
