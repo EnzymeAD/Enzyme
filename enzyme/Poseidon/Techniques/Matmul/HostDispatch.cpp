@@ -508,19 +508,20 @@ static Value *loadLaunchValue(IRBuilder<> &B, Value *argArray,
 // Builds the dispatch in front of the stub's launch, from the launch's own
 // argument array. The launch is removed (standalone) or kept (fused); with
 // assumed equalities it runs instead of the dispatch whenever one of them does
-// not hold.
-static bool rewriteStub(const Options &O, Module &M, Function &F,
-                        const LaunchDesc &d) {
+// not hold. A fused body's stub without that launch is an error: the device
+// compile already fissioned its kernel, which computes nothing without the
+// dispatch.
+static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
+                                  const LaunchDesc &d) {
   CallInst *launch = findLaunchCall(F);
   CallInst *pop = findPopConfig(F);
-  // A fused body was already fissioned device-side and computes nothing
-  // without the dispatch, so it can neither fall back nor be skipped.
   if (!d.standalone &&
       (!launch || (d.launchCrop && !pop) || !d.assumedEqual.empty()))
-    report_fatal_error(Twine("Poseidon: the stub ") + F.getName() +
-                       " of a fused host-dispatched GEMM has no launch to "
-                       "read the operands from, or a condition to check "
-                       "first, and its kernel was fissioned device-side");
+    return userError(F, F.getSubprogram(),
+                     Twine("the stub ") + F.getName() +
+                         " of a fused host-dispatched GEMM has no launch to "
+                         "read the operands from, or a condition to check "
+                         "first, and its kernel was fissioned device-side");
   if (!launch || (d.launchCrop && !pop)) {
     diagnose(F, F.getSubprogram(),
              "the library call of stub " + F.getName() +
@@ -664,8 +665,12 @@ Expected<bool> rewriteGemmStubBodies(const Options &O, Module &M) {
       continue;
     auto dIt = llvm::find_if(
         descs, [&](const auto &kv) { return isLaunchStubFor(F, kv.first); });
-    if (dIt != descs.end())
-      changed |= rewriteStub(O, M, F, dIt->second);
+    if (dIt == descs.end())
+      continue;
+    Expected<bool> rewritten = rewriteStub(O, M, F, dIt->second);
+    if (!rewritten)
+      return rewritten.takeError();
+    changed |= *rewritten;
   }
   return changed;
 }
