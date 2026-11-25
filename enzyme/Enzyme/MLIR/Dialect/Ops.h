@@ -23,8 +23,21 @@
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
+#include "TypeAnalysis/BaseType.h"
+
 #include "Dialect/EnzymeAttributeInterfaces.h.inc"
 #include "Dialect/EnzymeEnums.h.inc"
+
+namespace mlir {
+namespace enzyme {
+class TypeTreeAttr;
+namespace detail {
+/// Sort the subtrees of a type tree node by offset, as TypeTreeAttr keeps them.
+void sortTypeTreeSubtrees(llvm::SmallVectorImpl<int64_t> &offsets,
+                          llvm::SmallVectorImpl<TypeTreeAttr> &subtrees);
+} // namespace detail
+} // namespace enzyme
+} // namespace mlir
 
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/EnzymeAttributes.h.inc"

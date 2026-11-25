@@ -594,13 +594,13 @@ struct AffineForOpInterfaceReverse
     }
 
     SmallVector<bool> operandsActive;
-    for (auto [operand, result] : llvm::zip_equal(
-             op->getOperands().slice(forOp.getNumControlOperands(),
-                                     forOp->getNumOperands() -
-                                         forOp.getNumControlOperands()),
-             op->getResults())) {
+    for (auto [operand, result, iterArg, yielded] : llvm::zip_equal(
+             forOp.getInits(), op->getResults(), forOp.getRegionIterArgs(),
+             forOp.getBody()->getTerminator()->getOperands())) {
       operandsActive.push_back(!gutils->isConstantValue(operand) ||
-                               !gutils->isConstantValue(result));
+                               !gutils->isConstantValue(result) ||
+                               !gutils->isConstantValue(iterArg) ||
+                               !gutils->isConstantValue(yielded));
     }
 
     // Checkpointing dispatch happens before touching `caches` at all: the
@@ -684,14 +684,23 @@ struct AffineForOpInterfaceReverse
 
         auto term = oBB.getTerminator();
 
+        for (auto &&[active, operand] :
+             llvm::zip_equal(operandsActive, term->getOperands())) {
+          if (active) {
+            // Zero the diffe at the start of each iteration because it should
+            // not accumulate across iterations. The new gradient is passed as
+            // an iter_arg in the reverse for.
+            gutils->zeroDiffe(operand, bodyBuilder);
+          }
+        }
+
         unsigned argIdx = 1; // Skip over the reversed IV
         for (auto &&[active, operand] :
              llvm::zip_equal(operandsActive, term->getOperands())) {
           if (active) {
-            // Set diffe here, not add because it should not accumulate across
-            // iterations. Instead the new gradient for this operand is passed
-            // in the return of the reverse for body.
-            gutils->setDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
+            // If the same value is yielded multiple times in the original, the
+            // gradients must be accumulated.
+            gutils->addToDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
             argIdx++;
           }
         }
@@ -728,10 +737,11 @@ struct AffineForOpInterfaceReverse
     for (auto &&[active, arg] :
          llvm::zip_equal(operandsActive, forOp.getInits())) {
       if (active) {
-        if (!gutils->isConstantValue(arg)) {
+        // Every active carried value has a result in the reverse loop, so
+        // advance the index even when the init itself is constant.
+        if (!gutils->isConstantValue(arg))
           gutils->addToDiffe(arg, revFor.getResult(resIdx), builder);
-          resIdx++;
-        }
+        resIdx++;
       }
     }
 
@@ -1036,6 +1046,14 @@ struct AffineParallelRegionBranchOpInterface
 
   void getPredecessors(Operation *op, RegionSuccessor successor,
                        SmallVectorImpl<RegionBranchPoint> &predecessors) const {
+  }
+};
+
+struct AffineLoadLike
+    : public LoadLikeInterface::ExternalModel<AffineLoadLike,
+                                              affine::AffineLoadOp> {
+  Value getLoadedPointer(Operation *op) const {
+    return cast<affine::AffineLoadOp>(op).getMemref();
   }
 };
 
@@ -1519,6 +1537,7 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     // declared it as a dependent dialect.
     context->getOrLoadDialect<scf::SCFDialect>();
     registerInterfaces(context);
+    affine::AffineLoadOp::attachInterface<AffineLoadLike>(*context);
     affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(
         *context);
     affine::AffineStoreOp::attachInterface<AffineStoreLike>(*context);

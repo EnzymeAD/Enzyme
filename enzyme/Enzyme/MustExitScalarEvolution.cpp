@@ -30,6 +30,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/IR/PatternMatch.h"
 
 #include <type_traits>
 
@@ -173,17 +174,21 @@ ScalarEvolution::ExitLimit
 MustExitScalarEvolution::computeExitLimitFromCondImpl(
     ExitLimitCacheTy &Cache, const Loop *L, Value *ExitCond, bool ExitIfTrue,
     bool ControlsExit, bool AllowPredicates) {
-  // Check if the controlling expression for this loop is an And or Or.
-  if (BinaryOperator *BO = dyn_cast<BinaryOperator>(ExitCond)) {
-    if (BO->getOpcode() == Instruction::And) {
+  // Check if the controlling expression for this loop is an And or Or, in
+  // either its binary operator or its select form.
+  {
+    using namespace llvm::PatternMatch;
+    Value *Operand0 = nullptr;
+    Value *Operand1 = nullptr;
+    if (match(ExitCond, m_LogicalAnd(m_Value(Operand0), m_Value(Operand1)))) {
       // Recurse on the operands of the and.
       bool EitherMayExit = !ExitIfTrue;
       ExitLimit EL0 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(0), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand0, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       ExitLimit EL1 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(1), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand1, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       const SCEV *BECount = getCouldNotCompute();
       const SCEV *MaxBECount = getCouldNotCompute();
       if (EitherMayExit) {
@@ -248,15 +253,15 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
                          {&EL0.Predicates, &EL1.Predicates});
 #endif
     }
-    if (BO->getOpcode() == Instruction::Or) {
+    if (match(ExitCond, m_LogicalOr(m_Value(Operand0), m_Value(Operand1)))) {
       // Recurse on the operands of the or.
       bool EitherMayExit = ExitIfTrue;
       ExitLimit EL0 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(0), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand0, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       ExitLimit EL1 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(1), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand1, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       const SCEV *BECount = getCouldNotCompute();
       const SCEV *MaxBECount = getCouldNotCompute();
       if (EitherMayExit) {

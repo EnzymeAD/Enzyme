@@ -422,6 +422,8 @@ def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> 
     `(` $predicate `)` `(` $trueBranch `,` $falseBranch `)`
     attr-dict `:` functional-type($predicate, results)
   }];
+
+  let hasRegionVerifier = 1;
 }
 
 def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,

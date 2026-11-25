@@ -22,6 +22,8 @@ def Enzyme_Dialect : Dialect {
   let cppNamespace = "::mlir::enzyme";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  let hasOperationAttrVerify = 1;
+  let hasRegionArgAttrVerify = 1;
 
   // Canonicalizing an atomic accumulation of zero away leaves a plain load
   // behind, in whichever of these dialects the op was addressing memory in.
@@ -36,6 +38,14 @@ def Enzyme_Dialect : Dialect {
     static StringRef getAliasSummaryAttrName() { return "enzyme.alias"; }
     static StringRef getDenseActivityAnnotationAttrName() { return "enzyme.denseactive"; }
     static StringRef getSparseActivityAnnotationAttrName() { return "enzyme.sparseactive"; }
+
+    /// Names of the type trees (#enzyme.type_tree) that the translation to
+    /// LLVM IR hands to LLVM Enzyme's type analysis: of a value or global, of
+    /// each argument of a call, and of each result of a function (`unit`
+    /// where there is none).
+    static StringRef getTypeTreeAttrName() { return "enzyme.type"; }
+    static StringRef getArgTypeTreesAttrName() { return "enzyme.arg_types"; }
+    static StringRef getRetTypeTreesAttrName() { return "enzyme.ret_types"; }
   }];
 }
 

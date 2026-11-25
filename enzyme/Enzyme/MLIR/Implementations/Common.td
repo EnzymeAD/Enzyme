@@ -153,6 +153,14 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
 class ConstantInt<string val, string dialect_, string op_, string type_="">
     : ConstantFP<val, dialect_, op_, type_>;
 
+class ConstantCFP<string re, string im, string dialect_, string op_, string type_="">
+    : ConstantFP<re, dialect_, op_, type_> {
+  string imag = im;
+}
+
+class ComplexConstant<string re, string im="0">
+    : ConstantCFP<re, im, "complex", "ConstantOp", "mlir::ArrayAttr">;
+
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
 def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   SmallVector<Type> shadowTypes(op->getResultTypes());
@@ -163,6 +171,10 @@ def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
 
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
+
+// Element type of the op's first operand, which must be of complex type.
+def ComplexElementType : GlobalExpr</*needsprimal*/0, /*needsshadow*/0,
+  "cast<ComplexType>(op->getOperand(0).getType()).getElementType()">;
 
 class ComplexInst<string m> : Inst<m, "complex">;
 class ArithInst<string m> : Inst<m, "arith">;
@@ -190,6 +202,7 @@ def SItoF : ArithInst<"SIToFPOp">;
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
 def Arith_OLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OLT">;
+def Arith_OGT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGT">;
 def Arith_EQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpIPredicate::eq">;
 
 def CheckedMulF : SubRoutine<(Op $diffret, $x),
@@ -212,6 +225,40 @@ def LlvmExpF : LlvmInst<"ExpOp">;
 def ComplexCreate : ComplexInst<"CreateOp">;
 def ComplexRe : ComplexInst<"ReOp">;
 def ComplexIm : ComplexInst<"ImOp">;
+def ComplexMul : ComplexInst<"MulOp">;
+def ComplexDiv : ComplexInst<"DivOp">;
+def ComplexEq : ComplexInst<"EqualOp">;
+def ComplexSub : ComplexInst<"SubOp">;
+def ComplexNeg : ComplexInst<"NegOp">;
+def ComplexSin : ComplexInst<"SinOp">;
+def ComplexCos : ComplexInst<"CosOp">;
+def ComplexAdd : ComplexInst<"AddOp">;
+def ComplexTanh : ComplexInst<"TanhOp">;
+def ComplexExp : ComplexInst<"ExpOp">;
+def ComplexSqrt : ComplexInst<"SqrtOp">;
+def ComplexRsqrt : ComplexInst<"RsqrtOp">;
+def ComplexPow : ComplexInst<"PowOp">;
+def ComplexPowi : ComplexInst<"PowiOp">;
+// complex::PowiOp has no builder that defaults its optional fastmath attribute,
+// so it has to be passed explicitly as the last argument of ComplexPowi.
+def NoFastMathAttr : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::FastMathFlagsAttr()">;
+def ComplexLog : ComplexInst<"LogOp">;
+def ComplexSign : ComplexInst<"SignOp">;
+
+
+def CheckedComplexMul : SubRoutine<(Op $diffret, $x),
+                  (
+                    SelectIfStrongZero
+                    (Arith_Select (ComplexEq $diffret, (ComplexConstant<"0"> $diffret):$zero), $zero, (ComplexMul $diffret, $x)),
+                    (ComplexMul $diffret, $x)
+                  )>;
+
+def CheckedComplexDiv : SubRoutine<(Op $diffret, $x),
+                  (
+                    SelectIfStrongZero
+                    (Arith_Select (ComplexEq $diffret, (ComplexConstant<"0"> $diffret):$zero), $zero, (ComplexDiv $diffret, $x)),
+                    (ComplexDiv $diffret, $x)
+                  )>;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;

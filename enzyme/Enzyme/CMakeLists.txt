@@ -16,7 +16,13 @@ else()
 endif()
 
 function(enzyme_tablegen ofn)
-  tablegen(Enzyme ${ARGV})
+  # LLVM 24 (d6a4b2ad0b90) renamed the generic tablegen() helper to
+  # tablegen_internal(), keeping only per-project wrappers public.
+  if(COMMAND tablegen)
+    tablegen(Enzyme ${ARGV})
+  else()
+    tablegen_internal(Enzyme ${ARGV})
+  endif()
   set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
       PARENT_SCOPE)
 endfunction()
@@ -65,6 +71,16 @@ if(ENZYME_ENABLE_PLUGINS)
       LINK_COMPONENTS
       LLVM)
     if(${Clang_FOUND})
+      if(CLANG_LINK_CLANG_DYLIB AND TARGET clang-cpp)
+        set(ENZYME_CLANG_LINK_LIBS LINK_LIBS clang-cpp)
+      elseif(TARGET clangFrontend)
+        set(ENZYME_CLANG_LINK_LIBS
+            LINK_LIBS clangFrontend clangSema clangAST clangLex clangBasic)
+      elseif(TARGET clang-cpp)
+        set(ENZYME_CLANG_LINK_LIBS LINK_LIBS clang-cpp)
+      else()
+        set(ENZYME_CLANG_LINK_LIBS "")
+      endif()
       add_llvm_library(
         ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
@@ -74,6 +90,7 @@ if(ENZYME_ENABLE_PLUGINS)
         MODULE
         DEPENDS
         intrinsics_gen
+        ${ENZYME_CLANG_LINK_LIBS}
         LINK_COMPONENTS
         LLVM)
       target_compile_definitions(
@@ -92,7 +109,7 @@ if(ENZYME_ENABLE_PLUGINS)
         LLVM)
       target_compile_definitions(
         FlangEnzyme-${LLVM_VERSION_MAJOR}
-        PUBLIC ENZYME_RUNPASS)
+        PUBLIC ENZYME_RUNPASS ENZYME_FLANG_PLUGIN)
     endif() # ENZYME_FLANG
     add_llvm_library(
       LLDEnzyme-${LLVM_VERSION_MAJOR}
@@ -152,7 +169,7 @@ if(ENZYME_ENABLE_PLUGINS)
         ${ENZYME_FLANG_PLUGIN_TOOL})
       target_compile_definitions(
         FlangEnzyme-${LLVM_VERSION_MAJOR}
-        PUBLIC ENZYME_RUNPASS)
+        PUBLIC ENZYME_RUNPASS ENZYME_FLANG_PLUGIN)
     endif() # ENZYME_FLANG
     add_llvm_library(
       LLDEnzyme-${LLVM_VERSION_MAJOR}

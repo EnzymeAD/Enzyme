@@ -1136,10 +1136,19 @@ struct ExpandImpulsePass
           SmallVector<Value> trueYieldValues;
 
           if (adaptMassMatrix) {
-            auto newInvMass = finalizeWelford(rewriter, loc, conditionalWelford,
-                                              welfordConfig);
-            auto newMassMatrixSqrt =
+            Value newInvMass = finalizeWelford(
+                rewriter, loc, conditionalWelford, welfordConfig);
+            Value newMassMatrixSqrt =
                 computeMassMatrixSqrt(rewriter, loc, newInvMass, positionType);
+            // finalizeWelford returns rank-1 diagonals; match the carried
+            // type.
+            if (newInvMass.getType() != invMassLoop.getType())
+              newInvMass = impulse::ReshapeOp::create(
+                  rewriter, loc, invMassLoop.getType(), newInvMass);
+            if (newMassMatrixSqrt.getType() != massMatrixSqrtLoop.getType())
+              newMassMatrixSqrt = impulse::ReshapeOp::create(
+                  rewriter, loc, massMatrixSqrtLoop.getType(),
+                  newMassMatrixSqrt);
             auto reinitWelford =
                 initWelford(rewriter, loc, positionSize, diagonal);
 

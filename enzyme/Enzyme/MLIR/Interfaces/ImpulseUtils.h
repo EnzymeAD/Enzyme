@@ -35,17 +35,13 @@ public:
   ImpulseMode mode;
   FunctionOpInterface oldFunc;
   IRMapping originalToNewFn;
-  std::map<Operation *, Operation *> originalToNewFnOps;
 
   Block *initializationBlock;
 
   ImpulseUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
-               IRMapping &originalToNewFn_,
-               std::map<Operation *, Operation *> &originalToNewFnOps_,
-               ImpulseMode mode_)
+               IRMapping &originalToNewFn_, ImpulseMode mode_)
       : newFunc(newFunc_), mode(mode_), oldFunc(oldFunc_),
         originalToNewFn(originalToNewFn_),
-        originalToNewFnOps(originalToNewFnOps_),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   static ImpulseUtils *CreateFromClone(FunctionOpInterface toeval,

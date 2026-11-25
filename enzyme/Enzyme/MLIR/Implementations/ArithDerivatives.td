@@ -27,14 +27,20 @@ def : MLIRDerivative<"arith", "MulFOp", (Op $x, $y),
 def : MLIRDerivative<"arith", "DivFOp", (Op $x, $y),
                     [
                       (CheckedDivF (DiffeRet), $y),
-                      (NegF (MulF (CheckedDivF (DiffeRet), $y), (DivF $x, $y)))
+                      (NegF (CheckedMulF (CheckedDivF (DiffeRet), $y), (DivF $x, $y)))
                     ],
-                    (CheckedDivF (SubF (SelectIfActive $x, (MulF (Shadow $x), $y), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (MulF (Shadow $y), $x), (ConstantFP<"0","arith","ConstantOp"> $y))), (MulF $y, $y))
+                    (CheckedDivF (SubF (SelectIfActive $x, (Shadow $x), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (CheckedMulF (Shadow $y), (DivF $x, $y)), (ConstantFP<"0","arith","ConstantOp"> $y))), $y)
                   >;
 def : MLIRDerivative<"arith", "MaxNumFOp", (Op $x, $y),
                     [
-                      (Arith_Select (CmpF (Arith_OLT), $x, $y), (ConstantFP<"0","arith","ConstantOp"> (Shadow $x)), (DiffeRet)),
-                      (Arith_Select (CmpF (Arith_OLT), $x, $y), (DiffeRet), (ConstantFP<"0","arith","ConstantOp"> (Shadow $y))),
+                      (Arith_Select (CmpF (Arith_OLT), $x, $y), (ConstantFP<"0","arith","ConstantOp"> $x), (DiffeRet)),
+                      (Arith_Select (CmpF (Arith_OLT), $x, $y), (DiffeRet), (ConstantFP<"0","arith","ConstantOp"> $y)),
+                    ]
+                  >;
+def : MLIRDerivative<"arith", "MinNumFOp", (Op $x, $y),
+                    [
+                      (Arith_Select (CmpF (Arith_OGT), $x, $y), (ConstantFP<"0","arith","ConstantOp"> $x), (DiffeRet)),
+                      (Arith_Select (CmpF (Arith_OGT), $x, $y), (DiffeRet), (ConstantFP<"0","arith","ConstantOp"> $y)),
                     ]
                   >;
 
@@ -48,15 +54,15 @@ def IsNegZero : SubRoutine<(Op $x), (CmpF (Arith_OEQ),
 def : MLIRDerivative<"arith", "MaximumFOp", (Op $x, $y),
                     [
                       (Arith_Select (CmpF (Arith_OLT), $x, $y),
-                        (ConstantFP<"0","arith","ConstantOp"> (Shadow $x)),
+                        (ConstantFP<"0","arith","ConstantOp"> $x),
                         (Arith_Select (AndI (IsNegZero $x), (IsPosZero $y)),
-                            (ConstantFP<"0","arith","ConstantOp"> (Shadow $x)),
+                            (ConstantFP<"0","arith","ConstantOp"> $x),
                             (DiffeRet))),
                       (Arith_Select (CmpF (Arith_OLT), $x, $y),
                         (DiffeRet),
                         (Arith_Select (AndI (IsNegZero $x), (IsPosZero $y)),
                             (DiffeRet),
-                            (ConstantFP<"0","arith","ConstantOp"> (Shadow $x))))
+                            (ConstantFP<"0","arith","ConstantOp"> $x)))
                     ]>;
 
 def : MLIRDerivative<"arith", "MinimumFOp", (Op $x, $y),
@@ -65,11 +71,11 @@ def : MLIRDerivative<"arith", "MinimumFOp", (Op $x, $y),
                         (DiffeRet),
                         (Arith_Select (AndI (IsNegZero $x), (IsPosZero $y)),
                             (DiffeRet),
-                            (ConstantFP<"0","arith","ConstantOp"> (Shadow $x)))),
+                            (ConstantFP<"0","arith","ConstantOp"> $x))),
                       (Arith_Select (CmpF (Arith_OLT), $x, $y),
-                        (ConstantFP<"0","arith","ConstantOp"> (Shadow $y)),
+                        (ConstantFP<"0","arith","ConstantOp"> $y),
                         (Arith_Select (AndI (IsNegZero $x), (IsPosZero $y)),
-                            (ConstantFP<"0","arith","ConstantOp"> (Shadow $y)),
+                            (ConstantFP<"0","arith","ConstantOp"> $y),
                             (DiffeRet)))
                     ]>;
 

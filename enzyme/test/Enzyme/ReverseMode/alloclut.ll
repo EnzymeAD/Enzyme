@@ -69,7 +69,7 @@ declare double @__enzyme_autodiff(double (double, i32*)*, ...)
 ; CHECK-NEXT:   store double %m1, double* %g1, align 8
 ; CHECK-NEXT:   %0 = getelementptr inbounds [2 x double], [2 x double]* %val_malloccache, i64 %iv
 ; CHECK-NEXT:   %1 = load [2 x double], [2 x double]* %a, align 32
-; CHECK-NEXT:   store [2 x double] %1, [2 x double]* %0, align 16
+; CHECK-NEXT:   store [2 x double] %1, [2 x double]* %0, align 8
 ; CHECK-NEXT:   br label %loop2
 
 ; CHECK: loop2:

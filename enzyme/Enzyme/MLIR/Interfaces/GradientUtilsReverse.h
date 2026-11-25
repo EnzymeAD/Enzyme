@@ -35,11 +35,9 @@ public:
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
                         ArrayRef<DIFFE_TYPE> ReturnActivity,
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                        IRMapping &originalToNewFn_,
-                        std::map<Operation *, Operation *> &originalToNewFnOps_,
-                        DerivativeMode mode_, unsigned width, bool omp,
-                        llvm::StringRef postpasses, bool verifyPostPasses,
-                        bool strongZero);
+                        IRMapping &originalToNewFn_, DerivativeMode mode_,
+                        unsigned width, bool omp, llvm::StringRef postpasses,
+                        bool verifyPostPasses, bool strongZero);
 
   IRMapping mapReverseModeBlocks;
 

@@ -7,13 +7,49 @@ def : MLIRDerivative<"complex", "AddOp", (Op $x, $y),
                     ]
                   >;
 
-def CMul : ComplexInst<"MulOp">;
+def : MLIRDerivative<"complex", "SubOp", (Op $x, $y),
+                    [
+                      (DiffeRet),
+                      (ComplexNeg(DiffeRet)),
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "NegOp", (Op $x),
+                    [
+                      (ComplexNeg (DiffeRet))
+                    ]
+                  >;
 
 def : MLIRDerivative<"complex", "MulOp", (Op $x, $y),
                     [
-                      (CMul (DiffeRet), $y),
-                      (CMul (DiffeRet), $x)
+                      (CheckedComplexMul (DiffeRet), $y),
+                      (CheckedComplexMul (DiffeRet), $x)
                     ]
+                  >;
+
+def : MLIRDerivative<"complex", "DivOp", (Op $x, $y),
+                    [
+                      (CheckedComplexDiv (DiffeRet), $y),
+                      (ComplexNeg
+                        (ComplexMul
+                          (CheckedComplexDiv (DiffeRet), $y),
+                          (ComplexDiv $x, $y)
+                        )
+                      )
+                    ],
+                    (CheckedComplexDiv
+                      (ComplexSub
+                        (SelectIfActive $x,
+                          (ComplexMul (Shadow $x), $y),
+                          (ComplexConstant<"0"> $x)
+                        ),
+                        (SelectIfActive $y,
+                          (ComplexMul (Shadow $y), $x),
+                          (ComplexConstant<"0"> $y)
+                        )
+                      ),
+                      (ComplexMul $y, $y)
+                    )
                   >;
 
 def : MLIRDerivative<"complex", "ImOp", (Op $x),
@@ -45,3 +81,164 @@ def : MLIRDerivative<"complex", "CreateOp", (Op $re, $im),
                     ]
                   >;
 
+def : MLIRDerivative<"complex", "SinOp", (Op $x),
+                    [
+                      (CheckedComplexMul (DiffeRet), (ComplexCos $x))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "CosOp", (Op $x),
+                    [
+                      (CheckedComplexMul (DiffeRet), (ComplexNeg (ComplexSin $x)))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "TanOp", (Op $x),
+                    [
+                      (CheckedComplexDiv
+                        (DiffeRet),
+                        (ComplexMul (ComplexCos $x):$c, $c)
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "Atan2Op", (Op $y, $x),
+                    [
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexDiv
+                          $x,
+                          (ComplexAdd (ComplexMul $x, $x), (ComplexMul $y, $y))
+                        )
+                      ),
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexDiv
+                          (ComplexNeg $y),
+                          (ComplexAdd (ComplexMul $x, $x), (ComplexMul $y, $y))
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "TanhOp", (Op $x),
+                    [
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexSub
+                          (ComplexConstant<"1.0"> $x),
+                          (ComplexMul (ComplexTanh $x):$t, $t)
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "ExpOp", (Op $x),
+                    [
+                      (CheckedComplexMul (DiffeRet), (ComplexExp $x))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "Expm1Op", (Op $x),
+                    [
+                      (CheckedComplexMul (DiffeRet), (ComplexExp $x))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "RsqrtOp", (Op $x),
+                    [
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexDiv
+                          (ComplexNeg (ComplexRsqrt $x)),
+                          (ComplexMul (ComplexConstant<"2.0"> $x), $x)
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "SqrtOp", (Op $x),
+                    [
+                      (Arith_Select
+                        (ComplexEq $x, (ComplexConstant<"0"> $x):$zero),
+                        $zero,
+                        (ComplexDiv
+                          (DiffeRet),
+                          (ComplexMul (ComplexConstant<"2.0"> $x), (ComplexSqrt $x))
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "PowOp", (Op $x, $y),
+                    [
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexMul
+                          $y,
+                          (ComplexPow $x, (ComplexSub $y, (ComplexConstant<"1.0"> $y)))
+                        )
+                      ),
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (Arith_Select
+                          (ComplexEq $x, (ComplexConstant<"0"> $x):$pzero),
+                          $pzero,
+                          (ComplexMul (ComplexPow $x, $y), (ComplexLog $x))
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "PowiOp", (Op $x, $y),
+                    [
+                      (Arith_Select
+                        (CmpI (Arith_EQ), $y, (ConstantInt<"0", "arith", "ConstantOp"> $y)),
+                        (ComplexConstant<"0"> $x),
+                        (CheckedComplexMul
+                          (DiffeRet),
+                          (ComplexMul
+                            (ComplexCreate
+                              (TypeOf $x),
+                              (SItoF (ComplexElementType), $y):$n,
+                              (ConstantFP<"0", "arith", "ConstantOp"> $n)
+                            ),
+                            (ComplexPowi
+                              $x,
+                              (SubI $y, (ConstantInt<"1", "arith", "ConstantOp"> $y)),
+                              (NoFastMathAttr)
+                            )
+                          )
+                        )
+                      ),
+                      (InactiveArg)
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "LogOp", (Op $x), 
+                    [
+                      (CheckedComplexDiv (DiffeRet), $x)
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "Log1pOp", (Op $x),
+                    [
+                      (CheckedComplexDiv
+                        (DiffeRet),
+                        (ComplexAdd $x, (ComplexConstant<"1"> $x)))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "AbsOp", (Op $x),
+                    [
+                      (ComplexCreate
+                        (TypeOf $x),
+                        (MulF (DiffeRet), (ComplexRe (ComplexSign $x):$s)),
+                        (NegF (MulF (DiffeRet), (ComplexIm $s)))
+                      )
+                    ],
+                    (AddF
+                      (MulF (ComplexRe (Shadow $x)), (ComplexRe (ComplexSign $x):$s)),
+                      (MulF (ComplexIm (Shadow $x)), (ComplexIm $s))
+                    )
+                  >;

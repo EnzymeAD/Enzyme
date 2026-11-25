@@ -35,16 +35,13 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-    IRMapping &originalToNewFn_,
-    std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode_, unsigned width, bool omp, StringRef postpasses,
-    bool verifyPostPasses, bool strongZero)
+    IRMapping &originalToNewFn_, DerivativeMode mode_, unsigned width, bool omp,
+    StringRef postpasses, bool verifyPostPasses, bool strongZero)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
                           invertedPointers_, returnPrimals, returnShadows,
                           constantvalues_, activevals_, ReturnActivity,
-                          ArgDiffeTypes_, originalToNewFn_, originalToNewFnOps_,
-                          mode_, width, omp, postpasses, verifyPostPasses,
-                          strongZero) {}
+                          ArgDiffeTypes_, originalToNewFn_, mode_, width, omp,
+                          postpasses, verifyPostPasses, strongZero) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();
@@ -169,7 +166,6 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     prefix += std::to_string(width);
 
   IRMapping originalToNew;
-  std::map<Operation *, Operation *> originalToNewOps;
 
   SmallPtrSet<mlir::Value, 1> returnvals;
   SmallPtrSet<mlir::Value, 1> constant_values;
@@ -178,12 +174,11 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   FunctionOpInterface newFunc = CloneFunctionWithReturns(
       mode_, width, todiff, invertedPointers, constant_args, constant_values,
       nonconstant_values, returnvals, returnPrimals, returnShadows, retType,
-      prefix + todiff.getName(), originalToNew, originalToNewOps,
-      additionalArg);
+      prefix + todiff.getName(), originalToNew, additionalArg);
 
   return new MGradientUtilsReverse(
       Logic, newFunc, todiff, TA, invertedPointers, returnPrimals,
       returnShadows, constant_values, nonconstant_values, retType,
-      constant_args, originalToNew, originalToNewOps, mode_, width, omp,
-      postpasses, verifyPostPasses, strongZero);
+      constant_args, originalToNew, mode_, width, omp, postpasses,
+      verifyPostPasses, strongZero);
 }

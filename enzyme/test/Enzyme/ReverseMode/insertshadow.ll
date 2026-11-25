@@ -207,26 +207,54 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 !53 = !{!19}
 !54 = !{!"Unknown", i32 -1, !10}
 
-; The call in between is enzyme_ReadOnlyOrThrow, which the caching decision
-; consults directly, so the four pointers below are reloaded from %arg1 and
-; %"arg1'" in the reverse pass rather than carried in the tape, on every LLVM.
+; Nothing between the call to @a0 and the reverse pass reads memory that @a0
+; writes (the only follower is an llvm.assume, which is not a writer), so the
+; call is moved wholesale into the reverse pass as a combined forward/reverse
+; @diffea0 with no augmented primal and no tape. The call in between is
+; enzyme_ReadOnlyOrThrow, which the caching decision consults directly, so the
+; pointers below are reloaded from %arg1 and %"arg1'" in the reverse pass
+; rather than carried in the tape, on every LLVM.
+
+; CHECK: define internal {{.*}}void @diffejulia_test_forces_grad_159_inner.1
+; CHECK-NOT: @augmented_a0
+; CHECK: call fastcc void @diffea0(
+; CHECK-NOT: @augmented_a0
 
 ; CHECK: define internal fastcc void @diffea0
 ; CHECK-NEXT: bb:
-; CHECK-NEXT:  %i2 = alloca { [1 x [2 x double]], double }, i64 1
+; CHECK-NEXT:  %i = alloca [1 x [2 x double]]
+; CHECK-NEXT:  %i2 = alloca { [1 x [2 x double]], double }
 ; CHECK-NEXT:  %i3 = call {}*** @julia.get_pgcstack() #13
 ; CHECK-NEXT:  %"i4'ipg" = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %"arg1'", i64 0, i64 0, i64 2
+; CHECK-NEXT:  %i4 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 0, i64 2
 ; CHECK-NEXT:  %"i5'ipl" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"i4'ipg"
+; CHECK-NEXT:  %i5 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i4
 ; CHECK-NEXT:  %"i6'ipc" = addrspacecast {} addrspace(10)* %"arg'" to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
+; CHECK-NEXT:  %i6 = addrspacecast {} addrspace(10)* %arg to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
 ; CHECK-NEXT:  %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
+; CHECK-NEXT:  %i7 = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %i6, i64 0, i32 0
+; CHECK-NEXT:  %i8 = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %i7
+; CHECK-NEXT:  %i9 = bitcast [1 x [2 x double]]* %i to i8*
+; CHECK-NEXT:  %i10 = addrspacecast [1 x [2 x double]]* %i to [1 x [2 x double]] addrspace(11)*
 ; CHECK-NEXT:  %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
+; CHECK-NEXT:  call void @llvm.memcpy.p0i8.p13i8.i64(i8* noundef nonnull align 8 dereferenceable(16) %i9, i8 addrspace(13)* noundef align 1 dereferenceable(16) %i8, i64 noundef 16, i1 noundef false) #13
 ; CHECK-NEXT:  %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'ipl" to double addrspace(13)* addrspace(11)*
+; CHECK-NEXT:  %i12 = addrspacecast {} addrspace(10)* %i5 to double addrspace(13)* addrspace(11)*
 ; CHECK-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc"
+; CHECK-NEXT:  %i13 = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %i12
+; CHECK-NEXT:  %i14 = load double, double addrspace(13)* %i13
 ; CHECK-NEXT:  %i15 = load double, double* %i11
+; CHECK-NEXT:  %i16 = fmul double %i14, %i15
 ; CHECK-NEXT:  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg"
+; CHECK-NEXT:  %i17 = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %i7
 ; CHECK-NEXT:  %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
+; CHECK-NEXT:  %i18 = bitcast i8 addrspace(13)* %i17 to double addrspace(13)*
+; CHECK-NEXT:  store double %i16, double addrspace(13)* %i18
 ; CHECK-NEXT:  %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
+; CHECK-NEXT:  %i19 = getelementptr inbounds i8, i8 addrspace(13)* %i17, i64 8
 ; CHECK-NEXT:  %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
+; CHECK-NEXT:  %i20 = bitcast i8 addrspace(13)* %i19 to double addrspace(13)*
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %i20
 ; CHECK-NEXT:  %i21 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1
 ; CHECK-NEXT:  %i22 = icmp eq [3 x {} addrspace(10)*] addrspace(11)* %i21, null
 ; CHECK-NEXT:  %i23 = getelementptr inbounds [3 x {} addrspace(10)*], [3 x {} addrspace(10)*] addrspace(11)* %i21, i64 0, i64 0
@@ -239,6 +267,8 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:  %"i30'ipl" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"i29'ipg"
 ; CHECK-NEXT:  %"i31'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i28'ipiv", {} addrspace(10)* %"i30'ipl", 2
 ; CHECK-NEXT:  %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
+; CHECK-NEXT:  call void @llvm.memcpy.p0i8.p13i8.i64(i8* noundef nonnull align 8 dereferenceable(16) %i9, i8 addrspace(13)* noundef nonnull align 1 dereferenceable(16) %i17, i64 noundef 16, i1 noundef false) #13
+; CHECK-NEXT:  call fastcc void @nofree_a1({ [1 x [2 x double]], double }* noalias nocapture nofree noundef nonnull writeonly sret({ [1 x [2 x double]], double }) align 8 dereferenceable(24) %i2, [1 x [2 x double]] addrspace(11)* nocapture nofree noundef nonnull readonly align 8 dereferenceable(16) %i10) #13
 ; CHECK-NEXT:  %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
 ; CHECK-NEXT:  %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
 ; CHECK-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc"
@@ -255,4 +285,3 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:  %6 = fadd fast double %5, %4
 ; CHECK-NEXT:  store double %6, double addrspace(13)* %"i13'ipl"
 ; CHECK-NEXT:  ret void
-
