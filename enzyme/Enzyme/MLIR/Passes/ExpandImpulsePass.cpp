@@ -460,49 +460,58 @@ static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
 
 namespace {
 /// HMC/NUTS warmup adaptation state, in `state_schema` slot order from
-/// `da_log_step_size` through `window_idx`.
+/// `da_log_step_size` through `window_idx`. `welford` is unset while the warmup
+/// does not adapt the mass matrix.
 struct AdaptationState {
-  static constexpr unsigned kNumValues = 9;
-
-  DualAveragingState dualAveraging;
-  WelfordState welford;
-  Value windowIdx;
-
-  SmallVector<Value> toValues() const {
-    SmallVector<Value> values = dualAveraging.toValues();
-    llvm::append_range(values, welford.toValues());
-    values.push_back(windowIdx);
-    return values;
-  }
-  static AdaptationState fromValues(ArrayRef<Value> values) {
-    return {DualAveragingState::fromValues(values.take_front(5)),
-            WelfordState::fromValues(values.slice(5, 3)), values[8]};
-  }
-};
-
-/// Values carried by the HMC/NUTS warmup loop. `welford` is carried only
-/// while the mass matrix is adapted.
-struct WarmupCarry {
-  ChainPoint chain;
-  Value stepSize;
-  Value invMass;
-  Value massMatrixSqrt;
   DualAveragingState dualAveraging;
   std::optional<WelfordState> welford;
   Value windowIdx;
 
   SmallVector<Value> toValues() const {
-    SmallVector<Value> values = {
-        chain.q,  chain.grad, chain.potentialEnergy, chain.rng,
-        stepSize, invMass,    massMatrixSqrt};
-    llvm::append_range(values, dualAveraging.toValues());
+    SmallVector<Value> values = dualAveraging.toValues();
     if (welford)
       llvm::append_range(values, welford->toValues());
     values.push_back(windowIdx);
     return values;
   }
+  SmallVector<Type> getTypes() const {
+    return llvm::to_vector(ValueRange(toValues()).getTypes());
+  }
+  /// Reads the state, with Welford accumulators if `hasWelford`, from the
+  /// front of `values` and drops what it read.
+  static AdaptationState consume(ArrayRef<Value> &values, bool hasWelford) {
+    AdaptationState state;
+    state.dualAveraging = DualAveragingState::fromValues(
+        values.take_front(DualAveragingState::kNumValues));
+    values = values.drop_front(DualAveragingState::kNumValues);
+    if (hasWelford) {
+      state.welford =
+          WelfordState::fromValues(values.take_front(WelfordState::kNumValues));
+      values = values.drop_front(WelfordState::kNumValues);
+    }
+    state.windowIdx = values.front();
+    values = values.drop_front();
+    return state;
+  }
+};
+
+/// Values carried by the HMC/NUTS warmup loop.
+struct WarmupCarry {
+  ChainPoint chain;
+  Value stepSize;
+  Value invMass;
+  Value massMatrixSqrt;
+  AdaptationState adaptation;
+
+  SmallVector<Value> toValues() const {
+    SmallVector<Value> values = {
+        chain.q,  chain.grad, chain.potentialEnergy, chain.rng,
+        stepSize, invMass,    massMatrixSqrt};
+    llvm::append_range(values, adaptation.toValues());
+    return values;
+  }
   /// The position, gradient, potential energy and step size are typed by
-  /// `positionType` and `scalarType`, the window index by `tensor<i64>`.
+  /// `positionType` and `scalarType`.
   SmallVector<Type> getTypes(RankedTensorType positionType,
                              RankedTensorType scalarType) const {
     SmallVector<Type> types = {positionType,
@@ -512,26 +521,19 @@ struct WarmupCarry {
                                scalarType,
                                invMass.getType(),
                                massMatrixSqrt.getType()};
-    llvm::append_range(types, dualAveraging.getTypes());
-    if (welford)
-      llvm::append_range(types, welford->getTypes());
-    types.push_back(RankedTensorType::get(
-        {}, IntegerType::get(positionType.getContext(), 64)));
+    llvm::append_range(types, adaptation.getTypes());
     return types;
   }
   static WarmupCarry fromValues(ValueRange range, bool hasWelford) {
-    SmallVector<Value> values = llvm::to_vector(range);
+    SmallVector<Value> storage = llvm::to_vector(range);
+    ArrayRef<Value> values = storage;
     WarmupCarry carry;
     carry.chain = {values[0], values[1], values[2], values[3]};
     carry.stepSize = values[4];
     carry.invMass = values[5];
     carry.massMatrixSqrt = values[6];
-    carry.dualAveraging =
-        DualAveragingState::fromValues(ArrayRef<Value>(values).slice(7, 5));
-    if (hasWelford)
-      carry.welford =
-          WelfordState::fromValues(ArrayRef<Value>(values).slice(12, 3));
-    carry.windowIdx = values.back();
+    values = values.drop_front(7);
+    carry.adaptation = AdaptationState::consume(values, hasWelford);
     return carry;
   }
 };
@@ -613,14 +615,18 @@ private:
   WarmupCarry emitWarmupStep(const WarmupCarry &carry, Value iteration,
                              const WarmupSchedule &schedule);
   /// Emits the end of a middle adaptation window: when `atMiddleWindowEnd`
-  /// holds, the mass matrix is re-estimated from `next.welford` and the
-  /// adapted accumulators restart. Updates `next` to the selected values.
+  /// holds, the mass matrix is re-estimated from the Welford accumulators of
+  /// `next` and the adapted accumulators restart. Updates `next` to the
+  /// selected values.
   void emitWindowEndRestart(WarmupCarry &next, Value atMiddleWindowEnd);
   /// Emits the sampling loop from `state`, leaves the chain's final state in
   /// `state` and returns the collected samples and diagnostics.
   ChainResult emitSampling(ChainPoint &state, Value stepSize, Value invMass,
                            Value massMatrixSqrt);
-  /// The chain's `state_out` values in `state_schema` order.
+  /// The chain's `state_out` values in the order of the canonical
+  /// `state_schema`, which the op verifier enforces: the chain state, the
+  /// step size and the inverse mass matrix, then with `adaptation` its values
+  /// and the warmup offset.
   SmallVector<Value>
   packStateOut(const ChainPoint &state, Value stepSize, Value invMass,
                const std::optional<AdaptationState> &adaptation,
@@ -790,9 +796,11 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op,
       impulse::slotIndex(schema, state_slot::kWindowIdx).has_value();
   if (std::optional<unsigned> first =
           impulse::slotIndex(schema, state_slot::kDaLogStepSize);
-      first && *first < stateIn.size())
-    savedAdaptation = AdaptationState::fromValues(
-        llvm::to_vector(stateIn.slice(*first, AdaptationState::kNumValues)));
+      first && *first < stateIn.size()) {
+    SmallVector<Value> slots = llvm::to_vector(stateIn.drop_front(*first));
+    ArrayRef<Value> values = slots;
+    savedAdaptation = AdaptationState::consume(values, /*hasWelford=*/true);
+  }
 
   // Multi-chain slots are chain-major; emitChain reads them per chain.
   if (numChains <= 1) {
@@ -867,10 +875,11 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
     if (Value savedInvMass = stateInSlot(state_slot::kInverseMassMatrix))
       invMass = sliceChain(savedInvMass, chainIdx);
     if (saved) {
-      SmallVector<Value> values = saved->toValues();
-      for (Value &value : values)
-        value = sliceChain(value, chainIdx);
-      saved = AdaptationState::fromValues(values);
+      SmallVector<Value> slots = saved->toValues();
+      for (Value &slot : slots)
+        slot = sliceChain(slot, chainIdx);
+      ArrayRef<Value> values = slots;
+      saved = AdaptationState::consume(values, /*hasWelford=*/true);
     }
   }
 
@@ -899,13 +908,12 @@ ChainResult MCMCChainEmitter::emitChain(Value rng, int64_t chainIdx) {
           builder, loc, invMass,
           "MCMC: adapted inverse mass matrix after warmup", model.debugDump);
     }
-    if (exposeAdaptation)
-      finalAdaptation = AdaptationState{
-          warmedUp.dualAveraging,
-          adaptMassMatrix
-              ? *warmedUp.welford
-              : initWelford(builder, loc, model.positionSize, diagonal),
-          warmedUp.windowIdx};
+    if (exposeAdaptation) {
+      finalAdaptation = warmedUp.adaptation;
+      if (!adaptMassMatrix)
+        finalAdaptation->welford =
+            initWelford(builder, loc, model.positionSize, diagonal);
+    }
   } else if (exposeAdaptation) {
     finalAdaptation =
         loadOrInitAdaptation(stepSize, /*withWelford=*/true, saved);
@@ -1032,16 +1040,15 @@ MCMCChainEmitter::emitWarmup(const ChainPoint &start, Value stepSize,
                       "MCMC: initial step size before warmup", model.debugDump);
   AdaptationState adaptation =
       loadOrInitAdaptation(initialStepSize, adaptMassMatrix, saved);
+  if (!adaptMassMatrix)
+    adaptation.welford.reset();
 
   WarmupCarry init;
   init.chain = start;
   init.stepSize = initialStepSize;
   init.invMass = invMass;
   init.massMatrixSqrt = massMatrixSqrt;
-  init.dualAveraging = adaptation.dualAveraging;
-  if (adaptMassMatrix)
-    init.welford = adaptation.welford;
-  init.windowIdx = adaptation.windowIdx;
+  init.adaptation = adaptation;
   SmallVector<Type> warmupLoopTypes = init.getTypes(positionType, scalarType);
 
   auto warmupLoop =
@@ -1080,14 +1087,15 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
   Value finalStepSizeFromDA;
 
   if (adaptStepSize) {
-    updatedDaState = updateDualAveraging(builder, loc, carry.dualAveraging,
-                                         sample.acceptProb, daConfig);
+    updatedDaState =
+        updateDualAveraging(builder, loc, carry.adaptation.dualAveraging,
+                            sample.acceptProb, daConfig);
     currentStepSizeFromDA =
         getStepSizeFromDualAveraging(builder, loc, updatedDaState);
     finalStepSizeFromDA =
         getStepSizeFromDualAveraging(builder, loc, updatedDaState, true);
   } else {
-    updatedDaState = carry.dualAveraging;
+    updatedDaState = carry.adaptation.dualAveraging;
     currentStepSizeFromDA = carry.stepSize;
     finalStepSizeFromDA = carry.stepSize;
   }
@@ -1115,11 +1123,12 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
   adaptedStepSizeInLoop =
       arith::MinimumFOp::create(builder, loc, adaptedStepSizeInLoop, maxConst);
 
-  auto windowIdxGtZero = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::sgt, carry.windowIdx, schedule.zero);
+  auto windowIdxGtZero =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sgt,
+                            carry.adaptation.windowIdx, schedule.zero);
   auto windowIdxLtLast =
       arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
-                            carry.windowIdx, schedule.lastWindow);
+                            carry.adaptation.windowIdx, schedule.lastWindow);
   auto isMiddleWindow =
       arith::AndIOp::create(builder, loc, windowIdxGtZero, windowIdxLtLast);
 
@@ -1128,7 +1137,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
     auto sampleType1D = RankedTensorType::get({model.positionSize}, elemType);
     Value sample1D =
         impulse::ReshapeOp::create(builder, loc, sampleType1D, sample.next.q);
-    const WelfordState &welford = *carry.welford;
+    const WelfordState &welford = *carry.adaptation.welford;
     WelfordState updatedWelfordAfterSample =
         updateWelford(builder, loc, welford, sample1D, welfordConfig);
 
@@ -1147,7 +1156,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
 
   for (auto [window, windowEnd] : llvm::enumerate(schedule.windowEnds)) {
     auto inWindow = arith::CmpIOp::create(
-        builder, loc, arith::CmpIPredicate::eq, carry.windowIdx,
+        builder, loc, arith::CmpIPredicate::eq, carry.adaptation.windowIdx,
         emitI64ScalarConstant(builder, loc, window));
     auto atEnd = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
                                        iteration, windowEnd);
@@ -1157,10 +1166,11 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
         arith::OrIOp::create(builder, loc, atWindowEnd, matchesThisWindow);
   }
 
-  Value newWindowIdx =
-      arith::AddIOp::create(builder, loc, carry.windowIdx, schedule.one);
-  Value windowIdxAfterIncrement = impulse::SelectOp::create(
-      builder, loc, i64TensorType, atWindowEnd, newWindowIdx, carry.windowIdx);
+  Value newWindowIdx = arith::AddIOp::create(
+      builder, loc, carry.adaptation.windowIdx, schedule.one);
+  Value windowIdxAfterIncrement =
+      impulse::SelectOp::create(builder, loc, i64TensorType, atWindowEnd,
+                                newWindowIdx, carry.adaptation.windowIdx);
 
   auto atMiddleWindowEnd =
       arith::AndIOp::create(builder, loc, atWindowEnd, isMiddleWindow);
@@ -1170,10 +1180,10 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
   next.stepSize = adaptedStepSizeInLoop;
   next.invMass = carry.invMass;
   next.massMatrixSqrt = carry.massMatrixSqrt;
-  next.dualAveraging = updatedDaState;
+  next.adaptation.dualAveraging = updatedDaState;
   if (adaptMassMatrix)
-    next.welford = conditionalWelford;
-  next.windowIdx = windowIdxAfterIncrement;
+    next.adaptation.welford = conditionalWelford;
+  next.adaptation.windowIdx = windowIdxAfterIncrement;
 
   emitWindowEndRestart(next, atMiddleWindowEnd);
   return next;
@@ -1183,9 +1193,9 @@ void MCMCChainEmitter::emitWindowEndRestart(WarmupCarry &next,
                                             Value atMiddleWindowEnd) {
   auto windowEndValues = [](const WarmupCarry &c) {
     SmallVector<Value> values = {c.invMass, c.massMatrixSqrt};
-    if (c.welford)
-      llvm::append_range(values, c.welford->toValues());
-    llvm::append_range(values, c.dualAveraging.toValues());
+    if (c.adaptation.welford)
+      llvm::append_range(values, c.adaptation.welford->toValues());
+    llvm::append_range(values, c.adaptation.dualAveraging.toValues());
     return values;
   };
   SmallVector<Value> keptValues = windowEndValues(next);
@@ -1196,7 +1206,7 @@ void MCMCChainEmitter::emitWindowEndRestart(WarmupCarry &next,
   WarmupCarry restarted = next;
   if (adaptMassMatrix) {
     Value newInvMass =
-        finalizeWelford(builder, loc, *next.welford, welfordConfig);
+        finalizeWelford(builder, loc, *next.adaptation.welford, welfordConfig);
     Value newMassMatrixSqrt =
         computeMassMatrixSqrt(builder, loc, newInvMass, positionType);
     // finalizeWelford returns rank-1 diagonals; match the carried type.
@@ -1208,24 +1218,29 @@ void MCMCChainEmitter::emitWindowEndRestart(WarmupCarry &next,
           builder, loc, next.massMatrixSqrt.getType(), newMassMatrixSqrt);
     restarted.invMass = newInvMass;
     restarted.massMatrixSqrt = newMassMatrixSqrt;
-    restarted.welford = initWelford(builder, loc, model.positionSize, diagonal);
+    restarted.adaptation.welford =
+        initWelford(builder, loc, model.positionSize, diagonal);
   }
   if (adaptStepSize)
-    restarted.dualAveraging = initDualAveraging(builder, loc, next.stepSize);
+    restarted.adaptation.dualAveraging =
+        initDualAveraging(builder, loc, next.stepSize);
   impulse::YieldOp::create(builder, loc, windowEndValues(restarted));
 
   builder.setInsertionPointToStart(builder.createBlock(&ifOp.getFalseBranch()));
   impulse::YieldOp::create(builder, loc, keptValues);
 
   builder.setInsertionPointAfter(ifOp);
-  SmallVector<Value> updated = llvm::to_vector_of<Value>(ifOp.getResults());
+  SmallVector<Value> results = llvm::to_vector_of<Value>(ifOp.getResults());
+  ArrayRef<Value> updated = results;
   next.invMass = updated[0];
   next.massMatrixSqrt = updated[1];
-  if (adaptMassMatrix)
-    next.welford =
-        WelfordState::fromValues(ArrayRef<Value>(updated).slice(2, 3));
-  next.dualAveraging =
-      DualAveragingState::fromValues(ArrayRef<Value>(updated).take_back(5));
+  updated = updated.drop_front(2);
+  if (adaptMassMatrix) {
+    next.adaptation.welford =
+        WelfordState::fromValues(updated.take_front(WelfordState::kNumValues));
+    updated = updated.drop_front(WelfordState::kNumValues);
+  }
+  next.adaptation.dualAveraging = DualAveragingState::fromValues(updated);
 }
 
 ChainResult MCMCChainEmitter::emitSampling(ChainPoint &state, Value stepSize,
@@ -1357,32 +1372,12 @@ SmallVector<Value> MCMCChainEmitter::packStateOut(
       arith::AddIOp::create(builder, loc, warmupOffsetIn,
                             emitI64ScalarConstant(builder, loc, numWarmup));
 
-  SmallVector<Value> adaptationOut;
-  if (adaptation)
-    adaptationOut = adaptation->toValues();
-  auto slotValue = [&](StringRef name) -> Value {
-    if (name == state_slot::kPosition)
-      return state.q;
-    if (name == state_slot::kGradient)
-      return state.grad;
-    if (name == state_slot::kPotentialEnergy)
-      return state.potentialEnergy;
-    if (name == state_slot::kStepSize)
-      return stepSize;
-    if (name == state_slot::kInverseMassMatrix)
-      return invMass;
-    if (name == state_slot::kWarmupOffset)
-      return warmupOffsetOut;
-    unsigned first = *impulse::slotIndex(schema, state_slot::kDaLogStepSize);
-    return adaptationOut[*impulse::slotIndex(schema, name) - first];
-  };
-
-  // The op verifier checks that `state_schema` has the canonical layout.
-  SmallVector<Value> stateOut;
-  auto invMassTy = cast<RankedTensorType>(invMass.getType());
-  for (const impulse::StateSlot &slot : impulse::buildStateSchema(
-           exposeAdaptation, model.positionSize, elemType, invMassTy))
-    stateOut.push_back(slotValue(slot.name));
+  SmallVector<Value> stateOut = {state.q, state.grad, state.potentialEnergy,
+                                 stepSize, invMass};
+  if (adaptation) {
+    llvm::append_range(stateOut, adaptation->toValues());
+    stateOut.push_back(warmupOffsetOut);
+  }
   return stateOut;
 }
 

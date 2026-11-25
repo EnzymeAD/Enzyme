@@ -82,6 +82,8 @@ struct MCMCKernelResult {
 };
 
 struct DualAveragingState {
+  static constexpr unsigned kNumValues = 5;
+
   Value log_step_size;
   Value log_step_size_avg;
   Value gradient_avg;
@@ -388,6 +390,8 @@ Value getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
 
 /// State for Welford covariance estimation
 struct WelfordState {
+  static constexpr unsigned kNumValues = 3;
+
   Value mean;
   Value m2; // Sum of squared deviations
   Value n;
