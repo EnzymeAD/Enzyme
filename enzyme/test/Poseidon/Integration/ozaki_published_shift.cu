@@ -7,6 +7,7 @@
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc %s -x none %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
+#include "DeviceApi.h"
 #include "gemm/LibraryCalls.h"
 #include <cmath>
 #include <cstdio>

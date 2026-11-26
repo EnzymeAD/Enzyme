@@ -10,16 +10,14 @@
 // C = alpha * (A @ B) + beta * C for A (M x K), B (K x Ncols) and C (M x Ncols)
 // in memory of the current device, each operand column-major (X[c * ld + r])
 // when its ColMajor flag is set and row-major (X[r * ld + c]) otherwise, on
-// `stream`, from any host thread. With K == 0 it computes C = beta * C, with
-// M == 0 or Ncols == 0 nothing. A negative extent, or any error, stops the
-// program.
+// `stream` (a cudaStream_t or hipStream_t), from any host thread. With K == 0
+// it computes C = beta * C, with M == 0 or Ncols == 0 nothing. A negative
+// extent, or any error, stops the program.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H
 #define POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H
-
-#include "../DeviceApi.h"
 
 #define POSEIDON_GEMM_DECL(CType, IRType, Name) CType Name,
 #define POSEIDON_GEMM_DECL_LAST(CType, IRType, Name) CType Name

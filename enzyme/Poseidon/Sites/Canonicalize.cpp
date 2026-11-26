@@ -8,10 +8,10 @@
 
 #include "Canonicalize.h"
 
+#include "Core/FPNode.h"
 #include "Enzyme/Utils.h"
 #include "SiteIdentity.h"
 #include "Support/Utils.h"
-#include "Targets/MathLibrary.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -60,85 +60,6 @@
 using namespace llvm;
 
 namespace poseidon {
-
-static bool isOptimizableOperation(const Instruction *I) {
-  switch (I->getOpcode()) {
-  case Instruction::FNeg:
-  case Instruction::FAdd:
-  case Instruction::FSub:
-  case Instruction::FMul:
-  case Instruction::FDiv:
-  case Instruction::FRem:
-    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
-  case Instruction::Call: {
-    const Function *Callee = cast<CallInst>(I)->getCalledFunction();
-    if (!Callee)
-      return false;
-    // The libdevice and ocml entry points Poseidon handles.
-    if (deviceMathName(Callee->getName()))
-      return true;
-    if (!I->getType()->isFloatTy() && !I->getType()->isDoubleTy())
-      return false;
-    switch (Callee->getIntrinsicID()) {
-    case Intrinsic::sin:
-    case Intrinsic::cos:
-    case Intrinsic::tan:
-    case Intrinsic::asin:
-    case Intrinsic::acos:
-    case Intrinsic::atan:
-    case Intrinsic::atan2:
-    case Intrinsic::sinh:
-    case Intrinsic::cosh:
-    case Intrinsic::tanh:
-    case Intrinsic::exp:
-    case Intrinsic::log:
-    case Intrinsic::sqrt:
-    case Intrinsic::pow:
-    case Intrinsic::powi:
-    case Intrinsic::fabs:
-    case Intrinsic::fma:
-    case Intrinsic::fmuladd:
-    case Intrinsic::maxnum:
-    case Intrinsic::minnum:
-    case Intrinsic::ceil:
-    case Intrinsic::floor:
-    case Intrinsic::exp2:
-    case Intrinsic::log10:
-    case Intrinsic::log2:
-    case Intrinsic::rint:
-    case Intrinsic::round:
-    case Intrinsic::trunc:
-    case Intrinsic::copysign:
-      return true;
-    case Intrinsic::not_intrinsic:
-      return isOptimizableLibmCall(Callee->getName());
-    default:
-      return false;
-    }
-  }
-  default:
-    return false;
-  }
-}
-
-/// An undef or poison operand has no value to sample and may take a different
-/// one at each use; a constant expression has no literal.
-static bool isModelledOperand(const Value *V) {
-  Type *T = V->getType();
-  if (isa<Argument, ConstantFP>(V))
-    return T->isFloatTy() || T->isDoubleTy();
-  if (isa<Instruction>(V))
-    return T->isFloatingPointTy() || T->isIntegerTy();
-  return isa<ConstantInt>(V);
-}
-
-bool isOptimizable(const llvm::Value &V) {
-  const auto *I = dyn_cast<Instruction>(&V);
-  if (!I || !isOptimizableOperation(I))
-    return false;
-  return all_of(fpOperands(*I),
-                [](const Use &U) { return isModelledOperand(U.get()); });
-}
 
 std::optional<size_t> slotOf(const Instruction *I) {
   MDNode *md = I ? I->getMetadata(kSlotMD) : nullptr;

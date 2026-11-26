@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -57,6 +58,25 @@ static DeviceProfileTable g_table;
 static std::vector<const void *> &poseidonModuleTables() {
   static auto *v = new std::vector<const void *>();
   return *v;
+}
+
+// A runtime call that fails while the program runs stops it with the message,
+// by abort.
+[[noreturn]] __attribute__((format(printf, 1, 2))) static void
+profileAbort(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  profileReport(format, args);
+  va_end(args);
+  abort();
+}
+
+static unsigned long long profileEnvPositive(const char *name,
+                                             unsigned long long dflt) {
+  long long parsed = profileEnvInteger(name, (long long)dflt);
+  if (parsed <= 0)
+    profileBadEnv(name, getenv(name), "a positive integer");
+  return (unsigned long long)parsed;
 }
 
 // Every GPU runtime call is checked: an ignored failure leaves a sticky error

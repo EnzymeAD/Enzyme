@@ -15,7 +15,6 @@
 #define POSEIDON_MODEL_COST_MODEL_H
 
 #include "Model/CostTable.h"
-#include "Profile/ProfileReader.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -29,11 +28,14 @@
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_set>
 
 namespace poseidon {
+
+struct ProfileInfo;
 
 /// An error at `F` unless the cost model is present and its native_arch header
 /// names this function's target-cpu.
@@ -59,11 +61,12 @@ llvm::Expected<const std::unordered_set<std::string> *>
 scalarTypes(CostModelState &CM, const llvm::Function &F);
 
 /// What the profiled run spent in `F`, in the cost model's units: every
-/// operation the profile records, its execution count times its price.
-/// `slotOf` gives an instruction's profile slot, or none for an instruction
-/// without one.
+/// operation `profile` (a ProfileMap) records, its execution count times its
+/// price. `slotOf` gives an instruction's profile slot, or none for an
+/// instruction without one.
 llvm::Expected<double> profiledCost(
-    CostModelState &CM, const llvm::Function &F, const ProfileMap &profile,
+    CostModelState &CM, const llvm::Function &F,
+    const std::map<size_t, ProfileInfo> &profile,
     llvm::function_ref<std::optional<size_t>(const llvm::Instruction *)>
         slotOf);
 

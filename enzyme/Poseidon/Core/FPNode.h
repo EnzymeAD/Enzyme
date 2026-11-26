@@ -43,6 +43,12 @@ struct NumberFormatInfo;
 class FPGraph;
 enum class NumberFormat;
 
+/// Whether V is a floating-point operation the pass profiles and rewrites: an
+/// instruction it can model, whose operands are float or double arguments and
+/// literals, integer literals, or scalar floating-point or integer
+/// instructions.
+bool isOptimizable(const llvm::Value &V);
+
 /// A node of the expression graph: an operation, with its operands, of a
 /// parsed rewrite. Values of the program and literals are the subclasses
 /// FPLLValue and FPConst. Every node is owned by the FPGraph that created it.

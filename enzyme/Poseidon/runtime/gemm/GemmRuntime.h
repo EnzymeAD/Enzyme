@@ -17,6 +17,7 @@
 #ifndef POSEIDON_RUNTIME_GEMM_GEMM_RUNTIME_H
 #define POSEIDON_RUNTIME_GEMM_GEMM_RUNTIME_H
 
+#include "../DeviceApi.h"
 #include "LibraryCalls.h"
 
 #include <algorithm>
@@ -247,13 +248,14 @@ inline void scaleByBeta(double *C, int M, int Ncols, int ldc, int cColMajor,
   });
 }
 
-// What every entry does around its product: a negative extent stops the
-// program, M == 0 or Ncols == 0 leaves C alone, K == 0 gives C = beta * C,
-// and otherwise multiply(call) enqueues the product under a Call<State>
-// (with the scratch ordered when `scratch`).
+// What every entry does around its product on `stream`, the entry's
+// gpuStream_t: a negative extent stops the program, M == 0 or Ncols == 0
+// leaves C alone, K == 0 gives C = beta * C, and otherwise multiply(call)
+// enqueues the product under a Call<State> (with the scratch ordered when
+// `scratch`).
 template <class State, class Multiply>
 void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
-              int cColMajor, double beta, gpuStream_t stream, bool scratch,
+              int cColMajor, double beta, void *stream, bool scratch,
               Multiply multiply) {
   if (M < 0 || Ncols < 0 || K < 0)
     fail("%s with M = %d, Ncols = %d, K = %d: an extent is negative", entry, M,
@@ -261,9 +263,10 @@ void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
   if (M == 0 || Ncols == 0)
     return;
   if (K == 0) {
-    scaleByBeta(C, M, Ncols, ldc, cColMajor, beta, stream);
+    scaleByBeta(C, M, Ncols, ldc, cColMajor, beta,
+                static_cast<gpuStream_t>(stream));
   } else {
-    Call<State> call(stream, scratch);
+    Call<State> call(static_cast<gpuStream_t>(stream), scratch);
     multiply(call);
   }
   POSEIDON_GEMM_CK(gpuGetLastError());

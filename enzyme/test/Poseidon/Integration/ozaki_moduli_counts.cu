@@ -24,6 +24,7 @@
 #include <random>
 #include <vector>
 
+#include "DeviceApi.h"
 #include "gemm/LibraryCalls.h"
 
 using poseidon::simulateOzakiIIDgemm;

@@ -1,4 +1,4 @@
-//===- HerbieRun.h - Running Herbie, with its result cache ----------------===//
+//===- HerbieRun.h - Running Herbie and reading its answers ---------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -8,22 +8,29 @@
 //
 // Runs the Herbie binary on a set of FPCore cores and returns its
 // results.json, through the result cache: one file per question, holding the
-// answer and the digest of the Herbie that gave it. Nothing here reads LLVM
-// IR; the caller passes the options that say how to run Herbie.
+// answer and the digest of the Herbie that gave it. The caller passes the
+// options that say how to run Herbie. Reads what Herbie answered: the tests of
+// its results.json, and each expression of an answer as an expression graph
+// over the values of the site.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H
 #define POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H
 
+#include "Core/FPCore.h"
+#include "Core/FPNode.h"
 #include "Core/Technique.h"
 
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace poseidon {
@@ -125,6 +132,73 @@ llvm::Expected<HerbieRunResult>
 runHerbie(const std::vector<std::string> &Cores, const Options &O,
           const HerbiePlatform &Platform, std::optional<unsigned> TaylorTerms,
           llvm::StringRef Label, HerbieBinaryDigests &Digests);
+
+/// A point of a core's cost-accuracy curve: [cost, error in bits].
+struct HerbiePoint {
+  double Cost = 0, ErrorBits = 0;
+};
+
+/// An alternative Herbie lists for a core: [cost, error in bits, expression].
+/// An entry without the expression is no candidate.
+struct HerbieAlternative {
+  HerbiePoint Point;
+  std::optional<std::string> Expr;
+};
+
+/// A core's cost-accuracy list: [initial, best, alternatives].
+struct HerbieCostAccuracy {
+  HerbiePoint Initial, Best;
+  std::vector<HerbieAlternative> Alternatives;
+};
+
+/// What Herbie found for a core it has an expression for.
+struct HerbieRewrites {
+  std::string BestExpr;
+  /// The bits of the core's precision, which the errors are out of.
+  double Bits = 0;
+  HerbieCostAccuracy CostAccuracy;
+};
+
+/// One test of a Herbie results file: the answer for the core it names.
+struct HerbieCoreAnswer {
+  std::string Name;
+  /// The core's index, which is its name.
+  size_t Core = 0;
+  /// What Herbie reports about its search, printed when present.
+  std::optional<std::string> Status;
+  std::optional<double> Time, Start, End;
+  /// None when Herbie's output is "#f".
+  std::optional<HerbieRewrites> Rewrites;
+};
+
+/// Reads the Herbie results file `Contents`, the answers for `NumCores` cores
+/// named by their index.
+llvm::Expected<std::vector<HerbieCoreAnswer>>
+readHerbieResults(llvm::StringRef Contents, size_t NumCores);
+
+/// The expression graph of the FPCore expression `expr`, over the values its
+/// symbols name in `G`, which owns the nodes the parse creates. An error,
+/// saying what and where, for an expression that is not one the evaluators and
+/// the lowering model: an unknown symbol or operator, an operator of an
+/// unmodelled format or with the wrong operand count, a truth value where a
+/// number belongs or the reverse, or a malformed literal, approx form or array.
+/// Each `#s(approx spec result)` adds its (spec, result) pair to `approxSpecs`
+/// when given; with `subgraphInputs`, an operation that recomputes the
+/// definition of one of those inputs is that input's node.
+llvm::Expected<FPNode *> parseHerbieExpr(
+    llvm::StringRef expr, FPGraph &G,
+    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
+        nullptr,
+    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
+
+/// The FPCore expression `expr` as C, one string per element of an array and
+/// one otherwise; empty when `expr` names a symbol `G` does not know or does
+/// not parse. The parse adds to `G`, as parseHerbieExpr does.
+llvm::SmallVector<std::string, 1> fpcoreToC(
+    llvm::StringRef expr, FPGraph &G, const CRendering &how,
+    llvm::StringRef resultDtype = "",
+    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
+        nullptr);
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H

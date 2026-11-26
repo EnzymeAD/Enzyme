@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/FPNode.h"
 #include "Core/Technique.h"
 #include "PassInternal.h"
 

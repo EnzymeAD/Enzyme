@@ -7,8 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // A module's annotated functions, the kernels that become sites through the
-// device functions they call, the attributes a site is marked with, and the
-// body a site's computation is outlined into.
+// device functions they call, and the attributes a site is marked with.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,20 +17,16 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
 
 #include <optional>
-#include <string>
 
 namespace llvm {
 class CallBase;
-class CallInst;
 class Function;
 class Module;
-class Value;
 } // namespace llvm
 
 namespace poseidon {
@@ -98,27 +93,10 @@ bool dropSiteAnnotations(llvm::Module &M);
 /// removes their annotations and marks, so the module compiles as written.
 bool leaveSitesAsWritten(const Options &O, SiteRecords &T, llvm::Module &M);
 
-/// Why `F` cannot be a host site; none if it can.
-std::optional<std::string> hostSiteRefusal(llvm::Function &F);
 /// Makes each annotated host function a wrapper around an outlined body that
 /// carries the site's accuracy target, recording the site's identity in `T`.
 llvm::Expected<bool> outlineHostSites(const Options &O, SiteRecords &T,
                                       llvm::Module &M);
-/// The calls whose callee is `F` itself.
-llvm::SmallVector<llvm::CallBase *, 4> callsOf(llvm::Value &F);
-/// The host body `B` handed back to the optimizer: out of llvm.compiler.used
-/// and without the mark its clones would inherit.
-void releaseHostBody(llvm::Function &B);
-
-/// Lets the inliner fold `body` back into its caller.
-void markOutlineTransparent(llvm::Function *body);
-/// Moves the code of kernel `K` into a new body, recorded in `T` with K's
-/// identity, that K calls; that call, or an error, before any change, if K
-/// cannot be a site.
-llvm::Expected<llvm::CallInst *>
-outlineKernelBody(SiteRecords &T, llvm::Function &K, llvm::Function *&bodyOut);
-/// Inlines `body` back at `call`, undoing outlineKernelBody.
-void inlineKernelBody(llvm::CallInst *call, llvm::Function *body);
 
 } // namespace poseidon
 

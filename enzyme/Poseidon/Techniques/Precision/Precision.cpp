@@ -13,6 +13,7 @@
 
 #include "Precision.h"
 #include "Core/FPCore.h"
+#include "Core/FPNode.h"
 #include "Expansion.h"
 #include "ExpansionModel.h"
 #include "Model/CostModel.h"
@@ -20,7 +21,6 @@
 #include "Model/Sampling.h"
 #include "Narrowing.h"
 #include "Profile/ProfileReader.h"
-#include "Sites/Canonicalize.h"
 #include "Solve/Explain.h"
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"

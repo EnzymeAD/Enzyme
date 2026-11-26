@@ -21,7 +21,6 @@
 #include "Enzyme/Utils.h"
 #include "MatmulInternal.h"
 #include "Support/Utils.h"
-#include "Targets/NVPTX.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -39,6 +38,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -52,6 +52,93 @@
 using namespace llvm;
 
 namespace poseidon {
+
+// The NVPTX instructions the raised code is built from: the WMMA fragment
+// operations, the block barrier, the TF32 rounding and the thread geometry.
+
+// The threads that execute one WMMA fragment operation together.
+static constexpr unsigned kWarpSize = 32;
+// log2 of kWarpSize.
+static constexpr unsigned kLog2WarpSize = 5;
+static_assert(1u << kLog2WarpSize == kWarpSize);
+
+// The launch value `kind` on `axis` (0 to 2), read at `B`'s insertion point.
+static Value *emitLaunchValue(IRBuilderBase &B, Module *M, LaunchValue kind,
+                              unsigned axis) {
+  return Target::of(*M).emitLaunchValue(B, kind, axis);
+}
+
+namespace {
+// The barrier of a thread block (__syncthreads) and its operands.
+struct Barrier {
+  // The barrier intrinsic, declared in the module.
+  Function *Fn;
+  // The operands a call of `Fn` takes.
+  SmallVector<Value *, 1> Args;
+};
+} // namespace
+
+// The block barrier, declared in `M`.
+static Barrier declareBarrier(Module *M) {
+  return {Intrinsic::getOrInsertDeclaration(
+              M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
+          {ConstantInt::get(Type::getInt32Ty(M->getContext()), 0)}};
+}
+
+// `x`, an f32, rounded to nearest to TF32 and kept in f32 storage, which the
+// TF32 fragment loads read as it is.
+static Value *emitRoundToTF32(IRBuilderBase &B, Module *M, Value *x) {
+  // f2tf32.rna gives the i32 bit pattern.
+  Function *f2tf32 =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_f2tf32_rna);
+  return B.CreateBitCast(B.CreateCall(f2tf32, {x}), x->getType());
+}
+
+namespace {
+// The fragment operations of one m x n x k shape, through generic pointers: A
+// and D row-major, B row-major or column-major. `operand` and `accumulator`
+// name the element types as the instructions spell them (f16, bf16, tf32,
+// f64; f16, f32, f64).
+struct Wmma {
+  // The fragment loads of A and B, the multiply-accumulate, and the store of
+  // D, declared in the module.
+  Function *LoadA, *LoadB, *Mma, *StoreD;
+};
+} // namespace
+
+static Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
+  Intrinsic::ID id = Intrinsic::lookupIntrinsicID(name.str());
+  if (id == Intrinsic::not_intrinsic)
+    report_fatal_error("resolveWmmaIntrinsic: intrinsic not found: " + name);
+  return id;
+}
+
+// The fragment operations of the `m` x `n` x `k` shape, declared in `M`. A
+// shape and type combination NVPTX has no intrinsic for is a fatal error.
+static Wmma declareWmma(Module *M, unsigned m, unsigned n, unsigned k,
+                        StringRef operand, StringRef accumulator,
+                        bool bRowMajor) {
+  const std::string shape =
+      ("m" + Twine(m) + "n" + Twine(n) + "k" + Twine(k)).str();
+  const std::string a = operand.str(), d = accumulator.str();
+  const std::string layoutB = bRowMajor ? "row" : "col";
+  // An F16 product names its C/D precision pair; the other operand types
+  // imply theirs and name only themselves.
+  const std::string mmaSuffix = a == "f16" ? d + "." + d : a;
+  Intrinsic::ID loadA = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
+                                             ".load.a.row.stride." + a);
+  Intrinsic::ID loadB = resolveWmmaIntrinsic(
+      "llvm.nvvm.wmma." + shape + ".load.b." + layoutB + ".stride." + a);
+  Intrinsic::ID mma = resolveWmmaIntrinsic(
+      "llvm.nvvm.wmma." + shape + ".mma.row." + layoutB + "." + mmaSuffix);
+  Intrinsic::ID storeD = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
+                                              ".store.d.row.stride." + d);
+  PointerType *genPtrTy = getInt8PtrTy(M->getContext());
+  return {Intrinsic::getOrInsertDeclaration(M, loadA, {genPtrTy}),
+          Intrinsic::getOrInsertDeclaration(M, loadB, {genPtrTy}),
+          Intrinsic::getOrInsertDeclaration(M, mma),
+          Intrinsic::getOrInsertDeclaration(M, storeD, {genPtrTy})};
+}
 
 // fptrunc/fpext between FP types (no-op when they match). Two types of one
 // width never meet: a product is raised only in float or double, whose
@@ -88,7 +175,7 @@ static Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
   std::optional<unsigned> a = tidAxisIndex(axis);
   if (!a)
     report_fatal_error("emitTidIntrinsic: axis not resolved (Unknown/Other)");
-  return nvptx::emitThreadIndex(B, M, *a);
+  return emitLaunchValue(B, M, LaunchValue::ThreadIndex, *a);
 }
 
 // The thread's value of a matrix index.
@@ -113,13 +200,13 @@ static std::pair<Value *, Value *>
 emitThreadLinAndBlockSize(IRBuilder<> &B, Module *M, const uint32_t (&block)[3],
                           bool is2DBlock) {
   Type *i32Ty = B.getInt32Ty();
-  Value *tx = nvptx::emitThreadIndex(B, M, 0);
-  Value *ty = nvptx::emitThreadIndex(B, M, 1);
+  Value *tx = emitLaunchValue(B, M, LaunchValue::ThreadIndex, 0);
+  Value *ty = emitLaunchValue(B, M, LaunchValue::ThreadIndex, 1);
   Value *nx = ConstantInt::get(i32Ty, block[0]);
   Value *bsz = ConstantInt::get(i32Ty, block[0] * block[1] * block[2]);
   Value *planeRow = ty;
   if (!is2DBlock) {
-    Value *tz = nvptx::emitThreadIndex(B, M, 2);
+    Value *tz = emitLaunchValue(B, M, LaunchValue::ThreadIndex, 2);
     planeRow =
         B.CreateAdd(B.CreateMul(tz, ConstantInt::get(i32Ty, block[1])), ty);
   }
@@ -136,7 +223,7 @@ static Value *emitSliceQuantize(IRBuilder<> &B, Module *mod, Value *vs_f32,
                                 NumberFormat slice) {
   if (slice == NumberFormat::FP16 || slice == NumberFormat::BF16)
     return B.CreateFPTrunc(vs_f32, storageTypeOf(B.getContext(), slice));
-  return nvptx::emitRoundToTF32(B, mod, vs_f32);
+  return emitRoundToTF32(B, mod, vs_f32);
 }
 
 // Slice value back to F32 for the next residual; TF32 is already F32 storage.
@@ -324,7 +411,7 @@ static BasicBlock *emitRaiseGuard(BasicBlock &preheader, BasicBlock &loopHeader,
   Value *raise = nullptr;
   for (unsigned axis = 0; axis < 3; ++axis) {
     Value *eq = GB.CreateICmpEQ(
-        nvptx::emitBlockDim(GB, mod, axis),
+        emitLaunchValue(GB, mod, LaunchValue::BlockDim, axis),
         ConstantInt::get(GB.getInt32Ty(), h.profiledBlock[axis]));
     raise = raise ? GB.CreateAnd(raise, eq) : eq;
   }
@@ -339,9 +426,9 @@ static BasicBlock *emitRaiseGuard(BasicBlock &preheader, BasicBlock &loopHeader,
       continue;
     assert(h.profiledBlock[axis] && "a profiled block has every extent");
     const uint64_t blocks = ub / h.profiledBlock[axis];
-    Value *inside = GB.CreateICmpULT(nvptx::emitBlockIndex(GB, mod, axis),
-                                     ConstantInt::get(GB.getInt32Ty(), blocks),
-                                     "raise.inside");
+    Value *inside = GB.CreateICmpULT(
+        emitLaunchValue(GB, mod, LaunchValue::BlockIndex, axis),
+        ConstantInt::get(GB.getInt32Ty(), blocks), "raise.inside");
     raise = GB.CreateAnd(raise, inside);
   }
   BasicBlock *raiseBB =
@@ -376,7 +463,7 @@ struct RaiseContext {
   // means K-contiguous (col-major), otherwise K-strided (row-major). B always
   // routes through scratch, so this only sets the fill's read strides.
   bool bRowMajor;
-  nvptx::Wmma wmma;
+  Wmma wmma;
   unsigned aFragSize, bFragSize, cFragSize;
   Type *cFragElemTy;
   // Warp-gate the mma chain when there is a single output tile per block, and
@@ -446,9 +533,9 @@ static RaiseContext makeRaiseContext(const RecognizedMatmul &m,
         " is not a multiple of the element size " + Twine(C.srcByte));
   C.bRowMajor = h.bStrideByte != C.srcByte;
 
-  C.wmma = nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK,
-                              dtypeName(v.operand), dtypeName(v.accumulator),
-                              /*bRowMajor=*/true);
+  C.wmma = declareWmma(mod, t.tileM, t.tileN, t.tileK, dtypeName(v.operand),
+                       dtypeName(v.accumulator),
+                       /*bRowMajor=*/true);
   FunctionType *mmaFTy = C.wmma.Mma->getFunctionType();
   C.aFragSize = fragSize(C.wmma.LoadA->getFunctionType()->getReturnType());
   C.bFragSize = fragSize(C.wmma.LoadB->getFunctionType()->getReturnType());
@@ -458,7 +545,7 @@ static RaiseContext makeRaiseContext(const RecognizedMatmul &m,
   C.cFragElemTy = mmaFTy->getParamType(C.aFragSize + C.bFragSize);
 
   const bool partialWarpBlock =
-      h.blockThreads() != 0 && h.blockThreads() % nvptx::kWarpSize != 0;
+      h.blockThreads() != 0 && h.blockThreads() % kWarpSize != 0;
   C.useWarpGate = C.L.mTiles * C.L.nTiles == 1 || partialWarpBlock;
   return C;
 }
@@ -533,8 +620,7 @@ static std::pair<Value *, Value *> emitBlockBases(const RaiseContext &C,
 // in header PHIs. Leaves `bodyB` after the fills' barrier.
 static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
                                    IRBuilder<> &bodyB, Value *aBlockBase,
-                                   Value *bBlockBase,
-                                   const nvptx::Barrier &barrier) {
+                                   Value *bBlockBase, const Barrier &barrier) {
   const RecognizedMatmul &m = C.m;
   const ScalarLoopHandle &h = C.h;
   const unsigned tileK = C.t.tileK;
@@ -615,7 +701,7 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
     // truncates the low 13 mantissa bits, which biases the result one way, so
     // the fill rounds to nearest first.
     if (operand == NumberFormat::TF32)
-      cvt = nvptx::emitRoundToTF32(PB, C.mod, cvt);
+      cvt = emitRoundToTF32(PB, C.mod, cvt);
     return {cvt};
   };
   // The block is the profiled M x N one, so a fill of at most M * N elements
@@ -649,8 +735,8 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
 }
 
 static Value *emitIsWarp0(const RaiseContext &C, IRBuilder<> &GB, Value *lin) {
-  Value *warpId = GB.CreateLShr(
-      lin, ConstantInt::get(C.i32Ty, nvptx::kLog2WarpSize), "warp_id");
+  Value *warpId =
+      GB.CreateLShr(lin, ConstantInt::get(C.i32Ty, kLog2WarpSize), "warp_id");
   return GB.CreateICmpEQ(warpId, ConstantInt::get(C.i32Ty, 0), "is_warp0");
 }
 
@@ -674,7 +760,7 @@ static BasicBlock *openWarpGate(const RaiseContext &C, IRBuilder<> &B,
 // C.useWarpGate, then the barrier that keeps the next fill off the tiles the
 // chain reads, and the back edge.
 static void emitMmaChain(const RaiseContext &C, IRBuilder<> &bodyB,
-                         KStreamLoop &K, const nvptx::Barrier &barrier) {
+                         KStreamLoop &K, const Barrier &barrier) {
   const unsigned N = C.N, cFragSize = C.cFragSize;
   const unsigned numPhisPerGroup = C.accPhisPerGroup();
   BasicBlock *gatePreBB = nullptr;
@@ -806,7 +892,7 @@ static void emitMmaChain(const RaiseContext &C, IRBuilder<> &bodyB,
 // ends in, which still branches back to the loop.
 static std::pair<Value *, BasicBlock *>
 emitStoreAndReadback(const RaiseContext &C, const KStreamLoop &K,
-                     const nvptx::Barrier &barrier) {
+                     const Barrier &barrier) {
   const ScalarLoopHandle &h = C.h;
   const unsigned cFragSize = C.cFragSize;
   // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
@@ -941,7 +1027,7 @@ void materializeInKernel(const RecognizedMatmul &m,
   createScratch(C, aScratch, bScratch, dScratch);
 
   IRBuilder<> B(preheader->getTerminator());
-  const nvptx::Barrier barrier = nvptx::declareBarrier(C.mod);
+  const Barrier barrier = declareBarrier(C.mod);
   auto [aBlockBase, bBlockBase] = emitBlockBases(C, B);
   for (unsigned k = 0; k < C.N; ++k) {
     C.aGen.push_back(B.CreateAddrSpaceCast(aScratch[k], C.genPtrTy));

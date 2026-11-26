@@ -195,8 +195,8 @@ extern "C" void __poseidon_tcec_dgemm(double *C, const double *A,
                                       const double *B, int M, int Ncols, int K,
                                       int lda, int ldb, int ldc, int aColMajor,
                                       int bColMajor, int cColMajor,
-                                      double alpha, double beta,
-                                      cudaStream_t stream, int mode) {
+                                      double alpha, double beta, void *stream,
+                                      int mode) {
   const cuMpSGEMM_compute_mode_t computeMode = computeModeOf(mode);
   runEntry<TcecDevice>(
       "__poseidon_tcec_dgemm", C, M, Ncols, K, ldc, cColMajor, beta, stream,

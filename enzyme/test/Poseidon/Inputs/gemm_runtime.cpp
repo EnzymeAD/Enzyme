@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include "DeviceApi.h"
 #include "gemm/LibraryCalls.h"
 
 #define CK(x)                                                                  \

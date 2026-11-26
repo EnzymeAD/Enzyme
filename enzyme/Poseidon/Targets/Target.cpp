@@ -17,6 +17,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/TargetParser/Triple.h"
 
 #include <optional>
@@ -25,6 +26,10 @@
 using namespace llvm;
 
 namespace poseidon {
+
+Value *Target::emitLaunchValue(IRBuilderBase &, LaunchValue, unsigned) const {
+  llvm_unreachable("the target has no in-kernel matrix raise");
+}
 
 const Target &Target::of(const Module &M) {
   const Triple T(M.getTargetTriple());

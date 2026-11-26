@@ -9,6 +9,7 @@
 #include "CostModel.h"
 #include "Core/FPCore.h"
 #include "Core/NumberFormat.h"
+#include "Profile/ProfileReader.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"

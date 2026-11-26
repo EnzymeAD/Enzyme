@@ -610,7 +610,7 @@ template <class F> void withModuli(int nm, F &&f) {
 extern "C" void __poseidon_ozakiii_dgemm(
     double *C, const double *A, const double *B, int M, int Ncols, int K,
     int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
-    double alpha, double beta, gpuStream_t stream, int num_moduli) {
+    double alpha, double beta, void *stream, int num_moduli) {
   checkModuli(num_moduli);
   runEntry<OzakiDevice>("__poseidon_ozakiii_dgemm", C, M, Ncols, K, ldc,
                         cColMajor, beta, stream,

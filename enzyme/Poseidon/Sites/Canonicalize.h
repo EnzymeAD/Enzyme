@@ -35,12 +35,6 @@ llvm::Function *canonicalize(llvm::Function &F);
 /// numbered against, and profile-use refuses a form that does not match it.
 std::string canonicalFormHash(const llvm::Function &F);
 
-/// Whether V is a floating-point operation the pass profiles and rewrites: an
-/// instruction it can model, whose operands are float or double arguments and
-/// literals, integer literals, or scalar floating-point or integer
-/// instructions.
-bool isOptimizable(const llvm::Value &V);
-
 /// The metadata a canonical clone's optimizable instruction carries its slot
 /// in: the rank among optimizable instructions, which the profile-generate and
 /// profile-use compiles share.

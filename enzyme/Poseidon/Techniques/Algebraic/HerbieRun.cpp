@@ -1,4 +1,4 @@
-//===- HerbieRun.cpp - Running Herbie, with its result cache --------------===//
+//===- HerbieRun.cpp - Running Herbie and reading its answers -------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -7,17 +7,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "HerbieRun.h"
+#include "Core/NumberFormat.h"
 #include "Support/CacheKey.h"
 #include "Support/Options.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -27,6 +31,7 @@
 #include <algorithm>
 #include <chrono>
 #include <optional>
+#include <regex>
 
 using namespace llvm;
 
@@ -596,6 +601,351 @@ runHerbie(const std::vector<std::string> &Cores, const Options &O,
                  << binaryDigest << '\n';
   Run.Result = HerbieRunResult::Outcome::Ok;
   return Run;
+}
+
+static bool fromJSON(const json::Value &V, HerbiePoint &Point, json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 2) {
+    P.report("expected [cost, error]");
+    return false;
+  }
+  return fromJSON((*A)[0], Point.Cost, P.index(0)) &&
+         fromJSON((*A)[1], Point.ErrorBits, P.index(1));
+}
+
+static bool fromJSON(const json::Value &V, HerbieAlternative &Alt,
+                     json::Path P) {
+  if (!fromJSON(V, Alt.Point, P))
+    return false;
+  const json::Array &A = *V.getAsArray();
+  if (A.size() < 3)
+    return true;
+  return fromJSON(A[2], Alt.Expr.emplace(), P.index(2));
+}
+
+static bool fromJSON(const json::Value &V, HerbieCostAccuracy &CA,
+                     json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 3) {
+    P.report("expected [initial, best, alternatives]");
+    return false;
+  }
+  return fromJSON((*A)[0], CA.Initial, P.index(0)) &&
+         fromJSON((*A)[1], CA.Best, P.index(1)) &&
+         fromJSON((*A)[2], CA.Alternatives, P.index(2));
+}
+
+static bool fromJSON(const json::Value &V, HerbieCoreAnswer &Answer,
+                     json::Path P) {
+  json::ObjectMapper O(V, P);
+  std::string Output;
+  if (!O || !O.map("name", Answer.Name) || !O.map("output", Output))
+    return false;
+  const json::Object &Test = *V.getAsObject();
+  if (std::optional<StringRef> Status = Test.getString("status"))
+    Answer.Status = Status->str();
+  Answer.Time = Test.getNumber("time");
+  Answer.Start = Test.getNumber("start");
+  Answer.End = Test.getNumber("end");
+  if (Output == "#f")
+    return true;
+  HerbieRewrites &R = Answer.Rewrites.emplace();
+  R.BestExpr = std::move(Output);
+  return O.map("bits", R.Bits) && O.map("cost-accuracy", R.CostAccuracy);
+}
+
+Expected<std::vector<HerbieCoreAnswer>> readHerbieResults(StringRef Contents,
+                                                          size_t NumCores) {
+  Expected<json::Value> Results = json::parse(Contents);
+  if (!Results)
+    return Results.takeError();
+  const json::Object *Top = Results->getAsObject();
+  const json::Array *Tests = Top ? Top->getArray("tests") : nullptr;
+  if (!Tests)
+    return createStringError(
+        inconvertibleErrorCode(),
+        "expected an object with a \"tests\" array at the top level");
+  std::vector<HerbieCoreAnswer> Answers(Tests->size());
+  for (auto [I, Test] : enumerate(*Tests)) {
+    HerbieCoreAnswer &Answer = Answers[I];
+    std::string Where = formatv("tests[{0}]", I);
+    json::Path::Root Root(Where);
+    if (!fromJSON(Test, Answer, Root)) {
+      std::string Why = toString(Root.getError());
+      if (!Answer.Name.empty())
+        Why += ", core \"" + Answer.Name + "\"";
+      return createStringError(inconvertibleErrorCode(), Why);
+    }
+    if (StringRef(Answer.Name).getAsInteger(10, Answer.Core) ||
+        Answer.Core >= NumCores)
+      return createStringError(
+          inconvertibleErrorCode(),
+          formatv("{0} names core \"{1}\", and the cores asked about are 0 "
+                  "to {2}",
+                  Where, Answer.Name, NumCores - 1));
+  }
+  return Answers;
+}
+
+// The items of `S` separated by spaces outside parentheses, from its first
+// non-space character on; each further space separates another item.
+static SmallVector<StringRef, 4> splitTopLevel(StringRef S) {
+  SmallVector<StringRef, 4> Items;
+  S = S.ltrim(' ');
+  int Depth = 0;
+  size_t Start = 0;
+  for (size_t I = 0; I < S.size(); ++I) {
+    if (S[I] == '(') {
+      ++Depth;
+    } else if (S[I] == ')') {
+      --Depth;
+    } else if (S[I] == ' ' && Depth == 0) {
+      Items.push_back(S.slice(Start, I));
+      Start = I + 1;
+    }
+  }
+  if (Start < S.size())
+    Items.push_back(S.drop_front(Start));
+  return Items;
+}
+
+// Whether `N` is a truth value: a comparison, a logical operation, or a choice
+// between truth values.
+static bool isBoolean(const FPNode &N) {
+  if (N.getType() != FPNode::NodeType::Node)
+    return false;
+  if (N.is(fpcore::If))
+    return isBoolean(*N.operands[1]);
+  return N.op->Boolean;
+}
+
+static Error malformed(const Twine &Why, StringRef Expr) {
+  return createStringError(inconvertibleErrorCode(),
+                           Why + " in '" + Expr + "'");
+}
+
+// How an approx form and an element projection begin.
+static constexpr StringLiteral kApproxHead = "#s(approx";
+static constexpr StringLiteral kProjectionHead = "ref.";
+
+namespace {
+struct FPCoreParser {
+  FPGraph &G;
+  SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs;
+  const SetVector<Value *> *subgraphInputs;
+
+  // `expr`, an array only when it is the whole expression (`top`).
+  Expected<FPNode *> parse(StringRef expr, bool top);
+  // `expr` parsed as a number, not a truth value or an array.
+  Expected<FPNode *> parseNumber(StringRef expr) {
+    Expected<FPNode *> N = parse(expr, /*top=*/false);
+    if (N && isBoolean(**N))
+      return malformed("a truth value where a number is expected", expr);
+    return N;
+  }
+
+private:
+  // A literal, `#s(literal v format)` or a bare number; null for any other
+  // text.
+  Expected<FPNode *> parseLiteral(const std::string &expr);
+  // `#s(approx spec result)`: the result, the pair kept in approxSpecs.
+  Expected<FPNode *> parseApprox(StringRef expr, bool top);
+  // `(ref.N.array<...> e)`: element N of the array or sincos e.
+  Expected<FPNode *> parseProjection(StringRef expr, StringRef head,
+                                     StringRef args);
+  // `(op.dtype operands...)`.
+  Expected<FPNode *> parseOperation(StringRef expr, StringRef head,
+                                    StringRef args, bool top);
+};
+} // namespace
+
+Expected<FPNode *> FPCoreParser::parse(StringRef expr, bool top) {
+  const std::string trimmedExpr = expr.trim(' ').str();
+  if (trimmedExpr.empty())
+    return malformed("an empty expression", expr);
+  if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#')
+    if (FPNode *node = G.valueToNodeMap[G.symbolToValueMap[trimmedExpr]])
+      return node;
+  Expected<FPNode *> literal = parseLiteral(trimmedExpr);
+  if (!literal || *literal)
+    return literal;
+  if (StringRef(trimmedExpr).starts_with(kApproxHead))
+    return parseApprox(trimmedExpr, top);
+  if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')')
+    return malformed("an unknown symbol or an unparenthesized operation",
+                     trimmedExpr);
+  StringRef body = StringRef(trimmedExpr).drop_front().drop_back();
+  StringRef head = body.take_until([](char c) { return c == ' '; });
+  StringRef args = body.drop_front(head.size());
+  if (head.starts_with(kProjectionHead))
+    return parseProjection(trimmedExpr, head, args);
+  return parseOperation(trimmedExpr, head, args, top);
+}
+
+Expected<FPNode *> FPCoreParser::parseLiteral(const std::string &expr) {
+  static const std::regex constantPattern(
+      "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+(\\w+)\\)$");
+  static const std::regex plainConstantPattern(
+      R"(^([-+]?(\d+(\.\d+)?)(/\d+)?|[-+]?inf\.0))");
+  // Herbie writes a literal as an exact rational of a representable value and
+  // an infinity as inf.0, so a zero denominator is no value it can mean.
+  auto zeroDenominator = [](StringRef Literal) {
+    StringRef Denominator = Literal.split('/').second;
+    return !Denominator.empty() &&
+           Denominator.find_first_not_of('0') == StringRef::npos;
+  };
+  std::smatch matches;
+  const NumberFormatInfo *format;
+  if (std::regex_match(expr, matches, constantPattern)) {
+    format = StringSwitch<const NumberFormatInfo *>(matches[3].str())
+                 .Case("binary64", &formatOf(NumberFormat::FP64))
+                 .Case("binary32", &formatOf(NumberFormat::FP32))
+                 .Default(nullptr);
+    if (!format)
+      return malformed("a literal of the unmodelled format " + matches[3].str(),
+                       expr);
+  } else if (std::regex_match(expr, matches, plainConstantPattern)) {
+    format = &formatOf(NumberFormat::FP64);
+  } else {
+    return nullptr;
+  }
+  std::string value = matches[1].str();
+  if (zeroDenominator(value))
+    return malformed("a rational literal with denominator 0", expr);
+  return G.create<FPConst>(value, format);
+}
+
+Expected<FPNode *> FPCoreParser::parseApprox(StringRef expr, bool top) {
+  StringRef inner = expr.drop_front(kApproxHead.size()).drop_back().trim(' ');
+  SmallVector<StringRef, 4> parts = splitTopLevel(inner);
+  if (expr.back() != ')' || parts.size() < 2)
+    return malformed("an approx form without its specification and result",
+                     expr);
+  StringRef resultPart = inner.drop_front(parts[0].size() + 1).trim(' ');
+  if (approxSpecs)
+    approxSpecs->push_back({parts[0].str(), resultPart.str()});
+  return parse(resultPart, top);
+}
+
+Expected<FPNode *> FPCoreParser::parseProjection(StringRef expr, StringRef head,
+                                                 StringRef args) {
+  unsigned idx;
+  StringRef inner = args.trim(' ');
+  if (!head.drop_front(kProjectionHead.size())
+           .take_until([](char c) { return c == '.'; })
+           .getAsInteger(10, idx) &&
+      !inner.empty() && inner.front() == '(' && inner.back() == ')') {
+    StringRef projected = inner.drop_front().drop_back();
+    StringRef of = projected.take_until([](char c) { return c == ' '; });
+    SmallVector<StringRef, 4> elems =
+        splitTopLevel(projected.drop_front(of.size()));
+    if (of == "array" && idx < elems.size())
+      return parseNumber(elems[idx]);
+    if ((of == "sincos.f64" || of == "sincos.f32") && elems.size() == 1 &&
+        idx < 2) {
+      auto *node = G.create<FPNode>(*fpcoreOperator(idx == 0 ? "sin" : "cos"),
+                                    formatOfDtype(of.split('.').second));
+      Expected<FPNode *> operand = parseNumber(elems[0]);
+      if (!operand)
+        return operand.takeError();
+      node->addOperand(*operand);
+      return node;
+    }
+  }
+  return malformed("an array projection of no array element", expr);
+}
+
+Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
+                                                StringRef args, bool top) {
+  StringRef op = head;
+  const NumberFormatInfo *format = nullptr;
+  if (head.starts_with("array<")) {
+    op = fpcore::Array.Name;
+  } else if (size_t pos = head.find('.'); pos != StringRef::npos) {
+    op = head.substr(0, pos);
+    format = formatOfDtype(head.substr(pos + 1));
+    if (!format || (format->Kind != NumberFormat::FP64 &&
+                    format->Kind != NumberFormat::FP32))
+      return malformed("the operator " + head + " of an unmodelled format",
+                       expr);
+  }
+
+  const FPCoreOperator *O = fpcoreOperator(op);
+  if (!O)
+    return malformed("the operator " + op + ", which Poseidon does not model",
+                     expr);
+  SmallVector<StringRef, 4> operandTexts = splitTopLevel(args);
+  if (O == &fpcore::Array ? !top || operandTexts.empty()
+                          : operandTexts.size() != O->Arity)
+    return malformed(O == &fpcore::Array
+                         ? Twine("an array that is not a whole expression")
+                         : "the operator " + op + " with " +
+                               Twine(operandTexts.size()) +
+                               " operand(s), not " + Twine(O->Arity),
+                     expr);
+
+  // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
+  // destination precision, which makes it an identity at that precision.
+  if (!format) {
+    if (O == &fpcore::ToBinary32)
+      format = &formatOf(NumberFormat::FP32);
+    else if (O == &fpcore::ToBinary64)
+      format = &formatOf(NumberFormat::FP64);
+  }
+
+  auto *node = G.create<FPNode>(*O, format);
+  // A logical operation, and the condition of a choice, take truth values;
+  // every other operand is a number.
+  const bool logical =
+      O == &fpcore::And || O == &fpcore::Or || O == &fpcore::Not;
+  const bool choice = O == &fpcore::If;
+  for (auto [k, text] : enumerate(operandTexts)) {
+    const bool truth = logical || (choice && k == 0);
+    Expected<FPNode *> operand =
+        truth || choice ? parse(text, /*top=*/false) : parseNumber(text);
+    if (!operand)
+      return operand.takeError();
+    if (truth && !isBoolean(**operand))
+      return malformed("a number where a truth value is expected", text);
+    node->addOperand(*operand);
+  }
+  if (choice && isBoolean(*node->operands[1]) != isBoolean(*node->operands[2]))
+    return malformed("a choice between a number and a truth value", expr);
+
+  if (subgraphInputs)
+    if (FPNode *existing = existingDefinition(*node, *subgraphInputs, G))
+      return existing;
+  return node;
+}
+
+Expected<FPNode *> parseHerbieExpr(
+    StringRef expr, FPGraph &G,
+    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
+    const SetVector<Value *> *subgraphInputs) {
+  FPCoreParser P{G, approxSpecs, subgraphInputs};
+  Expected<FPNode *> N = P.parse(expr, /*top=*/true);
+  if (N && isBoolean(**N))
+    return malformed("a truth value where a number is expected", expr);
+  return N;
+}
+
+SmallVector<std::string, 1>
+fpcoreToC(StringRef expr, FPGraph &G, const CRendering &how,
+          StringRef resultDtype,
+          SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
+  SmallVector<std::string, 1> out;
+  Expected<FPNode *> parsed = parseHerbieExpr(expr, G, approxSpecs, how.inputs);
+  if (!parsed) {
+    consumeError(parsed.takeError());
+    return out;
+  }
+  FPNode *node = *parsed;
+  if (node->is(fpcore::Array))
+    for (const auto &element : node->operands)
+      out.push_back(renderC(*element, how, resultDtype));
+  else
+    out.push_back(renderC(*node, how, resultDtype));
+  return out;
 }
 
 } // namespace poseidon

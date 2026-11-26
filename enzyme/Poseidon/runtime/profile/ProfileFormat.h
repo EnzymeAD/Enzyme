@@ -165,17 +165,6 @@ profileFail(const char *format, ...) {
   _exit(1);
 }
 
-// A runtime call that fails while the program runs stops it with the message,
-// by abort.
-[[noreturn]] __attribute__((format(printf, 1, 2))) inline void
-profileAbort(const char *format, ...) {
-  va_list args;
-  va_start(args, format);
-  profileReport(format, args);
-  va_end(args);
-  abort();
-}
-
 // A profile that cannot be written is a profile the solve will not find, so
 // the run stops. Called with errno from the failed open.
 [[noreturn]] inline void profileOpenFatal(const std::string &path,
@@ -223,14 +212,6 @@ inline long long profileEnvInteger(const char *name, long long dflt) {
   if (end == v || *end != '\0' || errno == ERANGE)
     profileBadEnv(name, v, "an integer");
   return parsed;
-}
-
-inline unsigned long long profileEnvPositive(const char *name,
-                                             unsigned long long dflt) {
-  long long parsed = profileEnvInteger(name, (long long)dflt);
-  if (parsed <= 0)
-    profileBadEnv(name, getenv(name), "a positive integer");
-  return (unsigned long long)parsed;
 }
 
 // Replaces the Kappa lines of the profile at `path` with `lines`, kept in the

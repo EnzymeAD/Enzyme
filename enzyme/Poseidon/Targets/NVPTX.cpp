@@ -10,25 +10,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "NVPTX.h"
-#include "Enzyme/Utils.h"
 #include "MathLibrary.h"
 #include "Target.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/IR/CallingConv.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Support/ErrorHandling.h"
 
+#include <cassert>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -93,6 +87,13 @@ public:
         if (II->getIntrinsicID() == kSreg[kind][axis])
           return {kSregValue[kind], (int)axis};
     return {};
+  }
+  Value *emitLaunchValue(IRBuilderBase &B, LaunchValue Kind,
+                         unsigned Axis) const override {
+    const LaunchValue *Row = llvm::find(kSregValue, Kind);
+    assert(Row != std::end(kSregValue) && "no register holds the value");
+    return B.CreateCall(Intrinsic::getOrInsertDeclaration(
+        B.GetInsertBlock()->getModule(), kSreg[Row - kSregValue][Axis]));
   }
 
   StringRef mathLibrary() const override { return "libdevice"; }
@@ -183,63 +184,4 @@ const Target &nvptxTarget() {
   return T;
 }
 
-namespace nvptx {
-
-static Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
-  Intrinsic::ID id = Intrinsic::lookupIntrinsicID(name.str());
-  if (id == Intrinsic::not_intrinsic)
-    report_fatal_error("resolveWmmaIntrinsic: intrinsic not found: " + name);
-  return id;
-}
-
-Value *emitThreadIndex(IRBuilderBase &B, Module *M, unsigned axis) {
-  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[0][axis]));
-}
-
-Value *emitBlockIndex(IRBuilderBase &B, Module *M, unsigned axis) {
-  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[1][axis]));
-}
-
-Value *emitBlockDim(IRBuilderBase &B, Module *M, unsigned axis) {
-  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, kSreg[2][axis]));
-}
-
-Barrier declareBarrier(Module *M) {
-  return {Intrinsic::getOrInsertDeclaration(
-              M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
-          {ConstantInt::get(Type::getInt32Ty(M->getContext()), 0)}};
-}
-
-Value *emitRoundToTF32(IRBuilderBase &B, Module *M, Value *x) {
-  // f2tf32.rna gives the i32 bit pattern.
-  Function *f2tf32 =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_f2tf32_rna);
-  return B.CreateBitCast(B.CreateCall(f2tf32, {x}), x->getType());
-}
-
-Wmma declareWmma(Module *M, unsigned m, unsigned n, unsigned k,
-                 StringRef operand, StringRef accumulator, bool bRowMajor) {
-  const std::string shape =
-      ("m" + Twine(m) + "n" + Twine(n) + "k" + Twine(k)).str();
-  const std::string a = operand.str(), d = accumulator.str();
-  const std::string layoutB = bRowMajor ? "row" : "col";
-  // An F16 product names its C/D precision pair; the other operand types
-  // imply theirs and name only themselves.
-  const std::string mmaSuffix = a == "f16" ? d + "." + d : a;
-  Intrinsic::ID loadA = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
-                                             ".load.a.row.stride." + a);
-  Intrinsic::ID loadB = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".load.b." + layoutB + ".stride." + a);
-  Intrinsic::ID mma = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".mma.row." + layoutB + "." + mmaSuffix);
-  Intrinsic::ID storeD = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
-                                              ".store.d.row.stride." + d);
-  PointerType *genPtrTy = getInt8PtrTy(M->getContext());
-  return {Intrinsic::getOrInsertDeclaration(M, loadA, {genPtrTy}),
-          Intrinsic::getOrInsertDeclaration(M, loadB, {genPtrTy}),
-          Intrinsic::getOrInsertDeclaration(M, mma),
-          Intrinsic::getOrInsertDeclaration(M, storeD, {genPtrTy})};
-}
-
-} // namespace nvptx
 } // namespace poseidon

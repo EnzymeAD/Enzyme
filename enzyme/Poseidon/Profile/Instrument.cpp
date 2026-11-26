@@ -8,6 +8,7 @@
 
 #include "Instrument.h"
 
+#include "Core/FPNode.h"
 #include "Enzyme/Utils.h"
 #include "Sites/Annotations.h"
 #include "Sites/Canonicalize.h"

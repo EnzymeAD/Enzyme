@@ -8,8 +8,8 @@
 
 #include "SiteIdentity.h"
 
-#include "Annotations.h"
 #include "Markers.h"
+#include "Site.h"
 #include "Targets/OffloadRuntime.h"
 
 #include "llvm/ADT/STLExtras.h"

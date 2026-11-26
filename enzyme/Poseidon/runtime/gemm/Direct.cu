@@ -150,10 +150,12 @@ void multiply(Call<DirectDevice> &call, int mode, const LibraryFormat &format,
 
 } // namespace
 
-extern "C" void __poseidon_direct_dgemm(
-    double *C, const double *A, const double *B, int M, int Ncols, int K,
-    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
-    double alpha, double beta, gpuStream_t stream, int mode) {
+extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
+                                        const double *B, int M, int Ncols,
+                                        int K, int lda, int ldb, int ldc,
+                                        int aColMajor, int bColMajor,
+                                        int cColMajor, double alpha,
+                                        double beta, void *stream, int mode) {
   const LibraryFormat format = formatOf(mode);
   runEntry<DirectDevice>(
       "__poseidon_direct_dgemm", C, M, Ncols, K, ldc, cColMajor, beta, stream,
@@ -168,7 +170,7 @@ extern "C" void __poseidon_native_dgemm(double *C, const double *A,
                                         int K, int lda, int ldb, int ldc,
                                         int aColMajor, int bColMajor,
                                         int cColMajor, double alpha,
-                                        double beta, gpuStream_t stream) {
+                                        double beta, void *stream) {
   runEntry<Device>(
       "__poseidon_native_dgemm", C, M, Ncols, K, ldc, cColMajor, beta, stream,
       /*scratch=*/false, [&](Call<Device> &call) {

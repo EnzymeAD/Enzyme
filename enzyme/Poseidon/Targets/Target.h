@@ -27,6 +27,7 @@ namespace llvm {
 class CallInst;
 class Function;
 class GlobalValue;
+class IRBuilderBase;
 class Module;
 class Type;
 class Value;
@@ -107,6 +108,11 @@ public:
 
   /// The launch geometry `V` reads; Kind None when it reads none.
   virtual LaunchGeometry decodeLaunchValue(const llvm::Value *V) const = 0;
+  /// A read of the launch value `Kind` on `Axis` (0 to 2) at `B`'s insertion
+  /// point, the inverse of decodeLaunchValue; only on a target with an
+  /// in-kernel matrix raise.
+  virtual llvm::Value *emitLaunchValue(llvm::IRBuilderBase &B, LaunchValue Kind,
+                                       unsigned Axis) const;
 
   /// The name of the target's math library.
   virtual llvm::StringRef mathLibrary() const = 0;

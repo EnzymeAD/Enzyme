@@ -47,7 +47,7 @@
   P(int, I32, cColMajor)                                                       \
   P(double, Double, alpha)                                                     \
   P(double, Double, beta)                                                      \
-  LAST(gpuStream_t, Ptr, stream)
+  LAST(void *, Ptr, stream)
 #endif
 
 #ifndef POSEIDON_GEMM_ENTRY

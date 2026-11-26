@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Core/FPCore.h"
+#include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
 #include "Core/Technique.h"
 #include "Optimize.h"
@@ -107,7 +108,7 @@ void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
       }
 
       valueToNodeMap[&I] = G.create<FPLLValue>(
-          &I, fpcoreOperator(getHerbieOperator(I)), nodeFormat(I.getType()));
+          &I, fpcoreOperator(fpcoreName(I)), nodeFormat(I.getType()));
     }
   }
 
@@ -348,7 +349,7 @@ static bool isSplitPoint(const Options &O, Instruction *I,
   }
   const bool forced =
       isa<CallInst>(I) &&
-      is_contained(O.Candidates.SubgraphSplitCalls, getHerbieOperator(*I));
+      is_contained(O.Candidates.SubgraphSplitCalls, fpcoreName(*I));
 
   unsigned internalUses = 0;
   for (auto *U : I->users()) {

@@ -309,8 +309,7 @@ FPNode *nodeOf(Value *V, FPGraph &G) {
     node = G.create<FPConst>(s.c_str(), format);
   } else {
     auto *I = cast<Instruction>(V);
-    node =
-        G.create<FPLLValue>(I, fpcoreOperator(getHerbieOperator(*I)), format);
+    node = G.create<FPLLValue>(I, fpcoreOperator(fpcoreName(*I)), format);
     for (Value *op : I->operands())
       if (!isa<Function>(op))
         node->addOperand(nodeOf(op, G));

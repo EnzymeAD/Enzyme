@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The textual forms of the expression graph: FPCore, the language Herbie reads
-// and answers in, with its operator names for LLVM instructions, and the C an
-// explain record shows a rewrite as.
+// The textual forms of the expression graph: the FPCore operators the pass
+// models, with their names for LLVM instructions, and the C an explain record
+// shows a rewrite as.
 //
 //===----------------------------------------------------------------------===//
 
@@ -20,12 +20,10 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/Error.h"
 
 #include <functional>
 #include <memory>
@@ -41,10 +39,9 @@ class Type;
 
 namespace poseidon {
 
-/// An operator of Herbie's FPCore as the pass models it: its operand count
-/// and whether it yields a truth value, and how the lowering and the
-/// evaluators compute it. A consumer computes an operator whose column it
-/// reads is empty by its name.
+/// An FPCore operator as the pass models it: its operand count and whether it
+/// yields a truth value, and how the lowering and the evaluators compute it. A
+/// consumer computes an operator whose column it reads is empty by its name.
 struct FPCoreOperator {
   /// The FPCore name ("+", "sin", "if").
   llvm::StringLiteral Name;
@@ -89,21 +86,6 @@ extern const FPCoreOperator &Neg, &Add, &Sub, &Mul, &Div, &Pow, &Sqrt, &Fma,
     &And, &Or, &Not, &True, &False, &If, &Array, &ToBinary32, &ToBinary64;
 } // namespace fpcore
 
-/// The expression graph of the FPCore expression `expr`, over the values its
-/// symbols name in `G`, which owns the nodes the parse creates. An error,
-/// saying what and where, for an expression that is not one the evaluators and
-/// the lowering model: an unknown symbol or operator, an operator of an
-/// unmodelled format or with the wrong operand count, a truth value where a
-/// number belongs or the reverse, or a malformed literal, approx form or array.
-/// Each `#s(approx spec result)` adds its (spec, result) pair to `approxSpecs`
-/// when given; with `subgraphInputs`, an operation that recomputes the
-/// definition of one of those inputs is that input's node.
-llvm::Expected<FPNode *> parseHerbieExpr(
-    llvm::StringRef expr, FPGraph &G,
-    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
-        nullptr,
-    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
-
 /// The graph dtype of `T` ("f64"), or empty when `T` is no floating-point type
 /// of a format of the pass.
 std::string dtypeOfType(llvm::Type *T);
@@ -127,21 +109,12 @@ struct CRendering {
 std::string renderC(const FPNode &node, const CRendering &how,
                     llvm::StringRef resultDtype = "");
 
-/// The FPCore expression `expr` as C, one string per element of an array and
-/// one otherwise; empty when `expr` names a symbol `G` does not know or does
-/// not parse. The parse adds to `G`, as parseHerbieExpr does.
-llvm::SmallVector<std::string, 1> fpcoreToC(
-    llvm::StringRef expr, FPGraph &G, const CRendering &how,
-    llvm::StringRef resultDtype = "",
-    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
-        nullptr);
-
 /// The FPCore name of the operation `I`, which must be a floating-point
 /// arithmetic instruction or a call of a function.
-std::string getHerbieOperator(const llvm::Instruction &I);
+std::string fpcoreName(const llvm::Instruction &I);
 /// The FPCore name of `N`'s operation: its operator's, or for an operation of
-/// the program the operator table does not model, getHerbieOperator's; empty
-/// for a node that is no operation.
+/// the program the operator table does not model, fpcoreName's; empty for a
+/// node that is no operation.
 std::string operationName(const FPNode &N);
 
 /// The name of intrinsic `Callee` without its "llvm." prefix and type suffixes:
