@@ -68,8 +68,6 @@ constexpr llvm::StringLiteral kNoProfileAction =
 /// Warns with `message` at the annotated function `F`, once, and marks it as no
 /// site.
 void warnSite(llvm::Function &F, const llvm::Twine &message);
-/// The user error `message` at the function `F`.
-llvm::Error siteError(llvm::Function &F, const llvm::Twine &message);
 /// The functions the module's Poseidon annotations name, in module order, with
 /// the accuracy target each carries; one whose annotation cannot be read is
 /// left out.

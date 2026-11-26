@@ -15,6 +15,7 @@
 #include "Support/Options.h"
 #include "Support/Utils.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -43,7 +44,7 @@ bool isMarkerCall(StringRef calleeName) {
 }
 
 void warn(CallBase *CI, const Twine &message) {
-  diagnose(*CI->getFunction(), CI->getDebugLoc(), message, DS_Warning);
+  diagnose(*CI, message, DS_Warning);
 }
 
 /// The body a marker names, or null, without diagnostics: a malformed marker
@@ -105,10 +106,7 @@ static bool isEnzymeRequestName(StringRef name) {
       "__enzyme_augmentfwd", "__enzyme_reverse",  "__enzyme_virtualreverse",
       "__enzyme_batch",      "__enzyme_truncate", "__enzyme_error_estimate",
       "__enzyme_trace"};
-  for (StringRef req : kRequests)
-    if (name.contains(req))
-      return true;
-  return false;
+  return any_of(kRequests, [&](StringRef req) { return name.contains(req); });
 }
 
 /// Enzyme names what it generates after the function it differentiated, with

@@ -121,12 +121,11 @@ static Error keySiteTable(Session &S, const SiteState &st,
   for (const std::string &path : profilePaths) {
     auto buf = MemoryBuffer::getFile(path);
     if (!buf)
-      return userError(F, F.getSubprogram(),
-                       Twine("cannot read the profile ") + path +
-                           " again to key the DP table of " + F.getName() +
-                           " (" + buf.getError().message() +
-                           "); a profile directory must not change while a "
-                           "compile reads it.");
+      return userError(F, Twine("cannot read the profile ") + path +
+                              " again to key the DP table of " + F.getName() +
+                              " (" + buf.getError().message() +
+                              "); a profile directory must not change while a "
+                              "compile reads it.");
     profiles += contentDigest((*buf)->getBuffer()) + "\n";
   }
   key.addContent("profile", profiles);
@@ -277,7 +276,7 @@ static void writeDPTable(const Options &O, const Function &F,
   else
     E = writeCacheEntry(table.path, table.key, std::move(value));
   if (E) {
-    diagnose(F, F.getSubprogram(),
+    diagnose(F,
              "cannot write the DP cache entry " + table.path + ": " +
                  toString(std::move(E)),
              DS_Warning);
@@ -296,7 +295,7 @@ static Error checkToleranceInputs(const Function &at, StringRef siteName,
   if (!(accScale > 0.0) || !std::isfinite(accScale)) {
     std::string scaleStr;
     llvm::raw_string_ostream(scaleStr) << accScale;
-    return userError(at, at.getSubprogram(),
+    return userError(at,
                      Twine("site ") + siteName +
                          " was given an accuracy tolerance but its profile "
                          "carries a total sensitivity of " +
@@ -307,7 +306,7 @@ static Error checkToleranceInputs(const Function &at, StringRef siteName,
   }
 
   if (!std::isfinite(baseline))
-    return userError(at, at.getSubprogram(),
+    return userError(at,
                      Twine("site ") + siteName +
                          " was given an accuracy tolerance but its own "
                          "baseline accuracy cost is not finite, so no "

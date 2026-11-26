@@ -79,17 +79,11 @@ static Error readProfDescriptors(const Options &O, Module &M,
 static Constant *profIntArray(Module &M, const Twine &nameT,
                               ArrayRef<int> vals) {
   std::string name = nameT.str();
-  Type *i32 = Type::getInt32Ty(M.getContext());
-  SmallVector<Constant *, 8> elts;
-  for (int v : vals)
-    elts.push_back(ConstantInt::get(i32, (unsigned)v));
-  ArrayType *AT = ArrayType::get(i32, elts.size());
-  Constant *init = ConstantArray::get(AT, elts);
+  Constant *init = ConstantDataArray::get(M.getContext(), vals);
   if (auto *old = M.getNamedGlobal(name))
-    if (old->getValueType() == AT && old->hasInitializer() &&
-        old->getInitializer() == init)
+    if (old->hasInitializer() && old->getInitializer() == init)
       return old;
-  auto *GV = new GlobalVariable(M, AT, /*isConstant=*/true,
+  auto *GV = new GlobalVariable(M, init->getType(), /*isConstant=*/true,
                                 GlobalValue::PrivateLinkage, init, name);
   GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
   return GV;
@@ -137,7 +131,7 @@ Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
     if (!launch || !pop) {
       errors = joinErrors(
           std::move(errors),
-          userError(F, F.getSubprogram(),
+          userError(F,
                     "the launch stub " + F.getName() +
                         " does not end in __cuda/__hipPopCallConfiguration "
                         "and cuda/hipLaunchKernel, through which the "

@@ -8,6 +8,7 @@
 
 #include "AsWritten.h"
 
+#include "Support/Utils.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -19,7 +20,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalIFunc.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
@@ -132,21 +132,6 @@ struct RewrittenReferences final : ValueMaterializer {
 
 } // namespace
 
-static void collectReferences(Value *V, SmallVectorImpl<WeakVH> &out) {
-  if (auto *G = dyn_cast<GlobalValue>(V))
-    out.push_back(G);
-  else if (auto *C = dyn_cast<Constant>(V))
-    for (Value *op : C->operands())
-      collectReferences(op, out);
-}
-
-static void collectReferences(Function &F, SmallVectorImpl<WeakVH> &out) {
-  for (Instruction &I : instructions(F))
-    for (Value *op : I.operands())
-      if (isa<Constant>(op))
-        collectReferences(op, out);
-}
-
 // Into `T`, the module as written compiled, the functions in `rewritten`, each
 // in place of T's of the same name, with what they refer to. False if a
 // reference has no counterpart in T, which is then unusable.
@@ -207,21 +192,7 @@ static bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
     NF->setName(name);
   }
   // What only T's own versions of them referred to.
-  while (!maybeDead.empty()) {
-    auto *G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
-    if (!G)
-      continue;
-    G->removeDeadConstantUsers();
-    if (!G->use_empty() || !G->isDiscardableIfUnused())
-      continue;
-    if (auto *F = dyn_cast<Function>(G))
-      collectReferences(*F, maybeDead);
-    else if (auto *V = dyn_cast<GlobalVariable>(G); V && V->hasInitializer())
-      collectReferences(V->getInitializer(), maybeDead);
-    else
-      continue;
-    G->eraseFromParent();
-  }
+  eraseDeadGlobals(maybeDead, /*declarations=*/false);
   return true;
 }
 

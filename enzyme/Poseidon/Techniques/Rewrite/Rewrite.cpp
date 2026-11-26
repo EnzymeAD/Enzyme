@@ -88,17 +88,17 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
         (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
     if (!sys::fs::exists(P.Path))
       return userError(
-          F, F.getSubprogram(),
-          Twine("the Herbie platform of this device's cost model, ") + P.Path +
-              ", does not exist; generate it with "
-              "'poseidon-calibrate --only herbie-platform --out " +
-              costModelPath(S.CostModel) + "'");
+          F, Twine("the Herbie platform of this device's cost model, ") +
+                 P.Path +
+                 ", does not exist; generate it with "
+                 "'poseidon-calibrate --only herbie-platform --out " +
+                 costModelPath(S.CostModel) + "'");
   }
 
   if (!P.Path.empty()) {
     P.Digest = readFileDigest(P.Path);
     if (P.Digest.empty())
-      return userError(F, F.getSubprogram(),
+      return userError(F,
                        Twine("cannot read the Herbie platform ") + P.Path +
                            "; -poseidon-herbie-platform names a platform file "
                            "or a platform compiled into Herbie");
@@ -310,13 +310,13 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     Expected<HerbieRunResult> Run =
         runHerbie(cores, Opts, RunLabel, S.Herbie.HerbieDigests);
     if (!Run)
-      return userError(F, F.getSubprogram(), toString(Run.takeError()));
+      return userError(F, toString(Run.takeError()));
     const HerbieRunResult &R = H.runs.emplace_back(std::move(*Run));
     // A timeout is Herbie's answer for these cores; a Herbie that does not
     // start gives none.
     if (R.Result == HerbieRunResult::Outcome::Failed)
       return userError(
-          F, F.getSubprogram(),
+          F,
           Twine(Opts.CacheDir.empty() ? "no cache is kept"
                                       : "the cache " + Opts.CacheDir +
                                             " holds no Herbie answer") +
@@ -327,13 +327,12 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
               "; point -poseidon-herbie-binary at a Herbie, or turn algebraic "
               "rewriting off with -poseidon-enable-rewrite=0");
     if (!R.Warning.empty())
-      diagnose(F, F.getSubprogram(), R.Warning, DS_Warning);
+      diagnose(F, R.Warning, DS_Warning);
     if (R.Result == HerbieRunResult::Outcome::Crashed && O.Model.StrictMode)
-      return userError(F, F.getSubprogram(),
-                       Twine("strict mode: Herbie crashed (") + R.Crash +
-                           ") on " + RunLabel +
-                           "; without -poseidon-strict-mode the subgraph is "
-                           "left as written");
+      return userError(F, Twine("strict mode: Herbie crashed (") + R.Crash +
+                              ") on " + RunLabel +
+                              "; without -poseidon-strict-mode the subgraph is "
+                              "left as written");
     if (R.Result != HerbieRunResult::Outcome::Ok)
       continue;
     const bool cached = R.From == HerbieRunResult::Origin::Cache;
@@ -344,12 +343,11 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     if (!Read) {
       std::string Why = toString(Read.takeError());
       if (O.Model.StrictMode)
-        return userError(F, F.getSubprogram(),
-                         "strict mode: " + Origin + " for " + RunLabel +
-                             " is not a Herbie results file (" + Why +
-                             "); without -poseidon-strict-mode the subgraph "
-                             "is left as written");
-      diagnose(F, F.getSubprogram(),
+        return userError(F, "strict mode: " + Origin + " for " + RunLabel +
+                                " is not a Herbie results file (" + Why +
+                                "); without -poseidon-strict-mode the subgraph "
+                                "is left as written");
+      diagnose(F,
                Origin + " for " + RunLabel + " is not a Herbie results file (" +
                    Why +
                    "), so the subgraph has no algebraic candidate from it",
@@ -408,7 +406,7 @@ static Error checkAnswer(const HerbieCoreAnswer &answer,
     if (parsed)
       return Error::success();
     return userError(
-        F, F.getSubprogram(),
+        F,
         "the Herbie answer for " + source.first + " in " +
             (source.second.empty() ? std::string("no cache file")
                                    : source.second) +
@@ -1860,7 +1858,7 @@ static void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
   if (!I)
     return;
   exprInsts.insert(I);
-  for (Value *op : isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands())
+  for (Value *op : fpOperands(*I))
     collectExprInsts(op, inputs, exprInsts, visited);
 }
 

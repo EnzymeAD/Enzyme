@@ -51,11 +51,7 @@ void warnSite(Function &F, const Twine &message) {
   if (F.hasFnAttribute(kNotASite))
     return;
   F.addFnAttr(kNotASite);
-  diagnose(F, F.getSubprogram(), message, DS_Warning);
-}
-
-Error siteError(Function &F, const Twine &message) {
-  return userError(F, F.getSubprogram(), message);
+  diagnose(F, message, DS_Warning);
 }
 
 namespace {
@@ -145,7 +141,7 @@ readAnnotations(Module &M, Error &errors) {
   SmallPtrSet<Function *, 2> unreadable;
   auto refuse = [&](Function &fn, const Twine &message) {
     if (unreadable.insert(&fn).second)
-      errors = joinErrors(std::move(errors), siteError(fn, message));
+      errors = joinErrors(std::move(errors), userError(fn, message));
   };
   for (Value *op : arr->operands()) {
     std::optional<StringRef> text = entryAnnotation(op);
@@ -332,7 +328,7 @@ Expected<bool> propagateDeviceSites(const Options &O, Module &M) {
     if (annotated.count(&K)) {
       std::optional<double> own = annotated.lookup(&K);
       if (tau && (!own || *own != *tau))
-        diagnose(K, K.getSubprogram(),
+        diagnose(K,
                  displayName(K) + " carries POSEIDON_OPTIMIZE and calls " +
                      names +
                      ", which carry it too; the kernel's own annotation and "
@@ -347,7 +343,7 @@ Expected<bool> propagateDeviceSites(const Options &O, Module &M) {
           ", so it is no wrapper around the call and not their site; move "
           "that work out of the kernel, or annotate the kernel instead";
       if (O.Profiling.profileAction())
-        errors = joinErrors(std::move(errors), siteError(K, message));
+        errors = joinErrors(std::move(errors), userError(K, message));
       else
         warnSite(K, message);
       continue;
@@ -396,7 +392,7 @@ bool foldDeviceSiteCallees(const Options &O, Module &M) {
     // computes is outside the site.
     for (Instruction &I : instructions(*K))
       if (auto *CB = dyn_cast<CallBase>(&I); CB && foldsIntoSite(T, *CB))
-        diagnose(*K, CB->getDebugLoc(),
+        diagnose(*CB,
                  displayName(*K) + " calls " +
                      displayName(*CB->getCalledFunction()) +
                      ", which the pass cannot fold into the site; the "
@@ -418,7 +414,7 @@ void warnSitesWithoutProfile(const Options &O, SiteRecords &T, Module &M) {
     return;
   T.WarnedWithoutProfile = true;
   for (Site &site : collectSites(O, M, {Site::Form::Kernel}))
-    diagnose(*site.fn, site.fn->getSubprogram(), kNoProfileAction, DS_Warning);
+    diagnose(*site.fn, kNoProfileAction, DS_Warning);
 }
 
 /// The module's POSEIDON_OPTIMIZE annotations removed, with what only they
@@ -429,7 +425,7 @@ bool dropSiteAnnotations(Module &M) {
   if (!arr)
     return false;
   SmallVector<Constant *, 8> kept;
-  SmallSetVector<GlobalVariable *, 8> maybeDead;
+  SmallVector<WeakVH, 8> maybeDead;
   for (Value *op : arr->operands()) {
     auto *entry = cast<Constant>(op);
     std::optional<StringRef> str = entryAnnotation(entry);
@@ -439,7 +435,7 @@ bool dropSiteAnnotations(Module &M) {
     }
     for (Use &U : cast<ConstantStruct>(entry)->operands())
       if (auto *G = dyn_cast<GlobalVariable>(U.get()->stripPointerCasts()))
-        maybeDead.insert(G);
+        maybeDead.push_back(G);
   }
   if (kept.size() == arr->getNumOperands())
     return false;
@@ -447,11 +443,7 @@ bool dropSiteAnnotations(Module &M) {
     GA->eraseFromParent();
   else
     replaceAnnotations(M, GA, kept);
-  for (GlobalVariable *G : maybeDead) {
-    G->removeDeadConstantUsers();
-    if (G->use_empty() && G->isDiscardableIfUnused())
-      G->eraseFromParent();
-  }
+  eraseDeadGlobals(maybeDead, /*declarations=*/false);
   return true;
 }
 
@@ -623,7 +615,7 @@ outlineInto(Function &F, Function &B,
 Expected<CallInst *> outlineKernelBody(SiteRecords &T, Function &K,
                                        Function *&bodyOut) {
   if (K.isVarArg() || !K.getReturnType()->isVoidTy())
-    return siteError(
+    return userError(
         K, "an annotated kernel must be a void, non-variadic function");
   Module &M = *K.getParent();
   // An AMDGPU kernel takes an aggregate by reference into its constant
@@ -633,7 +625,7 @@ Expected<CallInst *> outlineKernelBody(SiteRecords &T, Function &K,
   for (Argument &A : K.args())
     if (A.hasByRefAttr()) {
       if (!reroots(&A))
-        return siteError(K, displayName(K) + " uses its aggregate parameter " +
+        return userError(K, displayName(K) + " uses its aggregate parameter " +
                                 Twine(A.getArgNo() + 1) +
                                 " otherwise than by loading or copying from "
                                 "it, so it cannot be a Poseidon site; copy the "
@@ -751,7 +743,7 @@ Expected<bool> outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
     if (std::optional<std::string> why = hostSiteRefusal(*F)) {
       errors =
           joinErrors(std::move(errors),
-                     siteError(*F, displayName(*F) + " " + *why +
+                     userError(*F, displayName(*F) + " " + *why +
                                        ", so it cannot be a Poseidon site"));
       continue;
     }

@@ -64,7 +64,7 @@ static Expected<PinItem> parseApplyItem(StringRef text, const Function &site) {
       item->site = site.str();
   }
   if (!item)
-    return userError(site, site.getSubprogram(),
+    return userError(site,
                      "-poseidon-pin: cannot read '" + Twine(text) +
                          "'; an item is [<site>:]<unit>_<ordinal> or "
                          "[<site>:]<unit>=<name>, <unit> being R<i>, P<i> or "
@@ -129,12 +129,11 @@ Error noteSiteForPins(Session &S, const Function &body) {
       continue;
     item.named.insert(key);
     if (item.named.size() > 1)
-      return userError(body, body.getSubprogram(),
-                       "-poseidon-pin item '" + Twine(item.text) +
-                           "' names the site '" + item.site +
-                           "', which more than one site of this module "
-                           "answers to; give one of them by its symbol:" +
-                           listSites(item.named));
+      return userError(body, "-poseidon-pin item '" + Twine(item.text) +
+                                 "' names the site '" + item.site +
+                                 "', which more than one site of this module "
+                                 "answers to; give one of them by its symbol:" +
+                                 listSites(item.named));
   }
   return Error::success();
 }
@@ -168,29 +167,27 @@ static Expected<size_t> findNamed(const PinItem &item, const Function &F,
     if (cands.candidateName(i) != item.name)
       continue;
     if (found)
-      return userError(F, F.getSubprogram(),
-                       "-poseidon-pin: " + Twine(site) + ": " + unit +
-                           " has more than one candidate named '" + item.name +
-                           "'; give it as " + unit + "_<ordinal>");
+      return userError(F, "-poseidon-pin: " + Twine(site) + ": " + unit +
+                              " has more than one candidate named '" +
+                              item.name + "'; give it as " + unit +
+                              "_<ordinal>");
     found = i;
   }
   if (found)
     return *found;
   for (const auto &[name, why] : cands.droppedCandidates())
     if (name == item.name)
-      return userError(F, F.getSubprogram(),
-                       "-poseidon-pin: " + Twine(site) + ": " + unit +
-                           " has no candidate named '" + item.name +
-                           "': pricing dropped it, because " + why);
+      return userError(F, "-poseidon-pin: " + Twine(site) + ": " + unit +
+                              " has no candidate named '" + item.name +
+                              "': pricing dropped it, because " + why);
   std::string names;
   for (size_t i = 0; i < cands.numCandidates(); ++i)
     names += "\n  " + cands.candidateName(i);
   if (names.empty())
     names = " none";
-  return userError(F, F.getSubprogram(),
-                   "-poseidon-pin: " + Twine(site) + ": " + unit +
-                       " has no candidate named '" + item.name +
-                       "'; its candidates are:" + names);
+  return userError(F, "-poseidon-pin: " + Twine(site) + ": " + unit +
+                          " has no candidate named '" + item.name +
+                          "'; its candidates are:" + names);
 }
 
 Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
@@ -223,23 +220,21 @@ Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
         has = (kind.letter + "0").str();
       else if (ofKind > 1)
         has = (kind.letter + "0 to " + kind.letter + Twine(ofKind - 1)).str();
-      return userError(F, F.getSubprogram(),
-                       "-poseidon-pin item '" + Twine(id) + "': there is no " +
-                           name + "; the site has " + has);
+      return userError(F, "-poseidon-pin item '" + Twine(id) +
+                              "': there is no " + name + "; the site has " +
+                              has);
     }
     size_t pos;
     if (item.ordinal) {
       std::optional<size_t> found = unit->positionOfOrdinal(*item.ordinal);
       if (!found && kind.pricingDrops)
-        return userError(F, F.getSubprogram(),
-                         "-poseidon-pin item '" + Twine(id) + "': " + name +
-                             " has no candidate " + Twine(*item.ordinal) +
-                             " that pricing kept");
+        return userError(F, "-poseidon-pin item '" + Twine(id) + "': " + name +
+                                " has no candidate " + Twine(*item.ordinal) +
+                                " that pricing kept");
       if (!found)
-        return userError(F, F.getSubprogram(),
-                         "-poseidon-pin item '" + Twine(id) + "': " + name +
-                             " has no candidate " + Twine(*item.ordinal) +
-                             "; it has " + Twine(unit->numCandidates()));
+        return userError(F, "-poseidon-pin item '" + Twine(id) + "': " + name +
+                                " has no candidate " + Twine(*item.ordinal) +
+                                "; it has " + Twine(unit->numCandidates()));
       pos = *found;
     } else {
       Expected<size_t> named = findNamed(item, F, key, name, *unit);
@@ -248,22 +243,20 @@ Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
       pos = *named;
     }
     if (!appliedUnits.insert(unit).second)
-      return userError(F, F.getSubprogram(),
-                       "-poseidon-pin item '" + Twine(id) + "': " + name +
-                           " already has " + kind.appliedNoun +
-                           " applied; give one item per unit");
+      return userError(F, "-poseidon-pin item '" + Twine(id) + "': " + name +
+                              " already has " + kind.appliedNoun +
+                              " applied; give one item per unit");
     // The rule the solvers keep: a raise replaces the loop it reads, so no
     // other step may edit an instruction of that loop.
     for (const SolutionStep &prior : steps) {
       const SiteUnit &other = unitOf(prior);
       if ((unit->consumesFootprint() || other.consumesFootprint()) &&
           unit->footprintOverlaps(other))
-        return userError(F, F.getSubprogram(),
-                         "-poseidon-pin item '" + Twine(id) + "': " + name +
-                             " and " + other.info().letter +
-                             Twine(other.indexInKind()) +
-                             " change the same instructions, and one of "
-                             "them replaces them; give one of the two");
+        return userError(F, "-poseidon-pin item '" + Twine(id) + "': " + name +
+                                " and " + other.info().letter +
+                                Twine(other.indexInKind()) +
+                                " change the same instructions, and one of "
+                                "them replaces them; give one of the two");
     }
     if (S.Opts.Diagnostics.Print)
       llvm::errs() << "[poseidon] Selecting " << id << ": "

@@ -136,8 +136,7 @@ bool isOptimizable(const llvm::Value &V) {
   const auto *I = dyn_cast<Instruction>(&V);
   if (!I || !isOptimizableOperation(I))
     return false;
-  const auto *CI = dyn_cast<CallInst>(I);
-  return all_of(CI ? CI->args() : I->operands(),
+  return all_of(fpOperands(*I),
                 [](const Use &U) { return isModelledOperand(U.get()); });
 }
 
@@ -200,18 +199,13 @@ std::string canonicalFormHash(const Function &F) {
       continue;
     os << slot++ << '|' << I.getOpcodeName() << '|';
     I.getType()->print(os);
+    for (const Use &op : fpOperands(I)) {
+      os << '|';
+      op->getType()->print(os);
+    }
     if (const auto *CI = dyn_cast<CallInst>(&I)) {
-      for (const Value *arg : CI->args()) {
-        os << '|';
-        arg->getType()->print(os);
-      }
       const Function *callee = CI->getCalledFunction();
       os << '|' << (callee ? callee->getName() : StringRef("<indirect>"));
-    } else {
-      for (const Use &op : I.operands()) {
-        os << '|';
-        op->getType()->print(os);
-      }
     }
     os << '\n';
   }
@@ -496,13 +490,10 @@ static void preprocess(Function *F) {
         continue;
       IRBuilder<> B(Select);
       Value *Result = nullptr;
-      if (Pred == FCmpInst::FCMP_OGT && match(CmpRHS, m_AnyZeroFP()) &&
-          CmpLHS == TrueVal && match(FalseVal, m_AnyZeroFP())) {
-        Result = B.CreateIntrinsic(
-            Intrinsic::maxnum, CmpLHS->getType(),
-            {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
-      } else if (Pred == FCmpInst::FCMP_OLT && match(CmpRHS, m_AnyZeroFP()) &&
-                 CmpLHS == FalseVal && match(TrueVal, m_AnyZeroFP())) {
+      if ((Pred == FCmpInst::FCMP_OGT && match(CmpRHS, m_AnyZeroFP()) &&
+           CmpLHS == TrueVal && match(FalseVal, m_AnyZeroFP())) ||
+          (Pred == FCmpInst::FCMP_OLT && match(CmpRHS, m_AnyZeroFP()) &&
+           CmpLHS == FalseVal && match(TrueVal, m_AnyZeroFP()))) {
         Result = B.CreateIntrinsic(
             Intrinsic::maxnum, CmpLHS->getType(),
             {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});

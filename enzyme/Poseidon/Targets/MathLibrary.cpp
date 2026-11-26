@@ -53,16 +53,6 @@ static std::string includeAdvice(const Target &T) {
       .str();
 }
 
-static void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
-  if (auto *G = dyn_cast<GlobalValue>(V)) {
-    out.push_back(G);
-    return;
-  }
-  if (auto *C = dyn_cast<Constant>(V))
-    for (Value *op : C->operands())
-      collectGlobals(op, out);
-}
-
 static bool hasRow(StringRef Name, bool MathFunction::*Column) {
   return any_of(mathFunctions(), [&](const MathFunction &F) {
     return F.*Column && F.Name == Name;
@@ -187,29 +177,8 @@ bool releaseDeviceMath(Module &M) {
   if (!keepalive)
     return changed;
   removeFromUsedLists(M, [&](Constant *C) { return C == keepalive; });
-  SmallVector<WeakVH, 16> maybeDead;
-  maybeDead.push_back(keepalive);
-  while (!maybeDead.empty()) {
-    auto *G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
-    if (!G)
-      continue;
-    G->removeDeadConstantUsers();
-    if (!G->use_empty() || (!G->isDeclaration() && !G->isDiscardableIfUnused()))
-      continue;
-    if (auto *F = dyn_cast<Function>(G)) {
-      for (Instruction &I : instructions(*F))
-        for (Value *op : I.operands())
-          collectGlobals(op, maybeDead);
-    } else if (auto *V = dyn_cast<GlobalVariable>(G);
-               V && V->hasInitializer()) {
-      collectGlobals(V->getInitializer(), maybeDead);
-    }
-    Comdat *C =
-        isa<GlobalObject>(G) ? cast<GlobalObject>(G)->getComdat() : nullptr;
-    G->eraseFromParent();
-    if (C && C->getUsers().empty())
-      M.getComdatSymbolTable().erase(C->getName());
-  }
+  SmallVector<WeakVH, 16> maybeDead{keepalive};
+  eraseDeadGlobals(maybeDead, /*declarations=*/true);
   return true;
 }
 

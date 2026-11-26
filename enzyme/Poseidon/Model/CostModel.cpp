@@ -38,7 +38,7 @@ namespace poseidon {
 Error requireCostModel(CostModelState &CM, const Function &F) {
   const Target &T = Target::of(F);
   if (Error E = requireCostModel(CM, T.processor(F), F.getName(), T.isDevice()))
-    return userError(F, F.getSubprogram(), toString(std::move(E)));
+    return userError(F, toString(std::move(E)));
   return Error::success();
 }
 
@@ -68,7 +68,7 @@ static StringRef costType(Type *T) {
 Expected<const std::unordered_set<std::string> *>
 scalarTypes(CostModelState &CM, const Function &F) {
   if (CM.ScalarTypes.empty())
-    return userError(F, F.getSubprogram(),
+    return userError(F,
                      "cost model " + Twine(costModelPath(CM)) +
                          " carries no '# scalar_types=' header, so the formats "
                          "the device has hardware for are unknown");

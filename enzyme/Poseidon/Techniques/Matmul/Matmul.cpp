@@ -124,7 +124,7 @@ static Error reportRow(Session &S, const RecognizedMatmul &m, const Twine &what,
   if (!S.Matmul.ReportedRows.insert(row).second)
     return Error::success();
   const Instruction &at = anchorOf(m);
-  diagnose(*at.getFunction(), at.getDebugLoc(),
+  diagnose(at,
            "matrix product " + Twine(m.id) + ", " + Twine(m.M) + "x" +
                Twine(m.N) + "x" + Twine(m.K) + ": " + what + " " + consequence +
                ": this device's cost model carries no measured '" + row +
@@ -1114,7 +1114,7 @@ Error MatmulUnit::apply(Session &S, size_t candidateIndex) {
     const uint64_t bytes = enclosingKernelSharedBytes(S, F);
     const uint64_t cap = Target::of(F).maxStaticSharedBytes();
     if (bytes > cap)
-      return userError(F, F.getSubprogram(),
+      return userError(F,
                        "the in-kernel raises selected for the matrix products "
                        "of " +
                            F.getName() + " need " + Twine(bytes) +

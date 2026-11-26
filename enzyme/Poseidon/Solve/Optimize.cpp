@@ -89,7 +89,7 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   auto &profileHeader = P.header;
   const std::string &profilePath = P.path;
   if (profileMap.empty())
-    diagnose(F, F.getSubprogram(),
+    diagnose(F,
              "the profile " + profilePath + " records no operation of the site",
              DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
@@ -217,11 +217,10 @@ static Error putOnApplicationScale(Session &S, Function &F,
   if (!O.Profiling.OutputProfiles.empty()) {
     if (profileHeader.hasKappa)
       return userError(
-          F, F.getSubprogram(),
-          Twine("the profile of ") + F.getName() +
-              " carries a measured condition number, which scales one "
-              "site-wide error and so cannot be combined with "
-              "-poseidon-output-profiles; leave out one or the other");
+          F, Twine("the profile of ") + F.getName() +
+                 " carries a measured condition number, which scales one "
+                 "site-wide error and so cannot be combined with "
+                 "-poseidon-output-profiles; leave out one or the other");
     siteSumSens = 1.0;
   }
 
@@ -234,7 +233,7 @@ static Error putOnApplicationScale(Session &S, Function &F,
                           (profileHeader.kappaMark == KappaMark::BelowNoise ||
                            !(profileHeader.kappa > 0.0));
   if (unresolved)
-    diagnose(F, F.getSubprogram(),
+    diagnose(F,
              Twine("the profiling runs did not resolve the condition "
                    "number of ") +
                  F.getName() +
@@ -248,14 +247,13 @@ static Error putOnApplicationScale(Session &S, Function &F,
   if (profileHeader.hasKappa && !unresolved) {
     double sumSens = siteSumSens;
     if (sumSens == 0.0)
-      return userError(F, F.getSubprogram(),
-                       Twine("the profile of ") + F.getName() +
-                           " carries a measured condition number but a zero "
-                           "total sensitivity, so the accuracy costs cannot "
-                           "be put on the scale the condition number was "
-                           "measured against; re-run profile generation");
+      return userError(F, Twine("the profile of ") + F.getName() +
+                              " carries a measured condition number but a zero "
+                              "total sensitivity, so the accuracy costs cannot "
+                              "be put on the scale the condition number was "
+                              "measured against; re-run profile generation");
     if (profileHeader.kappaMark == KappaMark::Diverged)
-      diagnose(F, F.getSubprogram(),
+      diagnose(F,
                Twine("the profiling runs of ") + F.getName() +
                    " diverged under the smallest perturbation, so no "
                    "candidate can be traded against its accuracy and the "
@@ -362,7 +360,7 @@ static Error requireCostsOnAxis(SiteState &st, ArrayRef<SiteUnit *> units) {
         continue;
       std::string Text;
       raw_string_ostream(Text) << delta;
-      return userError(*st.F, st.F->getSubprogram(),
+      return userError(*st.F,
                        unit->choiceText(i) + " changes the cost of " +
                            st.F->getName() + " by " + Text +
                            ", which does not fit the DP's cost axis; a "

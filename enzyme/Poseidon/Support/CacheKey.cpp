@@ -83,19 +83,14 @@ CacheKey::firstDifference(const json::Object *stored,
   return std::nullopt;
 }
 
-Error writeFileAtomically(StringRef path, StringRef contents) {
-  return writeToOutput(path, [&](raw_ostream &os) {
-    os << contents;
-    return Error::success();
-  });
-}
-
 Error writeCacheEntry(StringRef path, const CacheKey &key, json::Value value) {
   json::Object entry;
   entry["key"] = key.toJSON();
   entry["value"] = std::move(value);
-  return writeFileAtomically(
-      path, formatv("{0:2}", json::Value(std::move(entry))).str() + "\n");
+  return writeToOutput(path, [&](raw_ostream &os) {
+    os << formatv("{0:2}", json::Value(std::move(entry))) << "\n";
+    return Error::success();
+  });
 }
 
 CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key,

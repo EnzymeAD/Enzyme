@@ -666,16 +666,16 @@ Expected<bool> expansionsRoundedAsWritten(const Options &O, Function &F,
     const std::optional<std::string> reason = fastFPReason(F);
     expansionSafe = !reason;
     if (reason) {
-      diagnose(F, F.getSubprogram(),
+      diagnose(F,
                "floating-point expansions are not proposed: " + *reason +
                    "; compile with -ffp-contract=on or -ffp-contract=off, "
                    "without -ffast-math",
                DS_Warning);
       if (O.Model.StrictMode)
-        return userError(F, F.getSubprogram(),
-                         "strict mode: site '" + F.getName() + "': " + *reason +
-                             "; floating-point expansions need "
-                             "-ffp-contract=on or -ffp-contract=off");
+        return userError(F, "strict mode: site '" + F.getName() +
+                                "': " + *reason +
+                                "; floating-point expansions need "
+                                "-ffp-contract=on or -ffp-contract=off");
     }
   }
 #endif

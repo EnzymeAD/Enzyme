@@ -423,7 +423,7 @@ void SubgraphSamples::warnUnsettled(unsigned unsettled, size_t points) const {
   if (!unsettled)
     return;
   const Instruction &At = *subgraph.outputs.front();
-  diagnose(*At.getFunction(), At.getDebugLoc(),
+  diagnose(At,
            "the exact value of an expression of this subgraph did not settle "
            "within " +
                Twine(kMaxMPFRPrecision) + " bits at " + Twine(unsettled) +

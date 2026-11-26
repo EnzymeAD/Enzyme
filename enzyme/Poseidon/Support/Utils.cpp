@@ -15,6 +15,7 @@
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
@@ -131,6 +132,43 @@ bool callsFunctionNamed(const Function &F, StringRef name) {
 
 std::string displayName(const Function &F) {
   return demangle(F.getName().str());
+}
+
+static void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
+  if (auto *G = dyn_cast<GlobalValue>(V))
+    out.push_back(G);
+  else if (auto *C = dyn_cast<Constant>(V))
+    for (Value *op : C->operands())
+      collectGlobals(op, out);
+}
+
+void collectReferences(GlobalValue &G, SmallVectorImpl<WeakVH> &out) {
+  if (auto *F = dyn_cast<Function>(&G)) {
+    for (Instruction &I : instructions(*F))
+      for (Value *op : I.operands())
+        collectGlobals(op, out);
+  } else if (auto *V = dyn_cast<GlobalVariable>(&G); V && V->hasInitializer()) {
+    collectGlobals(V->getInitializer(), out);
+  }
+}
+
+void eraseDeadGlobals(SmallVectorImpl<WeakVH> &maybeDead, bool declarations) {
+  while (!maybeDead.empty()) {
+    auto *G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
+    if (!G)
+      continue;
+    G->removeDeadConstantUsers();
+    if (!G->use_empty() ||
+        !(G->isDiscardableIfUnused() || (declarations && G->isDeclaration())))
+      continue;
+    collectReferences(*G, maybeDead);
+    auto *GO = dyn_cast<GlobalObject>(G);
+    Comdat *C = GO ? GO->getComdat() : nullptr;
+    Module &M = *G->getParent();
+    G->eraseFromParent();
+    if (C && C->getUsers().empty())
+      M.getComdatSymbolTable().erase(C->getName());
+  }
 }
 
 void topoSort(const SetVector<Instruction *> &insts,

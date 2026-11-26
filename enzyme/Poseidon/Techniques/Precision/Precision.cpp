@@ -1283,8 +1283,8 @@ Error proposePrecisionCandidates(
          "scalar_types header")
             .str();
     if (O.Model.StrictMode)
-      return userError(F, F.getSubprogram(), "strict mode: " + msg);
-    diagnose(F, F.getSubprogram(), msg, DS_Warning);
+      return userError(F, "strict mode: " + msg);
+    diagnose(F, msg, DS_Warning);
   }
 
   precisionUnits.push_back(std::move(PU));

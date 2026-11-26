@@ -79,6 +79,37 @@ static Expected<double> identityTarget(CallInst *H, CallBase *call,
   return readTarget(call, H->getArgOperand(1), fn);
 }
 
+constexpr StringLiteral kNoRoutedCall =
+    "__poseidon_optimize needs a function name and a call of it";
+
+/// The function the identity call `H` routes and the one call of it through H;
+/// none when H names no function or is not used by exactly one call.
+static std::optional<std::pair<Function *, CallBase *>>
+routedCall(CallInst *H) {
+  auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
+  SmallVector<CallBase *, 4> calls = callsOf(*H);
+  if (!fn || calls.size() != 1 || !H->hasOneUse())
+    return std::nullopt;
+  return std::make_pair(fn, calls.front());
+}
+
+/// The accuracy target of `call` of `fn` through the identity call `H`; an
+/// error when the target or the argument list of `identity`'s form cannot be
+/// read, or when fn is annotated itself.
+static Expected<double>
+readRoutedCall(CallInst *H, CallBase *call, Function &fn, Identity identity,
+               const MapVector<Function *, std::optional<double>> &annotated) {
+  Expected<double> tau = identityTarget(H, call, fn);
+  if (!tau)
+    return tau;
+  if (Expected<CallArguments> list = readArgumentList(call, fn, identity);
+      !list)
+    return list.takeError();
+  if (annotated.count(&fn))
+    return annotatedCallError(*call, displayName(fn));
+  return tau;
+}
+
 /// `call` made the marker call over `fn` with `tau`, unless 0, as its
 /// poseidon_tau, then enzyme_primal_return for a value, then `list` with the
 /// parameter attributes `listAttrs`. The call's value is fn's, in the profiling
@@ -225,36 +256,22 @@ static bool lowerExplicitCalls(Module &M, Error &errors) {
   MapVector<Function *, std::optional<double>> annotated =
       annotatedFunctions(M);
   for (CallInst *H : identities) {
-    auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
-    SmallVector<CallBase *, 4> calls = callsOf(*H);
-    if (!fn || calls.size() != 1 || !H->hasOneUse()) {
-      errors = joinErrors(
-          std::move(errors),
-          userError(*H, "__poseidon_optimize needs a function name and a "
-                        "call of it"));
+    std::optional<std::pair<Function *, CallBase *>> routed = routedCall(H);
+    if (!routed) {
+      errors = joinErrors(std::move(errors), userError(*H, kNoRoutedCall));
       H->replaceAllUsesWith(PoisonValue::get(H->getType()));
       H->eraseFromParent();
       continue;
     }
-    CallBase *call = calls.front();
-    const std::string name = displayName(*fn);
-    Expected<double> tau = identityTarget(H, call, *fn);
+    auto [fn, call] = *routed;
+    Expected<double> tau =
+        readRoutedCall(H, call, *fn, Identity::Explicit, annotated);
     // Whatever the outcome, the call stops going through the identity, which
     // nothing defines.
     call->setCalledOperand(fn);
     H->eraseFromParent();
     if (!tau) {
       errors = joinErrors(std::move(errors), tau.takeError());
-      continue;
-    }
-    if (Expected<CallArguments> list =
-            readArgumentList(call, *fn, Identity::Explicit);
-        !list) {
-      errors = joinErrors(std::move(errors), list.takeError());
-      continue;
-    }
-    if (annotated.count(fn)) {
-      errors = joinErrors(std::move(errors), annotatedCallError(*call, name));
       continue;
     }
     SmallVector<Value *, 8> args(call->args());
@@ -400,42 +417,27 @@ Expected<bool> lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
     const std::string callerKey =
         targetFreeName(caller->getName(), targets.lookup(caller));
     unsigned k = ordinal[callerKey]++;
-    auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
-    SmallVector<CallBase *, 4> calls = callsOf(*H);
     // Whatever the outcome, the call stops going through the helper, which
     // returns its argument, so a later run of the pass does not see it again.
     auto asWritten = [&] {
       H->replaceAllUsesWith(H->getArgOperand(0));
       H->eraseFromParent();
     };
-    if (!fn || calls.size() != 1 || !H->hasOneUse()) {
+    std::optional<std::pair<Function *, CallBase *>> routed = routedCall(H);
+    if (!routed) {
       if (active)
-        errors = joinErrors(std::move(errors),
-                            userError(*H, "__poseidon_optimize needs a "
-                                          "function name and a call of it"));
+        errors = joinErrors(std::move(errors), userError(*H, kNoRoutedCall));
       else
-        warn(H, "__poseidon_optimize needs a function name and a call of it; "
-                "the call runs as written");
+        warn(H, kNoRoutedCall + "; the call runs as written");
       asWritten();
       continue;
     }
-    CallBase *call = calls.front();
+    auto [fn, call] = *routed;
     const std::string name = displayName(*fn);
-    Expected<double> tau = identityTarget(H, call, *fn);
+    Expected<double> tau =
+        readRoutedCall(H, call, *fn, Identity::Plain, annotated);
     if (!tau) {
       errors = joinErrors(std::move(errors), tau.takeError());
-      asWritten();
-      continue;
-    }
-    if (Expected<CallArguments> list =
-            readArgumentList(call, *fn, Identity::Plain);
-        !list) {
-      errors = joinErrors(std::move(errors), list.takeError());
-      asWritten();
-      continue;
-    }
-    if (annotated.count(fn)) {
-      errors = joinErrors(std::move(errors), annotatedCallError(*call, name));
       asWritten();
       continue;
     }

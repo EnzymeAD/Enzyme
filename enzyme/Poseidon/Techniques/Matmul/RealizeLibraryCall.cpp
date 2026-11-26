@@ -513,13 +513,12 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
   CallInst *pop = findPopConfig(F);
   if (!d.standalone &&
       (!launch || (d.launchCrop && !pop) || !d.assumedEqual.empty()))
-    return userError(F, F.getSubprogram(),
-                     Twine("the stub ") + F.getName() +
-                         " of a fused library-call GEMM has no launch to "
-                         "read the operands from, or a condition to check "
-                         "first, and its kernel was fissioned device-side");
+    return userError(F, Twine("the stub ") + F.getName() +
+                            " of a fused library-call GEMM has no launch to "
+                            "read the operands from, or a condition to check "
+                            "first, and its kernel was fissioned device-side");
   if (!launch || (d.launchCrop && !pop)) {
-    diagnose(F, F.getSubprogram(),
+    diagnose(F,
              "the library call of stub " + F.getName() +
                  " has no launch to read the kernel's arguments from; the "
                  "kernel is launched as written",

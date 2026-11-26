@@ -886,7 +886,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
   if (!extents) {
     // A warning: the solver then picks among in-kernel candidates that may
     // be materially less accurate.
-    diagnose(F, F.getSubprogram(),
+    diagnose(F,
              "no library call for " + F.getName() +
                  ": a non-square product at a changed deploy scale (profile "
                  "M/N/K = " +
@@ -896,11 +896,10 @@ constantShapeLibraryNote(const Options &O, Function &F,
              DS_Warning);
     if (O.Model.StrictMode)
       return userError(
-          F, F.getSubprogram(),
-          "strict mode: the library-call geometry of " + F.getName() +
-              " is unrecoverable for a non-square GEMM at a changed deploy "
-              "scale, so its candidate set would be reduced; profile at the "
-              "deploy shape, or leave out -poseidon-strict-mode");
+          F, "strict mode: the library-call geometry of " + F.getName() +
+                 " is unrecoverable for a non-square GEMM at a changed deploy "
+                 "scale, so its candidate set would be reduced; profile at the "
+                 "deploy shape, or leave out -poseidon-strict-mode");
     return std::nullopt;
   }
   const unsigned gM = extents->M, gNcols = extents->Ncols;

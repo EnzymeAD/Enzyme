@@ -26,6 +26,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/OptimizationLevel.h"
 #include "llvm/Support/Error.h"
 
@@ -71,7 +72,7 @@ inline void setInsertPoint(llvm::IRBuilderBase &B, llvm::BasicBlock *BB,
 
 /// The operands an FP instruction computes from: a call's arguments, without
 /// its callee.
-inline auto fpOperands(llvm::Instruction &I) {
+template <typename InstT> inline auto fpOperands(InstT &I) {
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&I))
     return CI->args();
   return I.operands();
@@ -89,6 +90,16 @@ bool callsFunctionNamed(const llvm::Function &F, llvm::StringRef name);
 /// in `insts`' order where that leaves a choice.
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,
               llvm::SmallVectorImpl<llvm::Instruction *> &instsSorted);
+
+/// Appends the globals `G` refers to: a function's operands, a variable's
+/// initializer, through constant expressions.
+void collectReferences(llvm::GlobalValue &G,
+                       llvm::SmallVectorImpl<llvm::WeakVH> &out);
+/// Erases each global of `maybeDead` that nothing uses any more and that may go
+/// (discardable, or a declaration when `declarations`), then what only it
+/// referred to, and the comdats left without a member.
+void eraseDeadGlobals(llvm::SmallVectorImpl<llvm::WeakVH> &maybeDead,
+                      bool declarations);
 
 /// Inlines the calls of `F` that `pick` selects, in instruction order, and
 /// again in what that inlined, for a bounded number of rounds so that a

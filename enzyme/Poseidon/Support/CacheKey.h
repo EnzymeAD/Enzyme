@@ -67,10 +67,6 @@ private:
 /// The 64-bit xxh3 digest of `bytes` as 16 upper-case hex digits.
 std::string contentDigest(llvm::StringRef bytes);
 
-/// Replaces `path` by `contents` through a temporary file in its directory, so
-/// a reader sees the old file or the new one, never part of either.
-llvm::Error writeFileAtomically(llvm::StringRef path, llvm::StringRef contents);
-
 /// A cache with one file per entry holds the entry's key and its value as JSON.
 llvm::Error writeCacheEntry(llvm::StringRef path, const CacheKey &key,
                             llvm::json::Value value);

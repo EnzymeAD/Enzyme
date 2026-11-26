@@ -29,10 +29,14 @@ namespace poseidon {
 /// enable.
 constexpr const char *kRemarkPass = "poseidon";
 
-/// A diagnostic of `Severity` at `Loc` in `F`, its message prefixed with
-/// "Poseidon: ".
+/// A diagnostic of `Severity` at `Loc` in `F`, or at `F`'s or `I`'s location,
+/// its message prefixed with "Poseidon: ".
 void diagnose(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
               const llvm::Twine &Message, llvm::DiagnosticSeverity Severity);
+void diagnose(const llvm::Function &F, const llvm::Twine &Message,
+              llvm::DiagnosticSeverity Severity);
+void diagnose(const llvm::Instruction &I, const llvm::Twine &Message,
+              llvm::DiagnosticSeverity Severity);
 
 /// A missed-optimization remark `Name` at `Loc` in `F`: what the pass left as
 /// written there, and why.
@@ -71,6 +75,7 @@ public:
 llvm::Error userError(const llvm::Function &F,
                       const llvm::DiagnosticLocation &Loc,
                       const llvm::Twine &Message);
+llvm::Error userError(const llvm::Function &F, const llvm::Twine &Message);
 llvm::Error userError(const llvm::Instruction &I, const llvm::Twine &Message);
 /// A mistake no site is concerned in: a flag value, a plugin or a file of the
 /// whole compile.

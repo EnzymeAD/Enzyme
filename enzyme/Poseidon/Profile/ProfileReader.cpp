@@ -89,9 +89,7 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                           StringRef fileName, StringRef canonicalHash,
                           const Function &F, bool print) {
   const StringRef functionName = F.getName();
-  auto refusal = [&](const Twine &why) {
-    return userError(F, F.getSubprogram(), why);
-  };
+  auto refusal = [&](const Twine &why) { return userError(F, why); };
   std::unordered_map<size_t, double> grad, sens;
   for (const std::string &dir : dirs) {
     SmallString<128> path(dir);
@@ -158,9 +156,8 @@ private:
   int64_t LineNo = 0;
 
   Error refusal(const Twine &What) const {
-    return userError(F, F.getSubprogram(),
-                     Path + ":" + Twine(LineNo) + ": " + What +
-                         "; re-run profile generation");
+    return userError(F, Path + ":" + Twine(LineNo) + ": " + What +
+                            "; re-run profile generation");
   }
 
   /// The next line, trimmed; none at the end of the file.
@@ -376,13 +373,12 @@ Error parseProfileFile(const std::string &profilePath, const Function &F,
   ErrorOr<std::unique_ptr<MemoryBuffer>> Buffer =
       MemoryBuffer::getFile(profilePath, /*IsText=*/true);
   if (!Buffer)
-    return userError(F, F.getSubprogram(),
-                     "cannot read the profile " + profilePath + " (" +
-                         Buffer.getError().message() +
-                         "); run the program built with "
-                         "-poseidon-profile-generate, which writes it into "
-                         "POSEIDON_PROFILE_DIR (default " +
-                         POSEIDON_DEFAULT_PROFILE_DIR + ")");
+    return userError(F, "cannot read the profile " + profilePath + " (" +
+                            Buffer.getError().message() +
+                            "); run the program built with "
+                            "-poseidon-profile-generate, which writes it into "
+                            "POSEIDON_PROFILE_DIR (default " +
+                            POSEIDON_DEFAULT_PROFILE_DIR + ")");
   return ProfileParser(**Buffer, profilePath, F).parse(profileMap, header);
 }
 
@@ -392,12 +388,12 @@ Error requireCanonicalHash(const SiteProfileHeader &header,
   if (header.canonicalHash == canonicalHash)
     return Error::success();
   return userError(
-      F, F.getSubprogram(),
-      Twine("the profile of ") + F.getName() +
-          " was recorded against a different canonical form "
-          "(profile CanonicalHash " +
-          (header.canonicalHash.empty() ? "none" : header.canonicalHash) +
-          ", this compile " + canonicalHash + "); re-run profile generation");
+      F, Twine("the profile of ") + F.getName() +
+             " was recorded against a different canonical form "
+             "(profile CanonicalHash " +
+             (header.canonicalHash.empty() ? "none" : header.canonicalHash) +
+             ", this compile " + canonicalHash +
+             "); re-run profile generation");
 }
 
 StringRef kappaMarkName(KappaMark M) {
@@ -423,7 +419,7 @@ Error requireMeasuredKappa(const SiteProfileHeader &header,
   if (header.hasKappa || header.kappaMark != KappaMark::Unmeasured)
     return Error::success();
   return userError(
-      F, F.getSubprogram(),
+      F,
       Twine("the profiling run declared a metric with poseidon_metric and "
             "did not measure the condition number of ") +
           F.getName() + " against it (" + profilePath +

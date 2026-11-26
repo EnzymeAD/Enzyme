@@ -481,7 +481,7 @@ static void writeExplanation(const Session &S, const Function &F,
                              StringRef stem, json::Object doc) {
   const std::string &dir = explanationDir(S.Opts);
   if (auto EC = sys::fs::create_directories(dir)) {
-    diagnose(F, F.getSubprogram(),
+    diagnose(F,
              "cannot create the explanation directory " + dir + ": " +
                  EC.message(),
              DS_Warning);
@@ -489,9 +489,11 @@ static void writeExplanation(const Session &S, const Function &F,
   }
   SmallString<128> path(dir);
   sys::path::append(path, stem + ".explain.json");
-  if (Error Err = writeFileAtomically(
-          path, formatv("{0:2}", json::Value(std::move(doc))).str() + "\n")) {
-    diagnose(F, F.getSubprogram(),
+  if (Error Err = writeToOutput(path, [&](raw_ostream &os) {
+        os << formatv("{0:2}", json::Value(std::move(doc))) << "\n";
+        return Error::success();
+      })) {
+    diagnose(F,
              "cannot write the explanation " + path + ": " +
                  toString(std::move(Err)),
              DS_Warning);
@@ -646,11 +648,10 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
     return *c;
   std::string Text;
   raw_string_ostream(Text) << cost;
-  return userError(F, F.getSubprogram(),
-                   "a cost of " + Twine(Text) +
-                       " does not fit the DP's cost axis; a cost-model row "
-                       "prices a candidate beyond 2^30 times the profiled "
-                       "cost");
+  return userError(F, "a cost of " + Twine(Text) +
+                          " does not fit the DP's cost axis; a cost-model row "
+                          "prices a candidate beyond 2^30 times the profiled "
+                          "cost");
 }
 
 Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {

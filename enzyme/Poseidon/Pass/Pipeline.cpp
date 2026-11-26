@@ -364,7 +364,7 @@ struct DeferredSitePass : PassParent<DeferredSitePass> {
       if (callsEnzymeRequest(*B))
         return stopOnError(
             S, M,
-            userError(*B, B->getSubprogram(),
+            userError(*B,
                       Twine("the marked body ") + B->getName() +
                           " still holds an __enzyme_* request that nothing "
                           "lowered" +

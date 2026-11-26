@@ -240,8 +240,8 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
 
   IRBuilder<> allocaB(&*clone.getEntryBlock().getFirstInsertionPt());
   for (auto &[I, idx] : targets) {
-    unsigned numOperands =
-        isa<CallInst>(I) ? cast<CallInst>(I)->arg_size() : I->getNumOperands();
+    auto operands = fpOperands(*I);
+    unsigned numOperands = size(operands);
     ArrayType *operandArrayType = ArrayType::get(DoubleTy, numOperands);
     Value *operandArray = allocaB.CreateAlloca(operandArrayType);
 
@@ -251,8 +251,6 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
     I->replaceUsesWithIf(probed, [&](Use &U) { return U.getUser() != probed; });
     Value *loggedValue = B.CreateFPExt(probed, DoubleTy);
 
-    auto operands =
-        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
     for (auto operand : enumerate(operands)) {
       Value *origOp = operand.value();
       Value *operandValue = nullptr;
@@ -462,8 +460,7 @@ Error requireSharedMemoryLimit(Module &M) {
        << (others.empty() ? "none" : others)
        << ". Profile the kernel with smaller shared buffers, or the kernels "
           "whose shadows it reaches in another translation unit.";
-    refused =
-        joinErrors(std::move(refused), userError(K, K.getSubprogram(), msg));
+    refused = joinErrors(std::move(refused), userError(K, msg));
   }
   return refused;
 }
@@ -524,7 +521,7 @@ static const Function &userFunctionOf(const Function &F) {
 /// at the user's function.
 static Error refuseProbe(const Target &target, const Function &caller) {
   const Function &F = userFunctionOf(caller);
-  return userError(F, F.getSubprogram(), *target.profilerMismatch(F));
+  return userError(F, *target.profilerMismatch(F));
 }
 
 /// An error at the first probe call of `M`, whose target this build carries

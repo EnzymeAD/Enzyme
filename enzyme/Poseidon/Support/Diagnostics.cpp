@@ -23,6 +23,16 @@ void diagnose(const Function &F, const DiagnosticLocation &Loc,
       F, "Poseidon: " + Message.str(), Loc, Severity));
 }
 
+void diagnose(const Function &F, const Twine &Message,
+              DiagnosticSeverity Severity) {
+  diagnose(F, F.getSubprogram(), Message, Severity);
+}
+
+void diagnose(const Instruction &I, const Twine &Message,
+              DiagnosticSeverity Severity) {
+  diagnose(*I.getFunction(), I.getDebugLoc(), Message, Severity);
+}
+
 void remarkMissed(const Function &F, const DiagnosticLocation &Loc,
                   StringRef Name, const Twine &Message) {
   OptimizationRemarkEmitter ORE(&F);
@@ -38,6 +48,10 @@ char UserError::ID = 0;
 Error userError(const Function &F, const DiagnosticLocation &Loc,
                 const Twine &Message) {
   return make_error<UserError>(&F, Loc, Message.str());
+}
+
+Error userError(const Function &F, const Twine &Message) {
+  return userError(F, F.getSubprogram(), Message);
 }
 
 Error userError(const Instruction &I, const Twine &Message) {
