@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The library's FP64 product: one cublasDgemm (hipblasDgemm) in the
+// The library's FP64 product: one gpublasDgemm (hipblasDgemm) in the
 // column-major form of the call.
 //
 // The direct reduced-precision GEMM, the library realization of the in-kernel
@@ -16,7 +16,7 @@
 // target input format as the in-kernel direct raise rounds it (FP16 and BF16
 // once, including FP16's subnormal floor and 65504 ceiling; TF32 to FP32 and
 // then to nearest with ties away, as f2tf32.rna), the product runs as one
-// cublasGemmEx with an FP32 accumulator in the library's order, and the result
+// gpublasGemmEx with an FP32 accumulator in the library's order, and the result
 // is widened back to FP64 with the FP64 alpha and beta applied.
 //
 // Each operand is packed in its own layout, so the transpose is the call's op
@@ -24,11 +24,6 @@
 // every mode but TF32, which has no hipBLAS compute type.
 //
 //===----------------------------------------------------------------------===//
-
-#ifndef __HIP__
-#include <cuda_bf16.h>
-#include <cuda_fp16.h>
-#endif
 
 #include "GemmRuntime.h"
 #include "SchemeConstants.h"
@@ -47,11 +42,11 @@ struct DirectDevice : Device {
 // FP16 and BF16 in one step (through FP32 would round twice), TF32 through
 // FP32.
 struct RoundToHalf {
-  __device__ __half operator()(double v) const { return __double2half(v); }
+  __device__ gpuHalf operator()(double v) const { return gpuDoubleToHalf(v); }
 };
 struct RoundToBFloat16 {
-  __device__ __nv_bfloat16 operator()(double v) const {
-    return __double2bfloat16(v);
+  __device__ gpuBfloat16 operator()(double v) const {
+    return gpuDoubleToBfloat16(v);
   }
 };
 struct RoundToFloat {
@@ -79,23 +74,23 @@ struct WidenFloat {
 
 // How the library takes the operands of a mode.
 struct LibraryFormat {
-  cudaDataType_t operand;
-  cublasComputeType_t compute;
+  gpuDataType_t operand;
+  gpublasComputeType_t compute;
   size_t operandBytes;
 };
 
 LibraryFormat formatOf(int mode) {
   switch (mode) {
   case kDirectFp16:
-    return {CUDA_R_16F, CUBLAS_COMPUTE_32F, sizeof(__half)};
+    return {GPU_R_16F, GPUBLAS_COMPUTE_32F, sizeof(gpuHalf)};
   case kDirectBf16:
-    return {CUDA_R_16BF, CUBLAS_COMPUTE_32F, sizeof(__nv_bfloat16)};
+    return {GPU_R_16BF, GPUBLAS_COMPUTE_32F, sizeof(gpuBfloat16)};
 #ifndef __HIP__
   case kDirectTf32:
     return {CUDA_R_32F, CUBLAS_COMPUTE_32F_FAST_TF32, sizeof(float)};
 #endif
   case kDirectFp32:
-    return {CUDA_R_32F, CUBLAS_COMPUTE_32F, sizeof(float)};
+    return {GPU_R_32F, GPUBLAS_COMPUTE_32F, sizeof(float)};
   }
 #ifdef __HIP__
   const char *modes = "1, 2 or 4 (hipBLAS has no TF32)";
@@ -109,15 +104,15 @@ LibraryFormat formatOf(int mode) {
 
 // Packs a rows x cols operand, in its own layout, in the format of `mode`.
 void packOperand(int mode, void *dst, const double *src, int rows, int cols,
-                 int ld, int colMajor, cudaStream_t stream) {
+                 int ld, int colMajor, gpuStream_t stream) {
   auto as = [&](auto *typed, auto round) {
     pack(typed, src, rows, cols, ld, colMajor, colMajor, round, stream);
   };
   switch (mode) {
   case kDirectFp16:
-    return as(static_cast<__half *>(dst), RoundToHalf());
+    return as(static_cast<gpuHalf *>(dst), RoundToHalf());
   case kDirectBf16:
-    return as(static_cast<__nv_bfloat16 *>(dst), RoundToBFloat16());
+    return as(static_cast<gpuBfloat16 *>(dst), RoundToBFloat16());
 #ifndef __HIP__
   case kDirectTf32:
     return as(static_cast<float *>(dst), RoundToTf32());
@@ -127,7 +122,7 @@ void packOperand(int mode, void *dst, const double *src, int rows, int cols,
   }
 }
 
-// Pack, one cublasGemmEx with alpha = 1 and beta = 0 into P, unpack. P is in
+// Pack, one gpublasGemmEx with alpha = 1 and beta = 0 into P, unpack. P is in
 // C's layout, which the column-major form of the call gives it.
 void multiply(Call<DirectDevice> &call, int mode, const LibraryFormat &format,
               double *C, const double *A, const double *B, int M, int Ncols,
@@ -144,10 +139,10 @@ void multiply(Call<DirectDevice> &call, int mode, const LibraryFormat &format,
       M, Ncols, dev.A.data, contiguousExtent(M, K, aColMajor), aColMajor,
       dev.B.data, contiguousExtent(K, Ncols, bColMajor), bColMajor, cColMajor);
   const float one = 1.0f, zero = 0.0f;
-  POSEIDON_GEMM_CB(cublasGemmEx(call.blas(), g.opA, g.opB, g.m, g.n, K, &one,
-                                g.A, format.operand, g.lda, g.B, format.operand,
-                                g.ldb, &zero, dev.P.as<float>(), CUDA_R_32F,
-                                g.m, format.compute, CUBLAS_GEMM_DEFAULT));
+  POSEIDON_GEMM_CB(gpublasGemmEx(
+      call.blas(), g.opA, g.opB, g.m, g.n, K, &one, g.A, format.operand, g.lda,
+      g.B, format.operand, g.ldb, &zero, dev.P.as<float>(), GPU_R_32F, g.m,
+      format.compute, GPUBLAS_GEMM_DEFAULT));
 
   unpack(C, dev.P.as<float>(), M, Ncols, ldc, cColMajor,
          /*pColMajor=*/cColMajor, alpha, beta, WidenFloat(), call.stream);
@@ -158,7 +153,7 @@ void multiply(Call<DirectDevice> &call, int mode, const LibraryFormat &format,
 extern "C" void __poseidon_direct_dgemm(
     double *C, const double *A, const double *B, int M, int Ncols, int K,
     int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
-    double alpha, double beta, cudaStream_t stream, int mode) {
+    double alpha, double beta, gpuStream_t stream, int mode) {
   const LibraryFormat format = formatOf(mode);
   runEntry<DirectDevice>(
       "__poseidon_direct_dgemm", C, M, Ncols, K, ldc, cColMajor, beta, stream,
@@ -173,15 +168,15 @@ extern "C" void __poseidon_native_dgemm(double *C, const double *A,
                                         int K, int lda, int ldb, int ldc,
                                         int aColMajor, int bColMajor,
                                         int cColMajor, double alpha,
-                                        double beta, cudaStream_t stream) {
+                                        double beta, gpuStream_t stream) {
   runEntry<Device>(
       "__poseidon_native_dgemm", C, M, Ncols, K, ldc, cColMajor, beta, stream,
       /*scratch=*/false, [&](Call<Device> &call) {
         const ColumnMajorGemm g = columnMajorGemm(M, Ncols, A, lda, aColMajor,
                                                   B, ldb, bColMajor, cColMajor);
-        POSEIDON_GEMM_CB(cublasDgemm(call.blas(), g.opA, g.opB, g.m, g.n, K,
-                                     &alpha, static_cast<const double *>(g.A),
-                                     g.lda, static_cast<const double *>(g.B),
-                                     g.ldb, &beta, C, ldc));
+        POSEIDON_GEMM_CB(gpublasDgemm(call.blas(), g.opA, g.opB, g.m, g.n, K,
+                                      &alpha, static_cast<const double *>(g.A),
+                                      g.lda, static_cast<const double *>(g.B),
+                                      g.ldb, &beta, C, ldc));
       });
 }

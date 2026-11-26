@@ -19,11 +19,7 @@
 #ifndef POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H
 #define POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H
 
-#ifdef __HIP__
-#include "../HipAsCuda.h"
-#else
-#include <cuda_runtime.h>
-#endif
+#include "../DeviceApi.h"
 
 #define POSEIDON_GEMM_DECL(CType, IRType, Name) CType Name,
 #define POSEIDON_GEMM_DECL_LAST(CType, IRType, Name) CType Name

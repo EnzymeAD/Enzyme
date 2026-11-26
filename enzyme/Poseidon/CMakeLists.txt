@@ -183,7 +183,7 @@ endforeach()
 # POSEIDON_AMDGPU_ARCH. HIP marks its error type nodiscard; the sources drop
 # the same results their CUDA builds drop.
 if(POSEIDON_HAS_HIP)
-  # HipAsCuda.h, which every HIP build includes, includes hipBLAS.
+  # DeviceApi.h, which every GPU runtime source includes, includes hipBLAS.
   if(NOT EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
     message(
       FATAL_ERROR

@@ -43,8 +43,8 @@
 // row whose sum of squares overflows (|a| beyond ~1e154) or underflows to zero
 // is outside the fast mode's range, as in GEMMul8.
 //
-// The per-modulus products are one cublasGemmStridedBatchedEx(CUBLAS_OP_T,
-// CUBLAS_OP_N, CUDA_R_8I -> CUDA_R_32I, CUBLAS_COMPUTE_32I) call. Residues are
+// The per-modulus products are one gpublasGemmStridedBatchedEx(GPUBLAS_OP_T,
+// GPUBLAS_OP_N, GPU_R_8I -> GPU_R_32I, GPUBLAS_COMPUTE_32I) call. Residues are
 // laid out for its TN form: A residues row-major (column-major view A^T) and
 // B residues transposed (column-major view B), so the batched product is the
 // column-major C^T = B^T*A^T, i.e. the row-major C the CRT pass reads. Because
@@ -86,14 +86,14 @@ template <int NM, class F> __device__ __forceinline__ void forModuli(F &&f) {
 // Scaling shifts.
 // ---------------------------------------------------------------------------
 // A 32-lane tree over threadIdx.x of a 32-wide block row. A 64-lane wavefront
-// holds two such rows, and each half sums in this order (HipAsCuda.h), so
+// holds two such rows, and each half sums in this order (DeviceApi.h), so
 // HIP gives the CUDA shifts.
 __device__ __forceinline__ double warpSumUp(double s) {
-  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 16));
-  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 8));
-  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 4));
-  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 2));
-  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 1));
+  s = __dadd_ru(s, gpuShflDownSync(0xffffffffu, s, 16));
+  s = __dadd_ru(s, gpuShflDownSync(0xffffffffu, s, 8));
+  s = __dadd_ru(s, gpuShflDownSync(0xffffffffu, s, 4));
+  s = __dadd_ru(s, gpuShflDownSync(0xffffffffu, s, 2));
+  s = __dadd_ru(s, gpuShflDownSync(0xffffffffu, s, 1));
   return s;
 }
 
@@ -188,7 +188,7 @@ __global__ void shiftsStridedReduceKernel(const double *part, int R, int nChunk,
 // Shifts of the R vectors (length K) of one operand. `part` holds
 // R*ceil(K/256) doubles for the strided K >= 1024 case.
 void computeShifts(const double *src, size_t ld, int R, int K, bool contiguous,
-                   short *sft, double *part, float log2P, cudaStream_t stream) {
+                   short *sft, double *part, float log2P, gpuStream_t stream) {
   if (contiguous) {
     shiftsContiguousKernel<<<R, kOzakiIINormThreads, 0, stream>>>(src, ld, K,
                                                                   sft, log2P);
@@ -478,7 +478,7 @@ static size_t layoutScratch(Scratch &s, char *base) {
 // B's of one whole column, so every chunk count returns the same bits. Only an
 // out-of-memory status is retried. CUDA documents which errors leave the
 // context unusable (cudaErrorIllegalAddress and its kind), and
-// cudaErrorMemoryAllocation is not one of them; HIP's documentation says
+// gpuErrorMemoryAllocation is not one of them; HIP's documentation says
 // nothing either way, so there the retry relies on each call's own status:
 // any other failure, including a later call's on a damaged context, is fatal.
 static int ensureScratch(OzakiDevice &dev, int Mp, int Kp, int Ncols) {
@@ -492,21 +492,21 @@ static int ensureScratch(OzakiDevice &dev, int Mp, int Kp, int Ncols) {
   next.Ncp = s.columnsCapped ? want : std::max(want, s.Ncp);
   if (s.block) {
     drainScratch(dev);
-    POSEIDON_GEMM_CK(cudaFree(s.block));
+    POSEIDON_GEMM_CK(gpuFree(s.block));
   }
   s = Scratch();
   for (;;) {
     const size_t bytes = layoutScratch(next, nullptr);
-    const cudaError_t e = cudaMalloc(&next.block, bytes);
-    if (e == cudaSuccess)
+    const gpuError_t e = gpuMalloc(&next.block, bytes);
+    if (e == gpuSuccess)
       break;
-    if (e != cudaErrorMemoryAllocation)
-      failCall("cudaMalloc", __FILE__, __LINE__, cudaGetErrorString(e));
+    if (e != gpuErrorMemoryAllocation)
+      failCall("gpuMalloc", __FILE__, __LINE__, gpuGetErrorString(e));
     // The failure is the last error of this thread; the entry checks that.
-    (void)cudaGetLastError();
+    (void)gpuGetLastError();
     if (next.Ncp == kOzakiIIPadTile) {
       size_t freeBytes = 0, totalBytes = 0;
-      POSEIDON_GEMM_CK(cudaMemGetInfo(&freeBytes, &totalBytes));
+      POSEIDON_GEMM_CK(gpuMemGetInfo(&freeBytes, &totalBytes));
       fail("__poseidon_ozakiii_dgemm needs %zu bytes of device memory for a %d "
            "x %d operand and %d columns of the other, and the device has %zu "
            "bytes free",
@@ -527,7 +527,7 @@ static int ensureScratch(OzakiDevice &dev, int Mp, int Kp, int Ncols) {
 template <int NM>
 static void residues(const double *src, int ld, int R, int K, int transposed,
                      short *sft, int8_t *dst, int Rp, int Kp, double *part,
-                     float log2P, cudaStream_t stream) {
+                     float log2P, gpuStream_t stream) {
   computeShifts(src, ld, R, K, /*contiguous=*/!transposed, sft, part, log2P,
                 stream);
   const unsigned gr = (Rp + 31) / 32, gk = (Kp + 31) / 32;
@@ -541,14 +541,14 @@ static void residues(const double *src, int ld, int R, int K, int transposed,
 // The NM INT32 products of the residue planes in one strided-batched INT8
 // GEMM: column-major C^T (ncp x Mp) = op_T(Br) op_N(Ar) = B^T A^T, so the
 // result read row-major with row stride ncp is the row-major product.
-static void int8Products(cublasHandle_t h, const Scratch &sc, int NM, int ncp,
+static void int8Products(gpublasHandle_t h, const Scratch &sc, int NM, int ncp,
                          int Mp, int Kp) {
   const int32_t one = 1, zero = 0;
-  POSEIDON_GEMM_CB(cublasGemmStridedBatchedEx(
-      h, CUBLAS_OP_T, CUBLAS_OP_N, ncp, Mp, Kp, &one, sc.Br, CUDA_R_8I, Kp,
-      (long long)ncp * Kp, sc.Ar, CUDA_R_8I, Kp, (long long)Mp * Kp, &zero,
-      sc.Cr, CUDA_R_32I, ncp, (long long)ncp * Mp, NM, CUBLAS_COMPUTE_32I,
-      CUBLAS_GEMM_DEFAULT));
+  POSEIDON_GEMM_CB(gpublasGemmStridedBatchedEx(
+      h, GPUBLAS_OP_T, GPUBLAS_OP_N, ncp, Mp, Kp, &one, sc.Br, GPU_R_8I, Kp,
+      (long long)ncp * Kp, sc.Ar, GPU_R_8I, Kp, (long long)Mp * Kp, &zero,
+      sc.Cr, GPU_R_32I, ncp, (long long)ncp * Mp, NM, GPUBLAS_COMPUTE_32I,
+      GPUBLAS_GEMM_DEFAULT));
 }
 
 // C (M x Ncols) = alpha * (A B) + beta * C for A (M x K) and B (K x Ncols),
@@ -565,8 +565,8 @@ static void multiply(Call<OzakiDevice> &call, double *C, const double *A,
     fail("__poseidon_ozakiii_dgemm with K = %d: its INT32 residue products "
          "overflow from K = %d on",
          K, kOzakiIIMaxK);
-  const cudaStream_t stream = call.stream;
-  const cublasHandle_t h = call.blas();
+  const gpuStream_t stream = call.stream;
+  const gpublasHandle_t h = call.blas();
   const OzakiIIConstants &q = constantsOf(NM);
   const int Kp = padded(K), Mp = padded(M);
   const int chunk = ensureScratch(call.dev, Mp, Kp, Ncols);
@@ -610,7 +610,7 @@ template <class F> void withModuli(int nm, F &&f) {
 extern "C" void __poseidon_ozakiii_dgemm(
     double *C, const double *A, const double *B, int M, int Ncols, int K,
     int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
-    double alpha, double beta, cudaStream_t stream, int num_moduli) {
+    double alpha, double beta, gpuStream_t stream, int num_moduli) {
   checkModuli(num_moduli);
   runEntry<OzakiDevice>("__poseidon_ozakiii_dgemm", C, M, Ncols, K, ldc,
                         cColMajor, beta, stream,

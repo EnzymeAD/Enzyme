@@ -16,8 +16,9 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "../DeviceApi.h"
+
 #ifdef __HIP__
-#include "../HipAsCuda.h"
 // The derivative a probed site runs keeps its caches in memory it mallocs and
 // frees, and HIP defines its device malloc and free only where a source calls
 // them: referenced here, they are defined for every module linking this one.
@@ -51,14 +52,14 @@ poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
              "calls at the top of main; link libposeidon_profile_cuda and "
              "compile main with -poseidon-profile-generate.\n",
              fn ? fn : "?");
-    __trap();
+    gpuTrap();
   }
   if (!fn) {
     if (poseidonFirstFatal())
       printf("[poseidon] null %s function-name key (probe emitted "
              "without its poseidon.site.<name> global).\n",
              which);
-    __trap();
+    gpuTrap();
   }
   unsigned long long key = (unsigned long long)fn;
   int home = (int)((key >> 4) % (unsigned long long)cap);
@@ -87,7 +88,7 @@ poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
                    "never look up. Raise POSEIDON_FUNCNAME_MAXLEN and rebuild. "
                    "Name starts: '%.128s'\n",
                    which, (int)POSEIDON_FUNCNAME_MAXLEN, fn);
-          __trap();
+          gpuTrap();
         }
         __threadfence();
         return i;
@@ -103,7 +104,7 @@ poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
            "than folding this function's statistics into another function's "
            "slots.\n",
            which, cap, fn);
-  __trap();
+  gpuTrap();
   return -1;
 }
 
@@ -123,7 +124,7 @@ __device__ inline GPUProfileSlot *poseidonSlot(const char *funcName, size_t idx,
              "probes the registered device modules declared.\n",
              (unsigned long long)idx, funcName,
              (unsigned long long)T.slotCount);
-    __trap();
+    gpuTrap();
   }
   fi = poseidonFuncIdx(funcName);
   return &T.slots[(size_t)fi * T.slotCount + idx];
@@ -142,7 +143,7 @@ __poseidon_device_overlapping_arguments(const char *site, int a, int b) {
            "memory that does not overlap, or copy one of the two into a local "
            "object.\n",
            site, a, b);
-  __trap();
+  gpuTrap();
 }
 
 // Probe entry points are inactive and never inlined: they are pure
@@ -241,7 +242,7 @@ __poseidon_device_publish_static(const char *funcName, const char *text) {
              "POSEIDON_PROFILE_STATIC_MAXLEN (%d) and would be TRUNCATED into "
              "the profile header. Raise it and rebuild.\n",
              funcName, (int)POSEIDON_PROFILE_STATIC_MAXLEN);
-    __trap();
+    gpuTrap();
   }
   dst[k] = '\0';
   __threadfence();

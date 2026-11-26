@@ -19,10 +19,6 @@
 
 #include "LibraryCalls.h"
 
-#ifndef __HIP__
-#include <cublas_v2.h>
-#endif
-
 #include <algorithm>
 #include <cstdarg>
 #include <cstddef>
@@ -63,18 +59,18 @@ fail(const char *format, ...) {
 
 #define POSEIDON_GEMM_CK(call)                                                 \
   do {                                                                         \
-    cudaError_t e_ = (call);                                                   \
-    if (e_ != cudaSuccess)                                                     \
+    gpuError_t e_ = (call);                                                    \
+    if (e_ != gpuSuccess)                                                      \
       poseidon::gemm::failCall(#call, __FILE__, __LINE__,                      \
-                               cudaGetErrorString(e_));                        \
+                               gpuGetErrorString(e_));                         \
   } while (0)
 
 #define POSEIDON_GEMM_CB(call)                                                 \
   do {                                                                         \
-    cublasStatus_t s_ = (call);                                                \
-    if (s_ != CUBLAS_STATUS_SUCCESS)                                           \
+    gpublasStatus_t s_ = (call);                                               \
+    if (s_ != GPUBLAS_STATUS_SUCCESS)                                          \
       poseidon::gemm::failCall(#call, __FILE__, __LINE__,                      \
-                               cublasGetStatusString(s_));                     \
+                               gpublasGetStatusString(s_));                    \
   } while (0)
 
 //===----------------------------------------------------------------------===//
@@ -88,8 +84,8 @@ fail(const char *format, ...) {
 // streams take the scratch in turn.
 struct Device {
   std::mutex lock;
-  cublasHandle_t blas = nullptr;
-  cudaEvent_t scratchFree = nullptr;
+  gpublasHandle_t blas = nullptr;
+  gpuEvent_t scratchFree = nullptr;
 };
 
 // The State (a Device) of the current device, one per runtime, created on
@@ -97,11 +93,11 @@ struct Device {
 template <class State> State &deviceState() {
   static std::vector<State> *all = [] {
     int n = 0;
-    POSEIDON_GEMM_CK(cudaGetDeviceCount(&n));
+    POSEIDON_GEMM_CK(gpuGetDeviceCount(&n));
     return new std::vector<State>(n);
   }();
   int d = 0;
-  POSEIDON_GEMM_CK(cudaGetDevice(&d));
+  POSEIDON_GEMM_CK(gpuGetDevice(&d));
   return (*all)[d];
 }
 
@@ -110,33 +106,33 @@ template <class State> State &deviceState() {
 // call's.
 template <class State> class Call {
 public:
-  Call(cudaStream_t stream, bool scratch)
+  Call(gpuStream_t stream, bool scratch)
       : dev(deviceState<State>()), stream(stream), hold(dev.lock),
         scratch(scratch) {
     if (scratch && dev.scratchFree)
-      POSEIDON_GEMM_CK(cudaStreamWaitEvent(stream, dev.scratchFree, 0));
+      POSEIDON_GEMM_CK(gpuStreamWaitEvent(stream, dev.scratchFree, 0));
   }
   ~Call() {
     if (!scratch)
       return;
     if (!dev.scratchFree)
       POSEIDON_GEMM_CK(
-          cudaEventCreateWithFlags(&dev.scratchFree, cudaEventDisableTiming));
-    POSEIDON_GEMM_CK(cudaEventRecord(dev.scratchFree, stream));
+          gpuEventCreateWithFlags(&dev.scratchFree, gpuEventDisableTiming));
+    POSEIDON_GEMM_CK(gpuEventRecord(dev.scratchFree, stream));
   }
   Call(const Call &) = delete;
   Call &operator=(const Call &) = delete;
 
   // The device's handle, created on first use, on the call's stream.
-  cublasHandle_t blas() {
+  gpublasHandle_t blas() {
     if (!dev.blas)
-      POSEIDON_GEMM_CB(cublasCreate(&dev.blas));
-    POSEIDON_GEMM_CB(cublasSetStream(dev.blas, stream));
+      POSEIDON_GEMM_CB(gpublasCreate(&dev.blas));
+    POSEIDON_GEMM_CB(gpublasSetStream(dev.blas, stream));
     return dev.blas;
   }
 
   State &dev;
-  const cudaStream_t stream;
+  const gpuStream_t stream;
 
 private:
   std::lock_guard<std::mutex> hold;
@@ -147,7 +143,7 @@ private:
 // then be freed.
 inline void drainScratch(Device &dev) {
   if (dev.scratchFree)
-    POSEIDON_GEMM_CK(cudaEventSynchronize(dev.scratchFree));
+    POSEIDON_GEMM_CK(gpuEventSynchronize(dev.scratchFree));
 }
 
 // A device buffer of a runtime's scratch, grown to the largest size asked of
@@ -161,9 +157,9 @@ struct ScratchBuffer {
       return;
     if (data) {
       drainScratch(dev);
-      POSEIDON_GEMM_CK(cudaFree(data));
+      POSEIDON_GEMM_CK(gpuFree(data));
     }
-    POSEIDON_GEMM_CK(cudaMalloc(&data, want));
+    POSEIDON_GEMM_CK(gpuMalloc(&data, want));
     bytes = want;
   }
   template <class T> T *as() const { return static_cast<T *>(data); }
@@ -238,7 +234,7 @@ __global__ void scaleKernel(double *C, int fast, int slow, int ldc, double beta,
 }
 
 inline void scaleByBeta(double *C, int M, int Ncols, int ldc, int cColMajor,
-                        double beta, cudaStream_t stream) {
+                        double beta, gpuStream_t stream) {
   const int fast = contiguousExtent(M, Ncols, cColMajor);
   const int slow = stridedExtent(M, Ncols, cColMajor);
   forTiles(fast, slow, [&](dim3 grid, unsigned y0) {
@@ -257,7 +253,7 @@ inline void scaleByBeta(double *C, int M, int Ncols, int ldc, int cColMajor,
 // (with the scratch ordered when `scratch`).
 template <class State, class Multiply>
 void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
-              int cColMajor, double beta, cudaStream_t stream, bool scratch,
+              int cColMajor, double beta, gpuStream_t stream, bool scratch,
               Multiply multiply) {
   if (M < 0 || Ncols < 0 || K < 0)
     fail("%s with M = %d, Ncols = %d, K = %d: an extent is negative", entry, M,
@@ -270,7 +266,7 @@ void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
     Call<State> call(stream, scratch);
     multiply(call);
   }
-  POSEIDON_GEMM_CK(cudaGetLastError());
+  POSEIDON_GEMM_CK(gpuGetLastError());
 }
 
 //===----------------------------------------------------------------------===//
@@ -284,7 +280,7 @@ void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
 // row-major C is computed as C^T = B^T A^T: the operands swap and their ops
 // flip.
 struct ColumnMajorGemm {
-  cublasOperation_t opA, opB;
+  gpublasOperation_t opA, opB;
   int m, n;
   const void *A;
   int lda;
@@ -295,12 +291,12 @@ struct ColumnMajorGemm {
 inline ColumnMajorGemm columnMajorGemm(int M, int Ncols, const void *A, int lda,
                                        int aColMajor, const void *B, int ldb,
                                        int bColMajor, int cColMajor) {
-  const cublasOperation_t opA = aColMajor ? CUBLAS_OP_N : CUBLAS_OP_T;
-  const cublasOperation_t opB = bColMajor ? CUBLAS_OP_N : CUBLAS_OP_T;
+  const gpublasOperation_t opA = aColMajor ? GPUBLAS_OP_N : GPUBLAS_OP_T;
+  const gpublasOperation_t opB = bColMajor ? GPUBLAS_OP_N : GPUBLAS_OP_T;
   if (cColMajor)
     return {opA, opB, M, Ncols, A, lda, B, ldb};
-  auto flip = [](cublasOperation_t o) {
-    return o == CUBLAS_OP_N ? CUBLAS_OP_T : CUBLAS_OP_N;
+  auto flip = [](gpublasOperation_t o) {
+    return o == GPUBLAS_OP_N ? GPUBLAS_OP_T : GPUBLAS_OP_N;
   };
   return {flip(opB), flip(opA), Ncols, M, B, ldb, A, lda};
 }
@@ -337,8 +333,7 @@ __global__ void packFlatKernel(T *__restrict__ dst,
 // A source already packed in the destination's layout is one flat pass.
 template <class T, class Narrow>
 void pack(T *dst, const double *src, int rows, int cols, int ld,
-          int srcColMajor, int dstColMajor, Narrow narrow,
-          cudaStream_t stream) {
+          int srcColMajor, int dstColMajor, Narrow narrow, gpuStream_t stream) {
   const int fast = contiguousExtent(rows, cols, srcColMajor);
   if (srcColMajor == dstColMajor && ld == fast) {
     const size_t n = (size_t)rows * cols;
@@ -392,7 +387,7 @@ __global__ void unpackFlatKernel(double *__restrict__ C,
 template <class Widen>
 void unpack(double *C, const float *P, int M, int Ncols, int ldc, int cColMajor,
             int pColMajor, double alpha, double beta, Widen widen,
-            cudaStream_t stream) {
+            gpuStream_t stream) {
   const int fast = contiguousExtent(M, Ncols, cColMajor);
   auto launch = [&](auto accumulate) {
     constexpr bool Accumulate = decltype(accumulate)::value;

@@ -32,17 +32,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../runtime/DeviceApi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#ifdef __HIP__
-#include "../../runtime/HipAsCuda.h"
-#else
-#include <cuda_bf16.h>
-#include <cuda_fp16.h>
-#include <cuda_runtime.h>
+#ifndef __HIP__
 #include <mma.h>
 #endif
 
@@ -411,17 +407,17 @@ constexpr int kBatches = 7;
 constexpr double kWarmMs = 20.0, kBatchMs = 5.0;
 
 template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
-  cudaEvent_t e0, e1;
-  (void)cudaEventCreate(&e0);
-  (void)cudaEventCreate(&e1);
+  hipEvent_t e0, e1;
+  (void)hipEventCreate(&e0);
+  (void)hipEventCreate(&e1);
   auto batch = [&](int reps) {
-    (void)cudaEventRecord(e0);
+    (void)hipEventRecord(e0);
     for (int i = 0; i < reps; ++i)
       kernel();
-    (void)cudaEventRecord(e1);
-    (void)cudaEventSynchronize(e1);
+    (void)hipEventRecord(e1);
+    (void)hipEventSynchronize(e1);
     float ms;
-    (void)cudaEventElapsedTime(&ms, e0, e1);
+    (void)hipEventElapsedTime(&ms, e0, e1);
     return (double)ms;
   };
   double ms = batch(reps);
@@ -432,8 +428,8 @@ template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
   double t[kBatches];
   for (int b = 0; b < kBatches; ++b)
     t[b] = batch(reps) * 1e6 / reps;
-  (void)cudaEventDestroy(e0);
-  (void)cudaEventDestroy(e1);
+  (void)hipEventDestroy(e0);
+  (void)hipEventDestroy(e1);
   std::sort(t, t + kBatches);
   return t[kBatches / 2];
 }
@@ -851,7 +847,7 @@ static void tileRows() {
 #endif
 
 // The name and the processor of a device, as its cost model is filed under.
-static void deviceArch(const cudaDeviceProp &prop, char *arch, size_t size) {
+static void deviceArch(const gpuDeviceProp_t &prop, char *arch, size_t size) {
 #ifdef __HIP__
   // gcnArchName carries the target features ("gfx942:sramecc+:xnack-"); the
   // processor alone names the cost model.
@@ -865,7 +861,7 @@ static void deviceArch(const cudaDeviceProp &prop, char *arch, size_t size) {
 
 /// Whether `e` says that this vendor's runtime sees no device at all, as
 /// against a device it could not initialize.
-static bool isNoDevice(cudaError_t e) {
+static bool isNoDevice(gpuError_t e) {
 #ifdef __HIP__
   return e == hipErrorNoDevice || e == hipErrorInvalidDevice ||
          e == hipErrorInsufficientDriver;
@@ -881,9 +877,9 @@ static bool isNoDevice(cudaError_t e) {
 constexpr int kExitNoDevice = 2;
 
 int main(int argc, char **argv) {
-  cudaDeviceProp prop;
-  if (cudaError_t e = cudaGetDeviceProperties(&prop, 0); e != cudaSuccess) {
-    fprintf(stderr, "%s\n", cudaGetErrorString(e));
+  gpuDeviceProp_t prop;
+  if (gpuError_t e = gpuGetDeviceProperties(&prop, 0); e != gpuSuccess) {
+    fprintf(stderr, "%s\n", gpuGetErrorString(e));
     return isNoDevice(e) ? kExitNoDevice : 1;
   }
   char arch[sizeof(prop.name)];
@@ -893,9 +889,9 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  // From CUDA 13 on, cudaDeviceProp carries no clock rate.
+  // From CUDA 13 on, gpuDeviceProp_t carries no clock rate.
   int clkKHz = 0;
-  (void)cudaDeviceGetAttribute(&clkKHz, cudaDevAttrClockRate, 0);
+  (void)gpuDeviceGetAttribute(&clkKHz, gpuDevAttrClockRate, 0);
   gGhz = (double)clkKHz / 1e6;
   // 1024 threads are 32 warps of an SM, but only 16 waves of a CU, whose four
   // SIMDs hold 32: an AMD GPU takes two blocks per CU to be throughput-bound.
@@ -911,15 +907,15 @@ int main(int argc, char **argv) {
 
   size_t total = (size_t)gCfg.blocks * gCfg.threads;
   float *fout;
-  (void)cudaMalloc(&fout, total * sizeof(float));
+  (void)gpuMalloc(&fout, total * sizeof(float));
   double *dout;
-  (void)cudaMalloc(&dout, total * sizeof(double));
+  (void)gpuMalloc(&dout, total * sizeof(double));
 
 #ifdef __HIP__
   // Bring the GPU to its sustained clock before the first row.
   for (int i = 0; i < 2000; ++i)
     fma_float<1024><<<gCfg.blocks, gCfg.threads>>>(fout);
-  (void)cudaDeviceSynchronize();
+  (void)hipDeviceSynchronize();
 #endif
 
 #define BENCH_FLOAT(stem, row) BENCH_SCALAR(stem, float, #row, "float", fout)
@@ -929,8 +925,8 @@ int main(int argc, char **argv) {
   BENCH_CVT(cvt_f32_f64, fout, "fpext_float_to_double", "float");
   BENCH_CVT(cvt_f64_f32, dout, "fptrunc_double_to_float", "double");
 
-  (void)cudaFree(fout);
-  (void)cudaFree(dout);
+  (void)gpuFree(fout);
+  (void)gpuFree(dout);
 #ifndef __HIP__
   tileRows();
 #endif

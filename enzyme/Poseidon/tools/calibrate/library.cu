@@ -92,20 +92,20 @@ double *dA, *dB, *dC;
 
 /// The mean time in milliseconds of `reps` calls of `fn`, after one warm-up.
 template <class Fn> float timeit(Fn fn, int reps) {
-  cudaEvent_t a, b;
-  POSEIDON_GEMM_CK(cudaEventCreate(&a));
-  POSEIDON_GEMM_CK(cudaEventCreate(&b));
+  gpuEvent_t a, b;
+  POSEIDON_GEMM_CK(gpuEventCreate(&a));
+  POSEIDON_GEMM_CK(gpuEventCreate(&b));
   fn();
-  POSEIDON_GEMM_CK(cudaDeviceSynchronize());
-  POSEIDON_GEMM_CK(cudaEventRecord(a));
+  POSEIDON_GEMM_CK(gpuDeviceSynchronize());
+  POSEIDON_GEMM_CK(gpuEventRecord(a));
   for (int i = 0; i < reps; i++)
     fn();
-  POSEIDON_GEMM_CK(cudaEventRecord(b));
-  POSEIDON_GEMM_CK(cudaEventSynchronize(b));
+  POSEIDON_GEMM_CK(gpuEventRecord(b));
+  POSEIDON_GEMM_CK(gpuEventSynchronize(b));
   float ms;
-  POSEIDON_GEMM_CK(cudaEventElapsedTime(&ms, a, b));
-  POSEIDON_GEMM_CK(cudaEventDestroy(a));
-  POSEIDON_GEMM_CK(cudaEventDestroy(b));
+  POSEIDON_GEMM_CK(gpuEventElapsedTime(&ms, a, b));
+  POSEIDON_GEMM_CK(gpuEventDestroy(a));
+  POSEIDON_GEMM_CK(gpuEventDestroy(b));
   return ms / reps;
 }
 
@@ -114,8 +114,8 @@ double *randomDevice(size_t n) {
   double *h = (double *)malloc(n * 8), *d;
   for (size_t i = 0; i < n; i++)
     h[i] = ((double)rand() / RAND_MAX) * 2 - 1;
-  POSEIDON_GEMM_CK(cudaMalloc(&d, n * 8));
-  POSEIDON_GEMM_CK(cudaMemcpy(d, h, n * 8, cudaMemcpyHostToDevice));
+  POSEIDON_GEMM_CK(gpuMalloc(&d, n * 8));
+  POSEIDON_GEMM_CK(gpuMemcpy(d, h, n * 8, gpuMemcpyHostToDevice));
   free(h);
   return d;
 }
@@ -133,14 +133,14 @@ const int kRectCols = 12288;
 template <class Call>
 double rectPerMac(const double *A, int M, int K, int cols, Call call) {
   double *B = randomDevice((size_t)K * cols), *C;
-  POSEIDON_GEMM_CK(cudaMalloc(&C, (size_t)M * cols * 8));
-  POSEIDON_GEMM_CK(cudaMemset(C, 0, (size_t)M * cols * 8));
+  POSEIDON_GEMM_CK(gpuMalloc(&C, (size_t)M * cols * 8));
+  POSEIDON_GEMM_CK(gpuMemset(C, 0, (size_t)M * cols * 8));
   const Gemm g{C,           A,         B,         M, cols, K,
                /*lda=*/K,   /*ldb=*/K, /*ldc=*/M, 0, 1,    1,
                /*beta=*/1.0};
   float t = timeit([&] { call(g); }, Reps);
-  POSEIDON_GEMM_CK(cudaFree(B));
-  POSEIDON_GEMM_CK(cudaFree(C));
+  POSEIDON_GEMM_CK(gpuFree(B));
+  POSEIDON_GEMM_CK(gpuFree(C));
   return (double)t / ((double)M * cols * K);
 }
 
@@ -158,7 +158,7 @@ void rectRows(int M, int K, float tRef) {
             nm, M, kRectCols, K, rel);
     printf("library_ozaki_rect_rel,nm%u_m%dk%d,%.6f\n", nm, M, K, rel);
   }
-  POSEIDON_GEMM_CK(cudaFree(A));
+  POSEIDON_GEMM_CK(gpuFree(A));
 }
 
 /// Prints the Ozaki-II rows, one per modulus count, and the native DGEMM row of
@@ -186,7 +186,7 @@ void fullRows(int M, int Ncols, int K, float tRef) {
       "poseidon-calibrate-library: rect dgemm M=%d Ncols=%d K=%d  rel = %.6f\n",
       M, Ncols, K, rel);
   printf("library_ozaki_rect_rel,dgemm_m%dn%dk%d,%.6f\n", M, Ncols, K, rel);
-  POSEIDON_GEMM_CK(cudaFree(A));
+  POSEIDON_GEMM_CK(gpuFree(A));
 }
 
 /// Prints the row `family`,`key` at the time of `call` on the square product
@@ -291,7 +291,7 @@ int main(int argc, char **argv) {
   srand(1);
   dA = randomDevice(sz);
   dB = randomDevice(sz);
-  POSEIDON_GEMM_CK(cudaMalloc(&dC, sz * 8));
+  POSEIDON_GEMM_CK(gpuMalloc(&dC, sz * 8));
 
   float tRef = timeit(
       [] {

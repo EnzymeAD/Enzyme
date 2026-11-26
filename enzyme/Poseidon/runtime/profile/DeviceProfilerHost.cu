@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../DeviceApi.h"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -21,12 +22,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#ifdef __HIP__
-#include "../HipAsCuda.h"
-#else
-#include <cuda_fp16.h>
-#include <cuda_runtime.h>
-#endif
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -65,25 +60,25 @@ static std::vector<const void *> &poseidonModuleTables() {
 }
 
 // Every GPU runtime call is checked: an ignored failure leaves a sticky error
-// on the context that the next caller of cudaGetLastError() reports as its
+// on the context that the next caller of gpuGetLastError() reports as its
 // own, or a profile that is wrong.
 #define POSEIDON_DEVICE_OK(call)                                               \
   do {                                                                         \
-    cudaError_t _e = (call);                                                   \
-    if (_e != cudaSuccess)                                                     \
-      profileAbort("%s failed (%s).", #call, cudaGetErrorString(_e));          \
+    gpuError_t _e = (call);                                                    \
+    if (_e != gpuSuccess)                                                      \
+      profileAbort("%s failed (%s).", #call, gpuGetErrorString(_e));           \
   } while (0)
 
-// A device-side profiler abort (__trap) poisons the context without failing
+// A device-side profiler abort (gpuTrap) poisons the context without failing
 // the process, so the exit writer checks the context first and exits nonzero.
 static void poseidonProfileExitCheck() {
-  cudaError_t st = cudaDeviceSynchronize();
-  if (st != cudaSuccess)
+  gpuError_t st = gpuDeviceSynchronize();
+  if (st != gpuSuccess)
     profileFail("the profiled run ended with a CUDA error (%s). A device-side "
                 "profiler abort leaves the context in this state (see the "
                 "'[poseidon]' message above); the profile is "
                 "incomplete and is NOT written.",
-                cudaGetErrorString(st));
+                gpuGetErrorString(st));
 }
 
 // Tells the host profiler which kernels this writer wrote a profile for. Weak:
@@ -106,15 +101,15 @@ static std::string poseidonCanonicalHash(const char *text) {
 template <typename T>
 static std::vector<T> poseidonReadBack(const T *from, size_t n) {
   std::vector<T> to(n);
-  cudaError_t e =
-      cudaMemcpy(to.data(), from, n * sizeof(T), cudaMemcpyDeviceToHost);
-  if (e != cudaSuccess)
+  gpuError_t e =
+      gpuMemcpy(to.data(), from, n * sizeof(T), gpuMemcpyDeviceToHost);
+  if (e != gpuSuccess)
     profileFail("the profile tables could not be read back at exit (%s). A "
                 "program that resets the device before returning from main "
                 "(cudaDeviceReset or hipDeviceReset) frees them; the profile "
                 "is written at exit, so do not reset the device in a "
                 "profiling run. The profile is NOT written.",
-                cudaGetErrorString(e));
+                gpuGetErrorString(e));
   return to;
 }
 
@@ -273,7 +268,7 @@ static size_t g_heapBytes = 0;
 static int g_device = -1;
 
 static void poseidonBindModule(const void *table) {
-  POSEIDON_DEVICE_OK(cudaMemcpyToSymbol(table, &g_table, sizeof(g_table)));
+  POSEIDON_DEVICE_OK(gpuMemcpyToSymbol(table, &g_table, sizeof(g_table)));
 }
 
 // The function registry (pointer keys, names, per-function launch geometry)
@@ -286,10 +281,10 @@ static void allocateTables(size_t nfuncs, size_t count) {
   const size_t lcBytes = nfuncs * sizeof(unsigned long long);
   const size_t stBytes = nfuncs * POSEIDON_PROFILE_STATIC_MAXLEN;
   const size_t slotBytes = nfuncs * count * sizeof(GPUProfileSlot);
-  cudaError_t err = cudaSuccess;
+  gpuError_t err = gpuSuccess;
   auto alloc = [&](void **p, size_t b) {
-    cudaError_t e = cudaMalloc(p, b);
-    if (e != cudaSuccess && err == cudaSuccess)
+    gpuError_t e = gpuMalloc(p, b);
+    if (e != gpuSuccess && err == gpuSuccess)
       err = e;
   };
   alloc((void **)&g_devFuncReg, regBytes);
@@ -299,21 +294,21 @@ static void allocateTables(size_t nfuncs, size_t count) {
   alloc((void **)&g_devLaunchByFunc, lcBytes);
   alloc((void **)&g_devStaticByFunc, stBytes);
   alloc((void **)&g_devSlots, slotBytes);
-  if (err != cudaSuccess)
+  if (err != gpuSuccess)
     profileAbort(
         "allocating the profile tables of %zu profiled functions of up to %zu "
         "probes each (%zu bytes) failed (%s).",
         nfuncs, count,
         regBytes + nameBytes + 2 * dimBytes + lcBytes + stBytes + slotBytes,
-        cudaGetErrorString(err));
-  POSEIDON_DEVICE_OK(cudaMemset(g_devFuncReg, 0, regBytes));
-  POSEIDON_DEVICE_OK(cudaMemset(g_devFuncNames, 0, nameBytes));
-  POSEIDON_DEVICE_OK(cudaMemset(g_devGridByFunc, 0, dimBytes));
-  POSEIDON_DEVICE_OK(cudaMemset(g_devBlockByFunc, 0, dimBytes));
-  POSEIDON_DEVICE_OK(cudaMemset(g_devLaunchByFunc, 0, lcBytes));
-  POSEIDON_DEVICE_OK(cudaMemset(g_devStaticByFunc, 0, stBytes));
+        gpuGetErrorString(err));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devFuncReg, 0, regBytes));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devFuncNames, 0, nameBytes));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devGridByFunc, 0, dimBytes));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devBlockByFunc, 0, dimBytes));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devLaunchByFunc, 0, lcBytes));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devStaticByFunc, 0, stBytes));
   // Zero is the initial state of every field (see doubleToOrderedUint64Min).
-  POSEIDON_DEVICE_OK(cudaMemset(g_devSlots, 0, slotBytes));
+  POSEIDON_DEVICE_OK(gpuMemset(g_devSlots, 0, slotBytes));
   g_maxFuncs = (int)nfuncs;
   g_slotCount = count;
   g_table.maxFuncs = (int)nfuncs;
@@ -365,7 +360,7 @@ extern "C" void __poseidon_profile_init_device() {
   g_deviceInitDone = true;
 
   profileDir = profileDirectory();
-  POSEIDON_DEVICE_OK(cudaGetDevice(&g_device));
+  POSEIDON_DEVICE_OK(gpuGetDevice(&g_device));
 
   // A profiled kernel's reverse pass caches what it cannot recompute in the
   // device heap, which CUDA sizes at 8 MiB and an application sizes for its
@@ -374,14 +369,14 @@ extern "C" void __poseidon_profile_init_device() {
   const size_t heapBytes =
       profileEnvPositive("POSEIDON_PROFILE_HEAP_MB", POSEIDON_DEFAULT_HEAP_MB)
       << 20;
-  POSEIDON_DEVICE_OK(cudaDeviceGetLimit(&g_heapBytes, cudaLimitMallocHeapSize));
+  POSEIDON_DEVICE_OK(gpuDeviceGetLimit(&g_heapBytes, gpuLimitMallocHeapSize));
   if (g_heapBytes < heapBytes) {
-    cudaError_t e = cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapBytes);
-    if (e != cudaSuccess)
+    gpuError_t e = gpuDeviceSetLimit(gpuLimitMallocHeapSize, heapBytes);
+    if (e != gpuSuccess)
       profileFail("reserving %zu MiB of device heap for the profiled kernels' "
                   "reverse passes failed (%s); set POSEIDON_PROFILE_HEAP_MB to "
                   "what the device can spare.",
-                  heapBytes >> 20, cudaGetErrorString(e));
+                  heapBytes >> 20, gpuGetErrorString(e));
     g_heapBytes = heapBytes;
   }
 
@@ -402,7 +397,7 @@ extern "C" void __poseidon_profile_init_device() {
 
   for (const void *table : poseidonModuleTables())
     poseidonBindModule(table);
-  POSEIDON_DEVICE_OK(cudaDeviceSynchronize());
+  POSEIDON_DEVICE_OK(gpuDeviceSynchronize());
   // atexit handlers run in reverse registration order, and the CUDA runtime
   // registers its own teardown when it is first initialized above, so the
   // writer runs before the driver shuts down.
@@ -428,20 +423,20 @@ namespace {
 struct DeviceShadowOps {
   static void *allocZeroed(size_t bytes, const char *, void *stream) {
     void *p = nullptr;
-    POSEIDON_DEVICE_OK(cudaMalloc(&p, bytes));
-    POSEIDON_DEVICE_OK(cudaMemsetAsync(p, 0, bytes, (cudaStream_t)stream));
+    POSEIDON_DEVICE_OK(gpuMalloc(&p, bytes));
+    POSEIDON_DEVICE_OK(gpuMemsetAsync(p, 0, bytes, (gpuStream_t)stream));
     return p;
   }
-  static void free(void *p) { POSEIDON_DEVICE_OK(cudaFree(p)); }
+  static void free(void *p) { POSEIDON_DEVICE_OK(gpuFree(p)); }
   // A run that ended with a device error exits from the profile writer, which
   // runs after this, with the message that names it.
-  static void freeAtExit(void *p) { (void)cudaFree(p); }
+  static void freeAtExit(void *p) { (void)gpuFree(p); }
   // A zero adjoint propagates zero through the whole reverse pass, so the seed
   // is one on the site's outputs.
   template <typename T> static void fillOnes(T *p, size_t n, void *stream) {
     if (n)
       poseidonSeedShadow<<<(unsigned)((n + 255) / 256), 256, 0,
-                           (cudaStream_t)stream>>>(p, n);
+                           (gpuStream_t)stream>>>(p, n);
   }
 };
 } // namespace
@@ -495,7 +490,7 @@ __poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
                            int nargs, void **args, int nptr, const int *ptrIdx,
                            const int *ptrOff, const int *seedWidth) {
   int device = -1;
-  POSEIDON_DEVICE_OK(cudaGetDevice(&device));
+  POSEIDON_DEVICE_OK(gpuGetDevice(&device));
   if (device != g_device)
     profileFail("site %d is launched on device %d, and the profile tables "
                 "were set up on device %d; profile generation supports one "
@@ -535,14 +530,14 @@ __poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
   dim3 b(block[0], block[1], block[2]);
   // The reverse pass needs a shadow of the kernel's dynamic shared memory too,
   // and Enzyme places it directly after the primal block.
-  cudaError_t e = cudaLaunchKernel(func, g, b, full.data(), shmem * 2,
-                                   (cudaStream_t)stream);
-  if (e == cudaSuccess)
-    e = cudaStreamSynchronize((cudaStream_t)stream);
-  if (e != cudaSuccess)
+  gpuError_t e =
+      gpuLaunchKernel(func, g, b, full.data(), shmem * 2, (gpuStream_t)stream);
+  if (e == gpuSuccess)
+    e = gpuStreamSynchronize((gpuStream_t)stream);
+  if (e != gpuSuccess)
     profileFail("the profiled launch of site %d failed (%s). The profile is "
                 "incomplete and is NOT written. A reverse pass that outgrows "
                 "the device heap (%zu MiB, POSEIDON_PROFILE_HEAP_MB) faults "
                 "this way too.",
-                site, cudaGetErrorString(e), g_heapBytes >> 20);
+                site, gpuGetErrorString(e), g_heapBytes >> 20);
 }

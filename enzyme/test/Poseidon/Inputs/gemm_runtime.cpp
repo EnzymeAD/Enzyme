@@ -6,7 +6,7 @@
 //   direct:   each reduced-precision mode is held to the a priori bound
 //             (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|, the native
 //             mode to gamma_K; on cuBLAS, FP32 (mode 4) and TF32 (mode 3) are
-//             bit exact against cublasSgemm and FAST_TF32 cublasGemmEx of the
+//             bit exact against cublasSgemm and FAST_TF32 gpublasGemmEx of the
 //             rounded operands, and differ from each other.
 //   empty:    K == 0 gives C = beta * C, touching nothing outside the view;
 //             M == 0 touches nothing.
@@ -19,20 +19,17 @@
 #include <cstring>
 #include <vector>
 #include "gemm/LibraryCalls.h"
-#ifndef __HIP__
-#include <cublas_v2.h>
-#endif
 
 #define CK(x)                                                                  \
   do {                                                                         \
-    if ((x) != cudaSuccess) {                                                  \
+    if ((x) != gpuSuccess) {                                                  \
       printf("runtime error %s:%d %s\n", __FILE__, __LINE__, #x);              \
       exit(2);                                                                 \
     }                                                                          \
   } while (0)
 #define CB(x)                                                                  \
   do {                                                                         \
-    if ((x) != CUBLAS_STATUS_SUCCESS) {                                        \
+    if ((x) != GPUBLAS_STATUS_SUCCESS) {                                        \
       printf("BLAS error %s:%d %s\n", __FILE__, __LINE__, #x);                 \
       exit(2);                                                                 \
     }                                                                          \
@@ -116,44 +113,44 @@ struct Problem {
         t += std::fabs(s.beta * at(C0, s.M, s.Ncols, s.cColMajor, r, c));
         absAB[s.cColMajor ? (size_t)c * s.M + r : (size_t)r * s.Ncols + c] = t;
       }
-    CK(cudaMalloc(&dA, A.size() * 8));
-    CK(cudaMalloc(&dB, B.size() * 8));
-    CK(cudaMalloc(&dC, C0.size() * 8));
-    CK(cudaMalloc(&dR, C0.size() * 8));
-    CK(cudaMemcpy(dA, A.data(), A.size() * 8, cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(dB, B.data(), B.size() * 8, cudaMemcpyHostToDevice));
+    CK(gpuMalloc(&dA, A.size() * 8));
+    CK(gpuMalloc(&dB, B.size() * 8));
+    CK(gpuMalloc(&dC, C0.size() * 8));
+    CK(gpuMalloc(&dR, C0.size() * 8));
+    CK(gpuMemcpy(dA, A.data(), A.size() * 8, gpuMemcpyHostToDevice));
+    CK(gpuMemcpy(dB, B.data(), B.size() * 8, gpuMemcpyHostToDevice));
     reference();
   }
 
   void reset(double *d) {
-    CK(cudaMemcpy(d, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice));
+    CK(gpuMemcpy(d, C0.data(), C0.size() * 8, gpuMemcpyHostToDevice));
   }
 
   // The library's DGEMM, column-major: a row-major C is computed as C^T.
   void reference() {
-    static cublasHandle_t h = nullptr;
+    static gpublasHandle_t h = nullptr;
     if (!h)
-      CB(cublasCreate(&h));
+      CB(gpublasCreate(&h));
     reset(dR);
     const double one = 1.0;
-    cublasOperation_t opA = s.aColMajor ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t opB = s.bColMajor ? CUBLAS_OP_N : CUBLAS_OP_T;
+    gpublasOperation_t opA = s.aColMajor ? GPUBLAS_OP_N : GPUBLAS_OP_T;
+    gpublasOperation_t opB = s.bColMajor ? GPUBLAS_OP_N : GPUBLAS_OP_T;
     if (s.cColMajor)
-      CB(cublasDgemm(h, opA, opB, s.M, s.Ncols, s.K, &one, dA, lda, dB, ldb,
+      CB(gpublasDgemm(h, opA, opB, s.M, s.Ncols, s.K, &one, dA, lda, dB, ldb,
                      &s.beta, dR, ldc));
     else
-      CB(cublasDgemm(h, s.bColMajor ? CUBLAS_OP_T : CUBLAS_OP_N,
-                     s.aColMajor ? CUBLAS_OP_T : CUBLAS_OP_N, s.Ncols, s.M,
+      CB(gpublasDgemm(h, s.bColMajor ? GPUBLAS_OP_T : GPUBLAS_OP_N,
+                     s.aColMajor ? GPUBLAS_OP_T : GPUBLAS_OP_N, s.Ncols, s.M,
                      s.K, &one, dB, ldb, dA, lda, &s.beta, dR, ldc));
-    CK(cudaDeviceSynchronize());
+    CK(gpuDeviceSynchronize());
   }
 
   // Largest |C - R| / (|A||B| + |beta C|) over the result.
   double error(std::vector<double> &out) {
     std::vector<double> ref(C0.size());
     out.resize(C0.size());
-    CK(cudaMemcpy(out.data(), dC, out.size() * 8, cudaMemcpyDeviceToHost));
-    CK(cudaMemcpy(ref.data(), dR, ref.size() * 8, cudaMemcpyDeviceToHost));
+    CK(gpuMemcpy(out.data(), dC, out.size() * 8, gpuMemcpyDeviceToHost));
+    CK(gpuMemcpy(ref.data(), dR, ref.size() * 8, gpuMemcpyDeviceToHost));
     double e = 0.0;
     for (size_t i = 0; i < out.size(); ++i)
       e = std::fmax(e, std::fabs(out[i] - ref[i]) / absAB[i]);
@@ -164,7 +161,7 @@ struct Problem {
 struct OzakiCase {
   int shape, nm;
   uint64_t bits; // the CUDA runtime's digest on an RTX 5090
-  double err;    // and its error against cublasDgemm
+  double err;    // and its error against gpublasDgemm
 };
 
 // Recorded by the CUDA build on an RTX 5090 (gemm_runtime ozaki-record).
@@ -191,7 +188,7 @@ int ozaki(bool record) {
       __poseidon_ozakiii_dgemm(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda, p.ldb,
                              p.ldc, s.aColMajor, s.bColMajor, s.cColMajor, 1.0,
                              s.beta, nullptr, oc.nm);
-      CK(cudaDeviceSynchronize());
+      CK(gpuDeviceSynchronize());
       std::vector<double> out;
       double e = p.error(out);
       uint64_t d = digest(out);
@@ -408,7 +405,7 @@ int direct() {
         __poseidon_direct_dgemm(p.dC, p.dA, p.dB, s.M, s.Ncols, s.K, p.lda,
                                 p.ldb, p.ldc, s.aColMajor, s.bColMajor,
                                 s.cColMajor, 1.0, s.beta, nullptr, mode);
-      CK(cudaDeviceSynchronize());
+      CK(gpuDeviceSynchronize());
       std::vector<double> out;
       double e = p.error(out);
       const double u = inputRoundoff(mode);
@@ -436,7 +433,7 @@ int empty() {
   for (size_t i = 0; i < n; ++i)
     C0[i] = std::ldexp(uniform() - 0.5, (int)(i % 7));
   double *dC;
-  CK(cudaMalloc(&dC, n * 8));
+  CK(gpuMalloc(&dC, n * 8));
   struct Entry {
     const char *name;
     int mode;
@@ -458,7 +455,7 @@ int empty() {
     else
       __poseidon_direct_dgemm(dC, nullptr, nullptr, m, Ncols, k, 1, 1, ldc, 1,
                               1, 1, 1.0, beta, nullptr, e.mode);
-    CK(cudaDeviceSynchronize());
+    CK(gpuDeviceSynchronize());
   };
   int failed = 0;
   for (const Entry &e : entries)
@@ -468,9 +465,9 @@ int empty() {
         for (int c = 0; c < Ncols; ++c)
           for (int r = 0; r < M; ++r)
             in[(size_t)c * ldc + r] = NAN;
-      CK(cudaMemcpy(dC, in.data(), n * 8, cudaMemcpyHostToDevice));
+      CK(gpuMemcpy(dC, in.data(), n * 8, gpuMemcpyHostToDevice));
       call(e, M, 0, beta);
-      CK(cudaMemcpy(out.data(), dC, n * 8, cudaMemcpyDeviceToHost));
+      CK(gpuMemcpy(out.data(), dC, n * 8, gpuMemcpyDeviceToHost));
       bool ok = true;
       for (int c = 0; c < Ncols; ++c)
         for (int r = 0; r < ldc; ++r) {
@@ -485,14 +482,14 @@ int empty() {
     }
   for (const Entry &e : entries) {
     std::vector<double> out(n);
-    CK(cudaMemcpy(dC, C0.data(), n * 8, cudaMemcpyHostToDevice));
+    CK(gpuMemcpy(dC, C0.data(), n * 8, gpuMemcpyHostToDevice));
     call(e, 0, 5, 0.0);
-    CK(cudaMemcpy(out.data(), dC, n * 8, cudaMemcpyDeviceToHost));
+    CK(gpuMemcpy(out.data(), dC, n * 8, gpuMemcpyDeviceToHost));
     const bool ok = !std::memcmp(out.data(), C0.data(), n * 8);
     printf("empty %s mode=%d M=0 %s\n", e.name, e.mode, ok ? "ok" : "WRONG");
     failed |= !ok;
   }
-  CK(cudaFree(dC));
+  CK(gpuFree(dC));
   return failed;
 }
 
@@ -500,32 +497,32 @@ int empty() {
 // turn on two non-blocking streams that share each runtime's scratch.
 int streams() {
   Problem p0(kShapes[0]), p1(kShapes[1]), p2(kShapes[2]);
-  auto direct1 = [&](cudaStream_t st) {
+  auto direct1 = [&](gpuStream_t st) {
     __poseidon_direct_dgemm(p1.dC, p1.dA, p1.dB, p1.s.M, p1.s.Ncols, p1.s.K,
                             p1.lda, p1.ldb, p1.ldc, p1.s.aColMajor,
                             p1.s.bColMajor, p1.s.cColMajor, 1.0, 0.0, st, 1);
   };
-  auto ozaki10 = [](Problem &p, cudaStream_t st) {
+  auto ozaki10 = [](Problem &p, gpuStream_t st) {
     __poseidon_ozakiii_dgemm(p.dC, p.dA, p.dB, p.s.M, p.s.Ncols, p.s.K, p.lda,
                            p.ldb, p.ldc, p.s.aColMajor, p.s.bColMajor,
                            p.s.cColMajor, 1.0, p.s.beta, st, 10);
   };
   // Alone first: shape 1's direct result (beta = 0 here) is the reference.
   direct1(nullptr);
-  CK(cudaDeviceSynchronize());
+  CK(gpuDeviceSynchronize());
   std::vector<double> alone(p1.C0.size());
-  CK(cudaMemcpy(alone.data(), p1.dC, alone.size() * 8, cudaMemcpyDeviceToHost));
+  CK(gpuMemcpy(alone.data(), p1.dC, alone.size() * 8, gpuMemcpyDeviceToHost));
 
-  cudaStream_t s1, s2;
-  CK(cudaStreamCreateWithFlags(&s1, cudaStreamNonBlocking));
-  CK(cudaStreamCreateWithFlags(&s2, cudaStreamNonBlocking));
+  gpuStream_t s1, s2;
+  CK(gpuStreamCreateWithFlags(&s1, gpuStreamNonBlocking));
+  CK(gpuStreamCreateWithFlags(&s2, gpuStreamNonBlocking));
   for (int rep = 0; rep < 8; ++rep) {
     ozaki10(rep % 2 ? p2 : p0, s1);
     ozaki10(rep % 2 ? p0 : p2, s2);
     direct1(rep % 2 ? s1 : s2);
   }
-  CK(cudaStreamSynchronize(s1));
-  CK(cudaStreamSynchronize(s2));
+  CK(gpuStreamSynchronize(s1));
+  CK(gpuStreamSynchronize(s2));
   int failed = 0;
   std::vector<double> out;
   for (auto [p, want] : {std::pair<Problem *, uint64_t>{&p0, kOzaki[1].bits},
@@ -541,8 +538,8 @@ int streams() {
   printf("streams direct %s mode=1 %s\n", p1.s.name,
          ok ? "BITS-MATCH" : "BITS-DIFFER");
   failed |= !ok;
-  CK(cudaStreamDestroy(s1));
-  CK(cudaStreamDestroy(s2));
+  CK(gpuStreamDestroy(s1));
+  CK(gpuStreamDestroy(s2));
   return failed;
 }
 

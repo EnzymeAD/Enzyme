@@ -6,7 +6,7 @@
 
 # The headers the runtime sources include, for the HIP compiles' dependencies.
 set(POSEIDON_RUNTIME_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/HipAsCuda.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/DeviceApi.h
     ${CMAKE_CURRENT_SOURCE_DIR}/gemm/LibraryCalls.h
     ${CMAKE_CURRENT_SOURCE_DIR}/gemm/LibraryCalls.inc
     ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmRuntime.h
@@ -104,7 +104,7 @@ function(poseidon_embed_device_profiler suffix consumer)
     COMMAND ${_arg_COMPILE} -emit-llvm -c ${_src} -o ${_bc}
     DEPENDS
       ${_src} ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProfiler.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/HipAsCuda.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/DeviceApi.h
     WORKING_DIRECTORY ${POSEIDON_BINARY_DIR}
     VERBATIM)
   add_custom_command(
