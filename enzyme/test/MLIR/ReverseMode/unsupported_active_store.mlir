@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme --split-input-file --verify-diagnostics %s
+// RUN: %eopt --enzyme --split-input-file --verify-diagnostics %s | FileCheck %s --check-prefix=PTR
 
 // Float8 is a valid memref element type, but has no AutoDiffTypeInterface model.
 // Refuse the active store rather than silently omitting its derivative.
@@ -92,7 +92,7 @@ func.func @dstore_inactive_vector_float8(%m: memref<1xvector<4xf8E4M3FN>>, %v: v
 
 // -----
 
-// LLVM pointer vectors are valid IR but have no vector null-value model.
+// LLVM pointer vectors are valid IR but are unsupported as active values.
 // expected-error @below {{AutoDiffTypeInterface not implemented for active type 'vector<4x!llvm.ptr>'}}
 func.func @store_vector_pointer(%p: !llvm.ptr, %v: vector<4x!llvm.ptr>) {
   llvm.store %v, %p : vector<4x!llvm.ptr>, !llvm.ptr
@@ -141,3 +141,7 @@ func.func @dstore_constant_vector_pointer(%p: !llvm.ptr, %dp: !llvm.ptr, %v: vec
   enzyme.autodiff @store_constant_vector_pointer(%p, %dp, %v) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[] }> : (!llvm.ptr, !llvm.ptr, vector<4x!llvm.ptr>) -> ()
   return
 }
+
+// PTR-LABEL: func.func private @diffestore_constant_vector_pointer
+// PTR: %[[ZERO:.*]] = llvm.mlir.zero : vector<4x!llvm.ptr>
+// PTR: llvm.store %[[ZERO]], {{.*}} : vector<4x!llvm.ptr>, !llvm.ptr

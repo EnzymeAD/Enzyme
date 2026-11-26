@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -365,9 +366,13 @@ public:
     return nullptr;
   }
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    auto vecType = cast<VectorType>(self);
+    // A constant pointer vector stored into duplicated memory still requires
+    // a zero shadow, even though active pointer vectors are unsupported.
+    if (isa<LLVM::LLVMPointerType>(vecType.getElementType()))
+      return LLVM::ZeroOp::create(builder, loc, vecType);
     auto attr = createNullAttr(self);
     assert(attr);
-    auto vecType = cast<VectorType>(self);
     return arith::ConstantOp::create(builder, loc, vecType,
                                      cast<TypedAttr>(attr));
   }
