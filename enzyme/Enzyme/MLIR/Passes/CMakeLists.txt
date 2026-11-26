@@ -1,5 +1,7 @@
 set(LLVM_TARGET_DEFINITIONS Passes.td)
-mlir_tablegen(Passes.h.inc -gen-pass-decls -name enzyme)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name Enzyme)
+mlir_tablegen(Passes.capi.h.inc -gen-pass-capi-header --prefix Enzyme)
+mlir_tablegen(Passes.capi.cpp.inc -gen-pass-capi-impl --prefix Enzyme)
 add_public_tablegen_target(MLIREnzymePassIncGen)
 add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 
@@ -43,6 +45,7 @@ add_mlir_dialect_library(
   PUBLIC
   MLIRAffineDialect
   MLIRArithDialect
+  MLIRArithUtils
   MLIRAsyncDialect
   MLIRAffineUtils
   MLIRFuncDialect

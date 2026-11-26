@@ -100,7 +100,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
       // We don't need any of the input operands to compute the adjoint of a
       // store instance The one exception to this is stores to the loop bounds.
-      if (SI->getValueOperand() == val) {
+      if (SI->getValueOperand() == val &&
+          !isa<ConstantPointerNull, UndefValue, PoisonValue>(
+              SI->getPointerOperand())) {
         for (auto U : SI->getPointerOperand()->users()) {
           if (auto CI = dyn_cast<CallInst>(U)) {
             if (auto F = CI->getCalledFunction()) {
@@ -450,9 +452,47 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (ID != Intrinsic::not_intrinsic) {
     if (ID == Intrinsic::lifetime_start || ID == Intrinsic::lifetime_end ||
-        ID == Intrinsic::stacksave || ID == Intrinsic::stackrestore) {
+        ID == Intrinsic::stacksave || ID == Intrinsic::stackrestore
+#if LLVM_VERSION_MAJOR >= 20
+        || ID == Intrinsic::fake_use
+#endif
+    ) {
       return false;
     }
+#if LLVM_VERSION_MAJOR > 20
+    // Adjoint barriers replay the original barrier ID and thread count in the
+    // reverse pass even though the barrier instruction itself is inactive.
+    if (!shadow) {
+      const auto *CB = cast<CallBase>(user);
+      bool needed = false;
+      switch (ID) {
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+#endif
+        needed = (val == CB->getArgOperand(0));
+        break;
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
+        needed = (val == CB->getArgOperand(0) || val == CB->getArgOperand(1));
+        break;
+      default:
+        break;
+      }
+      if (needed) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from barrier " << *user << '\n';
+        return true;
+      }
+    }
+#endif
   }
 
   if (!shadow)
@@ -538,7 +578,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       if (shadow && val == CI->getArgOperand(0)) {
         if ((funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") &&
             mode != DerivativeMode::ReverseModeGradient) {
-          // Need shadow buffer for forward pass of irecieve
+          // Need shadow buffer for forward pass of ireceive
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
                          << *val << " in reverse as shadow MPI " << *CI << "\n";
@@ -615,8 +655,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
 
-    if (funcName == "julia.write_barrier" ||
-        funcName == "julia.write_barrier_binding") {
+    if (isJuliaWriteBarrier(funcName)) {
       // Use in a write barrier requires the shadow in the forward, even
       // though the instruction is active.
       if (shadow && (mode != DerivativeMode::ReverseModeGradient &&
@@ -933,6 +972,49 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
   }
 
+  // The innermost loop for which caching V requires caching a distinct value
+  // per iteration. This is the loop containing V, except for allocations whose
+  // contents are only valid for an iteration of a loop which does not contain
+  // the allocation (e.g. a stack allocation in the entry block whose
+  // lifetime.start is within a loop). Caching such an allocation requires
+  // caching its contents for each iteration of that loop (see
+  // GradientUtils::getWholeAllocationCacheLoop).
+  auto getCacheLoop = [&](Value *V) {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found != gutils->rematerializableAllocations.end())
+      if (auto L = found->second.LI)
+        if (!L->contains(cast<Instruction>(V)->getParent()))
+          return L;
+    return OrigLI.getLoopFor(cast<Instruction>(V)->getParent());
+  };
+
+  // The number of bits which must be cached per iteration of getCacheLoop(V) in
+  // order to cache V. This is the size of V, except for the allocations
+  // described above, for which the contents of the allocation must be cached
+  // rather than the pointer.
+  auto getCacheSizeInBits = [&](Value *V) -> uint64_t {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found != gutils->rematerializableAllocations.end())
+      if (auto L = found->second.LI)
+        if (!L->contains(cast<Instruction>(V)->getParent())) {
+          SmallVector<Value *, 2> Counts;
+          uint64_t EltSize = 0;
+          MaybeAlign Alignment;
+          if (!gutils->getOrigAllocationSize(cast<Instruction>(V), Counts,
+                                             EltSize, Alignment))
+            return std::numeric_limits<uint64_t>::max();
+          uint64_t Size = 8 * EltSize;
+          for (auto Count : Counts) {
+            auto CI = dyn_cast<ConstantInt>(Count);
+            if (!CI)
+              return std::numeric_limits<uint64_t>::max();
+            Size *= CI->getLimitedValue();
+          }
+          return Size;
+        }
+    return DL.getTypeSizeInBits(V->getType());
+  };
+
   while (todo.size()) {
     auto V = todo.front();
     todo.remove(V);
@@ -961,9 +1043,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
             isa<PHINode>((*mp.begin()).V) &&
             OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
         int moreOuterLoop =
-            cmpLoopNest(OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
-                        OrigLI.getLoopFor(
-                            cast<Instruction>(((*mp.begin()).V))->getParent()));
+            cmpLoopNest(getCacheLoop(V), getCacheLoop((*mp.begin()).V));
         if (potentiallyRecursive)
           continue;
         if (moreOuterLoop == -1)
@@ -1011,8 +1091,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
 
         if (moreOuterLoop == 1 ||
             (moreOuterLoop == 0 &&
-             DL.getTypeSizeInBits(V->getType()) >=
-                 DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
+             getCacheSizeInBits(V) >= getCacheSizeInBits((*mp.begin()).V))) {
           MinReq.remove(V);
           auto nnode = (*mp.begin()).V;
           MinReq.insert(nnode);

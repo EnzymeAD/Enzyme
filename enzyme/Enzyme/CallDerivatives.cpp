@@ -25,6 +25,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "AdjointGenerator.h"
+#include "CApi.h"
+#include "FlangRuntime.h"
 
 using namespace llvm;
 
@@ -2538,9 +2540,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             ss << "Mismatched activity for: " << call
                << " const val: " << *valOp;
             if (CustomErrorHandler) {
-              dval = unwrap(CustomErrorHandler(
-                  str.c_str(), wrap(&call), ErrorType::MixedActivityError,
-                  gutils, wrap(valOp), wrap(&BuilderZ)));
+              LLVMBuilderRef BR = startCallbackBuilder(BuilderZ);
+              dval = unwrap(CustomErrorHandler(str.c_str(), wrap(&call),
+                                               ErrorType::MixedActivityError,
+                                               gutils, wrap(valOp), BR));
+              finishCallbackBuilder(BR, BuilderZ);
             } else
               EmitWarningAlways("MixedActivityError", call, ss.str(),
                                 MixedActivityHint);
@@ -3022,6 +3026,93 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    // Other LLVM flang runtime functions acting on descriptors (allocation,
+    // pointer association, initialization, copies): the derivative is the
+    // same call on the shadow descriptors. Memory that the call allocates is
+    // zeroed in the shadow, and re-initialized for derived types, whose
+    // components hold descriptors.
+    if (auto replay = getFlangShadowReplay(funcName)) {
+      if ((Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError) &&
+          !gutils->isConstantInstruction(&call)) {
+        SmallVector<int, 2> shadowed;
+        for (int i : replay->shadowArgs)
+          if (i >= 0 && (unsigned)i < call.arg_size() &&
+              !gutils->isConstantValue(call.getArgOperand(i)))
+            shadowed.push_back(i);
+        unsigned expected = 0;
+        for (int i : replay->shadowArgs)
+          if (i >= 0 && (unsigned)i < call.arg_size())
+            expected++;
+        // All descriptors inactive: nothing to replay, the primal call is all
+        // there is (e.g. allocating an inactive variable next to an active
+        // one in the same statement).
+        if (shadowed.empty())
+          return true;
+        // A copy from an inactive into an active descriptor would need the
+        // shadow to be zeroed rather than copied into: not handled.
+        if (shadowed.size() == expected) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          auto &M = *called->getParent();
+          auto &C = call.getContext();
+
+          SmallVector<Value *, 8> primalArgs;
+          for (auto &op : call.args())
+            primalArgs.push_back(gutils->getNewFromOriginal(op));
+          SmallVector<Value *, 2> shadows;
+          for (int i : shadowed)
+            shadows.push_back(
+                gutils->invertPointerM(call.getArgOperand(i), Builder2));
+
+          FunctionCallee sizeFn, initFn;
+          if (replay->allocates) {
+            auto I8Ptr = getInt8PtrTy(C);
+            auto I32 = Type::getInt32Ty(C);
+            sizeFn = M.getOrInsertFunction(
+                "_FortranASize", FunctionType::get(Type::getInt64Ty(C),
+                                                   {I8Ptr, I8Ptr, I32}, false));
+            initFn = M.getOrInsertFunction(
+                "_FortranAInitialize",
+                FunctionType::get(Type::getVoidTy(C), {I8Ptr, I8Ptr, I32},
+                                  false));
+          }
+
+          for (unsigned w = 0; w < gutils->getWidth(); w++) {
+            SmallVector<Value *, 8> args(primalArgs);
+            for (unsigned k = 0; k < shadowed.size(); k++)
+              args[shadowed[k]] =
+                  gutils->getWidth() > 1
+                      ? gutils->extractMeta(Builder2, shadows[k], w)
+                      : shadows[k];
+            auto dcall =
+                Builder2.CreateCall(called->getFunctionType(), called, args);
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+            dcall->setCallingConv(call.getCallingConv());
+
+            if (replay->allocates) {
+              // base_addr and elem_len lead every descriptor.
+              Value *desc = args[0];
+              auto nullp = ConstantPointerNull::get(getInt8PtrTy(C));
+              auto zero32 = ConstantInt::get(Type::getInt32Ty(C), 0);
+              Value *count = Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
+              Value *elemLen = Builder2.CreateLoad(
+                  Type::getInt64Ty(C), Builder2.CreateConstInBoundsGEP1_64(
+                                           Type::getInt8Ty(C), desc, 8));
+              Value *base = Builder2.CreateLoad(getInt8PtrTy(C), desc);
+              Builder2.CreateMemSet(base, Builder2.getInt8(0),
+                                    Builder2.CreateMul(count, elemLen),
+                                    MaybeAlign());
+              Builder2.CreateCall(initFn, {desc, nullp, zero32});
+            }
+          }
+
+          eraseIfUnused(call);
+          return true;
+        }
+      }
+    }
+
     /*
      * int gsl_sf_legendre_array_e(const gsl_sf_legendre_t norm,
                                    const size_t lmax,
@@ -3214,7 +3305,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         funcName == "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base" ||
         funcName == "_ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base" ||
         funcName == "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base" ||
-        funcName == "jl_ptr_to_array" || funcName == "jl_ptr_to_array_1d") {
+        funcName == "jl_ptr_to_array" || funcName == "jl_ptr_to_array_1d" ||
+        funcName == "ijl_ptr_to_array" || funcName == "ijl_ptr_to_array_1d") {
+      bool isPtrToArray =
+          funcName == "jl_ptr_to_array" || funcName == "jl_ptr_to_array_1d" ||
+          funcName == "ijl_ptr_to_array" || funcName == "ijl_ptr_to_array_1d";
       bool shouldCache = false;
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {
@@ -3236,7 +3331,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ForwardMode ||
               Mode == DerivativeMode::ForwardModeError) {
-            if (gutils->isConstantValue(call.getArgOperand(0)))
+            if (gutils->isConstantValue(
+                    call.getArgOperand(isPtrToArray ? 1 : 0)))
               shadow = gutils->getNewFromOriginal(&call);
             else {
               SmallVector<Value *, 2> args;
@@ -3244,8 +3340,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               for (auto &arg : call.args()) {
                 if (gutils->isConstantValue(arg) ||
                     (funcName == "__dynamic_cast" && i > 0) ||
-                    (funcName == "jl_ptr_to_array_1d" && i != 1) ||
-                    (funcName == "jl_ptr_to_array" && i != 1))
+                    (isPtrToArray && i != 1))
                   args.push_back(gutils->getNewFromOriginal(arg));
                 else
                   args.push_back(gutils->invertPointerM(arg, BuilderZ));
@@ -3312,8 +3407,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     if (called) {
-      if (funcName == "julia.write_barrier" ||
-          funcName == "julia.write_barrier_binding") {
+      if (isJuliaWriteBarrier(funcName)) {
         std::map<UsageKey, bool> Seen =
             gutils->populateSeenFromKnownRecompute();
         bool backwardsShadow = false;
@@ -3338,23 +3432,18 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
           for (size_t i = 0; i < gutils->getWidth(); i++) {
-            SmallVector<Value *, 1> iargs;
-            bool first = true;
-            for (auto &arg : call.args()) {
-              if (!gutils->isConstantValue(arg)) {
-                Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
-                if (gutils->getWidth() > 1) {
-                  ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
-                }
-                iargs.push_back(ptrshadow);
-              } else {
-                if (first)
-                  break;
-              }
-              first = false;
-            }
-            if (iargs.size()) {
-              BuilderZ.CreateCall(called, iargs);
+            SmallVector<Value *, 3> iargs;
+            auto shadowBarrier = getShadowJuliaWriteBarrier(
+                &call, iargs,
+                [&](Value *arg) { return gutils->isConstantValue(arg); },
+                [&](Value *arg) {
+                  Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+                  if (gutils->getWidth() > 1)
+                    ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
+                  return ptrshadow;
+                });
+            if (shadowBarrier) {
+              BuilderZ.CreateCall(shadowBarrier, iargs);
             }
           }
         }
@@ -3599,10 +3688,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             uint64_t idx = 0;
             Value *prev = nullptr;
             ;
+            auto Defs = gutils->getAllocationZeroingBundles(&call, bb,
+                                                            /*lookup*/ false);
             auto rule = [&]() {
               Value *anti =
                   bb.CreateCall(call.getFunctionType(), call.getCalledOperand(),
-                                args, call.getName() + "'mi");
+                                args, Defs, call.getName() + "'mi");
               cast<CallInst>(anti)->setAttributes(call.getAttributes());
               cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
               cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
@@ -3623,7 +3714,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                         cast<CallInst>(gutils->getNewFromOriginal(&call));
                     cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
                     cal->addDereferenceableRetAttr(derefBytes);
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
                     AttrBuilder B(ci->getContext());
 #else
                     AttrBuilder B;
@@ -3820,10 +3911,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   gutils->getWidth() == 1
                       ? anti
                       : GradientUtils::extractMeta(Builder2, anti, i);
-              cast<Instruction>(anti_i)->setMetadata(
-                  "enzyme_cache_alloc", MDNode::get(CI->getContext(), {ident}));
-              CI->setMetadata("enzyme_cache_free",
-                              MDNode::get(CI->getContext(), {ident}));
+              // In split mode the shadow allocation comes out of the tape. If
+              // it is the only value on the tape, it is the tape argument.
+              if (auto anti_inst = dyn_cast<Instruction>(anti_i)) {
+                anti_inst->setMetadata("enzyme_cache_alloc",
+                                       MDNode::get(CI->getContext(), {ident}));
+                CI->setMetadata("enzyme_cache_free",
+                                MDNode::get(CI->getContext(), {ident}));
+              }
             }
           }
         }
@@ -3889,12 +3984,16 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+    auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                          ? DerivativeMode::ReverseModeGradient
+                          : Mode;
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode ||
                 Mode == DerivativeMode::ForwardModeError
             ? false
             : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+                  QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                     oldUnreachable);
 
     // If we explicitly decided we need this in the reverse pass, mark it as
     // such.
@@ -3907,6 +4006,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
     if (cacheWholeAllocation) {
       primalNeededInReverse = true;
+      // If the contents of this allocation are only valid for an iteration of
+      // a loop which does not contain the allocation, caching the pointer is
+      // insufficient, and we must cache the contents for each iteration.
+      cacheWholeAllocationInLoop(call, BuilderZ);
     }
 
     auto restoreFromStack = [&](MDNode *MD) {

@@ -90,6 +90,53 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
   let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
 }
 
+def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
+  let summary = "Enzyme's type tree of a value";
+  let description = [{
+    The type tree that Enzyme's LLVM type analysis reads from `!enzyme_type`
+    metadata and `"enzyme_type"` attributes. A node has the concrete type of
+    the value, if known: `integer`, `pointer`, `anything`, or a floating-point
+    type. Its subtrees are the type trees of the memory that the value points
+    to, each at a byte offset, where -1 means every offset. The subtrees are
+    kept sorted by offset; an offset may appear only once.
+
+    ```mlir
+    #enzyme.type_tree<{-1: pointer {0: f64, 8: integer}}>
+    ```
+  }];
+
+  let parameters = (ins
+    "::BaseType":$kind,
+    OptionalParameter<"::mlir::Type">:$floatType,
+    ArrayRefParameter<"int64_t">:$offsets,
+    ArrayRefParameter<"::mlir::enzyme::TypeTreeAttr">:$subtrees
+  );
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    AttrBuilder<(ins "::BaseType":$kind,
+                     "::mlir::Type":$floatType,
+                     "::llvm::ArrayRef<int64_t>":$offsets,
+                     "::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>":$subtrees), [{
+      assert((!floatType || kind == ::BaseType::Float) &&
+             "only a float node has a floating-point type");
+      ::llvm::SmallVector<int64_t> sortedOffsets(offsets);
+      ::llvm::SmallVector<::mlir::enzyme::TypeTreeAttr> sortedSubtrees(subtrees);
+      ::mlir::enzyme::detail::sortTypeTreeSubtrees(sortedOffsets, sortedSubtrees);
+      return $_get($_ctxt, kind, floatType, sortedOffsets, sortedSubtrees);
+    }]>,
+    AttrBuilder<(ins "::mlir::FloatType":$floatType,
+                     CArg<"::llvm::ArrayRef<int64_t>", "{}">:$offsets,
+                     CArg<"::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>", "{}">:$subtrees), [{
+      return get($_ctxt, ::BaseType::Float, floatType,
+                 offsets, subtrees);
+    }]>
+  ];
+
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "Array of argument activity states">;
 
@@ -544,6 +591,7 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
   }];
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 
   let extraClassDeclaration = [{
     MemRefType getMemRefType() {
@@ -576,6 +624,7 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw", [
   }];
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 }
 
 #endif // ENZYME_OPS

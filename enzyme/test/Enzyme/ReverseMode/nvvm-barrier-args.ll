@@ -28,6 +28,38 @@ define float @test(float %x, i32 %barrier, i32 %count) {
   ret float %dx
 }
 
+define float @barriers_loop_args(float %x, ptr %bar_cfg, ptr %cnt_cfg) {
+entry:
+  store float %x, ptr addrspace(3) @shared, align 4
+  br label %loop
+
+loop:
+  %iv = phi i64 [ 0, %entry ], [ %iv_next, %loop ]
+  %bslot = getelementptr inbounds i32, ptr %bar_cfg, i64 %iv
+  %barrier = load i32, ptr %bslot, align 4
+  store i32 0, ptr %bslot, align 4
+  %cslot = getelementptr inbounds i32, ptr %cnt_cfg, i64 %iv
+  %count = load i32, ptr %cslot, align 4
+  store i32 0, ptr %cslot, align 4
+  call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 %barrier)
+  call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 %barrier, i32 %count)
+  %cur = load float, ptr addrspace(3) @shared, align 4
+  %dbl = fadd float %cur, %cur
+  store float %dbl, ptr addrspace(3) @shared, align 4
+  %iv_next = add nuw nsw i64 %iv, 1
+  %done = icmp eq i64 %iv_next, 2
+  br i1 %done, label %exit, label %loop
+
+exit:
+  %value = load float, ptr addrspace(3) @shared, align 4
+  ret float %value
+}
+
+define float @test_loop(float %x, ptr %bar_cfg, ptr %cnt_cfg) {
+  %dx = call float (ptr, ...) @__enzyme_autodiff(ptr @barriers_loop_args, float %x, metadata !"enzyme_const", ptr %bar_cfg, metadata !"enzyme_const", ptr %cnt_cfg)
+  ret float %dx
+}
+
 ; CHECK-LABEL: define internal { float } @diffebarriers(
 ; CHECK: store float 0.000000e+00, ptr addrspace(3) @shared_shadow
 ; CHECK: br label %[[START:[a-zA-Z0-9_.]+]]
@@ -45,3 +77,10 @@ define float @test(float %x, i32 %barrier, i32 %count) {
 ; CHECK-NEXT: call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 %barrier, i32 %count)
 ; CHECK-NEXT: call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 %barrier)
 ; CHECK: ret { float }
+
+; CHECK-LABEL: define internal { float } @diffebarriers_loop_args(
+; CHECK: invertloop:
+; CHECK: %[[REV_BAR:.+]] = load i32, ptr %{{.+}}, align 4
+; CHECK: %[[REV_CNT:.+]] = load i32, ptr %{{.+}}, align 4
+; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 %[[REV_BAR]], i32 %[[REV_CNT]])
+; CHECK-NEXT: call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 %[[REV_BAR]])

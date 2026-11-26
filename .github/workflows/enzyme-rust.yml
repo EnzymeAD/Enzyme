@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [linux-x86-n2-32]
+        os: [linux-x86-n4-32]
         commit: [cb40c25f6aebb637163d26bf76a680ed6e5d1eda]
     
     timeout-minutes: 90

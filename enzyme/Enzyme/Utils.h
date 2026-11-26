@@ -216,6 +216,15 @@ extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           LLVMBuilderRef);
 }
 
+/// Hand the builder @p B to a C API callback. LLVM 24 made LLVMBuilderRef a
+/// builder the C API owns (llvm/llvm-project#234620) and removed
+/// wrap(IRBuilder<> *), so this creates a C API builder positioned where @p B
+/// is. Pass the result to finishCallbackBuilder once the callback returned: it
+/// moves @p B to where the callback left the C API builder and frees it.
+/// Before LLVM 24 both are a plain wrap of @p B.
+LLVMBuilderRef startCallbackBuilder(llvm::IRBuilder<> &B);
+void finishCallbackBuilder(LLVMBuilderRef Ref, llvm::IRBuilder<> &B);
+
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
                                                          llvm::IRBuilder<> &B);
 
@@ -281,6 +290,10 @@ public:
                 const llvm::Function *CodeRegion);
 };
 
+void diagnoseEnzymeUnsupported(
+    llvm::LLVMContext &Context,
+    const llvm::DiagnosticInfoUnsupported &Diagnostic);
+
 /// Emit a diagnostic which is always shown, unlike EmitWarning which requires
 /// the user to opt in with -Rpass=enzyme. Use this for messages which describe
 /// a potential correctness problem (e.g. mismatched activity) as opposed to a
@@ -290,11 +303,11 @@ void EmitWarningAlways(llvm::StringRef RemarkName,
                        const llvm::DiagnosticLocation &Loc,
                        const llvm::Function &F, const Args &...args) {
   // DiagnosticInfoUnsupported does not copy its message, so keep the backing
-  // storage alive until diagnose() returns.
+  // storage alive until diagnoseEnzymeUnsupported() returns.
   std::string str = "Enzyme: ";
   llvm::raw_string_ostream ss(str);
   (ss << ... << args);
-  F.getContext().diagnose(EnzymeWarning(str, Loc, &F));
+  diagnoseEnzymeUnsupported(F.getContext(), EnzymeWarning(str, Loc, &F));
 }
 
 template <typename... Args>
@@ -347,22 +360,22 @@ template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Instruction *CodeRegion, Args &...args) {
-  std::string *str = new std::string();
-  llvm::raw_string_ostream ss(*str);
-  (ss << ... << args);
-  CodeRegion->getContext().diagnose(
-      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+  std::string Message = "Enzyme: ";
+  llvm::raw_string_ostream Stream(Message);
+  (Stream << ... << args);
+  diagnoseEnzymeUnsupported(CodeRegion->getContext(),
+                            EnzymeFailure(Message, Loc, CodeRegion));
 }
 
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Function *CodeRegion, Args &...args) {
-  std::string *str = new std::string();
-  llvm::raw_string_ostream ss(*str);
-  (ss << ... << args);
-  CodeRegion->getContext().diagnose(
-      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+  std::string Message = "Enzyme: ";
+  llvm::raw_string_ostream Stream(Message);
+  (Stream << ... << args);
+  diagnoseEnzymeUnsupported(CodeRegion->getContext(),
+                            EnzymeFailure(Message, Loc, CodeRegion));
 }
 
 template <typename... Args>
@@ -832,6 +845,9 @@ static inline bool isDebugFunction(llvm::Function *called) {
   case llvm::Intrinsic::dbg_declare:
   case llvm::Intrinsic::dbg_value:
   case llvm::Intrinsic::dbg_label:
+#if LLVM_VERSION_MAJOR >= 20
+  case llvm::Intrinsic::fake_use:
+#endif
 #if LLVM_VERSION_MAJOR <= 16
   case llvm::Intrinsic::dbg_addr:
 #endif
@@ -910,6 +926,17 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
     bool atomic);
 
+/// Get or create an internal helper function implementing floating-point
+/// atomic min/max (`AtomicRMWInst::FMin` or `AtomicRMWInst::FMax`) via an
+/// atomic load and CAS retry loop, returning `{ old_val, changed }` where
+/// `changed` is true iff `val` replaced the value in memory.
+llvm::Function *getOrInsertAtomicFloatMinMax(
+    llvm::Module &M, llvm::Type *T, llvm::AtomicRMWInst::BinOp Op,
+    unsigned AddrSpace = 0, llvm::MaybeAlign Alignment = llvm::MaybeAlign(),
+    llvm::AtomicOrdering Order = llvm::AtomicOrdering::Monotonic,
+    llvm::SyncScope::ID SSID = llvm::SyncScope::System,
+    bool IsVolatile = false);
+
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
@@ -920,6 +947,11 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
+/// Emit an inline helper scaling a general or triangular CBLAS matrix.
+void callLasclHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
 void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                         llvm::IntegerType *IT, llvm::Type *BlasCT,
@@ -1213,6 +1245,11 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::SetVector<llvm::Instruction *> &stores,
                      const llvm::Loop *region);
 
+/// Return whether maybeWriter can write to memory at maybeReader
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          const llvm::MemoryLocation &maybeReader,
+                          llvm::Instruction *maybeWriter);
+
 /// Return whether maybeReader can read from memory written to by maybeWriter
 bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                           llvm::TargetLibraryInfo &TLI,
@@ -1481,6 +1518,90 @@ static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   return "";
 }
 
+/// Julia write barriers. Before julia#62737 these are
+/// `julia.write_barrier(parent, children...)` (and
+/// `julia.write_barrier_binding`); since then codegen emits
+/// `julia.object_write_barrier(parent, children...)` and the field-aware
+/// `julia.field_write_barrier.p11/.p13(parent, slot, child, slot, child...)`,
+/// where each slot is a derived pointer into parent that child is stored to.
+static inline bool isJuliaFieldWriteBarrier(llvm::StringRef name) {
+  return name == "julia.field_write_barrier.p11" ||
+         name == "julia.field_write_barrier.p13";
+}
+
+static inline bool isJuliaWriteBarrier(llvm::StringRef name) {
+  return name == "julia.write_barrier" ||
+         name == "julia.write_barrier_binding" ||
+         name == "julia.object_write_barrier" || isJuliaFieldWriteBarrier(name);
+}
+
+/// Get the whole-object write barrier `(parent, children...)` to emit into M:
+/// `julia.object_write_barrier` if M already uses the julia#62737 barriers,
+/// `julia.write_barrier` otherwise.
+static inline llvm::FunctionCallee
+getJuliaObjectWriteBarrier(llvm::Module &M, llvm::FunctionType *FT) {
+  for (auto name :
+       {"julia.object_write_barrier", "julia.field_write_barrier.p11",
+        "julia.field_write_barrier.p13"})
+    if (M.getFunction(name))
+      return M.getOrInsertFunction("julia.object_write_barrier", FT);
+  return M.getOrInsertFunction("julia.write_barrier", FT);
+}
+
+/// Compute the shadow of the write barrier CB, given the activity and shadow
+/// of its operands. Fills args and returns the callee to call with them (CB's
+/// own, or a whole-object barrier if a field barrier cannot keep its slots),
+/// or a null callee if no shadow barrier is needed.
+template <typename IsConstant, typename Shadow>
+static inline llvm::FunctionCallee
+getShadowJuliaWriteBarrier(llvm::CallBase *CB,
+                           llvm::SmallVectorImpl<llvm::Value *> &args,
+                           IsConstant isConstant, Shadow shadow) {
+  using namespace llvm;
+  args.clear();
+  Value *parent = CB->getArgOperand(0);
+  if (isConstant(parent))
+    return FunctionCallee();
+  FunctionCallee callee(CB->getFunctionType(), CB->getCalledOperand());
+  SmallVector<Value *, 4> ops = {parent};
+  if (!isJuliaFieldWriteBarrier(getFuncNameFromCall(CB))) {
+    for (unsigned i = 1; i < CB->arg_size(); i++)
+      if (!isConstant(CB->getArgOperand(i)))
+        ops.push_back(CB->getArgOperand(i));
+    for (auto op : ops)
+      args.push_back(shadow(op));
+    return callee;
+  }
+  // Keep the (slot, child) pairs whose child is active. A slot into an active
+  // parent should itself be active; if not, fall back to a whole-object
+  // barrier of the shadow parent, which is always correct.
+  SmallVector<std::pair<Value *, Value *>, 2> pairs;
+  bool constantSlot = false;
+  for (unsigned i = 1; i + 1 < CB->arg_size(); i += 2) {
+    Value *slot = CB->getArgOperand(i);
+    Value *child = CB->getArgOperand(i + 1);
+    if (isConstant(child))
+      continue;
+    constantSlot |= isConstant(slot);
+    pairs.emplace_back(slot, child);
+  }
+  if (pairs.empty())
+    return FunctionCallee();
+  if (constantSlot) {
+    auto FT = FunctionType::get(Type::getVoidTy(CB->getContext()),
+                                {parent->getType()}, true);
+    callee = getJuliaObjectWriteBarrier(*CB->getModule(), FT);
+  }
+  for (auto &pair : pairs) {
+    if (!constantSlot)
+      ops.push_back(pair.first);
+    ops.push_back(pair.second);
+  }
+  for (auto op : ops)
+    args.push_back(shadow(op));
+  return callee;
+}
+
 static inline bool hasNoCache(llvm::Value *op) {
   using namespace llvm;
   if (auto CB = dyn_cast<CallBase>(op)) {
@@ -1697,6 +1818,13 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
     if (funcName == "julia.gc_loaded") {
       return true;
     }
+#if LLVM_VERSION_MAJOR >= 16
+    if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(Call)) {
+      if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::threadlocal_address) {
+        return true;
+      }
+    }
+#endif
     if (funcName.contains("__enzyme_todense")) {
       return true;
     }
@@ -1762,6 +1890,15 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         V = Call->getArgOperand(1);
         continue;
       }
+#if LLVM_VERSION_MAJOR >= 16
+      if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(Call)) {
+        if (Intrinsic->getIntrinsicID() ==
+            llvm::Intrinsic::threadlocal_address) {
+          V = Call->getArgOperand(0);
+          continue;
+        }
+      }
+#endif
       if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
         V = Call->getArgOperand(1);
         continue;
@@ -1880,6 +2017,51 @@ getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
   return results;
 }
 
+static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
+                                             const llvm::Instruction *I,
+                                             const llvm::MemoryLocation &loc) {
+  auto res = AA.getModRefInfo(I, loc);
+  if (llvm::isNoModRef(res))
+    return res;
+  const llvm::Value *base = loc.Ptr ? getBaseObject(loc.Ptr) : nullptr;
+  if (base && base != loc.Ptr && base->getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+    res &= AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base));
+#else
+    res = llvm::intersectModRef(
+        res, AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base)));
+#endif
+  }
+  return res;
+}
+
+static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
+                                             const llvm::Instruction *I,
+                                             const llvm::Value *P,
+                                             llvm::LocationSize Size) {
+  return getModRefInfo(AA, I, llvm::MemoryLocation(P, Size));
+}
+
+static inline llvm::ModRefInfo
+getModRefInfo(llvm::AAResults &AA, const llvm::Instruction *maybeReader,
+              const llvm::MemoryLocation *maybeReaderLoc, const llvm::Value *P,
+              llvm::LocationSize Size) {
+  if (maybeReader)
+    return getModRefInfo(AA, maybeReader, P, Size);
+  assert(maybeReaderLoc);
+  if (!maybeReaderLoc->Ptr || !P)
+    return llvm::ModRefInfo::Ref;
+  if (AA.isNoAlias(*maybeReaderLoc, llvm::MemoryLocation(P, Size)))
+    return llvm::ModRefInfo::NoModRef;
+  const llvm::Value *base = getBaseObject(P);
+  if (base && base != P && base->getType()->isPointerTy()) {
+    if (AA.isNoAlias(*maybeReaderLoc,
+                     llvm::MemoryLocation::getBeforeOrAfter(base)))
+      return llvm::ModRefInfo::NoModRef;
+  }
+  return llvm::ModRefInfo::Ref;
+}
+
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
   if (F->onlyReadsMemory())
     return true;
@@ -1948,13 +2130,14 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 // Whether the function does not write to memory visible before the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose allocation happened
-// within the call to F (including a local alloca, a malloc call, even if .
-// returned). This is also legal to write to an sret and/or returnroots
-// parameter (which must be an alloca).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory which did not exist prior to the function call, i.e.
+//     memory allocated within the call to F (including a local alloca, or a
+//     malloc call, even if returned), and to an sret and/or returnroots
+//     parameter (which must be an alloca).
+// A call to F may thus return memory it wrote, directly or through such a
+// parameter.
 static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -1989,12 +2172,17 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
 // Whether the function does not write to memory visible outside the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose lifetime is
-// entirely contained within F (including a local alloca, a malloc call locally
-// freed, but not .     a returned malloc call).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory whose lifetime is entirely contained within the call to
+//     F (including a local alloca, or a malloc call locally freed), but not
+//     to memory it returns or otherwise lets escape, even if allocated within
+//     it.
+// Allocating memory, even memory F returns, is not a write. A call to F thus
+// never returns memory it wrote: if it returns a pointer, derivatives can only
+// flow through the memory it points to, not through the call. A function that
+// may return memory it wrote, including memory a callee wrote and returned to
+// it, is only local read-only-or-throw.
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -2133,7 +2321,7 @@ static inline bool isNoAlias(const llvm::Value *val) {
   if (auto CB = llvm::dyn_cast<llvm::CallBase>(val))
     return isNoAlias(CB);
   if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
-    arg->hasNoAliasAttr();
+    return arg->hasNoAliasAttr();
   }
   if (llvm::isa<llvm::AllocaInst>(val))
     return true;
@@ -2180,7 +2368,7 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
   case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
@@ -2206,6 +2394,9 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::dbg_declare:
   case Intrinsic::dbg_value:
   case Intrinsic::dbg_label:
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::fake_use:
+#endif
   case Intrinsic::invariant_start:
   case Intrinsic::invariant_end:
   case Intrinsic::var_annotation:
@@ -2227,7 +2418,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::sadd_with_overflow:
+  case Intrinsic::uadd_with_overflow:
   case Intrinsic::ssub_with_overflow:
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::smul_with_overflow:
+  case Intrinsic::umul_with_overflow:
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::abs:
 #endif
@@ -2316,11 +2511,47 @@ static inline llvm::Value *checkedDiv(bool strongZero,
   return res;
 }
 
+/// Bits of the integer value V that are zero by construction, whatever the
+/// values of its operands: the high bits of a zext and the low bits of a shl by
+/// a constant. The shadow of V is computed by the same zext or shl of the
+/// shadow of the operand, so these bits are zero in the shadow as well. Returns
+/// an empty mask otherwise.
+static inline llvm::APInt structurallyZeroBits(const llvm::Value *V) {
+  auto IT = llvm::dyn_cast<llvm::IntegerType>(V->getType());
+  if (!IT)
+    return llvm::APInt();
+  unsigned bits = IT->getBitWidth();
+  if (auto ZE = llvm::dyn_cast<llvm::ZExtInst>(V)) {
+    unsigned from = ZE->getOperand(0)->getType()->getScalarSizeInBits();
+    return llvm::APInt::getHighBitsSet(bits, bits - from);
+  }
+  if (auto BO = llvm::dyn_cast<llvm::BinaryOperator>(V))
+    if (BO->getOpcode() == llvm::Instruction::Shl)
+      if (auto CI = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1)))
+        if (CI->getValue().ult(bits))
+          return llvm::APInt::getLowBitsSet(bits, CI->getZExtValue());
+  return llvm::APInt(bits, 0);
+}
+
+/// Whether `or` of V0 and V1 only combines disjoint bit fields that are zero by
+/// construction (e.g. two floats packed into one integer by zext, shl and or).
+/// The shadows of such an `or` are then combined by `or` as well.
+static inline bool isStructurallyDisjointOr(const llvm::Value *V0,
+                                            const llvm::Value *V1) {
+  auto m0 = structurallyZeroBits(V0);
+  auto m1 = structurallyZeroBits(V1);
+  if (m0.getBitWidth() == 0 || m0.getBitWidth() != m1.getBitWidth())
+    return false;
+  return (m0 | m1).isAllOnes();
+}
+
 static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
                                             llvm::Type *FT,
                                             const llvm::DataLayout &dl,
                                             llvm::Type **vFT = nullptr) {
   using namespace llvm;
+  if (!V)
+    return false;
   if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
     if (CI->isZero()) {
       if (vFT)
@@ -2572,7 +2803,10 @@ static inline void moveBeforeInst(llvm::Instruction *I,
 }
 
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIOrPseudoProbe();
+#elif LLVM_VERSION_MAJOR >= 20
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
@@ -2583,7 +2817,9 @@ static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 
 static inline llvm::Instruction *
 getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  return &*B->getFirstNonPHIOrLifetime();
+#elif LLVM_VERSION_MAJOR >= 20
   return &*B->getFirstNonPHIOrDbgOrLifetime();
 #else
   return B->getFirstNonPHIOrDbgOrLifetime();

@@ -3,6 +3,52 @@
 
 define { double, double } @test(double %xre, double %xim, double %yre, double %yim) {
 entry:
+  ; CHECK-LABEL: define internal { double, double, double, double } @diffetest(double %xre, double %xim, double %yre, double %yim, { double, double } %differeturn)
+  ; CHECK-NEXT: entry:
+  ; CHECK-NEXT:   %[[DRE:.+]] = extractvalue { double, double } %differeturn, 0
+  ; CHECK-NEXT:   %[[YR2:.+]] = fmul fast double %yre, %yre
+  ; CHECK-NEXT:   %[[YI2:.+]] = fmul fast double %yim, %yim
+  ; CHECK-NEXT:   %[[YNORM2:.+]] = fadd fast double %[[YR2]], %[[YI2]]
+  ; CHECK-NEXT:   %[[YR_OVER_D:.+]] = fdiv fast double %yre, %[[YNORM2]]
+  ; CHECK-NEXT:   %[[DXR0:.+]] = fmul fast double %[[DRE]], %[[YR_OVER_D]]
+  ; CHECK-NEXT:   %[[DIM:.+]] = extractvalue { double, double } %differeturn, 1
+  ; CHECK-NEXT:   %[[NYIM:.+]] = fneg fast double %yim
+  ; CHECK-NEXT:   %[[NYI_OVER_D:.+]] = fdiv fast double %[[NYIM]], %[[YNORM2]]
+  ; CHECK-NEXT:   %[[DXR1:.+]] = fmul fast double %[[DIM]], %[[NYI_OVER_D]]
+  ; CHECK-NEXT:   %[[DXR:.+]] = fadd fast double %[[DXR0]], %[[DXR1]]
+  ; CHECK-NEXT:   %[[YI_OVER_D:.+]] = fdiv fast double %yim, %[[YNORM2]]
+  ; CHECK-NEXT:   %[[DXI0:.+]] = fmul fast double %[[DRE]], %[[YI_OVER_D]]
+  ; CHECK-NEXT:   %[[DXI1:.+]] = fmul fast double %[[DIM]], %[[YR_OVER_D]]
+  ; CHECK-NEXT:   %[[DXI:.+]] = fadd fast double %[[DXI0]], %[[DXI1]]
+  ; CHECK-NEXT:   %[[NXRE:.+]] = fneg fast double %xre
+  ; CHECK-NEXT:   %[[NXIM:.+]] = fneg fast double %xim
+  ; CHECK-NEXT:   %[[YSQ_RE:.+]] = fsub fast double %[[YR2]], %[[YI2]]
+  ; CHECK-NEXT:   %[[YR_YI:.+]] = fmul fast double %yre, %yim
+  ; CHECK-NEXT:   %[[YSQ_IM:.+]] = fadd fast double %[[YR_YI]], %[[YR_YI]]
+  ; CHECK-NEXT:   %[[W_NUM_RE0:.+]] = fmul fast double %[[NXRE]], %[[YSQ_RE]]
+  ; CHECK-NEXT:   %[[W_NUM_RE1:.+]] = fmul fast double %[[NXIM]], %[[YSQ_IM]]
+  ; CHECK-NEXT:   %[[W_NUM_RE:.+]] = fadd fast double %[[W_NUM_RE0]], %[[W_NUM_RE1]]
+  ; CHECK-NEXT:   %[[YSQ_RE2:.+]] = fmul fast double %[[YSQ_RE]], %[[YSQ_RE]]
+  ; CHECK-NEXT:   %[[YSQ_IM2:.+]] = fmul fast double %[[YSQ_IM]], %[[YSQ_IM]]
+  ; CHECK-NEXT:   %[[YNORM4:.+]] = fadd fast double %[[YSQ_RE2]], %[[YSQ_IM2]]
+  ; CHECK-NEXT:   %[[W_RE:.+]] = fdiv fast double %[[W_NUM_RE]], %[[YNORM4]]
+  ; CHECK-NEXT:   %[[W_NUM_IM0:.+]] = fmul fast double %[[YSQ_RE]], %[[NXIM]]
+  ; CHECK-NEXT:   %[[W_NUM_IM1:.+]] = fmul fast double %[[NXRE]], %[[YSQ_IM]]
+  ; CHECK-NEXT:   %[[W_NUM_IM:.+]] = fsub fast double %[[W_NUM_IM0]], %[[W_NUM_IM1]]
+  ; CHECK-NEXT:   %[[W_IM:.+]] = fdiv fast double %[[W_NUM_IM]], %[[YNORM4]]
+  ; CHECK-NEXT:   %[[DYR0:.+]] = fmul fast double %[[DRE]], %[[W_RE]]
+  ; CHECK-NEXT:   %[[DYR1:.+]] = fmul fast double %[[DIM]], %[[W_IM]]
+  ; CHECK-NEXT:   %[[DYR:.+]] = fadd fast double %[[DYR0]], %[[DYR1]]
+  ; CHECK-NEXT:   %[[NW_IM:.+]] = fneg fast double %[[W_IM]]
+  ; CHECK-NEXT:   %[[DYI0:.+]] = fmul fast double %[[DRE]], %[[NW_IM]]
+  ; CHECK-NEXT:   %[[DYI1:.+]] = fmul fast double %[[DIM]], %[[W_RE]]
+  ; CHECK-NEXT:   %[[DYI:.+]] = fadd fast double %[[DYI0]], %[[DYI1]]
+  ; CHECK-NEXT:   %[[RES0:.+]] = insertvalue { double, double, double, double } {{.+}}, double %[[DXR]], 0
+  ; CHECK-NEXT:   %[[RES1:.+]] = insertvalue { double, double, double, double } %[[RES0]], double %[[DXI]], 1
+  ; CHECK-NEXT:   %[[RES2:.+]] = insertvalue { double, double, double, double } %[[RES1]], double %[[DYR]], 2
+  ; CHECK-NEXT:   %[[RES3:.+]] = insertvalue { double, double, double, double } %[[RES2]], double %[[DYI]], 3
+  ; CHECK-NEXT:   ret { double, double, double, double } %[[RES3]]
+  ; CHECK-NEXT: }
   %call = call { double, double } @__divdc3(double %xre, double %xim, double %yre, double %yim)
   ret { double, double } %call
 }
@@ -17,73 +63,3 @@ entry:
 
 declare { double, double, double, double } @__enzyme_autodiff(i8*, ...)
 
-
-; CHECK: define internal { double, double, double, double } @diffetest(double %xre, double %xim, double %yre, double %yim, { double, double } %differeturn)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %re1 = extractvalue { double, double } %differeturn, 0
-; CHECK-NEXT:   %im1 = extractvalue { double, double } %differeturn, 1
-; CHECK-NEXT:   %0 = fmul fast double %re1, %yre
-; CHECK-NEXT:   %1 = fmul fast double %im1, %yim
-; CHECK-NEXT:   %2 = fadd fast double %0, %1
-; CHECK-NEXT:   %3 = fmul fast double %yre, %yre
-; CHECK-NEXT:   %4 = fmul fast double %yim, %yim
-; CHECK-NEXT:   %5 = fadd fast double %3, %4
-; CHECK-NEXT:   %6 = fdiv fast double %2, %5
-; CHECK-NEXT:   %7 = fmul fast double %yre, %im1
-; CHECK-NEXT:   %8 = fmul fast double %re1, %yim
-; CHECK-NEXT:   %9 = fsub fast double %7, %8
-; CHECK-NEXT:   %10 = fdiv fast double %9, %5
-; CHECK-NEXT:   %11 = fadd fast double %6, %10
-; CHECK-NEXT:   %12 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %yre
-; CHECK-NEXT:   %13 = fmul fast double %im1, %12
-; CHECK-NEXT:   %14 = fadd fast double %8, %13
-; CHECK-NEXT:   %15 = fmul fast double %12, %12
-; CHECK-NEXT:   %16 = fadd fast double %4, %15
-; CHECK-NEXT:   %17 = fdiv fast double %14, %16
-; CHECK-NEXT:   %18 = fmul fast double %re1, %12
-; CHECK-NEXT:   %19 = fsub fast double %1, %18
-; CHECK-NEXT:   %20 = fdiv fast double %19, %16
-; CHECK-NEXT:   %21 = fadd fast double %17, %20
-; CHECK-NEXT:   %22 = fmul fast double %re1, %xre
-; CHECK-NEXT:   %23 = fmul fast double %im1, %xim
-; CHECK-NEXT:   %24 = fsub fast double %22, %23
-; CHECK-NEXT:   %25 = fmul fast double %re1, %xim
-; CHECK-NEXT:   %26 = fmul fast double %xre, %im1
-; CHECK-NEXT:   %27 = fadd fast double %25, %26
-; CHECK-NEXT:   %28 = fsub fast double %3, %4
-; CHECK-NEXT:   %29 = fmul fast double %yre, %yim
-; CHECK-NEXT:   %30 = fadd fast double %29, %29
-; CHECK-NEXT:   %31 = fmul fast double %24, %28
-; CHECK-NEXT:   %32 = fmul fast double %27, %30
-; CHECK-NEXT:   %33 = fadd fast double %31, %32
-; CHECK-NEXT:   %34 = fmul fast double %28, %28
-; CHECK-NEXT:   %35 = fmul fast double %30, %30
-; CHECK-NEXT:   %36 = fadd fast double %34, %35
-; CHECK-NEXT:   %37 = fdiv fast double %33, %36
-; CHECK-NEXT:   %38 = fmul fast double %28, %27
-; CHECK-NEXT:   %39 = fmul fast double %24, %30
-; CHECK-NEXT:   %40 = fsub fast double %38, %39
-; CHECK-NEXT:   %41 = fdiv fast double %40, %36
-; CHECK-NEXT:   %42 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %37
-; CHECK-NEXT:   %43 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %41
-; CHECK-NEXT:   %44 = fadd fast double %42, %43
-; CHECK-NEXT:   %45 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %xim
-; CHECK-NEXT:   %46 = fmul fast double %im1, %45
-; CHECK-NEXT:   %47 = fsub fast double %25, %46
-; CHECK-NEXT:   %48 = fmul fast double %re1, %45
-; CHECK-NEXT:   %49 = fadd fast double %48, %23
-; CHECK-NEXT:   %50 = fmul fast double %47, %28
-; CHECK-NEXT:   %51 = fmul fast double %49, %30
-; CHECK-NEXT:   %52 = fadd fast double %50, %51
-; CHECK-NEXT:   %53 = fdiv fast double %52, %36
-; CHECK-NEXT:   %54 = fmul fast double %28, %49
-; CHECK-NEXT:   %55 = fmul fast double %47, %30
-; CHECK-NEXT:   %56 = fsub fast double %54, %55
-; CHECK-NEXT:   %57 = fdiv fast double %56, %36
-; CHECK-NEXT:   %58 = fadd fast double %53, %57
-; CHECK-NEXT:   %59 = insertvalue { double, double, double, double } {{(undef|poison)?}}, double %11, 0
-; CHECK-NEXT:   %60 = insertvalue { double, double, double, double } %59, double %21, 1
-; CHECK-NEXT:   %61 = insertvalue { double, double, double, double } %60, double %44, 2
-; CHECK-NEXT:   %62 = insertvalue { double, double, double, double } %61, double %58, 3
-; CHECK-NEXT:   ret { double, double, double, double } %62
-; CHECK-NEXT: }

@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Utils.h"
+#include "CApi.h"
 #include "GradientUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
@@ -52,6 +53,7 @@
 #endif
 
 #include "llvm-c/Core.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 
 #include "BlasAttributor.inc"
 #include "LibraryFuncs.h"
@@ -501,14 +503,113 @@ bool attributeKnownFunctions(llvm::Function &F) {
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
+  const char *SystemAndStringCalls[] = {
+      "strtol",
+      "strtoul",
+      "strtoll",
+      "strtoull",
+      "__isoc23_strtol",
+      "__isoc23_strtoul",
+      "__isoc23_strtoll",
+      "__isoc23_strtoull",
+      "open",
+      "open64",
+      "close",
+      "sched_getaffinity",
+      "gettimeofday",
+      "clock_gettime",
+      "time",
+  };
+  if (llvm::is_contained(SystemAndStringCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  if (startsWith(name, "__atomic_load") || startsWith(name, "__atomic_store") ||
+      startsWith(name, "__atomic_exchange") ||
+      startsWith(name, "__atomic_compare_exchange")) {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    auto *FT = F.getFunctionType();
+    for (unsigned i = 0; i < FT->getNumParams(); ++i) {
+      if (FT->getParamType(i)->isPointerTy())
+        addFunctionNoCapture(&F, i);
+    }
+    if (startsWith(name, "__atomic_load_") && FT->getNumParams() == 2 &&
+        FT->getParamType(0)->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyReadsMemory();
+#else
+      F.addFnAttr(Attribute::ReadOnly);
+#endif
+      F.addParamAttr(0, Attribute::ReadOnly);
+    } else if (startsWith(name, "__atomic_store_") && FT->getNumParams() == 3 &&
+               FT->getParamType(0)->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyWritesMemory();
+#else
+      F.addFnAttr(Attribute::WriteOnly);
+#endif
+      F.addParamAttr(0, Attribute::WriteOnly);
+    } else if (name == "__atomic_load" && FT->getNumParams() == 4 &&
+               FT->getParamType(1)->isPointerTy() &&
+               FT->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::ReadOnly);
+      F.addParamAttr(2, Attribute::WriteOnly);
+    } else if (name == "__atomic_store" && FT->getNumParams() == 4 &&
+               FT->getParamType(1)->isPointerTy() &&
+               FT->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
+    }
+  }
   changed |= attributeTablegen(F);
   return changed;
+}
+
+LLVMBuilderRef startCallbackBuilder(IRBuilder<> &B) {
+#if LLVM_VERSION_MAJOR >= 24
+  BasicBlock *BB = B.GetInsertBlock();
+  assert(BB && BB->getParent() &&
+         "a builder handed to a C callback needs an insertion point in a "
+         "function");
+  LLVMBuilderRef Ref = LLVMCreateBuilderForModule(wrap(BB->getModule()));
+  IRBuilder<> &C = *unwrap(Ref);
+  C.restoreIP(B.saveIP());
+  C.SetCurrentDebugLocation(B.getCurrentDebugLocation());
+  C.setFastMathFlags(B.getFastMathFlags());
+  return Ref;
+#else
+  return wrap(&B);
+#endif
+}
+
+void finishCallbackBuilder(LLVMBuilderRef Ref, IRBuilder<> &B) {
+#if LLVM_VERSION_MAJOR >= 24
+  B.restoreIP(unwrap(Ref)->saveIP());
+  LLVMDisposeBuilder(Ref);
+#endif
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
                 bool isTape) {
   if (CustomZero) {
-    CustomZero(wrap(&Builder), wrap(T), wrap(obj), isTape);
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    CustomZero(BR, wrap(T), wrap(obj), isTape);
+    finishCallbackBuilder(BR, Builder);
   } else {
     Builder.CreateStore(Constant::getNullValue(T), obj);
   }
@@ -519,7 +620,9 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
   SmallVector<llvm::Instruction *, 2> res;
   if (EnzymePostCacheStore) {
     uint64_t size = 0;
-    auto ptr = EnzymePostCacheStore(wrap(SI), wrap(&B), &size);
+    LLVMBuilderRef BR = startCallbackBuilder(B);
+    auto ptr = EnzymePostCacheStore(wrap(SI), BR, &size);
+    finishCallbackBuilder(BR, B);
     for (size_t i = 0; i < size; i++) {
       res.push_back(cast<Instruction>(unwrap(ptr[i])));
     }
@@ -618,8 +721,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   Value *prevSize = B.CreateSelect(
       isFirstSize, ConstantInt::get(next->getType(), 0), halfNext);
 
+  // NVPTX and AMDGPU device code have malloc and free but no realloc.
   auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
-  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+                     Arch == Triple::amd_target;
 
   if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
@@ -660,6 +765,20 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       SubZero->setOperand(0, tmp);
       SubZero->setOperand(2, zeroSize);
     }
+    // Unlike realloc, allocating a replacement buffer and copying into it does
+    // not release the superseded buffer; skip the initial growth where ptr has
+    // no prior allocation.
+    if (!custom || CustomDeallocator) {
+      BasicBlock *freePrevious =
+          BasicBlock::Create(M.getContext(), "freeprev", F);
+      BasicBlock *afterFree =
+          BasicBlock::Create(M.getContext(), "afterfree", F);
+      B.CreateCondBr(isFirstSize, afterFree, freePrevious);
+      B.SetInsertPoint(freePrevious);
+      CreateDealloc(B, ptr);
+      B.CreateBr(afterFree);
+      B.SetInsertPoint(afterFree);
+    }
   }
 
   if (ZeroInit) {
@@ -673,10 +792,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
 
+  BasicBlock *growthEnd = B.GetInsertBlock();
   B.CreateBr(ok);
   B.SetInsertPoint(ok);
   auto phi = B.CreatePHI(ptr->getType(), 2);
-  phi->addIncoming(gVal, grow);
+  phi->addIncoming(gVal, growthEnd);
   phi->addIncoming(ptr, entry);
   B.CreateRet(phi);
   return F;
@@ -744,9 +864,10 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   CallInst *malloccall = nullptr;
   if (CustomAllocator) {
     LLVMValueRef wzeromem = nullptr;
-    res = unwrap(CustomAllocator(wrap(&Builder), wrap(T), wrap(Count),
-                                 wrap(Align), isDefault,
-                                 ZeroMem ? &wzeromem : nullptr));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    res = unwrap(CustomAllocator(BR, wrap(T), wrap(Count), wrap(Align),
+                                 isDefault, ZeroMem ? &wzeromem : nullptr));
+    finishCallbackBuilder(BR, Builder);
     if (isa<UndefValue>(res))
       return res;
     if (isa<Constant>(res))
@@ -802,7 +923,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     if (auto ci = dyn_cast<ConstantInt>(Count)) {
 #if LLVM_VERSION_MAJOR >= 14
       malloccall->addDereferenceableRetAttr(ci->getLimitedValue() * AlignI);
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
       AttrBuilder B(ci->getContext());
 #else
       AttrBuilder B;
@@ -872,8 +993,10 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   CallInst *res = nullptr;
 
   if (CustomDeallocator) {
-    res = dyn_cast_or_null<CallInst>(
-        unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    res =
+        dyn_cast_or_null<CallInst>(unwrap(CustomDeallocator(BR, wrap(ToFree))));
+    finishCallbackBuilder(BR, Builder);
   } else {
 
     ToFree =
@@ -920,6 +1043,36 @@ EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Function *CodeRegion)
     : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc) {}
+
+#if defined(ENZYME_FLANG_PLUGIN) && LLVM_VERSION_MAJOR < 22
+static constexpr bool DefaultUnsupportedDiagnosticFallback = true;
+#else
+static constexpr bool DefaultUnsupportedDiagnosticFallback = false;
+#endif
+
+static cl::opt<bool> EnzymeUnsupportedDiagnosticFallback(
+    "enzyme-unsupported-diag-fallback",
+    cl::init(DefaultUnsupportedDiagnosticFallback), cl::Hidden,
+    cl::desc("Print unsupported diagnostics directly when the host diagnostic "
+             "handler drops non-remark diagnostics"));
+
+/// Report an unsupported diagnostic, printing directly to stderr and exiting
+/// on errors when the host diagnostic handler drops non-remark diagnostics.
+void diagnoseEnzymeUnsupported(LLVMContext &Context,
+                               const DiagnosticInfoUnsupported &Diagnostic) {
+  if (!EnzymeUnsupportedDiagnosticFallback) {
+    Context.diagnose(Diagnostic);
+    return;
+  }
+  DiagnosticPrinterRawOStream Printer(errs());
+  errs() << LLVMContext::getDiagnosticMessagePrefix(Diagnostic.getSeverity())
+         << ": ";
+  Diagnostic.print(Printer);
+  errs() << '\n';
+  errs().flush();
+  if (Diagnostic.getSeverity() == DS_Error)
+    exit(1);
+}
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
@@ -1069,7 +1222,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.SetInsertPoint(error);
 
     if (CustomRuntimeInactiveError) {
-      CustomRuntimeInactiveError(wrap(&EB), wrap(msg), wrap(orig));
+      LLVMBuilderRef BR = startCallbackBuilder(EB);
+      CustomRuntimeInactiveError(BR, wrap(msg), wrap(orig));
+      finishCallbackBuilder(BR, EB);
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -1153,6 +1308,113 @@ bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
     Atomic = false;
   }
   return Atomic;
+}
+
+Function *getOrInsertAtomicFloatMinMax(Module &M, Type *T,
+                                       AtomicRMWInst::BinOp Op,
+                                       unsigned AddrSpace, MaybeAlign Alignment,
+                                       AtomicOrdering Order, SyncScope::ID SSID,
+                                       bool IsVolatile) {
+  assert(T->isFloatingPointTy() && "expected scalar floating-point type");
+  assert((Op == AtomicRMWInst::FMin || Op == AtomicRMWInst::FMax) &&
+         "expected FMin or FMax atomic operation");
+
+  LLVMContext &Ctx = M.getContext();
+  const DataLayout &DL = M.getDataLayout();
+  Align ResolvedAlign = Alignment ? *Alignment : DL.getABITypeAlign(T);
+  AtomicOrdering SuccessOrder =
+      Order == AtomicOrdering::Unordered ? AtomicOrdering::Monotonic : Order;
+  AtomicOrdering LoadOrder = SuccessOrder;
+  if (LoadOrder == AtomicOrdering::Release)
+    LoadOrder = AtomicOrdering::Monotonic;
+  else if (LoadOrder == AtomicOrdering::AcquireRelease)
+    LoadOrder = AtomicOrdering::Acquire;
+
+  std::string Name = std::string("__enzyme_atomic_") +
+                     (Op == AtomicRMWInst::FMax ? "fmax_" : "fmin_") +
+                     tofltstr(T) + "_a" +
+                     std::to_string(ResolvedAlign.value()) + "_o" +
+                     std::to_string(static_cast<unsigned>(SuccessOrder));
+  if (AddrSpace != 0)
+    Name += "_as" + std::to_string(AddrSpace);
+  if (SSID != SyncScope::System)
+    Name += "_ss" + std::to_string(static_cast<unsigned>(SSID));
+  if (IsVolatile)
+    Name += "_vol";
+
+  StructType *RetTy = StructType::get(Ctx, {T, Type::getInt1Ty(Ctx)});
+  Type *PtrTy = getPointerType(T, AddrSpace);
+  FunctionType *FT = FunctionType::get(RetTy, {PtrTy, T}, false);
+  Function *F = cast<Function>(M.getOrInsertFunction(Name, FT).getCallee());
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr(Attribute::AlwaysInline);
+  addFunctionNoCapture(F, 0);
+
+  Argument *Ptr = F->getArg(0);
+  Ptr->setName("ptr");
+  Argument *Val = F->getArg(1);
+  Val->setName("val");
+
+  unsigned Bits = T->getPrimitiveSizeInBits();
+  IntegerType *IntTy = IntegerType::get(Ctx, Bits);
+
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *LoopBB = BasicBlock::Create(Ctx, "loop", F);
+  BasicBlock *CasBB = BasicBlock::Create(Ctx, "cas", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+  IRBuilder<> EB(EntryBB);
+  Value *IntPtr = EB.CreatePointerCast(Ptr, getPointerType(IntTy, AddrSpace));
+  Value *ValInt = EB.CreateBitCast(Val, IntTy);
+  LoadInst *InitLoad =
+      EB.CreateAlignedLoad(IntTy, IntPtr, ResolvedAlign, IsVolatile);
+  InitLoad->setAtomic(LoadOrder, SSID);
+  EB.CreateBr(LoopBB);
+
+  IRBuilder<> LB(LoopBB);
+  PHINode *CurInt = LB.CreatePHI(IntTy, 2, "cur.int");
+  CurInt->addIncoming(InitLoad, EntryBB);
+  Value *Cur = LB.CreateBitCast(CurInt, T, "cur");
+  // Check whether `val` strictly improves on `cur` (or replaces a NaN `cur`
+  // with an ordered `val`, matching `atomicrmw fmin`/`fmax` / IEEE minNum &
+  // maxNum). Equal values return `{ cur, false }` without storing.
+  Value *StrictCmp = (Op == AtomicRMWInst::FMax) ? LB.CreateFCmpOGT(Val, Cur)
+                                                 : LB.CreateFCmpOLT(Val, Cur);
+  Value *CurIsNaN = LB.CreateFCmpUNO(Cur, Cur);
+  Value *ValIsOrd = LB.CreateFCmpORD(Val, Val);
+  Value *IsNew = LB.CreateOr(StrictCmp, LB.CreateAnd(CurIsNaN, ValIsOrd));
+  LB.CreateCondBr(IsNew, CasBB, ExitBB);
+
+  IRBuilder<> CB(CasBB);
+  AtomicCmpXchgInst *Cas = CB.CreateAtomicCmpXchg(
+      IntPtr, CurInt, ValInt, ResolvedAlign, SuccessOrder,
+      AtomicCmpXchgInst::getStrongestFailureOrdering(SuccessOrder), SSID);
+  Cas->setVolatile(IsVolatile);
+  Value *NextInt = CB.CreateExtractValue(Cas, {0}, "next.int");
+  Value *Ok = CB.CreateExtractValue(Cas, {1}, "ok");
+  CurInt->addIncoming(NextInt, CasBB);
+  CB.CreateCondBr(Ok, ExitBB, LoopBB);
+
+  IRBuilder<> XB(ExitBB);
+  PHINode *Changed = XB.CreatePHI(Type::getInt1Ty(Ctx), 2, "changed");
+  Changed->addIncoming(ConstantInt::getFalse(Ctx), LoopBB);
+  Changed->addIncoming(ConstantInt::getTrue(Ctx), CasBB);
+  Value *Res = UndefValue::get(RetTy);
+  Res = XB.CreateInsertValue(Res, Cur, {0});
+  Res = XB.CreateInsertValue(Res, Changed, {1});
+  XB.CreateRet(Res);
+
+  return F;
 }
 
 /// Create function for type that is equivalent to memcpy but adds to
@@ -1559,6 +1821,205 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 
   if (auto F = GetFunctionFromValue(fn.getCallee()))
     attributeKnownFunctions(*F);
+}
+
+void callLasclHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  assert(args.size() >= 10 && "lascl expects at least 10 arguments");
+  Type *elementType = args[4]->getType();
+  assert(elementType->isFPOrFPVectorTy() &&
+         "lascl element type must be floating-point");
+  IntegerType *IT = cast<IntegerType>(args[6]->getType());
+  Value *layout = B.CreateZExtOrTrunc(args[0], IT);
+  Value *type = B.CreateZExtOrTrunc(args[1], IT);
+  Value *cfrom = args[4];
+  Value *cto = args[5];
+  Value *m = args[6];
+  Value *n = args[7];
+  Value *A = args[8];
+  Value *lda = args[9];
+  unsigned addrSpace = 0;
+  if (auto *PT = dyn_cast<PointerType>(A->getType()))
+    addrSpace = PT->getAddressSpace();
+  PointerType *PT = getPointerType(elementType, addrSpace);
+  if (A->getType()->isIntegerTy())
+    A = B.CreateIntToPtr(A, PT);
+  else if (A->getType() != PT)
+    A = B.CreatePointerCast(A, PT);
+
+  std::string name = "__enzyme_cblas_lascl_" + tofltstr(elementType) + "_" +
+                     std::to_string(IT->getBitWidth());
+  if (addrSpace != 0)
+    name += "_as" + std::to_string(addrSpace);
+
+  FunctionType *FT = FunctionType::get(
+      Type::getVoidTy(M.getContext()),
+      {IT, IT, elementType, elementType, IT, IT, PT, IT}, false);
+
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  if (F->empty()) {
+    F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesArgMemory();
+#else
+    F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+    F->addFnAttr(Attribute::NoUnwind);
+    F->addFnAttr(Attribute::NoRecurse);
+    F->addFnAttr(Attribute::WillReturn);
+    F->addFnAttr(Attribute::NoFree);
+    F->addFnAttr(Attribute::NoSync);
+    F->addFnAttr(Attribute::AlwaysInline);
+    addFunctionNoCapture(F, 6);
+    F->addParamAttr(6, Attribute::NoAlias);
+
+    BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
+    BasicBlock *swtch = BasicBlock::Create(F->getContext(), "swtch", F);
+    BasicBlock *Ginit = BasicBlock::Create(F->getContext(), "Ginit.idx", F);
+    BasicBlock *Uinit = BasicBlock::Create(F->getContext(), "Uinit.idx", F);
+    BasicBlock *Linit = BasicBlock::Create(F->getContext(), "Linit.idx", F);
+    BasicBlock *end = BasicBlock::Create(F->getContext(), "for.end", F);
+
+    auto argLayout = F->arg_begin();
+    argLayout->setName("layout");
+    auto argType = argLayout + 1;
+    argType->setName("type");
+    auto argCfrom = argType + 1;
+    argCfrom->setName("cfrom");
+    auto argCto = argCfrom + 1;
+    argCto->setName("cto");
+    auto argM = argCto + 1;
+    argM->setName("M");
+    auto argN = argM + 1;
+    argN->setName("N");
+    auto argA = argN + 1;
+    argA->setName("A");
+    auto argLda = argA + 1;
+    argLda->setName("lda");
+
+    {
+      IRBuilder<> EB(entry);
+      Value *m0 = EB.CreateICmpSLE(argM, ConstantInt::get(IT, 0));
+      Value *n0 = EB.CreateICmpSLE(argN, ConstantInt::get(IT, 0));
+      Value *empty = EB.CreateOr(m0, n0);
+      Value *same = EB.CreateFCmpOEQ(argCto, argCfrom);
+      EB.CreateCondBr(EB.CreateOr(empty, same), end, swtch);
+    }
+
+    Value *scale = nullptr;
+    Value *isZero = nullptr;
+    {
+      IRBuilder<> SB(swtch);
+      SB.setFastMathFlags(getFast());
+      scale = SB.CreateFDiv(argCto, argCfrom, "scale");
+      isZero = SB.CreateFCmpOEQ(argCto, ConstantFP::get(elementType, 0.0),
+                                "is.zero");
+      auto swtchT = SB.CreateSwitch(argType, Ginit);
+      swtchT->addCase(ConstantInt::get(IT, 'U'), Uinit);
+      swtchT->addCase(ConstantInt::get(IT, 'u'), Uinit);
+      swtchT->addCase(ConstantInt::get(IT, 121), Uinit);
+      swtchT->addCase(ConstantInt::get(IT, 'L'), Linit);
+      swtchT->addCase(ConstantInt::get(IT, 'l'), Linit);
+      swtchT->addCase(ConstantInt::get(IT, 122), Linit);
+    }
+
+    std::pair<char, BasicBlock *> todo[] = {
+        {'G', Ginit}, {'U', Uinit}, {'L', Linit}};
+    for (auto &&[direction, init] : todo) {
+      std::string dir(1, direction);
+      BasicBlock *body =
+          BasicBlock::Create(F->getContext(), dir + "for.body", F);
+      BasicBlock *bodyZero =
+          BasicBlock::Create(F->getContext(), dir + "for.zero", F);
+      BasicBlock *bodyScale =
+          BasicBlock::Create(F->getContext(), dir + "for.scale", F);
+      BasicBlock *bodyLatch =
+          BasicBlock::Create(F->getContext(), dir + "for.latch", F);
+      BasicBlock *initend =
+          BasicBlock::Create(F->getContext(), dir + "init.end", F);
+
+      Value *istart = ConstantInt::get(IT, 0);
+      Value *iend = argM;
+      Value *jend = argN;
+
+      PHINode *j;
+      {
+        IRBuilder<> IB(init);
+        j = IB.CreatePHI(IT, direction == 'G' ? 2 : 4, dir + "j");
+        j->addIncoming(ConstantInt::get(IT, 0), swtch);
+        if (direction != 'G') {
+          j->addIncoming(ConstantInt::get(IT, 0), swtch);
+          j->addIncoming(ConstantInt::get(IT, 0), swtch);
+        }
+
+        if (direction == 'L') {
+          istart = j;
+          jend = IB.CreateSelect(IB.CreateICmpSLT(argM, argN), argM, argN);
+        } else if (direction == 'U') {
+          auto jp1 = IB.CreateAdd(j, ConstantInt::get(IT, 1), "", true, true);
+          iend = IB.CreateSelect(IB.CreateICmpULT(jp1, argM), jp1, argM);
+        }
+
+        IB.CreateBr(body);
+      }
+
+      PHINode *i;
+      Value *elemPtr;
+      {
+        IRBuilder<> BB(body);
+        i = BB.CreatePHI(IT, 2, dir + "i");
+        i->addIncoming(istart, init);
+        elemPtr =
+            lookup_with_layout(BB, elementType, argLayout, argA, argLda, i, j);
+        BB.CreateCondBr(isZero, bodyZero, bodyScale);
+      }
+
+      {
+        IRBuilder<> ZB(bodyZero);
+        ZB.CreateStore(Constant::getNullValue(elementType), elemPtr);
+        ZB.CreateBr(bodyLatch);
+      }
+
+      {
+        IRBuilder<> SCB(bodyScale);
+        SCB.setFastMathFlags(getFast());
+        Value *val = SCB.CreateLoad(elementType, elemPtr, dir + "val");
+        Value *res = SCB.CreateFMul(val, scale, dir + "scaled");
+        SCB.CreateStore(res, elemPtr);
+        SCB.CreateBr(bodyLatch);
+      }
+
+      {
+        IRBuilder<> LB(bodyLatch);
+        Value *nexti = LB.CreateAdd(i, ConstantInt::get(IT, 1), dir + "i.next",
+                                    true, true);
+        i->addIncoming(nexti, bodyLatch);
+        LB.CreateCondBr(LB.CreateICmpEQ(nexti, iend), initend, body);
+      }
+
+      {
+        IRBuilder<> IEB(initend);
+        Value *nextj = IEB.CreateAdd(j, ConstantInt::get(IT, 1), dir + "j.next",
+                                     true, true);
+        j->addIncoming(nextj, initend);
+        IEB.CreateCondBr(IEB.CreateICmpEQ(nextj, jend), end, init);
+      }
+    }
+
+    {
+      IRBuilder<> EndB(end);
+      EndB.CreateRetVoid();
+    }
+  }
+
+  B.CreateCall(F, {layout, type, cfrom, cto, m, n, A, lda}, bundles);
+  if (args.size() > 10) {
+    if (auto *AI = dyn_cast<AllocaInst>(args[10])) {
+      if (AI->use_empty())
+        AI->eraseFromParent();
+    }
+  }
 }
 
 void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
@@ -2947,16 +3408,22 @@ bool overwritesToMemoryReadByLoop(
             // they must be in the same loop, or one loop must dominate
             // the other.
             if (!eskip) {
-
-              if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                auto EH = endL->getLoop()->getHeader();
-                if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  auto SH = startL->getLoop()->getHeader();
-                  if (EH != SH && !DT.dominates(EH, SH) &&
-                      !DT.dominates(SH, EH))
-                    eskip = true;
-                }
-              }
+              eskip = SCEVExprContains(elim, [&](const SCEV *endExpr) {
+                const auto *endRec = dyn_cast<SCEVAddRecExpr>(endExpr);
+                if (!endRec)
+                  return false;
+                const BasicBlock *endHeader = endRec->getLoop()->getHeader();
+                return SCEVExprContains(slim, [&](const SCEV *startExpr) {
+                  const auto *startRec = dyn_cast<SCEVAddRecExpr>(startExpr);
+                  if (!startRec)
+                    return false;
+                  const BasicBlock *startHeader =
+                      startRec->getLoop()->getHeader();
+                  return endHeader != startHeader &&
+                         !DT.dominates(endHeader, startHeader) &&
+                         !DT.dominates(startHeader, endHeader);
+                });
+              });
             }
             if (!eskip) {
               auto sub = SE.getMinusSCEV(slim, elim);
@@ -3151,17 +3618,17 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   return true;
 }
 
-/// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
-                          llvm::TargetLibraryInfo &TLI,
-                          llvm::Instruction *maybeReader,
-                          llvm::Instruction *maybeWriter) {
-  assert(maybeReader->getParent()->getParent() ==
-         maybeWriter->getParent()->getParent());
+static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                                 llvm::TargetLibraryInfo &TLI,
+                                 const llvm::MemoryLocation *maybeReaderLoc,
+                                 llvm::Instruction *maybeReader,
+                                 llvm::Instruction *maybeWriter) {
+  assert(!maybeReader || maybeReader->getParent()->getParent() ==
+                             maybeWriter->getParent()->getParent());
   using namespace llvm;
-  if (isa<StoreInst>(maybeReader))
+  if (isa_and_nonnull<StoreInst>(maybeReader))
     return false;
-  if (isa<FenceInst>(maybeReader)) {
+  if (isa_and_nonnull<FenceInst>(maybeReader)) {
     return false;
   }
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
@@ -3178,6 +3645,40 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (isReadOnlyOrThrow(call))
       return false;
 
+    bool onlyArgOrLocalWrites = isLocalReadOnlyOrThrow(call);
+    if (!onlyArgOrLocalWrites && !call->hasOperandBundles()) {
+      auto F2 = getFunctionFromCall(call);
+      if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+#if LLVM_VERSION_MAJOR >= 16
+        auto allowed = MemoryEffects::readOnly() |
+                       MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
+                       MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+        onlyArgOrLocalWrites =
+            (call->getMemoryEffects() & allowed) == call->getMemoryEffects();
+#else
+        onlyArgOrLocalWrites = call->onlyAccessesArgMemory() ||
+                               call->onlyAccessesInaccessibleMemory() ||
+                               call->onlyAccessesInaccessibleMemOrArgMem();
+#endif
+      }
+    }
+    if (onlyArgOrLocalWrites) {
+      bool mayWrite = false;
+      for (unsigned i = 0; i < call->arg_size(); ++i) {
+        auto arg = call->getArgOperand(i);
+        if (!arg->getType()->isPointerTy() || isReadOnly(call, i))
+          continue;
+        auto loc = MemoryLocation::getForArgument(call, i, TLI);
+        if (isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                   loc.Size))) {
+          mayWrite = true;
+          break;
+        }
+      }
+      if (!mayWrite)
+        return false;
+    }
+
     if (isMemFreeLibMFunction(funcName)) {
       return false;
     }
@@ -3191,7 +3692,7 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (funcName == "jl_new_array" || funcName == "ijl_new_array")
       return false;
 
-    if (funcName == "julia.safepoint")
+    if (funcName == "julia.safepoint" || isRustNoAllocShimFunction(funcName))
       return false;
 
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
@@ -3211,16 +3712,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 #endif
       size_t off = (funcName == "MPI_Wait" || funcName == "PMPI_Wait") ? 0 : 1;
       // No alias with status
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(off + 1),
-                                     loc))) {
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(off + 1), loc))) {
         // No alias with request
-        if (!isRefSet(AA.getModRefInfo(maybeReader,
-                                       call->getArgOperand(off + 0), loc)))
+        if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                    call->getArgOperand(off + 0), loc)))
           return false;
         auto R = parseTBAA(
-            *maybeReader,
-            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-            nullptr)[{-1}];
+            maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+            *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
         // Could still conflict with the mpi_request unless a non pointer
         // type.
         if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -3231,21 +3731,22 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     // Isend only writes to inaccessible mem and request.
     if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
       auto R = parseTBAA(
-          *maybeReader,
-          maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-          nullptr)[{-1}];
+          maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+          *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
       // Could still conflict with the mpi_request, unless either
       // synchronous, or a non pointer type.
       if (R != BaseType::Unknown && R != BaseType::Anything &&
           R != BaseType::Pointer)
         return false;
 #if LLVM_VERSION_MAJOR > 11
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                     LocationSize::afterPointer())))
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(6),
+                                  LocationSize::afterPointer())))
         return false;
 #else
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                     MemoryLocation::UnknownSize)))
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(6),
+                                  MemoryLocation::UnknownSize)))
         return false;
 #endif
       return false;
@@ -3267,9 +3768,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       }
       if (type.isKnown()) {
         auto R = parseTBAA(
-            *maybeReader,
-            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-            nullptr)[{-1}];
+            maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+            *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
         if (R.isKnown() && type != R) {
           // Could still conflict with the mpi_request, unless either
           // synchronous, or a non pointer type.
@@ -3277,12 +3777,14 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
               (R != BaseType::Anything && R != BaseType::Pointer))
             return false;
 #if LLVM_VERSION_MAJOR > 11
-          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                         LocationSize::afterPointer())))
+          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                      call->getArgOperand(6),
+                                      LocationSize::afterPointer())))
             return false;
 #else
-          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                         MemoryLocation::UnknownSize)))
+          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                      call->getArgOperand(6),
+                                      MemoryLocation::UnknownSize)))
             return false;
 #endif
         }
@@ -3295,6 +3797,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
       if (II->getIntrinsicID() == Intrinsic::trap)
         return false;
+      if (II->getIntrinsicID() == Intrinsic::assume)
+        return false;
 #if LLVM_VERSION_MAJOR >= 13
       if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
         return false;
@@ -3306,14 +3810,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
     }
   }
-  if (auto call = dyn_cast<CallInst>(maybeReader)) {
+  if (auto call = dyn_cast_or_null<CallInst>(maybeReader)) {
     StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3328,6 +3833,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
       if (II->getIntrinsicID() == Intrinsic::trap)
         return false;
+      if (II->getIntrinsicID() == Intrinsic::assume)
+        return false;
 #if LLVM_VERSION_MAJOR >= 13
       if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
         return false;
@@ -3341,7 +3848,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3363,14 +3871,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
     }
   }
-  if (auto call = dyn_cast<InvokeInst>(maybeReader)) {
+  if (auto call = dyn_cast_or_null<InvokeInst>(maybeReader)) {
     StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3379,9 +3888,14 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   assert(maybeWriter->mayWriteToMemory());
-  assert(maybeReader->mayReadFromMemory());
+  if (maybeReaderLoc) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, *maybeReaderLoc)))
+      return false;
+  } else {
+    assert(maybeReader->mayReadFromMemory());
+  }
 
-  if (auto li = dyn_cast<LoadInst>(maybeReader)) {
+  if (auto li = dyn_cast_or_null<LoadInst>(maybeReader)) {
     if (TR) {
       auto TT = TR->query(li)[{-1}];
       if (TT != BaseType::Unknown && TT != BaseType::Anything) {
@@ -3402,32 +3916,48 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         }
       }
     }
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(li))))
+      return false;
   }
-  if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(rmw)));
+  if (auto rmw = dyn_cast_or_null<AtomicRMWInst>(maybeReader)) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(rmw))))
+      return false;
   }
-  if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(xch)));
+  if (auto xch = dyn_cast_or_null<AtomicCmpXchgInst>(maybeReader)) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(xch))))
+      return false;
   }
-  if (auto mti = dyn_cast<MemTransferInst>(maybeReader)) {
-    return isModSet(
-        AA.getModRefInfo(maybeWriter, MemoryLocation::getForSource(mti)));
+  if (auto mti = dyn_cast_or_null<MemTransferInst>(maybeReader)) {
+    if (!isModSet(
+            getModRefInfo(AA, maybeWriter, MemoryLocation::getForSource(mti))))
+      return false;
   }
 
   if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(si)));
+    auto loc = MemoryLocation::get(si);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(rmw)));
+    auto loc = MemoryLocation::get(rmw);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(xch)));
+    auto loc = MemoryLocation::get(xch);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto mti = dyn_cast<MemIntrinsic>(maybeWriter)) {
+    auto loc = MemoryLocation::getForDest(mti);
     return isRefSet(
-        AA.getModRefInfo(maybeReader, MemoryLocation::getForDest(mti)));
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
+
+  if (!maybeReader ||
+      isa<LoadInst, AtomicRMWInst, AtomicCmpXchgInst, MemTransferInst>(
+          maybeReader))
+    return true;
 
   if (auto cb = dyn_cast<CallInst>(maybeReader)) {
     return isModOrRefSet(AA.getModRefInfo(maybeWriter, cb));
@@ -3438,6 +3968,34 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   llvm::errs() << " maybeReader: " << *maybeReader
                << " maybeWriter: " << *maybeWriter << "\n";
   llvm_unreachable("unknown inst2");
+}
+
+/// Return whether maybeWriter can write to memory at maybeReader
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          const llvm::MemoryLocation &maybeReader,
+                          llvm::Instruction *maybeWriter) {
+  if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &maybeReader,
+                            /*maybeReader=*/nullptr, maybeWriter))
+    return false;
+  const llvm::Value *base =
+      maybeReader.Ptr ? getBaseObject(maybeReader.Ptr) : nullptr;
+  if (base && base != maybeReader.Ptr && base->getType()->isPointerTy()) {
+    auto baseLoc =
+        llvm::MemoryLocation::getBeforeOrAfter(base, maybeReader.AATags);
+    if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &baseLoc,
+                              /*maybeReader=*/nullptr, maybeWriter))
+      return false;
+  }
+  return true;
+}
+
+/// Return whether maybeReader can read from memory written to by maybeWriter
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
+                          llvm::Instruction *maybeReader,
+                          llvm::Instruction *maybeWriter) {
+  return writesToMemoryReadBy(TR, AA, TLI, /*maybeReaderLoc=*/nullptr,
+                              maybeReader, maybeWriter);
 }
 
 // Find the base pointer of ptr and the offset in bytes from the start of
@@ -3574,8 +4132,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
         if (offset + valSz <= suboff)
           continue;
 
-        if (valSz <= storeSz) {
-          assert(offset >= suboff);
+        if (offset >= suboff && offset + valSz <= suboff + storeSz) {
           options.emplace_back(SI->getValueOperand(), offset - suboff);
           continue;
         }
@@ -3686,13 +4243,18 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
     if (!legal) {
       return nullptr;
     }
+    const DataLayout &DL = LI->getModule()->getDataLayout();
     std::set<Value *> res;
     for (auto &&[opt, startOff] : opts) {
       Value *v2 = simplifyLoad(opt, valSz, startOff);
-      if (v2)
+      if (v2) {
         res.insert(v2);
-      else
-        res.insert(opt);
+        continue;
+      }
+      size_t optSizeInBytes = (DL.getTypeSizeInBits(opt->getType()) + 7) / 8;
+      if (startOff != 0 || optSizeInBytes != valSz)
+        return nullptr;
+      res.insert(opt);
     }
     if (res.size() != 1) {
       return nullptr;
@@ -3872,9 +4434,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   static const char *extractable[] = {
-      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
-      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
-      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
+      "dot",   "scal", "axpy",  "axpby", "gemv",  "gemm",  "spmv",
+      "syrk",  "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs",
+      "copy",  "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs",
+      "getri", "symv", "lacpy", "trsv",
   };
   static const char *floatType[] = {"s", "d", "c", "z"};
   static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
@@ -3981,8 +4544,10 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
 
       B.SetInsertPoint(bad);
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(B);
         CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
-                           wrap(msg_ptr), wrap(&B));
+                           wrap(msg_ptr), BR);
+        finishCallbackBuilder(BR, B);
       } else {
         llvm::FunctionType *PutsFT = llvm::FunctionType::get(
             llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
@@ -4017,9 +4582,13 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
     BuilderM.CreateCall(SanitizeFCallee, {toset, getString(*mod, stringv)});
   }
 
-  if (EnzymeSanitizeDerivatives)
-    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
-                                            wrap(&BuilderM), wrap(mask)));
+  if (EnzymeSanitizeDerivatives) {
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+    Value *res = unwrap(
+        EnzymeSanitizeDerivatives(wrap(val), wrap(toset), BR, wrap(mask)));
+    finishCallbackBuilder(BR, BuilderM);
+    return res;
+  }
   return toset;
 }
 
@@ -4596,9 +5165,12 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::IRBuilder<> &Builder2,
                                    llvm::Value *condition) {
   if (CustomErrorHandler) {
-    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils,
-                                     wrap(condition), wrap(&Builder2)));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder2);
+    Value *res = unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
+                                           ErrorType::NoDerivative, gutils,
+                                           wrap(condition), BR));
+    finishCallbackBuilder(BR, Builder2);
+    return res;
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4636,8 +5208,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     toshow = context.req;
   }
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR =
+        context.ip ? startCallbackBuilder(*context.ip) : nullptr;
     CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(todiff), wrap(context.ip));
+                       nullptr, wrap(todiff), BR);
+    if (BR)
+      finishCallbackBuilder(BR, *context.ip);
     return true;
   } else if (context.ip && EnzymeRuntimeError) {
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
@@ -4675,8 +5251,10 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
 void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR = startCallbackBuilder(Builder2);
     CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
-                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
+                       gutils->TR.analyzer, nullptr, BR);
+    finishCallbackBuilder(BR, Builder2);
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4841,6 +5419,8 @@ bool isNVLoad(const llvm::Value *V) {
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
                        size_t checkLoadCaptures, Instruction *startinst,
                        llvm::TargetLibraryInfo *TLI) {
+  if (isa<ConstantPointerNull, UndefValue, PoisonValue>(V))
+    return true;
   // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
@@ -4957,21 +5537,19 @@ bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
   return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
 }
 
+// Compare two pointers whose (single) base objects are lhs and rhs.
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
 // Return {} if no information is given.
 #if LLVM_VERSION_MAJOR >= 16
-std::optional<bool>
+static std::optional<bool>
 #else
-llvm::Optional<bool>
+static llvm::Optional<bool>
 #endif
-arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
-                             llvm::Value *op0, llvm::Value *op1,
-                             bool offsetAllowed) {
-  auto lhs = getBaseObject(op0, offsetAllowed);
-  auto rhs = getBaseObject(op1, offsetAllowed);
-
+areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                                llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                                llvm::Value *op0, llvm::Value *op1,
+                                llvm::Value *lhs, llvm::Value *rhs) {
   if (lhs == rhs) {
     return false;
   }
@@ -4988,6 +5566,27 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
 
   if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
     return {};
+
+  if (lhs->getType()->isPointerTy() && rhs->getType()->isPointerTy()) {
+    bool hasNullOrUndef = false;
+    for (auto obj : getBaseObjects(lhs, /*offsetAllowed=*/true)) {
+      if (isa<ConstantPointerNull, UndefValue>(obj)) {
+        hasNullOrUndef = true;
+        break;
+      }
+    }
+    if (!hasNullOrUndef) {
+      for (auto obj : getBaseObjects(rhs, /*offsetAllowed=*/true)) {
+        if (isa<ConstantPointerNull, UndefValue>(obj)) {
+          hasNullOrUndef = true;
+          break;
+        }
+      }
+    }
+    if (!hasNullOrUndef && AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
+                                        MemoryLocation::getBeforeOrAfter(rhs)))
+      return true;
+  }
 
   bool noalias_lhs = isNoAlias(lhs);
   bool noalias_rhs = isNoAlias(rhs);
@@ -5134,6 +5733,47 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   return {};
 }
 
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                             llvm::Value *op0, llvm::Value *op1,
+                             bool offsetAllowed) {
+  // Look through phis and selects: a pointer such as `xp = phi [x2, &s[i]]`
+  // may be based on any of several objects, and the per-object reasoning
+  // below (noalias, not captured, ...) is only valid for a single, known base.
+  auto lhsObjs = getBaseObjects(op0, offsetAllowed);
+  auto rhsObjs = getBaseObjects(op1, offsetAllowed);
+
+  if (lhsObjs.empty() || rhsObjs.empty())
+    return {};
+
+  if (lhsObjs.size() == 1 && rhsObjs.size() == 1)
+    return areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, op0, op1,
+                                           lhsObjs[0], rhsObjs[0]);
+
+  // With several candidate bases, the pointers are guaranteed not to alias
+  // only if every pair of candidates is. A shared candidate means they may
+  // alias (but, unlike the single-base case, not that they must).
+  for (auto lhs : lhsObjs) {
+    for (auto rhs : rhsObjs) {
+      if (lhs == rhs)
+        return {};
+      auto res =
+          areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, lhs, rhs, lhs, rhs);
+      if (!res || !*res)
+        return {};
+    }
+  }
+  return true;
+}
+
 static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
                                         llvm::Value *value,
                                         ArrayRef<unsigned> path) {
@@ -5253,10 +5893,10 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
     if (PT->getAddressSpace() == 10 && extracted.size()) {
       extracted.insert(extracted.begin(), obj);
       auto JLT = getPointerType(StructType::get(PT->getContext(), {}), 10);
-      auto FT = FunctionType::get(JLT, {}, true);
-      auto wb =
-          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-              "julia.write_barrier", FT);
+      auto FT =
+          FunctionType::get(Type::getVoidTy(PT->getContext()), {JLT}, true);
+      auto wb = getJuliaObjectWriteBarrier(
+          *B.GetInsertBlock()->getParent()->getParent(), FT);
       assert(obj->getType() == JLT);
       B.CreateCall(wb, extracted);
     }

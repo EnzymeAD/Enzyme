@@ -142,7 +142,6 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
-  auto argUsers = pattern.getArgUsers();
 
   std::string valueTypes = "";
   { bool comma = false;
@@ -340,7 +339,6 @@ os << "      if (EnzymeLapackCopy) {\n"
 void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
-  auto argUsers = pattern.getArgUsers();
   const auto activeArgs = pattern.getActiveArgs();
   auto rules = pattern.getRules();
 
@@ -448,7 +446,6 @@ os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode())
 
 void emit_caching(const TGPattern &pattern, raw_ostream &os) {
 
-  const auto typeMap = pattern.getArgTypeMap();
 
   // 1. No caching for fwd-mode
   // 2. Deactivate caching for uncacheable_args

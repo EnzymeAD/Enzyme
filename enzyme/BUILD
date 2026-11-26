@@ -561,9 +561,23 @@ gentbl_cc_library(
         (
             [
                 "-gen-pass-decls",
-                "-name=enzyme",
+                "-name=Enzyme",
             ],
             "Enzyme/MLIR/Passes/Passes.h.inc",
+        ),
+        (
+            [
+                "-gen-pass-capi-header",
+                "--prefix=Enzyme",
+            ],
+            "Enzyme/MLIR/Passes/Passes.capi.h.inc",
+        ),
+        (
+            [
+                "-gen-pass-capi-impl",
+                "--prefix=Enzyme",
+            ],
+            "Enzyme/MLIR/Passes/Passes.capi.cpp.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
@@ -982,6 +996,7 @@ cc_library(
         "Enzyme/MLIR/Interfaces/*.cpp",
         "Enzyme/MLIR/Analysis/*.cpp",
         "Enzyme/MLIR/Implementations/*.cpp",
+        "Enzyme/MLIR/Target/*.cpp",
     ]),
     hdrs = glob([
         "Enzyme/MLIR/Dialect/*.h",
@@ -990,6 +1005,7 @@ cc_library(
         "Enzyme/MLIR/Interfaces/*.h",
         "Enzyme/MLIR/Analysis/*.h",
         "Enzyme/MLIR/Implementations/*.h",
+        "Enzyme/MLIR/Target/*.h",
         "Enzyme/EnzymeCallMarkers.h",
         "Enzyme/PassUtils.h",
         "Enzyme/Utils.h",
@@ -1076,6 +1092,7 @@ cc_library(
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",
@@ -1085,11 +1102,15 @@ cc_library(
 cc_library(
     name = "CInterface",
     srcs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.cpp"],
-    hdrs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.h"],
+    hdrs = [
+        "Enzyme/MLIR/Integrations/c/EnzymeMLIR.h",
+        "Enzyme/MLIR/Integrations/c/EnzymeMLIRPasses.h",
+    ],
     includes = ["Enzyme/MLIR"],
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeMLIR",
+        ":EnzymePassesIncGen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:IR",

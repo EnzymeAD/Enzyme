@@ -24,6 +24,7 @@ lit_expand_template(
         "@TARGETS_TO_BUILD@": "ALL",
         "@LLVM_SHLIBEXT@": ".so",
         "@Fortran_COMPILER@": "",
+        "@ENZYME_TEST_PLUGIN_ENABLED@": "0",
     },
     template = "lit.site.cfg.py.in",
     visibility = [":__subpackages__"],

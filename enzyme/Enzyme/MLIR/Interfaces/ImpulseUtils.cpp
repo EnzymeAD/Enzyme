@@ -104,9 +104,7 @@ ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
   table.insert(NewF);
 
   IRMapping originalToNew;
-  std::map<Operation *, Operation *> originalToNewOps;
-  cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
-            originalToNewOps);
+  cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew);
 
   if (mode == ImpulseMode::Generate) {
     Block &entry = NewF.getFunctionBody().front();
@@ -122,5 +120,5 @@ ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
         toeval.getLoc());
   }
 
-  return new ImpulseUtils(NewF, toeval, originalToNew, originalToNewOps, mode);
+  return new ImpulseUtils(NewF, toeval, originalToNew, mode);
 }

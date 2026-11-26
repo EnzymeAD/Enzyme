@@ -6,15 +6,14 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/OffsetViewInterface.h"
 #include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -46,20 +45,10 @@ bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
     for (auto u : v.getUsers()) {
       if (seenuse && u == potentialUser)
         *seenuse = true;
-      if (isa<memref::LoadOp, LLVM::LoadOp, affine::AffineLoadOp>(u))
+      if (isa<enzyme::LoadLikeInterface>(u))
         continue;
-      if (auto s = dyn_cast<memref::StoreOp>(u)) {
-        if (s.getValue() == v)
-          return true;
-        continue;
-      }
-      if (auto s = dyn_cast<affine::AffineStoreOp>(u)) {
-        if (s.getValue() == v)
-          return true;
-        continue;
-      }
-      if (auto s = dyn_cast<LLVM::StoreOp>(u)) {
-        if (s.getValue() == v)
+      if (auto s = dyn_cast<enzyme::StoreLikeInterface>(u)) {
+        if (s.getStoredValue() == v)
           return true;
         continue;
       }
@@ -136,10 +125,9 @@ Value getBaseObject(Value v, bool offsetAllowed) {
   return v;
 }
 
-static bool isStackAlloca(Value v) {
-  return v.getDefiningOp<memref::AllocaOp>() ||
-         v.getDefiningOp<memref::AllocOp>() ||
-         v.getDefiningOp<LLVM::AllocaOp>();
+static bool isFreshAllocation(Value v) {
+  return v.getDefiningOp<enzyme::MallocLikeInterface>() ||
+         v.getDefiningOp<enzyme::AllocaLikeInterface>();
 }
 
 bool mayAlias(Value v1, Value v2) {
@@ -165,11 +153,11 @@ bool mayAlias(Value v1, Value v2) {
   bool isAlloca[2];
   bool isGlobal[2];
 
-  isAlloca[0] = isStackAlloca(v1);
+  isAlloca[0] = isFreshAllocation(v1);
   isGlobal[0] = v1.getDefiningOp<memref::GetGlobalOp>() ||
                 v1.getDefiningOp<LLVM::AddressOfOp>();
 
-  isAlloca[1] = isStackAlloca(v2);
+  isAlloca[1] = isFreshAllocation(v2);
 
   isGlobal[1] = v2.getDefiningOp<memref::GetGlobalOp>() ||
                 v2.getDefiningOp<LLVM::AddressOfOp>();

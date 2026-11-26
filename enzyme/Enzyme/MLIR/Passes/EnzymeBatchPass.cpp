@@ -283,12 +283,10 @@ namespace {
 struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
-  // Cache mapping original function and batch sizes to batched function
-  std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
-      batchedFunctionCache;
-
-  void lowerEnzymeBatchCalls(SymbolTableCollection &symbolTable,
-                             FunctionOpInterface op) {
+  void lowerEnzymeBatchCalls(
+      SymbolTableCollection &symbolTable, FunctionOpInterface op,
+      std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
+          &BatchedFunctionCache) {
     {
       SmallVector<Operation *> toLower;
       op->walk([&](enzyme::BatchOp dop) { toLower.push_back(dop); });
@@ -298,7 +296,7 @@ struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::BatchOp>(T)) {
           auto res = enzyme::batchutils::batchOperation(symbolTable, builder, F,
-                                                        batchedFunctionCache);
+                                                        BatchedFunctionCache);
           if (!res.succeeded()) {
             signalPassFailure();
             return;
@@ -314,8 +312,11 @@ struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
 } // end anonymous namespace
 
 void BatchPass::runOnOperation() {
+  std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
+      BatchedFunctionCache;
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
-  getOperation()->walk(
-      [&](FunctionOpInterface op) { lowerEnzymeBatchCalls(symbolTable, op); });
+  getOperation()->walk([&](FunctionOpInterface op) {
+    lowerEnzymeBatchCalls(symbolTable, op, BatchedFunctionCache);
+  });
 }

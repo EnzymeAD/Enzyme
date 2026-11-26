@@ -33,7 +33,7 @@ jobs:
         llvm: ["18"]
         build: ["Release"]
         os:
-          - linux-x86-n2-32
+          - linux-x86-n4-32
           - linux-x86-a2-48-a100-4gpu
         package:
           - mfem

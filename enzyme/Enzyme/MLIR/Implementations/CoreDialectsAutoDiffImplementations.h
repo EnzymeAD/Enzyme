@@ -16,6 +16,7 @@
 #define ENZYMEMLIR_CORE_IMPL_H_
 
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -330,6 +331,10 @@ void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 
 mlir::TypedAttr getConstantAttr(mlir::Type type, llvm::StringRef value);
+mlir::Attribute getComplexConstantAttr(mlir::Type type, llvm::StringRef re,
+                                       llvm::StringRef im);
+
+bool allResultsActive(Operation *op, const MGradientUtils *gutils);
 
 /// Give an operation built for a derivative the fast-math flags the LLVM path
 /// gives everything it builds (Utils.cpp's getFast()). A gradient is only as

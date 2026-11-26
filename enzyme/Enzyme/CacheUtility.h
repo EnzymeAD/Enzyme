@@ -236,6 +236,37 @@ public:
   virtual void replaceAWithB(llvm::Value *A, llvm::Value *B,
                              bool storeInCache = false);
 
+  /// Whether PN is a placeholder standing in for a non-PHI instruction, and so
+  /// belongs to the body of its block rather than to its group of PHIs.
+  virtual bool isPlaceholderForNonPHI(const llvm::PHINode *PN) const {
+    return false;
+  }
+
+  /// The first instruction of BB that code may be inserted before without
+  /// splitting the block's PHIs: the first instruction that is neither a PHI,
+  /// an EH pad, nor a shadow PHI whose incoming values are still being filled
+  /// in. A placeholder for a non-PHI instruction ends the group, so that code
+  /// inserted here precedes whatever later replaces the placeholder.
+  llvm::Instruction *getFirstNonPHIOrPlaceholder(llvm::BasicBlock *BB) {
+    return getFirstNonPHIOrPlaceholder(&BB->front());
+  }
+
+  /// Like the BasicBlock overload, scanning forward from From itself. Returns
+  /// From unchanged when it is already outside the PHIs, and null for a null
+  /// From.
+  llvm::Instruction *getFirstNonPHIOrPlaceholder(llvm::Instruction *From) {
+    for (; From; From = From->getNextNode()) {
+      if (auto *PN = llvm::dyn_cast<llvm::PHINode>(From)) {
+        if (isPlaceholderForNonPHI(PN))
+          return From;
+        continue;
+      }
+      if (!From->isEHPad())
+        return From;
+    }
+    return nullptr;
+  }
+
   // Context information to request calculation of loop limit information
   struct LimitContext {
     // Whether the limit needs to be accessible for a reverse pass

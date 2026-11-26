@@ -19,6 +19,7 @@ add_mlir_library(
   TransformUtils.cpp
   EnzymeLogic.cpp
   EnzymeLogicReverse.cpp
+  MTypeResults.cpp
   Utils.cpp
   DEPENDS
   MLIROffsetViewInterfaceIncGen

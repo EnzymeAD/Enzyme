@@ -5,6 +5,7 @@ add_lit_testsuite(
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
   enzymemlir-opt
+  enzymemlir-translate
   ARGS
   -v)
 

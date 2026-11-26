@@ -69,10 +69,16 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
     }
   }
 
-  nBB->push_back(newInst->create(newInst->getLoc(), newInst->getName(),
-                                 TypeRange(), retargs, newInst->getAttrs(),
-                                 mlir::PropertyRef(), newInst->getSuccessors(),
-                                 newInst->getNumRegions()));
+  if (auto fnIface =
+          dyn_cast<AutoDiffFunctionInterface>(gutils->newFunc.getOperation())) {
+    nBuilder.setInsertionPointToEnd(nBB);
+    fnIface.createReturn(nBuilder, newInst->getLoc(), retargs);
+  } else {
+    nBB->push_back(
+        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
+                        retargs, newInst->getAttrs(), mlir::PropertyRef(),
+                        newInst->getSuccessors(), newInst->getNumRegions()));
+  }
   gutils->erase(newInst);
   return;
 }
