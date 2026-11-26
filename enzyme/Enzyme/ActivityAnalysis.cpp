@@ -1277,7 +1277,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   // Otherwise we must fall back and assume this instruction to be active.
   ActiveInstructions.insert(I);
   if (EnzymePrintActivity)
-    llvm::errs() << "couldnt decide fallback as nonconstant instruction("
+    llvm::errs() << "couldn't decide fallback as nonconstant instruction("
                  << (int)directions << "):" << *I << "\n";
   if (noActiveWrite && directions == 3 && EnzymeEnableRecursiveHypotheses)
     ReEvaluateInstIfInactiveValue[I].insert(I);
@@ -1566,25 +1566,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               if (LoadReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *LoadReval << "\n";
+                               << " dependent on " << *LoadReval << "\n";
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
               }
               if (StoreReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *StoreReval << "\n";
+                               << " dependent on " << *StoreReval << "\n";
                 ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
               }
               if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *ValLoadReval << "\n";
+                               << " dependent on " << *ValLoadReval << "\n";
                 ReEvaluateValueIfInactiveValue[ValLoadReval].insert(Val);
               }
               if (ValStoreReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *ValStoreReval << "\n";
+                               << " dependent on " << *ValStoreReval << "\n";
                 ReEvaluateValueIfInactiveValue[ValStoreReval].insert(Val);
               }
             }
