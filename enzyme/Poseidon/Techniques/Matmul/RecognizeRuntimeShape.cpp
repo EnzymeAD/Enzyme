@@ -1481,8 +1481,8 @@ static Expected<RecognizedChain> analyzeChain(Function &F, ScalarEvolution &SE,
   note.bOffset = bRef->offset;
   note.cParam = cRef->param;
   note.cOffset = cRef->offset;
-  // A recognized nest is the whole body: the caller refuses a body that
-  // stores anything else into its arguments.
+  // A recognized nest is the whole body: the caller refuses a body with an
+  // effect besides the product's store.
   note.standalone = true;
   H.cStore = store->store;
   H.epilogue = store->epilogue;
@@ -1549,14 +1549,6 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
     if (am.origin == RecognizedMatmul::Origin::ConstantShape &&
         am.scalarLoop.fma)
       claimed.insert(am.scalarLoop.fma);
-
-  // A library call replaces the whole launch, so the body may store into
-  // its arguments only the product.
-  unsigned argStores = 0;
-  for (Instruction &I : instructions(F))
-    if (auto *St = dyn_cast<StoreInst>(&I))
-      if (tracePointerRoot(St->getPointerOperand()).param >= 0)
-        ++argStores;
 
   DominatorTree DT(F);
 
@@ -1661,10 +1653,12 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
 
     Expected<RecognizedChain> R =
         analyzeChain(F, SE, DT, profileHeader, prof, chain);
-    if (R && argStores != 1)
-      R = refuse("the body performs " + std::to_string(argStores) +
-                 " argument-rooted stores, and only a pure GEMM body can be "
-                 "replaced by a library call");
+    // A library call replaces the whole launch.
+    if (R && llvm::any_of(instructions(F), [&](const Instruction &I) {
+          return &I != R->H.cStore && hasEffect(I);
+        }))
+      R = refuse("the body has an effect besides the product's store, which "
+                 "the library call in place of its launch would lose");
     if (!R) {
       std::string why = toString(R.takeError());
       if (O.Diagnostics.Print)

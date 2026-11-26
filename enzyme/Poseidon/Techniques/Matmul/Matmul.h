@@ -223,7 +223,9 @@ struct GemmBodyNote {
   /// Byte offsets of the three operand pointers inside their parameter, when
   /// the parameter is a by-value aggregate; -1 when it is the pointer itself.
   int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  bool standalone = false; // body is a pure GEMM (only the C store)
+  /// The product's store is the body's one effect (hasEffect), so the library
+  /// call takes the place of the launch; otherwise it precedes the launch.
+  bool standalone = false;
   /// M x Ncols x K and the leading dimensions (in elements) at deploy scale,
   /// indexed by GemmDim. The host stub evaluates a dimension with factors from
   /// the launch arguments, so a build profiled at one problem size runs at

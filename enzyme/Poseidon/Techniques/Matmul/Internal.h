@@ -86,6 +86,11 @@ const llvm::CallBase *siteCallOf(const Session &S, const llvm::Function &F);
 /// and other uses that follow. Null if F has none.
 llvm::StoreInst *productStore(llvm::Function &F, const RecognizedMatmul &m);
 
+/// Whether `I` has an effect that removing its kernel's launch would lose: a
+/// store, an atomic, a volatile load, a call that may write memory, throw or
+/// not return. Debug, lifetime and other assume-like intrinsics have none.
+bool hasEffect(const llvm::Instruction &I);
+
 /// Why no library call computes a product whose elements are `elem`: every
 /// entry of the runtime is a GEMM of doubles. None for doubles.
 std::optional<std::string> libraryElementRefusal(FPKind elem);

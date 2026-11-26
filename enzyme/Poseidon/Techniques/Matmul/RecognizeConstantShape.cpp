@@ -770,6 +770,13 @@ constantOutputExtents(const RecognizedMatmul &m, const ThreadIndexBounds &guard,
   return std::nullopt;
 }
 
+bool hasEffect(const Instruction &I) {
+  if (const auto *II = dyn_cast<IntrinsicInst>(&I);
+      II && II->isAssumeLikeIntrinsic())
+    return false;
+  return I.mayHaveSideEffects();
+}
+
 std::optional<std::string> libraryElementRefusal(FPKind elem) {
   if (elem == FPKind::FP64)
     return std::nullopt;
@@ -826,7 +833,6 @@ constantShapeLibraryNote(const Options &O, Function &F,
   if (note.aParam < 0 || note.bParam < 0)
     return refuse("an operand is not read through a pointer parameter");
 
-  // The body is standalone iff it has exactly one argument-rooted store.
   int storeCount = 0;
   StoreInst *lastArgStore = nullptr;
   for (Instruction &I : instructions(F))
@@ -963,7 +969,19 @@ constantShapeLibraryNote(const Options &O, Function &F,
                    [](const RuntimeDim &d) { return d.add > kMaxDimConstant; }))
     return refuse("a dimension of the product is out of the range of the "
                   "library call's int dimensions");
-  note.standalone = (storeCount == 1);
+  // A library call takes the place of the launch of a body whose one effect
+  // is the product's store; any other body's kernel is launched after it.
+  note.standalone = llvm::all_of(instructions(F), [&](const Instruction &I) {
+    return &I == cStore || !hasEffect(I);
+  });
+  // The kept launch runs after the call has written C, so it may not read C.
+  if (!note.standalone && llvm::any_of(instructions(F), [&](Instruction &I) {
+        auto *L = dyn_cast<LoadInst>(&I);
+        return L &&
+               tracePointerRoot(L->getPointerOperand()).param == note.cParam;
+      }))
+    return refuse("the body reads C, which the library call writes before "
+                  "the kernel that does the body's other work runs");
   return note;
 }
 

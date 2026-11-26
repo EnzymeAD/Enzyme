@@ -116,16 +116,7 @@ static std::vector<int> launchArgsOf(ArrayRef<Value *> primalArgs) {
 // Whether `wrapper` does nothing with an effect but call its site, so that a
 // library call can take the place of its whole launch.
 static bool onlyCallsItsSite(const Function &wrapper) {
-  unsigned effects = 0;
-  for (const Instruction &I : instructions(wrapper)) {
-    if (!I.mayHaveSideEffects())
-      continue;
-    if (const auto *II = dyn_cast<IntrinsicInst>(&I);
-        II && II->isAssumeLikeIntrinsic())
-      continue;
-    ++effects;
-  }
-  return effects <= 1;
+  return llvm::count_if(instructions(wrapper), hasEffect) <= 1;
 }
 
 const CallBase *siteCallOf(const Session &S, const Function &F) {
