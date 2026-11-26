@@ -37,14 +37,18 @@ if grep -q '^log$' "$t"; then
   echo "fake-herbie: $*" >&2
   cat "$in" >&2
 fi
-for o in $(sed -n 's/^refuse //p' "$t"); do
+refused=$(sed -n 's/^refuse //p' "$t")
+while read -r o; do
+  [ -n "$o" ] || continue
   case " $* " in
   *" $o "*)
     echo "herbie report: unknown switch: $o" >&2
     exit 1
     ;;
   esac
-done
+done <<EOF
+$refused
+EOF
 answer=$(printf '%s\n' "$*" | cat - "$in" | awk -v table="$t" '
   { text = text $0 "\n" }
   END {

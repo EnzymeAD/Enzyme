@@ -7,7 +7,7 @@
 # rewrite $FAKE_CLANG_FAIL (an -poseidon-pin value) applied, the
 # program fails as a CUDA program that cannot initialize the device does.
 [ -z "$FAKE_CLANG_LOG" ] || echo "$*" >> "$FAKE_CLANG_LOG"
-out= prev= dir= explain= time=2.000000 fails=
+out='' prev='' dir='' explain='' time=2.000000 fails=''
 for arg; do
   case "$arg" in
   -poseidon-profile-generate=*) dir=${arg#*=} ;;
