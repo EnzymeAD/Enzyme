@@ -2193,6 +2193,119 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
   visitGEPOperator(*cast<GEPOperator>(&gep));
 }
 
+void TypeAnalyzer::visitNegativeOffsetGEPChain(GEPOperator &gep,
+                                               int64_t offset) {
+  auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+  auto inst = dyn_cast<Instruction>(&gep);
+
+  // The offsets of `gep` from `base`, one per known value of the indices of
+  // the GEPs walked so far.
+  std::set<int64_t> totals = {offset};
+  Value *base = gep.getPointerOperand();
+  bool seenVariable = false;
+  // How many GEPs to look through, to bound the work for long chains.
+  constexpr int MaxDepth = 4;
+  for (int depth = 0;; depth++) {
+    if (llvm::any_of(totals, [](int64_t t) { return t >= 0; }))
+      break;
+    if (depth == MaxDepth)
+      return;
+    auto P = dyn_cast<GEPOperator>(base);
+    if (!P || P->getNumIndices() == 0 ||
+        P->getPointerAddressSpace() != gep.getPointerAddressSpace())
+      return;
+    // As for `gep`: the offset is only an offset into the same object if the
+    // GEP is inbounds or its indices are integers.
+    if (!P->isInBounds())
+      for (auto I = P->idx_begin(), E = P->idx_end(); I != E; I++) {
+        auto CT = getAnalysis(*I).Inner0();
+        if (CT != BaseType::Integer && CT != BaseType::Anything)
+          return;
+      }
+
+    auto BitWidth = DL.getIndexSizeInBits(P->getPointerAddressSpace());
+    APInt constOffset(BitWidth, 0);
+#if LLVM_VERSION_MAJOR >= 20
+    SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
+    MapVector<Value *, APInt> VariableOffsets;
+#endif
+    if (!collectOffset(P, DL, BitWidth, VariableOffsets, constOffset))
+      return;
+    if (!constOffset.isSignedIntN(64))
+      return;
+
+    std::set<int64_t> offsets = {constOffset.getSExtValue()};
+    if (VariableOffsets.size() != 0) {
+      // Combining the values of the indices of two GEPs of the chain would
+      // pair values of the same loop index from different iterations.
+      if (seenVariable || VariableOffsets.size() != 1)
+        return;
+      seenVariable = true;
+      auto &pair = VariableOffsets.front();
+      if (!pair.second.isSignedIntN(64))
+        return;
+      int64_t scale = pair.second.getSExtValue();
+      std::set<int64_t> scaled;
+      for (auto i :
+           fntypeinfo.knownIntegralValues(pair.first, DT, intseen, SE)) {
+        // As for a single GEP, do not consider negative indices.
+        if (i < 0)
+          continue;
+        scaled.insert(*offsets.begin() + scale * i);
+      }
+      offsets = std::move(scaled);
+    }
+    if (offsets.empty())
+      return;
+
+    std::set<int64_t> next;
+    for (auto t : totals)
+      for (auto o : offsets)
+        next.insert(t + o);
+    totals = std::move(next);
+    base = P->getPointerOperand();
+  }
+
+  TypeTree upTree;
+  TypeTree downTree;
+  TypeTree gepData0;
+  TypeTree baseData0;
+  if (direction & UP)
+    gepData0 = getAnalysis(&gep).Data0();
+  if (direction & DOWN)
+    baseData0 = getAnalysis(base).Data0();
+
+  bool seenIdx = false;
+  for (auto off : totals) {
+    if (off < 0 || off > std::numeric_limits<int>::max())
+      continue;
+    if (direction & DOWN) {
+      auto shft = baseData0.ShiftIndices(DL, /*init offset*/ (int)off,
+                                         /*max size*/ -1, /*newoffset*/ 0);
+      if (seenIdx)
+        downTree &= shft;
+      else
+        downTree = shft;
+    }
+    if (direction & UP) {
+      auto shft = gepData0.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
+                                        /*new offset*/ (int)off);
+      if (seenIdx)
+        upTree |= shft;
+      else
+        upTree = shft;
+    }
+    seenIdx = true;
+  }
+  if (!seenIdx)
+    return;
+  if (direction & DOWN)
+    updateAnalysis(&gep, downTree.Only(-1, inst), &gep);
+  if (direction & UP)
+    updateAnalysis(base, upTree.Only(-1, inst), &gep);
+}
+
 void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   auto inst = dyn_cast<Instruction>(&gep);
   if (isa<UndefValue>(gep.getPointerOperand())) {
@@ -2345,6 +2458,50 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;
   assert(legalOffset);
+
+  // A later GEP of this one may step back by a constant (see below), and then
+  // relates the base pointer of this GEP to itself: revisit it as this GEP's
+  // base gains types.
+  if (direction & DOWN)
+    for (auto U : gep.users())
+      if (auto UG = dyn_cast<GEPOperator>(U))
+        if (UG->getPointerOperand() == &gep && UG->hasAllConstantIndices())
+          addToWorkList(UG);
+
+  // LLVM canonicalizes the address of an element of a 1-based array, a(i)
+  // at &a[i - 1], into a scaled GEP of the index followed by a negative
+  // constant byte offset:
+  //   %hi = getelementptr [4 x i8], ptr %a, i64 %i
+  //   %e  = getelementptr i8, ptr %hi, i64 -4
+  // A type tree has no negative offsets, so nothing would flow between %e and
+  // %hi. Relate %e to the base of the chain of GEPs instead, at the offsets
+  // of the whole chain that are not negative.
+  if (VariableOffsets.size() == 0 && constOffset.isNegative() &&
+      constOffset.isSignedIntN(32)) {
+    int64_t back = -constOffset.getSExtValue();
+    visitNegativeOffsetGEPChain(gep, -back);
+    // LICM may instead hoist the step back out of a loop, so that it is the
+    // base of the scaled GEP:
+    //   %lo = getelementptr i8, ptr %a, i64 -4
+    //   %e  = getelementptr float, ptr %lo, i64 %i    ; %i >= 1
+    // The bytes of %lo from offset 4 on are those of %a.
+    if (direction & UP)
+      updateAnalysis(gep.getPointerOperand(),
+                     getAnalysis(&gep)
+                         .Data0()
+                         .ShiftIndices(DL, /*init offset*/ (int)back,
+                                       /*max size*/ -1, /*new offset*/ 0)
+                         .Only(-1, inst),
+                     &gep);
+    if (direction & DOWN)
+      updateAnalysis(&gep,
+                     getAnalysis(gep.getPointerOperand())
+                         .Data0()
+                         .ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
+                                       /*new offset*/ (int)back)
+                         .Only(-1, inst),
+                     &gep);
+  }
 
   SmallVector<std::set<int>, 4> idnext;
 

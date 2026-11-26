@@ -355,6 +355,10 @@ public:
 
   void visitGEPOperator(llvm::GEPOperator &gep);
 
+  /// Relates a GEP with a negative constant offset to the base of the chain
+  /// of GEPs it steps back into, at the non-negative offsets of the chain.
+  void visitNegativeOffsetGEPChain(llvm::GEPOperator &gep, int64_t offset);
+
   void visitPHINode(llvm::PHINode &phi);
 
   void visitTruncInst(llvm::TruncInst &I);
