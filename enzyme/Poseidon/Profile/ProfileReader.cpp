@@ -278,10 +278,10 @@ Error ProfileParser::header(StringRef Key, StringRef Value,
     Header.hasKappa = true;
   } else if (Key == kProfileKeyKappaMark) {
     Header.kappaMark = StringSwitch<KappaMark>(Value)
-                           .Case("ok", KappaMark::Ok)
-                           .Case("below-noise", KappaMark::BelowNoise)
-                           .Case("nonlinear", KappaMark::Nonlinear)
-                           .Case("diverged", KappaMark::Diverged)
+                           .Case(kProfileKappaOk, KappaMark::Ok)
+                           .Case(kProfileKappaBelowNoise, KappaMark::BelowNoise)
+                           .Case(kProfileKappaNonlinear, KappaMark::Nonlinear)
+                           .Case(kProfileKappaDiverged, KappaMark::Diverged)
                            .Case(kProfileKappaUnmeasured, KappaMark::Unmeasured)
                            .Default(KappaMark::None);
     if (Header.kappaMark == KappaMark::None)
@@ -405,13 +405,13 @@ StringRef kappaMarkName(KappaMark M) {
   case KappaMark::None:
     return "";
   case KappaMark::Ok:
-    return "ok";
+    return kProfileKappaOk;
   case KappaMark::BelowNoise:
-    return "below-noise";
+    return kProfileKappaBelowNoise;
   case KappaMark::Nonlinear:
-    return "nonlinear";
+    return kProfileKappaNonlinear;
   case KappaMark::Diverged:
-    return "diverged";
+    return kProfileKappaDiverged;
   case KappaMark::Unmeasured:
     return kProfileKappaUnmeasured;
   }

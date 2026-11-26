@@ -174,7 +174,7 @@ void decide(const std::vector<Step> &ladder, double &kappa, std::string &mark,
     hasDiverge |= r.diverged;
   if (ladder.empty() || ladder.front().diverged) {
     kappa = std::numeric_limits<double>::infinity();
-    mark = "diverged";
+    mark = kProfileKappaDiverged;
     hasDiverge = false;
     return;
   }
@@ -186,7 +186,7 @@ void decide(const std::vector<Step> &ladder, double &kappa, std::string &mark,
       std::swap(lo, hi);
     if (hi == 0.0 || (lo > 0.0 && hi / lo <= kSlopeAgreement)) {
       kappa = ladder[i].kappa;
-      mark = "ok";
+      mark = kProfileKappaOk;
       return;
     }
   }
@@ -195,7 +195,7 @@ void decide(const std::vector<Step> &ladder, double &kappa, std::string &mark,
       kappa = r.kappa;
       break;
     }
-  mark = hasDiverge ? "ok" : "nonlinear";
+  mark = hasDiverge ? kProfileKappaOk : kProfileKappaNonlinear;
 }
 
 // The scratch directory of the run of `site` at `eps` under `tmp`.
@@ -285,7 +285,7 @@ bool measure(const std::string &tmp, const std::map<int, std::string> &sites,
     const std::vector<Step> steps =
         measureSite(tmp, site, ladder, m0, noise, responded);
     double kappa = 0.0;
-    std::string mark = "below-noise";
+    std::string mark = kProfileKappaBelowNoise;
     bool hasDiverge = false;
     if (responded)
       decide(steps, kappa, mark, hasDiverge);

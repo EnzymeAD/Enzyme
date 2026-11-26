@@ -59,7 +59,15 @@ inline constexpr char kProfileKeyCanonicalHash[] = "CanonicalHash";
 inline constexpr char kProfileKeyKappa[] = "Kappa";
 inline constexpr char kProfileKeyKappaMark[] = "KappaMark";
 inline constexpr char kProfileKeyExecuted[] = "Executed";
-// The KappaMark of a run that declared a metric and did not measure it.
+// The words of a KappaMark line, which poseidon-kappa writes and the pass
+// reads: the condition number was measured (ok), changed less than the noise
+// of the runs (below-noise), held at no two neighbouring perturbations
+// (nonlinear), or did not finish at the smallest one (diverged); or the run
+// declared a metric and did not measure it (unmeasured).
+inline constexpr char kProfileKappaOk[] = "ok";
+inline constexpr char kProfileKappaBelowNoise[] = "below-noise";
+inline constexpr char kProfileKappaNonlinear[] = "nonlinear";
+inline constexpr char kProfileKappaDiverged[] = "diverged";
 inline constexpr char kProfileKappaUnmeasured[] = "unmeasured";
 // The whole header of a site the run instrumented and never executed.
 inline constexpr char kProfileNeverExecuted[] = "Executed = 0";

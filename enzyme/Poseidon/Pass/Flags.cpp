@@ -105,7 +105,7 @@ static const Options kDefaults;
 namespace flags {
 #define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key,      \
                         ValueName, Description)                                \
-  static Flag<OptionKind::Kind>::type Field(                                   \
+  static Flag<OptionKind::Kind>::type Group##Field(                            \
       Spelling, cl::desc(Description), cl::value_desc(ValueName),              \
       visibility(OptionRole::Role), cl::cat(Category),                         \
       valueModifier<OptionKind::Kind>(kDefaults.Group.Field));
@@ -115,18 +115,19 @@ namespace flags {
 Options readOptions() {
   Options O;
 #define POSEIDON_OPTION(Group, Field, Kind, ...)                               \
-  O.Group.Field = read<OptionKind::Kind>(flags::Field);
+  O.Group.Field = read<OptionKind::Kind>(flags::Group##Field);
 #include "Pass/Options.def"
   for (auto [flag, dir] :
-       {std::pair(&flags::ProfileGenerate, &O.Profiling.ProfileGenerate),
-        std::pair(&flags::ProfileUse, &O.Profiling.ProfileUse)})
+       {std::pair(&flags::ProfilingProfileGenerate,
+                  &O.Profiling.ProfileGenerate),
+        std::pair(&flags::ProfilingProfileUse, &O.Profiling.ProfileUse)})
     if (flag->getNumOccurrences() && dir->empty())
       *dir = kDefaultProfileDir.str();
   // Rewriting runs Herbie: left to its default, it is off when no Herbie can
   // run, except under -poseidon-strict-mode, where a missing Herbie stays an
   // error.
-  if (!flags::EnableRewrites.getNumOccurrences() && !O.Model.StrictMode &&
-      !sys::fs::exists(herbieProgram(O.Herbie))) {
+  if (!flags::CandidatesEnableRewrites.getNumOccurrences() &&
+      !O.Model.StrictMode && !sys::fs::exists(herbieProgram(O.Herbie))) {
     O.Candidates.EnableRewrites = false;
     O.Candidates.RewritesLackHerbie = true;
   }

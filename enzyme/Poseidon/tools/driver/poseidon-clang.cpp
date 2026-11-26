@@ -103,7 +103,44 @@ static Expected<std::string> toolkitRoot(StringRef Toolkit, StringRef Given,
                            Built + ", is not on this machine; " + How);
 }
 
-/// Prints -poseidon-help.
+/// A flag of Options.def that -help lists.
+struct UserFlag {
+  StringRef Spelling, Kind, Role, ValueName, Description;
+};
+
+static constexpr UserFlag kFlags[] = {
+#define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key,      \
+                        ValueName, Description)                                \
+  {Spelling, #Kind, #Role, ValueName, Description},
+#include "Pass/Options.def"
+};
+
+/// Prints `text` from column `indent` to column 80, the first line from
+/// `column`.
+static void printWrapped(raw_ostream &OS, StringRef text, size_t column,
+                         size_t indent) {
+  SmallVector<StringRef> words;
+  text.split(words, ' ', -1, false);
+  for (StringRef word : words) {
+    if (column > indent && column + 1 + word.size() > 80) {
+      OS << '\n';
+      column = 0;
+    }
+    if (column < indent) {
+      OS.indent(indent - column);
+      column = indent;
+    } else {
+      OS << ' ';
+      ++column;
+    }
+    OS << word;
+    column += word.size();
+  }
+  OS << '\n';
+}
+
+/// Prints -poseidon-help: the workflow, then the flags -help lists, from
+/// Options.def.
 static void printHelp(StringRef Prog) {
   outs()
       << Prog
@@ -119,46 +156,29 @@ static void printHelp(StringRef Prog) {
          "     from the cost model poseidon-calibrate measured for the\n"
          "     target device\n"
          "Profiling a host function needs glibc, whose __libc_malloc the\n"
-         "profiler wraps to record heap extents.\n\n"
-         "  -poseidon-profile-generate[=<dir>]\n"
-         "                                instrument the annotated sites,\n"
-         "                                link the profiler runtime, and\n"
-         "                                write the profiles to <dir>\n"
-         "                                "
-         "(default " POSEIDON_DEFAULT_PROFILE_DIR ";\n"
-         "                                POSEIDON_PROFILE_DIR overrides it\n"
-         "                                when the program runs)\n"
-         "  -poseidon-profile-use[=<dir>] rewrite from a profile\n"
-         "                                "
-         "(default " POSEIDON_DEFAULT_PROFILE_DIR ")\n"
-         "  -poseidon-tau=<rel>           accuracy target of every site that\n"
-         "                                does not carry its own\n"
-         "  -poseidon-cost-budget=<share> share of its profiled cost a site\n"
-         "                                with no target may add (negative:\n"
-         "                                has to save)\n"
-         "  -poseidon-cost-model=<csv>    cost model to price candidates "
-         "with;\n"
-         "                                without it the model for the target\n"
-         "                                device is looked up "
-         "(poseidon-calibrate)\n"
-         "  -poseidon-kernels=<regex>     treat matching kernels as "
-         "optimization\n"
-         "                                sites ('all' matches every kernel)\n"
-         "  -poseidon-min-cost-share=<f>  skip -poseidon-kernels sites below\n"
-         "                                this share of the profiled FP cost\n"
-         "  -poseidon-cache=<dir>         Herbie results, DP tables, "
-         "descriptors\n"
-         "  -poseidon-explain=<dir>       write <func>.explain.json (see\n"
-         "                                poseidon-explain)\n"
-         "  -poseidon-help                this message\n\n"
-         "Any other -poseidon-<flag>[=<value>], with or without -mllvm before\n"
-         "it, reaches the pass as -Xclang -mllvm -Xclang -poseidon-<flag>.\n"
-         "POSEIDON_PLUGIN and POSEIDON_ENZYME_PLUGIN override the plugin paths "
-         "baked\n"
-         "in at build time; POSEIDON_ECHO=1 prints the clang command line\n"
-         "this driver runs. Every -poseidon-<flag> is listed by\n"
-         "  "
-      << Prog << " -mllvm -help-hidden -c -x c /dev/null\n";
+         "profiler wraps to record heap extents.\n\n";
+  constexpr size_t Indent = 32;
+  for (const UserFlag &F : kFlags) {
+    if (F.Role != "User")
+      continue;
+    std::string Head = ("  -" + F.Spelling).str();
+    if (F.Kind == "Directory")
+      Head += ("[=<" + F.ValueName + ">]").str();
+    else if (F.Kind != "Bool")
+      Head +=
+          ("=<" + (F.ValueName.empty() ? "value" : F.ValueName) + ">").str();
+    outs() << Head;
+    printWrapped(outs(), F.Description, Head.size(), Indent);
+  }
+  outs() << "  -poseidon-help";
+  printWrapped(outs(), "this message", 15, Indent);
+  outs() << "\nAny other -poseidon-<flag>[=<value>], with or without -mllvm "
+            "before\nit, reaches the pass as -Xclang -mllvm -Xclang "
+            "-poseidon-<flag>.\nPOSEIDON_PLUGIN and POSEIDON_ENZYME_PLUGIN "
+            "override the plugin paths baked\nin at build time; "
+            "POSEIDON_ECHO=1 prints the clang command line\nthis driver "
+            "runs. Every -poseidon-<flag> is listed by\n  "
+         << Prog << " -mllvm -help-hidden -c -x c /dev/null\n";
 }
 
 /// The `<flag>[=<value>]` of -poseidon-<flag>[=<value>] or

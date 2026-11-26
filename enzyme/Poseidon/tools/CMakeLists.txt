@@ -14,7 +14,9 @@ string(JOIN "," POSEIDON_DRIVER_GEMM_LIBS ${_rt_libs})
 # One binary, two names: the C or the C++ clang, chosen from argv[0].
 set(LLVM_LINK_COMPONENTS Option Support TargetParser)
 add_llvm_executable(poseidon-clang driver/poseidon-clang.cpp)
-target_include_directories(poseidon-clang PRIVATE ${ENZYME_SOURCE_DIR}/include)
+target_include_directories(
+  poseidon-clang
+  PRIVATE ${ENZYME_SOURCE_DIR}/include ${POSEIDON_SOURCE_DIR})
 target_compile_definitions(
   poseidon-clang
   PRIVATE
