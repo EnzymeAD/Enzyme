@@ -92,7 +92,7 @@ loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
            abInfo->minMagOperands[0]};
   out.b = {abInfo->minOperands[1], abInfo->maxOperands[1],
            abInfo->minMagOperands[1]};
-  out.gradSum = fmaInfo.sumGrad;
+  out.gradSum = fmaInfo.sumAbsGrad;
   out.macs = fmaInfo.exec;
   return out;
 }
@@ -112,7 +112,7 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
   double aMax = std::numeric_limits<double>::lowest();
   double bMin = aMin, bMax = aMax;
   double aMinMag = 0.0, bMinMag = 0.0;
-  double sumGrad = 0.0;
+  double gradSum = 0.0;
   uint64_t exec = 0;
   for (unsigned r = 0; r < h.fmas.size(); ++r) {
     Instruction *ab = h.fmuls[r] ? h.fmuls[r] : h.fmas[r];
@@ -144,14 +144,14 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
     if (ai.minMagOperands[bo] > 0.0)
       bMinMag = bMinMag > 0.0 ? std::min(bMinMag, ai.minMagOperands[bo])
                               : ai.minMagOperands[bo];
-    sumGrad += fIt->second.sumGrad;
+    gradSum += fIt->second.sumAbsGrad;
     exec += fIt->second.exec;
   }
 
   MatmulProfile out;
   out.a = {aMin, aMax, aMinMag};
   out.b = {bMin, bMax, bMinMag};
-  out.gradSum = sumGrad;
+  out.gradSum = gradSum;
   out.macs = exec;
   return out;
 }

@@ -77,8 +77,8 @@ public:
   /// executions, the gradient being that of the declared metric; NaN for a
   /// node the profile has no record of.
   double sens = std::numeric_limits<double>::quiet_NaN();
-  /// The gradient of the declared metric with respect to the value, summed
-  /// with its sign over the profiled executions; NaN without a record.
+  /// The accuracy weight: |gradient| of the declared metric with respect to
+  /// the value, summed over the profiled executions; NaN without a record.
   double grad = std::numeric_limits<double>::quiet_NaN();
   /// How often the profiling run executed the operation.
   uint64_t executions = 0;

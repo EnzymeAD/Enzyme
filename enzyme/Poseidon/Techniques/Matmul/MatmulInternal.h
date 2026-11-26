@@ -247,8 +247,8 @@ struct CellStat {
 struct MatmulProfile {
   /// The ranges of A's and of B's elements.
   CellStat a, b;
-  /// The profiled gradient summed over the product's executions, the weight of
-  /// each output element's error.
+  /// The profiled |gradient| summed over the product's executions, the weight
+  /// of each output element's error.
   double gradSum = 0.0;
   /// The product's MACs over the profiling run, at profile scale: the
   /// executions of its multiply-adds, summed over the members of a
