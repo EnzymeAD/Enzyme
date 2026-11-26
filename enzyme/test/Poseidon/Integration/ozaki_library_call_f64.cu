@@ -5,7 +5,7 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe -lcublas
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe 1e-13 | FileCheck --check-prefix=PRIMAL %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-tau=1e-12 %s -o %t/opt.exe -lcublas 2>&1 | FileCheck %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-algebraic=0 -poseidon-enable-precision=0 -poseidon-tau=1e-12 %s -o %t/opt.exe -lcublas 2>&1 | FileCheck %s
 // RUN: %t/opt.exe 1e-12 | FileCheck --check-prefix=OPT %s
 
 #include <cmath>

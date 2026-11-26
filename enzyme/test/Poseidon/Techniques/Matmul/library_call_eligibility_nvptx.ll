@@ -5,7 +5,7 @@
 ; RUN: for f in tri short bound wrap nt nn_col_c fused_c row_skip_b gemm shifted fused two_store unmapped; do cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile \
 ; RUN:   %t/prof/${f}_body.fpprofile; done
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c -poseidon-compilation-id=layout \
-; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-print -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
+; RUN:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-print -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -S -o %t/out.ll 2> %t/err
 ; RUN: FileCheck %s < %t/err
 ; RUN: not grep -E 'wrote descriptor for %{refused}' %t/err
@@ -15,7 +15,7 @@
 ; RUN: not grep -E '%{refused}' %t/c/launches_*.json
 ; RUN: FileCheck --check-prefix=FISSION %s < %t/out.ll
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/q -poseidon-compilation-id=layout \
-; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
+; RUN:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -S -o %t/quiet.ll 2> %t/quiet.err
 ; RUN: diff %t/out.ll %t/quiet.ll
 ; RUN: sed 's/ozaki_stub\.cu/layout.cu/g' %S/../../Inputs/library_call/ozaki_stub_host.ll > %t/nt.ll

@@ -8,7 +8,7 @@
 // RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t/profile/*.fpprofile | FileCheck --check-prefix=PROF %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-enable-matmul %s -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-algebraic=0 -poseidon-enable-precision=0 -poseidon-enable-matmul %s -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
 #include <cmath>

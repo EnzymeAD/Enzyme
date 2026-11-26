@@ -1,26 +1,26 @@
 ; DEFINE: %{opt} = env FAKE_HERBIE_DIR=%S/Inputs/rewrite_after_precision %opt %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize" -poseidon-early-prune -poseidon-enable-rewrite=true \
+; DEFINE:   -passes="poseidon,poseidon-finalize" -poseidon-early-prune -poseidon-enable-algebraic=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-enable-precision=true -S -poseidon-print
 ; DEFINE: %{up} = %t/upstream.ll -poseidon-profile-use=%S/../../Inputs/subgraph_split \
 ; DEFINE:   -poseidon-subgraph-split-uses=3 -poseidon-subgraph-split-ops=4 -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{carried} = %t/carried.ll -poseidon-profile-use=%S/Inputs/rewrite_after_precision \
 ; DEFINE:   -poseidon-precision-expansions=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
 ; RUN: rm -rf %t && split-file %s %t
-; RUN: %{opt} %{up} "-poseidon-pin=P0=All FP64(0%%) + FP32(100%%),R4=(fma.f64 v2 v1 (+.f64 v2 v0))" -poseidon-cache=%t/pt-first -o %t/pt-first.ll 2>&1 | FileCheck --check-prefix=UP-APPLY %s
+; RUN: %{opt} %{up} "-poseidon-pin=P0=All FP64(0%%) + FP32(100%%),A4=(fma.f64 v2 v1 (+.f64 v2 v0))" -poseidon-cache=%t/pt-first -o %t/pt-first.ll 2>&1 | FileCheck --check-prefix=UP-APPLY %s
 ; RUN: FileCheck --check-prefix=UP-IR %s < %t/pt-first.ll
-; RUN: %{opt} %{up} "-poseidon-pin=R4=(fma.f64 v2 v1 (+.f64 v2 v0)),P0=All FP64(0%%) + FP32(100%%)" -poseidon-cache=%t/rewrite-first -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=UP-APPLY %s
+; RUN: %{opt} %{up} "-poseidon-pin=A4=(fma.f64 v2 v1 (+.f64 v2 v0)),P0=All FP64(0%%) + FP32(100%%)" -poseidon-cache=%t/rewrite-first -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=UP-APPLY %s
 ; RUN: diff %t/pt-first.ll %t/rewrite-first.ll
-; RUN: %{opt} %{carried} "-poseidon-pin=P0=All FP64(0%%) + Expansion2(100%%),R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2))" -poseidon-cache=%t/expansion-first -o %t/expansion-first.ll 2>&1 | FileCheck --check-prefix=CARRIED-APPLY %s
+; RUN: %{opt} %{carried} "-poseidon-pin=P0=All FP64(0%%) + Expansion2(100%%),A2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2))" -poseidon-cache=%t/expansion-first -o %t/expansion-first.ll 2>&1 | FileCheck --check-prefix=CARRIED-APPLY %s
 ; RUN: FileCheck --check-prefix=CARRIED-IR %s < %t/expansion-first.ll
-; RUN: %{opt} %{carried} "-poseidon-pin=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),P0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/carried-rewrite-first -o %t/carried-rewrite-first.ll 2>&1 | FileCheck --check-prefix=CARRIED-APPLY %s
+; RUN: %{opt} %{carried} "-poseidon-pin=A2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),P0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/carried-rewrite-first -o %t/carried-rewrite-first.ll 2>&1 | FileCheck --check-prefix=CARRIED-APPLY %s
 ; RUN: diff %t/expansion-first.ll %t/carried-rewrite-first.ll
 
 ; A rewrite of an FP subgraph that reads a value a precision change of another
 ; subgraph produces: the steps apply in the solve's order, the rewrite first,
 ; whatever the order of the pinned items. upstream.ll (the module and profile of
-; Solve/subgraphs.ll): P0 moves %t to binary32 and R4 reads it extended
+; Solve/subgraphs.ll): P0 moves %t to binary32 and A4 reads it extended
 ; back as v2. carried.ll: P0 carries the loop accumulator as two float PHIs and
-; R2 reads the joined pair as v1. Herbie's answers are canned in
+; A2 reads the joined pair as v1. Herbie's answers are canned in
 ; Inputs/rewrite_after_precision; carried.ll is carried.cu (an accumulator loop
 ; under __poseidon_fp_optimize) via clang -x cuda --cuda-device-only
 ; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on, profile from

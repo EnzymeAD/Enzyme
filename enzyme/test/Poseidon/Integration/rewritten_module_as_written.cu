@@ -3,14 +3,14 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S %s -o %t/plain.ptx
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=OUT %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/use.ptx 2> %t/use.err
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/use.ptx 2> %t/use.err
 // RUN: awk '/^.visible .entry _Z(5other|10unprofiled)/{p=1} p{print} /^}/{p=0}' %t/plain.ptx > %t/plain.fns
 // RUN: awk '/^.visible .entry _Z(5other|10unprofiled)/{p=1} p{print} /^}/{p=0}' %t/use.ptx > %t/use.fns
 // RUN: diff %t/plain.fns %t/use.fns
 // RUN: FileCheck --check-prefix=FNS %s < %t/use.fns
 // RUN: FileCheck --check-prefix=SOLVE --implicit-check-not=warning: %s < %t/use.err
 // RUN: awk '/^.visible .entry _Z4site/{p=1} p{print} /^}/{p=0}' %t/use.ptx | FileCheck --check-prefix=USE-SITE --implicit-check-not=fma.rn.f64 %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -o %t/use
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c %s -o %t/use
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
 
 // Next to a site rewritten to FP32, a kernel that is no site and an unreached

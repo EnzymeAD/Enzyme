@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; RUN:   -poseidon-profile-use=%S/Inputs/cast_loop_depth -poseidon-early-prune -poseidon-cache=%t/c \
-; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; RUN:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true \
 ; RUN:   -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; RUN:   -poseidon-print -S -o /dev/null 2>&1 | FileCheck %s
 

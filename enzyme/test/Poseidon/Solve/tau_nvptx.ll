@@ -1,10 +1,10 @@
 ; DEFINE: %{opt} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-print -S
 ; DEFINE: %{mm} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-print \
 ; DEFINE:   -S -o /dev/null
 ; DEFINE: %{mmcm} = -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv

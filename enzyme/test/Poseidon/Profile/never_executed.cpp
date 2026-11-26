@@ -12,7 +12,7 @@
 // RUN: FileCheck --check-prefix=ORDER %s < %t/idx
 // RUN: sort -n -c %t/idx
 // RUN: FileCheck --check-prefix=NOKAPPA --allow-empty %s < %t/gen.err
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
 // RUN: %poseidon_clangxx -poseidon-profile-use=%t/prof -poseidon-early-prune %t/use.o -o %t/use
 // RUN: mkdir %t/deployed && cd %t/deployed && %t/use
 // RUN: ls -A %t/deployed | count 0

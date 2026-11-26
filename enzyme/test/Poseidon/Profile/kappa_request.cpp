@@ -27,13 +27,13 @@
 // RUN: ls -A %t/scratch | count 0
 // RUN: env POSEIDON_KAPPA=child POSEIDON_PROFILE_DIR=%t/child %t/gen %t/child.runs > /dev/null
 // RUN: ls %t/child | FileCheck --check-prefix=CHILD %s
-// RUN: not %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/plain -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: not %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/plain -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: env POSEIDON_KAPPA=0 POSEIDON_PROFILE_DIR=%t/declined %t/gen %t/declined.runs > /dev/null 2> %t/declined.err
 // RUN: FileCheck --check-prefix=ONCE %s < %t/declined.runs
 // RUN: FileCheck --check-prefix=DECLINED %s < %t/declined.err
 // RUN: FileCheck --check-prefix=NOKAPPA -DID=0 %s < %t/declined/_Z5gaussPKdPdi.fpprofile
 // RUN: FileCheck --check-prefix=NOKAPPA -DID=1 %s < %t/declined/_Z4wavePKdPdi.fpprofile
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/declined.o 2>&1 \
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/declined.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=DECLINED-USE --implicit-check-not=error: %s
 
 // Condition numbers of a metric: poseidon-kappa measures them with more runs

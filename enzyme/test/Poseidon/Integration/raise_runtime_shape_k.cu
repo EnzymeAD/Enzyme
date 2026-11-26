@@ -9,7 +9,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe | FileCheck --check-prefix=PRIMAL %s
 // A GPU program has no host site, so its profiling run records no allocation.
 // RUN: llvm-nm --defined-only %t/exe | not grep __poseidon_host_sites_present
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-enable-matmul %s -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-algebraic=0 -poseidon-enable-precision=0 -poseidon-enable-matmul %s -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 

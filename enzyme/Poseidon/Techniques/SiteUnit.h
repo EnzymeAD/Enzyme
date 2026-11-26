@@ -105,7 +105,7 @@ public:
     assert(boundGraph && "unit read before its site was sealed");
     return *boundGraph;
   }
-  /// The i of R<i>, P<i>, M<i>, and the DP table's itemIndex.
+  /// The i of A<i>, P<i>, M<i>, and the DP table's itemIndex.
   size_t indexInKind() const {
     assert(boundSite && "unit read before its site was sealed");
     return boundIndex;
@@ -114,7 +114,7 @@ public:
   UnitKind unitKind() const { return UnitKind(kind()); }
   /// The row of the unit's kind.
   const UnitKindInfo &info() const { return infoOf(unitKind()); }
-  /// The noun of the unit's kind ("rewrite", "precision change").
+  /// The noun of the unit's kind ("algebraic", "precision change").
   llvm::StringRef kindName() const final { return info().noun; }
 
   /// The instructions the unit's candidates edit or consume; null for none.

@@ -1,12 +1,12 @@
 ; DEFINE: %{opt} = %opt < %S/../../Inputs/piecewise_rewrite/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-enable-precision=false \
+; DEFINE:   -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-print -S
 ; RUN: rm -rf %t && mkdir -p %t/legacy %t/fixed %t/wide %t/literal && split-file %s %t/literal-herbie
-; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/piecewise_rewrite %{opt} -poseidon-cache=%t/legacy -poseidon-rewrite-min-regime-samples=0 2>&1 \
+; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/piecewise_rewrite %{opt} -poseidon-cache=%t/legacy -poseidon-algebraic-min-regime-samples=0 2>&1 \
 ; RUN:   | FileCheck --check-prefix=LEGACY %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/piecewise_rewrite %{opt} -poseidon-cache=%t/fixed 2>&1 | FileCheck --check-prefix=FIXED %s
-; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/piecewise_rewrite %{opt} -poseidon-cache=%t/wide -poseidon-rewrite-regime-search-factor=1024 2>&1 \
+; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/piecewise_rewrite %{opt} -poseidon-cache=%t/wide -poseidon-algebraic-regime-search-factor=1024 2>&1 \
 ; RUN:   | FileCheck --check-prefix=WIDE %s
 ; RUN: env FAKE_HERBIE_DIR=%t/literal-herbie %{opt} -poseidon-cache=%t/literal 2>&1 | FileCheck --check-prefix=LITERAL %s
 

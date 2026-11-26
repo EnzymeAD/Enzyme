@@ -5,7 +5,7 @@
 // RUN: cat %t/xdg/poseidon/cm_$(cat %t/cpu)_*.csv | FileCheck --check-prefix=CSV -DCPU=$(cat %t/cpu) %s
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
-// RUN: env XDG_CACHE_HOME=%t/xdg %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-rewrite=0 -poseidon-enable-precision=1 -poseidon-print -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: env XDG_CACHE_HOME=%t/xdg %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-enable-algebraic=0 -poseidon-enable-precision=1 -poseidon-print -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: env XDG_CACHE_HOME=%t/xdg %poseidon_calibrate --cpu $(cat %t/cpu) --check | FileCheck --check-prefix=CHECK -DCPU=$(cat %t/cpu) %s
 // RUN: not %poseidon_calibrate --cpu $(cat %t/cpu) --cpu-iterations=1000 --cpu-chain-only --out %t/chain.csv 2>&1 | FileCheck --check-prefix=FOLD %s
 // RUN: test ! -e %t/chain.csv

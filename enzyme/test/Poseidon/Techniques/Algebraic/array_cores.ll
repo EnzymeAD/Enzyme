@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/array_cores/profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true \
+; DEFINE:   -poseidon-enable-algebraic=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh \
 ; DEFINE:   -poseidon-herbie-processes=1 -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \

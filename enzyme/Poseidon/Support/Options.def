@@ -80,7 +80,7 @@ POSEIDON_PROFILING_OPTION(
     "marker are never filtered")
 
 // Candidate classes.
-POSEIDON_CANDIDATE_OPTION(EnableRewrite, Bool, true, "poseidon-enable-rewrite",
+POSEIDON_CANDIDATE_OPTION(EnableAlgebraic, Bool, true, "poseidon-enable-algebraic",
                           Hidden, SolveInput, "",
                           "Use Herbie to rewrite floating-point expressions "
                           "(default: on when a Herbie can run)")
@@ -218,20 +218,20 @@ POSEIDON_MODEL_OPTION(StrictMode, Bool, false, "poseidon-strict-mode", Hidden,
                       "the floating-point flags rule out expansions, or a "
                       "product's geometry cannot be recovered")
 POSEIDON_MODEL_OPTION(
-    RewriteMinRegimeSamples, Unsigned, 32,
-    "poseidon-rewrite-min-regime-samples", Hidden, SolveInput, "",
+    AlgebraicMinRegimeSamples, Unsigned, 32,
+    "poseidon-algebraic-min-regime-samples", Hidden, SolveInput, "",
     "Every branch of a piecewise (if) rewrite must be priced on at least this "
     "many samples that take it, drawn from the profiled ranges by rejection "
     "when the others miss it; a rewrite with a branch that stays unsampled is "
     "dropped (0 = off)")
-POSEIDON_MODEL_OPTION(RewriteRegimeSearchFactor, Unsigned, 64,
-                      "poseidon-rewrite-regime-search-factor", Hidden,
+POSEIDON_MODEL_OPTION(AlgebraicRegimeSearchFactor, Unsigned, 64,
+                      "poseidon-algebraic-regime-search-factor", Hidden,
                       SolveInput, "",
                       "Rejection-sampling budget for an under-sampled branch "
                       "of a piecewise rewrite, in multiples of "
                       "-poseidon-num-samples")
 POSEIDON_MODEL_OPTION(
-    RewriteMaxBrokenShare, Number, 0.01, "poseidon-rewrite-max-broken-share",
+    AlgebraicMaxBrokenShare, Number, 0.01, "poseidon-algebraic-max-broken-share",
     Hidden, SolveInput, "",
     "Drop a Herbie candidate whose relative error reaches 1 (wrong sign or "
     "magnitude) on more than this share of the samples the original gets "

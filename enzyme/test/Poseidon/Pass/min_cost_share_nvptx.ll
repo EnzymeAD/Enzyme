@@ -1,7 +1,7 @@
 ; REQUIRES: cuda-toolkit, nvptx-registered-target
 ; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 ; DEFINE: %{use} = -poseidon-kernels=.*_kernel -poseidon-profile-use=%t/prof -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=true \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-precision-expansions=true \
 ; DEFINE:   -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-print
 ; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale %t/prof

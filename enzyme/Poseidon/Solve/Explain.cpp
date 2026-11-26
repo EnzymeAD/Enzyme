@@ -114,7 +114,7 @@ static std::string opWord(StringRef op) {
 
 static std::string kindWords(StringRef kind) {
   if (kind == "algebraic")
-    return "the rewrite";
+    return "the algebraic rewrite";
   if (kind == "precision")
     return "the precision change";
   if (kind == "expansion")
@@ -668,7 +668,7 @@ Error Explainer::addAlgebraicAlternatives(Unit &U, const Subgraph &sg) {
     if (RU.subgraph != &sg)
       continue;
     json::Object core;
-    core["id"] = formatv("R{0}", i).str();
+    core["id"] = formatv("A{0}", i).str();
     if (!RU.herbiePrecision.empty())
       core["precision"] = RU.herbiePrecision;
     if (!RU.herbieStatus.empty())
@@ -739,7 +739,7 @@ Error Explainer::addAlgebraicAlternatives(Unit &U, const Subgraph &sg) {
     for (size_t j = 0; j < RU.candidates.size(); ++j) {
       const AlgebraicCandidate &cand = RU.candidates[j];
       Alt A;
-      A.id = formatv("R{0}_{1}", i, cand.ordinal).str();
+      A.id = formatv("A{0}_{1}", i, cand.ordinal).str();
       A.item = &RU;
       A.index = j;
       fill(A, cand.expr);
@@ -1024,7 +1024,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
           why.push_back("its candidates could not be priced: " +
                         PU.unpricedReason);
       if (!hadRewrite) {
-        if (!Sess.Opts.Candidates.EnableRewrite)
+        if (!Sess.Opts.Candidates.EnableAlgebraic)
           why.push_back("the algebraic search is disabled");
         else
           for (Instruction *O : sg->outputs) {

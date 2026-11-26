@@ -32,7 +32,7 @@
 // RUN: %{echo} -v 2>&1 | FileCheck --check-prefix=VERSION %s
 // A value pair reaches clang adjacent and unrewritten; a Poseidon flag after
 // -mllvm is spelled as any other.
-// RUN: %{echo} -poseidon-profile-use=%t.profile -Xcuda-ptxas --maxrregcount=160 -Xclang -poseidon-not-a-flag -mllvm -poseidon-print -mllvm=-poseidon-enable-rewrite=0 %{cuda} -### %s -o %t.o 2>&1 | FileCheck --check-prefix=XPAIR %s
+// RUN: %{echo} -poseidon-profile-use=%t.profile -Xcuda-ptxas --maxrregcount=160 -Xclang -poseidon-not-a-flag -mllvm -poseidon-print -mllvm=-poseidon-enable-algebraic=0 %{cuda} -### %s -o %t.o 2>&1 | FileCheck --check-prefix=XPAIR %s
 // HIP: the flags reach the compilers, not the device linker; the runtimes are
 // HIP's, from HIP_PATH before --rocm-path, ROCM_PATH without either.
 // RUN: %{echo} -poseidon-profile-use -poseidon-tau=1e-7 %{hip} -### %s -o %t.o 2>&1 | FileCheck --check-prefix=HIPUSE --implicit-check-not=ClangEnzyme --implicit-check-not=enzyme-lto-prelink %s
@@ -122,7 +122,7 @@ int main(void) { return 0; }
 
 // XPAIR: clang{{.*}} -Xcuda-ptxas --maxrregcount=160
 // XPAIR-SAME: -Xclang -poseidon-not-a-flag
-// XPAIR-SAME: -Xclang -mllvm -Xclang -poseidon-print -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0
+// XPAIR-SAME: -Xclang -mllvm -Xclang -poseidon-print -Xclang -mllvm -Xclang -poseidon-enable-algebraic=0
 // XPAIR-NOT: -mllvm --maxrregcount=160
 // XPAIR-NOT: -mllvm -poseidon-not-a-flag
 // XPAIR-NOT: -mllvm{{=| }}-poseidon

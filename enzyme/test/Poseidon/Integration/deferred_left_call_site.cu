@@ -8,7 +8,7 @@
 // the ones as written.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: awk '/^define .*@(_Z5jvp_bPKdS0_PdS1_|fwddiffe_Z2qfPKdPd)\(/{p=1} p{print} /^}/{p=0}' %t/plain.ll | sed -E 's/#[0-9]+/#/g; s/![0-9]+/!/g' > %t/plain.fns
 // RUN: awk '/^define .*@(_Z5jvp_bPKdS0_PdS1_|fwddiffe_Z2qfPKdPd)\(/{p=1} p{print} /^}/{p=0}' %t/left.ll | sed -E 's/#[0-9]+/#/g; s/![0-9]+/!/g' > %t/left.fns
 // RUN: diff %t/plain.fns %t/left.fns

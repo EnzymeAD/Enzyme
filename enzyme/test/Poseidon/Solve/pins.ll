@@ -1,45 +1,45 @@
 ; DEFINE: %{regime} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/piecewise_rewrite/tester.ll \
 ; DEFINE:   %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh \
+; DEFINE:   -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
 ; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)"
 ; DEFINE: %{joint} = -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-early-prune
-; DEFINE: %{pt} = -poseidon-enable-rewrite=false -poseidon-enable-precision=true
+; DEFINE: %{pt} = -poseidon-enable-algebraic=false -poseidon-enable-precision=true
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; RUN: rm -rf %t && mkdir %t
 
 ; -poseidon-pin selects candidates by name: a rewrite by id or expression, a
 ; precision candidate by description, at a site named by its function. The
 ; replayed Herbie answer lists a regime split (dropped by pricing) before the
-; exact rewrite, which keeps its Herbie number R0_1 with a table cached too.
+; exact rewrite, which keeps its Herbie number A0_1 with a table cached too.
 ; RUN: mkdir %t/cached
 ; RUN: %{regime} -poseidon-cost-budget=1e9 -poseidon-print -poseidon-cache=%t/cached -S 2>&1 | FileCheck --check-prefix=CACHED-SOLVE %s
-; RUN: %{regime} -poseidon-pin=R0_1 -poseidon-print -poseidon-cache=%t/cached -S 2>&1 | FileCheck --check-prefix=CACHED-APPLY %s
+; RUN: %{regime} -poseidon-pin=A0_1 -poseidon-print -poseidon-cache=%t/cached -S 2>&1 | FileCheck --check-prefix=CACHED-APPLY %s
 
 ; CACHED-SOLVE: dropped (unpriced arm)
 ; CACHED-SOLVE: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
-; CACHED-APPLY: Selecting R0_1: (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) -> (/.f64 (*.f64 v1 v1)
+; CACHED-APPLY: Selecting A0_1: (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) -> (/.f64 (*.f64 v1 v1)
 ; CACHED-APPLY: define double @preprocess_tester
 ; CACHED-APPLY-NOT: select
 ; CACHED-APPLY: ret double
 
 ; A rewrite named by its expression is applied; the dropped split is no candidate.
 ; RUN: mkdir %t/named
-; RUN: %{regime} -poseidon-cache=%t/named/c "-poseidon-pin=tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))" -S -poseidon-print 2>&1 | FileCheck --check-prefix=NAMED %s
-; RUN: not %{regime} -poseidon-cache=%t/named/c "-poseidon-pin=R0=(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) #s(literal 0 binary64) (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)))" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-DROPPED %s
-; RUN: not %{regime} -poseidon-cache=%t/named/c "-poseidon-pin=R0=(-.f64 v0 v1)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-UNKNOWN %s
+; RUN: %{regime} -poseidon-cache=%t/named/c "-poseidon-pin=tester:A0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))" -S -poseidon-print 2>&1 | FileCheck --check-prefix=NAMED %s
+; RUN: not %{regime} -poseidon-cache=%t/named/c "-poseidon-pin=A0=(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) #s(literal 0 binary64) (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)))" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-DROPPED %s
+; RUN: not %{regime} -poseidon-cache=%t/named/c "-poseidon-pin=A0=(-.f64 v0 v1)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-UNKNOWN %s
 
-; NAMED: [poseidon] Selecting tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)): (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) -> (/.f64 (*.f64 v1 v1)
+; NAMED: [poseidon] Selecting tester:A0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)): (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) -> (/.f64 (*.f64 v1 v1)
 ; NAMED: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
-; NAMED: [poseidon] pin: tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; NAMED: [poseidon] pin: tester:A0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 ; NAMED-LABEL: define double @preprocess_tester
 ; NAMED-NOT: select
 ; NAMED: ret double
-; NAMED-DROPPED: error: {{.*}}Poseidon: -poseidon-pin: tester: R0 has no candidate named '(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) {{.*}}': pricing dropped it, because a regime-split arm is reached by fewer than {{[0-9]+}} samples
+; NAMED-DROPPED: error: {{.*}}Poseidon: -poseidon-pin: tester: A0 has no candidate named '(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) {{.*}}': pricing dropped it, because a regime-split arm is reached by fewer than {{[0-9]+}} samples
 
-; NAMED-UNKNOWN: error: {{.*}}Poseidon: -poseidon-pin: tester: R0 has no candidate named '(-.f64 v0 v1)'; its candidates are:
+; NAMED-UNKNOWN: error: {{.*}}Poseidon: -poseidon-pin: tester: A0 has no candidate named '(-.f64 v0 v1)'; its candidates are:
 ; NAMED-UNKNOWN-NEXT: {{^}}  (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 
 ; The pins a cached replay prints apply what it applied.
@@ -53,11 +53,11 @@
 ; RUN: diff %t/named/replay.picks %t/named/pinned.picks
 
 ; NAMED-SOLVE: DP table for preprocess_tester cached to
-; NAMED-SOLVE: [poseidon] pin: tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; NAMED-SOLVE: [poseidon] pin: tester:A0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 
 ; NAMED-REPLAY: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 ; NAMED-REPLAY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
-; NAMED-REPLAY: [poseidon] pin: tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; NAMED-REPLAY: [poseidon] pin: tester:A0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 
 ; Two sites (Inputs/joint_profiles): an item without a site applies at each.
 ; RUN: mkdir %t/sites %t/sites/mangled %t/sites/onemangled

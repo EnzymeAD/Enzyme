@@ -1,11 +1,11 @@
 ; DEFINE: %{chain} = %opt %t/chain.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/subgraph_split -poseidon-early-prune -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/subgraph_split -poseidon-early-prune -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=-0.05 -poseidon-print -S
 ; DEFINE: %{unexec} = %opt %t/unexecuted.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/Inputs/unexecuted_operations -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-tau=1e-4 -pass-remarks=poseidon \
 ; DEFINE:   -pass-remarks-missed=poseidon -S
 ; FP subgraph formation: chain splitting, operands with no model node, and
@@ -58,7 +58,7 @@
 ; constant expression, a non-FP argument) is left out of the FP subgraph and
 ; its result is an input. Profiles: host profiler, x = 0.5 + i/4, y = 0.5 +
 ; (i % 7)/4, n = 1 + i % 3, i < 64.
-; RUN: %opt %t/unmodelled.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/unmodelled_operand -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.3 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-print -poseidon-cache=%t -S -o %t/out.ll 2>&1 | FileCheck --check-prefix=UMSOLVE %s
+; RUN: %opt %t/unmodelled.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/unmodelled_operand -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.3 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-print -poseidon-cache=%t -S -o %t/out.ll 2>&1 | FileCheck --check-prefix=UMSOLVE %s
 ; RUN: FileCheck --check-prefix=UMIR %s < %t/out.ll
 
 ; UMSOLVE: [poseidon] Optimizing preprocess_tester_undef

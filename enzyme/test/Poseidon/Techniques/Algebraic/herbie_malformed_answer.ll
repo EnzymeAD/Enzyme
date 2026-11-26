@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt < %S/../../Inputs/piecewise_rewrite/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true \
+; DEFINE:   -poseidon-enable-algebraic=true \
 ; DEFINE:   -poseidon-herbie-processes=1 -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
 ; DEFINE:   -poseidon-cache=%t/c -poseidon-print -S -o /dev/null
@@ -55,7 +55,7 @@
 
 ; ZERO-ALTERNATIVES: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1)
 
-; APPROX: error: <unknown>:0:0: in function preprocess_tester double (double, double): Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}/c/herbie_default_{{[0-9A-F]+}}.json has, for core "0", an expression Poseidon cannot model (an approx form without its specification and result in '#s(approx v0)'); remove the file to search again, or turn algebraic rewriting off with -poseidon-enable-rewrite=0{{$}}
+; APPROX: error: <unknown>:0:0: in function preprocess_tester double (double, double): Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}/c/herbie_default_{{[0-9A-F]+}}.json has, for core "0", an expression Poseidon cannot model (an approx form without its specification and result in '#s(approx v0)'); remove the file to search again, or turn algebraic rewriting off with -poseidon-enable-algebraic=0{{$}}
 ; LITERAL: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}herbie_default_{{[0-9A-F]+}}.json has, for core "0", an expression Poseidon cannot model (a literal of the unmodelled format binary16 in '#s(literal 1 binary16)')
 ; OPERATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}herbie_default_{{[0-9A-F]+}}.json has, for core "0", an expression Poseidon cannot model (the operator +.f16 of an unmodelled format in '(+.f16 v0 v1)')
 ; UNKNOWN-OPERATOR: error: {{.*}}Poseidon: the Herbie answer for subgraph 0 of preprocess_tester in {{.*}}herbie_default_{{[0-9A-F]+}}.json has, for core "0", an expression Poseidon cannot model (the operator erfc, which Poseidon does not model in '(erfc.f64 v0)')

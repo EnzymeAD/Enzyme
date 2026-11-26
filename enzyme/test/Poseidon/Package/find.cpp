@@ -9,10 +9,10 @@
 // RUN: %cmake --build %t/gen > /dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROF %s
-// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-print" > /dev/null
+// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-print" > /dev/null
 // RUN: %cmake --build %t/use -v 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use/host | FileCheck --check-prefix=OUT %s
-// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/none -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_GPU_RUNTIME=NONE -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0" > /dev/null
+// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/none -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_GPU_RUNTIME=NONE -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0" > /dev/null
 // RUN: %cmake --build %t/none -v 2>&1 | FileCheck --check-prefix=NONE --implicit-check-not=cublas --implicit-check-not=cudart --implicit-check-not=poseidon_gemm_cuda %s
 // RUN: not %cmake %cmake_generator -S %S/../Inputs/package -B %t/bad -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_GPU_RUNTIME=OpenCL 2>&1 | FileCheck --check-prefix=BADRT %s
 // RUN: not %cmake %cmake_generator -S %S/../Inputs/package -B %t/newer -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MIN_VERSION=99 2>&1 | FileCheck --check-prefix=NEWER %s
@@ -45,7 +45,7 @@
 // PLAINCMD-NOT: ClangEnzyme
 // OUT: wave 348.384
 // PROF: {{^}}_Z4wavePKdPdi.fpprofile{{$}}
-// USE: clang++ {{.*}}-Xclang -mllvm -Xclang -poseidon-profile-use={{[^ ]+}}/prof -Xclang -mllvm -Xclang -poseidon-tau=1e-6 -Xclang -mllvm -Xclang -poseidon-cost-model={{[^ ]+}}/cm_cpu_host.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-print -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on {{.*}}-c {{[^ ]+}}/host.cpp{{$}}
+// USE: clang++ {{.*}}-Xclang -mllvm -Xclang -poseidon-profile-use={{[^ ]+}}/prof -Xclang -mllvm -Xclang -poseidon-tau=1e-6 -Xclang -mllvm -Xclang -poseidon-cost-model={{[^ ]+}}/cm_cpu_host.csv -Xclang -mllvm -Xclang -poseidon-enable-algebraic=0 -Xclang -mllvm -Xclang -poseidon-print -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on {{.*}}-c {{[^ ]+}}/host.cpp{{$}}
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06 S=
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // USE: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64(0%) + FP32(100%)

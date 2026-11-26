@@ -7,7 +7,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: FileCheck --check-prefix=PROF %s < %t/profiles/scalar_matmul_body_f64.fpprofile
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH -S -emit-llvm %s -o %t/dev.ll
-// RUN: %opt %t/dev.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/profiles -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cache= -poseidon-enable-matmul -poseidon-print -poseidon-matmul-library-calls=false -poseidon-cost-model=%gpu_cost_model -S 2>&1 | tee %t/use.out | FileCheck %s
+// RUN: %opt %t/dev.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/profiles -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-cache= -poseidon-enable-matmul -poseidon-print -poseidon-matmul-library-calls=false -poseidon-cost-model=%gpu_cost_model -S 2>&1 | tee %t/use.out | FileCheck %s
 // RUN: FileCheck --check-prefix=NOFP %s < %t/use.out
 
 #include <cmath>

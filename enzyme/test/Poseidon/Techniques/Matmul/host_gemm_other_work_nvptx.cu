@@ -2,7 +2,7 @@
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t/prof
 // RUN: cp %S/../../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile %t/prof/_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~8ee02cf9c0312e47.fpprofile
-// DEFINE: %{cc} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul %s -o /dev/null
+// DEFINE: %{cc} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-print -mllvm -poseidon-enable-algebraic=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul %s -o /dev/null
 // RUN: %{cc} -mllvm -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NONE %s
 // RUN: %{cc} -mllvm -poseidon-cache=%t/atomic '-DWORK=__nvvm_atom_add_gen_i(&hits, 1)' 2>&1 | FileCheck --check-prefix=WORK --implicit-check-not='wrote descriptor' %s
 // RUN: %{cc} -mllvm -poseidon-cache=%t/global '-DWORK=hits = 1' 2>&1 | FileCheck --check-prefix=WORK --implicit-check-not='wrote descriptor' %s

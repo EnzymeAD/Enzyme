@@ -128,10 +128,10 @@ Options readOptions() {
   // Rewriting runs Herbie: left to its default, it is off when no Herbie can
   // run, except under -poseidon-strict-mode, where a missing Herbie stays an
   // error.
-  if (!flags::CandidatesEnableRewrite.getNumOccurrences() &&
+  if (!flags::CandidatesEnableAlgebraic.getNumOccurrences() &&
       !O.Model.StrictMode && !sys::fs::exists(herbieProgram(O.Herbie))) {
-    O.Candidates.EnableRewrite = false;
-    O.Candidates.RewritesLackHerbie = true;
+    O.Candidates.EnableAlgebraic = false;
+    O.Candidates.AlgebraicLacksHerbie = true;
   }
   std::vector<unsigned> &terms = O.Herbie.NumTaylorTerms;
   llvm::sort(terms);
@@ -188,7 +188,7 @@ Error validateOptions(const Options &O) {
   const std::pair<StringRef, double> numbers[] = {
       {"poseidon-tau", O.Solver.Tau},
       {"poseidon-min-cost-share", O.Profiling.MinCostShare},
-      {"poseidon-rewrite-max-broken-share", O.Model.RewriteMaxBrokenShare}};
+      {"poseidon-algebraic-max-broken-share", O.Model.AlgebraicMaxBrokenShare}};
   for (const auto &[flag, value] : numbers)
     if (std::isnan(value))
       return noNumber(flag);

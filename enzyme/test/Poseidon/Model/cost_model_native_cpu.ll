@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true -S
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true -S
 ; DEFINE: %{fn} = -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} %{fn} -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 | FileCheck --check-prefix=NATIVE %s

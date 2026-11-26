@@ -99,12 +99,12 @@ public:
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
 
   using AlgebraicUnitSet = std::set<AlgebraicUnit *>;
-  /// A repricing: a candidate, by position, and the rewrite units of the same
+  /// A repricing: a candidate, by position, and the algebraic units of the same
   /// subgraph among the steps it is priced after.
   struct RepriceKey {
     /// The candidate's position in `candidates`.
     size_t candidateIndex;
-    /// The rewrite units of the subgraph the candidate is priced after.
+    /// The algebraic units of the subgraph the candidate is priced after.
     AlgebraicUnitSet AlgebraicUnits;
     bool operator<(const RepriceKey &other) const {
       return std::tie(candidateIndex, AlgebraicUnits) <

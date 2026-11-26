@@ -66,7 +66,7 @@ static Expected<PinItem> parseApplyItem(StringRef text, const Function &site) {
     return userError(site,
                      "-poseidon-pin: cannot read '" + Twine(text) +
                          "'; an item is [<site>:]<unit>_<ordinal> or "
-                         "[<site>:]<unit>=<name>, <unit> being R<i>, P<i> or "
+                         "[<site>:]<unit>=<name>, <unit> being A<i>, P<i> or "
                          "M<i>");
   item->text = text.str();
   return *item;

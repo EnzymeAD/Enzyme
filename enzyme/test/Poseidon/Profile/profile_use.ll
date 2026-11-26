@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S
 ; DEFINE: %{fma} = %S/../Inputs/fma_site_profile/tester.fpprofile
 ; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/empty %t/metric_only %t/never_executed %t/site_id %t/truncated %t/field %t/dropped

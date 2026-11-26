@@ -1,9 +1,9 @@
-; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-rewrite=false \
+; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-print -S -o /dev/null
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{profiles} = -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-early-prune
 ; DEFINE: %{out0} = -poseidon-profile-use=%S/../Inputs/pow_term/out0 -poseidon-early-prune
-; DEFINE: %{herbie} = %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-rewrite=true \
+; DEFINE: %{herbie} = %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-algebraic=true \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=1e9 -poseidon-print
 ; DEFINE: %{keys} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/piecewise_rewrite/tester.ll \
@@ -143,7 +143,7 @@
 
 ; IDS-HIT: Loaded DP tables from cache
 
-; IDS-ID: {{^R[0-9]+_[0-9]+$}}
+; IDS-ID: {{^A[0-9]+_[0-9]+$}}
 
 ; IDS-EXPLAIN: "result": {
 ; IDS-EXPLAIN-NEXT: "applied": [

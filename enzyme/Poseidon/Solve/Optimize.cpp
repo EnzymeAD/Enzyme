@@ -160,12 +160,12 @@ static Error proposeSubgraphCandidates(Session &S, Function &F,
   int symbolCounter = 0;
   int subgraphCounter = 0;
 
-  if (O.Candidates.RewritesLackHerbie && !subgraphs.empty())
+  if (O.Candidates.AlgebraicLacksHerbie && !subgraphs.empty())
     remarkNoHerbie(S, F);
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
-    if (O.Candidates.EnableRewrite)
+    if (O.Candidates.EnableAlgebraic)
       if (Error E =
               proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
                                       symbolCounter, st, st.algebraicUnits))

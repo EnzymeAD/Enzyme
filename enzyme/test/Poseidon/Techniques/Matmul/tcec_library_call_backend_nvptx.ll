@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/fp16_range/matmul_tiny -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/fp16_range/matmul_tiny -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %if tcec-cumpsgemm %{ %{opt} -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau 2>&1 | FileCheck --check-prefix=TAU --implicit-check-not="TCEC library call not proposed" %s %}
@@ -8,9 +8,9 @@
 ; RUN: %if tcec-cumpsgemm %{ cat %t/budget/dp_*.json | FileCheck --check-prefix=KEY %s %}
 ; RUN: %if tcec-cumpsgemm %{ sed -i 's/"TCEC backend": "[^"]*"/"TCEC backend": "another"/' %t/budget/dp_*.json %t/budget/matmul_accuracy_*.json %}
 ; RUN: %if tcec-cumpsgemm %{ %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget -poseidon-print 2>&1 | FileCheck --check-prefix=ANOTHER %s %}
-; RUN: %if !tcec-cumpsgemm %{ %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-cost-budget=0 -poseidon-print -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=PRICED --implicit-check-not=tcec-dispatch %s %}
+; RUN: %if !tcec-cumpsgemm %{ %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-cost-budget=0 -poseidon-print -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=PRICED --implicit-check-not=tcec-dispatch %s %}
 ; RUN: %if !tcec-cumpsgemm %{ cat %t/c/dp_*.json | FileCheck --check-prefix=NONE %s %}
-; RUN: %if !tcec-cumpsgemm %{ not %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-cache=%t/pin "-poseidon-pin=M0=tcec-dispatch wmma m16n16k16 f16/f32" -S -o /dev/null 2>&1 | FileCheck --check-prefix=PIN %s %}
+; RUN: %if !tcec-cumpsgemm %{ not %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-cache=%t/pin "-poseidon-pin=M0=tcec-dispatch wmma m16n16k16 f16/f32" -S -o /dev/null 2>&1 | FileCheck --check-prefix=PIN %s %}
 
 ; With cuMpSGEMM, the split library call of a product whose operand A is
 ; profiled at 1e-9 (Inputs/fp16_range/matmul_tiny) scales its operands, clears

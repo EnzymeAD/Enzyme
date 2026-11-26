@@ -938,7 +938,7 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
   SmallVector<std::string, 16> Common = Timed;
   Common.append({"-poseidon-profile-use=" + ProfDir,
                  "-poseidon-cache=" + Dir + "/cache",
-                 "-poseidon-cost-model=" + Csv, "-poseidon-enable-rewrite=0",
+                 "-poseidon-cost-model=" + Csv, "-poseidon-enable-algebraic=0",
                  "-poseidon-enable-precision=0", "-poseidon-enable-matmul",
                  "-poseidon-matmul-calibration"});
   auto compile = [&](ArrayRef<std::string> Apply, StringRef Exe,

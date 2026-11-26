@@ -2,12 +2,12 @@
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/pow_term/profiles -poseidon-early-prune \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/base -o /dev/null 2>&1 | FileCheck --check-prefix=BASE %s
-; RUN: %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/split -poseidon-subgraph-split-calls=pow -o /dev/null 2>&1 | FileCheck --check-prefix=SPLIT %s
-; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/pow_term %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=false -poseidon-cost-budget=-1e-9 -poseidon-subgraph-split-calls=pow -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE-CORE %s
+; RUN: %{opt} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/base -o /dev/null 2>&1 | FileCheck --check-prefix=BASE %s
+; RUN: %{opt} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/split -poseidon-subgraph-split-calls=pow -o /dev/null 2>&1 | FileCheck --check-prefix=SPLIT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/pow_term %{opt} -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=false -poseidon-cost-budget=-1e-9 -poseidon-subgraph-split-calls=pow -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE-CORE %s
 ; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
-; RUN: %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/po -poseidon-output-profiles=%S/../../Inputs/pow_term/out0,%S/../../Inputs/pow_term/out1 -o /dev/null 2>&1 | FileCheck --check-prefix=PO %s
-; RUN: not %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/../../Inputs/pow_term/out0,%t/none -o /dev/null 2>&1 \
+; RUN: %{opt} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/po -poseidon-output-profiles=%S/../../Inputs/pow_term/out0,%S/../../Inputs/pow_term/out1 -o /dev/null 2>&1 | FileCheck --check-prefix=PO %s
+; RUN: not %{opt} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/../../Inputs/pow_term/out0,%t/none -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=PO-MISSING %s
 
 ; A rate term pow(T, fma(-log T, a, b)), about 1e-25, with log T also used by

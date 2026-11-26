@@ -1,5 +1,5 @@
 ; DEFINE: %{use} = -poseidon-profile-use=%t/prof -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
@@ -21,7 +21,7 @@
 ; RUN: %if nvptx-registered-target %{ count 0 < %t/noop.err %}
 ; RUN: %opt %t/k.ll %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S 2> %t/inlined.err | FileCheck --check-prefix=INLINED %s
 ; RUN: %if nvptx-registered-target %{ count 0 < %t/inlined.err %}
-; RUN: %opt %t/tau3.ll %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/tauprof -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/tau -S -poseidon-print > %t/tau.out 2> %t/tau.err
+; RUN: %opt %t/tau3.ll %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/tauprof -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/tau -S -poseidon-print > %t/tau.out 2> %t/tau.err
 ; RUN: FileCheck --check-prefix=TAU-ERR %s < %t/tau.err
 ; RUN: FileCheck --check-prefix=TAU-IR %s < %t/tau.out
 

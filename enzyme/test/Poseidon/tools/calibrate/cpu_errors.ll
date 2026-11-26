@@ -5,7 +5,7 @@
 ; RUN: not %poseidon_calibrate --cpu x86-64 --only ops,direct --out %t/cm.csv 2>&1 | FileCheck --check-prefix=GPUARM %s
 ; RUN: not %poseidon_calibrate --cpu x86-64 --only opz --out %t/cm.csv 2>&1 | FileCheck --check-prefix=NOARM %s
 ; RUN: test ! -e %t/cm.csv
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/joint_profiles -poseidon-enable-rewrite=false -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=COMPILE %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/joint_profiles -poseidon-enable-algebraic=false -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=COMPILE %s
 
 ; poseidon-calibrate --cpu stops with one error and writes nothing; a compile
 ; for a target-cpu with no model in the user cache names the command for one.

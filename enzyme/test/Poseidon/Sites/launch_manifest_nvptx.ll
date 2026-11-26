@@ -1,7 +1,7 @@
 ; DEFINE: %{dev} = %S/../Inputs/stale_cache/matmul_device.ll
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
 ; DEFINE: %{flags} = -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; DEFINE:   -poseidon-tau=1e-12 -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
@@ -83,8 +83,8 @@
 ; RUN: sed '/^target triple/a @__hip_cuid_0123abcd = global i8 0' %t/unit/host.ll > %t/unit/host_cuid.ll
 ; RUN: sed '/^target triple/a @__hip_cuid_89abcdef = global i8 0' %t/unit/host.ll > %t/unit/host_other_cuid.ll
 ; RUN: %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/options -poseidon-print 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-tau=1e-12 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-algebraic=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-tau=1e-12 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-algebraic=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %opt %t/unit/dev_cuid.ll %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/cuid -poseidon-print 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
 ; RUN: cat %t/unit/cuid/launches_*.json | FileCheck --check-prefix=UNIT-CUID %s
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s

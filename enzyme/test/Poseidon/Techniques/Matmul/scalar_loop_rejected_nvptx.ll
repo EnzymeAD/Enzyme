@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false \
+; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: for f in trip exit seed; do cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/${f}_body.fpprofile; done

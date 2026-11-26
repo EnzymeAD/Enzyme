@@ -3,7 +3,7 @@
 // RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=SAME %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -poseidon-print -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c %s -poseidon-print -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
 // RUN: not %clang -fsyntax-only -I%poseidon_profile_inc -DMACRO %s 2>&1 | FileCheck --check-prefix=MACRO %s
 

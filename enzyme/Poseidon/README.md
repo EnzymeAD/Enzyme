@@ -17,7 +17,7 @@ algebraic rewrites run Herbie: `-DPOSEIDON_HERBIE_BINARY=<herbie>` names a
 prebuilt one, and `-DPOSEIDON_BUILD_HERBIE=ON` builds it from source, which
 takes Rust and Racket. A build without Herbie proposes no algebraic rewrites
 and says so in a remark (`-Rpass-missed=poseidon`); asking for them with
-`-poseidon-enable-rewrite` is then an error, unless the `-poseidon-cache`
+`-poseidon-enable-algebraic` is then an error, unless the `-poseidon-cache`
 directory holds Herbie's answers from another build.
 
 The CUDA runtimes are built when CMake finds a CUDA toolkit

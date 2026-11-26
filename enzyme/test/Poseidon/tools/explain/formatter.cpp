@@ -24,29 +24,29 @@
 // REPORT-NEXT: called at formatter.cpp:26:3
 // REPORT-NEXT: accuracy target tau = 1e-06; cost model cm_x86-64_explorer.csv; selector dp
 // REPORT-NEXT: as written:   modelled error 2.8e-10, cost 1
-// REPORT-NEXT: with Poseidon: modelled error 1.2e-16, cost 0 (-100%); applied R0_1
+// REPORT-NEXT: with Poseidon: modelled error 1.2e-16, cost 0 (-100%); applied A0_1
 // REPORT: formatter.cpp:15:37  S0: (1.0 - cos(x[i])) / (x[i] * x[i])
 // REPORT-NEXT: profile: x[i] in [1e-08, 0.0001]; 1024 executions; 4 operations; cost 1
-// REPORT-NEXT: applied R0_1 (algebraic, binary64): 0.5
+// REPORT-NEXT: applied A0_1 (algebraic, binary64): 0.5
 // REPORT-NEXT: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]; modelled error 1.2e-16; cost change -1
-// REPORT: R0_0 pareto algebraic 2.1e-25 -0.965646 fma(-0.041666666666666664, x[i] * x[i], 0.5)
-// REPORT-NEXT: on the Pareto frontier; -poseidon-pin=R0_0 applies it
-// REPORT: R1_0 rejected algebraic 1.2e-16 -1 (double)0.5f
-// REPORT-NEXT: the selected R0_1 rewrites the same output
+// REPORT: A0_0 pareto algebraic 2.1e-25 -0.965646 fma(-0.041666666666666664, x[i] * x[i], 0.5)
+// REPORT-NEXT: on the Pareto frontier; -poseidon-pin=A0_0 applies it
+// REPORT: A1_0 rejected algebraic 1.2e-16 -1 (double)0.5f
+// REPORT-NEXT: the selected A0_1 rewrites the same output
 // REPORT: Pareto frontier (cost, modelled error; * = selected):
-// REPORT: * 0 1.2e-16 R0_1 -poseidon-tau=0 -poseidon-cost-budget=-1
-// REPORT-NEXT: 0.0343544 2.1e-25 R0_0 -poseidon-tau=0 -poseidon-cost-budget=-0.9656455768680218
+// REPORT: * 0 1.2e-16 A0_1 -poseidon-tau=0 -poseidon-cost-budget=-1
+// REPORT-NEXT: 0.0343544 2.1e-25 A0_0 -poseidon-tau=0 -poseidon-cost-budget=-0.9656455768680218
 
 // FPCORE: (FPCore (v0) :name "S0 output 0 as written" :precision binary64 :pre (<= 1e-08 v0 0.0001)
 // FPCORE-NEXT: (/ (- 1 (cos v0)) (* v0 v0)))
-// FPCORE-NEXT: (FPCore (v0) :name "S0 R0_1 (applied)" :precision binary64 :pre (<= 1e-08 v0 0.0001)
+// FPCORE-NEXT: (FPCore (v0) :name "S0 A0_1 (applied)" :precision binary64 :pre (<= 1e-08 v0 0.0001)
 // FPCORE-NEXT: 1/2)
-// FPCORE-NEXT: (FPCore (v0) :name "S0 R0_0 (pareto)" :precision binary64 :pre (<= 1e-08 v0 0.0001)
+// FPCORE-NEXT: (FPCore (v0) :name "S0 A0_0 (pareto)" :precision binary64 :pre (<= 1e-08 v0 0.0001)
 // FPCORE-NEXT: (fma -1/24 (* v0 v0) 1/2))
 
 // BUDGETS: {{^}}-1,-0.96564557686802177{{$}}
 
-// SOURCE: {{^}}    out[i] = 0.5;  // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]) [R0_1], modelled error 1.2e-16{{$}}
+// SOURCE: {{^}}    out[i] = 0.5;  // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]) [A0_1], modelled error 1.2e-16{{$}}
 
 // DIFF: --- a/formatter.cpp
 // DIFF-NEXT: +++ b/formatter.cpp
@@ -54,7 +54,7 @@
 // DIFF-NEXT: {{^}}+    out[i] = 0.5;  // Poseidon
 
 // NOAST: poseidon-explain: no AST of kernel ({{.+}}); its rewrites are shown as comments
-// NOAST: {{^}}    // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]): (1.0 - cos(x[i])) / (x[i] * x[i]) -> 0.5 [R0_1], modelled error 1.2e-16
+// NOAST: {{^}}    // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]): (1.0 - cos(x[i])) / (x[i] * x[i]) -> 0.5 [A0_1], modelled error 1.2e-16
 // NOAST-NEXT: {{^}}    out[i] = (1.0 - std::cos(x[i])) / (x[i] * x[i]);
 
 // NOMATCH: poseidon-explain: no explanation in {{.*}}formatter is of a site named like 'no_such_site'
@@ -71,10 +71,10 @@
 // ROT-REPORT: profile: y in [-0.5, -0.05], x in [0.001, 1], z in [0.02, 0.06]; 1000 executions; 11 operations; cost 1
 // ROT-REPORT-NEXT: applied P0_10 (precision): Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations)
 
-// A second explanation of kernel applies R1_1 to the expression R0_1 rewrote.
-// OVERLAP: poseidon-explain: R1_1 overlaps an earlier rewrite; shown as a comment
-// OVERLAP: {{^}}    // Poseidon: algebraic rewrite at binary64: not applied, it overlaps an earlier rewrite [R1_1], modelled error 1.2e-16{{$}}
-// OVERLAP-NEXT: {{^}}    out[i] = 0.5;  // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]) [R0_1], modelled error 1.2e-16{{$}}
+// A second explanation of kernel applies A1_1 to the expression A0_1 rewrote.
+// OVERLAP: poseidon-explain: A1_1 overlaps an earlier rewrite; shown as a comment
+// OVERLAP: {{^}}    // Poseidon: algebraic rewrite at binary64: not applied, it overlaps an earlier rewrite [A1_1], modelled error 1.2e-16{{$}}
+// OVERLAP-NEXT: {{^}}    out[i] = 0.5;  // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]) [A0_1], modelled error 1.2e-16{{$}}
 
 // Changes to different formats render each operation in its own type.
 // MIXED: {{^}}    double s = (double)sinf((float)(0.5 * angle)) / angle;  // Poseidon: sin in float [P0_10]{{$}}
@@ -141,9 +141,9 @@ __attribute__((noinline)) void rotation(const double *w, double *q, int n) {
 {"schema": "poseidon-explain/1",
  "function": {"name": "kernel(double const*, double*, int)", "symbol": "_Z6kernelPKdPdi", "site": {"file": "formatter.cpp", "line": 26, "col": 3}},
  "target": {"cost_model": "cm_x86-64_explorer.csv", "selector": "dp", "tau": 1e-06, "tau_from": "flag"},
- "result": {"applied": ["R0_1"], "cost_after": 0, "cost_before": 1.0, "modelled_rel_error": 1.1607706226323944e-16, "modelled_rel_error_as_written": 2.770306794452491e-10, "status": "rewritten"},
- "pareto": [{"applied": ["R0_1"], "budget": -1.0, "cost": 0, "modelled_rel_error": 1.1607706226323944e-16, "selected": true},
-            {"applied": ["R0_0"], "budget": -0.9656455768680218, "cost": 0.03435442313197824, "modelled_rel_error": 2.1273352908378104e-25}],
+ "result": {"applied": ["A0_1"], "cost_after": 0, "cost_before": 1.0, "modelled_rel_error": 1.1607706226323944e-16, "modelled_rel_error_as_written": 2.770306794452491e-10, "status": "rewritten"},
+ "pareto": [{"applied": ["A0_1"], "budget": -1.0, "cost": 0, "modelled_rel_error": 1.1607706226323944e-16, "selected": true},
+            {"applied": ["A0_0"], "budget": -0.9656455768680218, "cost": 0.03435442313197824, "modelled_rel_error": 2.1273352908378104e-25}],
  "subgraphs": [{"id": "S0", "kind": "subgraph", "loc": {"file": "formatter.cpp", "line": 15, "col": 37}, "cost": 1.0, "executions": 1024,
   "inputs": [{"loc": {"file": "formatter.cpp", "line": 15, "col": 30}, "min": 1e-08, "max": 0.0001, "name": "x[i]", "var": "v0"}],
   "ops": [{"loc": {"file": "formatter.cpp", "line": 15, "col": 21}, "opcode": "cos"}, {"loc": {"file": "formatter.cpp", "line": 15, "col": 19}, "opcode": "-"},
@@ -151,13 +151,13 @@ __attribute__((noinline)) void rotation(const double *w, double *q, int n) {
   "original": {"c": "(1.0 - cos(x[i])) / (x[i] * x[i])"},
   "outputs": [{"c": "(1.0 - cos(x[i])) / (x[i] * x[i])", "fpcore": "(/ (- 1 (cos v0)) (* v0 v0))", "loc": {"file": "formatter.cpp", "line": 15, "col": 37}, "ops": [0, 1, 2, 3]}],
   "alternatives": [
-   {"id": "R0_0", "kind": "algebraic", "status": "pareto", "precision": "binary64", "outputs": [0], "c": "fma(-0.041666666666666664, x[i] * x[i], 0.5)",
+   {"id": "A0_0", "kind": "algebraic", "status": "pareto", "precision": "binary64", "outputs": [0], "c": "fma(-0.041666666666666664, x[i] * x[i], 0.5)",
     "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) (fma.f64 #s(literal -1/24 binary64) (*.f64 v0 v0) #s(literal 1/2 binary64)))",
-    "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])", "modelled_error": 2.1273352908378104e-25, "cost_delta": -0.9656455768680218, "reason": "on the Pareto frontier; -poseidon-pin=R0_0 applies it"},
-   {"id": "R0_1", "kind": "algebraic", "status": "applied", "precision": "binary64", "outputs": [0], "c": "0.5", "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
+    "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])", "modelled_error": 2.1273352908378104e-25, "cost_delta": -0.9656455768680218, "reason": "on the Pareto frontier; -poseidon-pin=A0_0 applies it"},
+   {"id": "A0_1", "kind": "algebraic", "status": "applied", "precision": "binary64", "outputs": [0], "c": "0.5", "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
     "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])", "modelled_error": 1.1607706226323944e-16, "cost_delta": -1.0, "reason": "part of the cheapest solution that meets the target"},
-   {"id": "R1_0", "kind": "algebraic", "status": "rejected", "precision": "binary32", "outputs": [0], "c": "(double)0.5f", "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary32))",
-    "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])", "modelled_error": 1.1607706226323944e-16, "cost_delta": -1.0, "reason": "the selected R0_1 rewrites the same output"}]}]}
+   {"id": "A1_0", "kind": "algebraic", "status": "rejected", "precision": "binary32", "outputs": [0], "c": "(double)0.5f", "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary32))",
+    "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])", "modelled_error": 1.1607706226323944e-16, "cost_delta": -1.0, "reason": "the selected A0_1 rewrites the same output"}]}]}
 //--- formatter/overlap.explain.json
 {"schema": "poseidon-explain/1",
  "function": {"name": "kernel(double const*, double*, int)", "symbol": "_Z6kernelPKdPdi", "site": {"file": "formatter.cpp", "line": 26, "col": 3}},
@@ -165,7 +165,7 @@ __attribute__((noinline)) void rotation(const double *w, double *q, int n) {
   "ops": [{"loc": {"file": "formatter.cpp", "line": 15, "col": 21}, "opcode": "cos"}, {"loc": {"file": "formatter.cpp", "line": 15, "col": 19}, "opcode": "-"},
           {"loc": {"file": "formatter.cpp", "line": 15, "col": 45}, "opcode": "*"}, {"loc": {"file": "formatter.cpp", "line": 15, "col": 37}, "opcode": "/"}],
   "outputs": [{"c": "(1.0 - cos(x[i])) / (x[i] * x[i])", "loc": {"file": "formatter.cpp", "line": 15, "col": 37}, "ops": [0, 1, 2, 3]}],
-  "alternatives": [{"id": "R1_1", "kind": "algebraic", "status": "applied", "precision": "binary64", "outputs": [0], "c": "0.25", "modelled_error": 1.1607706226323944e-16}]}]}
+  "alternatives": [{"id": "A1_1", "kind": "algebraic", "status": "applied", "precision": "binary64", "outputs": [0], "c": "0.25", "modelled_error": 1.1607706226323944e-16}]}]}
 //--- formatter/rotation.explain.json
 {"schema": "poseidon-explain/1",
  "function": {"name": "rotation(double const*, double*, int)", "symbol": "_Z8rotationPKdPdi"},

@@ -186,7 +186,7 @@ struct SiteState : FPGraph {
   /// Backing storage for the matmuls; MatmulUnit::matmul points into this,
   /// so it must outlive materialization.
   llvm::SmallVector<RecognizedMatmul, 4> abstractMatmuls;
-  /// The rewrite units proposed for the site.
+  /// The algebraic units proposed for the site.
   llvm::SmallVector<AlgebraicUnit, 4> algebraicUnits;
   /// The precision units proposed for the site.
   llvm::SmallVector<PrecisionUnit, 4> precisionUnits;

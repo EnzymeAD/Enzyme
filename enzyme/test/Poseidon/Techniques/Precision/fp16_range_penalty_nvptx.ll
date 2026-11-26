@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-precision-expansions=false -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-early-prune \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_half.csv -poseidon-print -S

@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv
+; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: cat %t/tester.ll %t/nothing.ll > %t/nothing_full.ll
 ; RUN: cat %t/tester.ll %t/two.ll > %t/two_full.ll

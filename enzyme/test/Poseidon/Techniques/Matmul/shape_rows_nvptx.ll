@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
+; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-algebraic=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-enable-matmul -poseidon-tau=1e-14 -S -o /dev/null
 ; DEFINE: %{raise} = %{opt} -poseidon-matmul-library-calls=false -poseidon-print
 ; RUN: rm -rf %t && mkdir -p %t/scaled %t/rect

@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt < %S/../../Inputs/piecewise_rewrite/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true -poseidon-enable-precision=false \
+; DEFINE:   -poseidon-enable-algebraic=true -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-print -S -o /dev/null
 ; DEFINE: %{fake} = env FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys
 ; RUN: rm -rf %t && mkdir %t

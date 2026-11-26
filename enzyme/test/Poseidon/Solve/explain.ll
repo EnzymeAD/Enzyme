@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-rewrite=false \
+; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -disable-output
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: %{opt} < %t/precision.ll -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-early-prune -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -poseidon-print 2>&1 | FileCheck --check-prefix=FLOAT %s
@@ -78,8 +78,8 @@
 
 ; REMARK: cancellation.c:9:3: Poseidon site tester: target 1e-06; modelled error as written {{.*}}
 ; REMARK: cancellation.c:4:37: Poseidon profile of (1.0 - cos(x[i])) / (x[i] * x[i]): x[i] in [1e-08, 0.0001]; 1024 executions
-; REMARK: cancellation.c:4:37: Poseidon rewrote (1.0 - cos(x[i])) / (x[i] * x[i]) as 0.5 (series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]); modelled error {{.*}} -> {{.*}}, cost {{[0-9]+}} -> 0 (-100%) [R0_1]
-; REMARK: cancellation.c:4:37: Poseidon {{did not select|rejected}} the rewrite R0_0 to fma(-0.041666666666666664, x[i] * x[i], 0.5)
+; REMARK: cancellation.c:4:37: Poseidon rewrote (1.0 - cos(x[i])) / (x[i] * x[i]) as 0.5 (series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]); modelled error {{.*}} -> {{.*}}, cost {{[0-9]+}} -> 0 (-100%) [A0_1]
+; REMARK: cancellation.c:4:37: Poseidon {{did not select|rejected}} the algebraic rewrite A0_0 to fma(-0.041666666666666664, x[i] * x[i], 0.5)
 
 ; RPASS-NOT: Poseidon profile
 ; RPASS: cancellation.c:4:37: Poseidon rewrote (1.0 - cos(x[i])) / (x[i] * x[i]) as 0.5 {{.*}}[-Rpass=poseidon]
@@ -91,19 +91,19 @@
 ; RJSON: "pareto": [
 ; RJSON: "result": {
 ; RJSON-NEXT: "applied": [
-; RJSON-NEXT: "R0_1"
+; RJSON-NEXT: "A0_1"
 ; RJSON: "cost_after": 0,
 ; RJSON: "schema": "poseidon-explain/1",
 ; RJSON: "subgraphs": [
-; RJSON: "id": "R0_0",
+; RJSON: "id": "A0_0",
 ; RJSON: "approx": true,
 ; RJSON-NEXT: "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
 ; RJSON-NEXT: "c": "0.5",
 ; RJSON: "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
-; RJSON: "id": "R0_1",
+; RJSON: "id": "A0_1",
 ; RJSON: "status": "applied",
 ; RJSON: "c": "(double)0.5f",
-; RJSON: "id": "R1_0",
+; RJSON: "id": "A1_0",
 ; RJSON: "precision": "binary32",
 ; RJSON: "kind": "precision",
 ; RJSON: "id": "S0",

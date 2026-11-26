@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-early-prune -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-early-prune -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S -poseidon-print
 ; DEFINE: %{err} = %python -c "import json, sys; d = json.load(open(sys.argv[1])); m = [a for u in d['subgraphs'] for a in u['alternatives'] if a['kind'] == 'matmul' and a['status'] == 'applied']; print('site %.6e product %.6e' % (d['result']['modelled_rel_error'], m[0]['modelled_domain_error']))"

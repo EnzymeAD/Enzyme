@@ -11,7 +11,7 @@
 // RUN: grep Sum %t/prof/jvp_body.fpprofile > %t/explicit.sums
 // RUN: grep Sum %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.sums
 // RUN: paste %t/explicit.sums %t/call.sums | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' | FileCheck --check-prefix=SUMS %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-algebraic=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt | FileCheck --check-prefix=OPT %s
 
 // A site whose body is one __enzyme_fwddiff request, as a call and in the

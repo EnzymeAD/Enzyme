@@ -1,18 +1,18 @@
 ; DEFINE: %{reprice} = env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie \
 ; DEFINE:   %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-algebraic=true \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-print-dp-table -S
 ; DEFINE: %{two} = %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes=poseidon \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; DEFINE:   -poseidon-cost-budget=-0.99 -poseidon-print -poseidon-print-dp-table -S
 ; DEFINE: %{fms} = %opt %S/../Techniques/Precision/expansion_two_components_nvptx.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../Inputs/expansion_two_components -poseidon-early-prune -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/expansion_two_components -poseidon-early-prune -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print -S
@@ -40,7 +40,7 @@
 ; RUN: awk '/^\[poseidon\] DP table:$/ {t = 1; print; next} t && /^ / {print; next} {t = 0}' %t/kinds/replay.log > %t/kinds/replay.table
 ; RUN: diff %t/kinds/solve.table %t/kinds/replay.table
 ; RUN: diff %t/kinds/solve.ll %t/kinds/replay.ll
-; RUN: grep -h -B3 '"unit": "R"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-R %s
+; RUN: grep -h -B3 '"unit": "A"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-R %s
 ; RUN: grep -h -B3 '"unit": "P"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-P %s
 ; RUN: grep -h -B2 '"unit": "M"' %t/kinds/reprice/dp_*.json | FileCheck --check-prefix=KINDS-TABLE-M --implicit-check-not=candidate_key %s
 ; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_solve.ll > %t/kinds/two_solve.log 2>&1
@@ -65,7 +65,7 @@
 ; Each step entry of a kind, as grep -B keeps it: the lines before its unit.
 ; KINDS-TABLE-R: "candidate_key": "{{[0-9A-F]+}}",
 ; KINDS-TABLE-R-NEXT: "index": {{[0-9]+}},
-; KINDS-TABLE-R-NEXT: "unit": "R"
+; KINDS-TABLE-R-NEXT: "unit": "A"
 ; KINDS-TABLE-P: "candidate_key": "{{[0-9A-F]+}}",
 ; KINDS-TABLE-P-NEXT: "index": {{[0-9]+}},
 ; KINDS-TABLE-P-NEXT: "unit": "P"

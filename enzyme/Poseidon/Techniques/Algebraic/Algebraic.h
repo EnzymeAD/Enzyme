@@ -59,7 +59,7 @@ struct AlgebraicCandidate {
   /// The FPCore expression, over the core's symbols.
   std::string expr;
   /// Its position among the alternatives Herbie returned for its core, the j of
-  /// its R<i>_<j> id. Pricing drops candidates and a table hit prices none, so
+  /// its A<i>_<j> id. Pricing drops candidates and a table hit prices none, so
   /// the position in `candidates` differs between the two.
   size_t ordinal = 0;
 

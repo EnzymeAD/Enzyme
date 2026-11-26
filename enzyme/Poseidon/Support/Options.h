@@ -104,9 +104,9 @@ struct CandidateOptions {
 #define POSEIDON_CANDIDATE_OPTION POSEIDON_FIELD
 #include "Options.def"
 
-  /// EnableRewrites is off because no Herbie can run, not because the flag
+  /// EnableAlgebraic is off because no Herbie can run, not because the flag
   /// said so.
-  bool RewritesLackHerbie = false;
+  bool AlgebraicLacksHerbie = false;
 };
 
 /// The accuracy target, the cost budget, how the DP searches, and the rewrites

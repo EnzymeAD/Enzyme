@@ -1,4 +1,4 @@
-; DEFINE: %{fma} = -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie \
+; DEFINE: %{fma} = -poseidon-enable-algebraic=true -poseidon-herbie-binary=/nonexistent/herbie \
 ; DEFINE:   -poseidon-enable-precision=false -S
 ; RUN: rm -rf %t && mkdir %t
 
@@ -40,7 +40,7 @@
 ; ONE: Minimum accuracy cost within budget: 7.671461e-05
 ; ONE-NEXT: Computation cost budget used: -7.480469e-01
 ; ONE: Applying solution for (* (+ v0 v1) v2) --(0)-> (fma.f32 v1 v2 (*.f32 v2 v0))
-; ONE: [poseidon] pin: tester:R1=(fma.f32 v1 v2 (*.f32 v2 v0))
+; ONE: [poseidon] pin: tester:A1=(fma.f32 v1 v2 (*.f32 v2 v0))
 ; ONE-BUDGETS: {{^}}-0.748046875,-0.05859375{{$}}
 ; ONE-TO-EXACT-NOT: DP cache entry
 ; ONE-TO-EXACT: Solving the DP for preprocess_tester.
@@ -85,9 +85,9 @@
 ; kept, and both solves find all three raises. A budget below every frontier
 ; point selects nothing, so only the solve runs.
 ; RUN: mkdir %t/refusal
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/refusal_herbie %opt %S/../Inputs/no_early_prune/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/refusal -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/prune -poseidon-explain=%t/refusal/prune/ex 2>&1 | FileCheck --check-prefixes=REFUSAL,REFUSAL-PRUNE %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/refusal_herbie %opt %S/../Inputs/no_early_prune/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/refusal -poseidon-early-prune -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/prune -poseidon-explain=%t/refusal/prune/ex 2>&1 | FileCheck --check-prefixes=REFUSAL,REFUSAL-PRUNE %s
 ; RUN: %poseidon_explain %t/refusal/prune/ex --format budgets | FileCheck --check-prefix=REFUSAL-BUDGETS %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/refusal_herbie %opt %S/../Inputs/no_early_prune/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/refusal -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-explain=%t/refusal/exact/ex 2>&1 | FileCheck --check-prefixes=REFUSAL,REFUSAL-EXACT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/refusal_herbie %opt %S/../Inputs/no_early_prune/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/refusal -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-explain=%t/refusal/exact/ex 2>&1 | FileCheck --check-prefixes=REFUSAL,REFUSAL-EXACT %s
 ; RUN: %poseidon_explain %t/refusal/exact/ex --format budgets | FileCheck --check-prefix=REFUSAL-BUDGETS %s
 
 ; REFUSAL-PRUNE: [poseidon] matmul[0] candidates
@@ -110,9 +110,9 @@
 ; functions as the libdevice calls the pass recognizes. A budget below every
 ; frontier point selects nothing, so only the solve runs.
 ; RUN: mkdir %t/reprice
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/prune -poseidon-explain=%t/reprice/prune/ex 2>&1 | FileCheck --check-prefixes=REPRICE,REPRICE-PRUNE %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-early-prune -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/prune -poseidon-explain=%t/reprice/prune/ex 2>&1 | FileCheck --check-prefixes=REPRICE,REPRICE-PRUNE %s
 ; RUN: %poseidon_explain %t/reprice/prune/ex --format budgets | FileCheck --check-prefix=REPRICE-BUDGETS %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/exact -poseidon-explain=%t/reprice/exact/ex 2>&1 | FileCheck --check-prefixes=REPRICE,REPRICE-EXACT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/exact -poseidon-explain=%t/reprice/exact/ex 2>&1 | FileCheck --check-prefixes=REPRICE,REPRICE-EXACT %s
 ; RUN: %poseidon_explain %t/reprice/exact/ex --format budgets | FileCheck --check-prefix=REPRICE-BUDGETS %s
 
 ; REPRICE-PRUNE-NOT: Exact DP
@@ -126,9 +126,9 @@
 ; admits: the empty strategy is kept, and both solves keep d's options. The
 ; budget is below every frontier point, so only the solve runs.
 ; RUN: mkdir %t/two_matmuls
-; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefixes=TWO,TWO-PRUNE %s
+; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefixes=TWO,TWO-PRUNE %s
 ; RUN: cat %t/two_matmuls/prune/dp_*.json | FileCheck --check-prefix=TWO-TABLE %s
-; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact 2>&1 | FileCheck --check-prefixes=TWO,TWO-EXACT %s
+; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact 2>&1 | FileCheck --check-prefixes=TWO,TWO-EXACT %s
 ; RUN: cat %t/two_matmuls/exact/dp_*.json | FileCheck --check-prefix=TWO-TABLE %s
 
 ; TWO-PRUNE-NOT: Exact DP

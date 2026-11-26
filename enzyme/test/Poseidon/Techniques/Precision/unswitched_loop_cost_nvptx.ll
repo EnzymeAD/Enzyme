@@ -1,7 +1,7 @@
 ; REQUIRES: nvptx-registered-target
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/Inputs/unswitched_loop -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-precision-expansions=true -poseidon-tau=1e-6 \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t

@@ -1,4 +1,4 @@
-; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-rewrite=false \
+; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-tau=1e-12 -poseidon-print -S -o /dev/null
 ; DEFINE: %{prof} = -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune
 ; RUN: rm -rf %t && mkdir %t

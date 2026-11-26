@@ -5,7 +5,7 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/gen.exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/gen.exe | FileCheck --check-prefix=PROFILED %s
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false -mllvm -poseidon-enable-algebraic=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=RAISED %s
 
 #include <cmath>

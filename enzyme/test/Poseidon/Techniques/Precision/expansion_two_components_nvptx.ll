@@ -1,7 +1,7 @@
 ; DEFINE: %{ds} = %S/../../Inputs/expansion_two_components/ds_fms.ll
 ; DEFINE: %{opt} = %opt %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/expansion_two_components -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/expansion_two_components -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -S
 ; RUN: rm -rf %t && mkdir %t
@@ -9,7 +9,7 @@
 ; RUN: FileCheck %s < %t/out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t/out
 ; RUN: mkdir -p %t/noscalar && grep -v '^# scalar_types=' %cost_models/cm_sm_120_synthetic.csv > %t/noscalar/cm.csv
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/expansion_two_components -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-model=%t/noscalar/cm.csv -poseidon-cache=%t/noscalar -S 2>&1 | FileCheck --check-prefix=NOSCALAR %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/expansion_two_components -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-model=%t/noscalar/cm.csv -poseidon-cache=%t/noscalar -S 2>&1 | FileCheck --check-prefix=NOSCALAR %s
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call contract double @llvm.fmuladd/' %{ds} > %t/contract.ll
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call fast double @llvm.fmuladd/; s/= fneg double/= fneg fast double/' %{ds} > %t/fast.ll
 ; RUN: sed 's/^attributes #0 = { /attributes #0 = { "unsafe-fp-math"="true" "no-nans-fp-math"="true" "no-infs-fp-math"="true" "approx-func-fp-math"="true" "no-signed-zeros-fp-math"="true" /' %{ds} > %t/attr.ll

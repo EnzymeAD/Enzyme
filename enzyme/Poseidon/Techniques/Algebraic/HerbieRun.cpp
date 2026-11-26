@@ -285,7 +285,7 @@ readCachedAnswer(const AnswerCache &cache, StringRef Program, bool Print,
                  : "there is no Herbie at " + Program + " to compute it") +
             "; copy here the -poseidon-cache directory of a compile that ran "
             "Herbie, or turn algebraic rewriting off with "
-            "-poseidon-enable-rewrite=0");
+            "-poseidon-enable-algebraic=0");
   return std::nullopt;
 }
 

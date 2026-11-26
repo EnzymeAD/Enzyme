@@ -1,14 +1,14 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/Inputs/fmod_operator -poseidon-early-prune -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.5 -poseidon-cache=%t/pt -o %t/pt.ll 2>&1 | FileCheck --check-prefix=PT %s
+; RUN: %{opt} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.5 -poseidon-cache=%t/pt -o %t/pt.ll 2>&1 | FileCheck --check-prefix=PT %s
 ; RUN: FileCheck --check-prefix=PT-IR %s < %t/pt.ll
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/fmod_operator %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/fmod_operator %{opt} -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE %s
 ; RUN: FileCheck --check-prefix=HERBIE-IR %s < %t/herbie.ll
 ; RUN: grep -v '^fmod,' %cost_models/cm_cpu_native.csv > %t/nofmod.csv
-; RUN: not %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%t/nofmod.csv -poseidon-cache=%t/nofmod -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMOD %s
+; RUN: not %{opt} -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-cost-model=%t/nofmod.csv -poseidon-cache=%t/nofmod -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMOD %s
 ; RUN: grep -v '^fma,' %cost_models/cm_cpu_native.csv > %t/nofma.csv
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/fmod_operator not %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%t/nofma.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/nofma -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMA %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/fmod_operator not %{opt} -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%t/nofma.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/nofma -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMA %s
 
 ; An frem is fmod to Herbie, the accuracy model and the cost model (its fmod
 ; row, also for the frem a rewrite's fmod becomes); a model without the row is
@@ -69,7 +69,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; HERBIE: [poseidon] Optimizing preprocess_tester_fma
 ; HERBIE: {{^}}-3.731043e-14 2.560000e+02 1.500000e+00 9.843750e-01 (fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
 ; HERBIE: Applying solution for (+ (* v0 v1) v0) --(0)-> (fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
-; HERBIE: [poseidon] pin: tester_fma:R0=(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
+; HERBIE: [poseidon] pin: tester_fma:A0=(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
 ; HERBIE-IR-LABEL: define void @preprocess_tester_fma(
 ; HERBIE-IR: [[FMA:%.+]] = tail call nnan double @llvm.fma.f64(double %x, double %y, double %x)
 ; HERBIE-IR-NEXT: [[FMOD:%.+]] = frem nnan double [[FMA]], 1.000000e+03

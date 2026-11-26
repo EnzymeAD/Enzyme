@@ -1,9 +1,9 @@
 ; DEFINE: %{opt} = %opt < %S/../../Inputs/piecewise_rewrite/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/piecewise_rewrite/profiles -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true -poseidon-enable-precision=false \
+; DEFINE:   -poseidon-enable-algebraic=true -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=1e9 -poseidon-print -S -o /dev/null
-; DEFINE: %{rewrites} = %python -c "import json, sys; print('\\n'.join(a['id'] + ' ' + a['fpcore'] for u in json.load(open(sys.argv[1]))['subgraphs'] for a in u['alternatives'] if a.get('id', '').startswith('R0_')))"
+; DEFINE: %{rewrites} = %python -c "import json, sys; print('\\n'.join(a['id'] + ' ' + a['fpcore'] for u in json.load(open(sys.argv[1]))['subgraphs'] for a in u['alternatives'] if a.get('id', '').startswith('A0_')))"
 ; RUN: rm -rf %t && split-file %s %t/h
 ; RUN: env FAKE_HERBIE_DIR=%t/h %{opt} \
 ; RUN:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
@@ -47,17 +47,17 @@
 ; CALLS24-NEXT: {{^}}fake-herbie: report {{.*}} --enable reduce:dag-cost --num-taylor-terms 4 {{[^ ]+}} {{[^ ]+$}}
 ; CALLS24-NOT: report
 
-; UNION24: R0_0 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
-; UNION24-NEXT: R0_2 (/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))
-; UNION24-NOT: R0_
+; UNION24: A0_0 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
+; UNION24-NEXT: A0_2 (/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))
+; UNION24-NOT: A0_
 
 ; SEARCH4-NOT: FPCore(s) in
 ; SEARCH4: [poseidon] Using cached Herbie output from {{.*}}herbie_default_{{[0-9A-F]+}}.json
 ; SEARCH4-NOT: FPCore(s) in
 
-; UNION4: R0_0 (/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))
-; UNION4-NEXT: R0_1 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
-; UNION4-NOT: R0_
+; UNION4: A0_0 (/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))
+; UNION4-NEXT: A0_1 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
+; UNION4-NOT: A0_
 
 ; SEARCH46: [poseidon] Using cached Herbie output from
 ; SEARCH46: [poseidon] Herbie subgraph 0 of preprocess_tester at 6 Taylor terms: 2 FPCore(s) in
@@ -66,10 +66,10 @@
 ; CALLS46: {{^}}fake-herbie: report {{.*}} --num-taylor-terms 6 {{[^ ]+}} {{[^ ]+$}}
 ; CALLS46-NOT: report
 
-; UNION46: R0_0 (/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))
-; UNION46-NEXT: R0_1 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
-; UNION46-NEXT: R0_2 (-.f64 (sqrt.f64 (fma.f64 v0 v0 (*.f64 v1 v1))) v0)
-; UNION46-NOT: R0_
+; UNION46: A0_0 (/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))
+; UNION46-NEXT: A0_1 (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))
+; UNION46-NEXT: A0_2 (-.f64 (sqrt.f64 (fma.f64 v0 v0 (*.f64 v1 v1))) v0)
+; UNION46-NOT: A0_
 
 ; UNSET-NOT: Taylor terms
 ; UNSET: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_7D7D1B4F7D656892.json

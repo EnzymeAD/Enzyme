@@ -3,7 +3,7 @@
 ; DEFINE:   %S/../../Inputs/stale_cache/matmul_device.ll
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-tau=1e-12 \
 ; DEFINE:   -poseidon-compilation-id=tcec -S
 ; DEFINE: %{host} = %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll \

@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-print -S
 ; Two sites whose profiles carry a condition number (Kappa 1000 on the product,
 ; 0.001 on the scalar subgraph): each candidate's accuracy cost is scaled by

@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %loadPoseidon -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie \
+; DEFINE:   -poseidon-enable-algebraic=true -poseidon-herbie-binary=/nonexistent/herbie \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-print -S
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: sed 's/"sm_120"/"sm_90"/' %t/kernel.ll > %t/sm90.ll

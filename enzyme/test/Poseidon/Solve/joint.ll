@@ -4,7 +4,7 @@
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{mm} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-print -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/@tester_a, double %x, double %y)/@tester_a, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %S/Inputs/two_sites.ll > %t/a.ll
@@ -13,9 +13,9 @@
 ; profiles from the host profiler on x = 1 + i/8, y = 0.5 + (i % 7)/4, i < 64.
 ; Budget -0.4 rewrites both sites, -0.2 only tester_b.
 ; RUN: mkdir %t/sites
-; RUN: %opt %S/Inputs/two_sites.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
+; RUN: %opt %S/Inputs/two_sites.ll %{passfn} %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
 ; RUN: %poseidon_explain %t/sites/both/ex --format budgets | FileCheck --check-prefix=SITES-BUDGETS %s
-; RUN: %opt %S/Inputs/two_sites.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
+; RUN: %opt %S/Inputs/two_sites.ll %{passfn} %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
 
 ; SITES-BOTH: [poseidon] joint solve: collecting candidates from 2 marked function(s)
 ; SITES-BOTH: Critical computation cost range: [-4.500000e-01, 0.000000e+00]
@@ -64,18 +64,18 @@
 ; A budget share that cannot be met (-400, inf, above 2^30) and a number flag
 ; given an empty value or nan are errors of a solve that reads them; a compile
 ; that solves nothing or solves under a target does not read the budget.
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-STALE %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONFINITE %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=1.0000000000000001e+300 %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=2e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=2000000000 %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
-; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-rewrite-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-rewrite-max-broken-share %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-STALE %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONFINITE %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=1.0000000000000001e+300 %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-cost-budget=2e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=2000000000 %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false %{cm} -poseidon-cache= -poseidon-algebraic-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-algebraic-max-broken-share %s
 ; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 ; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
-; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 
 ; SITES-STALE-NOT: Starting accuracy DP solver
 ; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost; give the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 saves a quarter)
@@ -95,12 +95,12 @@
 ; RUN: mkdir %t/targets
 ; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-03)/' %t/a.ll > %t/targets/ab_diff.ll
 ; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %t/a.ll > %t/targets/ab_same.ll
-; RUN: not %opt %t/a.ll %{pass} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c1 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-NONE %s
-; RUN: not %opt %t/targets/ab_diff.ll %{pass} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-DIFF %s
-; RUN: %opt %t/a.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -poseidon-print -o %t/targets/flag.out.ll 2> %t/targets/flag.err
+; RUN: not %opt %t/a.ll %{pass} %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c1 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-NONE %s
+; RUN: not %opt %t/targets/ab_diff.ll %{pass} %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-DIFF %s
+; RUN: %opt %t/a.ll %{passfn} %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -poseidon-print -o %t/targets/flag.out.ll 2> %t/targets/flag.err
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/targets/flag.err %t/targets/ex | FileCheck --check-prefix=TARGETS-JSON %s
 ; RUN: FileCheck --check-prefix=TARGETS-SITES %s < %t/targets/ex/tester_a.explain.json
-; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c4 -S -poseidon-print -o %t/targets/site.out.ll 2> %t/targets/site.err
+; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -poseidon-cache=%t/targets/c4 -S -poseidon-print -o %t/targets/site.out.ll 2> %t/targets/site.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/flag.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/site.err
 ; RUN: sed -e 's/, metadata !"poseidon_tau", double 1.000000e-02//' -e '/^; ModuleID/d' -e '/^source_filename/d' %t/targets/flag.out.ll > %t/targets/flag.cmp.ll

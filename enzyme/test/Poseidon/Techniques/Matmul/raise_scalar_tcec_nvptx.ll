@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} %s -poseidon-cache=%t/c -poseidon-cost-budget=-1e-9 > %t/out 2>&1

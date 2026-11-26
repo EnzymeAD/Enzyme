@@ -1,9 +1,9 @@
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: sed 's/{ "target-cpu"/{ mustprogress "target-cpu"/' %t/spin.ll > %t/progress.ll
 ; RUN: sed -e 's/label %%spin, label/label %%abort, label/' -e 's/^spin:$/abort:/' -e 's/^  br label %%spin$/  call void @exit(i32 1)\n  unreachable/' -e '/^declare double @llvm.sqrt/i declare void @exit(i32) noreturn nounwind' %t/spin.ll > %t/exit.ll
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/spin.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-pin=R0_1 -poseidon-cache=%t/spin -S 2>&1 | FileCheck --check-prefix=SPIN --implicit-check-not=@llvm.assume %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/exit.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-pin=R0_1 -poseidon-cache=%t/exit -S -poseidon-print 2>&1 | FileCheck --check-prefix=EXIT --implicit-check-not=@llvm.assume %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/progress.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-pin=R0_1 -poseidon-cache=%t/progress -S 2>&1 | FileCheck --check-prefix=PROGRESS %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/spin.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-pin=A0_1 -poseidon-cache=%t/spin -S 2>&1 | FileCheck --check-prefix=SPIN --implicit-check-not=@llvm.assume %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/exit.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-pin=A0_1 -poseidon-cache=%t/exit -S -poseidon-print 2>&1 | FileCheck --check-prefix=EXIT --implicit-check-not=@llvm.assume %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %t/progress.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/piecewise_rewrite/profiles -poseidon-early-prune -poseidon-enable-algebraic=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-pin=A0_1 -poseidon-cache=%t/progress -S 2>&1 | FileCheck --check-prefix=PROGRESS %s
 
 ; The rewritten clone carries the function attributes of the original and no
 ; more: a body that may spin forever keeps its loop (SPIN), one that may call
@@ -22,7 +22,7 @@
 ; SPIN-NEXT: [[OK]]:
 ; SPIN: attributes #[[ATTR]] = { alwaysinline "target-cpu"="x86-64" }
 
-; EXIT: [poseidon] Selecting R0_1: (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) -> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
+; EXIT: [poseidon] Selecting A0_1: (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) -> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 ; EXIT-LABEL: define double @preprocess_tester(
 ; EXIT-SAME: double [[X:%[a-z0-9._]+]], double [[Y:%[a-z0-9._]+]]) #[[ATTR:[0-9]+]] {
 ; EXIT-NEXT: entry:

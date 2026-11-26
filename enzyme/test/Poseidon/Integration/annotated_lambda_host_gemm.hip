@@ -11,7 +11,7 @@
 // RUN: mkdir %t/cache %t/src
 // RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t/cache/
 // RUN: cp %s %t/src/annotated_lambda_host_gemm.hip
-// RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch -poseidon-print --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-compilation-id=seeded -poseidon-enable-rewrite=0 annotated_lambda_host_gemm.hip -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch -poseidon-print --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-compilation-id=seeded -poseidon-enable-algebraic=0 annotated_lambda_host_gemm.hip -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
 #include <cmath>

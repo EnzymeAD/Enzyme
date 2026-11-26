@@ -1,5 +1,5 @@
 ; REQUIRES: herbie
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/expm1div_profiles -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=%herbie_binary -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-print -S 2>&1 | FileCheck %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/Inputs/expm1div_profiles -poseidon-early-prune -poseidon-enable-algebraic=true -poseidon-herbie-binary=%herbie_binary -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-print -S 2>&1 | FileCheck %s
 
 ; Live Herbie on (exp(x) - 1) / x: the expm1 rewrite of the binary64 search is
 ; pinned with its price and modelled error; the rest depends on the release.

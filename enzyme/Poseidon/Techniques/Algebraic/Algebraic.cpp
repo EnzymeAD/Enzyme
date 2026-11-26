@@ -286,7 +286,7 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
                                : ", and the Herbie at " + Program +
                                      " cannot run (" + R.Failure + ")") +
               "; point -poseidon-herbie-binary at a Herbie, or turn algebraic "
-              "rewriting off with -poseidon-enable-rewrite=0");
+              "rewriting off with -poseidon-enable-algebraic=0");
     if (!R.Warning.empty())
       diagnose(F, R.Warning, DS_Warning);
     if (R.Result == HerbieRunResult::Outcome::Crashed && O.Model.StrictMode)
@@ -377,7 +377,7 @@ static Error checkAnswer(const HerbieCoreAnswer &answer,
             "\", an expression Poseidon cannot model (" +
             toString(parsed.takeError()) +
             "); remove the file to search again, or turn algebraic rewriting "
-            "off with -poseidon-enable-rewrite=0");
+            "off with -poseidon-enable-algebraic=0");
   };
   if (Error E = check(answer.Rewrites->BestExpr))
     return E;
@@ -1001,14 +1001,15 @@ struct ElementPricing {
   // Its -poseidon-print lines, printed in candidate order.
   std::string diag;
 
-  // Whether `arm` has fewer samples than -poseidon-rewrite-min-regime-samples.
+  // Whether `arm` has fewer samples than
+  // -poseidon-algebraic-min-regime-samples.
   bool starved(const Options &O, const RegimeArm &arm) {
-    return regimeArmStats[arm].count < O.Model.RewriteMinRegimeSamples;
+    return regimeArmStats[arm].count < O.Model.AlgebraicMinRegimeSamples;
   }
   // Whether any arm has.
   bool starved(const Options &O) const {
     return any_of(regimeArmStats, [&](const auto &kv) {
-      return kv.second.count < O.Model.RewriteMinRegimeSamples;
+      return kv.second.count < O.Model.AlgebraicMinRegimeSamples;
     });
   }
 };
@@ -1074,8 +1075,8 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
       E.cost = sum / count;
     }
   }
-  if (!E.discard && O.Model.RewriteMaxBrokenShare >= 0.0 &&
-      broken > O.Model.RewriteMaxBrokenShare * n) {
+  if (!E.discard && O.Model.AlgebraicMaxBrokenShare >= 0.0 &&
+      broken > O.Model.AlgebraicMaxBrokenShare * n) {
     if (O.Diagnostics.Print)
       raw_string_ostream(E.diag)
           << "[poseidon] dropping candidate: relative error >= 1 on " << broken
@@ -1087,7 +1088,8 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
                 .str();
   }
   E.searching = !E.discard && !E.ifNodes.empty() && E.starved(O) &&
-                O.Model.RewriteRegimeSearchFactor > 0 && O.Model.NumSamples > 0;
+                O.Model.AlgebraicRegimeSearchFactor > 0 &&
+                O.Model.NumSamples > 0;
 }
 
 // Uniform marginal sampling weights each regime by its share of the profiled
@@ -1170,8 +1172,9 @@ static void takeRound(const Options &O, ElementPricing &E, const RoundWork &W) {
 // round's evaluations running concurrently.
 static void searchArms(const Options &O, SubgraphSamples &samples,
                        ArrayRef<ElementPricing *> elements) {
-  const size_t budget = static_cast<size_t>(O.Model.RewriteRegimeSearchFactor) *
-                        O.Model.NumSamples;
+  const size_t budget =
+      static_cast<size_t>(O.Model.AlgebraicRegimeSearchFactor) *
+      O.Model.NumSamples;
   for (unsigned round = 1;; ++round) {
     SmallVector<ElementPricing *, 0> active;
     for (ElementPricing *E : elements)
@@ -1224,11 +1227,11 @@ static void chargeWorstArm(const Options &O, ElementPricing &E) {
       if (st.count)
         os << ':' << format("%.3e", st.candSum / st.count) << '/'
            << format("%.3e", st.origSum / st.count);
-      if (st.count < O.Model.RewriteMinRegimeSamples) {
+      if (st.count < O.Model.AlgebraicMinRegimeSamples) {
         E.discard = true;
         E.why = formatv("a regime-split arm is reached by fewer than {0} "
                         "samples",
-                        (unsigned)O.Model.RewriteMinRegimeSamples)
+                        (unsigned)O.Model.AlgebraicMinRegimeSamples)
                     .str();
         continue;
       }
@@ -1346,7 +1349,7 @@ RewriteAccuracy::prepare(const AlgebraicCandidate &candidate) const {
     E.ref = rootSamples[k].ref;
     E.origCost = rootSamples[k].error;
     E.exprForLog = &candidate.expr;
-    if (O.Model.RewriteMinRegimeSamples > 0) {
+    if (O.Model.AlgebraicMinRegimeSamples > 0) {
       SmallPtrSet<const FPNode *, 32> seenIfs;
       collectIfNodes(element, seenIfs, E.ifNodes);
     }
@@ -1880,7 +1883,7 @@ Error AlgebraicUnit::price() {
 }
 
 void AlgebraicUnit::printPriced(raw_ostream &OS) {
-  OS << "[poseidon] priced rewrite candidates\n";
+  OS << "[poseidon] priced algebraic candidates\n";
   OS << "Initial AccuracyCost: " << initialAccCost << '\n';
   OS << "Initial ComputationCost: " << initialCompCost << '\n';
   OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << '\n';

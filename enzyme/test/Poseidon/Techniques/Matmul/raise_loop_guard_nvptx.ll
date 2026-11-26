@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: for f in or one and fold intra ptr index gather; do cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/${f}_body.fpprofile; done
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c -poseidon-enable-rewrite=false \
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c -poseidon-enable-algebraic=false \
 ; RUN:   -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S \
 ; RUN:   -o %t/out.ll 2>&1 | FileCheck %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll

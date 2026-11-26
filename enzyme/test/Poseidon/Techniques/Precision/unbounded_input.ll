@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/Inputs/unbounded_input -poseidon-early-prune \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true \
+; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=true \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -pass-remarks-missed=poseidon -S
 ; RUN: rm -rf %t && mkdir %t

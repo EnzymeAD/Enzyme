@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: for f in tri gemm staged; do cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/${f}_body.fpprofile; done
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c \
-; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-tau=1e-6 \
+; RUN:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-print -S -o %t/out.ll 2>&1 | FileCheck --implicit-check-not='Applying solution for matmul' %s
 ; RUN: FileCheck --check-prefix=IR --implicit-check-not=wmma --implicit-check-not=barrier %s < %t/out.ll
 

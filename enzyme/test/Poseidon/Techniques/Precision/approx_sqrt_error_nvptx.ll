@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/approx_sqrt \
-; DEFINE:   -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false \
+; DEFINE:   -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-precision-expansions=false \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-print "-poseidon-pin=P0=Funcs FP64(0%) + FP32(100%)" -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: sed -e '/^target triple/d' -e 's/"target-cpu"="sm_120"/"target-cpu"="x86-64"/' %s > %t/host.ll

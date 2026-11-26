@@ -1,6 +1,6 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/Inputs/staging_param -poseidon-early-prune -poseidon-enable-rewrite=false \
+; DEFINE:   -poseidon-profile-use=%S/Inputs/staging_param -poseidon-early-prune -poseidon-enable-algebraic=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S

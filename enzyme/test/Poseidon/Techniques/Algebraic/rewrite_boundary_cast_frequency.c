@@ -3,7 +3,7 @@
 // RUN: printf '%%s\n' '{"tests":[{"bits":32,"name":"1","status":"ex-start","time":1.0,"start":0.5,"end":0.25,"output":"(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1)))","cost-accuracy":[[1.0,0.5],[0.75,0.25],[]]}]}' > %t/h/r1.json
 // RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
-// RUN: env FAKE_HERBIE_DIR=%t/h %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=1 -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=0 -poseidon-subgraph-split-uses=2 -poseidon-subgraph-split-ops=1 -poseidon-cost-budget=-0.01 -poseidon-print -poseidon-cache=%t/c %s -S -emit-llvm -o %t/use.ll 2>&1 | FileCheck --check-prefix=PRICE %s
+// RUN: env FAKE_HERBIE_DIR=%t/h %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=1 -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=0 -poseidon-subgraph-split-uses=2 -poseidon-subgraph-split-ops=1 -poseidon-cost-budget=-0.01 -poseidon-print -poseidon-cache=%t/c %s -S -emit-llvm -o %t/use.ll 2>&1 | FileCheck --check-prefix=PRICE %s
 // RUN: FileCheck --check-prefix=IR %s < %t/use.ll
 
 // A binary32 rewrite of the value a loop carries, with Herbie's answer canned
@@ -40,7 +40,7 @@ int main(void) {
 
 // PRICE: Initial ComputationCost: 1.200000e+01
 // PRICE: {{^}}1.113646e-06 -2.944000e+03 7.500000e-01 9.921875e-01 (*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1))){{$}}
-// PRICE: [poseidon] pin: iterate.poseidon.main.0:R3=(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1))){{$}}
+// PRICE: [poseidon] pin: iterate.poseidon.main.0:A3=(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1))){{$}}
 
 // IR-LABEL: define {{.*}} @main(
 // IR: [[X:%.+]] = fdiv double

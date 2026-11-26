@@ -5,7 +5,7 @@
 // DEFINE: %{use} = -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile
 // DEFINE: %{waved} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -DWAVED -O2 -ffp-contract=on -S -I%poseidon_profile_inc
 // DEFINE: %{wuse} = %{waved} %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-early-prune -mllvm -poseidon-tau=1e-3 \
-// DEFINE:   -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-cost-model=%gpu_cost_model %s
+// DEFINE:   -mllvm -poseidon-enable-algebraic=0 -mllvm -poseidon-cost-model=%gpu_cost_model %s
 // RUN: %if cuda-toolkit %{ not %{nvptx} -UPOSEIDON_DEVICE_MATH %{use} 2>&1 | FileCheck -DLIB=libdevice %s %}
 // RUN: %if cuda-toolkit %{ %{nvptx} %{use} 2>&1 | FileCheck --allow-empty --check-prefix=DEFINED %s %}
 // RUN: %if cuda-toolkit %{ not %{nvptx} -UPOSEIDON_DEVICE_MATH -DKERNELS -mllvm -poseidon-kernels=wave %{use} 2>&1 | FileCheck -DLIB=libdevice %s %}
