@@ -15,8 +15,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "ExpansionModel.h"
+#include "Core/FPCore.h"
+#include "Core/FPNode.h"
 #include "Support/ExpansionRoutines.h"
 
+#include "llvm/ADT/DenseMap.h"
+
+#include <cassert>
 #include <cfloat>
 #include <cmath>
 
@@ -196,6 +201,72 @@ FloatExpansion expansionFmaSqr(const FloatExpansion &a,
   if (a.n == 2)
     return components2(routines().dsFma(pair(a), pair(a), pair(c)));
   return expansionAdd(expansionSqr(a), c);
+}
+
+namespace {
+// The arithmetic of one change to an n-component expansion: the components of
+// every operation of the change it has computed.
+class ExpansionArithmetic final : public EmulatedArithmetic {
+public:
+  explicit ExpansionArithmetic(unsigned n) : n(n) {}
+  std::optional<double>
+  evaluate(const FPNode &node,
+           llvm::function_ref<double(const FPNode &)> valueOf) override;
+
+private:
+  unsigned n;
+  llvm::DenseMap<const FPNode *, FloatExpansion> components;
+};
+} // namespace
+
+// As materialized: the result's components are kept for the change's later
+// operations.
+std::optional<double> ExpansionArithmetic::evaluate(
+    const FPNode &node, llvm::function_ref<double(const FPNode &)> valueOf) {
+  const bool supported = node.is(fpcore::Neg) || node.is(fpcore::Add) ||
+                         node.is(fpcore::Sub) || node.is(fpcore::Mul) ||
+                         node.is(fpcore::Div) || node.is(fpcore::Sqrt) ||
+                         node.is(fpcore::Fma);
+  if (!supported)
+    return std::nullopt;
+  auto operand = [&](unsigned i) -> FloatExpansion {
+    const FPNode *o = node.operands[i];
+    auto kept = components.find(o);
+    if (kept != components.end())
+      return kept->second;
+    double v = valueOf(*o);
+    return o->hasPrecision(NumberFormat::FP32) ? expansionFromF32((float)v, n)
+                                               : expansionFromF64(v, n);
+  };
+  // A value multiplied by itself is materialized as a square.
+  const bool sameFactor =
+      node.operands.size() >= 2 && node.operands[0] == node.operands[1];
+  FloatExpansion r;
+  if (node.is(fpcore::Neg))
+    r = expansionNeg(operand(0));
+  else if (node.is(fpcore::Add))
+    r = expansionAdd(operand(0), operand(1));
+  else if (node.is(fpcore::Sub))
+    r = expansionSub(operand(0), operand(1));
+  else if (node.is(fpcore::Mul))
+    r = sameFactor ? expansionSqr(operand(0))
+                   : expansionMul(operand(0), operand(1));
+  else if (node.is(fpcore::Div))
+    r = expansionDiv(operand(0), operand(1));
+  else if (node.is(fpcore::Sqrt))
+    r = expansionSqrt(operand(0));
+  else
+    r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
+                   : expansionFma(operand(0), operand(1), operand(2));
+  components[&node] = r;
+  return node.hasPrecision(NumberFormat::FP32) ? (double)expansionToF32(r)
+                                               : expansionToF64(r);
+}
+
+std::unique_ptr<EmulatedArithmetic> expansionArithmetic(NumberFormat format) {
+  const unsigned n = expansionComponents(format);
+  assert(n && "not an expansion format");
+  return std::make_unique<ExpansionArithmetic>(n);
 }
 
 } // namespace poseidon

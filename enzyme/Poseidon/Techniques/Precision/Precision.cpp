@@ -15,6 +15,7 @@
 #include "../Algebraic/Algebraic.h"
 #include "Core/FPCore.h"
 #include "Expansion.h"
+#include "ExpansionModel.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Model/Sampling.h"
@@ -1095,7 +1096,9 @@ void TierSweep::add(ArrayRef<NumberFormat> tiers, ArrayRef<int> cuts,
     shares.emplace_back(type, pct - prevPct);
     SetVector<FPLLValue *> ops(sortedAsc.end() - k, sortedAsc.end() - prevK);
     if (type != current && !ops.empty())
-      changes.emplace_back(ops, current, type);
+      changes.emplace_back(ops, current, type,
+                           expansionComponents(type) ? expansionArithmetic
+                                                     : nullptr);
     prevPct = pct;
     prevK = k;
   }

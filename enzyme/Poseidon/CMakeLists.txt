@@ -256,7 +256,7 @@ set(POSEIDON_SRC
     Pass/Pipeline.cpp
     Model/Evaluators.cpp
     Techniques/Precision/Expansion.cpp
-    Model/ExpansionModel.cpp
+    Techniques/Precision/ExpansionModel.cpp
     Solve/Explain.cpp
     Pass/Flags.cpp
     Techniques/Algebraic/Algebraic.cpp

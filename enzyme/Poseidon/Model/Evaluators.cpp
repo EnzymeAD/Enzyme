@@ -33,8 +33,13 @@ namespace poseidon {
 // precisions for it to count as converged: those of a binary64 result.
 static constexpr unsigned kGroundTruthPrec = 53;
 
-FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
+EmulatedArithmetic::~EmulatedArithmetic() = default;
+
+FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes)
+    : emulated(changes.size()) {
   for (const auto &[index, change] : enumerate(changes)) {
+    if (change.arithmetic)
+      emulated[index] = change.arithmetic(change.newType);
     for (auto node : change.nodes) {
       nodePrecisions[node] = change.newType;
       nodeChange[node] = index;
@@ -56,55 +61,6 @@ static float approxSqrtModel(float x, double bound) {
   double far = std::sqrt((double)x) * (1 + bound);
   float r = (float)far;
   return r < far ? std::nextafter(r, INFINITY) : r;
-}
-
-// Evaluates `node` as an operation of an `n`-component expansion change, as
-// it is materialized: an operand's components are kept from an operation of
-// the same change and otherwise split from the operand's value at its type;
-// the result's components are kept for the change's later operations, and the
-// node's value is the result restored to its own type. Returns false for an
-// operation with no expansion form.
-bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
-  const bool supported = node->is(fpcore::Neg) || node->is(fpcore::Add) ||
-                         node->is(fpcore::Sub) || node->is(fpcore::Mul) ||
-                         node->is(fpcore::Div) || node->is(fpcore::Sqrt) ||
-                         node->is(fpcore::Fma);
-  if (!supported)
-    return false;
-  auto operand = [&](unsigned i) -> FloatExpansion {
-    const FPNode *o = node->operands[i];
-    auto kept = components.find(o);
-    if (kept != components.end() && nodeChange.at(o) == nodeChange.at(node))
-      return kept->second;
-    double v = getResult(o);
-    return o->hasPrecision(NumberFormat::FP32) ? expansionFromF32((float)v, n)
-                                               : expansionFromF64(v, n);
-  };
-  // A value multiplied by itself is materialized as a square.
-  const bool sameFactor =
-      node->operands.size() >= 2 && node->operands[0] == node->operands[1];
-  FloatExpansion r;
-  if (node->is(fpcore::Neg))
-    r = expansionNeg(operand(0));
-  else if (node->is(fpcore::Add))
-    r = expansionAdd(operand(0), operand(1));
-  else if (node->is(fpcore::Sub))
-    r = expansionSub(operand(0), operand(1));
-  else if (node->is(fpcore::Mul))
-    r = sameFactor ? expansionSqr(operand(0))
-                   : expansionMul(operand(0), operand(1));
-  else if (node->is(fpcore::Div))
-    r = expansionDiv(operand(0), operand(1));
-  else if (node->is(fpcore::Sqrt))
-    r = expansionSqrt(operand(0));
-  else
-    r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
-                   : expansionFma(operand(0), operand(1), operand(2));
-  components[node] = r;
-  cache.try_emplace(node, node->hasPrecision(NumberFormat::FP32)
-                              ? (double)expansionToF32(r)
-                              : expansionToF64(r));
-  return true;
 }
 
 NumberFormat FPEvaluator::getNodePrecision(const FPNode *node) const {
@@ -234,9 +190,13 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     evaluateNode(operand, inputValues);
   if (nodePrec == NumberFormat::FP80 || nodePrec == NumberFormat::FP128)
     llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
-  if (const unsigned nExp = expansionComponents(nodePrec))
-    if (evaluateExpansionNode(node, nExp))
-      return;
+  if (auto C = nodeChange.find(node); C != nodeChange.end())
+    if (EmulatedArithmetic *A = emulated[C->second].get())
+      if (std::optional<double> V = A->evaluate(
+              *node, [&](const FPNode &O) { return getResult(&O); })) {
+        cache.try_emplace(node, *V);
+        return;
+      }
   cache.try_emplace(node, evaluateOperation(node, nodePrec));
 }
 

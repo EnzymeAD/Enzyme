@@ -17,6 +17,7 @@
 #include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
 #include "Model/CostModel.h"
+#include "Model/Evaluators.h"
 #include "Support/Diagnostics.h"
 #include "Techniques/SubgraphUnit.h"
 

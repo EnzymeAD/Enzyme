@@ -9,9 +9,9 @@
 #include "Core/FPCore.h"
 #include "Core/FPNode.h"
 #include "Model/Evaluators.h"
-#include "Model/ExpansionModel.h"
 #include "Support/Utils.h"
 #include "Techniques/Precision/Expansion.h"
+#include "Techniques/Precision/ExpansionModel.h"
 #include "Techniques/Precision/Precision.h"
 
 #include "llvm/IR/IRBuilder.h"
@@ -387,7 +387,7 @@ void modelApplied(std::vector<AppFn> &fns) {
       for (Instruction *I : ch)
         nodes.insert(cast<FPLLValue>(G.valueToNodeMap.at(I)));
       changes.emplace_back(nodes, f32 ? NumberFormat::FP32 : NumberFormat::FP64,
-                           expansionType(a.n));
+                           expansionType(a.n), expansionArithmetic);
     }
     PrecisionCandidate pt(changes, "expansion-match");
     for (size_t i = 0; i < pts.size() / 3; ++i) {

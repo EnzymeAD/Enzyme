@@ -12,8 +12,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MODEL_EXPANSION_MODEL_H
-#define POSEIDON_MODEL_EXPANSION_MODEL_H
+#ifndef POSEIDON_TECHNIQUES_PRECISION_EXPANSION_MODEL_H
+#define POSEIDON_TECHNIQUES_PRECISION_EXPANSION_MODEL_H
+
+#include "Core/NumberFormat.h"
+#include "Model/Evaluators.h"
+
+#include <memory>
 
 namespace poseidon {
 
@@ -57,5 +62,11 @@ FloatExpansion expansionFma(const FloatExpansion &a, const FloatExpansion &b,
 FloatExpansion expansionFmaSqr(const FloatExpansion &a,
                                const FloatExpansion &c);
 
+/// The evaluator's arithmetic of the expansion format `format`, which must be
+/// one: each operation computed as the emitted code computes it, an operand of
+/// the same change read from the components kept for it, any other split from
+/// its value as the emitted boundary conversion splits it.
+std::unique_ptr<EmulatedArithmetic> expansionArithmetic(NumberFormat format);
+
 } // namespace poseidon
-#endif // POSEIDON_MODEL_EXPANSION_MODEL_H
+#endif // POSEIDON_TECHNIQUES_PRECISION_EXPANSION_MODEL_H

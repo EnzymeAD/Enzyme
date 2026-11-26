@@ -78,7 +78,7 @@
 //
 // The FP32 expansion routines, written once over the arithmetic they run on:
 // Techniques/Precision/Expansion.cpp emits them through an IRBuilder, and
-// Model/ExpansionModel.cpp evaluates them on host floats for the
+// Techniques/Precision/ExpansionModel.cpp evaluates them on host floats for the
 // accuracy model, so that the model computes what the emitted code computes.
 // Every operation is bound to a local, so that instructions are created in the
 // order written, and is given the name of the instruction it emits.

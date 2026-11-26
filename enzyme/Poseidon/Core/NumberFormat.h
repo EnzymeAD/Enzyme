@@ -7,15 +7,13 @@
 //===----------------------------------------------------------------------===//
 //
 // The number formats of the pass: their names, the LLVM types their values
-// are held in, rounding a double to them, and a precision change, the nodes
-// it moves from one format to another.
+// are held in, and rounding a double to them.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_CORE_NUMBERFORMAT_H
 #define POSEIDON_CORE_NUMBERFORMAT_H
 
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Type.h"
 
@@ -66,8 +64,6 @@ private:
 /// 0 for a format without Semantics and for Invalid.
 double minSubnormalOf(NumberFormat k);
 
-class FPLLValue;
-
 /// A row of NumberFormat.def.
 struct NumberFormatInfo {
   NumberFormat Kind;
@@ -94,21 +90,6 @@ NumberFormat matrixFormatOf(llvm::Type *T);
 /// The LLVM type a value of kind `k` is stored in: TF32 in float, S8 and S32 in
 /// i8 and i32. `k` must be neither Invalid nor an expansion.
 llvm::Type *storageTypeOf(llvm::LLVMContext &ctx, NumberFormat k);
-
-/// The nodes of one tier of a precision candidate and the format they move
-/// from and to. The nodes belong to the site's graph.
-struct PrecisionChange {
-  /// The operations of the tier.
-  llvm::SetVector<FPLLValue *> nodes;
-  /// The format they are computed in as written.
-  NumberFormat oldType;
-  /// The format the change computes them in.
-  NumberFormat newType;
-
-  explicit PrecisionChange(llvm::SetVector<FPLLValue *> &nodes,
-                           NumberFormat oldType, NumberFormat newType)
-      : nodes(nodes), oldType(oldType), newType(newType) {}
-};
 
 } // namespace poseidon
 #endif // POSEIDON_CORE_NUMBERFORMAT_H
