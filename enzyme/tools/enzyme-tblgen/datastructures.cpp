@@ -49,6 +49,8 @@ const char *TyToString(ArgType ty) {
     return "vincData";
   case ArgType::vincInc:
     return "vincInc";
+  case ArgType::ivec:
+    return "ivec";
   case ArgType::cblas_layout:
     return "layout";
   case ArgType::mldData:
@@ -71,7 +73,8 @@ const char *TyToString(ArgType ty) {
 }
 
 bool isVecLikeArg(ArgType ty) {
-  if (ty == ArgType::vincData || ty == ArgType::mldData || ty == ArgType::ap)
+  if (ty == ArgType::vincData || ty == ArgType::mldData || ty == ArgType::ap ||
+      ty == ArgType::ivec)
     return true;
   return false;
 }
@@ -310,6 +313,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, ArgType> &argTypes) {
       argTypes.insert(std::make_pair(pos + 1, ArgType::mldLD));
     } else if (val->isSubClassOf("ap")) {
       argTypes.insert(std::make_pair(pos, ArgType::ap));
+    } else if (val->isSubClassOf("ivec")) {
+      argTypes.insert(std::make_pair(pos, ArgType::ivec));
     } else {
       // TODO: fix assertion
       // assert(isa<DefInit>(val));
@@ -361,7 +366,7 @@ void fillRelatedLenghts(
   size_t pos = 0;
   for (auto val : inputTypes) {
     if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld") &&
-        !val->isSubClassOf("ap")) {
+        !val->isSubClassOf("ap") && !val->isSubClassOf("ivec")) {
       pos += val->getValueAsInt("nelem");
       continue;
     }
@@ -385,7 +390,7 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
       }
       relatedLengths.insert(std::make_pair(pos, lengths));
-    } else if (val->isSubClassOf("ap")) {
+    } else if (val->isSubClassOf("ap") || val->isSubClassOf("ivec")) {
       assert(argsSize == 1);
       assert(argTypes.lookup(lengths[0]) == ArgType::len);
       relatedLengths.insert(std::make_pair(pos, lengths));
@@ -394,7 +399,8 @@ void fillRelatedLenghts(
       assert(argTypes.lookup(pos) == ArgType::mldData);
       assert(argTypes.lookup(pos + 1) == ArgType::mldLD);
       if (argsSize == 2) {
-        assert(argTypes.lookup(lengths[0]) == ArgType::len);
+        assert(argTypes.lookup(lengths[0]) == ArgType::len ||
+               argTypes.lookup(lengths[0]) == ArgType::mldLD);
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
       } else {
         assert(argTypes.lookup(lengths[0]) == ArgType::trans ||
@@ -464,7 +470,8 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg,
   // other args are unrelated to length args
   assert(argTypes.lookup(arg) == ArgType::vincData ||
          argTypes.lookup(arg) == ArgType::mldData ||
-         argTypes.lookup(arg) == ArgType::ap);
+         argTypes.lookup(arg) == ArgType::ap ||
+         argTypes.lookup(arg) == ArgType::ivec);
 
   assert(relatedLengths.count(arg) == 1);
   auto related = relatedLengths.lookup(arg);
