@@ -20,14 +20,14 @@ int main() {
   for (int i = 0; i < N; ++i)
     B[i * N + i] = 1.0;
   double *dA, *dB, *dC;
-  cudaMalloc(&dA, sizeof A);
-  cudaMalloc(&dB, sizeof B);
-  cudaMalloc(&dC, sizeof C);
-  cudaMemcpy(dA, A, sizeof A, cudaMemcpyHostToDevice);
-  cudaMemcpy(dB, B, sizeof B, cudaMemcpyHostToDevice);
+  gpuMalloc(&dA, sizeof A);
+  gpuMalloc(&dB, sizeof B);
+  gpuMalloc(&dC, sizeof C);
+  gpuMemcpy(dA, A, sizeof A, gpuMemcpyHostToDevice);
+  gpuMemcpy(dB, B, sizeof B, gpuMemcpyHostToDevice);
   __poseidon_ozakiii_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
                          10);
-  if (cudaMemcpy(C, dC, sizeof C, cudaMemcpyDeviceToHost) != cudaSuccess)
+  if (gpuMemcpy(C, dC, sizeof C, gpuMemcpyDeviceToHost) != gpuSuccess)
     return 1;
   bool row1 = true, rest = true;
   for (int c = 0; c < N; ++c)

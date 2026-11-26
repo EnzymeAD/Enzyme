@@ -94,9 +94,9 @@ bool sameBits(double a, double b) {
 size_t run(int M, int N, int K) {
   const Operands o(M, N, K);
   double *dA, *dB, *dC;
-  cudaMalloc(&dA, o.A.size() * 8);
-  cudaMalloc(&dB, o.B.size() * 8);
-  cudaMalloc(&dC, o.C0.size() * 8);
+  gpuMalloc(&dA, o.A.size() * 8);
+  gpuMalloc(&dB, o.B.size() * 8);
+  gpuMalloc(&dC, o.C0.size() * 8);
   const int layouts = 8;
   size_t products = 0, differ = 0;
   for (int lay = 0; lay < layouts; ++lay) {
@@ -105,15 +105,15 @@ size_t run(int M, int N, int K) {
     const std::vector<double> A = store(o.A, M, K, ac),
                               B = store(o.B, K, N, bc),
                               C0 = store(o.C0, M, N, cc);
-    cudaMemcpy(dA, A.data(), A.size() * 8, cudaMemcpyHostToDevice);
-    cudaMemcpy(dB, B.data(), B.size() * 8, cudaMemcpyHostToDevice);
+    gpuMemcpy(dA, A.data(), A.size() * 8, gpuMemcpyHostToDevice);
+    gpuMemcpy(dB, B.data(), B.size() * 8, gpuMemcpyHostToDevice);
     std::vector<double> C(C0.size());
     for (unsigned nm = 3; nm <= 14; ++nm) {
-      cudaMemcpy(dC, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice);
+      gpuMemcpy(dC, C0.data(), C0.size() * 8, gpuMemcpyHostToDevice);
       __poseidon_ozakiii_dgemm(dC, dA, dB, M, N, K, ac ? M : K, bc ? K : N,
                              cc ? M : N, ac, bc, cc, 1.0, beta, nullptr, nm);
-      if (cudaMemcpy(C.data(), dC, C.size() * 8, cudaMemcpyDeviceToHost) !=
-          cudaSuccess) {
+      if (gpuMemcpy(C.data(), dC, C.size() * 8, gpuMemcpyDeviceToHost) !=
+          gpuSuccess) {
         printf("ozaki %dx%dx%d: CUDA error\n", M, N, K);
         return 1;
       }
@@ -129,9 +129,9 @@ size_t run(int M, int N, int K) {
   }
   printf("ozaki %dx%dx%d: %d layouts, %zu products, %zu differ\n", M, N, K,
          layouts, products, differ);
-  cudaFree(dA);
-  cudaFree(dB);
-  cudaFree(dC);
+  gpuFree(dA);
+  gpuFree(dB);
+  gpuFree(dC);
   return differ;
 }
 
@@ -161,18 +161,18 @@ size_t runSampled(int M, int N, int K) {
     std::vector<double> A = sampled(M, K, log40, 0.5);
     std::vector<double> B = sampled(K, N, log40, 2.0);
     double *dA, *dB, *dC;
-    cudaMalloc(&dA, A.size() * 8);
-    cudaMalloc(&dB, B.size() * 8);
-    cudaMalloc(&dC, (size_t)M * N * 8);
-    cudaMemcpy(dA, A.data(), A.size() * 8, cudaMemcpyHostToDevice);
-    cudaMemcpy(dB, B.data(), B.size() * 8, cudaMemcpyHostToDevice);
+    gpuMalloc(&dA, A.size() * 8);
+    gpuMalloc(&dB, B.size() * 8);
+    gpuMalloc(&dC, (size_t)M * N * 8);
+    gpuMemcpy(dA, A.data(), A.size() * 8, gpuMemcpyHostToDevice);
+    gpuMemcpy(dB, B.data(), B.size() * 8, gpuMemcpyHostToDevice);
     std::vector<double> C((size_t)M * N), P((size_t)M * N);
     size_t products = 0, d = 0;
     int counts = 0;
     for (unsigned nm = 8; nm <= 14; ++nm, ++counts) {
       __poseidon_ozakiii_dgemm(dC, dA, dB, M, N, K, K, N, N, 0, 0, 0, 1.0, 0.0,
                              nullptr, nm);
-      cudaMemcpy(C.data(), dC, C.size() * 8, cudaMemcpyDeviceToHost);
+      gpuMemcpy(C.data(), dC, C.size() * 8, gpuMemcpyDeviceToHost);
       simulateOzakiIIDgemm(nm, {A.data(), (unsigned)K, (unsigned)M, true},
                            {B.data(), (unsigned)N, (unsigned)N, false},
                            (unsigned)K, P.data());
@@ -181,9 +181,9 @@ size_t runSampled(int M, int N, int K) {
     }
     printf("model %dx%dx%d %s: %d moduli, %zu products, %zu differ\n", M, N, K,
            log40 ? "log40" : "uniform", counts, products, d);
-    cudaFree(dA);
-    cudaFree(dB);
-    cudaFree(dC);
+    gpuFree(dA);
+    gpuFree(dB);
+    gpuFree(dC);
     differ += d;
   }
   return differ;
