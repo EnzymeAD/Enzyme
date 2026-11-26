@@ -1730,6 +1730,10 @@ public:
                 valueop = array;
               }
             }
+          } else if (dt == BaseType::Integer) {
+            // The shadow of integer-only memory mirrors the primal.
+            auto rule = [&val]() { return val; };
+            valueop = applyChainRule(val->getType(), BuilderZ, rule);
           } else {
             valueop = gutils->invertPointerM(orig_val, BuilderZ, vd);
           }

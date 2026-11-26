@@ -5921,7 +5921,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 
     // void _FortranAAssign(Descriptor &to, const Descriptor &from,
     //                      const char *sourceFile, int sourceLine)
-    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+    // and AssignSimple, with the same arguments.
+    if ((funcName == "_FortranAAssign" ||
+         funcName == "_FortranAAssignSimple") &&
+        call.arg_size() == 4) {
       auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
       for (int i = 0; i < 2; i++) {
         updateAnalysis(call.getOperand(i),
