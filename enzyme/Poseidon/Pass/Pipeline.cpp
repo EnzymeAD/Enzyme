@@ -6,11 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Actions.h"
-#include "AsWritten.h"
-#include "Pass/HostStubs.h"
+#include "Internal.h"
 #include "Profile/Instrument.h"
-#include "Profile/SiteProfile.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
@@ -25,6 +22,7 @@
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -604,6 +602,47 @@ struct SiteGatePass : PassParent<SiteGatePass> {
 };
 
 } // namespace
+
+// The host module's launch stubs of the kernels a descriptor in its manifest
+// names, rewritten before inlining: for profile generation into a launch that
+// supplies the profiling kernel's shadows, and for host library call.
+
+/// Rewrites, on the host module and before inlining, each __device_stub__
+/// launch stub that a descriptor in the module's manifest matches.
+class HostStubPass : public PassParent<HostStubPass> {
+public:
+  /// Rewrites the stubs of `M`; nothing in a device module or a compile that
+  /// hands no launch over, and nothing once the session has stopped.
+  llvm::PreservedAnalyses run(llvm::Module &M,
+                              llvm::ModuleAnalysisManager &MAM);
+};
+
+llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
+                                          llvm::ModuleAnalysisManager &MAM) {
+  Session &S = sessionOf(M, MAM);
+  const Options &O = S.Opts;
+  if (S.Stopped || Target::of(M).isDevice() || !handsOverLaunches(O))
+    return llvm::PreservedAnalyses::all();
+  // Profile generation: every launch of an annotated kernel goes through the
+  // runtime helper that supplies its shadow buffers. Library call
+  // materializes only in the optimize phase: profile-gen builds instrument the
+  // original kernel and do not link the runtime.
+  bool changed = false;
+  if (O.Profiling.generatesProfile()) {
+    Expected<bool> rewritten = rewriteProfileStubBodies(O, M);
+    if (!rewritten)
+      return stopOnError(S, M, rewritten.takeError());
+    changed = *rewritten;
+    changed |= registerProfiledKernels(O, M);
+  } else {
+    Expected<bool> rewritten = rewriteGemmStubBodies(O, M);
+    if (!rewritten)
+      return stopOnError(S, M, rewritten.takeError());
+    changed = *rewritten;
+  }
+  return changed ? llvm::PreservedAnalyses::none()
+                 : llvm::PreservedAnalyses::all();
+}
 
 // The canonical prefix, which brings a site body to the form the profile is
 // numbered against. It matches the start of Enzyme's OptimizerEarly pipeline,

@@ -10,7 +10,6 @@
 #include "Optimize.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Session.h"
-#include "SolveSites.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 

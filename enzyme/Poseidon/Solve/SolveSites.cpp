@@ -6,7 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "SolveSites.h"
 #include "BuildIdentity.h"
 #include "Model/CostModel.h"
 #include "Optimize.h"

@@ -175,7 +175,7 @@ endif()
 # Native, Ozaki-II and direct for every GPU runtime; TCEC on cuMpSGEMM for
 # CUDA only.
 poseidon_add_gpu_runtime(poseidon_gemm_cuda poseidon_gemm_hip SOURCES
-                         gemm/Native.cu gemm/OzakiII.cu gemm/Direct.cu)
+                         gemm/OzakiII.cu gemm/Direct.cu)
 if(POSEIDON_HAS_CUDA)
   # Optimized in every build type but Debug, as LLVM's own runtimes are;
   # -Xcompiler, since nvcc warns when its own -O is given twice.

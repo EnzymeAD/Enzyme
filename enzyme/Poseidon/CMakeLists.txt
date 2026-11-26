@@ -244,7 +244,6 @@ set(POSEIDON_SRC
     Model/CostModel.cpp
     Targets/MathLibrary.cpp
     Targets/Target.cpp
-    Targets/Host.cpp
     Targets/NVPTX.cpp
     Targets/AMDGPU.cpp
     Targets/OffloadRuntime.cpp
@@ -264,7 +263,6 @@ set(POSEIDON_SRC
     Techniques/Rewrite/Rewrite.cpp
     Model/FPCore.cpp
     Techniques/Rewrite/HerbieRun.cpp
-    Support/Options.cpp
     Support/Parallel.cpp
     Solve/DP.cpp
     Support/UniformReal.cpp
@@ -272,14 +270,12 @@ set(POSEIDON_SRC
     Techniques/Matmul/RealizeInKernel.cpp
     Profile/Instrument.cpp
     Sites/LaunchManifest.cpp
-    Pass/HostStubs.cpp
     Solve/Optimize.cpp
     Sites/Site.cpp
     Sites/SiteIdentity.cpp
     Techniques/Precision/Precision.cpp
     Model/FPFormat.cpp
     Profile/ProfileReader.cpp
-    Profile/ProfiledLaunch.cpp
     Model/Sampling.cpp
     Solve/SolveSites.cpp
     Solve/Pins.cpp
@@ -396,7 +392,7 @@ add_subdirectory(tools)
 
 # The Herbie the pass runs by default (tools/CMakeLists.txt).
 set_source_files_properties(
-  Support/Options.cpp
+  Pass/Flags.cpp
   PROPERTIES
     COMPILE_DEFINITIONS
     POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")

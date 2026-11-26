@@ -6,8 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The profiling probes on a site clone, and what a profile-generate compile
-// adds to a module besides the per-site requests. The probes the pass places
+// Each site's body instrumented with the profiling probes, and the call that
+// reaches it made a reverse-mode request over the instrumented clone with the
+// shadows it needs (SiteProfile.cpp); what else a profile-generate compile adds
+// to a module; and the host half of profile generation for a CUDA or HIP unit,
+// its launch stubs rewritten from the descriptors its device half recorded.
+//
+// The probes the pass places
 // in device code call the device half of the profiler, which the plugin
 // carries as bitcode and links into each device module it compiles for profile
 // generation. Each module holds its own copy of the profiler's table, and the
@@ -20,6 +25,7 @@
 #ifndef POSEIDON_PROFILE_INSTRUMENT_H
 #define POSEIDON_PROFILE_INSTRUMENT_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/Error.h"
@@ -27,6 +33,7 @@
 #include <cstddef>
 
 namespace llvm {
+class CallInst;
 class Constant;
 class Function;
 class Module;
@@ -36,6 +43,8 @@ namespace poseidon {
 
 struct Options;
 struct LaunchManifest;
+class Session;
+struct Site;
 
 /// The profiler runtime function `name` of type `FT`, declared in `M` if
 /// absent, marked enzyme_inactive and nofree so that AD never differentiates
@@ -114,6 +123,36 @@ bool defineProfileDirectory(const Options &O, llvm::Module &M);
 /// Device module: declare the probes enzyme_inactive before anything calls
 /// them, so that AD never differentiates them.
 void predeclareInactiveProfilerProbes(llvm::Module &M);
+
+/// Instruments the site and makes the call that reaches it a derivative
+/// request; whether it did, or the mistake that keeps the site from being
+/// profiled. Markers of one body share `clones`' instrumented clone, and the
+/// clones made take their ids from `nextSiteId`.
+llvm::Expected<bool>
+profileSite(Session &S, const Site &site,
+            llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
+            unsigned &nextSiteId);
+/// Registers with the host profiler, around each call that passes a stack
+/// object, that object's extent, so that a site reached through it can size
+/// its shadow.
+void registerStackArrays(Session &S, llvm::Module &M);
+/// Registers before main the extent of every global the module defines.
+void registerGlobals(llvm::Module &M);
+
+/// Rewrite the launch in each launch stub that a profile generation descriptor
+/// in M's manifest matches into a call of __poseidon_launch_profiled, which
+/// allocates, zeroes and seeds the shadow buffers the profiling kernel takes
+/// and launches it. Host module only. An error at a matched stub that does
+/// not launch through the CUDA or HIP launch API, or for a descriptor that does
+/// not parse.
+llvm::Expected<bool> rewriteProfileStubBodies(const Options &O,
+                                              llvm::Module &M);
+
+/// Registers the header of every kernel the device half profiled with the
+/// host profiler, as a host site's is: the device profiler writes a kernel's
+/// profile only once the kernel has run, and the host profiler writes one with
+/// no records for a registered site that nothing wrote.
+bool registerProfiledKernels(const Options &O, llvm::Module &M);
 
 } // namespace poseidon
 

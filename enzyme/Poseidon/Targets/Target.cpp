@@ -9,6 +9,7 @@
 #include "Target.h"
 #include "MathLibrary.h"
 
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
@@ -17,6 +18,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/TargetParser/Triple.h"
+
+#include <optional>
+#include <string>
 
 using namespace llvm;
 
@@ -60,6 +64,54 @@ bool Target::callsMathLibrary(StringRef op, Type *Ty) const {
 
 const ProbeABI &Target::probes() const {
   return isDevice() ? deviceProbes() : hostProbes();
+}
+
+// The host CPU: no kernels, libm, and the host profiler
+// (runtime/profile/Profiler.cpp).
+namespace {
+
+class HostTarget final : public Target {
+public:
+  bool isDevice() const override { return false; }
+  StringRef name() const override { return "host"; }
+  std::string herbiePlatform(StringRef) const override { return "default"; }
+
+  bool isKernel(const Function &) const override { return false; }
+  unsigned globalAddressSpace() const override { return 0; }
+  std::optional<unsigned> sharedAddressSpace() const override {
+    return std::nullopt;
+  }
+  uint64_t maxStaticSharedBytes() const override { return 0; }
+
+  LaunchGeometry decodeLaunchValue(const Value *) const override { return {}; }
+
+  StringRef mathLibrary() const override { return "libm"; }
+  std::string mathFunction(StringRef base, Type *Ty) const override {
+    return (Twine(base) + (Ty->isDoubleTy() ? "" : "f")).str();
+  }
+  std::optional<std::string> retypeMathFunction(StringRef name,
+                                                Type *Ty) const override {
+    return retypeLibmFunction(name, Ty).value_or("");
+  }
+};
+
+} // namespace
+
+const Target &hostTarget() {
+  static const HostTarget T{};
+  return T;
+}
+
+const ProbeABI &hostProbes() {
+  static const ProbeABI P{"__poseidon_log_value",
+                          "__poseidon_log_grad",
+                          "__poseidon_perturb",
+                          "__poseidon_perturbf",
+                          /*BlockDims=*/"",
+                          /*PublishStatic=*/"",
+                          "__poseidon_register_static",
+                          "__poseidon_profile_runtime"};
+  return P;
 }
 
 const ProbeABI &deviceProbes() {

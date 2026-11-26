@@ -6,10 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "SiteProfile.h"
+#include "Instrument.h"
 
 #include "Enzyme/Utils.h"
-#include "Instrument.h"
 #include "ProfileReader.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"

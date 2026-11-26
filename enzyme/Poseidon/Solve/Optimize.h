@@ -5,16 +5,26 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+//
+// A site's candidates, solve and materialization; the DP over the units of one
+// site or of several sites, the selection of a frontier point by budget or
+// accuracy target, and the cache of a site's solved table (SolveSites.cpp): a
+// later compile with the same key binds the table to its own candidates instead
+// of pricing and solving again.
+//
+//===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_SOLVE_OPTIMIZE_H
 #define POSEIDON_SOLVE_OPTIMIZE_H
 
 #include "Model/FPNode.h"
 #include "Profile/ProfileReader.h"
-#include "SolveSites.h"
+#include "Solve/DP.h"
+#include "Support/CacheKey.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision/Precision.h"
 #include "Techniques/Rewrite/Rewrite.h"
+#include "Techniques/SiteUnit.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -27,15 +37,114 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Error.h"
 
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace poseidon {
 
+struct SiteState;
 struct Options;
 class Session;
+
+/// What chose a solve's applied steps.
+enum class SolveSelector {
+  /// The DP over one site's units.
+  DP,
+  /// The DP over the units of the sites of -poseidon-solve-jointly.
+  Joint,
+  /// -poseidon-pin, without a DP.
+  Pinned,
+};
+
+/// The selector as the explanation spells it: "dp", "joint" or "pinned".
+llvm::StringRef selectorName(SolveSelector selector);
+
+/// How a site's solve went, for its explanation: the frontier it searched and
+/// the point it chose.
+struct SolveRecord {
+  /// What chose the applied point.
+  SolveSelector selector = SolveSelector::DP;
+  /// Whether the frontier came from the DP table cache.
+  bool fromCache = false;
+  /// The frontier: per cost, the least accuracy cost of a strategy of that
+  /// cost.
+  CostMap table;
+  /// Per cost on the frontier, its strategy.
+  SolutionMap solutions;
+  /// The accuracy cost of the site as written; NaN when it was not computed.
+  double baseline = std::numeric_limits<double>::quiet_NaN();
+  /// The sites' summed accuracy scale (SiteState::accScale).
+  double accScale = 0.0;
+  /// What the profiled run spent in the solved sites: the DP's cost axis is in
+  /// shares of it.
+  double profiledCost = 0.0;
+  /// The relative error target the solve was held to; 0 when it solved for a
+  /// cost budget.
+  double tau = 0.0;
+  /// Whether `tau` was written at the site rather than given by -poseidon-tau.
+  bool siteTarget = false;
+  /// The sites of a joint solve.
+  std::vector<std::string> sites;
+  /// The cost of the point applied; none when nothing was applied.
+  std::optional<DPCost> selected;
+};
+
+/// A site's DP table in the cache: the key of what it is solved from, the file
+/// the entry under that key is kept in and, when the cache holds it, the table
+/// bound to this compile's candidates.
+struct DPTable {
+  /// The cache file the entry is kept in.
+  std::string path;
+  /// What the table is solved from.
+  CacheKey key;
+  /// Whether the cache held an entry under `key`.
+  bool hit = false;
+  /// The cached frontier, when `hit`.
+  CostMap costToAccuracyMap;
+  /// The strategies of the cached frontier, bound to this compile's candidates,
+  /// when `hit`.
+  SolutionMap costToSolutionMap;
+  /// The accuracy cost of the site as written, as cached; none when the entry
+  /// carries none.
+  std::optional<double> baseline;
+};
+
+/// The cache entry of the DP table of the site `st` over `units`, read from
+/// the cache when it holds one; an entry that is unreadable or was solved by
+/// another compiler is reported and missed.
+llvm::Expected<std::unique_ptr<DPTable>>
+lookupDPTable(Session &S, const SiteState &st, llvm::ArrayRef<SiteUnit *> units,
+              llvm::StringRef profilePath);
+
+/// The order the DP takes `units[i]`, units of the i-th site, in, which is the
+/// order of the steps of every solution: exactOrder by default, or
+/// prunedOrder under -poseidon-early-prune.
+llvm::SmallVector<OptimizationUnit *>
+solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
+
+/// Solves `units[i]`, units of the site `sites[i]`, in one DP and selects a
+/// frontier point: under `tau` > 0 the one the target picks, else the most
+/// accurate one within -poseidon-cost-budget. Under `tau` a point's modelled
+/// relative error is (A0 + its accuracy cost) / the sites' summed accScale,
+/// A0 the accuracy cost of the sites as written: for one site, the sum over
+/// its units of an FP subgraph's accuracy cost over accScale (a per-operation
+/// relative rounding level) and a matrix product's relative domain error. A
+/// single site's table is read from or written to the cache when the site has
+/// one. `joint` marks a solve of the sites of -poseidon-solve-jointly, however
+/// many.
+llvm::Expected<llvm::SmallVector<SolutionStep>>
+solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
+           llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
+           bool joint, SolveRecord *record);
+
+/// Whether a budget or an accuracy target can select a frontier point of this
+/// accuracy cost. A point whose cost is not finite stays on the frontier when
+/// nothing cheaper beats it, and no selection takes it.
+bool selectable(double accCost);
 
 /// One site's solve: its FP graph, its profile's scale, the units proposed for
 /// it and the analyses its matrix products hold.

@@ -14,9 +14,11 @@
 #include "poseidon/poseidon.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Regex.h"
 
 #include <cmath>
@@ -194,6 +196,52 @@ Error validateOptions(const Options &O) {
   if (O.Solver.Tau <= 0.0 && O.Solver.Pin.empty())
     return validateCostBudget(O.Solver.CostBudget);
   return Error::success();
+}
+
+// What one compile was asked to do, as the spellings and values of its flags.
+
+static std::string value(bool v) { return v ? "1" : "0"; }
+static std::string value(double v) { return formatv("{0:e16}", v).str(); }
+static std::string value(const std::string &v) { return v; }
+static std::string value(const std::optional<unsigned> &v) {
+  return v ? std::to_string(*v) : "";
+}
+static std::string value(const std::vector<std::string> &v) {
+  return join(v, ",");
+}
+static std::string value(const std::vector<unsigned> &v) {
+  return join(map_range(v, [](unsigned n) { return std::to_string(n); }), ",");
+}
+template <typename T> static std::string value(T v) {
+  return std::to_string(v);
+}
+
+std::string herbieProgram(const HerbieOptions &H) {
+  return H.Binary.empty() ? POSEIDON_HERBIE_DEFAULT_BINARY : H.Binary;
+}
+
+FlagValues solveFlagValues(const Options &O) {
+  FlagValues out;
+#define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key, ...) \
+  if (OptionKey::Key == OptionKey::SolveInput)                                 \
+    out.emplace_back(Spelling, value(O.Group.Field));
+#include "Support/Options.def"
+  return out;
+}
+
+FlagValues notSolveInputs(const Options &O) {
+  FlagValues out;
+#define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key, ...) \
+  if (OptionKey::Key == OptionKey::Other)                                      \
+    out.emplace_back(Spelling, value(O.Group.Field));
+#include "Support/Options.def"
+  return out;
+}
+
+FlagValues allFlagValues(const Options &O) {
+  FlagValues all = solveFlagValues(O);
+  all.append(notSolveInputs(O));
+  return all;
 }
 
 } // namespace poseidon

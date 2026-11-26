@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "AsWritten.h"
+#include "Internal.h"
 
 #include "Support/Utils.h"
 #include "Targets/Target.h"

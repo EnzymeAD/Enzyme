@@ -6,11 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// See RealizeLibraryCall.h.
+// A raised GEMM materialized as a host library call: the device sub-compilation
+// records a descriptor in the manifest of its translation unit in the Poseidon
+// cache dir, and the host sub-compilation (a separate cc1 process) reads it and
+// rewrites the kernel launch into a call to the runtime helper.
 //
 //===----------------------------------------------------------------------===//
 
-#include "RealizeLibraryCall.h"
 #include "Enzyme/Utils.h"
 #include "Internal.h"
 #include "Sites/Annotations.h"

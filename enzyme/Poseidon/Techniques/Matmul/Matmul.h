@@ -15,6 +15,7 @@
 #include "Sites/LaunchManifest.h"
 #include "Techniques/SiteUnit.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -531,6 +532,30 @@ llvm::Error generateMatmulCandidates(Session &S,
                                      const ProfileMap &scalarProfile,
                                      unsigned sampleLogBits,
                                      llvm::SmallVectorImpl<MatmulUnit> &out);
+
+// A raised GEMM materialized as a host library call (RealizeLibraryCall.cpp).
+
+/// Map body params to wrapper launch-arg indices via primalArgs and record the
+/// wrapper's library call descriptor.
+void writeGemmDescriptor(Session &S, llvm::Function &wrapper,
+                         llvm::ArrayRef<llvm::Value *> primalArgs,
+                         const ChosenLibraryCall &call);
+
+/// For a joint solve, whose notes exist only after materialization:
+/// addPendingLibraryCall records the body-parameter to wrapper-argument map
+/// when the site is split, and flushPendingLibraryCalls writes the
+/// descriptors afterwards.
+void addPendingLibraryCall(Session &S, const llvm::Function *body,
+                           llvm::Function &wrapper,
+                           llvm::ArrayRef<llvm::Value *> primalArgs);
+/// Writes the descriptor of each pending site whose body was given a library
+/// call, and forgets every pending site.
+void flushPendingLibraryCalls(Session &S);
+
+/// Rewrite the launch in each launch stub that a library call descriptor in
+/// M's manifest matches into a call of the GEMM runtime. Host module only. An
+/// error for a descriptor that does not parse.
+llvm::Expected<bool> rewriteGemmStubBodies(const Options &O, llvm::Module &M);
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
