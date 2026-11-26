@@ -80,8 +80,8 @@ POSEIDON_PROFILING_OPTION(
     "marker are never filtered")
 
 // Candidate classes.
-POSEIDON_CANDIDATE_OPTION(EnableAlgebraic, Bool, true, "poseidon-enable-algebraic",
-                          Hidden, SolveInput, "",
+POSEIDON_CANDIDATE_OPTION(EnableAlgebraic, Bool, true,
+                          "poseidon-enable-algebraic", Hidden, SolveInput, "",
                           "Use Herbie to rewrite floating-point expressions "
                           "(default: on when a Herbie can run)")
 POSEIDON_CANDIDATE_OPTION(EnablePrecision, Bool, true,
@@ -231,8 +231,8 @@ POSEIDON_MODEL_OPTION(AlgebraicRegimeSearchFactor, Unsigned, 64,
                       "of a piecewise rewrite, in multiples of "
                       "-poseidon-num-samples")
 POSEIDON_MODEL_OPTION(
-    AlgebraicMaxBrokenShare, Number, 0.01, "poseidon-algebraic-max-broken-share",
-    Hidden, SolveInput, "",
+    AlgebraicMaxBrokenShare, Number, 0.01,
+    "poseidon-algebraic-max-broken-share", Hidden, SolveInput, "",
     "Drop a Herbie candidate whose relative error reaches 1 (wrong sign or "
     "magnitude) on more than this share of the samples the original gets "
     "within 1; the gradient-weighted accuracy model is first order and cannot "
