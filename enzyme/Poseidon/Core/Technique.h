@@ -22,15 +22,18 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Error.h"
 
 #include <cstddef>
 #include <memory>
+#include <string>
 
 namespace llvm {
 class Function;
 class Module;
 class Value;
+class raw_ostream;
 } // namespace llvm
 
 namespace poseidon {
@@ -66,19 +69,27 @@ private:
 };
 
 /// A technique of the pass. Every step but BindUnits is optional (null).
-/// Recognize, BeginSite and the Propose steps are called only when Enabled
-/// says the compile proposes the technique's candidates, RemarkUnavailable only
-/// when it does not, and the others for every technique, since what they act
-/// on may come from another.
+/// WriteProfileHeader, Recognize, BeginSite and the Propose steps are called
+/// only when Enabled says the compile proposes the technique's candidates,
+/// RemarkUnavailable only when it does not, and the others for every
+/// technique, since what they act on may come from another.
 struct Technique {
   /// The kind of the technique's units.
   const UnitKindInfo &Unit;
   /// Whether this compile proposes the technique's candidates.
   bool (*Enabled)(const Options &O);
+  /// Writes to the header of the profile of the site clone `Clone`, before
+  /// its probes are added, the lines the technique reads back from it.
+  void (*WriteProfileHeader)(const Options &O, llvm::Function &Clone,
+                             llvm::raw_ostream &OS);
   /// Finds, before the site's FP subgraphs are built, the code the technique
   /// takes as a whole; the subgraphs leave it out. Whether it found any.
   bool (*Recognize)(Session &S, llvm::Function &F, const SiteProfileData &P,
                     SiteState &Site);
+  /// Reshapes the FP subgraphs of the site `F`, once they are split, into the
+  /// subgraphs its units are proposed for.
+  void (*ShapeSubgraphs)(const Options &O, llvm::Function &F,
+                         llvm::SmallVectorImpl<Subgraph> &Subgraphs);
   /// Prepares the proposals of a site that has FP subgraphs or what Recognize
   /// found.
   llvm::Error (*BeginSite)(Session &S, llvm::Function &F, SiteState &Site);
@@ -102,6 +113,11 @@ struct Technique {
   /// output counted once; adds to `Unpriced` the outputs it leaves out for want
   /// of a price.
   double (*Baseline)(SiteState &Site, unsigned &Unpriced);
+  /// Adds to `Why` why the technique proposed no unit for the FP subgraph
+  /// `Subgraph` of `Site`, for its explanation.
+  void (*ExplainAbsent)(const Options &O, const SiteState &Site,
+                        const Subgraph &Subgraph,
+                        llvm::SmallVectorImpl<std::string> &Why);
   /// Completes the site function `F` once the steps its solve applied to it
   /// are materialized, before it is cleaned up.
   void (*SiteApplied)(Session &S, llvm::Function &F);

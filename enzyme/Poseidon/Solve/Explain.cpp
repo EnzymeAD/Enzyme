@@ -8,20 +8,16 @@
 
 #include "Explain.h"
 #include "Core/FPCore.h"
+#include "Core/Technique.h"
 #include "Model/CostModel.h"
 #include "Optimize.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Session.h"
-#include "Support/CacheKey.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
-#include "Techniques/Algebraic/Algebraic.h"
-#include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision/Precision.h"
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -47,11 +43,9 @@
 #include <cmath>
 #include <limits>
 #include <map>
-#include <memory>
 #include <optional>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 using namespace llvm;
@@ -59,8 +53,6 @@ using namespace llvm;
 namespace poseidon {
 
 static constexpr size_t kMaxRejectedRemarks = 3;
-static constexpr size_t kRemarkExprChars = 160;
-static constexpr size_t kMaxListedOps = 6;
 
 static void putNum(json::Object &o, StringRef key, double v) {
   if (std::isfinite(v))
@@ -80,7 +72,7 @@ static std::string pctStr(int64_t before, int64_t after) {
   return formatv(" ({0}{1}%)", pct >= 0 ? "+" : "", format("%.0f", pct)).str();
 }
 
-static std::string clip(const std::string &s, size_t n = kRemarkExprChars) {
+std::string clip(const std::string &s, size_t n) {
   if (s.size() <= n)
     return s;
   return s.substr(0, n) + "...";
@@ -97,21 +89,6 @@ static std::string typeName(Type *T) {
   return s;
 }
 
-static std::string precisionWords(NumberFormat t) {
-  if (unsigned k = expansionComponents(t))
-    return formatv("a {0}-component float expansion", k).str();
-  const NumberFormatInfo &format = formatOf(t);
-  return (format.Words.empty() ? format.Name : format.Words).str();
-}
-
-static std::string opWord(StringRef op) {
-  if (op == "+" || op == "-" || op == "*" || op == "/")
-    return ("'" + op + "'").str();
-  if (op == "neg")
-    return "negation";
-  return op.str();
-}
-
 static std::string kindWords(StringRef kind) {
   if (kind == "algebraic")
     return "the algebraic rewrite";
@@ -122,7 +99,7 @@ static std::string kindWords(StringRef kind) {
   return "the product candidate";
 }
 
-static std::string joinWords(ArrayRef<std::string> items) {
+std::string joinWords(ArrayRef<std::string> items) {
   std::string out;
   for (size_t k = 0; k < items.size(); ++k) {
     if (k)
@@ -328,52 +305,6 @@ public:
 
 } // namespace
 
-// Whether the FPCore expression `expr` is arithmetic only: a series rather
-// than a call of another function. Parsing adds to `G`.
-static bool isPolynomial(StringRef expr, FPGraph &G) {
-  static constexpr StringLiteral kArithmetic[] = {"+",   "-",   "*",  "/",
-                                                  "neg", "fma", "pow"};
-  Expected<FPNode *> root = parseHerbieExpr(expr, G);
-  if (!root) {
-    consumeError(root.takeError());
-    return false;
-  }
-  SmallVector<const FPNode *, 8> work = {*root};
-  while (!work.empty()) {
-    const FPNode *N = work.pop_back_val();
-    if (N->getType() != FPNode::NodeType::Node)
-      continue;
-    if (!is_contained(kArithmetic, N->op->Name))
-      return false;
-    append_range(work, N->operands);
-  }
-  return true;
-}
-
-static const Instruction *
-firstInIROrder(Function &F, const SmallPtrSetImpl<const Value *> &set) {
-  for (Instruction &I : instructions(F))
-    if (set.contains(&I))
-      return &I;
-  return nullptr;
-}
-
-namespace {
-
-// How the solve treated a candidate, in the order the remarks list rejected
-// ones: closest to being taken first.
-enum class Standing {
-  Applied,
-  // Above the target alone, and cheaper than as written.
-  CheaperAboveTarget,
-  // On a frontier point the selection passed over.
-  Pareto,
-  Near,
-  Far,
-  // Never priced.
-  Dropped,
-};
-
 // The `status` of a candidate in the explanation.
 static StringRef statusName(Standing standing) {
   switch (standing) {
@@ -386,46 +317,7 @@ static StringRef statusName(Standing standing) {
   }
 }
 
-struct Alt {
-  std::string id, kind, summary, fpcore, precision, reason;
-  std::string inKernelClass;
-  SmallVector<std::string, 1> c;
-  SmallVector<unsigned, 1> outputs;
-  bool approx = false, series = false;
-  std::string approxNote;
-  std::optional<int64_t> costDelta;
-  std::optional<double> accDelta, err, domainError;
-  std::optional<double> bitsBefore, bitsAfter;
-  json::Array changes;
-  SmallVector<std::string, 4> changedOps;
-  std::string changedTo;
-  const Instruction *at = nullptr;
-  const SiteUnit *item = nullptr;
-  size_t index = 0;
-  Standing standing = Standing::Far;
-  double baseAcc = std::numeric_limits<double>::quiet_NaN();
-  std::optional<int64_t> baseCost;
-};
-
-struct Unit {
-  std::string id, kind;
-  const Subgraph *sg = nullptr;
-  SourceLoc loc;
-  const Instruction *root = nullptr;
-  json::Array ops, inputs, outputs, herbie;
-  SmallVector<std::string, 2> outC;
-  SmallVector<std::string, 2> inputRanges;
-  std::vector<Alt> alts;
-  std::optional<int64_t> baseCost;
-  uint64_t executions = 0;
-  double sensitivity = std::numeric_limits<double>::quiet_NaN();
-  std::string left, shape;
-  bool applied = false;
-};
-
-} // namespace
-
-static std::string exprWords(const Unit &U) {
+static std::string exprWords(const UnitExplanation &U) {
   if (!U.outC.empty() && !U.outC[0].empty())
     return clip(U.outC[0]);
   return formatv("the subgraph of {0} operations at {1}:{2}", U.ops.size(),
@@ -508,7 +400,7 @@ DiagnosticLocation siteLocation(const Session &S, const Function &F) {
 
 namespace {
 
-class Explainer {
+class Explainer final : public Explanation {
   Session &Sess;
   Function &F;
   SiteState &st;
@@ -517,13 +409,14 @@ class Explainer {
   ValueNamer namer;
   // An overlay: fpcoreToC may add to the graph it is given, and the
   // explanation must leave the solve's own as it is.
-  FPGraph scratch;
+  FPGraph scratchGraph;
+  SmallVector<SolutionStep> stepsApplied;
   std::set<std::pair<const SiteUnit *, size_t>> applied, skipped;
   // Per candidate on the frontier, the best verdict of the points that hold
   // it, and the cheapest of those points.
   std::map<std::pair<const SiteUnit *, size_t>, std::pair<PointVerdict, DPCost>>
       onFrontier;
-  std::vector<Unit> units;
+  std::vector<UnitExplanation> units;
   double A0, S, tau;
   // Puts the units' cost changes on the axis the solve compared them on.
   CostScale scale;
@@ -549,16 +442,6 @@ class Explainer {
     return (A0 + acc) / S;
   }
 
-  // A's accuracy cost change `acc` and the modelled error it gives, when
-  // finite.
-  void setAccuracy(Alt &A, double acc) const {
-    if (!std::isfinite(acc))
-      return;
-    A.accDelta = acc;
-    if (double e = relErr(acc); std::isfinite(e))
-      A.err = e;
-  }
-
   double share(double acc) const {
     if (!(S > 0.0) || !std::isfinite(acc))
       return std::numeric_limits<double>::quiet_NaN();
@@ -568,13 +451,6 @@ class Explainer {
   FPNode *nodeOf(Value *V) const {
     auto it = st.valueToNodeMap.find(V);
     return it == st.valueToNodeMap.end() ? nullptr : it->second;
-  }
-
-  CRendering rendering(const Subgraph &sg) {
-    CRendering how;
-    how.inputs = &sg.inputs;
-    how.leafName = [this](Value *V) { return namer.name(V); };
-    return how;
   }
 
   std::string rangeOf(Value *V, const std::string &label) {
@@ -603,16 +479,10 @@ class Explainer {
 
   void markSteps();
   Error buildSubgraph(size_t s);
-  Error buildMatmul(size_t m);
-  Error addAlgebraicAlternatives(Unit &U, const Subgraph &sg);
-  Error addPrecisionAlternatives(Unit &U, const Subgraph &sg);
-  // `cost` on the solve's axis; an error at the site when the axis cannot hold
-  // it.
-  Expected<int64_t> onAxis(double cost) const;
-  void judge(Unit &U);
+  void judge(UnitExplanation &U);
   // A candidate on the frontier point `point` the selection passed over.
-  void markPareto(Alt &A, DPCost point) const;
-  std::string leftReason(const Unit &U, const Subgraph *sg);
+  void markPareto(Alternative &A, DPCost point) const;
+  std::string leftReason(const UnitExplanation &U);
   std::optional<int64_t> appliedDelta() const;
   std::optional<int64_t> costBefore() const;
   std::optional<double> selectedAcc() const;
@@ -623,8 +493,25 @@ public:
   Explainer(Session &Sess, Function &F, SiteState &st,
             ArrayRef<SolutionStep> steps, const SolveRecord &rec)
       : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F),
-        scratch(st.overlay()), A0(rec.baseline), S(rec.accScale), tau(rec.tau),
-        scale(rec.profiledCost) {}
+        scratchGraph(st.overlay()), A0(rec.baseline), S(rec.accScale),
+        tau(rec.tau), scale(rec.profiledCost) {}
+
+  Expected<int64_t> onAxis(double cost) const override;
+  void setAccuracy(Alternative &A, double acc) const override {
+    if (!std::isfinite(acc))
+      return;
+    A.accDelta = acc;
+    if (double e = relErr(acc); std::isfinite(e))
+      A.err = e;
+  }
+  CRendering rendering(const Subgraph &sg) override {
+    CRendering how;
+    how.inputs = &sg.inputs;
+    how.leafName = [this](Value *V) { return namer.name(V); };
+    return how;
+  }
+  FPGraph &scratch() override { return scratchGraph; }
+  ArrayRef<SolutionStep> appliedSteps() const override { return stepsApplied; }
 
   Error build();
   void emitRemarks();
@@ -634,7 +521,8 @@ public:
 } // namespace
 
 void Explainer::markSteps() {
-  for (const SolutionStep &step : stepsToApply(steps))
+  stepsApplied = stepsToApply(steps);
+  for (const SolutionStep &step : stepsApplied)
     applied.insert(keyOf(step));
   for (const SolutionStep &step : steps)
     if (!applied.count(keyOf(step)))
@@ -660,254 +548,8 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
                           "cost");
 }
 
-Error Explainer::addAlgebraicAlternatives(Unit &U, const Subgraph &sg) {
-  CRendering how = rendering(sg);
-  SmallVectorImpl<AlgebraicUnit> &algebraicUnits =
-      st.get<AlgebraicSiteState>().units;
-  for (size_t i = 0; i < algebraicUnits.size(); ++i) {
-    AlgebraicUnit &RU = algebraicUnits[i];
-    if (RU.subgraph != &sg)
-      continue;
-    json::Object core;
-    core["id"] = formatv("A{0}", i).str();
-    if (!RU.herbiePrecision.empty())
-      core["precision"] = RU.herbiePrecision;
-    if (!RU.herbieStatus.empty())
-      core["status"] = RU.herbieStatus;
-    core["candidates"] = (int64_t)RU.candidates.size();
-    if (!RU.unpricedReason.empty())
-      core["unpriced"] = RU.unpricedReason;
-    if (std::isfinite(RU.herbieBits) && std::isfinite(RU.initialHerbieAccuracy))
-      core["error_bits"] = (1.0 - RU.initialHerbieAccuracy) * RU.herbieBits;
-    U.herbie.push_back(std::move(core));
-
-    SmallVector<unsigned, 1> outs;
-    for (Value *root : RU.roots)
-      for (unsigned k = 0; k < sg.outputs.size(); ++k)
-        if (sg.outputs[k] == root)
-          outs.push_back(k);
-    std::string rdt = dtypeOfType(RU.roots.front()->getType());
-    std::optional<int64_t> base;
-    if (std::isfinite(RU.initialCompCost)) {
-      Expected<int64_t> c = onAxis(RU.initialCompCost * (double)RU.executions);
-      if (!c)
-        return c.takeError();
-      base = *c;
-    }
-
-    auto fill = [&](Alt &A, const std::string &expr) {
-      A.kind = "algebraic";
-      A.precision = RU.herbiePrecision;
-      A.fpcore = expr;
-      A.outputs = outs;
-      A.at = cast<Instruction>(RU.roots.front());
-      A.baseAcc = RU.initialAccCost;
-      A.baseCost = base;
-      SmallVector<std::pair<std::string, std::string>, 2> specs;
-      A.c = fpcoreToC(expr, scratch, how, rdt, &specs);
-      SmallVector<std::string, 2> notes;
-      std::set<std::string> seen;
-      for (const auto &[spec, impl] : specs) {
-        if (!seen.insert(spec).second)
-          continue;
-        SmallVector<std::string, 1> specC = fpcoreToC(spec, scratch, how, "");
-        std::string specText = clip(specC.empty() ? spec : specC[0], 120);
-        if (!isPolynomial(impl, scratch)) {
-          SmallVector<std::string, 1> implC = fpcoreToC(impl, scratch, how, "");
-          notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
-                          " in place of " + specText);
-          continue;
-        }
-        A.series = true;
-        notes.push_back("series approximation of " + specText);
-      }
-      A.approx = !specs.empty();
-      if (StringRef(expr).contains("(if"))
-        notes.push_back("regime split");
-      A.approxNote = joinWords(notes);
-      std::string what = "Herbie rewrite";
-      if (!A.precision.empty())
-        what += " searched at " + A.precision;
-      if (A.series)
-        what += ", series approximation";
-      else if (A.approx)
-        what += ", approximation";
-      if (StringRef(expr).contains("(if"))
-        what += ", regime split";
-      A.summary = what;
-    };
-
-    for (size_t j = 0; j < RU.candidates.size(); ++j) {
-      const AlgebraicCandidate &cand = RU.candidates[j];
-      Alt A;
-      A.id = formatv("A{0}_{1}", i, cand.ordinal).str();
-      A.item = &RU;
-      A.index = j;
-      fill(A, cand.expr);
-      if (cand.CompCost != std::numeric_limits<double>::max()) {
-        Expected<int64_t> c = onAxis(RU.getCompCostDelta(j));
-        if (!c)
-          return c.takeError();
-        A.costDelta = *c;
-      }
-      setAccuracy(A, RU.getAccCostDelta(j));
-      if (std::isfinite(RU.herbieBits)) {
-        if (std::isfinite(RU.initialHerbieAccuracy))
-          A.bitsBefore = (1.0 - RU.initialHerbieAccuracy) * RU.herbieBits;
-        if (std::isfinite(cand.herbieAccuracy))
-          A.bitsAfter = (1.0 - cand.herbieAccuracy) * RU.herbieBits;
-      }
-      U.alts.push_back(std::move(A));
-    }
-    for (const auto &[expr, why] : RU.dropped) {
-      Alt A;
-      fill(A, expr);
-      A.standing = Standing::Dropped;
-      A.reason = "the accuracy model dropped it: " + why;
-      U.alts.push_back(std::move(A));
-    }
-  }
-  return Error::success();
-}
-
-Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
-  CRendering how = rendering(sg);
-  DenseMap<const FPNode *, unsigned> opIndex;
-  unsigned k = 0;
-  for (Instruction &I : instructions(F))
-    if (sg.operations.contains(&I)) {
-      if (FPNode *N = nodeOf(&I))
-        opIndex[N] = k;
-      ++k;
-    }
-
-  SmallVectorImpl<PrecisionUnit> &precisionUnits =
-      st.get<PrecisionSiteState>().units;
-  for (size_t i = 0; i < precisionUnits.size(); ++i) {
-    PrecisionUnit &PU = precisionUnits[i];
-    if (PU.subgraph != &sg)
-      continue;
-    auto describe = [&](Alt &A, PrecisionCandidate &cand) {
-      bool expansion = false;
-      DenseMap<const FPNode *, std::string> dtypes;
-      SmallPtrSet<const Value *, 8> changedInsts;
-      SmallVector<std::string, 4> parts;
-      for (const PrecisionChange &ch : cand.changes) {
-        expansion |= expansionComponents(ch.newType) != 0;
-        json::Object c;
-        c["from"] = formatOf(ch.oldType).Name.str();
-        c["to"] = formatOf(ch.newType).Name.str();
-        json::Array idx;
-        SmallVector<std::string, 4> names;
-        MapVector<std::string, unsigned, std::map<std::string, unsigned>>
-            counts;
-        for (FPLLValue *node : ch.nodes) {
-          auto it = opIndex.find(node);
-          if (it != opIndex.end())
-            idx.push_back((int64_t)it->second);
-          changedInsts.insert(node->value);
-          SourceLoc L = locOf(node->value);
-          std::string w = opWord(operationName(*node));
-          ++counts[w];
-          if (L.valid())
-            w += formatv(" ({0}:{1})", L.line, L.col).str();
-          names.push_back(w);
-          A.changedOps.push_back(w);
-          if (!expansionComponents(ch.newType))
-            dtypes[node] =
-                dtypeOfType(storageTypeOf(F.getContext(), ch.newType));
-        }
-        c["ops"] = std::move(idx);
-        A.changes.push_back(std::move(c));
-        if (names.size() > kMaxListedOps) {
-          names.clear();
-          for (const auto &[w, n] : counts)
-            names.push_back(n == 1 ? w : formatv("{0} x {1}", n, w).str());
-        }
-        parts.push_back(joinWords(names) + " in " + precisionWords(ch.newType));
-        A.changedTo = precisionWords(ch.newType);
-      }
-      A.kind = expansion ? "expansion" : "precision";
-      A.summary = cand.desc + ": " + joinWords(parts) + " (" +
-                  std::to_string(A.changedOps.size()) + " of " +
-                  std::to_string(sg.operations.size()) + " operations)";
-      if (A.changedOps.size() == sg.operations.size() &&
-          cand.changes.size() == 1)
-        A.changedOps = {
-            formatv("all {0} operations", sg.operations.size()).str()};
-      else if (A.changedOps.size() > kMaxListedOps)
-        A.changedOps = {formatv("{0} of the {1} operations",
-                                A.changedOps.size(), sg.operations.size())
-                            .str()};
-      A.at = firstInIROrder(F, changedInsts);
-      if (!A.at)
-        A.at = sg.outputs[0];
-      if (!expansion) {
-        CRendering typed = how;
-        typed.dtypes = &dtypes;
-        for (Instruction *O : sg.outputs)
-          if (FPNode *N = nodeOf(O))
-            A.c.push_back(renderC(*N, typed, dtypeOfType(O->getType())));
-      }
-      A.baseAcc = PU.initialAccCost;
-      A.baseCost = U.baseCost;
-    };
-    for (size_t j = 0; j < PU.candidates.size(); ++j) {
-      PrecisionCandidate &cand = PU.candidates[j];
-      Alt A;
-      A.id = formatv("P{0}_{1}", i, cand.ordinal).str();
-      A.item = &PU;
-      A.index = j;
-      describe(A, cand);
-      for (unsigned o = 0; o < sg.outputs.size(); ++o)
-        A.outputs.push_back(o);
-      std::optional<int64_t> cost;
-      if (cand.CompCost != std::numeric_limits<double>::max()) {
-        Expected<int64_t> c = onAxis(PU.getCompCostDelta(j));
-        if (!c)
-          return c.takeError();
-        cost = *c;
-      }
-      double acc = PU.getAccCostDelta(j);
-      PrecisionUnit::AlgebraicUnitSet cos;
-      for (const auto &[item, idx] : applied)
-        for (AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units)
-          if (&RU == item && RU.subgraph == &sg)
-            cos.insert(&RU);
-      if (applied.count({&PU, j}) && !cos.empty()) {
-        PrecisionUnit::RepriceKey key{j, cos};
-        auto c = PU.compCostDeltaCache.find(key);
-        cost = std::nullopt;
-        if (c != PU.compCostDeltaCache.end()) {
-          Expected<int64_t> repriced = onAxis(c->second);
-          if (!repriced)
-            return repriced.takeError();
-          cost = *repriced;
-        }
-        auto a = PU.accCostDeltaCache.find(key);
-        acc = a == PU.accCostDeltaCache.end()
-                  ? std::numeric_limits<double>::quiet_NaN()
-                  : a->second;
-      }
-      A.costDelta = cost;
-      setAccuracy(A, acc);
-      U.alts.push_back(std::move(A));
-    }
-    for (const auto &[desc, why] : PU.dropped) {
-      Alt A;
-      A.kind = "precision";
-      A.summary = desc;
-      A.at = sg.outputs[0];
-      A.standing = Standing::Dropped;
-      A.reason = "pricing dropped it: " + why;
-      U.alts.push_back(std::move(A));
-    }
-  }
-  return Error::success();
-}
-
-void Explainer::judge(Unit &U) {
-  for (Alt &A : U.alts) {
+void Explainer::judge(UnitExplanation &U) {
+  for (Alternative &A : U.alts) {
     if (!A.item)
       continue;
     auto key = std::make_pair(A.item, A.index);
@@ -951,14 +593,14 @@ void Explainer::judge(Unit &U) {
       markPareto(A, frontier->second.second);
       continue;
     }
-    const Alt *dom = nullptr;
-    auto better = [&](const Alt &B, const Alt &D) {
+    const Alternative *dom = nullptr;
+    auto better = [&](const Alternative &B, const Alternative &D) {
       bool b = applied.count({B.item, B.index}),
            d = applied.count({D.item, D.index});
       return b != d ? b : *B.costDelta < *D.costDelta;
     };
     if (A.costDelta && A.accDelta)
-      for (const Alt &B : U.alts)
+      for (const Alternative &B : U.alts)
         if (&B != &A && B.item && B.costDelta && B.accDelta &&
             *B.costDelta <= *A.costDelta && *B.accDelta <= *A.accDelta &&
             (*B.costDelta < *A.costDelta || *B.accDelta < *A.accDelta) &&
@@ -970,8 +612,8 @@ void Explainer::judge(Unit &U) {
       A.standing = Standing::Far;
       continue;
     }
-    const Alt *rival = nullptr;
-    for (const Alt &B : U.alts)
+    const Alternative *rival = nullptr;
+    for (const Alternative &B : U.alts)
       if (&B != &A && B.item && applied.count({B.item, B.index}) &&
           B.kind == A.kind && B.outputs == A.outputs)
         rival = &B;
@@ -996,7 +638,7 @@ void Explainer::judge(Unit &U) {
   }
 }
 
-void Explainer::markPareto(Alt &A, DPCost point) const {
+void Explainer::markPareto(Alternative &A, DPCost point) const {
   std::string ids;
   for (const SolutionStep &step : rec.solutions.at(point))
     ids += (ids.empty() ? "" : ",") + stepId(step);
@@ -1004,42 +646,18 @@ void Explainer::markPareto(Alt &A, DPCost point) const {
   A.reason = "on the Pareto frontier; -poseidon-pin=" + ids + " applies it";
 }
 
-std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
+std::string Explainer::leftReason(const UnitExplanation &U) {
   if (U.applied)
     return "";
-  bool any = llvm::any_of(U.alts, [](const Alt &A) { return A.item; });
+  bool any = llvm::any_of(U.alts, [](const Alternative &A) { return A.item; });
   if (!any) {
-    SmallVector<std::string, 2> why;
-    if (sg) {
-      bool hadRewrite = false;
-      for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units)
-        if (RU.subgraph == sg) {
-          hadRewrite = true;
-          if (!RU.unpricedReason.empty())
-            why.push_back("its candidates could not be priced: " +
-                          RU.unpricedReason);
-          else if (!RU.herbieStatus.empty() && RU.candidates.empty())
-            why.push_back("Herbie returned no alternative (" + RU.herbieStatus +
-                          ")");
-        }
-      for (const PrecisionUnit &PU : st.get<PrecisionSiteState>().units)
-        if (PU.subgraph == sg && !PU.unpricedReason.empty())
-          why.push_back("its candidates could not be priced: " +
-                        PU.unpricedReason);
-      if (!hadRewrite) {
-        if (!Sess.Opts.Candidates.EnableAlgebraic)
-          why.push_back("the algebraic search is disabled");
-        else
-          for (Instruction *O : sg->outputs) {
-            auto it = st.valueToNodeMap.find(O);
-            if (it != st.valueToNodeMap.end() && it->second &&
-                it->second->grad == 0.0) {
-              why.push_back("the profiled gradient of its output is zero");
-              break;
-            }
-          }
-      }
-    }
+    SmallVector<std::string, 2> why(U.whyNone.begin(), U.whyNone.end());
+    if (U.sg)
+      for (const Technique &T : techniques())
+        if (T.ExplainAbsent && llvm::none_of(st.units, [&](SiteUnit *unit) {
+              return &unit->info() == &T.Unit && unit->subgraphOf() == U.sg;
+            }))
+          T.ExplainAbsent(Sess.Opts, st, *U.sg, why);
     if (why.empty())
       why.push_back("no candidate was generated");
     llvm::sort(why);
@@ -1047,16 +665,17 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     return joinWords(why);
   }
   if (tau > 0.0) {
-    const Alt *best = nullptr;
-    for (const Alt &A : U.alts)
+    const Alternative *best = nullptr;
+    for (const Alternative &A : U.alts)
       if (A.item && A.err && (!best || *A.err < *best->err))
         best = &A;
-    bool anyMeets = llvm::any_of(
-        U.alts, [&](const Alt &A) { return A.item && A.err && *A.err <= tau; });
+    bool anyMeets = llvm::any_of(U.alts, [&](const Alternative &A) {
+      return A.item && A.err && *A.err <= tau;
+    });
     if (!anyMeets && best)
       return "every alternative's modelled error is above the target " +
              num(tau) + " (best: " + best->id + ", " + num(*best->err) + ")";
-    bool cheaperMeets = llvm::any_of(U.alts, [&](const Alt &A) {
+    bool cheaperMeets = llvm::any_of(U.alts, [&](const Alternative &A) {
       return A.item && A.err && *A.err <= tau && A.costDelta &&
              *A.costDelta < 0;
     });
@@ -1074,7 +693,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
 
 Error Explainer::buildSubgraph(size_t s) {
   Subgraph &sg = st.subgraphs[s];
-  Unit U;
+  UnitExplanation U;
   U.id = formatv("S{0}", s).str();
   U.kind = "subgraph";
   U.sg = &sg;
@@ -1140,11 +759,6 @@ Error Explainer::buildSubgraph(size_t s) {
       out["name"] = name;
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
-    for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units)
-      if (RU.subgraph == &sg && !RU.isArray() && RU.roots.front() == O) {
-        out["fpcore"] = RU.expr;
-        break;
-      }
     FPNode *ON = nodeOf(O);
     SmallVector<FPNode *, 16> todo;
     SmallPtrSet<FPNode *, 16> seen;
@@ -1202,74 +816,12 @@ Error Explainer::buildSubgraph(size_t s) {
     }
   }
 
-  if (Error E = addAlgebraicAlternatives(U, sg))
-    return E;
-  if (Error E = addPrecisionAlternatives(U, sg))
-    return E;
+  for (SiteUnit *unit : st.units)
+    if (unit->subgraphOf() == &sg)
+      if (Error E = unit->explain(*this, U))
+        return E;
   judge(U);
-  U.left = leftReason(U, &sg);
-  units.push_back(std::move(U));
-  return Error::success();
-}
-
-Error Explainer::buildMatmul(size_t m) {
-  MatmulUnit &MU = st.get<MatmulSiteState>().units[m];
-  Unit U;
-  U.id = formatv("M{0}", m).str();
-  U.kind = "matmul";
-  const RecognizedMatmul *mm = MU.matmul;
-  if (mm) {
-    U.root = dyn_cast_or_null<Instruction>(mm->outputValue);
-    if (!U.root && !mm->footprint.empty())
-      U.root = mm->footprint[0];
-    auto dim = [](unsigned d) {
-      return d == ~0u || d == 0 ? std::string("?") : std::to_string(d);
-    };
-    unsigned M = mm->globalM ? mm->globalM : mm->M;
-    unsigned N = mm->globalN ? mm->globalN : mm->N;
-    unsigned K = mm->globalK ? mm->globalK : mm->K;
-    U.shape = dim(M) + "x" + dim(N) + "x" + dim(K);
-  }
-  U.loc = locOf(U.root);
-  U.executions = MU.executions;
-  if (MU.initialCompCost >= 0.0) {
-    Expected<int64_t> c = onAxis(MU.initialCompCost * (double)MU.executions);
-    if (!c)
-      return c.takeError();
-    U.baseCost = *c;
-  }
-  for (size_t j = 0; j < MU.candidates.size(); ++j) {
-    const MatmulUnit::Option &o = MU.candidates[j];
-    Alt A;
-    A.id = formatv("M{0}_{1}", m, j).str();
-    A.kind = "matmul";
-    A.summary = matmulOptionLabel(o);
-    if (o.realization == Realization::InKernel)
-      A.inKernelClass = inKernelCostClass(o.variant);
-    A.item = &MU;
-    A.index = j;
-    A.at = U.root;
-    Expected<int64_t> c = onAxis(MU.getCompCostDelta(j));
-    if (!c)
-      return c.takeError();
-    A.costDelta = *c;
-    setAccuracy(A, MU.getAccCostDelta(j));
-    if (std::isfinite(o.domainError))
-      A.domainError = o.domainError;
-    A.baseCost = U.baseCost;
-    U.alts.push_back(std::move(A));
-  }
-  for (const auto &[label, why] : MU.dropped) {
-    Alt A;
-    A.kind = "matmul";
-    A.summary = label;
-    A.at = U.root;
-    A.standing = Standing::Dropped;
-    A.reason = "not offered: " + why;
-    U.alts.push_back(std::move(A));
-  }
-  judge(U);
-  U.left = leftReason(U, nullptr);
+  U.left = leftReason(U);
   units.push_back(std::move(U));
   return Error::success();
 }
@@ -1277,8 +829,8 @@ Error Explainer::buildMatmul(size_t m) {
 std::optional<int64_t> Explainer::appliedDelta() const {
   int64_t total = 0;
   bool complete = true;
-  for (const Unit &U : units)
-    for (const Alt &A : U.alts)
+  for (const UnitExplanation &U : units)
+    for (const Alternative &A : U.alts)
       if (A.standing == Standing::Applied) {
         if (A.costDelta)
           total += *A.costDelta;
@@ -1295,7 +847,7 @@ std::optional<int64_t> Explainer::appliedDelta() const {
 // What the units cost as written, when every unit's cost is known.
 std::optional<int64_t> Explainer::costBefore() const {
   int64_t sum = 0;
-  for (const Unit &U : units) {
+  for (const UnitExplanation &U : units) {
     if (!U.baseCost)
       return std::nullopt;
     sum += *U.baseCost;
@@ -1318,9 +870,19 @@ Error Explainer::build() {
   for (size_t s = 0; s < st.subgraphs.size(); ++s)
     if (Error E = buildSubgraph(s))
       return E;
-  for (size_t m = 0; m < st.get<MatmulSiteState>().units.size(); ++m)
-    if (Error E = buildMatmul(m))
+  // A unit over something other than a subgraph has an entry of its own.
+  for (SiteUnit *unit : st.units) {
+    if (unit->subgraphOf())
+      continue;
+    UnitExplanation U;
+    U.id = (unit->info().letter + Twine(unit->indexInKind())).str();
+    if (Error E = unit->explain(*this, U))
       return E;
+    U.loc = locOf(U.root);
+    judge(U);
+    U.left = leftReason(U);
+    units.push_back(std::move(U));
+  }
   return Error::success();
 }
 
@@ -1412,7 +974,7 @@ json::Object Explainer::toJSON() {
   root["result"] = std::move(result);
 
   json::Array subgraphs;
-  for (Unit &U : units) {
+  for (UnitExplanation &U : units) {
     json::Object u;
     u["id"] = U.id;
     u["kind"] = U.kind;
@@ -1456,7 +1018,7 @@ json::Object Explainer::toJSON() {
     if (!U.left.empty())
       u["left_as_written"] = U.left;
     json::Array alts;
-    for (Alt &A : U.alts) {
+    for (Alternative &A : U.alts) {
       json::Object a;
       if (!A.id.empty())
         a["id"] = A.id;
@@ -1567,8 +1129,8 @@ void Explainer::emitRemarks() {
   std::optional<int64_t> before = costBefore();
   std::optional<int64_t> delta = appliedDelta();
   unsigned nApplied = 0;
-  for (const Unit &U : units)
-    for (const Alt &A : U.alts)
+  for (const UnitExplanation &U : units)
+    for (const Alternative &A : U.alts)
       nApplied += A.standing == Standing::Applied;
 
   ORE.emit([&]() {
@@ -1614,7 +1176,7 @@ void Explainer::emitRemarks() {
       return R;
     });
 
-  for (const Unit &U : units) {
+  for (const UnitExplanation &U : units) {
     if (!U.root)
       continue;
     ORE.emit([&]() {
@@ -1639,8 +1201,8 @@ void Explainer::emitRemarks() {
     });
   }
 
-  for (const Unit &U : units)
-    for (const Alt &A : U.alts) {
+  for (const UnitExplanation &U : units)
+    for (const Alternative &A : U.alts) {
       if (A.standing != Standing::Applied || !A.at)
         continue;
       std::string costChange;
@@ -1708,7 +1270,7 @@ void Explainer::emitRemarks() {
       }
     }
 
-  for (const Unit &U : units) {
+  for (const UnitExplanation &U : units) {
     if (!U.root)
       continue;
     if (!U.applied)
@@ -1721,12 +1283,12 @@ void Explainer::emitRemarks() {
           << " as written: " << ore::NV("Reason", U.left);
         return R;
       });
-    SmallVector<const Alt *, 8> rejected;
-    for (const Alt &A : U.alts)
+    SmallVector<const Alternative *, 8> rejected;
+    for (const Alternative &A : U.alts)
       if (A.standing != Standing::Applied)
         rejected.push_back(&A);
     std::stable_sort(rejected.begin(), rejected.end(),
-                     [](const Alt *a, const Alt *b) {
+                     [](const Alternative *a, const Alternative *b) {
                        if (a->standing != b->standing)
                          return a->standing < b->standing;
                        if (a->err && b->err)
@@ -1734,7 +1296,7 @@ void Explainer::emitRemarks() {
                        return false;
                      });
     for (size_t k = 0; k < rejected.size() && k < kMaxRejectedRemarks; ++k) {
-      const Alt &A = *rejected[k];
+      const Alternative &A = *rejected[k];
       const Instruction *at = A.at ? A.at : U.root;
       ORE.emit([&]() {
         OptimizationRemarkMissed R(kRemarkPass, "Rejected", at);

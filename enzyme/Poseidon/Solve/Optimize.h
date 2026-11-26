@@ -25,6 +25,7 @@
 #include "Support/CacheKey.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Value.h"
@@ -174,6 +175,10 @@ struct SiteState : FPGraph, TechniqueStates {
   /// application's scale: kappa over the summed sensitivity, 1 without a
   /// measured kappa.
   double scaleFactor = 1.0;
+  /// The accumulating operations of the reduction loops a technique
+  /// recognized, each of which -poseidon-subgraph-reductions admits as an FP
+  /// subgraph of one operation.
+  llvm::SmallPtrSet<llvm::Instruction *, 4> reductionOps;
   /// The site's FP subgraphs, the connected components of its operations.
   llvm::SmallVector<Subgraph, 1> subgraphs;
   /// The site's units, technique by technique in the order techniques() lists
@@ -232,8 +237,8 @@ void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
 llvm::Error attachProfile(const Options &O, const ProfileMap &profileMap,
                           FPGraph &G, llvm::ArrayRef<Subgraph> subgraphs);
 
-/// The site's optimization units: the subgraphs after splitting and the
-/// shared-staging merge.
+/// The subgraphs the site's units are proposed for: split, then reshaped by
+/// each technique.
 void shapeSubgraphs(const Options &O, llvm::Function &F,
                     llvm::SmallVectorImpl<Subgraph> &subgraphs);
 

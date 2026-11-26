@@ -22,6 +22,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
@@ -37,6 +38,12 @@ namespace poseidon {
 /// An error at `F` unless the cost model is present and its native_arch header
 /// names this function's target-cpu.
 llvm::Error requireCostModel(CostModelState &CM, const llvm::Function &F);
+
+/// The row `Opcode,Type`, in the cost model's units per execution; a model
+/// without it is an error at `Loc` in `F`.
+llvm::Expected<double> rowCost(CostModelState &CM, const llvm::Function &F,
+                               const llvm::DiagnosticLocation &Loc,
+                               llvm::StringRef Opcode, llvm::StringRef Type);
 
 /// The row that prices `I`, in the cost model's units per execution; a model
 /// without that row is an error at `At`, by default `I`, as is an instruction
@@ -59,12 +66,6 @@ llvm::Expected<double> profiledCost(
     CostModelState &CM, const llvm::Function &F, const ProfileMap &profile,
     llvm::function_ref<std::optional<size_t>(const llvm::Instruction *)>
         slotOf);
-
-/// The libm calls that are cheaper computed at FP32 and converted back than at
-/// FP64 on this device. A model without a row this needs is an error at `F`.
-/// The set is owned by `CM`.
-llvm::Expected<const std::unordered_set<std::string> *>
-narrowableFuncs(CostModelState &CM, const llvm::Function &F);
 
 /// `Weight`, when given, is how often an instruction executes per execution of
 /// the function it is priced in.

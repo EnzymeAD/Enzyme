@@ -16,10 +16,10 @@
 
 #include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
-#include "Core/SubgraphUnit.h"
 #include "Core/Technique.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
+#include "Model/SubgraphUnit.h"
 #include "Support/Diagnostics.h"
 
 #include "llvm/ADT/MapVector.h"
@@ -42,7 +42,6 @@
 namespace poseidon {
 
 class PrecisionUnit;
-class AlgebraicUnit;
 class Session;
 struct SiteProfileHeader;
 
@@ -104,17 +103,17 @@ public:
   /// Each output's part of initialAccCost, by the output's node.
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
 
-  using AlgebraicUnitSet = std::set<AlgebraicUnit *>;
-  /// A repricing: a candidate, by position, and the algebraic units of the same
-  /// subgraph among the steps it is priced after.
+  /// A repricing: a candidate, by position, and the units rewriting outputs
+  /// of the same subgraph among the steps it is priced after.
   struct RepriceKey {
     /// The candidate's position in `candidates`.
     size_t candidateIndex;
-    /// The algebraic units of the subgraph the candidate is priced after.
-    AlgebraicUnitSet AlgebraicUnits;
+    /// The units rewriting outputs of the subgraph that the candidate is
+    /// priced after.
+    std::set<const SiteUnit *> rewrites;
     bool operator<(const RepriceKey &other) const {
-      return std::tie(candidateIndex, AlgebraicUnits) <
-             std::tie(other.candidateIndex, other.AlgebraicUnits);
+      return std::tie(candidateIndex, rewrites) <
+             std::tie(other.candidateIndex, other.rewrites);
     }
   };
 
@@ -151,7 +150,7 @@ public:
   }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
-  /// Priced over the outputs the algebraic units of its subgraph leave.
+  /// Priced over what the rewrites of its subgraph's outputs leave of it.
   bool pricedAlone() const override { return false; }
   size_t memoizedPricings() const override { return compCostDeltaCache.size(); }
   void priceAhead(llvm::ArrayRef<llvm::ArrayRef<SolutionStep>> priors) override;
@@ -167,6 +166,7 @@ public:
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override { return "P"; }
+  llvm::Error explain(Explanation &E, UnitExplanation &U) override;
   std::string selectionText(size_t i) const override {
     return candidates[i].desc;
   }

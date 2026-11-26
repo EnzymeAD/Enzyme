@@ -87,6 +87,54 @@ static void bindAlgebraic(Session &S, SiteState &st) {
   bindAll(S, st, st.get<AlgebraicSiteState>().units);
 }
 
+// The outputs as written that the algebraic units price, on the subgraphs no
+// unit edits in place: such a unit's baseline covers every output of its
+// subgraph. `unpriced` counts the units left out for want of a price.
+static double algebraicBaseline(SiteState &st, unsigned &unpriced) {
+  SmallPtrSet<const Value *, 8> arrayPriced;
+  double baseline = 0.0;
+  for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units) {
+    if (llvm::any_of(st.units, [&](const SiteUnit *unit) {
+          return unit->subgraphOf() == RU.subgraph &&
+                 unit->rewrittenOutputs().empty();
+        }))
+      continue;
+    // An algebraic unit with no candidates was never priced, so its share of
+    // the baseline is unknown; it cannot appear in a solution either.
+    if (RU.candidates.empty()) {
+      ++unpriced;
+      continue;
+    }
+    // An array core prices all of its outputs at once; each output's baseline
+    // is counted once however many cores cover it.
+    if (llvm::any_of(RU.roots,
+                     [&](const Value *V) { return arrayPriced.contains(V); }))
+      continue;
+    if (RU.isArray())
+      arrayPriced.insert(RU.roots.begin(), RU.roots.end());
+    baseline += RU.initialAccCost;
+  }
+  return baseline;
+}
+
+// Why no algebraic rewrite of `subgraph` was searched for.
+static void explainNoAlgebraic(const Options &O, const SiteState &st,
+                               const Subgraph &subgraph,
+                               SmallVectorImpl<std::string> &why) {
+  if (!algebraicEnabled(O)) {
+    why.push_back("the algebraic search is disabled");
+    return;
+  }
+  for (Instruction *output : subgraph.outputs) {
+    auto it = st.valueToNodeMap.find(output);
+    if (it != st.valueToNodeMap.end() && it->second &&
+        it->second->grad == 0.0) {
+      why.push_back("the profiled gradient of its output is zero");
+      return;
+    }
+  }
+}
+
 // Precision changes and floating-point expansions.
 
 static bool precisionEnabled(const Options &O) {
@@ -114,37 +162,15 @@ static void bindPrecision(Session &S, SiteState &st) {
   bindAll(S, st, st.get<PrecisionSiteState>().units);
 }
 
-// The subgraphs as written, each output counted once: a precision unit's
-// baseline covers every output of its subgraph, so an algebraic unit's counts
-// only on a subgraph without one. `unpriced` counts the algebraic units, and
-// the outputs of the precision units, left out for want of a price.
-static double subgraphBaseline(SiteState &st, unsigned &unpriced) {
-  SmallPtrSet<const Subgraph *, 4> subgraphsWithPrecision;
+// The subgraphs as written: a precision unit's baseline covers every output
+// of its subgraph. `unpriced` counts the outputs of the units left out for
+// want of a price.
+static double precisionBaseline(SiteState &st, unsigned &unpriced) {
   double baseline = 0.0;
   for (const PrecisionUnit &PU : st.get<PrecisionSiteState>().units) {
     baseline += PU.initialAccCost;
-    subgraphsWithPrecision.insert(PU.subgraph);
     if (!PU.unpricedReason.empty())
       unpriced += PU.subgraph->outputs.size();
-  }
-  SmallPtrSet<const Value *, 8> arrayPriced;
-  for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units) {
-    if (subgraphsWithPrecision.count(RU.subgraph))
-      continue;
-    // An algebraic unit with no candidates was never priced, so its share of
-    // the baseline is unknown; it cannot appear in a solution either.
-    if (RU.candidates.empty()) {
-      ++unpriced;
-      continue;
-    }
-    // An array core prices all of its outputs at once; each output's baseline
-    // is counted once however many cores cover it.
-    if (llvm::any_of(RU.roots,
-                     [&](const Value *V) { return arrayPriced.contains(V); }))
-      continue;
-    if (RU.isArray())
-      arrayPriced.insert(RU.roots.begin(), RU.roots.end());
-    baseline += RU.initialAccCost;
   }
   return baseline;
 }
@@ -183,6 +209,9 @@ static bool recognizeMatmuls(Session &S, Function &F, const SiteProfileData &P,
     // constant-trip candidate set.
     findRuntimeShapeMatmuls(O, F, *M.SE, *M.LI, P.header, P.map, M.matmuls);
   }
+  for (const RecognizedMatmul &m : M.matmuls)
+    if (m.origin == RecognizedMatmul::Origin::ConstantShape && m.scalarLoop.fma)
+      st.reductionOps.insert(m.scalarLoop.fma);
 
   if (O.Diagnostics.Print && !M.matmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << M.matmuls.size()
@@ -229,21 +258,24 @@ static void keyTcecBackend(CacheKey &key) {
 
 // clang-format off
 static const Technique kTechniques[] = {
-    {AlgebraicUnit::Info, algebraicEnabled, /*Recognize=*/nullptr,
-     /*BeginSite=*/nullptr, remarkAlgebraicUnavailable, proposeAlgebraic,
-     /*ProposeForSite=*/nullptr, bindAlgebraic, /*AddToTableKey=*/nullptr,
-     /*Baseline=*/nullptr, /*SiteApplied=*/nullptr, /*SiteLaunched=*/nullptr,
+    {AlgebraicUnit::Info, algebraicEnabled, /*WriteProfileHeader=*/nullptr,
+     /*Recognize=*/nullptr, /*ShapeSubgraphs=*/nullptr, /*BeginSite=*/nullptr,
+     remarkAlgebraicUnavailable, proposeAlgebraic, /*ProposeForSite=*/nullptr,
+     bindAlgebraic, /*AddToTableKey=*/nullptr, algebraicBaseline,
+     explainNoAlgebraic, /*SiteApplied=*/nullptr, /*SiteLaunched=*/nullptr,
      reportHerbieAnswers, /*RewriteHost=*/nullptr},
-    {PrecisionUnit::Info, precisionEnabled, /*Recognize=*/nullptr,
-     beginPrecision, /*RemarkUnavailable=*/nullptr, proposePrecision,
+    {PrecisionUnit::Info, precisionEnabled, /*WriteProfileHeader=*/nullptr,
+     /*Recognize=*/nullptr, mergeSharedStagingSubgraphs, beginPrecision,
+     /*RemarkUnavailable=*/nullptr, proposePrecision,
      /*ProposeForSite=*/nullptr, bindPrecision, /*AddToTableKey=*/nullptr,
-     subgraphBaseline, narrowApplied, /*SiteLaunched=*/nullptr,
-     /*Report=*/nullptr, /*RewriteHost=*/nullptr},
-    {MatmulUnit::Info, matmulEnabled, recognizeMatmuls, /*BeginSite=*/nullptr,
+     precisionBaseline, /*ExplainAbsent=*/nullptr, narrowApplied,
+     /*SiteLaunched=*/nullptr, /*Report=*/nullptr, /*RewriteHost=*/nullptr},
+    {MatmulUnit::Info, matmulEnabled, writeReductionTrips, recognizeMatmuls,
+     /*ShapeSubgraphs=*/nullptr, /*BeginSite=*/nullptr,
      /*RemarkUnavailable=*/nullptr, /*ProposeForSubgraph=*/nullptr,
      proposeMatmuls, bindMatmuls, keyTcecBackend, /*Baseline=*/nullptr,
-     writePendingLibraryCall, noteLibraryCallLaunch, /*Report=*/nullptr,
-     rewriteGemmStubBodies},
+     /*ExplainAbsent=*/nullptr, writePendingLibraryCall, noteLibraryCallLaunch,
+     /*Report=*/nullptr, rewriteGemmStubBodies},
 };
 // clang-format on
 

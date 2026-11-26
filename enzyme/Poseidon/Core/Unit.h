@@ -40,8 +40,11 @@ class raw_ostream;
 namespace poseidon {
 
 class Session;
+class Explanation;
 class FPGraph;
 struct SiteState;
+struct Subgraph;
+struct UnitExplanation;
 class OptimizationUnit;
 
 /// A candidate taken: candidate `candidateIndex` of `unit`.
@@ -174,10 +177,16 @@ public:
   /// The noun of the unit's kind ("algebraic", "precision change").
   llvm::StringRef kindName() const final { return info().noun; }
 
+  /// The FP subgraph the unit's candidates rewrite; null for a unit over
+  /// something else.
+  virtual const Subgraph *subgraphOf() const { return nullptr; }
   /// The instructions the unit's candidates edit or consume; null for none.
   virtual const llvm::SetVector<llvm::Instruction *> *footprint() const = 0;
   /// The outputs each candidate replaces.
   virtual llvm::ArrayRef<llvm::Value *> rewrittenOutputs() const { return {}; }
+  /// Removes from `left`, a copy of the unit's subgraph, the outputs a step of
+  /// the unit replaces and the operations it erases with them.
+  virtual void removeRewritten(Subgraph &left) const {}
 
   /// Whether the footprints share an instruction; a footprint does not
   /// overlap itself, and a unit without one overlaps none.
@@ -222,6 +231,10 @@ public:
   /// The unit's line of the DP table key's candidate set; each candidate
   /// follows on its own line as two spaces and its name.
   virtual std::string keyHeader() const = 0;
+  /// Adds the unit's candidates to `U`, the entry of its subgraph or of the
+  /// unit itself in the explanation `E` of the site's solve; an error is one
+  /// `E` reports.
+  virtual llvm::Error explain(Explanation &E, UnitExplanation &U) = 0;
 
 protected:
   /// A unit of kind `kind`, unbound.

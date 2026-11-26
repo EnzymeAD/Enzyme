@@ -8,6 +8,7 @@
 
 #include "Instrument.h"
 
+#include "Core/Technique.h"
 #include "Enzyme/Utils.h"
 #include "ProfileReader.h"
 #include "Sites/Annotations.h"
@@ -21,7 +22,6 @@
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
-#include "Techniques/Matmul/Matmul.h"
 #include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -67,10 +67,12 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   Function *clone = canonicalize(F);
   S.SiteClones.push_back(clone);
   setSlotMetadata(*clone);
-  // Before the probes: they break the reduction shape the trip count is read
-  // from.
-  SmallVector<std::pair<size_t, unsigned>, 4> trips;
-  collectScalarLoopReductionTrips(S.Opts, *clone, trips);
+  // Before the probes, which break the shapes a technique reads.
+  std::string techniqueHeader;
+  raw_string_ostream techniqueOS(techniqueHeader);
+  for (const Technique &T : techniques())
+    if (T.WriteProfileHeader && T.Enabled(S.Opts))
+      T.WriteProfileHeader(S.Opts, *clone, techniqueOS);
   const std::string profileName = bodyProfileStem(S.Sites, F);
   if (!instrumentForProfiling(*clone, siteId, profileName)) {
     clone->eraseFromParent();
@@ -79,9 +81,7 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   std::string staticData;
   {
     raw_string_ostream os(staticData);
-    os << kProfileKeySiteId << " = " << siteId << '\n';
-    for (const auto &kv : trips)
-      os << "ReductionTrip = " << kv.first << ' ' << kv.second << '\n';
+    os << kProfileKeySiteId << " = " << siteId << '\n' << techniqueHeader;
     os << kProfileKeyCanonicalHash << " = " << canonicalFormHash(*clone)
        << '\n';
   }

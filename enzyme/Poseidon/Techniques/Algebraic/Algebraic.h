@@ -15,9 +15,9 @@
 #define POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H
 
 #include "Core/FPNode.h"
-#include "Core/SubgraphUnit.h"
 #include "Core/Technique.h"
 #include "Model/CostModel.h"
+#include "Model/SubgraphUnit.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
@@ -161,6 +161,7 @@ public:
   llvm::ArrayRef<llvm::Value *> rewrittenOutputs() const override {
     return roots;
   }
+  void removeRewritten(Subgraph &left) const override;
   std::string candidateName(size_t i) const override {
     return candidates[i].expr;
   }
@@ -168,6 +169,7 @@ public:
   llvm::Error materialize(size_t i) override;
   llvm::Error price() override;
   void printPriced(llvm::raw_ostream &OS) override;
+  llvm::Error explain(Explanation &E, UnitExplanation &U) override;
   std::string keyHeader() const override {
     return "R " + herbiePrecision + " " + expr;
   }

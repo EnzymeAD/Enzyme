@@ -632,11 +632,9 @@ static void forEachScalarLoopReduction(
   });
 }
 
-void collectScalarLoopReductionTrips(
-    const Options &O, Function &F,
-    SmallVectorImpl<std::pair<size_t, unsigned>> &trips) {
+void writeReductionTrips(const Options &O, Function &F, raw_ostream &OS) {
   Module &M = *F.getParent();
-  if (!O.Candidates.EnableMatmul || !Target::of(M).hasInKernelMatrixRaise())
+  if (!Target::of(M).hasInKernelMatrixRaise())
     return;
   if (F.isDeclaration())
     return;
@@ -647,15 +645,18 @@ void collectScalarLoopReductionTrips(
   TargetLibraryInfo TLI(TLII, &F);
   ScalarEvolution SE(F, TLI, AC, DT, LI);
 
+  unsigned trips = 0;
   forEachScalarLoopReduction(
       O, F, SE, LI,
       [&](Loop *, ScalarLoopHandle &h, NumberFormat, unsigned trip) {
-        if (std::optional<size_t> slot = slotOf(h.fma))
-          trips.emplace_back(*slot, trip);
+        if (std::optional<size_t> slot = slotOf(h.fma)) {
+          OS << "ReductionTrip = " << *slot << ' ' << trip << '\n';
+          ++trips;
+        }
       });
-  if (O.Diagnostics.Print && !trips.empty())
-    llvm::errs() << "[poseidon] recorded " << trips.size()
-                 << " reduction trip(s) for " << F.getName() << '\n';
+  if (O.Diagnostics.Print && trips)
+    llvm::errs() << "[poseidon] recorded " << trips << " reduction trip(s) for "
+                 << F.getName() << '\n';
 }
 
 // Strip LCSSA / single-value phis and casts from a stored value, testing

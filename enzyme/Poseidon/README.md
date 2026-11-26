@@ -161,8 +161,8 @@ plugin links into each device module it compiles for profile generation.
 
 | Folder | What it holds |
 |---|---|
-| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), the optimization unit the solver chooses among (`Unit.h`) and the unit over one FP subgraph (`SubgraphUnit.h`), and what a technique provides the pass (`Technique.h`) |
-| `Model/` | The models every technique shares: the measured cost table and the cost of code over it, the sampling of a subgraph's inputs, and the evaluation of an expression graph at a point, in floating point and exactly |
+| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), the optimization unit the solver chooses among (`Unit.h`), and what a technique provides the pass (`Technique.h`) |
+| `Model/` | The models every technique shares: the measured cost table and the cost of code over it, the sampling of a subgraph's inputs, the evaluation of an expression graph at a point, in floating point and exactly, and the unit over one FP subgraph priced on its samples (`SubgraphUnit.h`) |
 | `Techniques/` | One folder per technique, each with its own pricing and accuracy model: `Algebraic/` (Herbie), `Precision/` (narrowing and floating-point expansions), `Matmul/` (matrix products on tensor cores or as library calls); `Techniques.cpp` lists them |
 | `Solve/` | A site's collection and pricing of units, the DP over them, pins, and the explanation of the result |
 | `Sites/`, `Profile/` | Finding and outlining sites, their canonical form and launch manifest; profile generation and the reading of profiles |
@@ -176,9 +176,9 @@ entry of the list in `Techniques/Techniques.cpp`: the kind of its units, the
 option that turns it on, and the steps of a compile it takes part in, from
 proposing units for a site to rewriting the host half. What it keeps for a site
 or a compile is its own state type, which the site and the session hold for it.
-The explanation of a solve (`Solve/Explain.cpp`) and the shaping of a site's
-subgraphs (`Solve/Subgraphs.cpp`) are the exceptions: they read the units and
-state of the techniques they know by name.
+Each unit writes its own part of the explanation of a solve; the explanation
+(`Solve/Explain.cpp`) words a remark by the kind the unit gives a candidate,
+one of the kinds its schema lists.
 
 ### Passes
 

@@ -352,14 +352,13 @@ void findConstantShapeMatmuls(const Options &O, llvm::Function &F,
                               const SiteProfileHeader &profileHeader,
                               llvm::SmallVectorImpl<RecognizedMatmul> &out);
 
-/// Profile generation only: the reduction trip counts (profile-scale) of the
-/// scalar-loop matmuls of one profiled clone, as (fma probe index, trip) pairs
-/// for the clone's profile header, so the profile-use compile sees the shape
-/// at one scale. Must run on the clone without probes, which break the
-/// reduction shape.
-void collectScalarLoopReductionTrips(
-    const Options &O, llvm::Function &F,
-    llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
+/// Profile generation only: writes the reduction trip counts (profile-scale)
+/// of the scalar-loop matmuls of one profiled clone to its profile header, as
+/// "ReductionTrip = <fma slot> <trip>" lines, so the profile-use compile sees
+/// the shape at one scale. Must run on the clone without probes, which break
+/// the reduction shape.
+void writeReductionTrips(const Options &O, llvm::Function &F,
+                         llvm::raw_ostream &OS);
 
 /// The library call the solve chose for a body: the product's descriptor and
 /// the variant whose scheme names the runtime entry and whose
@@ -523,6 +522,7 @@ public:
   std::string keyHeader() const override {
     return "M " + std::to_string(matmul->id);
   }
+  llvm::Error explain(Explanation &E, UnitExplanation &U) override;
   std::string selectionText(size_t i) const override;
 };
 

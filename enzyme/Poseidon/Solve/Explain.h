@@ -69,19 +69,141 @@
 #ifndef POSEIDON_SOLVE_EXPLAIN_H
 #define POSEIDON_SOLVE_EXPLAIN_H
 
+#include "Core/FPCore.h"
+#include "Support/Utils.h"
+
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/JSON.h"
+
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace poseidon {
 
 struct SiteState;
 struct Options;
 class Session;
+class SiteUnit;
 struct SolutionStep;
 struct SolveRecord;
+
+/// How the solve treated a candidate, in the order the remarks list rejected
+/// ones: closest to being taken first.
+enum class Standing {
+  Applied,
+  /// Above the target alone, and cheaper than as written.
+  CheaperAboveTarget,
+  /// On a frontier point the selection passed over.
+  Pareto,
+  Near,
+  Far,
+  /// Never priced.
+  Dropped,
+};
+
+/// A candidate among the alternatives of an entry of the explanation; what is
+/// empty or none is not written.
+struct Alternative {
+  /// Its id, kind, summary, fpcore, precision and inkernel_class, and why the
+  /// solve treated it as it did.
+  std::string id, kind, summary, fpcore, precision, inKernelClass, reason;
+  /// Its C form, one expression per output.
+  llvm::SmallVector<std::string, 1> c;
+  /// The positions of the outputs it rewrites among its subgraph's.
+  llvm::SmallVector<unsigned, 1> outputs;
+  /// Whether it approximates a function, whether by a series, and how.
+  bool approx = false, series = false;
+  std::string approxNote;
+  /// Its cost change, and the cost as written of what it rewrites, on the
+  /// solve's axis.
+  std::optional<int64_t> costDelta, baseCost;
+  /// Its accuracy cost change, its modelled error and, for a product, its
+  /// relative domain error.
+  std::optional<double> accDelta, err, domainError;
+  /// Herbie's error bits of the expression as written and of the candidate.
+  std::optional<double> bitsBefore, bitsAfter;
+  /// The accuracy cost as written of what it rewrites.
+  double baseAcc = std::numeric_limits<double>::quiet_NaN();
+  /// Its format changes; the operations they change and the format they move
+  /// to, as its remark names them.
+  llvm::json::Array changes;
+  llvm::SmallVector<std::string, 4> changedOps;
+  std::string changedTo;
+  /// Where its remarks point.
+  const llvm::Instruction *at = nullptr;
+  /// Its unit and position there; none for a candidate never offered.
+  const SiteUnit *item = nullptr;
+  size_t index = 0;
+  Standing standing = Standing::Far;
+};
+
+/// An entry of the explanation: an FP subgraph with the units over it, or a
+/// unit over something else.
+struct UnitExplanation {
+  std::string id, kind;
+  /// The subgraph; null for a unit over something else.
+  const Subgraph *sg = nullptr;
+  /// Where it is, and the instruction its remarks point at.
+  SourceLoc loc;
+  const llvm::Instruction *root = nullptr;
+  /// Its ops, inputs and outputs, and the cores Herbie searched.
+  llvm::json::Array ops, inputs, outputs, herbie;
+  /// Each output as C, and the profiled ranges of the inputs as remarks name
+  /// them.
+  llvm::SmallVector<std::string, 2> outC, inputRanges;
+  std::vector<Alternative> alts;
+  /// Its cost as written on the solve's axis.
+  std::optional<int64_t> baseCost;
+  uint64_t executions = 0;
+  double sensitivity = std::numeric_limits<double>::quiet_NaN();
+  /// Why it is left as written, and the shape of a product.
+  std::string left, shape;
+  /// Why its units offer no candidate, when they offer none.
+  llvm::SmallVector<std::string, 2> whyNone;
+  /// Whether a candidate of it is applied.
+  bool applied = false;
+
+  /// Notes that the candidates of one of its units could not be priced.
+  void unpriced(llvm::StringRef reason) {
+    whyNone.push_back(("its candidates could not be priced: " + reason).str());
+  }
+};
+
+/// The explanation of a site's solve, as a unit adds its entry or its part of
+/// its subgraph's (SiteUnit::explain).
+class Explanation {
+public:
+  /// `cost`, in cost-model units over the profiled run, on the solve's axis;
+  /// an error at the site when the axis cannot hold it.
+  virtual llvm::Expected<int64_t> onAxis(double cost) const = 0;
+  /// Sets A's accuracy cost change to `acc`, and its modelled error, when
+  /// `acc` is finite.
+  virtual void setAccuracy(Alternative &A, double acc) const = 0;
+  /// How C writes the values of `sg`: its inputs as leaves, by source name.
+  virtual CRendering rendering(const Subgraph &sg) = 0;
+  /// A graph to parse expressions into, apart from the solve's own.
+  virtual FPGraph &scratch() = 0;
+  /// The steps the solve applies, in order.
+  virtual llvm::ArrayRef<SolutionStep> appliedSteps() const = 0;
+
+protected:
+  ~Explanation() = default;
+};
+
+/// `items` as a list in words: "a", "a and b", "a, b and c".
+std::string joinWords(llvm::ArrayRef<std::string> items);
+
+/// `s`, cut after `n` characters and marked as cut; 160 is what a remark shows
+/// of an expression.
+std::string clip(const std::string &s, size_t n = 160);
 
 /// Whether the solve of `F` is explained: -poseidon-explain names a directory,
 /// or a remark of the pass is enabled for `F`.

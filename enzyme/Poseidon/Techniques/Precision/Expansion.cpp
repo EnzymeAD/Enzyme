@@ -9,11 +9,11 @@
 #include "Expansion.h"
 #include "Enzyme/Utils.h"
 #include "Support/Diagnostics.h"
-#include "Techniques/Precision/ExpansionRoutines.h"
 #include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
+#include "Techniques/Precision/ExpansionRoutines.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"

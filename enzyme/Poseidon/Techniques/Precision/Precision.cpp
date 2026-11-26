@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "Precision.h"
-#include "Techniques/Algebraic/Algebraic.h"
 #include "Core/FPCore.h"
 #include "Expansion.h"
 #include "ExpansionModel.h"
@@ -22,6 +21,7 @@
 #include "Narrowing.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
+#include "Solve/Explain.h"
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
@@ -31,6 +31,7 @@
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -1140,6 +1141,51 @@ void TierSweep::threeTier(ArrayRef<NumberFormat> tiers,
   }
 }
 
+namespace {
+// What the precision technique keeps for a compile.
+struct PrecisionState : TechniqueState {
+  static inline char ID;
+  // The libm functions whose single-precision call, with its two casts, the
+  // cost model prices below the double-precision call; set on first use.
+  std::optional<std::unordered_set<std::string>> NarrowableFuncs;
+};
+} // namespace
+
+// The libm calls that are cheaper computed at FP32 and converted back than at
+// FP64 on this device. A model without a row this needs is an error at `F`.
+static Expected<const std::unordered_set<std::string> *>
+narrowableFuncs(Session &S, const Function &F) {
+  std::optional<std::unordered_set<std::string>> &cached =
+      S.get<PrecisionState>().NarrowableFuncs;
+  if (!cached) {
+    std::unordered_set<std::string> funcs;
+    for (const MathFunction &libm : mathFunctions()) {
+      if (!libm.Libm)
+        continue;
+      StringRef func = libm.Name;
+      const std::pair<StringRef, StringRef> rows[] = {
+          {func, "float"},
+          {func, "double"},
+          {"fptrunc_double_to_float", "double"},
+          {"fpext_float_to_double", "float"}};
+      double costs[4];
+      for (auto [cost, row] : zip(costs, rows)) {
+        Expected<double> price =
+            rowCost(S.CostModel, F, F.getSubprogram(), row.first, row.second);
+        if (!price)
+          return price.takeError();
+        cost = *price;
+      }
+      auto [costFP32, costFP64, costFPTrunc, costFPExt] = costs;
+      double costFPCast = costFPTrunc + costFPExt;
+      if (costFP32 + costFPCast < costFP64)
+        funcs.insert(func.str());
+    }
+    cached = std::move(funcs);
+  }
+  return &*cached;
+}
+
 Error proposePrecisionCandidates(
     Session &S, Function &F, Subgraph &subgraph, FPGraph &G,
     const SiteProfileHeader &profileHeader, bool expansionSafe,
@@ -1166,7 +1212,7 @@ Error proposePrecisionCandidates(
   // prices per precision, by ascending sensitivity. Stable: which tier an
   // operation of a tied sensitivity lands in follows the subgraph's order.
   Expected<const std::unordered_set<std::string> *> funcs =
-      narrowableFuncs(S.CostModel, F);
+      narrowableFuncs(S, F);
   if (!funcs)
     return funcs.takeError();
   const std::unordered_set<std::string> &NarrowableFuncs = **funcs;
@@ -1245,14 +1291,15 @@ double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
          (double)executions;
 }
 
-// The algebraic units of `subgraph` among `steps`, in step order.
-static SmallVector<AlgebraicUnit *> rewritesOf(const Subgraph *subgraph,
-                                               ArrayRef<SolutionStep> steps) {
-  SmallVector<AlgebraicUnit *> rewrites;
-  for (const SolutionStep &step : steps)
-    if (auto *RU = dyn_cast<AlgebraicUnit>(step.unit))
-      if (RU->subgraph == subgraph)
-        rewrites.push_back(RU);
+// The units among `steps` that rewrite outputs of `subgraph`, in step order.
+static SmallVector<const SiteUnit *> rewritesOf(const Subgraph *subgraph,
+                                                ArrayRef<SolutionStep> steps) {
+  SmallVector<const SiteUnit *> rewrites;
+  for (const SolutionStep &step : steps) {
+    const SiteUnit &unit = unitOf(step);
+    if (unit.subgraphOf() == subgraph && !unit.rewrittenOutputs().empty())
+      rewrites.push_back(&unit);
+  }
   return rewrites;
 }
 
@@ -1260,12 +1307,8 @@ static SmallVector<AlgebraicUnit *> rewritesOf(const Subgraph *subgraph,
 static Subgraph withoutRewrites(const Subgraph &subgraph,
                                 ArrayRef<SolutionStep> steps) {
   Subgraph left = subgraph;
-  for (AlgebraicUnit *RU : rewritesOf(&subgraph, steps)) {
-    left.operations.remove_if(
-        [RU](Instruction *I) { return RU->erasableInsts.contains(I); });
-    for (Value *root : RU->roots)
-      left.outputs.remove(cast<Instruction>(root));
-  }
+  for (const SiteUnit *unit : rewritesOf(&subgraph, steps))
+    unit->removeRewritten(left);
   return left;
 }
 
@@ -1288,9 +1331,8 @@ changedOperations(const PrecisionCandidate &candidate,
 PrecisionUnit::RepriceKey
 PrecisionUnit::repriceKey(size_t candidateIndex,
                           ArrayRef<SolutionStep> steps) const {
-  SmallVector<AlgebraicUnit *> rewrites = rewritesOf(subgraph, steps);
-  return RepriceKey{candidateIndex,
-                    AlgebraicUnitSet(rewrites.begin(), rewrites.end())};
+  SmallVector<const SiteUnit *> rewrites = rewritesOf(subgraph, steps);
+  return RepriceKey{candidateIndex, {rewrites.begin(), rewrites.end()}};
 }
 
 void PrecisionUnit::priceRequests(
@@ -1416,8 +1458,8 @@ double PrecisionUnit::errorDelta(size_t candidateIndex,
 
   // The outputs the rewrites among `steps` replace are not this unit's.
   SmallPtrSet<FPNode *, 8> stepNodes;
-  for (AlgebraicUnit *RU : rewritesOf(subgraph, steps))
-    for (Value *root : RU->roots) {
+  for (const SiteUnit *unit : rewritesOf(subgraph, steps))
+    for (Value *root : unit->rewrittenOutputs()) {
       auto it = valueToNodeMap.find(root);
       assert(it != valueToNodeMap.end() && it->second &&
              "a rewritten output has a node");
@@ -1438,8 +1480,167 @@ double PrecisionUnit::errorDelta(size_t candidateIndex,
 }
 
 bool PrecisionUnit::pricedAgainst(const OptimizationUnit &earlier) const {
-  const auto *co = dyn_cast<AlgebraicUnit>(&earlier);
-  return co && co->subgraph == subgraph;
+  const SiteUnit &unit = cast<SiteUnit>(earlier);
+  return unit.subgraphOf() == subgraph && !unit.rewrittenOutputs().empty();
+}
+
+static constexpr size_t kMaxListedOps = 6;
+
+static std::string precisionWords(NumberFormat t) {
+  if (unsigned k = expansionComponents(t))
+    return formatv("a {0}-component float expansion", k).str();
+  const NumberFormatInfo &format = formatOf(t);
+  return (format.Words.empty() ? format.Name : format.Words).str();
+}
+
+static std::string opWord(StringRef op) {
+  if (op == "+" || op == "-" || op == "*" || op == "/")
+    return ("'" + op + "'").str();
+  if (op == "neg")
+    return "negation";
+  return op.str();
+}
+
+static const Instruction *
+firstInIROrder(Function &F, const SmallPtrSetImpl<const Value *> &set) {
+  for (Instruction &I : instructions(F))
+    if (set.contains(&I))
+      return &I;
+  return nullptr;
+}
+
+Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
+  const Subgraph &sg = *subgraph;
+  Function &F = *graph().F;
+  auto nodeOf = [&](Value *V) -> FPNode * {
+    auto it = graph().valueToNodeMap.find(V);
+    return it == graph().valueToNodeMap.end() ? nullptr : it->second;
+  };
+  CRendering how = E.rendering(sg);
+  DenseMap<const FPNode *, unsigned> opIndex;
+  unsigned k = 0;
+  for (Instruction &I : instructions(F))
+    if (sg.operations.contains(&I)) {
+      if (FPNode *N = nodeOf(&I))
+        opIndex[N] = k;
+      ++k;
+    }
+
+  auto describe = [&](Alternative &A, PrecisionCandidate &cand) {
+    bool expansion = false;
+    DenseMap<const FPNode *, std::string> dtypes;
+    SmallPtrSet<const Value *, 8> changedInsts;
+    SmallVector<std::string, 4> parts;
+    for (const PrecisionChange &ch : cand.changes) {
+      expansion |= expansionComponents(ch.newType) != 0;
+      json::Object c;
+      c["from"] = formatOf(ch.oldType).Name.str();
+      c["to"] = formatOf(ch.newType).Name.str();
+      json::Array idx;
+      SmallVector<std::string, 4> names;
+      MapVector<std::string, unsigned, std::map<std::string, unsigned>> counts;
+      for (FPLLValue *node : ch.nodes) {
+        auto it = opIndex.find(node);
+        if (it != opIndex.end())
+          idx.push_back((int64_t)it->second);
+        changedInsts.insert(node->value);
+        SourceLoc L = locOf(node->value);
+        std::string w = opWord(operationName(*node));
+        ++counts[w];
+        if (L.valid())
+          w += formatv(" ({0}:{1})", L.line, L.col).str();
+        names.push_back(w);
+        A.changedOps.push_back(w);
+        if (!expansionComponents(ch.newType))
+          dtypes[node] = dtypeOfType(storageTypeOf(F.getContext(), ch.newType));
+      }
+      c["ops"] = std::move(idx);
+      A.changes.push_back(std::move(c));
+      if (names.size() > kMaxListedOps) {
+        names.clear();
+        for (const auto &[w, n] : counts)
+          names.push_back(n == 1 ? w : formatv("{0} x {1}", n, w).str());
+      }
+      parts.push_back(joinWords(names) + " in " + precisionWords(ch.newType));
+      A.changedTo = precisionWords(ch.newType);
+    }
+    A.kind = expansion ? "expansion" : "precision";
+    A.summary = cand.desc + ": " + joinWords(parts) + " (" +
+                std::to_string(A.changedOps.size()) + " of " +
+                std::to_string(sg.operations.size()) + " operations)";
+    if (A.changedOps.size() == sg.operations.size() && cand.changes.size() == 1)
+      A.changedOps = {
+          formatv("all {0} operations", sg.operations.size()).str()};
+    else if (A.changedOps.size() > kMaxListedOps)
+      A.changedOps = {formatv("{0} of the {1} operations", A.changedOps.size(),
+                              sg.operations.size())
+                          .str()};
+    A.at = firstInIROrder(F, changedInsts);
+    if (!A.at)
+      A.at = sg.outputs[0];
+    if (!expansion) {
+      CRendering typed = how;
+      typed.dtypes = &dtypes;
+      for (Instruction *O : sg.outputs)
+        if (FPNode *N = nodeOf(O))
+          A.c.push_back(renderC(*N, typed, dtypeOfType(O->getType())));
+    }
+    A.baseAcc = initialAccCost;
+    A.baseCost = U.baseCost;
+  };
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    PrecisionCandidate &cand = candidates[j];
+    Alternative A;
+    A.id = candidateId(j);
+    A.item = this;
+    A.index = j;
+    describe(A, cand);
+    for (unsigned o = 0; o < sg.outputs.size(); ++o)
+      A.outputs.push_back(o);
+    std::optional<int64_t> cost;
+    if (cand.CompCost != std::numeric_limits<double>::max()) {
+      Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
+      if (!c)
+        return c.takeError();
+      cost = *c;
+    }
+    double acc = getAccCostDelta(j);
+    // Applied after rewrites of its subgraph's outputs, the candidate is
+    // priced over what they leave.
+    RepriceKey key = repriceKey(j, E.appliedSteps());
+    if (!key.rewrites.empty() &&
+        llvm::any_of(E.appliedSteps(), [&](const SolutionStep &step) {
+          return step.unit == this && step.candidateIndex == j;
+        })) {
+      auto c = compCostDeltaCache.find(key);
+      cost = std::nullopt;
+      if (c != compCostDeltaCache.end()) {
+        Expected<int64_t> repriced = E.onAxis(c->second);
+        if (!repriced)
+          return repriced.takeError();
+        cost = *repriced;
+      }
+      auto a = accCostDeltaCache.find(key);
+      acc = a == accCostDeltaCache.end()
+                ? std::numeric_limits<double>::quiet_NaN()
+                : a->second;
+    }
+    A.costDelta = cost;
+    E.setAccuracy(A, acc);
+    U.alts.push_back(std::move(A));
+  }
+  for (const auto &[desc, why] : dropped) {
+    Alternative A;
+    A.kind = "precision";
+    A.summary = desc;
+    A.at = sg.outputs[0];
+    A.standing = Standing::Dropped;
+    A.reason = "pricing dropped it: " + why;
+    U.alts.push_back(std::move(A));
+  }
+  if (!unpricedReason.empty())
+    U.unpriced(unpricedReason);
+  return Error::success();
 }
 
 std::string PrecisionUnit::choiceText(size_t i) const {

@@ -18,6 +18,7 @@
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Model/Sampling.h"
+#include "Solve/Explain.h"
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
@@ -45,6 +46,7 @@
 #include <algorithm>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -1858,6 +1860,13 @@ bool AlgebraicUnit::sameRewriteTargetAs(const OptimizationUnit &earlier) const {
                       [&](Value *r) { return llvm::is_contained(roots, r); });
 }
 
+void AlgebraicUnit::removeRewritten(Subgraph &left) const {
+  left.operations.remove_if(
+      [&](Instruction *I) { return erasableInsts.contains(I); });
+  for (Value *root : roots)
+    left.outputs.remove(cast<Instruction>(root));
+}
+
 std::string AlgebraicUnit::choiceText(size_t i) const {
   const AlgebraicCandidate &cand = candidates[i];
   return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
@@ -1881,6 +1890,141 @@ Error AlgebraicUnit::price() {
     c.CompCost = *cost;
   }
   RewriteAccuracy(session().Opts, *this, st).price();
+  return Error::success();
+}
+
+// Whether the FPCore expression `expr` is arithmetic only: a series rather
+// than a call of another function. Parsing adds to `G`.
+static bool isPolynomial(StringRef expr, FPGraph &G) {
+  static constexpr StringLiteral kArithmetic[] = {"+",   "-",   "*",  "/",
+                                                  "neg", "fma", "pow"};
+  Expected<FPNode *> root = parseHerbieExpr(expr, G);
+  if (!root) {
+    consumeError(root.takeError());
+    return false;
+  }
+  SmallVector<const FPNode *, 8> work = {*root};
+  while (!work.empty()) {
+    const FPNode *N = work.pop_back_val();
+    if (N->getType() != FPNode::NodeType::Node)
+      continue;
+    if (!is_contained(kArithmetic, N->op->Name))
+      return false;
+    append_range(work, N->operands);
+  }
+  return true;
+}
+
+Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
+  const Subgraph &sg = *subgraph;
+  CRendering how = E.rendering(sg);
+  json::Object core;
+  core["id"] = (info().letter + Twine(indexInKind())).str();
+  if (!herbiePrecision.empty())
+    core["precision"] = herbiePrecision;
+  if (!herbieStatus.empty())
+    core["status"] = herbieStatus;
+  core["candidates"] = (int64_t)candidates.size();
+  if (!unpricedReason.empty())
+    core["unpriced"] = unpricedReason;
+  if (std::isfinite(herbieBits) && std::isfinite(initialHerbieAccuracy))
+    core["error_bits"] = (1.0 - initialHerbieAccuracy) * herbieBits;
+  U.herbie.push_back(std::move(core));
+
+  SmallVector<unsigned, 1> outs;
+  for (Value *root : roots)
+    for (unsigned k = 0; k < sg.outputs.size(); ++k)
+      if (sg.outputs[k] == root)
+        outs.push_back(k);
+  // An output's FPCore as written is the first single-output core's of it.
+  if (!isArray() && !outs.empty())
+    U.outputs[outs.front()].getAsObject()->try_emplace("fpcore", expr);
+  std::string rdt = dtypeOfType(roots.front()->getType());
+  std::optional<int64_t> base;
+  if (std::isfinite(initialCompCost)) {
+    Expected<int64_t> c = E.onAxis(initialCompCost * (double)executions);
+    if (!c)
+      return c.takeError();
+    base = *c;
+  }
+
+  auto fill = [&](Alternative &A, const std::string &text) {
+    A.kind = "algebraic";
+    A.precision = herbiePrecision;
+    A.fpcore = text;
+    A.outputs = outs;
+    A.at = cast<Instruction>(roots.front());
+    A.baseAcc = initialAccCost;
+    A.baseCost = base;
+    SmallVector<std::pair<std::string, std::string>, 2> specs;
+    A.c = fpcoreToC(text, E.scratch(), how, rdt, &specs);
+    SmallVector<std::string, 2> notes;
+    std::set<std::string> seen;
+    for (const auto &[spec, impl] : specs) {
+      if (!seen.insert(spec).second)
+        continue;
+      SmallVector<std::string, 1> specC = fpcoreToC(spec, E.scratch(), how, "");
+      std::string specText = clip(specC.empty() ? spec : specC[0], 120);
+      if (!isPolynomial(impl, E.scratch())) {
+        SmallVector<std::string, 1> implC =
+            fpcoreToC(impl, E.scratch(), how, "");
+        notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
+                        " in place of " + specText);
+        continue;
+      }
+      A.series = true;
+      notes.push_back("series approximation of " + specText);
+    }
+    A.approx = !specs.empty();
+    if (StringRef(text).contains("(if"))
+      notes.push_back("regime split");
+    A.approxNote = joinWords(notes);
+    std::string what = "Herbie rewrite";
+    if (!A.precision.empty())
+      what += " searched at " + A.precision;
+    if (A.series)
+      what += ", series approximation";
+    else if (A.approx)
+      what += ", approximation";
+    if (StringRef(text).contains("(if"))
+      what += ", regime split";
+    A.summary = what;
+  };
+
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    const AlgebraicCandidate &cand = candidates[j];
+    Alternative A;
+    A.id = candidateId(j);
+    A.item = this;
+    A.index = j;
+    fill(A, cand.expr);
+    if (cand.CompCost != std::numeric_limits<double>::max()) {
+      Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
+      if (!c)
+        return c.takeError();
+      A.costDelta = *c;
+    }
+    E.setAccuracy(A, getAccCostDelta(j));
+    if (std::isfinite(herbieBits)) {
+      if (std::isfinite(initialHerbieAccuracy))
+        A.bitsBefore = (1.0 - initialHerbieAccuracy) * herbieBits;
+      if (std::isfinite(cand.herbieAccuracy))
+        A.bitsAfter = (1.0 - cand.herbieAccuracy) * herbieBits;
+    }
+    U.alts.push_back(std::move(A));
+  }
+  for (const auto &[text, why] : dropped) {
+    Alternative A;
+    fill(A, text);
+    A.standing = Standing::Dropped;
+    A.reason = "the accuracy model dropped it: " + why;
+    U.alts.push_back(std::move(A));
+  }
+  if (!unpricedReason.empty())
+    U.unpriced(unpricedReason);
+  else if (!herbieStatus.empty() && candidates.empty())
+    U.whyNone.push_back("Herbie returned no alternative (" + herbieStatus +
+                        ")");
   return Error::success();
 }
 

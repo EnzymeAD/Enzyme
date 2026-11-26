@@ -15,6 +15,7 @@
 #include "MatmulInternal.h"
 #include "Model/CostModel.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Explain.h"
 #include "Solve/Optimize.h"
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
@@ -1182,6 +1183,60 @@ void MatmulUnit::printPriced(raw_ostream &OS) {
     OS << "[poseidon]   " << matmulOptionLabel(candidates[i])
        << ": dcost=" << getCompCostDelta(i) << " dacc=" << getAccCostDelta(i)
        << '\n';
+}
+
+Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
+  U.kind = "matmul";
+  if (matmul) {
+    U.root = dyn_cast_or_null<Instruction>(matmul->outputValue);
+    if (!U.root && !matmul->footprint.empty())
+      U.root = matmul->footprint[0];
+    auto dim = [](unsigned d) {
+      return d == ~0u || d == 0 ? std::string("?") : std::to_string(d);
+    };
+    unsigned M = matmul->globalM ? matmul->globalM : matmul->M;
+    unsigned N = matmul->globalN ? matmul->globalN : matmul->N;
+    unsigned K = matmul->globalK ? matmul->globalK : matmul->K;
+    U.shape = dim(M) + "x" + dim(N) + "x" + dim(K);
+  }
+  U.executions = executions;
+  if (initialCompCost >= 0.0) {
+    Expected<int64_t> c = E.onAxis(initialCompCost * (double)executions);
+    if (!c)
+      return c.takeError();
+    U.baseCost = *c;
+  }
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    const Option &o = candidates[j];
+    Alternative A;
+    A.id = candidateId(j);
+    A.kind = "matmul";
+    A.summary = matmulOptionLabel(o);
+    if (o.realization == Realization::InKernel)
+      A.inKernelClass = inKernelCostClass(o.variant);
+    A.item = this;
+    A.index = j;
+    A.at = U.root;
+    Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
+    if (!c)
+      return c.takeError();
+    A.costDelta = *c;
+    E.setAccuracy(A, getAccCostDelta(j));
+    if (std::isfinite(o.domainError))
+      A.domainError = o.domainError;
+    A.baseCost = U.baseCost;
+    U.alts.push_back(std::move(A));
+  }
+  for (const auto &[label, why] : dropped) {
+    Alternative A;
+    A.kind = "matmul";
+    A.summary = label;
+    A.at = U.root;
+    A.standing = Standing::Dropped;
+    A.reason = "not offered: " + why;
+    U.alts.push_back(std::move(A));
+  }
+  return Error::success();
 }
 
 } // namespace poseidon

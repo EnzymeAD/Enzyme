@@ -7,12 +7,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "Narrowing.h"
+#include "Core/FPNode.h"
 #include "Expansion.h"
 #include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Session.h"
+#include "Support/Options.h"
 #include "Targets/Target.h"
 
+#include "llvm/ADT/IntEqClasses.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -859,6 +862,111 @@ bool narrowSharedStaging(Session &S, Function &F, bool announce,
                    << F.getName() << '\n';
   }
   return changed;
+}
+
+//===----------------------------------------------------------------------===//
+// Subgraphs that share a staging buffer
+//===----------------------------------------------------------------------===//
+
+// The memory object a value is loaded from / stored to when that object is a
+// staging buffer (pointer argument or addrspace(3) global), else nullptr.
+static const Value *stagingObjectOf(const Value *Ptr) {
+  const Value *Obj = getUnderlyingObject(Ptr);
+  if (!Obj)
+    return nullptr;
+  if (isa<Argument>(Obj) && Obj->getType()->isPointerTy())
+    return Obj;
+  if (auto *GV = dyn_cast<GlobalVariable>(Obj))
+    if (Target::of(*GV->getParent()).isShared(*GV))
+      return Obj;
+  return nullptr;
+}
+
+// The objects `objectOf` gives for the pointers a subgraph reads through the
+// loads feeding it and writes through the stores of its outputs.
+static SmallPtrSet<const Value *, 4>
+touchedObjects(const Subgraph &subgraph,
+               function_ref<const Value *(const Value *)> objectOf) {
+  SmallPtrSet<const Value *, 4> touched;
+  auto add = [&](const Value *Ptr) {
+    if (const Value *O = objectOf(Ptr))
+      touched.insert(O);
+  };
+  for (Value *In : subgraph.inputs)
+    if (auto *LI = dyn_cast<LoadInst>(In))
+      add(LI->getPointerOperand());
+  for (Instruction *Op : subgraph.operations)
+    for (Value *V : Op->operands())
+      if (auto *LI = dyn_cast<LoadInst>(V))
+        add(LI->getPointerOperand());
+  for (Instruction *Out : subgraph.outputs)
+    for (User *U : Out->users())
+      if (auto *SI = dyn_cast<StoreInst>(U))
+        if (SI->getValueOperand() == Out)
+          add(SI->getPointerOperand());
+  return touched;
+}
+
+void mergeSharedStagingSubgraphs(const Options &O, Function &F,
+                                 SmallVectorImpl<Subgraph> &subgraphs) {
+  if (!O.Candidates.SubgraphMergeStaging || subgraphs.size() < 2)
+    return;
+
+  SmallVector<SmallPtrSet<const Value *, 4>, 8> touched;
+  for (const Subgraph &subgraph : subgraphs)
+    touched.push_back(touchedObjects(subgraph, stagingObjectOf));
+
+  IntEqClasses classes(subgraphs.size());
+  for (size_t i = 0; i < subgraphs.size(); ++i)
+    for (size_t j = i + 1; j < subgraphs.size(); ++j)
+      if (llvm::any_of(touched[i],
+                       [&](const Value *O) { return touched[j].count(O); }))
+        classes.join(i, j);
+  classes.compress();
+  if (classes.getNumClasses() == subgraphs.size())
+    return; // nothing shares a buffer
+  SmallVector<SmallVector<unsigned, 8>, 8> groups(classes.getNumClasses());
+  for (unsigned i = 0; i < subgraphs.size(); ++i)
+    groups[classes[i]].push_back(i);
+
+  SmallVector<Subgraph, 8> merged;
+  for (ArrayRef<unsigned> group : groups) {
+    if (group.size() == 1) {
+      merged.push_back(subgraphs[group.front()]);
+      continue;
+    }
+    Subgraph M;
+    for (unsigned idx : group) {
+      for (Instruction *Op : subgraphs[idx].operations)
+        M.operations.insert(Op);
+      for (Instruction *Out : subgraphs[idx].outputs)
+        M.outputs.insert(Out);
+    }
+    // An input of one member may be produced by another member; those edges
+    // are internal to the merged unit and must not be re-declared as inputs.
+    for (unsigned idx : group)
+      for (Value *In : subgraphs[idx].inputs) {
+        auto *I = dyn_cast<Instruction>(In);
+        if (I && (M.operations.contains(I) || M.outputs.contains(I)))
+          continue;
+        M.inputs.insert(In);
+      }
+    if (O.Diagnostics.Print) {
+      SmallPtrSet<const Value *, 4> objs;
+      for (unsigned idx : group)
+        for (const Value *O : touched[idx])
+          objs.insert(O);
+      llvm::errs() << "[poseidon] merged " << group.size()
+                   << " FP subgraphs sharing " << objs.size()
+                   << " staging buffer(s) into one optimization unit ("
+                   << M.operations.size() << " operations, " << M.inputs.size()
+                   << " inputs, " << M.outputs.size() << " outputs) in "
+                   << F.getName() << '\n';
+    }
+    merged.push_back(std::move(M));
+  }
+
+  subgraphs = std::move(merged);
 }
 
 } // namespace poseidon

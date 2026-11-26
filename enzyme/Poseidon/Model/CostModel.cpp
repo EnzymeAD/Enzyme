@@ -42,10 +42,9 @@ Error requireCostModel(CostModelState &CM, const Function &F) {
   return Error::success();
 }
 
-// The row `Opcode,Type`; a model without it is an error at `Loc` in `F`.
-static Expected<double> rowCost(CostModelState &CM, const Function &F,
-                                const DiagnosticLocation &Loc, StringRef Opcode,
-                                StringRef Type) {
+Expected<double> rowCost(CostModelState &CM, const Function &F,
+                         const DiagnosticLocation &Loc, StringRef Opcode,
+                         StringRef Type) {
   if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
     return *cost;
   return userError(F, Loc,
@@ -208,37 +207,6 @@ profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
     cost += (double)it->second.exec * *price;
   }
   return cost;
-}
-
-Expected<const std::unordered_set<std::string> *>
-narrowableFuncs(CostModelState &CM, const Function &F) {
-  if (!CM.NarrowableFuncs) {
-    std::unordered_set<std::string> funcs;
-    for (const MathFunction &libm : mathFunctions()) {
-      if (!libm.Libm)
-        continue;
-      StringRef func = libm.Name;
-      const std::pair<StringRef, StringRef> rows[] = {
-          {func, "float"},
-          {func, "double"},
-          {"fptrunc_double_to_float", "double"},
-          {"fpext_float_to_double", "float"}};
-      double costs[4];
-      for (auto [cost, row] : zip(costs, rows)) {
-        Expected<double> price =
-            rowCost(CM, F, F.getSubprogram(), row.first, row.second);
-        if (!price)
-          return price.takeError();
-        cost = *price;
-      }
-      auto [costFP32, costFP64, costFPTrunc, costFPExt] = costs;
-      double costFPCast = costFPTrunc + costFPExt;
-      if (costFP32 + costFPCast < costFP64)
-        funcs.insert(func.str());
-    }
-    CM.NarrowableFuncs = std::move(funcs);
-  }
-  return &*CM.NarrowableFuncs;
 }
 
 static Expected<double> computeMaxCost(CostModelState &CM, BasicBlock *BB,

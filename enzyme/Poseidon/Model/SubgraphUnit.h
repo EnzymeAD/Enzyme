@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_CORE_SUBGRAPH_UNIT_H
-#define POSEIDON_CORE_SUBGRAPH_UNIT_H
+#ifndef POSEIDON_MODEL_SUBGRAPH_UNIT_H
+#define POSEIDON_MODEL_SUBGRAPH_UNIT_H
 
 #include "Core/FPNode.h"
 #include "Core/Unit.h"
@@ -99,6 +99,7 @@ public:
   droppedCandidates() const override {
     return dropped;
   }
+  const Subgraph *subgraphOf() const override { return subgraph; }
   const llvm::SetVector<llvm::Instruction *> *footprint() const override {
     return subgraph ? &subgraph->operations : nullptr;
   }
@@ -138,4 +139,4 @@ protected:
 };
 
 } // namespace poseidon
-#endif // POSEIDON_CORE_SUBGRAPH_UNIT_H
+#endif // POSEIDON_MODEL_SUBGRAPH_UNIT_H
