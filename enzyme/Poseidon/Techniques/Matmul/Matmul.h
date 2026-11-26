@@ -9,7 +9,7 @@
 #ifndef POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 #define POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 
-#include "Model/FPFormat.h"
+#include "Core/NumberFormat.h"
 #include "Profile/ProfileReader.h"
 #include "Scheme.h"
 #include "Sites/LaunchManifest.h"
@@ -301,7 +301,7 @@ struct RecognizedMatmul {
   unsigned globalK = 0;
 
   /// The type of A, B, the accumulator and the result.
-  FPKind elemType = FPKind::Invalid;
+  NumberFormat elemType = NumberFormat::Invalid;
 
   /// Which recognizer found the product.
   enum class Origin {
@@ -381,9 +381,9 @@ struct InKernelTile {
   /// The tile extents in elements.
   unsigned M, N, K;
   /// The operand format.
-  FPKind operand;
+  NumberFormat operand;
   /// The accumulator format.
-  FPKind accumulator;
+  NumberFormat accumulator;
 };
 
 /// What the matrix-product pipeline records over a compile.

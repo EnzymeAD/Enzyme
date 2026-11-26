@@ -16,11 +16,11 @@
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
+#include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision/Expansion.h"
 #include "Techniques/Precision/Narrowing.h"
 #include "Techniques/Precision/Precision.h"
-#include "Techniques/Rewrite/Rewrite.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -140,7 +140,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
     for (const auto &m : st.abstractMatmuls) {
       llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
                    << dimStr(m.N) << 'x' << dimStr(m.K)
-                   << " type=" << fpKindName(m.elemType) << " origin="
+                   << " type=" << dtypeName(m.elemType) << " origin="
                    << (m.origin == RecognizedMatmul::Origin::RuntimeShape
                            ? "RuntimeShape"
                            : "ConstantShape")
@@ -150,7 +150,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
 }
 
 // Each technique's candidates for every FP subgraph, one subgraph at a time:
-// Herbie's rewrites into st.rewriteUnits, precision assignments into
+// Herbie's rewrites into st.algebraicUnits, precision assignments into
 // st.precisionUnits.
 static Error proposeSubgraphCandidates(Session &S, Function &F,
                                        const SiteProfileHeader &profileHeader,
@@ -166,8 +166,9 @@ static Error proposeSubgraphCandidates(Session &S, Function &F,
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
     if (O.Candidates.EnableRewrite)
-      if (Error E = proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
-                                            symbolCounter, st, st.rewriteUnits))
+      if (Error E =
+              proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
+                                      symbolCounter, st, st.algebraicUnits))
         return E;
 
     if (O.Candidates.EnablePrecision)
@@ -297,9 +298,9 @@ static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
 void SiteState::sealUnits(Session &S) {
   assert(!unitsSealed && "a site's units are sealed once");
   unitsSealed = true;
-  for (size_t i = 0; i < rewriteUnits.size(); ++i) {
-    rewriteUnits[i].bind(S, *this, *this, i);
-    units.push_back(&rewriteUnits[i]);
+  for (size_t i = 0; i < algebraicUnits.size(); ++i) {
+    algebraicUnits[i].bind(S, *this, *this, i);
+    units.push_back(&algebraicUnits[i]);
   }
   for (size_t i = 0; i < precisionUnits.size(); ++i) {
     precisionUnits[i].bind(S, *this, *this, i);
@@ -321,7 +322,7 @@ static Error requireCostsOnAxis(SiteState &st, ArrayRef<SiteUnit *> units) {
   for (SiteUnit *unit : units)
     for (size_t i = 0; i < unit->numCandidates(); ++i) {
       double delta;
-      if (auto *RU = dyn_cast<RewriteUnit>(unit)) {
+      if (auto *RU = dyn_cast<AlgebraicUnit>(unit)) {
         if (RU->candidates[i].CompCost == std::numeric_limits<double>::max())
           continue;
         delta = RU->getCompCostDelta(i);

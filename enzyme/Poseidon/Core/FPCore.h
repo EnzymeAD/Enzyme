@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MODEL_FPCORE_H
-#define POSEIDON_MODEL_FPCORE_H
+#ifndef POSEIDON_CORE_FPCORE_H
+#define POSEIDON_CORE_FPCORE_H
 
 #include "FPNode.h"
 
@@ -153,4 +153,4 @@ void getUniqueArgs(const std::string &expr,
                    llvm::SmallSet<std::string, 8> &args);
 
 } // namespace poseidon
-#endif // POSEIDON_MODEL_FPCORE_H
+#endif // POSEIDON_CORE_FPCORE_H

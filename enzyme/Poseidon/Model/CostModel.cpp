@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostModel.h"
-#include "FPCore.h"
-#include "FPFormat.h"
+#include "Core/FPCore.h"
+#include "Core/NumberFormat.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -61,7 +61,7 @@ static Expected<double> rowCost(CostModelState &CM, const Instruction &At,
 
 // The cost-model type column of `T`, or empty when it has none.
 static StringRef costType(Type *T) {
-  const FPFormatInfo *F = formatOf(T);
+  const NumberFormatInfo *F = formatOf(T);
   return F ? StringRef(F->CostType) : StringRef();
 }
 

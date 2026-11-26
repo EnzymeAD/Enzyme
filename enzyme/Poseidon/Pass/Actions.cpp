@@ -21,8 +21,8 @@
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
+#include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Rewrite/Rewrite.h"
 #include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"

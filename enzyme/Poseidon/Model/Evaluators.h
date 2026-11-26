@@ -21,8 +21,8 @@
 #include "llvm/IR/Value.h"
 #include <unordered_map>
 
-#include "FPFormat.h"
-#include "FPNode.h"
+#include "Core/FPNode.h"
+#include "Core/NumberFormat.h"
 #include "Model/ExpansionModel.h"
 
 namespace poseidon {
@@ -37,7 +37,7 @@ inline constexpr unsigned kMaxMPFRPrecision = 1024;
 class FPEvaluator {
 private:
   llvm::DenseMap<const FPNode *, double> cache;
-  std::unordered_map<const FPNode *, FPKind> nodePrecisions;
+  std::unordered_map<const FPNode *, NumberFormat> nodePrecisions;
   /// The position, among the candidate's changes, of the change a node
   /// belongs to.
   std::unordered_map<const FPNode *, size_t> nodeChange;
@@ -47,12 +47,12 @@ private:
   std::unordered_map<const FPNode *, double> approxSqrtError;
 
   bool evaluateExpansionNode(const FPNode *node, unsigned n);
-  FPKind getNodePrecision(const FPNode *node) const;
+  NumberFormat getNodePrecision(const FPNode *node) const;
   /// An if, and, or, not, TRUE or FALSE; false for any other node.
   bool evaluateLogic(const FPNode *node,
                      const llvm::MapVector<llvm::Value *, double> &inputValues);
   /// Any other operation, its operands evaluated, at `nodePrec`.
-  double evaluateOperation(const FPNode *node, FPKind nodePrec) const;
+  double evaluateOperation(const FPNode *node, NumberFormat nodePrec) const;
 
 public:
   /// An evaluator of the candidate whose precision changes are `changes`;

@@ -7,9 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Evaluators.h"
-#include "FPCore.h"
-#include "FPFormat.h"
-#include "FPNode.h"
+#include "Core/FPCore.h"
+#include "Core/FPNode.h"
+#include "Core/NumberFormat.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -39,7 +39,7 @@ FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
       nodePrecisions[node] = change.newType;
       nodeChange[node] = index;
       auto *CI = dyn_cast<CallInst>(node->value);
-      if (change.newType == FPKind::FP32 && CI &&
+      if (change.newType == NumberFormat::FP32 && CI &&
           approxSqrtF32Of(*CI) != Intrinsic::not_intrinsic)
         approxSqrtError[node] =
             Target::of(*CI->getModule()).approxSqrtF32Error();
@@ -77,8 +77,8 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     if (kept != components.end() && nodeChange.at(o) == nodeChange.at(node))
       return kept->second;
     double v = getResult(o);
-    return o->hasPrecision(FPKind::FP32) ? expansionFromF32((float)v, n)
-                                         : expansionFromF64(v, n);
+    return o->hasPrecision(NumberFormat::FP32) ? expansionFromF32((float)v, n)
+                                               : expansionFromF64(v, n);
   };
   // A value multiplied by itself is materialized as a square.
   const bool sameFactor =
@@ -101,17 +101,17 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
                    : expansionFma(operand(0), operand(1), operand(2));
   components[node] = r;
-  cache.try_emplace(node, node->hasPrecision(FPKind::FP32)
+  cache.try_emplace(node, node->hasPrecision(NumberFormat::FP32)
                               ? (double)expansionToF32(r)
                               : expansionToF64(r));
   return true;
 }
 
-FPKind FPEvaluator::getNodePrecision(const FPNode *node) const {
+NumberFormat FPEvaluator::getNodePrecision(const FPNode *node) const {
   auto it = nodePrecisions.find(node);
   if (it != nodePrecisions.end())
     return it->second;
-  const FPFormatInfo *F = node->format;
+  const NumberFormatInfo *F = node->format;
   assert(F && F->Matrix &&
          "an evaluated node has a format the matrix model has a kind for");
   return F->Kind;
@@ -173,13 +173,13 @@ bool FPEvaluator::evaluateLogic(const FPNode *node,
 }
 
 double FPEvaluator::evaluateOperation(const FPNode *node,
-                                      FPKind nodePrec) const {
-  const bool useReducedFloat = nodePrec == FPKind::FP32 ||
-                               nodePrec == FPKind::FP16 ||
-                               nodePrec == FPKind::BF16;
+                                      NumberFormat nodePrec) const {
+  const bool useReducedFloat = nodePrec == NumberFormat::FP32 ||
+                               nodePrec == NumberFormat::FP16 ||
+                               nodePrec == NumberFormat::BF16;
   // A binary16 or bfloat16 operation is computed in binary32 and rounded.
   auto truncToPrec = [&](float val) -> float {
-    if (nodePrec != FPKind::BF16 && nodePrec != FPKind::FP16)
+    if (nodePrec != NumberFormat::BF16 && nodePrec != NumberFormat::FP16)
       return val;
     return static_cast<float>(roundToPrec((double)val, nodePrec));
   };
@@ -229,10 +229,10 @@ void FPEvaluator::evaluateNode(const FPNode *node,
   if (evaluateLogic(node, inputValues))
     return;
 
-  FPKind nodePrec = getNodePrecision(node);
+  NumberFormat nodePrec = getNodePrecision(node);
   for (const auto &operand : node->operands)
     evaluateNode(operand, inputValues);
-  if (nodePrec == FPKind::FP80 || nodePrec == FPKind::FP128)
+  if (nodePrec == NumberFormat::FP80 || nodePrec == NumberFormat::FP128)
     llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
   if (const unsigned nExp = expansionComponents(nodePrec))
     if (evaluateExpansionNode(node, nExp))

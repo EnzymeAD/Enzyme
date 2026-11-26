@@ -8,7 +8,7 @@
 
 #include "FPNode.h"
 #include "FPCore.h"
-#include "FPFormat.h"
+#include "NumberFormat.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -43,7 +43,7 @@ static constexpr unsigned kMaxExprDepth = 100;
 static constexpr unsigned kMaxInlinedOps = 3;
 
 // The LLVM type of `format`; null for none.
-static Type *llvmTypeOf(const FPFormatInfo *format, IRBuilder<> &builder) {
+static Type *llvmTypeOf(const NumberFormatInfo *format, IRBuilder<> &builder) {
   return format ? format->LLVMType(builder.getContext()) : nullptr;
 }
 
@@ -65,7 +65,7 @@ static Value *mathLibraryCall(IRBuilder<> &b, Module *M, StringRef name,
 
 FPNode::NodeType FPNode::getType() const { return ntype; }
 
-bool FPNode::hasPrecision(FPKind P) const {
+bool FPNode::hasPrecision(NumberFormat P) const {
   return format && format->Kind == P;
 }
 
@@ -405,7 +405,7 @@ emitSharedElements(FPGraph &G, ArrayRef<FPNode *> elements,
     count(element);
 
   StringMap<Value *> emitted;
-  auto placeholder = [&](Value *V, const FPFormatInfo *format) {
+  auto placeholder = [&](Value *V, const NumberFormatInfo *format) {
     if (VMap)
       (*VMap)[V] = V;
     return G.create<FPLLValue>(V, nullptr, format);

@@ -248,7 +248,7 @@ serves only a compile that gets the same answers.
 | Cost model, `cm_<arch>_<device>.csv` and its Herbie platform | `poseidon-calibrate` | plugin | `tools/calibrate/README.md` |
 | Explanation, `<function>.explain.json` | plugin (`-poseidon-explain`) | `poseidon-explain`, `poseidon-calibrate` | `Solve/Explain.h` |
 | Launch manifest | device half of a GPU compile | host half | `Sites/LaunchManifest.h` |
-| Herbie answer, in the cache directory | plugin | plugin | `Techniques/Rewrite/HerbieRun.cpp` |
+| Herbie answer, in the cache directory | plugin | plugin | `Techniques/Algebraic/HerbieRun.cpp` |
 | Solved table (DP), in the cache directory | plugin | plugin | `Solve/SolveSites.cpp`, `Support/CacheKey.h` |
 
 ### Platform

@@ -7,9 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Sampling.h"
+#include "Core/FPCore.h"
+#include "Core/FPNode.h"
 #include "Evaluators.h"
-#include "FPCore.h"
-#include "FPNode.h"
 #include "Support/Diagnostics.h"
 #include "Support/Options.h"
 #include "Support/Parallel.h"

@@ -15,9 +15,9 @@
 #define POSEIDON_TECHNIQUES_PRECISION_PRECISION_H
 
 #include "../SiteUnit.h"
+#include "Core/FPNode.h"
+#include "Core/NumberFormat.h"
 #include "Model/CostModel.h"
-#include "Model/FPFormat.h"
-#include "Model/FPNode.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
@@ -39,7 +39,7 @@
 namespace poseidon {
 
 class PrecisionUnit;
-class RewriteUnit;
+class AlgebraicUnit;
 class Session;
 struct SiteProfileHeader;
 
@@ -98,17 +98,17 @@ public:
   /// Each output's part of initialAccCost, by the output's node.
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
 
-  using RewriteUnitSet = std::set<RewriteUnit *>;
+  using AlgebraicUnitSet = std::set<AlgebraicUnit *>;
   /// A repricing: a candidate, by position, and the rewrite units of the same
   /// subgraph among the steps it is priced after.
   struct RepriceKey {
     /// The candidate's position in `candidates`.
     size_t candidateIndex;
     /// The rewrite units of the subgraph the candidate is priced after.
-    RewriteUnitSet RewriteUnits;
+    AlgebraicUnitSet AlgebraicUnits;
     bool operator<(const RepriceKey &other) const {
-      return std::tie(candidateIndex, RewriteUnits) <
-             std::tie(other.candidateIndex, other.RewriteUnits);
+      return std::tie(candidateIndex, AlgebraicUnits) <
+             std::tie(other.candidateIndex, other.AlgebraicUnits);
     }
   };
 

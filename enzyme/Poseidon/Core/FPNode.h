@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_MODEL_FPNODE_H
-#define POSEIDON_MODEL_FPNODE_H
+#ifndef POSEIDON_CORE_FPNODE_H
+#define POSEIDON_CORE_FPNODE_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -39,9 +39,9 @@
 namespace poseidon {
 
 struct FPCoreOperator;
-struct FPFormatInfo;
+struct NumberFormatInfo;
 class FPGraph;
-enum class FPKind;
+enum class NumberFormat;
 
 /// A node of the expression graph: an operation, with its operands, of a
 /// parsed rewrite. Values of the program and literals are the subclasses
@@ -61,7 +61,7 @@ public:
   const FPCoreOperator *op;
   /// The format of the node's value; null for a value that is not a
   /// floating-point number of a format of the pass.
-  const FPFormatInfo *format;
+  const NumberFormatInfo *format;
   /// The FPCore variable ("v0") a Herbie core names a subgraph input by;
   /// empty for any other node.
   std::string symbol;
@@ -78,10 +78,10 @@ public:
   uint64_t executions = 0;
 
   /// An operation of a parsed rewrite; to be created through an FPGraph.
-  explicit FPNode(const FPCoreOperator &op, const FPFormatInfo *format)
+  explicit FPNode(const FPCoreOperator &op, const NumberFormatInfo *format)
       : ntype(NodeType::Node), op(&op), format(format) {}
   explicit FPNode(NodeType ntype, const FPCoreOperator *op,
-                  const FPFormatInfo *format)
+                  const NumberFormatInfo *format)
       : ntype(ntype), op(op), format(format) {}
   virtual ~FPNode() = default;
 
@@ -89,7 +89,7 @@ public:
   /// Whether the node's operator is the row `O`.
   bool is(const FPCoreOperator &O) const { return op == &O; }
   /// Whether the node's value has the format of precision `P`.
-  bool hasPrecision(FPKind P) const;
+  bool hasPrecision(NumberFormat P) const;
   /// Appends `operand`, a node of the same graph.
   void addOperand(FPNode *operand);
   bool hasSymbol() const { return !symbol.empty(); }
@@ -149,7 +149,7 @@ public:
   /// `op` is the operator of the operation `value` is, null for any other
   /// value.
   explicit FPLLValue(llvm::Value *value, const FPCoreOperator *op,
-                     const FPFormatInfo *format)
+                     const NumberFormatInfo *format)
       : FPNode(NodeType::LLValue, op, format), value(value) {}
 
   /// The value, or its image under `VMap`, which must map it; emits nothing.
@@ -173,7 +173,7 @@ private:
 
 public:
   /// The literal `literal` of `format`; to be created through an FPGraph.
-  explicit FPConst(std::string literal, const FPFormatInfo *format)
+  explicit FPConst(std::string literal, const NumberFormatInfo *format)
       : FPNode(NodeType::Const, nullptr, format), strValue(std::move(literal)) {
     lb = ub = literalValue(strValue);
   }
@@ -287,4 +287,4 @@ private:
 };
 
 } // namespace poseidon
-#endif // POSEIDON_MODEL_FPNODE_H
+#endif // POSEIDON_CORE_FPNODE_H

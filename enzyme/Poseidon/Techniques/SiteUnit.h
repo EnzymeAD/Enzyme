@@ -16,7 +16,7 @@
 #ifndef POSEIDON_TECHNIQUES_SITE_UNIT_H
 #define POSEIDON_TECHNIQUES_SITE_UNIT_H
 
-#include "Model/FPNode.h"
+#include "Core/FPNode.h"
 #include "Model/Sampling.h"
 #include "Solve/DP.h"
 
@@ -50,7 +50,7 @@ class FPGraph;
 struct SiteState;
 
 /// The kinds of unit, by the letter -poseidon-pin names them with.
-enum class UnitKind { Rewrite, Precision, Matmul };
+enum class UnitKind { Algebraic, Precision, Matmul };
 
 /// What the pass's fixed formats call one kind of unit.
 struct UnitKindInfo {

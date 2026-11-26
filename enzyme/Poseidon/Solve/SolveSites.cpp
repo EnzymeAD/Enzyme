@@ -12,8 +12,8 @@
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
+#include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Precision/Precision.h"
-#include "Techniques/Rewrite/Rewrite.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -319,11 +319,11 @@ static Error checkToleranceInputs(const Function &at, StringRef siteName,
 // The modelled error of the code as written. The DP table is relative to it
 // (costToAccuracyMap[0] == 0) while a tolerance is an absolute level. Each
 // subgraph counts once: a PrecisionUnit's initial cost covers every output of
-// its subgraph, so RewriteUnit baselines count only on subgraphs without one.
+// its subgraph, so AlgebraicUnit baselines count only on subgraphs without one.
 // A MatmulUnit's baseline is zero. `unpriced` is increased by the number of
-// RewriteUnits, and of outputs of PrecisionUnits, left out for want of a
+// AlgebraicUnits, and of outputs of PrecisionUnits, left out for want of a
 // price.
-static double baselineAccCost(ArrayRef<RewriteUnit> rewriteUnits,
+static double baselineAccCost(ArrayRef<AlgebraicUnit> algebraicUnits,
                               ArrayRef<PrecisionUnit> precisionUnits,
                               unsigned &unpriced) {
   SmallPtrSet<const Subgraph *, 4> subgraphsWithPrecision;
@@ -335,10 +335,10 @@ static double baselineAccCost(ArrayRef<RewriteUnit> rewriteUnits,
       unpriced += PU.subgraph->outputs.size();
   }
   SmallPtrSet<const Value *, 8> arrayPriced;
-  for (const auto &RU : rewriteUnits) {
+  for (const auto &RU : algebraicUnits) {
     if (subgraphsWithPrecision.count(RU.subgraph))
       continue;
-    // A RewriteUnit with no candidates was never priced, so its share of the
+    // A AlgebraicUnit with no candidates was never priced, so its share of the
     // baseline is unknown; it cannot appear in a solution either.
     if (RU.candidates.empty()) {
       ++unpriced;
@@ -526,7 +526,8 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
   unsigned unpriced = 0;
   double baseline = 0.0;
   for (SiteState *st : sites)
-    baseline += baselineAccCost(st->rewriteUnits, st->precisionUnits, unpriced);
+    baseline +=
+        baselineAccCost(st->algebraicUnits, st->precisionUnits, unpriced);
 
   if (loadedFromCache) {
     costToAccuracyMap = table->costToAccuracyMap;

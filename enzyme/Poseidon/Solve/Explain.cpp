@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Explain.h"
+#include "Core/FPCore.h"
 #include "Model/CostModel.h"
-#include "Model/FPCore.h"
 #include "Optimize.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Session.h"
@@ -16,9 +16,9 @@
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
+#include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision/Precision.h"
-#include "Techniques/Rewrite/Rewrite.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -97,10 +97,10 @@ static std::string typeName(Type *T) {
   return s;
 }
 
-static std::string precisionWords(FPKind t) {
+static std::string precisionWords(NumberFormat t) {
   if (unsigned k = expansionComponents(t))
     return formatv("a {0}-component float expansion", k).str();
-  const FPFormatInfo &format = formatOf(t);
+  const NumberFormatInfo &format = formatOf(t);
   return (format.Words.empty() ? format.Name : format.Words).str();
 }
 
@@ -605,7 +605,7 @@ class Explainer {
   void markSteps();
   Error buildSubgraph(size_t s);
   Error buildMatmul(size_t m);
-  Error addRewriteAlternatives(Unit &U, const Subgraph &sg);
+  Error addAlgebraicAlternatives(Unit &U, const Subgraph &sg);
   Error addPrecisionAlternatives(Unit &U, const Subgraph &sg);
   // `cost` on the solve's axis; an error at the site when the axis cannot hold
   // it.
@@ -661,10 +661,10 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
                           "cost");
 }
 
-Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
+Error Explainer::addAlgebraicAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
-  for (size_t i = 0; i < st.rewriteUnits.size(); ++i) {
-    RewriteUnit &RU = st.rewriteUnits[i];
+  for (size_t i = 0; i < st.algebraicUnits.size(); ++i) {
+    AlgebraicUnit &RU = st.algebraicUnits[i];
     if (RU.subgraph != &sg)
       continue;
     json::Object core;
@@ -737,7 +737,7 @@ Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
     };
 
     for (size_t j = 0; j < RU.candidates.size(); ++j) {
-      const RewriteCandidate &cand = RU.candidates[j];
+      const AlgebraicCandidate &cand = RU.candidates[j];
       Alt A;
       A.id = formatv("R{0}_{1}", i, cand.ordinal).str();
       A.item = &RU;
@@ -812,7 +812,7 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
           A.changedOps.push_back(w);
           if (!expansionComponents(ch.newType))
             dtypes[node] =
-                dtypeOfType(llvmTypeForFPKind(F.getContext(), ch.newType));
+                dtypeOfType(storageTypeOf(F.getContext(), ch.newType));
         }
         c["ops"] = std::move(idx);
         A.changes.push_back(std::move(c));
@@ -866,9 +866,9 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
         cost = *c;
       }
       double acc = PU.getAccCostDelta(j);
-      PrecisionUnit::RewriteUnitSet cos;
+      PrecisionUnit::AlgebraicUnitSet cos;
       for (const auto &[item, idx] : applied)
-        for (RewriteUnit &RU : st.rewriteUnits)
+        for (AlgebraicUnit &RU : st.algebraicUnits)
           if (&RU == item && RU.subgraph == &sg)
             cos.insert(&RU);
       if (applied.count({&PU, j}) && !cos.empty()) {
@@ -1009,7 +1009,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     SmallVector<std::string, 2> why;
     if (sg) {
       bool hadRewrite = false;
-      for (const RewriteUnit &RU : st.rewriteUnits)
+      for (const AlgebraicUnit &RU : st.algebraicUnits)
         if (RU.subgraph == sg) {
           hadRewrite = true;
           if (!RU.unpricedReason.empty())
@@ -1137,7 +1137,7 @@ Error Explainer::buildSubgraph(size_t s) {
       out["name"] = name;
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
-    for (const RewriteUnit &RU : st.rewriteUnits)
+    for (const AlgebraicUnit &RU : st.algebraicUnits)
       if (RU.subgraph == &sg && !RU.isArray() && RU.roots.front() == O) {
         out["fpcore"] = RU.expr;
         break;
@@ -1199,7 +1199,7 @@ Error Explainer::buildSubgraph(size_t s) {
     }
   }
 
-  if (Error E = addRewriteAlternatives(U, sg))
+  if (Error E = addAlgebraicAlternatives(U, sg))
     return E;
   if (Error E = addPrecisionAlternatives(U, sg))
     return E;

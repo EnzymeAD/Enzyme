@@ -266,11 +266,11 @@ static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
 // The tiles poseidon-calibrate measures, so that a missing row is always one
 // it can produce.
 static constexpr InKernelTile kInKernelTiles[] = {
-    {16, 16, 16, FPKind::FP16, FPKind::FP16},
-    {16, 16, 16, FPKind::FP16, FPKind::FP32},
-    {16, 16, 16, FPKind::BF16, FPKind::FP32},
-    {16, 16, 8, FPKind::TF32, FPKind::FP32},
-    {8, 8, 4, FPKind::FP64, FPKind::FP64},
+    {16, 16, 16, NumberFormat::FP16, NumberFormat::FP16},
+    {16, 16, 16, NumberFormat::FP16, NumberFormat::FP32},
+    {16, 16, 16, NumberFormat::BF16, NumberFormat::FP32},
+    {16, 16, 8, NumberFormat::TF32, NumberFormat::FP32},
+    {8, 8, 4, NumberFormat::FP64, NumberFormat::FP64},
 };
 
 // The tensor-core tiles the cost model has an MMA row for; a tile without one
@@ -283,7 +283,7 @@ getAvailableWmmaTargets(Session &S, const RecognizedMatmul &m) {
     for (const InKernelTile &t : kInKernelTiles) {
       std::string opcode = "wmma_mma_" + mmaShapeSuffix(t.M, t.N, t.K);
       std::string prec =
-          std::string(fpKindName(t.operand)) + "_" + fpKindName(t.accumulator);
+          std::string(dtypeName(t.operand)) + "_" + dtypeName(t.accumulator);
       if (model.find({opcode, prec}) != model.end())
         result.push_back(t);
       else if (Error E = reportMissingRow(S, m,
@@ -390,8 +390,8 @@ static uint64_t inKernelRaiseSharedBytes(Module &M, const RecognizedMatmul &m,
     return 0;
   const DataLayout &DL = M.getDataLayout();
   LLVMContext &ctx = M.getContext();
-  auto bytesOf = [&](FPKind k) -> uint64_t {
-    return DL.getTypeAllocSize(llvmTypeForFPKind(ctx, k)).getFixedValue();
+  auto bytesOf = [&](NumberFormat k) -> uint64_t {
+    return DL.getTypeAllocSize(storageTypeOf(ctx, k)).getFixedValue();
   };
   const InKernelLayout L = inKernelLayout(m, opt);
   const SchemeVariant &v = opt.variant;
@@ -403,12 +403,12 @@ static uint64_t inKernelRaiseSharedBytes(Module &M, const RecognizedMatmul &m,
     if (v.scheme == Scheme::Tcec)
       *breakdown =
           (Twine(L.slices) + " slices x " + Twine(a + b + d) + " B (A " +
-           Twine(a) + " + B " + Twine(b) + " + D " + fpKindName(v.accumulator) +
+           Twine(a) + " + B " + Twine(b) + " + D " + dtypeName(v.accumulator) +
            " " + Twine(d) + ", " + tile + " output tile)")
               .str();
     else
       *breakdown =
-          (Twine(d) + " B D tile (" + tile + " " + fpKindName(v.accumulator) +
+          (Twine(d) + " B D tile (" + tile + " " + dtypeName(v.accumulator) +
            ") + " + Twine(a) + " B A tile + " + Twine(b) + " B B tile")
               .str();
   }
@@ -472,8 +472,8 @@ static MatmulAccuracyQuery accuracyQuery(const RecognizedMatmul &m,
       q.model = MatmulAccuracyQuery::Model::TcecLibrary;
       return q;
     }
-    q.inputPrec = FPKind::FP32;
-    q.accPrec = FPKind::FP32;
+    q.inputPrec = NumberFormat::FP32;
+    q.accPrec = NumberFormat::FP32;
     q.exponentPrec = v.operand;
     q.inputMantBits = splitCapturedBits(v);
     return q;
@@ -494,7 +494,8 @@ static MatmulAccuracyQuery accuracyQuery(const RecognizedMatmul &m,
 
 static Expected<bool> wmmaTileAvailable(Session &S, const RecognizedMatmul &m,
                                         unsigned M, unsigned N, unsigned K,
-                                        FPKind operand, FPKind accumulator) {
+                                        NumberFormat operand,
+                                        NumberFormat accumulator) {
   Expected<const SmallVector<InKernelTile, 16> *> targets =
       getAvailableWmmaTargets(S, m);
   if (!targets)
@@ -623,13 +624,17 @@ struct InKernelSplitVariant {
   SchemeVariant variant;
 };
 static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
-    {16, 16, 16, SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, 2)},
-    {16, 16, 16, SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, 3)},
-    {16, 16, 16, SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, 5)},
-    {16, 16, 16, SchemeVariant::tcec(FPKind::BF16, FPKind::FP32, 2)},
-    {16, 16, 8, SchemeVariant::tcec(FPKind::TF32, FPKind::FP32, 2)},
-    {16, 16, 8, SchemeVariant::tcec(FPKind::TF32, FPKind::FP32, 3)},
-    {16, 16, 8, SchemeVariant::tcec(FPKind::TF32, FPKind::FP32, 5)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 3)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 5)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::BF16, NumberFormat::FP32, 2)},
+    {16, 16, 8, SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, 2)},
+    {16, 16, 8, SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, 3)},
+    {16, 16, 8, SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, 5)},
     // Integer slices (s8) are intentionally not proposed: in-kernel they have
     // the same structural slowdown as an in-kernel modular product, and the
     // modular library calls cover their range.
@@ -838,7 +843,8 @@ static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
   if (!L.hasLibraryCall)
     return Error::success();
   MatmulUnit::Option opt = libraryOption(
-      SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, 2), 16, 16, 16);
+      SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2), 16, 16,
+      16);
   if (!kHaveTcecRuntime) {
     if (P.S.Opts.Diagnostics.Print &&
         !std::exchange(P.S.Matmul.ReportedNoTcecRuntime, true))
@@ -880,10 +886,10 @@ struct LibraryDirectVariant {
   unsigned tileM, tileN, tileK;
 };
 static constexpr LibraryDirectVariant kLibraryDirectVariants[] = {
-    {SchemeVariant::direct(FPKind::FP16, FPKind::FP32), 16, 16, 16},
-    {SchemeVariant::direct(FPKind::BF16, FPKind::FP32), 16, 16, 16},
-    {SchemeVariant::direct(FPKind::TF32, FPKind::FP32), 16, 16, 8},
-    {SchemeVariant::direct(FPKind::FP32, FPKind::FP32), 0, 0, 0},
+    {SchemeVariant::direct(NumberFormat::FP16, NumberFormat::FP32), 16, 16, 16},
+    {SchemeVariant::direct(NumberFormat::BF16, NumberFormat::FP32), 16, 16, 16},
+    {SchemeVariant::direct(NumberFormat::TF32, NumberFormat::FP32), 16, 16, 8},
+    {SchemeVariant::direct(NumberFormat::FP32, NumberFormat::FP32), 0, 0, 0},
 };
 
 static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,

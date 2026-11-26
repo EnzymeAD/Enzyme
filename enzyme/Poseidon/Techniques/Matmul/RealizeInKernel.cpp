@@ -17,9 +17,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/NumberFormat.h"
 #include "Enzyme/Utils.h"
 #include "Internal.h"
-#include "Model/FPFormat.h"
 #include "Support/Utils.h"
 #include "Targets/NVPTX.h"
 #include "Targets/Target.h"
@@ -126,23 +126,23 @@ emitThreadLinAndBlockSize(IRBuilder<> &B, Module *M, const uint32_t (&block)[3],
   return {B.CreateAdd(B.CreateMul(planeRow, nx), tx), bsz};
 }
 
-static double veltkampScale(FPKind slice) {
+static double veltkampScale(NumberFormat slice) {
   return std::ldexp(1.0, sliceFormat(slice).scaleExponent);
 }
 
 // Quantize an F32 value to slice precision (half for F16/BF16; float for TF32,
 // bit-identical to F32 with the bottom 13 mantissa bits zeroed).
 static Value *emitSliceQuantize(IRBuilder<> &B, Module *mod, Value *vs_f32,
-                                FPKind slice) {
-  if (slice == FPKind::FP16 || slice == FPKind::BF16)
-    return B.CreateFPTrunc(vs_f32, llvmTypeForFPKind(B.getContext(), slice));
+                                NumberFormat slice) {
+  if (slice == NumberFormat::FP16 || slice == NumberFormat::BF16)
+    return B.CreateFPTrunc(vs_f32, storageTypeOf(B.getContext(), slice));
   return nvptx::emitRoundToTF32(B, mod, vs_f32);
 }
 
 // Slice value back to F32 for the next residual; TF32 is already F32 storage.
-static Value *emitSliceToF32(IRBuilder<> &B, Value *slice, FPKind kind) {
+static Value *emitSliceToF32(IRBuilder<> &B, Value *slice, NumberFormat kind) {
   Type *f32Ty = Type::getFloatTy(B.getContext());
-  if (kind == FPKind::TF32)
+  if (kind == NumberFormat::TF32)
     return slice; // bit-pattern already in float
   return B.CreateFPExt(slice, f32Ty);
 }
@@ -154,7 +154,8 @@ static Value *emitSliceToF32(IRBuilder<> &B, Value *slice, FPKind kind) {
 // significand bits of its format (sliceFormat).
 static SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B,
                                                      Module *mod, Value *vs_f32,
-                                                     unsigned N, FPKind slice) {
+                                                     unsigned N,
+                                                     NumberFormat slice) {
   Type *f32Ty = Type::getFloatTy(B.getContext());
   Value *scale = ConstantFP::get(f32Ty, veltkampScale(slice));
   SmallVector<Value *, 8> slices;
@@ -431,9 +432,9 @@ static RaiseContext makeRaiseContext(const RecognizedMatmul &m,
   C.i64Ty = Type::getInt64Ty(ctx);
   C.f32Ty = Type::getFloatTy(ctx);
   C.genPtrTy = getInt8PtrTy(ctx);
-  C.srcTy = llvmTypeForFPKind(ctx, m.elemType);
-  C.opTy = llvmTypeForFPKind(ctx, v.operand);
-  C.accTy = llvmTypeForFPKind(ctx, v.accumulator);
+  C.srcTy = storageTypeOf(ctx, m.elemType);
+  C.opTy = storageTypeOf(ctx, v.operand);
+  C.accTy = storageTypeOf(ctx, v.accumulator);
   C.tag = C.split ? "ozaki" : "wmma";
   C.srcByte = (int64_t)DL.getTypeAllocSize(C.srcTy).getFixedValue();
   C.opByte = (int64_t)DL.getTypeAllocSize(C.opTy).getFixedValue();
@@ -446,7 +447,7 @@ static RaiseContext makeRaiseContext(const RecognizedMatmul &m,
   C.bRowMajor = h.bStrideByte != C.srcByte;
 
   C.wmma = nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK,
-                              fpKindName(v.operand), fpKindName(v.accumulator),
+                              dtypeName(v.operand), dtypeName(v.accumulator),
                               /*bRowMajor=*/true);
   FunctionType *mmaFTy = C.wmma.Mma->getFunctionType();
   C.aFragSize = fragSize(C.wmma.LoadA->getFunctionType()->getReturnType());
@@ -485,14 +486,14 @@ static void createScratch(const RaiseContext &C,
   };
   for (unsigned k = 0; k < C.N; ++k) {
     a.push_back(getOrCreateSharedScratch(
-        C.mod, scratchName("a", k, fpKindName(v.operand), C.L.mPad, C.t.tileK),
+        C.mod, scratchName("a", k, dtypeName(v.operand), C.L.mPad, C.t.tileK),
         C.opTy, C.L.aElts()));
     b.push_back(getOrCreateSharedScratch(
-        C.mod, scratchName("b", k, fpKindName(v.operand), C.t.tileK, C.L.nPad),
+        C.mod, scratchName("b", k, dtypeName(v.operand), C.t.tileK, C.L.nPad),
         C.opTy, C.L.bElts()));
     d.push_back(getOrCreateSharedScratch(
         C.mod,
-        scratchName("d", k, fpKindName(v.accumulator), C.L.mPad, C.L.nPad),
+        scratchName("d", k, dtypeName(v.accumulator), C.L.mPad, C.L.nPad),
         C.accTy, C.L.dElts()));
   }
 }
@@ -603,7 +604,7 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
   const bool rangeChecked = C.L.padded(m) || C.split;
   const std::string fillName =
       (C.tag + (rangeChecked ? "_pfill" : "_cfill")).str();
-  const FPKind operand = C.t.variant.operand;
+  const NumberFormat operand = C.t.variant.operand;
   auto payload = [&](IRBuilder<> &PB, Value *x) -> SmallVector<Value *, 8> {
     if (C.split) {
       Value *xF32 = emitFPCast(PB, x, C.f32Ty);
@@ -613,7 +614,7 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
     // wmma.load.a/b.tf32 reads the float bit pattern as it is and the MMA
     // truncates the low 13 mantissa bits, which biases the result one way, so
     // the fill rounds to nearest first.
-    if (operand == FPKind::TF32)
+    if (operand == NumberFormat::TF32)
       cvt = nvptx::emitRoundToTF32(PB, C.mod, cvt);
     return {cvt};
   };
@@ -913,8 +914,8 @@ void materializeInKernel(const RecognizedMatmul &m,
   assert(t.realization == Realization::InKernel &&
          (v.scheme == Scheme::Direct || v.scheme == Scheme::Tcec) &&
          "only the in-kernel direct and split schemes are realized here");
-  assert((v.scheme != Scheme::Tcec ||
-          (v.accumulator == FPKind::FP32 && v.operand != FPKind::FP64)) &&
+  assert((v.scheme != Scheme::Tcec || (v.accumulator == NumberFormat::FP32 &&
+                                       v.operand != NumberFormat::FP64)) &&
          "a split scheme slices into a 16- or 19-bit format and accumulates "
          "in F32");
   const ScalarLoopHandle &h = m.scalarLoop;

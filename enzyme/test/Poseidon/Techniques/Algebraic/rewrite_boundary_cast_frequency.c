@@ -7,7 +7,7 @@
 // RUN: FileCheck --check-prefix=IR %s < %t/use.ll
 
 // A binary32 rewrite of the value a loop carries, with Herbie's answer canned
-// in Techniques/Rewrite/Inputs/rewrite_boundary_cast_frequency. Written after the loop's output
+// in Techniques/Algebraic/Inputs/rewrite_boundary_cast_frequency. Written after the loop's output
 // x * a + b * a, the rewrite truncates x, p and q and extends its result; in
 // the emitted code x stays binary32 across the back edge, truncated once
 // before the loop and extended once after it. The price follows: per

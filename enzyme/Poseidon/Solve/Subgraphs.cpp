@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Model/FPCore.h"
+#include "Core/FPCore.h"
 #include "Optimize.h"
 #include "Sites/Canonicalize.h"
 #include "Support/Diagnostics.h"
@@ -41,9 +41,10 @@ namespace poseidon {
 
 // The dtype of a node of type T, which an optimizable instruction and its
 // operands only ever have as float or double.
-static const FPFormatInfo *nodeFormat(Type *T) {
-  const FPFormatInfo *F = formatOf(T);
-  assert(F && (F->Kind == FPKind::FP32 || F->Kind == FPKind::FP64) &&
+static const NumberFormatInfo *nodeFormat(Type *T) {
+  const NumberFormatInfo *F = formatOf(T);
+  assert(F &&
+         (F->Kind == NumberFormat::FP32 || F->Kind == NumberFormat::FP64) &&
          "an optimizable instruction computes float or double");
   return F;
 }
@@ -137,8 +138,8 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
             // e.g., powi intrinsic has a constant int as its exponent
             double exponent = static_cast<double>(CI->getSExtValue());
             std::string doubleStr = std::to_string(exponent);
-            valueToNodeMap[operand] =
-                G.create<FPConst>(doubleStr.c_str(), &formatOf(FPKind::FP64));
+            valueToNodeMap[operand] = G.create<FPConst>(
+                doubleStr.c_str(), &formatOf(NumberFormat::FP64));
           } else {
             llvm_unreachable("isOptimizable admits no other operand");
           }

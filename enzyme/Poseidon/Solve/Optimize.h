@@ -17,13 +17,13 @@
 #ifndef POSEIDON_SOLVE_OPTIMIZE_H
 #define POSEIDON_SOLVE_OPTIMIZE_H
 
-#include "Model/FPNode.h"
+#include "Core/FPNode.h"
 #include "Profile/ProfileReader.h"
 #include "Solve/DP.h"
 #include "Support/CacheKey.h"
+#include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision/Precision.h"
-#include "Techniques/Rewrite/Rewrite.h"
 #include "Techniques/SiteUnit.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -187,12 +187,12 @@ struct SiteState : FPGraph {
   /// so it must outlive materialization.
   llvm::SmallVector<RecognizedMatmul, 4> abstractMatmuls;
   /// The rewrite units proposed for the site.
-  llvm::SmallVector<RewriteUnit, 4> rewriteUnits;
+  llvm::SmallVector<AlgebraicUnit, 4> algebraicUnits;
   /// The precision units proposed for the site.
   llvm::SmallVector<PrecisionUnit, 4> precisionUnits;
   /// The matrix-product units proposed for the site.
   llvm::SmallVector<MatmulUnit, 4> matmulUnits;
-  /// The site's units in site order (rewriteUnits, precisionUnits,
+  /// The site's units in site order (algebraicUnits, precisionUnits,
   /// matmulUnits), each bound to this site.
   llvm::SmallVector<SiteUnit *, 8> units;
   /// Whether sealUnits has run.
@@ -213,8 +213,8 @@ struct SiteState : FPGraph {
   std::optional<llvm::ScalarEvolution> raiseSE;
 
   /// Binds every unit to this site and lists it in `units`. Once per site,
-  /// after its last proposal: no unit is added to rewriteUnits, precisionUnits
-  /// or matmulUnits after it.
+  /// after its last proposal: no unit is added to algebraicUnits,
+  /// precisionUnits or matmulUnits after it.
   void sealUnits(Session &S);
 };
 

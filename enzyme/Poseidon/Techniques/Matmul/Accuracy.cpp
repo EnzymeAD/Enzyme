@@ -269,10 +269,10 @@ static unsigned sampleCount(const Options &O) {
 static std::string describe(const MatmulAccuracyQuery &q) {
   switch (q.model) {
   case MatmulAccuracyQuery::Model::Rounded: {
-    std::string s = "matmul in=" + std::string(fpKindName(q.inputPrec));
+    std::string s = "matmul in=" + std::string(dtypeName(q.inputPrec));
     if (q.inputMantBits)
       s += "(" + std::to_string(q.inputMantBits) + "b)";
-    return s + " acc=" + fpKindName(q.accPrec);
+    return s + " acc=" + dtypeName(q.accPrec);
   }
   case MatmulAccuracyQuery::Model::TcecLibrary:
     return "tcec library";
@@ -286,9 +286,9 @@ static std::string describe(const MatmulAccuracyQuery &q) {
 // checked against the profile afterwards, and operands rounded to a bit count
 // never see the input format.
 static MatmulAccuracyQuery sampledPart(MatmulAccuracyQuery q) {
-  q.exponentPrec = FPKind::Invalid;
+  q.exponentPrec = NumberFormat::Invalid;
   if (q.inputMantBits)
-    q.inputPrec = FPKind::Invalid;
+    q.inputPrec = NumberFormat::Invalid;
   return q;
 }
 
@@ -303,9 +303,9 @@ static bool operator==(const MatmulAccuracyQuery &a,
 
 // Round `x` to `bits` significand bits, keeping the F64 exponent range: an
 // emulation scheme's captured precision (16 bits for two BF16 limbs, 22 for two
-// FP16/TF32 limbs) is not a hardware FPKind, and rounding to the nearest kind
-// is wrong in both directions. The exponent range is charged separately via
-// `exponentPrec`.
+// FP16/TF32 limbs) is not a hardware NumberFormat, and rounding to the nearest
+// kind is wrong in both directions. The exponent range is charged separately
+// via `exponentPrec`.
 static double roundToMantBits(double x, unsigned bits) {
   if (bits == 0 || bits >= 53 || !std::isfinite(x) || x == 0.0)
     return x;
@@ -528,9 +528,9 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
   switch (q.model) {
   case MatmulAccuracyQuery::Model::Rounded:
     key.add("model", "rounded");
-    key.add("input format", fpKindName(q.inputPrec));
-    key.add("accumulator format", fpKindName(q.accPrec));
-    key.add("exponent format", fpKindName(q.exponentPrec));
+    key.add("input format", dtypeName(q.inputPrec));
+    key.add("accumulator format", dtypeName(q.accPrec));
+    key.add("exponent format", dtypeName(q.exponentPrec));
     key.add("order tile K", std::to_string(q.orderTileK));
     key.add("input mantissa bits", std::to_string(q.inputMantBits));
     break;
@@ -640,13 +640,14 @@ static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
   // The operands reach `exponentPrec` (Invalid = inputPrec) unscaled: a
   // scheme that scales them first has its own simulation.
   if (q.model == MatmulAccuracyQuery::Model::Rounded) {
-    FPKind expK =
-        (q.exponentPrec == FPKind::Invalid) ? q.inputPrec : q.exponentPrec;
-    double minSub = minSubnormalForKind(expK);
+    NumberFormat expK = (q.exponentPrec == NumberFormat::Invalid)
+                            ? q.inputPrec
+                            : q.exponentPrec;
+    double minSub = minSubnormalOf(expK);
     if (minSub > 0.0)
       for (const CellStat *c : {&prof.a, &prof.b})
         if (c->minMag > 0.0 && c->minMag < minSub)
-          r.outOfRange = (Twine(fpKindName(expK)) +
+          r.outOfRange = (Twine(dtypeName(expK)) +
                           " flushes the smallest profiled operand "
                           "magnitude, " +
                           shortDouble(c->minMag) + ", to zero")

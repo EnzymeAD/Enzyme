@@ -9,10 +9,10 @@
 // lower-fpcore lowers each of them, as a rewrite is lowered, into a function
 // @fpcore.<n>(double %x, double %y) of the module that returns it, its
 // symbols x and y the two arguments.
-#include "Support/Utils.h"
+#include "Core/FPCore.h"
+#include "Core/FPNode.h"
 #include "Model/Evaluators.h"
-#include "Model/FPCore.h"
-#include "Model/FPNode.h"
+#include "Support/Utils.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Metadata.h"
@@ -70,7 +70,7 @@ struct LowerFPCore : PassParent<LowerFPCore> {
       FPGraph G;
       for (auto [Symbol, Arg] : zip(StringRef("xy"), Scratch->args())) {
         auto *Node =
-            G.create<FPLLValue>(&Arg, nullptr, &formatOf(FPKind::FP64));
+            G.create<FPLLValue>(&Arg, nullptr, &formatOf(NumberFormat::FP64));
         Node->symbol = std::string(1, Symbol);
         G.valueToNodeMap[&Arg] = Node;
         G.symbolToValueMap[Node->symbol] = &Arg;

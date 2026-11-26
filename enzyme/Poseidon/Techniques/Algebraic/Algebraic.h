@@ -1,4 +1,4 @@
-//===- Rewrite.h - algebraic rewrites from Herbie -------------------------===//
+//===- Algebraic.h - algebraic rewrites from Herbie -----------------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -11,12 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TECHNIQUES_REWRITE_REWRITE_H
-#define POSEIDON_TECHNIQUES_REWRITE_REWRITE_H
+#ifndef POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H
+#define POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H
 
 #include "../SiteUnit.h"
+#include "Core/FPNode.h"
 #include "Model/CostModel.h"
-#include "Model/FPNode.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
@@ -44,7 +44,7 @@ struct Options;
 class Session;
 
 /// An expression Herbie returned for a core.
-struct RewriteCandidate {
+struct AlgebraicCandidate {
   /// Per execution, in cost-model units; the solver puts the change over the
   /// profiled run on its axis.
   double CompCost = std::numeric_limits<double>::max();
@@ -64,7 +64,7 @@ struct RewriteCandidate {
   size_t ordinal = 0;
 
   /// A candidate of Herbie's relative cost `cost` and accuracy `accuracy`.
-  RewriteCandidate(double cost, double accuracy, std::string expression)
+  AlgebraicCandidate(double cost, double accuracy, std::string expression)
       : herbieCost(cost), herbieAccuracy(accuracy),
         expr(std::move(expression)) {}
 };
@@ -90,7 +90,7 @@ struct BoundaryCastFreq {
 
 /// The rewrites Herbie returned for one core: one output of a subgraph, or a
 /// group of its outputs as an array, at one FPCore precision.
-class RewriteUnit : public SubgraphUnit<RewriteCandidate> {
+class AlgebraicUnit : public SubgraphUnit<AlgebraicCandidate> {
 public:
   /// The core's FPCore body, over the subgraph's input symbols.
   std::string expr;
@@ -115,11 +115,11 @@ public:
   double herbieBits = std::numeric_limits<double>::quiet_NaN();
 
   /// The unit of `outputs` with their gradients `grads`.
-  explicit RewriteUnit(Subgraph &subgraph,
-                       llvm::ArrayRef<llvm::Value *> outputs,
-                       llvm::ArrayRef<double> grads, std::string expr,
-                       uint64_t executions)
-      : SubgraphUnit(UnitKind::Rewrite, subgraph), expr(expr),
+  explicit AlgebraicUnit(Subgraph &subgraph,
+                         llvm::ArrayRef<llvm::Value *> outputs,
+                         llvm::ArrayRef<double> grads, std::string expr,
+                         uint64_t executions)
+      : SubgraphUnit(UnitKind::Algebraic, subgraph), expr(expr),
         roots(outputs.begin(), outputs.end()),
         rootGrads(grads.begin(), grads.end()) {
     this->executions = executions;
@@ -141,7 +141,7 @@ public:
   BoundaryCastFreq boundaryCastFreq(const llvm::LoopInfo &LI) const;
 
   static bool classof(const OptimizationUnit *U) {
-    return U->kind() == unsigned(UnitKind::Rewrite);
+    return U->kind() == unsigned(UnitKind::Algebraic);
   }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
@@ -177,12 +177,12 @@ private:
 void reportHerbieAnswers(Session &S);
 
 /// Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
-/// `subgraphCounter`, appended to `rewriteUnits` unpriced. Its inputs are named
-/// from `symbolCounter`, which the site's subgraphs share.
+/// `subgraphCounter`, appended to `algebraicUnits` unpriced. Its inputs are
+/// named from `symbolCounter`, which the site's subgraphs share.
 llvm::Error
 proposeHerbieCandidates(Session &S, llvm::Function &F, Subgraph &subgraph,
                         int subgraphCounter, int &symbolCounter, FPGraph &G,
-                        llvm::SmallVectorImpl<RewriteUnit> &rewriteUnits);
+                        llvm::SmallVectorImpl<AlgebraicUnit> &algebraicUnits);
 
 } // namespace poseidon
-#endif // POSEIDON_TECHNIQUES_REWRITE_REWRITE_H
+#endif // POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H

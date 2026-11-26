@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TECHNIQUES_REWRITE_HERBIE_RUN_H
-#define POSEIDON_TECHNIQUES_REWRITE_HERBIE_RUN_H
+#ifndef POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H
+#define POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -124,4 +124,4 @@ runHerbie(const std::vector<std::string> &Cores, const Options &O,
           llvm::StringRef Label, HerbieBinaryDigests &Digests);
 
 } // namespace poseidon
-#endif // POSEIDON_TECHNIQUES_REWRITE_HERBIE_RUN_H
+#endif // POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H

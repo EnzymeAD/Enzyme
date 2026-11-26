@@ -98,7 +98,7 @@ function(poseidon_configure_test_program name)
 endfunction()
 
 function(poseidon_add_test_program name)
-  set(LLVM_LINK_COMPONENTS Support)
+  set(LLVM_LINK_COMPONENTS Core Support)
   add_llvm_executable(${name} ${ARGN})
   poseidon_configure_test_program(${name})
 endfunction()
@@ -109,11 +109,11 @@ function(poseidon_add_test_plugin name source)
 endfunction()
 
 poseidon_add_test_program(
-  poseidon-test-round-to-prec Model/round_to_prec_apfloat.cpp
-  ${POSEIDON_SOURCE_DIR}/Model/FPKind.cpp)
+  poseidon-test-round-to-prec Core/round_to_prec_apfloat.cpp
+  ${POSEIDON_SOURCE_DIR}/Core/NumberFormat.cpp)
 poseidon_add_test_program(
   poseidon-test-matmul-scheme Techniques/Matmul/scheme.cpp
-  ${POSEIDON_SOURCE_DIR}/Model/FPKind.cpp)
+  ${POSEIDON_SOURCE_DIR}/Core/NumberFormat.cpp)
 poseidon_add_test_plugin(poseidon-test-expansion-match
                          Inputs/expansion_match/emit.cpp)
 poseidon_add_test_plugin(poseidon-test-model Inputs/model/plugin.cpp)

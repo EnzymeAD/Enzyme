@@ -5,7 +5,7 @@
 // every double: around each format's exponent range, at and next to every kind
 // of tie, through underflow and overflow, and for the special values.
 
-#include "Model/FPKind.h"
+#include "Core/NumberFormat.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/bit.h"
@@ -27,15 +27,15 @@ static double viaAPFloat(double x, const fltSemantics &sem) {
 }
 
 int main() {
-  const std::pair<FPKind, const fltSemantics *> kinds[] = {
-      {FPKind::FP16, &APFloat::IEEEhalf()},
-      {FPKind::BF16, &APFloat::BFloat()},
-      {FPKind::TF32, &APFloat::FloatTF32()},
-      {FPKind::FP32, &APFloat::IEEEsingle()}};
+  const std::pair<NumberFormat, const fltSemantics *> kinds[] = {
+      {NumberFormat::FP16, &APFloat::IEEEhalf()},
+      {NumberFormat::BF16, &APFloat::BFloat()},
+      {NumberFormat::TF32, &APFloat::FloatTF32()},
+      {NumberFormat::FP32, &APFloat::IEEEsingle()}};
   std::mt19937_64 rng(1);
   for (const auto &kindAndSem : kinds) {
     // A structured binding cannot be captured by the lambda below in C++17.
-    const FPKind kind = kindAndSem.first;
+    const NumberFormat kind = kindAndSem.first;
     const fltSemantics *sem = kindAndSem.second;
     const int p = APFloat::semanticsPrecision(*sem);
     const int emin = APFloat::semanticsMinExponent(*sem);
@@ -77,7 +77,7 @@ int main() {
       check(bit_cast<uint64_t>(s));
       check(bit_cast<uint64_t>(-s));
     }
-    outs() << fpKindName(kind) << ": " << checked << " values, " << mismatches
+    outs() << dtypeName(kind) << ": " << checked << " values, " << mismatches
            << " mismatches\n";
   }
 }

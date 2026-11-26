@@ -1,4 +1,4 @@
-//===- Rewrite.cpp - algebraic rewrites from Herbie -----------------------===//
+//===- Algebraic.cpp - algebraic rewrites from Herbie ---------------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -13,17 +13,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Rewrite.h"
+#include "Algebraic.h"
+#include "Core/FPCore.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
-#include "Model/FPCore.h"
 #include "Model/Sampling.h"
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
-#include "Techniques/Rewrite/HerbieRun.h"
+#include "Techniques/Algebraic/HerbieRun.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -326,7 +326,8 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
 // and each expression not in `seen` as a candidate, priced relative to the
 // core as written.
 static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
-                      RewriteUnit &RU, std::unordered_set<std::string> &seen) {
+                      AlgebraicUnit &RU,
+                      std::unordered_set<std::string> &seen) {
   if (!RU.herbieAnswered)
     RU.herbieStatus = status.str();
   if (!answer.Rewrites)
@@ -343,8 +344,8 @@ static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
   auto add = [&](const HerbiePoint &point, const std::string &expr) {
     if (!seen.insert(expr).second)
       return;
-    RewriteCandidate candidate(point.Cost / initialCost,
-                               1.0 - point.ErrorBits / bits, expr);
+    AlgebraicCandidate candidate(point.Cost / initialCost,
+                                 1.0 - point.ErrorBits / bits, expr);
     candidate.ordinal = RU.candidates.size();
     RU.candidates.push_back(candidate);
   };
@@ -360,7 +361,8 @@ static void addAnswer(const HerbieCoreAnswer &answer, StringRef status,
 // or lowers it.
 static Error checkAnswer(const HerbieCoreAnswer &answer,
                          const std::pair<std::string, std::string> &source,
-                         const RewriteUnit &RU, const Function &F, FPGraph &G) {
+                         const AlgebraicUnit &RU, const Function &F,
+                         FPGraph &G) {
   auto check = [&](const std::string &expr) -> Error {
     Expected<FPNode *> parsed =
         parseHerbieExpr(expr, G, nullptr, &RU.subgraph->inputs);
@@ -388,11 +390,11 @@ static Error checkAnswer(const HerbieCoreAnswer &answer,
 }
 
 // Collects Herbie's rewrites of `cores`, cores of the subgraph `subgraphIdx`
-// of the site `F` over the graph `G`, into their units `rewriteUnits`,
+// of the site `F` over the graph `G`, into their units `algebraicUnits`,
 // unpriced.
 static Error collectHerbieRewrites(Session &S,
                                    const std::vector<std::string> &cores,
-                                   std::vector<RewriteUnit> &rewriteUnits,
+                                   std::vector<AlgebraicUnit> &algebraicUnits,
                                    int subgraphIdx, const Function &F,
                                    FPGraph &G) {
   const std::string label =
@@ -403,7 +405,7 @@ static Error collectHerbieRewrites(Session &S,
   HerbieAnswers &H = *Asked;
 
   const bool print = S.Opts.Diagnostics.Print;
-  std::vector<std::unordered_set<std::string>> seenExprs(rewriteUnits.size());
+  std::vector<std::unordered_set<std::string>> seenExprs(algebraicUnits.size());
   for (auto [answers, source] : zip(H.answers, H.sources))
     for (const HerbieCoreAnswer &answer : answers) {
       StringRef status = answer.Status ? StringRef(*answer.Status) : "?";
@@ -425,9 +427,9 @@ static Error collectHerbieRewrites(Session &S,
       }
       if (answer.Rewrites)
         if (Error E =
-                checkAnswer(answer, source, rewriteUnits[answer.Core], F, G))
+                checkAnswer(answer, source, algebraicUnits[answer.Core], F, G))
           return E;
-      addAnswer(answer, status, rewriteUnits[answer.Core],
+      addAnswer(answer, status, algebraicUnits[answer.Core],
                 seenExprs[answer.Core]);
     }
 
@@ -435,7 +437,7 @@ static Error collectHerbieRewrites(Session &S,
     if (Run.Result != HerbieRunResult::Outcome::Timeout &&
         Run.Result != HerbieRunResult::Outcome::Crashed)
       continue;
-    for (RewriteUnit &RU : rewriteUnits)
+    for (AlgebraicUnit &RU : algebraicUnits)
       if (!RU.herbieAnswered)
         RU.herbieStatus = Run.Result == HerbieRunResult::Outcome::Timeout
                               ? "timeout"
@@ -629,7 +631,7 @@ struct EligibleOutput {
 // each becomes.
 struct CoreBatch {
   std::vector<std::string> inputs;
-  std::vector<RewriteUnit> units;
+  std::vector<AlgebraicUnit> units;
 };
 
 // The cores Herbie is asked for one subgraph: one per output and precision,
@@ -745,7 +747,7 @@ Error SubgraphCores::addCores(ArrayRef<Value *> roots, ArrayRef<double> grads,
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << what << ":\n" << herbieInput << '\n';
     batch.inputs.push_back(herbieInput);
-    RewriteUnit &RU =
+    AlgebraicUnit &RU =
         batch.units.emplace_back(subgraph, roots, grads, body, executions);
     if (Error Err = RU.priceAsWritten(S.CostModel))
       return Err;
@@ -844,7 +846,7 @@ Error SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
 Error proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
                               int subgraphCounter, int &symbolCounter,
                               FPGraph &G,
-                              SmallVectorImpl<RewriteUnit> &rewriteUnits) {
+                              SmallVectorImpl<AlgebraicUnit> &algebraicUnits) {
   SubgraphCores cores(S, subgraph, subgraphCounter, G);
   cores.nameInputs(symbolCounter);
 
@@ -907,15 +909,15 @@ Error proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
     if (Error Err = cores.addPerOutputCores(E, sendAt, perOutput))
       return Err;
   }
-  rewriteUnits.append(std::make_move_iterator(arrays.units.begin()),
-                      std::make_move_iterator(arrays.units.end()));
+  algebraicUnits.append(std::make_move_iterator(arrays.units.begin()),
+                        std::make_move_iterator(arrays.units.end()));
 
   if (!perOutput.inputs.empty()) {
     if (Error Err = collectHerbieRewrites(S, perOutput.inputs, perOutput.units,
                                           subgraphCounter, F, G))
       return Err;
-    rewriteUnits.append(std::make_move_iterator(perOutput.units.begin()),
-                        std::make_move_iterator(perOutput.units.end()));
+    algebraicUnits.append(std::make_move_iterator(perOutput.units.begin()),
+                          std::make_move_iterator(perOutput.units.end()));
   }
   return Error::success();
 }
@@ -1264,7 +1266,7 @@ static void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
 // operands of an array, or the candidate itself; none when an array candidate
 // has another count.
 static std::optional<SmallVector<FPNode *, 1>>
-elementsOf(FPNode *parsed, const RewriteUnit &RU) {
+elementsOf(FPNode *parsed, const AlgebraicUnit &RU) {
   SmallVector<FPNode *, 1> elements;
   if (!RU.isArray()) {
     elements.push_back(parsed);
@@ -1283,7 +1285,7 @@ namespace {
 // gradients.
 class RewriteAccuracy {
 public:
-  RewriteAccuracy(const Options &O, RewriteUnit &RU, FPGraph &G)
+  RewriteAccuracy(const Options &O, AlgebraicUnit &RU, FPGraph &G)
       : O(O), RU(RU), G(G), samples(samplesOf(O, *RU.subgraph, G)) {}
 
   // Sets the unit's accuracy cost as written and each candidate's, and drops
@@ -1302,13 +1304,13 @@ private:
   };
 
   // `candidate` parsed into elements, each set up to be priced.
-  CandidatePricing prepare(const RewriteCandidate &candidate) const;
+  CandidatePricing prepare(const AlgebraicCandidate &candidate) const;
   // Whether `candidate`, priced as `P`, is kept, with its accuracy cost set;
   // else why it is dropped is recorded.
-  bool keep(RewriteCandidate &candidate, CandidatePricing &P);
+  bool keep(AlgebraicCandidate &candidate, CandidatePricing &P);
 
   const Options &O;
-  RewriteUnit &RU;
+  AlgebraicUnit &RU;
   FPGraph &G;
   SubgraphSamples &samples;
   SmallVector<BaselineAccuracy::Output, 1> rootSamples;
@@ -1320,7 +1322,7 @@ private:
 } // namespace
 
 RewriteAccuracy::CandidatePricing
-RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
+RewriteAccuracy::prepare(const AlgebraicCandidate &candidate) const {
   CandidatePricing P;
   P.parsed = cantFail(
       parseHerbieExpr(candidate.expr, G, nullptr, &RU.subgraph->inputs));
@@ -1356,7 +1358,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
   return P;
 }
 
-bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
+bool RewriteAccuracy::keep(AlgebraicCandidate &candidate, CandidatePricing &P) {
   if (P.wrongShape) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] dropping array candidate with "
@@ -1422,7 +1424,7 @@ void RewriteAccuracy::price() {
   // Parsing extends the site's maps, so the candidates are read in order and
   // only their elements are priced concurrently.
   SmallVector<CandidatePricing, 4> pricings;
-  for (const RewriteCandidate &candidate : RU.candidates)
+  for (const AlgebraicCandidate &candidate : RU.candidates)
     pricings.push_back(prepare(candidate));
   SmallVector<ElementPricing *, 0> allElements;
   for (CandidatePricing &P : pricings)
@@ -1435,7 +1437,7 @@ void RewriteAccuracy::price() {
   for (ElementPricing *E : allElements)
     chargeWorstArm(O, *E);
 
-  SmallVector<RewriteCandidate, 4> kept;
+  SmallVector<AlgebraicCandidate, 4> kept;
   for (auto [candidate, P] : zip(RU.candidates, pricings))
     if (keep(candidate, P))
       kept.push_back(std::move(candidate));
@@ -1472,12 +1474,14 @@ private:
 // The type the scratch function of a node of `format` over `argTypes` returns:
 // its first floating-point (or vector of floating-point) argument's.
 static Type *scratchReturnType(ArrayRef<Type *> argTypes,
-                               const FPFormatInfo *format, LLVMContext &Ctx) {
+                               const NumberFormatInfo *format,
+                               LLVMContext &Ctx) {
   if (auto It =
           find_if(argTypes, [](Type *T) { return T->isFPOrFPVectorTy(); });
       It != argTypes.end())
     return *It;
-  if (format && (format->Kind == FPKind::FP32 || format->Kind == FPKind::FP16))
+  if (format && (format->Kind == NumberFormat::FP32 ||
+                 format->Kind == NumberFormat::FP16))
     return format->LLVMType(Ctx);
   return Type::getDoubleTy(Ctx);
 }
@@ -1631,7 +1635,7 @@ static Expected<double> priceRewrite(CostModelState &CM, PassBuilder &PB,
   return compCost(CM, &Scratch.function(), weight, &Site);
 }
 
-BoundaryCastFreq RewriteUnit::boundaryCastFreq(const LoopInfo &LI) const {
+BoundaryCastFreq AlgebraicUnit::boundaryCastFreq(const LoopInfo &LI) const {
   const auto &valueToNodeMap = graph().valueToNodeMap;
   BoundaryCastFreq B;
   const Loop *L = LI.getLoopFor(cast<Instruction>(roots.front())->getParent());
@@ -1713,7 +1717,7 @@ BoundaryCastFreq RewriteUnit::boundaryCastFreq(const LoopInfo &LI) const {
 // The unit
 //===----------------------------------------------------------------------===//
 
-Error RewriteUnit::materialize(size_t candidateIndex) {
+Error AlgebraicUnit::materialize(size_t candidateIndex) {
   FPGraph &G = graph();
   auto &valueToNodeMap = G.valueToNodeMap;
   assert(candidateIndex < candidates.size() &&
@@ -1782,7 +1786,7 @@ Error RewriteUnit::materialize(size_t candidateIndex) {
   return Error::success();
 }
 
-Error RewriteUnit::priceAsWritten(CostModelState &CM) {
+Error AlgebraicUnit::priceAsWritten(CostModelState &CM) {
   Expected<double> cost = compCost(CM, roots, subgraph->inputs);
   if (!cost)
     return cost.takeError();
@@ -1797,12 +1801,12 @@ Error RewriteUnit::priceAsWritten(CostModelState &CM) {
   return Error::success();
 }
 
-double RewriteUnit::getCompCostDelta(size_t candidateIndex) {
+double AlgebraicUnit::getCompCostDelta(size_t candidateIndex) {
   return (candidates[candidateIndex].CompCost - erasableCost) *
          (double)executions;
 }
 
-void RewriteUnit::findErasableInstructions() {
+void AlgebraicUnit::findErasableInstructions() {
   SmallPtrSet<Instruction *, 8> exprInsts;
   for (Instruction *I : backwardCone(
            roots, [&](Value *V) { return subgraph->inputs.contains(V); }))
@@ -1833,28 +1837,28 @@ void RewriteUnit::findErasableInstructions() {
       erasableInsts.insert(I);
 }
 
-double RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
+double AlgebraicUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
   return getCompCostDelta(i);
 }
 
-double RewriteUnit::errorDelta(size_t i, ArrayRef<SolutionStep>) {
+double AlgebraicUnit::errorDelta(size_t i, ArrayRef<SolutionStep>) {
   return getAccCostDelta(i);
 }
 
-bool RewriteUnit::sameRewriteTargetAs(const OptimizationUnit &earlier) const {
-  const auto *other = dyn_cast<RewriteUnit>(&earlier);
+bool AlgebraicUnit::sameRewriteTargetAs(const OptimizationUnit &earlier) const {
+  const auto *other = dyn_cast<AlgebraicUnit>(&earlier);
   return other && other->subgraph == subgraph &&
          other->roots.size() == roots.size() &&
          llvm::all_of(other->roots,
                       [&](Value *r) { return llvm::is_contained(roots, r); });
 }
 
-std::string RewriteUnit::choiceText(size_t i) const {
-  const RewriteCandidate &cand = candidates[i];
+std::string AlgebraicUnit::choiceText(size_t i) const {
+  const AlgebraicCandidate &cand = candidates[i];
   return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
 }
 
-Error RewriteUnit::price() {
+Error AlgebraicUnit::price() {
   if (!herbieAnswered)
     return Error::success();
   FPGraph &st = graph();
@@ -1863,7 +1867,7 @@ Error RewriteUnit::price() {
   DominatorTree DT(*st.F);
   LoopInfo LI(DT);
   const BoundaryCastFreq Boundary = boundaryCastFreq(LI);
-  for (RewriteCandidate &c : candidates) {
+  for (AlgebraicCandidate &c : candidates) {
     Expected<double> cost =
         priceRewrite(session().CostModel, session().PB, c.expr, *output, st,
                      FMF, subgraph->inputs, Boundary);
@@ -1875,7 +1879,7 @@ Error RewriteUnit::price() {
   return Error::success();
 }
 
-void RewriteUnit::printPriced(raw_ostream &OS) {
+void AlgebraicUnit::printPriced(raw_ostream &OS) {
   OS << "[poseidon] priced rewrite candidates\n";
   OS << "Initial AccuracyCost: " << initialAccCost << '\n';
   OS << "Initial ComputationCost: " << initialCompCost << '\n';
@@ -1894,7 +1898,7 @@ void RewriteUnit::printPriced(raw_ostream &OS) {
         "expression\n";
   OS << "--------------------------------\n";
   for (size_t i = 0; i < candidates.size(); ++i) {
-    RewriteCandidate &candidate = candidates[i];
+    AlgebraicCandidate &candidate = candidates[i];
     OS << getAccCostDelta(i) << "\t\t";
     // A compile that reads its DP table from the cache prices no candidate.
     if (candidate.CompCost == std::numeric_limits<double>::max())

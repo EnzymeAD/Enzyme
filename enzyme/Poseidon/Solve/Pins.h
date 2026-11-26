@@ -44,7 +44,7 @@ struct PinItem {
   /// The site the item names; empty when it applies to every site.
   std::string site;
   /// The kind of the unit it names.
-  UnitKind kind = UnitKind::Rewrite;
+  UnitKind kind = UnitKind::Algebraic;
   /// The index of the unit among the site's units of that kind.
   size_t unit = 0;
   /// The candidate it applies, by ordinal; none when it names one.

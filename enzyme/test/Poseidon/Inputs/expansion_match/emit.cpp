@@ -6,11 +6,11 @@
 // the accuracy model on them and materializes them as PrecisionCandidate::apply
 // does, writing raw.bin, app.bin and fns.inc into $EXPANSION_MATCH_OUT;
 // apply-expansion materializes every FP64 instruction of each ex<n>_* function.
+#include "Core/FPCore.h"
+#include "Core/FPNode.h"
+#include "Model/Evaluators.h"
 #include "Model/ExpansionModel.h"
 #include "Support/Utils.h"
-#include "Model/Evaluators.h"
-#include "Model/FPCore.h"
-#include "Model/FPNode.h"
 #include "Techniques/Precision/Expansion.h"
 #include "Techniques/Precision/Precision.h"
 
@@ -299,7 +299,7 @@ FPNode *nodeOf(Value *V, FPGraph &G) {
   DenseMap<Value *, FPNode *> &m = G.valueToNodeMap;
   if (auto it = m.find(V); it != m.end())
     return it->second;
-  const FPFormatInfo *format = formatOf(V->getType());
+  const NumberFormatInfo *format = formatOf(V->getType());
   FPNode *node;
   if (auto *A = dyn_cast<Argument>(V)) {
     node = G.create<FPLLValue>(A, nullptr, format);
@@ -319,10 +319,10 @@ FPNode *nodeOf(Value *V, FPGraph &G) {
   return node;
 }
 
-FPKind expansionType(unsigned n) {
-  return n == 2   ? FPKind::Expansion2
-         : n == 3 ? FPKind::Expansion3
-                  : FPKind::Expansion4;
+NumberFormat expansionType(unsigned n) {
+  return n == 2   ? NumberFormat::Expansion2
+         : n == 3 ? NumberFormat::Expansion3
+                  : NumberFormat::Expansion4;
 }
 
 std::string outPath(const char *file) {
@@ -386,7 +386,7 @@ void modelApplied(std::vector<AppFn> &fns) {
       SetVector<FPLLValue *> nodes;
       for (Instruction *I : ch)
         nodes.insert(cast<FPLLValue>(G.valueToNodeMap.at(I)));
-      changes.emplace_back(nodes, f32 ? FPKind::FP32 : FPKind::FP64,
+      changes.emplace_back(nodes, f32 ? NumberFormat::FP32 : NumberFormat::FP64,
                            expansionType(a.n));
     }
     PrecisionCandidate pt(changes, "expansion-match");

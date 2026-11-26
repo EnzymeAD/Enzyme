@@ -16,7 +16,7 @@
 #ifndef POSEIDON_TECHNIQUES_MATMUL_SCHEME_H
 #define POSEIDON_TECHNIQUES_MATMUL_SCHEME_H
 
-#include "Model/FPKind.h"
+#include "Core/NumberFormat.h"
 #include "runtime/gemm/SchemeConstants.h"
 
 #include "llvm/Support/ErrorHandling.h"
@@ -56,29 +56,31 @@ struct SchemeVariant {
   /// The scheme.
   Scheme scheme = Scheme::Direct;
   /// The format operands, or their slices, are rounded to; INT8 for Ozaki-II.
-  FPKind operand = FPKind::Invalid;
+  NumberFormat operand = NumberFormat::Invalid;
   /// The format products are accumulated in; INT32 for Ozaki-II.
-  FPKind accumulator = FPKind::Invalid;
+  NumberFormat accumulator = NumberFormat::Invalid;
   unsigned slices = 0; // Tcec
   unsigned moduli = 0; // OzakiII
 
   /// The direct scheme on `operand` operands with an `accumulator` accumulator.
-  static constexpr SchemeVariant direct(FPKind operand, FPKind accumulator) {
+  static constexpr SchemeVariant direct(NumberFormat operand,
+                                        NumberFormat accumulator) {
     return {Scheme::Direct, operand, accumulator, 0, 0};
   }
   /// The split scheme into `slices` slices of `operand`, accumulated in
   /// `accumulator`.
-  static constexpr SchemeVariant tcec(FPKind operand, FPKind accumulator,
-                                      unsigned slices) {
+  static constexpr SchemeVariant
+  tcec(NumberFormat operand, NumberFormat accumulator, unsigned slices) {
     return {Scheme::Tcec, operand, accumulator, slices, 0};
   }
   /// Ozaki-II with `moduli` moduli.
   static constexpr SchemeVariant ozakiII(unsigned moduli) {
-    return {Scheme::OzakiII, FPKind::INT8, FPKind::INT32, 0, moduli};
+    return {Scheme::OzakiII, NumberFormat::INT8, NumberFormat::INT32, 0,
+            moduli};
   }
   /// The FP64 product.
   static constexpr SchemeVariant native() {
-    return {Scheme::Native, FPKind::FP64, FPKind::FP64, 0, 0};
+    return {Scheme::Native, NumberFormat::FP64, NumberFormat::FP64, 0, 0};
   }
 };
 
@@ -105,7 +107,7 @@ inline unsigned modulusCount(const SchemeVariant &v) {
 /// with F32.
 struct SliceFormat {
   /// The slice format.
-  FPKind kind;
+  NumberFormat kind;
   /// The bits of its residual one slice keeps.
   unsigned significandBits;
   /// The power of two each residual is multiplied by before it is rounded.
@@ -113,13 +115,13 @@ struct SliceFormat {
 };
 /// The formats a split scheme slices into.
 inline constexpr SliceFormat kSliceFormats[] = {
-    {FPKind::FP16, 11, 11},
-    {FPKind::BF16, 8, 7},
-    {FPKind::TF32, 11, 11},
+    {NumberFormat::FP16, 11, 11},
+    {NumberFormat::BF16, 8, 7},
+    {NumberFormat::TF32, 11, 11},
 };
 
 /// The slice format of `k`; a fatal error when `k` is none.
-inline const SliceFormat &sliceFormat(FPKind k) {
+inline const SliceFormat &sliceFormat(NumberFormat k) {
   for (const SliceFormat &f : kSliceFormats)
     if (f.kind == k)
       return f;
@@ -146,8 +148,8 @@ inline constexpr bool kHaveTcecRuntime = false;
 /// __poseidon_tcec_dgemm's compute mode: cuMpSGEMM's FP16TCEC is a two-slice
 /// FP16 split with an FP32 accumulator.
 inline PoseidonTcecMode splitLibraryComputeMode(const SchemeVariant &v) {
-  if (v.scheme == Scheme::Tcec && v.operand == FPKind::FP16 &&
-      v.accumulator == FPKind::FP32 && v.slices == 2)
+  if (v.scheme == Scheme::Tcec && v.operand == NumberFormat::FP16 &&
+      v.accumulator == NumberFormat::FP32 && v.slices == 2)
     return kTcecFp16Tcec;
   llvm::report_fatal_error(
       "no __poseidon_tcec_dgemm compute mode realizes this split");
@@ -157,15 +159,15 @@ inline PoseidonTcecMode splitLibraryComputeMode(const SchemeVariant &v) {
 /// with an FP32 accumulator; FP32 operands are cuBLAS's SGEMM rather than a
 /// tensor-core product.
 inline PoseidonDirectMode directLibraryOperandFormat(const SchemeVariant &v) {
-  if (v.scheme == Scheme::Direct && v.accumulator == FPKind::FP32) {
+  if (v.scheme == Scheme::Direct && v.accumulator == NumberFormat::FP32) {
     switch (v.operand) {
-    case FPKind::FP16:
+    case NumberFormat::FP16:
       return kDirectFp16;
-    case FPKind::BF16:
+    case NumberFormat::BF16:
       return kDirectBf16;
-    case FPKind::TF32:
+    case NumberFormat::TF32:
       return kDirectTf32;
-    case FPKind::FP32:
+    case NumberFormat::FP32:
       return kDirectFp32;
     default:
       break;
@@ -194,8 +196,8 @@ inline unsigned descriptorModulusField(const SchemeVariant &v) {
 
 /// Label fragments of the scheme, shared by both realizations.
 inline std::string schemeFormats(const SchemeVariant &v, char separator) {
-  return std::string(fpKindName(v.operand)) + separator +
-         fpKindName(v.accumulator);
+  return std::string(dtypeName(v.operand)) + separator +
+         dtypeName(v.accumulator);
 }
 
 /// The scheme's word in candidate labels.

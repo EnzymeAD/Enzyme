@@ -1417,7 +1417,7 @@ static Expected<RecognizedChain> analyzeChain(Function &F, ScalarEvolution &SE,
       return refuse("chain members disagree on element type");
   // A runtime-shape product has no realization but the library call.
   if (std::optional<std::string> why =
-          libraryElementRefusal(fpKindFromType(eltTy)))
+          libraryElementRefusal(matrixFormatOf(eltTy)))
     return refuse(*why);
 
   ChainAnalysis C(SE, chain);
@@ -1681,7 +1681,7 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
     am.globalN = P.N;
     am.globalK = P.K;
     am.gridCTAs = P.ctaPerLaunch;
-    am.elemType = fpKindFromType(chain[0].aLoad->getType());
+    am.elemType = matrixFormatOf(chain[0].aLoad->getType());
     am.origin = RecognizedMatmul::Origin::RuntimeShape;
     am.runtimeGemm = std::make_shared<RuntimeGemmHandle>(std::move(R->H));
     am.outputValue = chain.back().fma;

@@ -21,8 +21,8 @@
 #include "Sites/SiteIdentity.h"
 #include "Solve/Pins.h"
 #include "Support/Options.h"
+#include "Techniques/Algebraic/HerbieRun.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Rewrite/HerbieRun.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CGSCCPassManager.h"

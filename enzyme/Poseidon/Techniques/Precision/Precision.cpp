@@ -12,11 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Precision.h"
-#include "../Rewrite/Rewrite.h"
+#include "../Algebraic/Algebraic.h"
+#include "Core/FPCore.h"
 #include "Expansion.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
-#include "Model/FPCore.h"
 #include "Model/Sampling.h"
 #include "Narrowing.h"
 #include "Profile/ProfileReader.h"
@@ -147,7 +147,7 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
 
   IRBuilder<> Builder(I);
   Builder.setFastMathFlags(I->getFastMathFlags());
-  Type *newType = llvmTypeForFPKind(I->getContext(), change.newType);
+  Type *newType = storageTypeOf(I->getContext(), change.newType);
 
   // An operand in the new precision: its changed value, or a cast of it.
   auto convert = [&](Value *operand) -> Value * {
@@ -291,7 +291,7 @@ void ChangeTarget::changeFormat(PrecisionChange &change,
             oldI, [&](Instruction *U) { return insts.contains(U); },
             [&](IRBuilder<> &B) {
               return B.CreateFPCast(
-                  newV, llvmTypeForFPKind(B.getContext(), change.oldType));
+                  newV, storageTypeOf(B.getContext(), change.oldType));
             })) {
       if (VMap) {
         assert(VMap->count(clonedToOriginal[oldI]) &&
@@ -640,7 +640,7 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
   bool ptHasExpansion = false, wantsPairs = false;
   for (PrecisionChange &ch : pt.changes) {
     ptHasExpansion |= expansionComponents(ch.newType) != 0;
-    wantsPairs |= ch.newType == FPKind::Expansion2;
+    wantsPairs |= ch.newType == NumberFormat::Expansion2;
   }
   pt.apply(S, subgraph, &VMap, /*graph=*/nullptr, &expandedComponents);
   // An Expansion2 change that converts nothing (unsupported instructions)
@@ -906,37 +906,37 @@ static constexpr int kThreeTierStep = 20;
 static constexpr int kMinTwoTierStep = 5;
 
 // The tiers of a candidate, widest first.
-static const std::array<FPKind, 2> kCanonicalPairs[] = {
-    {FPKind::FP64, FPKind::FP32},
-    {FPKind::FP64, FPKind::Expansion2},
-    {FPKind::FP64, FPKind::FP16},
-    {FPKind::FP64, FPKind::BF16},
-    {FPKind::Expansion2, FPKind::FP32},
-    {FPKind::Expansion2, FPKind::FP16},
-    {FPKind::Expansion2, FPKind::BF16},
-    {FPKind::FP32, FPKind::FP16},
-    {FPKind::FP32, FPKind::BF16},
-    {FPKind::FP64, FPKind::Expansion3},
-    {FPKind::Expansion3, FPKind::Expansion2},
-    {FPKind::Expansion3, FPKind::FP32},
-    {FPKind::FP64, FPKind::Expansion4},
-    {FPKind::Expansion4, FPKind::Expansion3},
-    {FPKind::Expansion4, FPKind::Expansion2},
-    {FPKind::Expansion4, FPKind::FP32},
+static const std::array<NumberFormat, 2> kCanonicalPairs[] = {
+    {NumberFormat::FP64, NumberFormat::FP32},
+    {NumberFormat::FP64, NumberFormat::Expansion2},
+    {NumberFormat::FP64, NumberFormat::FP16},
+    {NumberFormat::FP64, NumberFormat::BF16},
+    {NumberFormat::Expansion2, NumberFormat::FP32},
+    {NumberFormat::Expansion2, NumberFormat::FP16},
+    {NumberFormat::Expansion2, NumberFormat::BF16},
+    {NumberFormat::FP32, NumberFormat::FP16},
+    {NumberFormat::FP32, NumberFormat::BF16},
+    {NumberFormat::FP64, NumberFormat::Expansion3},
+    {NumberFormat::Expansion3, NumberFormat::Expansion2},
+    {NumberFormat::Expansion3, NumberFormat::FP32},
+    {NumberFormat::FP64, NumberFormat::Expansion4},
+    {NumberFormat::Expansion4, NumberFormat::Expansion3},
+    {NumberFormat::Expansion4, NumberFormat::Expansion2},
+    {NumberFormat::Expansion4, NumberFormat::FP32},
 };
 
-static const std::array<FPKind, 3> kCanonicalTriples[] = {
-    {FPKind::FP64, FPKind::Expansion2, FPKind::FP32},
-    {FPKind::FP64, FPKind::Expansion2, FPKind::FP16},
-    {FPKind::FP64, FPKind::Expansion2, FPKind::BF16},
-    {FPKind::FP64, FPKind::FP32, FPKind::FP16},
-    {FPKind::FP64, FPKind::FP32, FPKind::BF16},
-    {FPKind::Expansion2, FPKind::FP32, FPKind::FP16},
-    {FPKind::Expansion2, FPKind::FP32, FPKind::BF16},
+static const std::array<NumberFormat, 3> kCanonicalTriples[] = {
+    {NumberFormat::FP64, NumberFormat::Expansion2, NumberFormat::FP32},
+    {NumberFormat::FP64, NumberFormat::Expansion2, NumberFormat::FP16},
+    {NumberFormat::FP64, NumberFormat::Expansion2, NumberFormat::BF16},
+    {NumberFormat::FP64, NumberFormat::FP32, NumberFormat::FP16},
+    {NumberFormat::FP64, NumberFormat::FP32, NumberFormat::BF16},
+    {NumberFormat::Expansion2, NumberFormat::FP32, NumberFormat::FP16},
+    {NumberFormat::Expansion2, NumberFormat::FP32, NumberFormat::BF16},
 };
 
 // `hwScalar` is the target's scalar types; null off the GPU.
-static bool precAllowed(const Options &O, FPKind t, bool gpuMode,
+static bool precAllowed(const Options &O, NumberFormat t, bool gpuMode,
                         bool expansionSafe,
                         const std::unordered_set<std::string> *hwScalar) {
   if (unsigned nComp = expansionComponents(t)) {
@@ -947,25 +947,25 @@ static bool precAllowed(const Options &O, FPKind t, bool gpuMode,
     if (nComp > O.Candidates.PrecisionExpansionComponents)
       return false;
   }
-  if (t == FPKind::FP16 && (!gpuMode || !hwScalar->count("half")))
+  if (t == NumberFormat::FP16 && (!gpuMode || !hwScalar->count("half")))
     return false;
-  if (t == FPKind::BF16 && (!gpuMode || !hwScalar->count("bf16")))
+  if (t == NumberFormat::BF16 && (!gpuMode || !hwScalar->count("bf16")))
     return false;
   return true;
 }
 
 // Whether every tier of a tier pair or triple is allowed.
-static bool tiersAllowed(const Options &O, ArrayRef<FPKind> tiers, bool gpuMode,
-                         bool expansionSafe,
+static bool tiersAllowed(const Options &O, ArrayRef<NumberFormat> tiers,
+                         bool gpuMode, bool expansionSafe,
                          const std::unordered_set<std::string> *hwScalar) {
-  return all_of(tiers, [&](FPKind t) {
+  return all_of(tiers, [&](NumberFormat t) {
     return precAllowed(O, t, gpuMode, expansionSafe, hwScalar);
   });
 }
 
 // The tiers of a candidate with the percentage of the operations each takes,
 // as its description lists them: "FP64(20%) + FP32(80%)".
-static std::string fmtTiers(ArrayRef<std::pair<FPKind, int>> tierPcts) {
+static std::string fmtTiers(ArrayRef<std::pair<NumberFormat, int>> tierPcts) {
   std::string s;
   for (const auto &[t, pct] : tierPcts) {
     if (!s.empty())
@@ -1041,15 +1041,15 @@ namespace {
 // profiled sensitivity, the most sensitive in the widest tier.
 class TierSweep {
 public:
-  TierSweep(const Options &O, PrecisionUnit &PU, FPKind current)
+  TierSweep(const Options &O, PrecisionUnit &PU, NumberFormat current)
       : O(O), PU(PU), current(current) {}
 
   // Two tiers, the share of the wider from 0% up in steps of
   // -poseidon-precision-tier-step, over `sortedAsc` (ascending sensitivity).
-  void twoTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
+  void twoTier(ArrayRef<NumberFormat> tiers, ArrayRef<FPLLValue *> sortedAsc,
                StringRef label);
   // Three tiers, the shares in steps of kThreeTierStep.
-  void threeTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
+  void threeTier(ArrayRef<NumberFormat> tiers, ArrayRef<FPLLValue *> sortedAsc,
                  StringRef label);
 
 private:
@@ -1060,12 +1060,12 @@ private:
   // Adds the candidate that computes the operations of `sortedAsc` from the
   // cumulative share `cuts[i - 1]` to `cuts[i]` (percent, most sensitive
   // first; the last tier ends at 100) in `tiers[i]`, unless it moves nothing.
-  void add(ArrayRef<FPKind> tiers, ArrayRef<int> cuts,
+  void add(ArrayRef<NumberFormat> tiers, ArrayRef<int> cuts,
            ArrayRef<FPLLValue *> sortedAsc, StringRef label, StringRef kind);
 
   const Options &O;
   PrecisionUnit &PU;
-  FPKind current;
+  NumberFormat current;
 };
 
 } // namespace
@@ -1081,11 +1081,11 @@ std::string TierSweep::describe(StringRef label, StringRef kind,
   return desc + tiers;
 }
 
-void TierSweep::add(ArrayRef<FPKind> tiers, ArrayRef<int> cuts,
+void TierSweep::add(ArrayRef<NumberFormat> tiers, ArrayRef<int> cuts,
                     ArrayRef<FPLLValue *> sortedAsc, StringRef label,
                     StringRef kind) {
   const size_t N = sortedAsc.size();
-  SmallVector<std::pair<FPKind, int>, 3> shares;
+  SmallVector<std::pair<NumberFormat, int>, 3> shares;
   SmallVector<PrecisionChange, 3> changes;
   int prevPct = 0;
   size_t prevK = 0;
@@ -1107,8 +1107,8 @@ void TierSweep::add(ArrayRef<FPKind> tiers, ArrayRef<int> cuts,
   PU.candidates.push_back(std::move(cand));
 }
 
-void TierSweep::twoTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
-                        StringRef label) {
+void TierSweep::twoTier(ArrayRef<NumberFormat> tiers,
+                        ArrayRef<FPLLValue *> sortedAsc, StringRef label) {
   const size_t N = sortedAsc.size();
   const int step = std::max(kMinTwoTierStep, O.Candidates.PrecisionTierStep);
   size_t prev = N + 1;
@@ -1121,7 +1121,7 @@ void TierSweep::twoTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
   }
 }
 
-void TierSweep::threeTier(ArrayRef<FPKind> tiers,
+void TierSweep::threeTier(ArrayRef<NumberFormat> tiers,
                           ArrayRef<FPLLValue *> sortedAsc, StringRef label) {
   const size_t N = sortedAsc.size();
   const int step = kThreeTierStep;
@@ -1196,7 +1196,7 @@ Error proposePrecisionCandidates(
     hwScalar = *types;
   }
   TierSweep sweep(O, PU, formatOf(subgraph.outputs[0]->getType())->Kind);
-  for (ArrayRef<FPKind> tp : kCanonicalPairs) {
+  for (ArrayRef<NumberFormat> tp : kCanonicalPairs) {
     if (!tiersAllowed(O, tp, gpuMode, expansionSafe, hwScalar))
       continue;
     sweep.twoTier(tp, sortedAllOps, "All");
@@ -1204,7 +1204,7 @@ Error proposePrecisionCandidates(
       sweep.twoTier(tp, sortedFuncs, "Funcs");
   }
   if (O.Candidates.PrecisionThreeTier)
-    for (ArrayRef<FPKind> tr : kCanonicalTriples)
+    for (ArrayRef<NumberFormat> tr : kCanonicalTriples)
       if (tiersAllowed(O, tr, gpuMode, expansionSafe, hwScalar))
         sweep.threeTier(tr, sortedAllOps, "All");
 
@@ -1243,11 +1243,11 @@ double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
 }
 
 // The algebraic units of `subgraph` among `steps`, in step order.
-static SmallVector<RewriteUnit *> rewritesOf(const Subgraph *subgraph,
-                                             ArrayRef<SolutionStep> steps) {
-  SmallVector<RewriteUnit *> rewrites;
+static SmallVector<AlgebraicUnit *> rewritesOf(const Subgraph *subgraph,
+                                               ArrayRef<SolutionStep> steps) {
+  SmallVector<AlgebraicUnit *> rewrites;
   for (const SolutionStep &step : steps)
-    if (auto *RU = dyn_cast<RewriteUnit>(step.unit))
+    if (auto *RU = dyn_cast<AlgebraicUnit>(step.unit))
       if (RU->subgraph == subgraph)
         rewrites.push_back(RU);
   return rewrites;
@@ -1257,7 +1257,7 @@ static SmallVector<RewriteUnit *> rewritesOf(const Subgraph *subgraph,
 static Subgraph withoutRewrites(const Subgraph &subgraph,
                                 ArrayRef<SolutionStep> steps) {
   Subgraph left = subgraph;
-  for (RewriteUnit *RU : rewritesOf(&subgraph, steps)) {
+  for (AlgebraicUnit *RU : rewritesOf(&subgraph, steps)) {
     left.operations.remove_if(
         [RU](Instruction *I) { return RU->erasableInsts.contains(I); });
     for (Value *root : RU->roots)
@@ -1285,9 +1285,9 @@ changedOperations(const PrecisionCandidate &candidate,
 PrecisionUnit::RepriceKey
 PrecisionUnit::repriceKey(size_t candidateIndex,
                           ArrayRef<SolutionStep> steps) const {
-  SmallVector<RewriteUnit *> rewrites = rewritesOf(subgraph, steps);
+  SmallVector<AlgebraicUnit *> rewrites = rewritesOf(subgraph, steps);
   return RepriceKey{candidateIndex,
-                    RewriteUnitSet(rewrites.begin(), rewrites.end())};
+                    AlgebraicUnitSet(rewrites.begin(), rewrites.end())};
 }
 
 void PrecisionUnit::priceRequests(
@@ -1413,7 +1413,7 @@ double PrecisionUnit::errorDelta(size_t candidateIndex,
 
   // The outputs the rewrites among `steps` replace are not this unit's.
   SmallPtrSet<FPNode *, 8> stepNodes;
-  for (RewriteUnit *RU : rewritesOf(subgraph, steps))
+  for (AlgebraicUnit *RU : rewritesOf(subgraph, steps))
     for (Value *root : RU->roots) {
       auto it = valueToNodeMap.find(root);
       assert(it != valueToNodeMap.end() && it->second &&
@@ -1435,7 +1435,7 @@ double PrecisionUnit::errorDelta(size_t candidateIndex,
 }
 
 bool PrecisionUnit::pricedAgainst(const OptimizationUnit &earlier) const {
-  const auto *co = dyn_cast<RewriteUnit>(&earlier);
+  const auto *co = dyn_cast<AlgebraicUnit>(&earlier);
   return co && co->subgraph == subgraph;
 }
 

@@ -259,10 +259,9 @@ set(POSEIDON_SRC
     Model/ExpansionModel.cpp
     Solve/Explain.cpp
     Pass/Flags.cpp
-    Model/FPKind.cpp
-    Techniques/Rewrite/Rewrite.cpp
-    Model/FPCore.cpp
-    Techniques/Rewrite/HerbieRun.cpp
+    Techniques/Algebraic/Algebraic.cpp
+    Core/FPCore.cpp
+    Techniques/Algebraic/HerbieRun.cpp
     Support/Parallel.cpp
     Solve/DP.cpp
     Support/UniformReal.cpp
@@ -274,7 +273,7 @@ set(POSEIDON_SRC
     Sites/Site.cpp
     Sites/SiteIdentity.cpp
     Techniques/Precision/Precision.cpp
-    Model/FPFormat.cpp
+    Core/NumberFormat.cpp
     Profile/ProfileReader.cpp
     Model/Sampling.cpp
     Solve/SolveSites.cpp
@@ -282,7 +281,7 @@ set(POSEIDON_SRC
     Solve/Subgraphs.cpp
     Techniques/Precision/Narrowing.cpp
     Techniques/SiteUnit.cpp
-    Model/FPNode.cpp
+    Core/FPNode.cpp
     Support/Utils.cpp
     Support/Diagnostics.cpp
     Techniques/Matmul/Accuracy.cpp

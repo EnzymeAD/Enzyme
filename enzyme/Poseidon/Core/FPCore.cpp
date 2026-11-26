@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPCore.h"
-#include "FPFormat.h"
+#include "NumberFormat.h"
 #include "Targets/MathLibrary.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -368,17 +368,17 @@ Expected<FPNode *> FPCoreParser::parseLiteral(const std::string &expr) {
            Denominator.find_first_not_of('0') == StringRef::npos;
   };
   std::smatch matches;
-  const FPFormatInfo *format;
+  const NumberFormatInfo *format;
   if (std::regex_match(expr, matches, constantPattern)) {
-    format = StringSwitch<const FPFormatInfo *>(matches[3].str())
-                 .Case("binary64", &formatOf(FPKind::FP64))
-                 .Case("binary32", &formatOf(FPKind::FP32))
+    format = StringSwitch<const NumberFormatInfo *>(matches[3].str())
+                 .Case("binary64", &formatOf(NumberFormat::FP64))
+                 .Case("binary32", &formatOf(NumberFormat::FP32))
                  .Default(nullptr);
     if (!format)
       return malformed("a literal of the unmodelled format " + matches[3].str(),
                        expr);
   } else if (std::regex_match(expr, matches, plainConstantPattern)) {
-    format = &formatOf(FPKind::FP64);
+    format = &formatOf(NumberFormat::FP64);
   } else {
     return nullptr;
   }
@@ -431,14 +431,14 @@ Expected<FPNode *> FPCoreParser::parseProjection(StringRef expr, StringRef head,
 Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
                                                 StringRef args, bool top) {
   StringRef op = head;
-  const FPFormatInfo *format = nullptr;
+  const NumberFormatInfo *format = nullptr;
   if (head.starts_with("array<")) {
     op = fpcore::Array.Name;
   } else if (size_t pos = head.find('.'); pos != StringRef::npos) {
     op = head.substr(0, pos);
     format = formatOfDtype(head.substr(pos + 1));
-    if (!format ||
-        (format->Kind != FPKind::FP64 && format->Kind != FPKind::FP32))
+    if (!format || (format->Kind != NumberFormat::FP64 &&
+                    format->Kind != NumberFormat::FP32))
       return malformed("the operator " + head + " of an unmodelled format",
                        expr);
   }
@@ -461,9 +461,9 @@ Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
   // destination precision, which makes it an identity at that precision.
   if (!format) {
     if (O == &fpcore::ToBinary32)
-      format = &formatOf(FPKind::FP32);
+      format = &formatOf(NumberFormat::FP32);
     else if (O == &fpcore::ToBinary64)
-      format = &formatOf(FPKind::FP64);
+      format = &formatOf(NumberFormat::FP64);
   }
 
   auto *node = G.create<FPNode>(*O, format);
@@ -503,7 +503,7 @@ Expected<FPNode *> parseHerbieExpr(
 }
 
 std::string dtypeOfType(Type *T) {
-  const FPFormatInfo *F = formatOf(T);
+  const NumberFormatInfo *F = formatOf(T);
   return F ? F->Dtype.str() : "";
 }
 
@@ -532,7 +532,7 @@ enum : int {
 static bool isFPDtype(StringRef d) { return formatOfDtype(d); }
 
 StringRef cTypeName(StringRef d) {
-  const FPFormatInfo *F = formatOfDtype(d);
+  const NumberFormatInfo *F = formatOfDtype(d);
   return F ? StringRef(F->CType) : "double";
 }
 

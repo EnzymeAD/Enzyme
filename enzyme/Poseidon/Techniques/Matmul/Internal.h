@@ -9,8 +9,8 @@
 #ifndef POSEIDON_TECHNIQUES_MATMUL_INTERNAL_H
 #define POSEIDON_TECHNIQUES_MATMUL_INTERNAL_H
 
+#include "Core/NumberFormat.h"
 #include "Matmul.h"
-#include "Model/FPFormat.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -93,7 +93,7 @@ bool hasEffect(const llvm::Instruction &I);
 
 /// Why no library call computes a product whose elements are `elem`: every
 /// entry of the runtime is a GEMM of doubles. None for doubles.
-std::optional<std::string> libraryElementRefusal(FPKind elem);
+std::optional<std::string> libraryElementRefusal(NumberFormat elem);
 
 /// The extents of the output of a constant-trip product at the reduction length
 /// of the compile, in elements.
@@ -213,12 +213,12 @@ struct MatmulAccuracyQuery {
   /// The simulation the query runs.
   Model model = Model::Rounded;
   /// The format operands are rounded to (Rounded).
-  FPKind inputPrec = FPKind::Invalid;
+  NumberFormat inputPrec = NumberFormat::Invalid;
   /// The format each multiply-accumulate is rounded to (Rounded).
-  FPKind accPrec = FPKind::Invalid;
+  NumberFormat accPrec = NumberFormat::Invalid;
   /// The format whose range the operands' smallest magnitude must lie in;
   /// Invalid means inputPrec.
-  FPKind exponentPrec = FPKind::Invalid;
+  NumberFormat exponentPrec = NumberFormat::Invalid;
   /// The K extent in elements of the tiles folded into the accumulator one at a
   /// time; 0 accumulates element by element.
   unsigned orderTileK = 0;

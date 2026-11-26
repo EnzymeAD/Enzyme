@@ -1,4 +1,4 @@
-//===- FPKind.cpp - Number formats and rounding to them -------------------===//
+//===- NumberFormat.cpp - Number formats and rounding to them -------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,9 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "FPKind.h"
+#include "NumberFormat.h"
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/LLVMContext.h"
 
 #include <cassert>
 #include <cmath>
@@ -20,22 +23,75 @@ using namespace llvm;
 
 namespace poseidon {
 
-const char *fpKindName(FPKind k) {
+// The LLVMType column as one function type (getInt8Ty returns an IntegerType);
+// null for an expansion.
+template <auto Get> static Type *storage(LLVMContext &C) {
+  if constexpr (Get == nullptr)
+    return nullptr;
+  else
+    return Get(C);
+}
+
+static constexpr NumberFormatInfo kFormats[] = {
+#define NUMBER_FORMAT(Kind, Name, Dtype, CostType, CType, Words, LLVMType,     \
+                      Semantics, Components, Matrix)                           \
+  {NumberFormat::Kind, Name,       Dtype, CostType, CType, Words,              \
+   storage<LLVMType>,  Components, Matrix},
+#include "Core/NumberFormat.def"
+};
+
+const NumberFormatInfo &formatOf(NumberFormat K) {
+  assert(K != NumberFormat::Invalid && "Invalid has no row");
+  return kFormats[unsigned(K) - 1];
+}
+
+// A format no graph value has (TF32, the integer formats, an expansion) has no
+// C type, so a float is FP32 and an i8 is no format.
+static bool isGraphFormat(const NumberFormatInfo &F) {
+  return !F.CType.empty();
+}
+
+const NumberFormatInfo *formatOf(Type *T) {
+  const NumberFormatInfo *F = find_if(kFormats, [&](const NumberFormatInfo &F) {
+    return isGraphFormat(F) && F.LLVMType(T->getContext()) == T;
+  });
+  return F == std::end(kFormats) ? nullptr : F;
+}
+
+const NumberFormatInfo *formatOfDtype(StringRef Dtype) {
+  const NumberFormatInfo *F = find_if(kFormats, [&](const NumberFormatInfo &F) {
+    return isGraphFormat(F) && F.Dtype == Dtype;
+  });
+  return F == std::end(kFormats) ? nullptr : F;
+}
+
+NumberFormat matrixFormatOf(Type *T) {
+  const NumberFormatInfo *F = formatOf(T);
+  return F && F->Matrix ? F->Kind : NumberFormat::Invalid;
+}
+
+Type *storageTypeOf(LLVMContext &ctx, NumberFormat k) {
+  const NumberFormatInfo &F = formatOf(k);
+  assert(!F.Components && "an expansion has no LLVM type");
+  return F.LLVMType(ctx);
+}
+
+const char *dtypeName(NumberFormat k) {
   static constexpr const char *kNames[] = {
       "invalid",
-#define FP_FORMAT(Kind, Name, Dtype, ...) Dtype,
-#include "Model/FPFormat.def"
+#define NUMBER_FORMAT(Kind, Name, Dtype, ...) Dtype,
+#include "Core/NumberFormat.def"
   };
   return kNames[unsigned(k)];
 }
 
-static const fltSemantics *semanticsForKind(FPKind k) {
+static const fltSemantics *semanticsForKind(NumberFormat k) {
   static constexpr const fltSemantics &(*kSemantics[])() = {
       nullptr,
-#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, Words, Storage,          \
-                  Semantics, ...)                                              \
+#define NUMBER_FORMAT(Kind, Name, Dtype, CostType, CType, Words, Storage,      \
+                      Semantics, ...)                                          \
   Semantics,
-#include "Model/FPFormat.def"
+#include "Core/NumberFormat.def"
   };
   return kSemantics[unsigned(k)] ? &kSemantics[unsigned(k)]() : nullptr;
 }
@@ -48,7 +104,7 @@ struct Format {
 };
 } // namespace
 
-static Format formatOf(FPKind k) {
+static Format roundingFormatOf(NumberFormat k) {
   Format f;
   const fltSemantics *sem = semanticsForKind(k);
   if (!sem)
@@ -65,13 +121,13 @@ static Format formatOf(FPKind k) {
   return f;
 }
 
-Rounding::Rounding(FPKind k) : kind(k) {
-  assert(k != FPKind::INT8 && k != FPKind::INT32 &&
+Rounding::Rounding(NumberFormat k) : kind(k) {
+  assert(k != NumberFormat::INT8 && k != NumberFormat::INT32 &&
          "an integer format has no floating-point rounding");
   static const Format formats[] = {
-      formatOf(FPKind::Invalid),
-#define FP_FORMAT(Kind, ...) formatOf(FPKind::Kind),
-#include "Model/FPFormat.def"
+      roundingFormatOf(NumberFormat::Invalid),
+#define NUMBER_FORMAT(Kind, ...) roundingFormatOf(NumberFormat::Kind),
+#include "Core/NumberFormat.def"
   };
   const Format &f = formats[unsigned(k)];
   precision = f.precision;
@@ -142,9 +198,9 @@ double Rounding::operator()(double x) const {
   return result;
 }
 
-double roundToPrec(double x, FPKind k) { return Rounding(k)(x); }
+double roundToPrec(double x, NumberFormat k) { return Rounding(k)(x); }
 
-double minSubnormalForKind(FPKind k) {
+double minSubnormalOf(NumberFormat k) {
   const fltSemantics *sem = semanticsForKind(k);
   if (!sem)
     return 0.0;

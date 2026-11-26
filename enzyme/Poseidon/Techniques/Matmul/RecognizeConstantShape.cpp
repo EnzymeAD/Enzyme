@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/NumberFormat.h"
 #include "Internal.h"
-#include "Model/FPFormat.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchManifest.h"
@@ -583,7 +583,7 @@ static unsigned extentForIndex(const Options &O, const uint32_t (&dims)[3],
 // profile generation.
 static void forEachScalarLoopReduction(
     const Options &O, Function &F, ScalarEvolution &SE, LoopInfo &LI,
-    function_ref<void(Loop *, ScalarLoopHandle &, FPKind, unsigned)> cb) {
+    function_ref<void(Loop *, ScalarLoopHandle &, NumberFormat, unsigned)> cb) {
   const DataLayout &DL = F.getParent()->getDataLayout();
   auto reject = [&](StringRef why) {
     if (O.Diagnostics.Print)
@@ -602,7 +602,7 @@ static void forEachScalarLoopReduction(
     std::optional<StringRef> shape = reductionLoopShapeRefusal(*L);
     unsigned trip = SE.getSmallConstantTripCount(L);
     for (PHINode &phi : L->getHeader()->phis()) {
-      if (fpKindFromType(phi.getType()) == FPKind::Invalid)
+      if (matrixFormatOf(phi.getType()) == NumberFormat::Invalid)
         continue;
       Expected<ReductionCycle> rc = matchReductionCycle(L, phi, latch);
       if (!rc) {
@@ -627,7 +627,7 @@ static void forEachScalarLoopReduction(
         reject("the accumulator does not start at +0.0");
         continue;
       }
-      cb(L, *h, fpKindFromType(phi.getType()), trip);
+      cb(L, *h, matrixFormatOf(phi.getType()), trip);
     }
   });
 }
@@ -648,7 +648,8 @@ void collectScalarLoopReductionTrips(
   ScalarEvolution SE(F, TLI, AC, DT, LI);
 
   forEachScalarLoopReduction(
-      O, F, SE, LI, [&](Loop *, ScalarLoopHandle &h, FPKind, unsigned trip) {
+      O, F, SE, LI,
+      [&](Loop *, ScalarLoopHandle &h, NumberFormat, unsigned trip) {
         if (std::optional<size_t> slot = slotOf(h.fma))
           trips.emplace_back(*slot, trip);
       });
@@ -777,10 +778,10 @@ bool hasEffect(const Instruction &I) {
   return I.mayHaveSideEffects();
 }
 
-std::optional<std::string> libraryElementRefusal(FPKind elem) {
-  if (elem == FPKind::FP64)
+std::optional<std::string> libraryElementRefusal(NumberFormat elem) {
+  if (elem == NumberFormat::FP64)
     return std::nullopt;
-  return "the product's elements are " + std::string(fpKindName(elem)) +
+  return "the product's elements are " + std::string(dtypeName(elem)) +
          ", and every library-call entry is a GEMM of doubles";
 }
 
@@ -1064,7 +1065,7 @@ void findConstantShapeMatmuls(const Options &O, Function &F,
 
   forEachScalarLoopReduction(
       O, F, SE, LI,
-      [&](Loop *L, ScalarLoopHandle &h, FPKind eltKind, unsigned trip) {
+      [&](Loop *L, ScalarLoopHandle &h, NumberFormat eltKind, unsigned trip) {
         unsigned profM = extentForIndex(O, profileHeader.maxBlockDim, h.aRow,
                                         "A-row", F.getName());
         unsigned profN = extentForIndex(O, profileHeader.maxBlockDim, h.bCol,

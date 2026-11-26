@@ -40,15 +40,15 @@ int main() {
   for (unsigned nm : kOzakiIIModuliCounts)
     library(SchemeVariant::ozakiII(nm));
   library(SchemeVariant::native());
-  library(SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, 2));
-  for (FPKind k : {FPKind::FP16, FPKind::BF16, FPKind::TF32, FPKind::FP32})
-    library(SchemeVariant::direct(k, FPKind::FP32));
+  library(SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2));
+  for (NumberFormat k : {NumberFormat::FP16, NumberFormat::BF16, NumberFormat::TF32, NumberFormat::FP32})
+    library(SchemeVariant::direct(k, NumberFormat::FP32));
 
   for (unsigned n : {2u, 3u, 5u})
-    split(SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, n));
-  split(SchemeVariant::tcec(FPKind::BF16, FPKind::FP32, 2));
+    split(SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, n));
+  split(SchemeVariant::tcec(NumberFormat::BF16, NumberFormat::FP32, 2));
   for (unsigned n : {2u, 3u, 5u})
-    split(SchemeVariant::tcec(FPKind::TF32, FPKind::FP32, n));
+    split(SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, n));
   return 0;
 }
 
