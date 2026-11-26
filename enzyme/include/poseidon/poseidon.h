@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_POSEIDON_POSEIDON_H
-#define POSEIDON_POSEIDON_POSEIDON_H
+#ifndef POSEIDON_POSEIDON_H
+#define POSEIDON_POSEIDON_H
 
 /// Marks the function it precedes as a site: a host or device function, a CUDA
 /// or HIP kernel, or a lambda. POSEIDON_OPTIMIZE_TAU(t) also gives the site
@@ -271,4 +271,4 @@ __poseidon_device_math_defined(void) {}
 #undef POSEIDON_SITE_HELPER
 #undef POSEIDON_SITE_TARGETS
 
-#endif // POSEIDON_POSEIDON_POSEIDON_H
+#endif // POSEIDON_POSEIDON_H
