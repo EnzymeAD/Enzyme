@@ -511,8 +511,8 @@ static void priceAccuracy(const Options &O, PrecisionUnit &PU, FPGraph &G) {
 
   SmallVector<CandidateErrors, 0> scored(PU.candidates.size());
   forEachIndex(O.Model.Threads, PU.candidates.size(), [&](size_t c) {
-    scored[c] = scoreCandidate(PU.candidates[c], outputs, refs, sampledPoints,
-                               moment);
+    scored[c] =
+        scoreCandidate(PU.candidates[c], outputs, refs, sampledPoints, moment);
   });
 
   SmallVector<PrecisionCandidate, 4> kept;

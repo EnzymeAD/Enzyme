@@ -497,9 +497,8 @@ static void printSelection(StringRef names, double tau, double accScale,
     llvm::errs() << "[poseidon] " << names << ": tau=" << tau
                  << " S=" << accScale << " A0=" << baseline
                  << " selected cost=" << scale.share(*best)
-                 << " accCost=" << accCost
-                 << " rel=" << relativeError(baseline + accCost, accScale, moment)
-                 << '\n';
+                 << " accCost=" << accCost << " rel="
+                 << relativeError(baseline + accCost, accScale, moment) << '\n';
     return;
   }
   if (!best) {
