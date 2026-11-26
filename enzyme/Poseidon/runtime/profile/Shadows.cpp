@@ -217,9 +217,9 @@ struct HostShadowOps {
   }
   static void free(void *p) { ::free(p); }
   static void freeAtExit(void *p) { ::free(p); }
-  template <typename T> static void fillOnes(T *p, size_t n, void *) {
+  template <typename T> static void fillSeed(T *p, size_t n, void *) {
     for (size_t i = 0; i < n; ++i)
-      p[i] = T(1);
+      p[i] = T(poseidon::outputSeed(i));
   }
 };
 } // namespace

@@ -152,30 +152,31 @@ int main(int argc, char **argv) {
 // PRIMAL: DENSE: rel err ok
 
 // Each of the three FMAs the m loop unrolls into runs nd ne np times and the
-// accumulation into y nd ne times, each with a gradient of one.
+// accumulation into y nd ne times; their gradients carry the seeds of y's
+// elements (outputSeed).
 // PROF: MaxBlockDims = 1 64 1
 // PROF-NEXT: MaxGridDims = 192 1 1
 // PROF-NEXT: LaunchCount = 192
 // PROF-NEXT: SiteId = 0
 // PROF-NEXT: CanonicalHash = ec8a91ad004ef65f
 // PROF-NEXT: {{^0$}}
-// PROF: SumGrad = 2.35929600000000000e+06
-// PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06
+// PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
+// PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06
 // PROF-NEXT: Exec = 2359296
 // PROF-NEXT: NumOperands = 3
 // PROF: {{^1$}}
-// PROF: SumGrad = 2.35929600000000000e+06
-// PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06
+// PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
+// PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06
 // PROF-NEXT: Exec = 2359296
 // PROF-NEXT: NumOperands = 3
 // PROF: {{^2$}}
-// PROF: SumGrad = 3.68640000000000000e+04
-// PROF-NEXT: SumAbsGrad = 3.68640000000000000e+04
+// PROF: SumGrad = -8.394494923{{[0-9]+}}e+00
+// PROF-NEXT: SumAbsGrad = 3.6795242903{{[0-9]+}}e+04
 // PROF-NEXT: Exec = 36864
 // PROF-NEXT: NumOperands = 2
 // PROF: {{^3$}}
-// PROF: SumGrad = 2.35929600000000000e+06
-// PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06
+// PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
+// PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06
 // PROF-NEXT: Exec = 2359296
 // PROF-NEXT: NumOperands = 3
 // PROF-NOT: {{^[0-9]+$}}

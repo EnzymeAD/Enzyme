@@ -15,6 +15,7 @@
 #ifndef POSEIDON_RUNTIME_PROFILE_SHADOW_TABLE_H
 #define POSEIDON_RUNTIME_PROFILE_SHADOW_TABLE_H
 
+#include "DeviceProfiler.h"
 #include "ProfileFormat.h"
 
 #include <cstddef>
@@ -25,6 +26,24 @@
 
 namespace poseidon {
 
+// The adjoint seed of element `i` of an output allocation: a sign and a
+// magnitude in [0.5, 1.5) hashed from `i`. A value's profiled gradient is that
+// of the seeded combination of the outputs, and a seed of ones asks for the
+// derivative of their sum, which is zero for a value whose outputs sum to a
+// constant: a flux added to one element and subtracted from another, or
+// anything a derivative of a partition-of-unity basis distributes. No fixed
+// combination cancels this seed, it is the same in every run, and its
+// magnitude averages to one. splitmix64's finalizer: the sign is the low bit,
+// the magnitude the top 53.
+POSEIDON_HD inline double outputSeed(uint64_t i) {
+  uint64_t h = i + 0x9e3779b97f4a7c15ULL;
+  h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  h = (h ^ (h >> 27)) * 0x94d049bb133111ebULL;
+  h ^= h >> 31;
+  double mag = 0.5 + (double)(h >> 11) * 0x1.0p-53;
+  return (h & 1) ? -mag : mag;
+}
+
 // Keyed by the base address of the allocation: the adjoint is a property of
 // the buffer, so every site and call that passes a pointer into it must see
 // the same shadow at the same offset. A shadow starts zeroed and accumulates
@@ -34,7 +53,7 @@ namespace poseidon {
 //   void *allocZeroed(size_t bytes, const char *site, void *stream);
 //   void free(void *p);         // a shadow being replaced
 //   void freeAtExit(void *p);
-//   void fillOnes<T>(T *p, size_t n, void *stream);
+//   void fillSeed<T>(T *p, size_t n, void *stream); // p[i] = outputSeed(i)
 template <class Ops> class ShadowTable {
 public:
   // The table of the process, never destroyed: its buffers are freed at exit
@@ -50,8 +69,8 @@ public:
   // The shadow of the allocation [base, base + bytes). A base seen with a
   // different extent is a reused address, not the same buffer: the previous
   // allocation was freed and its shadow is stale. When `width` is the element
-  // size of an output of `site`, the shadow carries the seed one for that
-  // site once: a site's reverse pass runs right after it, in program order,
+  // size of an output of `site`, the shadow carries the seed for that site
+  // once: a site's reverse pass runs right after it, in program order,
   // so the first site that writes a buffer consumes its adjoint and leaves
   // zero behind for the sites that write it later.
   void *shadowOf(uintptr_t base, size_t bytes, int site, int width,
@@ -78,9 +97,9 @@ private:
 
   static void seed(void *p, size_t bytes, int width, void *stream) {
     if (width == 8)
-      Ops::fillOnes((double *)p, bytes / sizeof(double), stream);
+      Ops::fillSeed((double *)p, bytes / sizeof(double), stream);
     else if (width == 4)
-      Ops::fillOnes((float *)p, bytes / sizeof(float), stream);
+      Ops::fillSeed((float *)p, bytes / sizeof(float), stream);
     else
       fatal("no seed rule for a %d-byte output element.", width);
   }

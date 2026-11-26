@@ -402,7 +402,7 @@ extern "C" void __poseidon_profile_init_device() {
 template <typename T> __global__ void poseidonSeedShadow(T *p, size_t n) {
   size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n)
-    p[i] = T(1);
+    p[i] = T(outputSeed(i));
 }
 
 namespace {
@@ -419,9 +419,9 @@ struct DeviceShadowOps {
   // A run that ended with a device error exits from the profile writer, which
   // runs after this, with the message that names it.
   static void freeAtExit(void *p) { (void)gpuFree(p); }
-  // A zero adjoint propagates zero through the whole reverse pass, so the seed
-  // is one on the site's outputs.
-  template <typename T> static void fillOnes(T *p, size_t n, void *stream) {
+  // A zero adjoint propagates zero through the whole reverse pass, so the
+  // site's outputs carry the seed.
+  template <typename T> static void fillSeed(T *p, size_t n, void *stream) {
     if (n)
       poseidonSeedShadow<<<(unsigned)((n + 255) / 256), 256, 0,
                            (gpuStream_t)stream>>>(p, n);

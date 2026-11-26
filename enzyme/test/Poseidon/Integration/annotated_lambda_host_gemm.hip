@@ -154,13 +154,13 @@ int main(int argc, char **argv) {
 // PROF-NEXT: MaxGridDims = 192 1 1
 // PROF-NEXT: LaunchCount = 192
 // PROF: CanonicalHash = ec8a91ad004ef65f
-// PROF: SumGrad = 2.35929600000000000e+06
+// PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF: Exec = 2359296
-// PROF: SumGrad = 2.35929600000000000e+06
+// PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF: Exec = 2359296
-// PROF: SumGrad = 3.68640000000000000e+04
+// PROF: SumGrad = -8.394494923{{[0-9]+}}e+00
 // PROF: Exec = 36864
-// PROF: SumGrad = 2.35929600000000000e+06
+// PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF: Exec = 2359296
 
 // The device half has no profile and keeps the kernel as written; the host
