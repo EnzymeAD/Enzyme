@@ -62,9 +62,11 @@ static TypeTreeAttr getTypeTreeNode(
   SmallVector<int64_t> offsets;
   SmallVector<TypeTreeAttr> subtrees;
   while (begin != end) {
-    int offset = begin->first[depth];
+    // TODO: #enzyme.type_tree has no runs of offsets yet.
+    assert(begin->first[depth].isSimple());
+    int offset = begin->first[depth].key();
     auto groupEnd = std::find_if(begin, end, [&](const auto &entry) {
-      return entry.first[depth] != offset;
+      return entry.first[depth].key() != offset;
     });
     if (TypeTreeAttr subtree =
             getTypeTreeNode(context, begin, groupEnd, depth + 1)) {

@@ -1471,11 +1471,11 @@ void TypeAnalyzer::prepareArgs() {
 static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
                                   size_t RegSize, Instruction &I, Value *Val) {
   for (const auto &pair : TT.getMapping()) {
-    if (pair.first[0] == -1 || (size_t)pair.first[0] < RegSize)
+    if (pair.first[0].isAll() || pair.first[0].end() <= (int64_t)RegSize)
       continue;
     std::string str;
     raw_string_ostream ss(str);
-    ss << "enzyme_type " << TT.str() << " names offset " << pair.first[0]
+    ss << "enzyme_type " << TT.str() << " names offset " << pair.first[0].str()
        << " beyond the " << RegSize << " bytes of " << *Val << " in " << I;
     if (CustomErrorHandler)
       CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::IllegalTypeAnalysis,
@@ -1488,6 +1488,18 @@ static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
 /// Analyze type info given by the TBAA, possibly adding to work queue
 void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+
+  // The types of the arguments as this function declares them, including the
+  // open offset sets, which callers do not see.
+  for (Argument &Arg : fntypeinfo.Function->args()) {
+    if (!fntypeinfo.Function->getAttributes().hasParamAttr(Arg.getArgNo(),
+                                                           "enzyme_type"))
+      continue;
+    auto attr = fntypeinfo.Function->getAttributes().getParamAttr(
+        Arg.getArgNo(), "enzyme_type");
+    updateAnalysis(
+        &Arg, TypeTree::parse(attr.getValueAsString(), Arg.getContext()), &Arg);
+  }
 
   for (BasicBlock &BB : *fntypeinfo.Function) {
     if (notForAnalysis.count(&BB))
@@ -1553,7 +1565,8 @@ void TypeAnalyzer::considerTBAA() {
             if (F->getAttributes().hasParamAttr(i, "enzyme_type")) {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
-                  TypeTree::parse(attr.getValueAsString(), call->getContext());
+                  TypeTree::parse(attr.getValueAsString(), call->getContext())
+                      .DropOpen();
               auto argTy = call->getArgOperand(i)->getType();
               auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
               checkEnzymeTypeExtent(this, TT, RegSize, I,
@@ -2345,6 +2358,21 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;
   assert(legalOffset);
+
+  // An inbounds element of runs of offsets: whatever the variable offsets,
+  // the element starts where the runs say.
+  if ((direction & DOWN) && gep.isInBounds() && VariableOffsets.size() &&
+      constOffset.isNonNegative()) {
+    uint64_t Stride = 0;
+    for (auto &pair : VariableOffsets)
+      Stride = std::gcd(Stride, pair.second.abs().getLimitedValue());
+    if (Stride > 0 && Stride <= (uint64_t)std::numeric_limits<int>::max())
+      updateAnalysis(
+          &gep,
+          pointerAnalysis.AtVariableOffset(
+              (int64_t)Stride, (int64_t)constOffset.getLimitedValue()),
+          &gep);
+  }
 
   SmallVector<std::set<int>, 4> idnext;
 
@@ -6855,16 +6883,16 @@ TypeTree TypeAnalyzer::getReturnAnalysis() {
         chunk = dl.getPointerSizeInBits() / 8;
       }
 
-      for (size_t i = 0; i < chunk; i++) {
+      for (size_t i = 0; i < chunk && pair.first.back().isPoint(); i++) {
         auto v2(pair.first);
-        v2.back() += i;
+        v2.back() = TypeIndex((int)(v2.back().Start + i));
         auto found = vd.getMapping().find(v2);
         if (found == vd.getMapping().end())
           continue;
-        vd.remove(v2);
+        vd.removePath(v2);
       }
 
-      vd.insert(pair.first, pair.second);
+      vd.insertPath(pair.first, pair.second);
     }
   }
 
@@ -7074,13 +7102,13 @@ void TypeAnalyzer::visitIPOCall(CallBase &call, Function &fn) {
         a->print(llvm::errs(), *MST);
         llvm::errs() << "\n";
       }
-      updateAnalysis(arg, dt, &call);
+      updateAnalysis(arg, dt.DropOpen(), &call);
       ++a;
     }
   }
 
   if (hasDown) {
-    TypeTree vd = STR.getReturnAnalysis();
+    TypeTree vd = STR.getReturnAnalysis().DropOpen();
     if (call.getType()->isIntOrIntVectorTy() &&
         vd.Inner0() == BaseType::Anything) {
       bool returned = false;

@@ -41,6 +41,7 @@
 #include "../Utils.h"
 #include "BaseType.h"
 #include "ConcreteType.h"
+#include "TypeIndex.h"
 
 /// Maximum offset for type trees to keep
 extern "C" {
@@ -95,7 +96,8 @@ template <typename SubTypeT> class GenericTypeTree;
 using TypeTree = GenericTypeTree<llvm::Type *>;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
-typedef std::map<const std::vector<int>, ConcreteType> ConcreteTypeMapType;
+typedef std::vector<TypeIndex> TypePath;
+typedef std::map<const TypePath, ConcreteType> ConcreteTypeMapType;
 typedef std::map<const std::vector<int>, const TypeResult> TypeTreeMapType;
 
 /// Class representing the underlying types of values as
@@ -110,7 +112,8 @@ class GenericTypeTree
 
 public:
   using ConcreteType = GenericConcreteType<SubTypeT>;
-  using ConcreteTypeMapType = std::map<const std::vector<int>, ConcreteType>;
+  using Path = std::vector<TypeIndex>;
+  using ConcreteTypeMapType = std::map<const Path, ConcreteType>;
 
 private:
   // mapping of known indices to type if one exists
@@ -121,7 +124,7 @@ public:
   GenericTypeTree() {}
   GenericTypeTree(ConcreteType dat) {
     if (dat != ConcreteType(BaseType::Unknown)) {
-      mapping.insert(std::pair<const std::vector<int>, ConcreteType>({}, dat));
+      mapping.insert(std::pair<const Path, ConcreteType>({}, dat));
     }
   }
 
@@ -141,7 +144,7 @@ public:
       assert(str[0] == '[');
       str = str.substr(1);
 
-      std::vector<int> idxs;
+      Path idxs;
       while (true) {
         while (str[0] == ' ')
           str = str.substr(1);
@@ -150,10 +153,10 @@ public:
           break;
         }
 
-        int idx;
-        bool failed = str.consumeInteger(10, idx);
-        (void)failed;
-        assert(!failed);
+        TypeIndex idx;
+        bool parsed = TypeIndex::consume(str, idx);
+        (void)parsed;
+        assert(parsed);
         idxs.push_back(idx);
 
         while (str[0] == ' ')
@@ -190,16 +193,7 @@ public:
 
       ConcreteType CT(tystr, ctx);
       Result.mapping.emplace(idxs, CT);
-      if (Result.minIndices.size() < idxs.size()) {
-        for (size_t i = Result.minIndices.size(), end = idxs.size(); i < end;
-             ++i) {
-          Result.minIndices.push_back(idxs[i]);
-        }
-      }
-      for (size_t i = 0, end = idxs.size(); i < end; ++i) {
-        if (idxs[i] < Result.minIndices[i])
-          Result.minIndices[i] = idxs[i];
-      }
+      Result.noteMinIndices(idxs);
 
       while (str[0] == ' ')
         str = str.substr(1);
@@ -216,45 +210,39 @@ public:
   const ConcreteTypeMapType &getMapping() const { return mapping; }
 
   /// Lookup the underlying ConcreteType at a given offset sequence
-  /// or Unknown if none exists
-  ConcreteType operator[](const std::vector<int> Seq) const {
-    auto Found0 = mapping.find(Seq);
-    if (Found0 != mapping.end())
-      return Found0->second;
-    size_t Len = Seq.size();
-    if (Len == 0)
-      return BaseType::Unknown;
+  /// or Unknown if none exists. -1 in `Seq` asks for the type at every
+  /// offset of that level.
+  ConcreteType operator[](const std::vector<int> &Seq) const {
+    ConcreteType Found = lookupSimple(Seq);
+    if (Found != BaseType::Unknown || !hasRuns())
+      return Found;
+    return lookupPath(toTypePath(Seq));
+  }
 
-    std::vector<std::vector<int>> todo[2];
-    todo[0].push_back({});
-    int parity = 0;
-    for (size_t i = 0, Len = Seq.size(); i < Len - 1; ++i) {
-      for (auto prev : todo[parity]) {
-        prev.push_back(-1);
-        if (mapping.find(prev) != mapping.end())
-          todo[1 - parity].push_back(prev);
-        if (Seq[i] != -1) {
-          prev.back() = Seq[i];
-          if (mapping.find(prev) != mapping.end())
-            todo[1 - parity].push_back(prev);
-        }
-      }
-      todo[parity].clear();
-      parity = 1 - parity;
+  /// Lookup the ConcreteType of an entry whose offset sets include those of
+  /// `Seq`, or Unknown if none exists.
+  ConcreteType lookupPath(const Path &Seq) const {
+    if (llvm::all_of(Seq,
+                     [](const TypeIndex &idx) { return idx.isSimple(); })) {
+      std::vector<int> Simple;
+      for (const TypeIndex &idx : Seq)
+        Simple.push_back(idx.key());
+      ConcreteType Found = lookupSimple(Simple);
+      if (Found != BaseType::Unknown || !hasRuns())
+        return Found;
+    } else {
+      auto Found0 = mapping.find(Seq);
+      if (Found0 != mapping.end())
+        return Found0->second;
     }
-
-    size_t i = Len - 1;
-    for (auto prev : todo[parity]) {
-      prev.push_back(-1);
-      auto Found = mapping.find(prev);
-      if (Found != mapping.end())
-        return Found->second;
-      if (Seq[i] != -1) {
-        prev.back() = Seq[i];
-        Found = mapping.find(prev);
-        if (Found != mapping.end())
-          return Found->second;
-      }
+    for (const auto &pair : mapping) {
+      if (pair.first.size() != Seq.size())
+        continue;
+      bool Includes = true;
+      for (size_t i = 0, Len = Seq.size(); i < Len && Includes; ++i)
+        Includes = pair.first[i].includes(Seq[i]);
+      if (Includes)
+        return pair.second;
     }
     return BaseType::Unknown;
   }
@@ -264,7 +252,7 @@ public:
   bool IsFullyDetermined() const {
     std::vector<int> offsets = {-1};
     while (1) {
-      auto found = mapping.find(offsets);
+      auto found = mapping.find(toTypePath(offsets));
       if (found == mapping.end())
         return false;
       if (found->second != BaseType::Pointer)
@@ -273,11 +261,18 @@ public:
     }
   }
 
-  void remove(const std::vector<int> Seq) { mapping.erase(Seq); }
+  void remove(const std::vector<int> &Seq) { mapping.erase(toTypePath(Seq)); }
+  void removePath(const Path &Seq) { mapping.erase(Seq); }
 
   /// Return if changed
-  bool insert(const std::vector<int> Seq, ConcreteType CT,
+  bool insert(const std::vector<int> &Seq, ConcreteType CT,
               bool PointerIntSame = false) {
+    return insertPath(toTypePath(Seq), CT, PointerIntSame);
+  }
+
+  /// Return if changed
+  bool insertPath(const Path &Seq, ConcreteType CT,
+                  bool PointerIntSame = false) {
     size_t SeqSize = Seq.size();
     if (SeqSize > Traits::maxDepth()) {
       Traits::depthLimitExceeded(
@@ -285,14 +280,14 @@ public:
       return false;
     }
     if (SeqSize == 0) {
-      mapping.insert(std::pair<const std::vector<int>, ConcreteType>(Seq, CT));
+      mapping.insert(std::pair<const Path, ConcreteType>(Seq, CT));
       return true;
     }
 
     // check types at lower pointer offsets are either pointer or
     // anything. Don't insert into an anything
     {
-      std::vector<int> tmp(Seq);
+      Path tmp(Seq);
       while (tmp.size() > 0) {
         tmp.erase(tmp.end() - 1);
         auto found = mapping.find(tmp);
@@ -315,27 +310,11 @@ public:
     {
       for (const auto &pair : llvm::make_early_inc_range(mapping)) {
         if (pair.first.size() == SeqSize) {
-          // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
-          // as general as the existing map val (e.g. [0, 0]).
-          bool newMoreGeneralThanOld = true;
-          // Whether the the existing val (e.g. [-1, 0] or [0, 0]) is at least
-          // as general as the inserted map val (e.g. [0, 0]).
-          bool oldMoreGeneralThanNew = true;
-          for (unsigned i = 0; i < SeqSize; i++) {
-            if (pair.first[i] == Seq[i])
-              continue;
-            if (Seq[i] == -1) {
-              oldMoreGeneralThanNew = false;
-            } else if (pair.first[i] == -1) {
-              newMoreGeneralThanOld = false;
-            } else {
-              oldMoreGeneralThanNew = false;
-              newMoreGeneralThanOld = false;
-              break;
-            }
-          }
+          Generality G = compare(Seq, pair.first);
+          if (G.Disjoint)
+            continue;
 
-          if (oldMoreGeneralThanNew) {
+          if (G.OldMoreGeneral) {
             // Inserting an existing or less general version
             if (CT == pair.second)
               return false;
@@ -362,7 +341,7 @@ public:
             llvm::errs() << "inserting into : " << str() << " with "
                          << to_string(Seq) << " of " << CT.str() << "\n";
             llvm_unreachable("illegal insertion");
-          } else if (newMoreGeneralThanOld) {
+          } else if (G.NewMoreGeneral) {
             // This new is strictly more general than the old. If they were
             // equivalent, the case above would have been hit.
 
@@ -397,6 +376,11 @@ public:
             llvm::errs() << "inserting into : " << str() << " with "
                          << to_string(Seq) << " of " << CT.str() << "\n";
             llvm_unreachable("illegal insertion");
+          } else if (G.RunsOverlap &&
+                     !compatibleOverlap(CT, pair.second, PointerIntSame)) {
+            llvm::errs() << "inserting into : " << str() << " with "
+                         << to_string(Seq) << " of " << CT.str() << "\n";
+            llvm_unreachable("illegal insertion");
           }
         }
       }
@@ -406,16 +390,16 @@ public:
     size_t minLen =
         (minIndices.size() <= SeqSize) ? minIndices.size() : SeqSize;
     for (size_t i = 0; i < minLen; i++) {
-      if (minIndices[i] > Seq[i]) {
+      if (minIndices[i] > Seq[i].key()) {
         if (minIndices[i] > Traits::maxOffset())
           possibleDeletion = true;
-        minIndices[i] = Seq[i];
+        minIndices[i] = Seq[i].key();
       }
     }
 
     if (minIndices.size() < SeqSize) {
       for (size_t i = minIndices.size(), end = SeqSize; i < end; ++i) {
-        minIndices.push_back(Seq[i]);
+        minIndices.push_back(Seq[i].key());
       }
     }
 
@@ -424,8 +408,9 @@ public:
         size_t i = 0;
         bool mustKeep = false;
         bool considerErase = false;
-        for (int val : pair.first) {
-          if (val > Traits::maxOffset()) {
+        for (const TypeIndex &idx : pair.first) {
+          int val = idx.key();
+          if (val > Traits::maxOffset() && idx.isSimple()) {
             if (val == minIndices[i]) {
               mustKeep = true;
               break;
@@ -441,25 +426,172 @@ public:
       }
     }
 
-    size_t i = 0;
-    bool keep = false;
-    bool considerErase = false;
-    for (auto val : Seq) {
-      if (val > Traits::maxOffset()) {
-        if (val == minIndices[i]) {
-          keep = true;
-          break;
-        }
-        considerErase = true;
-      }
-      i++;
-    }
-    if (considerErase && !keep)
+    if (!keepBeyondMaxOffset(Seq, minIndices, mapping))
       return changed;
-    mapping.insert(std::pair<const std::vector<int>, ConcreteType>(Seq, CT));
+    mapping.insert(std::pair<const Path, ConcreteType>(Seq, CT));
     return true;
   }
 
+  /// Drop the entries with an open offset set, which hold only within the
+  /// function whose argument types introduced them, before this tree is
+  /// applied to values of another function.
+  GenericTypeTree DropOpen() const {
+    GenericTypeTree Result;
+    for (const auto &pair : mapping) {
+      if (llvm::any_of(pair.first,
+                       [](const TypeIndex &idx) { return idx.Open; }))
+        continue;
+      Result.mapping.insert(pair);
+      Result.noteMinIndices(pair.first);
+    }
+    return Result;
+  }
+
+private:
+  /// How the offset sets of two paths of the same length relate.
+  struct Generality {
+    /// Some level has no offset in common.
+    bool Disjoint = false;
+    /// Every level of the new path includes the old one.
+    bool NewMoreGeneral = true;
+    /// Every level of the old path includes the new one.
+    bool OldMoreGeneral = true;
+    /// The paths share offsets, neither includes the other, and one of the
+    /// levels that differ is a run of offsets.
+    bool RunsOverlap = false;
+  };
+
+  static Generality compare(const Path &New, const Path &Old) {
+    Generality G;
+    bool AnyRun = false;
+    for (size_t i = 0, Len = New.size(); i < Len; i++) {
+      if (New[i] == Old[i])
+        continue;
+      bool NewIncludes = New[i].includes(Old[i]);
+      bool OldIncludes = Old[i].includes(New[i]);
+      if (!NewIncludes && !OldIncludes && !New[i].overlaps(Old[i])) {
+        G.Disjoint = true;
+        G.NewMoreGeneral = G.OldMoreGeneral = false;
+        return G;
+      }
+      AnyRun |= !New[i].isSimple() || !Old[i].isSimple();
+      G.NewMoreGeneral &= NewIncludes;
+      G.OldMoreGeneral &= OldIncludes;
+    }
+    // Two simple paths that cross, like [0,-1] and [-1,0], are not compared,
+    // as before runs existed.
+    G.RunsOverlap = !G.NewMoreGeneral && !G.OldMoreGeneral && AnyRun;
+    return G;
+  }
+
+  /// Whether two types may hold at the same offsets of overlapping entries.
+  static bool compatibleOverlap(ConcreteType New, ConcreteType Old,
+                                bool PointerIntSame) {
+    if (New == Old || New == BaseType::Anything || Old == BaseType::Anything)
+      return true;
+    return PointerIntSame &&
+           ((New == BaseType::Pointer && Old == BaseType::Integer) ||
+            (New == BaseType::Integer && Old == BaseType::Pointer));
+  }
+
+  /// Whether any entry has an offset set other than a point or -1.
+  bool hasRuns() const {
+    for (const auto &pair : mapping)
+      for (const TypeIndex &idx : pair.first)
+        if (!idx.isSimple())
+          return true;
+    return false;
+  }
+
+  /// Whether an entry with path `Seq` stays within the limits that make type
+  /// analysis terminate: a point beyond the maximum offset only if it is the
+  /// smallest offset at its depth, and runs beyond it only up to as many as
+  /// the maximum offset (constant-offset pointer cycles shift a run further
+  /// on each iteration).
+  static bool keepBeyondMaxOffset(const Path &Seq,
+                                  const std::vector<int> &minIdx,
+                                  const ConcreteTypeMapType &entries) {
+    bool considerErase = false;
+    bool farRun = false;
+    for (size_t i = 0, Len = Seq.size(); i < Len; i++) {
+      int val = Seq[i].key();
+      if (val <= Traits::maxOffset())
+        continue;
+      if (i < minIdx.size() && val == minIdx[i])
+        return true;
+      if (Seq[i].isSimple())
+        considerErase = true;
+      else
+        farRun = true;
+    }
+    if (considerErase)
+      return false;
+    if (!farRun)
+      return true;
+    int farRuns = 0;
+    for (const auto &pair : entries)
+      for (const TypeIndex &idx : pair.first)
+        if (!idx.isSimple() && idx.key() > Traits::maxOffset()) {
+          ++farRuns;
+          break;
+        }
+    return farRuns < Traits::maxOffset();
+  }
+
+  /// Lower minIndices to the offsets of `Seq`.
+  void noteMinIndices(const Path &Seq) {
+    for (size_t i = 0, Len = Seq.size(); i < Len; ++i) {
+      if (i == minIndices.size())
+        minIndices.push_back(Seq[i].key());
+      else if (Seq[i].key() < minIndices[i])
+        minIndices[i] = Seq[i].key();
+    }
+  }
+
+  /// The lookup of plain offsets among the entries with plain offsets.
+  ConcreteType lookupSimple(const std::vector<int> &Seq) const {
+    auto Found0 = mapping.find(toTypePath(Seq));
+    if (Found0 != mapping.end())
+      return Found0->second;
+    size_t Len = Seq.size();
+    if (Len == 0)
+      return BaseType::Unknown;
+
+    std::vector<Path> todo[2];
+    todo[0].push_back({});
+    int parity = 0;
+    for (size_t i = 0, Len = Seq.size(); i < Len - 1; ++i) {
+      for (auto prev : todo[parity]) {
+        prev.push_back(-1);
+        if (mapping.find(prev) != mapping.end())
+          todo[1 - parity].push_back(prev);
+        if (Seq[i] != -1) {
+          prev.back() = Seq[i];
+          if (mapping.find(prev) != mapping.end())
+            todo[1 - parity].push_back(prev);
+        }
+      }
+      todo[parity].clear();
+      parity = 1 - parity;
+    }
+
+    size_t i = Len - 1;
+    for (auto prev : todo[parity]) {
+      prev.push_back(-1);
+      auto Found = mapping.find(prev);
+      if (Found != mapping.end())
+        return Found->second;
+      if (Seq[i] != -1) {
+        prev.back() = Seq[i];
+        Found = mapping.find(prev);
+        if (Found != mapping.end())
+          return Found->second;
+      }
+    }
+    return BaseType::Unknown;
+  }
+
+public:
   /// How this TypeTree compares with another
   bool operator<(const GenericTypeTree &vd) const {
     return mapping < vd.mapping;
@@ -498,7 +630,7 @@ public:
     GenericTypeTree vd;
     for (auto &pair : mapping) {
       if (pair.second == BaseType::Integer) {
-        vd.insert(pair.first, pair.second);
+        vd.insertPath(pair.first, pair.second);
       }
     }
 
@@ -507,28 +639,33 @@ public:
 
   /// Prepend an offset to all mappings
   GenericTypeTree Only(int Off, typename Traits::Origin orig) const {
+    return OnlyIndex(TypeIndex(Off), orig);
+  }
+
+  /// Prepend an offset set to all mappings
+  GenericTypeTree OnlyIndex(const TypeIndex &Off,
+                            typename Traits::Origin orig) const {
     GenericTypeTree Result;
     Result.minIndices.reserve(1 + minIndices.size());
-    Result.minIndices.push_back(Off);
+    Result.minIndices.push_back(Off.key());
     for (auto midx : minIndices)
       Result.minIndices.push_back(midx);
 
     if (Result.minIndices.size() > Traits::maxDepth()) {
       Result.minIndices.pop_back();
-      Traits::depthLimitExceeded(*this, orig,
-                                 " only(" + llvm::Twine(Off) + ")");
+      Traits::depthLimitExceeded(*this, orig, " only(" + Off.str() + ")");
     }
 
     for (const auto &pair : mapping) {
       if (pair.first.size() == Traits::maxDepth())
         continue;
-      std::vector<int> Vec;
+      Path Vec;
       Vec.reserve(pair.first.size() + 1);
       Vec.push_back(Off);
-      for (auto Val : pair.first)
+      for (const auto &Val : pair.first)
         Vec.push_back(Val);
       Result.mapping.insert(
-          std::pair<const std::vector<int>, ConcreteType>(Vec, pair.second));
+          std::pair<const Path, ConcreteType>(Vec, pair.second));
     }
     return Result;
   }
@@ -543,25 +680,20 @@ public:
       }
       assert(pair.first.size() != 0);
 
-      if (pair.first[0] == -1) {
-        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+      if (pair.first[0].isAll()) {
+        Path next(pair.first.begin() + 1, pair.first.end());
         Result.mapping.insert(
-            std::pair<const std::vector<int>, ConcreteType>(next, pair.second));
-        for (size_t i = 0, Len = next.size(); i < Len; ++i) {
-          if (i == Result.minIndices.size())
-            Result.minIndices.push_back(next[i]);
-          else if (next[i] < Result.minIndices[i])
-            Result.minIndices[i] = next[i];
-        }
+            std::pair<const Path, ConcreteType>(next, pair.second));
+        Result.noteMinIndices(next);
       }
     }
     for (const auto &pair : mapping) {
-      if (pair.first[0] == 0) {
-        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+      if (!pair.first[0].isAll() && pair.first[0].contains(0)) {
+        Path next(pair.first.begin() + 1, pair.first.end());
         // We do insertion like this to force an error
         // on the orIn operation if there is an incompatible
         // merge. The insert operation does not error.
-        Result.orIn(next, pair.second);
+        Result.orInPath(next, pair.second);
       }
     }
 
@@ -587,24 +719,32 @@ public:
     for (const auto &pair : mapping) {
       assert(pair.first.size() != 0);
 
-      if (pair.first[0] == -1) {
+      if (pair.first[0].isAll()) {
         // For "all index" calculations, explicitly
         // add mappings for regions in range
         auto next = pair.first;
         for (size_t i = 0; i < start; ++i) {
           next[0] = i;
-          Result.orIn(next, pair.second);
+          Result.orInPath(next, pair.second);
         }
         for (size_t i = end; i < len; ++i) {
           next[0] = i;
-          Result.orIn(next, pair.second);
+          Result.orInPath(next, pair.second);
         }
-      } else if ((size_t)pair.first[0] < start ||
-                 ((size_t)pair.first[0] >= end &&
-                  (size_t)pair.first[0] < len)) {
+      } else if (pair.first[0].isPoint()) {
         // Otherwise simply check that the given offset is in range
-
-        Result.insert(pair.first, pair.second);
+        size_t off = pair.first[0].Start;
+        if (off < start || (off >= end && off < len))
+          Result.insertPath(pair.first, pair.second);
+      } else {
+        llvm::SmallVector<TypeIndex, 2> kept;
+        pair.first[0].clip(0, start, 0, kept);
+        pair.first[0].clip(end, len, 0, kept);
+        auto next = pair.first;
+        for (const TypeIndex &idx : kept) {
+          next[0] = idx;
+          Result.orInPath(next, pair.second);
+        }
       }
     }
 
@@ -612,18 +752,43 @@ public:
     return Result;
   }
 
+private:
+  /// The size of the values whose start offsets an entry of type `dt` with
+  /// `inner` further offsets lists, for combining them into a -1.
+  static size_t chunkSize(const Path &inner, ConcreteType dt,
+                          const llvm::DataLayout &dl) {
+    if (inner.size() > 0)
+      return dl.getPointerSizeInBits() / 8;
+    if (auto flt = dt.isFloat())
+      return dl.getTypeSizeInBits(flt) / 8;
+    if (dt == BaseType::Pointer)
+      return dl.getPointerSizeInBits() / 8;
+    return 1;
+  }
+
+  /// Whether the offset sets `set` cover every `chunk`-th offset of [0, len).
+  static bool covers(const std::vector<TypeIndex> &set, size_t len,
+                     size_t chunk) {
+    for (size_t i = 0; i < len; i += chunk)
+      if (!llvm::any_of(set,
+                        [&](const TypeIndex &idx) { return idx.contains(i); }))
+        return false;
+    return true;
+  }
+
+public:
   /// Select all submappings whose first index is in range [0, len) and remove
   /// the first index. This is the inverse of the `Only` operation
   GenericTypeTree Lookup(size_t len, const llvm::DataLayout &dl) const {
 
     // Map of indices[1:] => ( End => possible Index[0] )
-    std::map<std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
+    std::map<Path, std::map<ConcreteType, std::vector<TypeIndex>>> staging;
 
     for (const auto &pair : mapping) {
       assert(pair.first.size() != 0);
 
       // Pointer is at offset 0 from this object
-      if (pair.first[0] != 0 && pair.first[0] != -1)
+      if (!pair.first[0].contains(0))
         continue;
 
       if (pair.first.size() == 1) {
@@ -632,15 +797,15 @@ public:
         continue;
       }
 
-      if (pair.first[1] == -1) {
+      Path next(pair.first.begin() + 2, pair.first.end());
+      auto &set = staging[next][pair.second];
+      if (pair.first[1].isAll()) {
+        set.push_back(pair.first[1]);
       } else {
-        if ((size_t)pair.first[1] >= len)
-          continue;
+        llvm::SmallVector<TypeIndex, 2> kept;
+        pair.first[1].clip(0, len, 0, kept);
+        set.insert(set.end(), kept.begin(), kept.end());
       }
-
-      std::vector<int> next(pair.first.begin() + 2, pair.first.end());
-
-      staging[next][pair.second].insert(pair.first[1]);
     }
 
     GenericTypeTree Result;
@@ -649,44 +814,27 @@ public:
       for (auto &pair2 : pair.second) {
         auto dt = pair2.first;
         const auto &set = pair2.second;
-
-        bool legalCombine = set.count(-1);
+        if (set.empty())
+          continue;
 
         // See if we can canonicalize the outermost index into a -1
-        if (!legalCombine) {
-          size_t chunk = 1;
-          // Implicit pointer
-          if (pnext.size() > 0) {
-            chunk = dl.getPointerSizeInBits() / 8;
-          } else {
-            if (auto flt = dt.isFloat()) {
-              chunk = dl.getTypeSizeInBits(flt) / 8;
-            } else if (dt == BaseType::Pointer) {
-              chunk = dl.getPointerSizeInBits() / 8;
-            }
-          }
+        bool legalCombine =
+            llvm::any_of(set,
+                         [](const TypeIndex &idx) { return idx.isAll(); }) ||
+            covers(set, len, chunkSize(pnext, dt, dl));
 
-          legalCombine = true;
-          for (size_t i = 0; i < len; i += chunk) {
-            if (!set.count(i)) {
-              legalCombine = false;
-              break;
-            }
-          }
-        }
-
-        std::vector<int> next;
+        Path next;
         next.reserve(pnext.size() + 1);
         next.push_back(-1);
         for (auto v : pnext)
           next.push_back(v);
 
         if (legalCombine) {
-          Result.insert(next, dt, /*intsAreLegalPointerSub*/ true);
+          Result.insertPath(next, dt, /*intsAreLegalPointerSub*/ true);
         } else {
-          for (auto e : set) {
+          for (const auto &e : set) {
             next[0] = e;
-            Result.insert(next, dt);
+            Result.insertPath(next, dt);
           }
         }
       }
@@ -701,7 +849,7 @@ public:
     bool canonicalized = true;
     for (const auto &pair : mapping) {
       assert(pair.first.size() != 0);
-      if (pair.first[0] != -1) {
+      if (!pair.first[0].isAll()) {
         canonicalized = false;
         break;
       }
@@ -710,27 +858,35 @@ public:
       return;
 
     // Map of indices[1:] => ( End => possible Index[0] )
-    std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>>
+    std::map<const Path, std::map<ConcreteType, std::vector<TypeIndex>>>
         staging;
 
     for (const auto &pair : mapping) {
 
-      std::vector<int> next(pair.first.begin() + 1, pair.first.end());
-      if (pair.first[0] != -1) {
-        if ((size_t)pair.first[0] >= len) {
+      Path next(pair.first.begin() + 1, pair.first.end());
+      const TypeIndex &first = pair.first[0];
+      if (first.isPoint()) {
+        if ((size_t)first.Start >= len) {
           llvm::errs() << str() << "\n";
           llvm::errs() << " canonicalizing " << len << "\n";
           llvm::report_fatal_error("Canonicalization failed");
         }
+        staging[next][pair.second].push_back(first);
+      } else if (first.isAll()) {
+        staging[next][pair.second].push_back(first);
+      } else {
+        llvm::SmallVector<TypeIndex, 2> kept;
+        first.clip(0, len, 0, kept);
+        auto &set = staging[next][pair.second];
+        set.insert(set.end(), kept.begin(), kept.end());
       }
-      staging[next][pair.second].insert(pair.first[0]);
     }
 
     // TypeTree mappings which did not get combined
-    std::map<const std::vector<int>, ConcreteType> unCombinedToAdd;
+    std::map<const Path, ConcreteType> unCombinedToAdd;
 
     // TypeTree mappings which did get combined into an outer -1
-    std::map<const std::vector<int>, ConcreteType> combinedToAdd;
+    std::map<const Path, ConcreteType> combinedToAdd;
 
     for (const auto &pair : staging) {
       auto &pnext = pair.first;
@@ -738,31 +894,12 @@ public:
         auto dt = pair2.first;
         const auto &set = pair2.second;
 
-        bool legalCombine = false;
-
         // See if we can canonicalize the outermost index into a -1
-        if (!set.count(-1)) {
-          size_t chunk = 1;
-          if (pnext.size() > 0) {
-            chunk = dl.getPointerSizeInBits() / 8;
-          } else {
-            if (auto flt = dt.isFloat()) {
-              chunk = dl.getTypeSizeInBits(flt) / 8;
-            } else if (dt == BaseType::Pointer) {
-              chunk = dl.getPointerSizeInBits() / 8;
-            }
-          }
+        bool legalCombine = !llvm::any_of(set, [](const TypeIndex &idx) {
+          return idx.isAll();
+        }) && covers(set, len, chunkSize(pnext, dt, dl));
 
-          legalCombine = true;
-          for (size_t i = 0; i < len; i += chunk) {
-            if (!set.count(i)) {
-              legalCombine = false;
-              break;
-            }
-          }
-        }
-
-        std::vector<int> next;
+        Path next;
         next.reserve(pnext.size() + 1);
         next.push_back(-1);
         for (auto v : pnext)
@@ -771,7 +908,7 @@ public:
         if (legalCombine) {
           combinedToAdd.emplace(next, dt);
         } else {
-          for (auto e : set) {
+          for (const auto &e : set) {
             next[0] = e;
             unCombinedToAdd.emplace(next, dt);
           }
@@ -799,7 +936,7 @@ public:
     //   which conflicts
     // Alternatively [-1,-1,-1]:Pointer, and generated a [-1,0,-1] fusion
     for (const auto &pair : combinedToAdd) {
-      insert(pair.first, pair.second);
+      insertPath(pair.first, pair.second);
     }
 
     return;
@@ -814,25 +951,56 @@ public:
       assert(pair.first.size() != 0);
 
       // Pointer is at offset 0 from this object
-      if (pair.first[0] != 0 && pair.first[0] != -1)
+      if (!pair.first[0].contains(0))
         continue;
 
       if (pair.first.size() == 1) {
         if (pair.second == BaseType::Pointer ||
             pair.second == BaseType::Anything) {
-          dat.insert(pair.first, pair.second);
+          dat.insertPath(pair.first, pair.second);
           continue;
         }
         legal = false;
         break;
       }
 
-      if (pair.first[1] == -1) {
-        dat.insert(pair.first, pair.second);
+      if (pair.first[1].isAll()) {
+        dat.insertPath(pair.first, pair.second);
       }
     }
 
     return dat;
+  }
+
+  /// The types of what a pointer `Base + k * Stride` points to, for this
+  /// pointer's tree and any `k` for which it stays within the runs of offsets
+  /// of the data. A run of bytes from at most `Base` holds the `Stride` bytes
+  /// from the new pointer; a run of elements of size `Stride` (with `Base` 0)
+  /// holds one element.
+  GenericTypeTree AtVariableOffset(int64_t Stride, int64_t Base) const {
+    GenericTypeTree Result;
+    for (const auto &pair : mapping) {
+      if (pair.first.size() < 2 || !pair.first[0].contains(0))
+        continue;
+      const TypeIndex &Data = pair.first[1];
+      if (Data.isSimple())
+        continue;
+      Path next(pair.first);
+      if (Data.Dims.size() == 1 && Data.Dims[0].Stride == 1 &&
+          Data.Start <= Base && Data.end() >= Base + Stride)
+        next[1] = TypeIndex::run(0, Stride, Data.Open);
+      else if (Base == 0 && Data.Dims[0].Stride == Stride &&
+               Data.Start < Stride && Data.end() > Stride) {
+        TypeIndex Element(Data);
+        Element.Dims.erase(Element.Dims.begin());
+        if (Element.Dims.empty())
+          Element = TypeIndex((int)Data.Start);
+        next[1] = Element;
+      } else
+        continue;
+      Result.insertPath(next, pair.second);
+    }
+    return Result;
   }
 
   llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl,
@@ -955,24 +1123,24 @@ public:
     GenericTypeTree Result;
 
     // The normal orIn / insert methods do collision checking, which is slow
-    //  (and presently O(n)). This is because an expansion of a -1 which could
-    //  conflict with a fixed value. Consider calling this
-    //  ShiftIndicies(offset=0, maxSize=2, addOffset=0, tt={[-1]:Integer,
-    //  [1]:Anything}) the -1 would expand to [0]:Int, [1]:Int, which would need
-    //  to be merged with [1]:Anything
-    //
-    // The only possible values which can cause a conflict are minus -1's.
-    // As a result, we start with a fast insertion (aka without check) of
-    // non-expanded values, since they just do a literal shift which needs no
-    // extra checking, besides bounds checks.
+    // (and presently O(n)). The shifted entries are collected first, then
+    // inserted without checks, merging only entries with the same path: the
+    // tree they come from has no conflicts, and only the expansion of a -1
+    // into offsets can collide with a fixed offset (e.g. shifting
+    // {[-1]:Integer, [1]:Anything} to two bytes gives [0]:Int, [1]:Int, which
+    // merges with [1]:Anything).
     //
     // Since we're doing things manually, we also need to manually preserve TT
     // invariants. Specifically, TT limits all values to have offsets <
     // MAX_OFFSET, unless it is the smallest offset at that depth. (e.g. so we
     // can still hava  typetree {[123456]:Int}, even if limit is 100).
-    //
-    // First compute the minimum 0th index to be kept.
-    Result.minIndices.resize(minIndices.size(), INT_MAX);
+    const int64_t Hi = maxSize == -1 ? std::numeric_limits<int64_t>::max()
+                                     : (int64_t)offset + maxSize;
+    const int64_t Delta = (int64_t)addOffset - offset;
+
+    // Shifted entries, and the -1's to expand into offsets.
+    std::vector<std::pair<Path, ConcreteType>> shifted;
+    std::vector<std::pair<Path, ConcreteType>> expand;
 
     for (const auto &pair : mapping) {
       if (pair.first.size() == 0) {
@@ -987,148 +1155,116 @@ public:
         llvm_unreachable("ShiftIndices called on a nonpointer/anything");
       }
 
-      int next0 = pair.first[0];
-
-      if (next0 == -1) {
+      const TypeIndex &first = pair.first[0];
+      Path next(pair.first);
+      if (first.isAll()) {
         if (maxSize == -1) {
-          // Max size does not clip the next index
-
-          // If we have a follow up offset add, we lose the -1 since we only
-          // represent [0, inf) with -1 not the [addOffset, inf) required here
-          if (addOffset != 0) {
-            next0 = addOffset;
-          }
-
+          // Max size does not clip the next index; a -1 represents only
+          // [0, inf), so from a nonzero addOffset it becomes a run.
+          if (addOffset != 0)
+            next[0] = TypeIndex::run(addOffset, TypeIndex::Infinite);
+          shifted.emplace_back(next, pair.second);
+        } else if ((int64_t)addOffset + maxSize - 1 > Traits::maxOffset()) {
+          // Offsets beyond the maximum would be dropped.
+          next[0] = TypeIndex::run(addOffset, maxSize);
+          shifted.emplace_back(next, pair.second);
         } else {
-          // We're going to insert addOffset + 0...maxSize so the new minIndex
-          // is addOffset
-          Result.minIndices[0] = addOffset;
-          for (size_t i = 1, sz = pair.first.size(); i < sz; i++)
-            if (pair.first[i] < Result.minIndices[i])
-              Result.minIndices[i] = pair.first[i];
-          continue;
+          // This needs to become 0...maxSize handled separately as it is the
+          // only insertion that could have collisions
+          expand.emplace_back(next, pair.second);
         }
-      } else {
-        // Too small for range
-        if (next0 < offset) {
-          continue;
-        }
-        next0 -= offset;
-
-        if (maxSize != -1) {
-          if (next0 >= maxSize)
-            continue;
-        }
-
-        next0 += addOffset;
+        continue;
       }
-      if (next0 < Result.minIndices[0])
-        Result.minIndices[0] = next0;
+
+      llvm::SmallVector<TypeIndex, 2> pieces;
+      first.clip(offset, Hi, Delta, pieces);
+      for (const TypeIndex &idx : pieces) {
+        next[0] = idx;
+        shifted.emplace_back(next, pair.second);
+      }
+    }
+
+    // First compute the minimum index at each depth to be kept.
+    Result.minIndices.resize(minIndices.size(), INT_MAX);
+    for (const auto &pair : shifted)
+      for (size_t i = 0, sz = pair.first.size(); i < sz; i++)
+        if (pair.first[i].key() < Result.minIndices[i])
+          Result.minIndices[i] = pair.first[i].key();
+    for (const auto &pair : expand) {
+      // We're going to insert addOffset + 0...maxSize so the new minIndex
+      // is addOffset
+      if ((int)addOffset < Result.minIndices[0])
+        Result.minIndices[0] = addOffset;
       for (size_t i = 1, sz = pair.first.size(); i < sz; i++)
-        if (pair.first[i] < Result.minIndices[i])
-          Result.minIndices[i] = pair.first[i];
+        if (pair.first[i].key() < Result.minIndices[i])
+          Result.minIndices[i] = pair.first[i].key();
     }
 
     // Max depth of actual inserted values
     size_t maxInsertedDepth = 0;
 
-    // Insert all
-    for (const auto &pair : mapping) {
-      if (pair.first.size() == 0)
-        continue;
-
-      int next0 = pair.first[0];
-
-      if (next0 == -1) {
-        if (maxSize == -1) {
-          // Max size does not clip the next index
-
-          // If we have a follow up offset add, we lose the -1 since we only
-          // represent [0, inf) with -1 not the [addOffset, inf) required here
-          if (addOffset != 0) {
-            next0 = addOffset;
-          }
-
-        } else {
-          // This needs to become 0...maxSize handled separately as it is the
-          // only insertion that could have collisions
-          continue;
-        }
-      } else {
-        // Too small for range
-        if (next0 < offset) {
-          continue;
-        }
-        next0 -= offset;
-
-        if (maxSize != -1) {
-          if (next0 >= maxSize)
-            continue;
-        }
-
-        next0 += addOffset;
-      }
-
+    for (const auto &pair : shifted) {
       // If after moving this would not merit being kept for being a min index
       // or being within the max type offset, skip it.
+      int next0 = pair.first[0].key();
       if (next0 > Traits::maxOffset()) {
         bool minIndex = next0 == Result.minIndices[0];
         if (!minIndex)
           for (size_t i = 1; i < pair.first.size(); i++) {
-            if (pair.first[i] == Result.minIndices[i]) {
+            if (pair.first[i].key() == Result.minIndices[i]) {
               minIndex = true;
               break;
             }
           }
-        if (!minIndex)
+        if (!minIndex &&
+            !keepBeyondMaxOffset(pair.first, Result.minIndices, Result.mapping))
           continue;
       }
 
-      std::vector<int> next(pair.first);
-      next[0] = next0;
-      Result.mapping.emplace(next, pair.second);
-      if (next.size() > maxInsertedDepth)
-        maxInsertedDepth = next.size();
+      auto found = Result.mapping.find(pair.first);
+      if (found != Result.mapping.end()) {
+        ConcreteType prev(pair.second);
+        if (prev.orIn(found->second, /*pointerIntSame*/ false))
+          found->second = prev;
+      } else {
+        Result.mapping.emplace(pair.first, pair.second);
+      }
+      if (pair.first.size() > maxInsertedDepth)
+        maxInsertedDepth = pair.first.size();
     }
 
-    // Insert and expand the minus one, if needed
-    if (maxSize != -1)
-      for (const auto &pair : mapping) {
-        if (pair.first.size() == 0)
-          continue;
-        if (pair.first[0] != -1)
-          continue;
-
-        size_t chunk = 1;
-        std::vector<int> next(pair.first);
-        auto op = operator[]({next[0]});
-        if (auto flt = op.isFloat()) {
-          chunk = dl.getTypeSizeInBits(flt) / 8;
-        } else if (op == BaseType::Pointer) {
-          chunk = dl.getPointerSizeInBits() / 8;
-        }
-        auto offincr = (chunk - offset % chunk) % chunk;
-        bool inserted = false;
-        for (int i = offincr; i < maxSize; i += chunk) {
-          next[0] = i + addOffset;
-          ConcreteType prev(pair.second);
-          // We can use faster checks here, since we know there can be no
-          // -1's that we would conflict with, only conflicts from previous
-          // fixed value insertions.
-          auto found = Result.mapping.find(next);
-          if (found != Result.mapping.end()) {
-            // orIn returns if changed, update the value in the map if so
-            // with the new value.
-            if (prev.orIn(found->second, /*pointerIntSame*/ false))
-              found->second = prev;
-          } else {
-            Result.mapping.emplace(next, pair.second);
-          }
-          inserted = true;
-        }
-        if (inserted && next.size() > maxInsertedDepth)
-          maxInsertedDepth = next.size();
+    // Insert and expand the minus one
+    for (const auto &pair : expand) {
+      size_t chunk = 1;
+      Path next(pair.first);
+      auto op = lookupPath(Path{next[0]});
+      if (auto flt = op.isFloat()) {
+        chunk = dl.getTypeSizeInBits(flt) / 8;
+      } else if (op == BaseType::Pointer) {
+        chunk = dl.getPointerSizeInBits() / 8;
       }
+      auto offincr = (chunk - offset % chunk) % chunk;
+      bool inserted = false;
+      for (int i = offincr; i < maxSize; i += chunk) {
+        next[0] = i + addOffset;
+        ConcreteType prev(pair.second);
+        // We can use faster checks here, since we know there can be no
+        // -1's that we would conflict with, only conflicts from previous
+        // fixed value insertions.
+        auto found = Result.mapping.find(next);
+        if (found != Result.mapping.end()) {
+          // orIn returns if changed, update the value in the map if so
+          // with the new value.
+          if (prev.orIn(found->second, /*pointerIntSame*/ false))
+            found->second = prev;
+        } else {
+          Result.mapping.emplace(next, pair.second);
+        }
+        inserted = true;
+      }
+      if (inserted && next.size() > maxInsertedDepth)
+        maxInsertedDepth = next.size();
+    }
 
     // Resize minIndices down if we dropped any higher-depth indices for being
     // out of scope.
@@ -1144,12 +1280,7 @@ public:
       if (pair.second == ConcreteType(BaseType::Anything))
         continue;
       Result.mapping.insert(pair);
-      for (size_t i = 0, Len = pair.first.size(); i < Len; ++i) {
-        if (i == Result.minIndices.size())
-          Result.minIndices.push_back(pair.first[i]);
-        else if (pair.first[i] < Result.minIndices[i])
-          Result.minIndices[i] = pair.first[i];
-      }
+      Result.noteMinIndices(pair.first);
     }
     return Result;
   }
@@ -1160,11 +1291,11 @@ public:
     for (const auto &pair : mapping) {
       if (pair.second == ConcreteType(BaseType::Anything))
         continue;
-      std::vector<int> nex = pair.first;
+      Path nex = pair.first;
       for (auto &v : nex)
-        if (v == -1)
-          v = 0;
-      dat.insert(nex, pair.second);
+        if (!v.isPoint())
+          v = TypeIndex((int)v.Start);
+      dat.insertPath(nex, pair.second);
     }
     return dat;
   }
@@ -1184,7 +1315,7 @@ public:
     for (const auto &pair : mapping) {
       if (pair.second != ConcreteType(BaseType::Anything))
         continue;
-      dat.insert(pair.first, pair.second);
+      dat.insertPath(pair.first, pair.second);
     }
     return dat;
   }
@@ -1208,8 +1339,13 @@ public:
 
   bool checkedOrIn(const std::vector<int> &Seq, ConcreteType RHS,
                    bool PointerIntSame, bool &LegalOr) {
+    return checkedOrInPath(toTypePath(Seq), RHS, PointerIntSame, LegalOr);
+  }
+
+  bool checkedOrInPath(const Path &Seq, ConcreteType RHS, bool PointerIntSame,
+                       bool &LegalOr) {
     assert(RHS != BaseType::Unknown);
-    ConcreteType CT = operator[](Seq);
+    ConcreteType CT = lookupPath(Seq);
 
     bool subchanged = CT.checkedOrIn(RHS, PointerIntSame, LegalOr);
     if (!subchanged)
@@ -1222,7 +1358,7 @@ public:
     if (SeqSize > 0) {
       // check pointer abilities from before
       for (size_t i = 0; i < SeqSize; ++i) {
-        std::vector<int> tmp(Seq.begin(), Seq.end() - 1 - i);
+        Path tmp(Seq.begin(), Seq.end() - 1 - i);
         auto found = mapping.find(tmp);
         if (found != mapping.end()) {
           if (!(found->second == BaseType::Pointer ||
@@ -1238,24 +1374,20 @@ public:
       {
         for (const auto &pair : llvm::make_early_inc_range(mapping)) {
           if (pair.first.size() == SeqSize) {
+            Generality G = compare(Seq, pair.first);
+            if (G.Disjoint)
+              continue;
             // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
             // as general as the existing map val (e.g. [0, 0]).
-            bool newMoreGeneralThanOld = true;
+            bool newMoreGeneralThanOld = G.NewMoreGeneral;
             // Whether the the existing val (e.g. [-1, 0] or [0, 0]) is at least
             // as general as the inserted map val (e.g. [0, 0]).
-            bool oldMoreGeneralThanNew = true;
-            for (unsigned i = 0; i < SeqSize; i++) {
-              if (pair.first[i] == Seq[i])
-                continue;
-              if (Seq[i] == -1) {
-                oldMoreGeneralThanNew = false;
-              } else if (pair.first[i] == -1) {
-                newMoreGeneralThanOld = false;
-              } else {
-                oldMoreGeneralThanNew = false;
-                newMoreGeneralThanOld = false;
-                break;
-              }
+            bool oldMoreGeneralThanNew = G.OldMoreGeneral;
+
+            if (G.RunsOverlap &&
+                !compatibleOverlap(CT, pair.second, PointerIntSame)) {
+              LegalOr = false;
+              return false;
             }
 
             if (oldMoreGeneralThanNew) {
@@ -1327,13 +1459,18 @@ public:
       }
     }
 
-    return insert(Seq, CT);
+    return insertPath(Seq, CT);
   }
 
   bool orIn(const std::vector<int> &Seq, ConcreteType RHS,
             bool PointerIntSame = false) {
+    return orInPath(toTypePath(Seq), RHS, PointerIntSame);
+  }
+
+  bool orInPath(const Path &Seq, ConcreteType RHS,
+                bool PointerIntSame = false) {
     bool LegalOr = true;
-    bool Result = checkedOrIn(Seq, RHS, PointerIntSame, LegalOr);
+    bool Result = checkedOrInPath(Seq, RHS, PointerIntSame, LegalOr);
     assert(LegalOr);
     return Result;
   }
@@ -1347,7 +1484,8 @@ public:
 
     bool changed = false;
     for (auto &pair : RHS.mapping) {
-      changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr);
+      changed |=
+          checkedOrInPath(pair.first, pair.second, PointerIntSame, LegalOr);
     }
     return changed;
   }
@@ -1489,13 +1627,7 @@ public:
       if (!first) {
         out += ", ";
       }
-      out += "[";
-      for (unsigned i = 0; i < pair.first.size(); ++i) {
-        if (i != 0)
-          out += ",";
-        out += std::to_string(pair.first[i]);
-      }
-      out += "]:" + pair.second.str();
+      out += to_string(pair.first) + ":" + pair.second.str();
       first = false;
     }
     out += "}";
@@ -1504,7 +1636,7 @@ public:
 
   llvm::MDNode *toMD(llvm::LLVMContext &ctx) {
     llvm::SmallVector<llvm::Metadata *, 1> subMD;
-    std::map<int, GenericTypeTree> todo;
+    std::map<TypeIndex, GenericTypeTree> todo;
     ConcreteType base(BaseType::Unknown);
     for (auto &pair : mapping) {
       if (pair.first.size() == 0) {
@@ -1517,36 +1649,67 @@ public:
     }
     subMD.push_back(llvm::MDString::get(ctx, base.str()));
     for (auto pair : todo) {
-      // Offsets may be negative (e.g. -1 to denote any offset), so the
-      // constant must be created as a signed value.
-      subMD.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-          llvm::IntegerType::get(ctx, 32), pair.first, /*IsSigned*/ true)));
+      subMD.push_back(indexToMD(ctx, pair.first));
       subMD.push_back(pair.second.toMD(ctx));
     }
     return llvm::MDNode::get(ctx, subMD);
   };
 
-  void insertFromMD(llvm::MDNode *md, const std::vector<int> &prev = {}) {
+  /// A point or -1 is a signed i32 constant, any other offset set a tuple of
+  /// i64 constants: the start, 1 if open (0 otherwise), and a stride and count
+  /// per dimension (-1 for no end).
+  static llvm::Metadata *indexToMD(llvm::LLVMContext &ctx,
+                                   const TypeIndex &idx) {
+    if (idx.isSimple())
+      return llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+          llvm::IntegerType::get(ctx, 32), idx.key(), /*IsSigned*/ true));
+    auto *I64 = llvm::IntegerType::get(ctx, 64);
+    auto get = [&](int64_t v) -> llvm::Metadata * {
+      return llvm::ConstantAsMetadata::get(
+          llvm::ConstantInt::get(I64, v, /*IsSigned*/ true));
+    };
+    llvm::SmallVector<llvm::Metadata *, 4> ops = {get(idx.Start),
+                                                  get(idx.Open)};
+    for (const TypeIndex::Dim &D : idx.Dims) {
+      ops.push_back(get(D.Stride));
+      ops.push_back(get(D.Count));
+    }
+    return llvm::MDTuple::get(ctx, ops);
+  }
+
+  static TypeIndex indexFromMD(llvm::Metadata *md) {
+    auto value = [](llvm::Metadata *op) {
+      return llvm::cast<llvm::ConstantInt>(
+                 llvm::cast<llvm::ConstantAsMetadata>(op)->getValue())
+          ->getSExtValue();
+    };
+    auto *tuple = llvm::dyn_cast<llvm::MDTuple>(md);
+    if (!tuple)
+      return TypeIndex((int)value(md));
+    TypeIndex idx((int)value(tuple->getOperand(0)));
+    idx.Open = value(tuple->getOperand(1)) != 0;
+    for (unsigned i = 2; i + 1 < tuple->getNumOperands(); i += 2)
+      idx.Dims.push_back(
+          {value(tuple->getOperand(i)), value(tuple->getOperand(i + 1))});
+    return idx;
+  }
+
+  void insertFromMD(llvm::MDNode *md, const Path &prev = {}) {
     ConcreteType base(
         llvm::cast<llvm::MDString>(md->getOperand(0))->getString(),
         md->getContext());
     if (base != BaseType::Unknown)
       mapping.insert(std::make_pair(prev, base));
     for (size_t i = 1; i < md->getNumOperands(); i += 2) {
-      auto off = llvm::cast<llvm::ConstantInt>(
-                     llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i))
-                         ->getValue())
-                     ->getSExtValue();
       auto next(prev);
-      next.push_back((int)off);
+      next.push_back(indexFromMD(md->getOperand(i)));
       insertFromMD(llvm::cast<llvm::MDNode>(md->getOperand(i + 1)), next);
     }
   }
 
   static GenericTypeTree fromMD(llvm::MDNode *md) {
     GenericTypeTree ret;
-    std::vector<int> off;
-    ret.insertFromMD(md, off);
+    ret.insertFromMD(md);
     return ret;
   }
 };

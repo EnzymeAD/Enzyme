@@ -5654,8 +5654,9 @@ static TypeTree sliceSubTypeTree(const TypeTree &typeTree,
   TypeTree subTypeTree =
       typeTree.ShiftIndices(dataLayout, offset, elementSize, 0);
   for (const auto &entry : typeTree.getMapping()) {
-    if (entry.first.empty() || entry.first[0] < 0 ||
-        (size_t)entry.first[0] >= offset)
+    // Runs of offsets were cut at the slice boundary by ShiftIndices.
+    if (entry.first.empty() || !entry.first[0].isPoint() ||
+        (size_t)entry.first[0].Start >= offset)
       continue;
     size_t entrySize = 0;
     bool isPointer =
@@ -5664,7 +5665,7 @@ static TypeTree sliceSubTypeTree(const TypeTree &typeTree,
       entrySize = dataLayout.getPointerSize(0);
     else if (Type *floatType = entry.second.isFloat())
       entrySize = (dataLayout.getTypeSizeInBits(floatType) + 7) / 8;
-    size_t entryStart = (size_t)entry.first[0];
+    size_t entryStart = (size_t)entry.first[0].Start;
     if (entryStart + entrySize <= offset)
       continue;
     if (isPointer) {

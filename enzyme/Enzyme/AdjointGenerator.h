@@ -4179,9 +4179,9 @@ public:
                 for (const auto &pair : vd.getMapping()) {
                   if (pair.first.size() != 1)
                     continue;
-                  if (mv != BaseType::Unknown && minInt < pair.first[0])
+                  if (mv != BaseType::Unknown && minInt < pair.first[0].key())
                     continue;
-                  minInt = pair.first[0];
+                  minInt = pair.first[0].key();
                   mv = pair.second;
                 }
                 if (mv != BaseType::Unknown) {
