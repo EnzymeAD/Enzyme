@@ -235,7 +235,8 @@ void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
   }
 }
 
-Error attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
+Error attachProfile(const Options &O, const ProfileMap &profileMap,
+                    ErrorSum errorSum, FPGraph &G,
                     ArrayRef<Subgraph> subgraphs) {
   auto &valueToNodeMap = G.valueToNodeMap;
   for (auto &subgraph : subgraphs) {
@@ -250,7 +251,7 @@ Error attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
 
       auto node = valueToNodeMap[op];
       node->sens = profileInfo.sumSens;
-      node->grad = profileInfo.sumAbsGrad;
+      node->grad = profileInfo.weight(errorSum);
       if (profileInfo.hasSecondMoments)
         node->sqGrad = profileInfo.sumSqGrad;
       node->executions = profileInfo.exec;

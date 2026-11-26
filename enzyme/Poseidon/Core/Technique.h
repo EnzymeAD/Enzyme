@@ -59,8 +59,11 @@ struct SiteState : FPGraph, AttachedStates {
   /// turns an accuracy cost into a per-operation relative rounding level
   /// (relativeError).
   double accScale = 0.0;
-  /// The moment the site's accuracy costs are summed in, its profile's.
-  ErrorMoment moment = ErrorMoment::First;
+  /// How the site's accuracy costs sum rounding errors, as its profile
+  /// resolves -poseidon-error-sum.
+  ErrorSum errorSum = ErrorSum::Absolute;
+  /// The moment the site's accuracy costs are summed in.
+  ErrorMoment moment() const { return momentOf(errorSum); }
   /// What the profiled run spent in the site, in cost-model units: the
   /// execution count times the price of every operation the profile records.
   double profiledCost = 0.0;

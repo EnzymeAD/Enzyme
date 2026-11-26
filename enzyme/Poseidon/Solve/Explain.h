@@ -19,12 +19,14 @@
 //              against) and profile (the profile file read)
 //   target     tau and tau_from ("site" or "flag") under an accuracy target,
 //              else budget (the -poseidon-cost-budget share); for a solved site
-//              also cost_model, selector ("dp", "joint", "pinned"),
-//              from_cache (the DP table was read from the cache),
-//              sites (the IR functions of a joint solve)
+//              also cost_model, error_sum ("signed", "absolute" or "squares":
+//              -poseidon-error-sum as the site's profile resolves it),
+//              selector ("dp", "joint", "pinned"), from_cache (the DP table
+//              was read from the cache), sites (the IR functions of a joint
+//              solve)
 //   scale      (solved sites) accuracy_scale S and baseline_accuracy_cost A0:
 //              an accuracy cost a is the modelled relative error (A0 + a) / S,
-//              or its square root when the profile records second moments;
+//              or its square root under the error sum "squares";
 //              profiled_cost, the cost-model units the profiled run spent, a
 //              cost share is a fraction of; kappa, kappa_mark and kappa_factor
 //              when the profiling run measured a condition number
@@ -60,7 +62,8 @@
 //              in an explanation) and the indices of its ops), cost_delta,
 //              modelled_error, modelled_domain_error (of a product: its
 //              relative output error, under a target its term of
-//              modelled_error, or of its square in the second moment),
+//              modelled_error, or of its square under the error sum
+//              "squares"),
 //              herbie_error_bits, status ("applied", "pareto",
 //              "rejected") and reason
 //   pareto     (solved sites) the frontier in cost order: budget (the

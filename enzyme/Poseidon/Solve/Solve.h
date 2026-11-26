@@ -198,11 +198,13 @@ llvm::Expected<bool> solveJointly(Session &S, llvm::Module &M);
 void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
                     SiteState &st);
 
-/// Sets the profiled sensitivity, gradient, execution count and value ranges
-/// of the subgraphs' nodes. A profile that gives an operand no range was not
+/// Sets the profiled sensitivity, gradient (the accuracy weight under
+/// `errorSum`), squared gradient, execution count and value ranges of the
+/// subgraphs' nodes. A profile that gives an operand no range was not
 /// generated from this program, an error at the operation.
 llvm::Error attachProfile(const Options &O, const ProfileMap &profileMap,
-                          FPGraph &G, llvm::ArrayRef<Subgraph> subgraphs);
+                          ErrorSum errorSum, FPGraph &G,
+                          llvm::ArrayRef<Subgraph> subgraphs);
 
 /// The subgraphs the site's units are proposed for: split, then reshaped by
 /// each technique.

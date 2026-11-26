@@ -59,6 +59,12 @@ struct ProfileInfo {
   /// Per operand; minMagOperands is the smallest nonzero |operand|, 0 if the
   /// operand was never nonzero.
   llvm::SmallVector<double, 2> minOperands, maxOperands, minMagOperands;
+
+  /// The first-moment accuracy weight when errors are summed as `s`: the
+  /// signed gradient sum for ErrorSum::Signed, else the summed |gradient|.
+  double weight(ErrorSum s) const {
+    return s == ErrorSum::Signed ? sumGrad : sumAbsGrad;
+  }
 };
 
 /// A site's profile records by slot index, iterated in slot order: what is
@@ -105,9 +111,10 @@ struct SiteProfileData {
   ProfileMap map;
   /// The profile's header.
   SiteProfileHeader header;
-  /// The moment its records are read in: the second when they record the
-  /// squared sums.
-  ErrorMoment moment = ErrorMoment::First;
+  /// How its records' rounding errors are summed: -poseidon-error-sum, or,
+  /// when it is not given, squares when the records carry the squared sums,
+  /// else absolute.
+  ErrorSum errorSum = ErrorSum::Absolute;
   /// The canonical form hash of the site, as computed for this compile.
   std::string canonicalHash;
 };

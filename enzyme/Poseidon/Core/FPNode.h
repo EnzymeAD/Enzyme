@@ -79,8 +79,10 @@ public:
   /// executions, the gradient being that of the declared metric; NaN for a
   /// node the profile has no record of.
   double sens = std::numeric_limits<double>::quiet_NaN();
-  /// The accuracy weight: |gradient| of the declared metric with respect to
-  /// the value, summed over the profiled executions; NaN without a record.
+  /// The accuracy weight: the gradient of the declared metric with respect to
+  /// the value, summed over the profiled executions in magnitude, or with its
+  /// sign under -poseidon-error-sum=signed (ProfileInfo::weight); NaN without
+  /// a record.
   double grad = std::numeric_limits<double>::quiet_NaN();
   /// The second moment's weight, gradient^2 summed over the profiled
   /// executions; NaN when the profile records no second moments.
@@ -143,8 +145,8 @@ protected:
   double ub = -std::numeric_limits<double>::infinity();
 };
 
-/// The weight of `node`'s sampled error in moment `m`: its summed |gradient|,
-/// or its summed squared gradient.
+/// The weight of `node`'s sampled error in moment `m`: |grad|, or its summed
+/// squared gradient.
 inline double accuracyWeight(const FPNode &node, ErrorMoment m) {
   return m == ErrorMoment::First ? std::fabs(node.grad) : node.sqGrad;
 }

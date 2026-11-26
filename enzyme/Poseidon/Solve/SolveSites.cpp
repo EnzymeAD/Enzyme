@@ -124,6 +124,7 @@ static Error keySiteTable(Session &S, const SiteState &st,
     profiles += contentDigest((*buf)->getBuffer()) + "\n";
   }
   key.addContent("profile", profiles);
+  key.add("error sum", errorSumName(st.errorSum));
 
   for (const auto &[name, value] : solveFlagValues(O))
     key.add(("-" + name).str(), value);
@@ -524,9 +525,9 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                        : nullptr;
 
   std::string names;
-  const ErrorMoment moment = sites.front()->moment;
+  const ErrorMoment moment = sites.front()->moment();
   for (SiteState *st : sites) {
-    assert(st->moment == moment && "the sites of one solve share a moment");
+    assert(st->moment() == moment && "the sites of one solve share a moment");
     if (!names.empty())
       names += ",";
     names += st->F->getName().str();

@@ -175,6 +175,9 @@ Error validateOptions(const Options &O) {
   if (!is_contained({"sensitivity", "gradient", "none"}, H.ArrayWeights))
     return userError("-poseidon-herbie-array-weights=" + Twine(H.ArrayWeights) +
                      " is not 'sensitivity', 'gradient' or 'none'");
+  if (!is_contained({"", "signed", "absolute", "squares"}, O.Model.ErrorSum))
+    return userError("-poseidon-error-sum=" + Twine(O.Model.ErrorSum) +
+                     " is not 'signed', 'absolute' or 'squares'");
   if (std::string err; !O.Profiling.Kernels.empty() &&
                        O.Profiling.Kernels != "all" &&
                        !Regex(O.Profiling.Kernels).isValid(err))

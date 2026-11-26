@@ -926,6 +926,7 @@ json::Object Explainer::toJSON() {
 
   json::Object target = targetJSON(Sess.Opts, tau, rec.siteTarget);
   target["cost_model"] = costModelPath(Sess.get<CostModelState>());
+  target["error_sum"] = errorSumName(st.errorSum);
   target["selector"] = selectorName(rec.selector);
   if (rec.fromCache)
     target["from_cache"] = true;

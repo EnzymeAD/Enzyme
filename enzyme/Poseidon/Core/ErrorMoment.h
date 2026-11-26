@@ -17,14 +17,20 @@
 // when the rounding errors of distinct executions are independent; the
 // relative error is the root of the quotient, a root-sum-of-squares. Only the
 // second moment ranks two candidates as their errors do when one spreads its
-// rounding over far more executions than the other. A profile that records
-// the squared sums is read in the second moment, one that does not in the
-// first.
+// rounding over far more executions than the other.
+//
+// -poseidon-error-sum names the weight: the signed sum of an operation's
+// gradients or the sum of their magnitudes, both in the first moment, or the
+// sum of their squares in the second. Without it the profile decides: the
+// squares when it records them, else the magnitudes, which every profile
+// records.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_CORE_ERROR_MOMENT_H
 #define POSEIDON_CORE_ERROR_MOMENT_H
+
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cmath>
 
@@ -32,6 +38,29 @@ namespace poseidon {
 
 /// The moment the accuracy model sums a site's rounding errors in.
 enum class ErrorMoment { First, Second };
+
+/// How an operation's rounding errors are summed over its executions: weighted
+/// by the signed sum of its gradients, by the sum of their magnitudes, or
+/// squared and weighted by the sum of their squares.
+enum class ErrorSum { Signed, Absolute, Squares };
+
+/// The moment the sum `s` is in.
+inline ErrorMoment momentOf(ErrorSum s) {
+  return s == ErrorSum::Squares ? ErrorMoment::Second : ErrorMoment::First;
+}
+
+/// The value of -poseidon-error-sum that names `s`.
+inline const char *errorSumName(ErrorSum s) {
+  switch (s) {
+  case ErrorSum::Signed:
+    return "signed";
+  case ErrorSum::Absolute:
+    return "absolute";
+  case ErrorSum::Squares:
+    return "squares";
+  }
+  llvm_unreachable("every error sum has a name");
+}
 
 /// What the error of `result` against `goldVal` contributes to an accuracy
 /// cost in moment `m`: its magnitude, or its square.

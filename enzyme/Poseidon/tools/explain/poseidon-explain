@@ -172,8 +172,10 @@ def report_header(doc, emit):
         if res.get("profile"):
             emit("  profile: %s" % res["profile"])
         return False
-    emit("  %s; cost model %s; selector %s%s" % (target_words(doc), os.path.basename(t.get("cost_model", "")),
-                                             t.get("selector", "?"), "; DP table from the cache" if t.get("from_cache") else ""))
+    emit("  %s; cost model %s; selector %s%s%s" % (target_words(doc), os.path.basename(t.get("cost_model", "")),
+                                               t.get("selector", "?"),
+                                               "; error sum %s" % t["error_sum"] if "error_sum" in t else "",
+                                               "; DP table from the cache" if t.get("from_cache") else ""))
     before, after = res.get("cost_before"), res.get("cost_after")
     emit("  as written:   modelled error %s, cost %s" % (fmt_number(res.get("modelled_rel_error_as_written")),
                                                         fmt_cost(before)))

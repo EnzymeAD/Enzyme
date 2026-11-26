@@ -240,6 +240,16 @@ POSEIDON_MODEL_OPTION(
     "magnitude) on more than this share of the samples the original gets "
     "within 1; the gradient-weighted accuracy model is first order and cannot "
     "price such a change (negative = off)")
+// The DP key holds the value the site's profile resolves this to.
+POSEIDON_MODEL_OPTION(
+    ErrorSum, String, "", "poseidon-error-sum", Hidden, Other,
+    "signed|absolute|squares",
+    "How an operation's rounding errors are summed over its executions: "
+    "weighted by the signed sum of its profiled gradients (signed), by the sum "
+    "of their magnitudes (absolute), or as a root-sum-of-squares weighted by "
+    "the sum of their squares (squares, from the profile's SumSqGrad and "
+    "SumSqSens lines); unset, the last of the three whose lines the profile "
+    "records")
 POSEIDON_MODEL_OPTION(Threads, Unsigned, 1, "poseidon-threads", Hidden, Other,
                       "",
                       "Threads the accuracy model runs on (0 = all hardware "

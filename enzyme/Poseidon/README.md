@@ -103,11 +103,8 @@ poseidon-clang++ -O2 -poseidon-profile-use -poseidon-tau=1e-8 app.cu -o app_opt
 It bounds a site's modelled relative error, a sum over the parts of the site:
 a matrix product contributes its relative output error (none as written), an
 FP subgraph its output error weighted by the profiled sensitivities and
-divided by the site's summed sensitivity. A profile that records the squared
-sums `SumSqGrad` and `SumSqSens` takes the rounding errors as independent: the
-parts' errors and the executions' errors within a part add as a
-root-sum-of-squares. The cheapest set of rewrites that keeps the error within
-the target is applied. The set is solved exactly;
+divided by the site's summed sensitivity. The cheapest set of rewrites that
+keeps the error within the target is applied. The set is solved exactly;
 `-poseidon-early-prune` solves an approximation instead, faster on sites with
 many units, which drops a partial set for a cheaper, no less accurate one that
 the later choices admit alike.
@@ -115,6 +112,22 @@ the later choices admit alike.
 cost a rewrite may add, or with a negative share has to save. Herbie results
 and solved tables are kept in `./.poseidon` (`-poseidon-cache=<dir>`), so a
 repeated compile does not search again.
+
+`-poseidon-error-sum=<signed|absolute|squares>` names how the accuracy model
+sums an operation's rounding errors over its executions, three alternative
+models:
+
+| value | weight of an operation | reads the errors of its executions as | profile lines |
+|---|---|---|---|
+| `signed` | the signed sum of its profiled gradients | one error repeated with one sign, so gradients of opposite sign cancel | `SumGrad` |
+| `absolute` | the sum of their magnitudes | each counted with its full magnitude | `SumAbsGrad` |
+| `squares` | the root of the sum of their squares | independent, adding as a root-sum-of-squares | `SumSqGrad`, `SumSqSens` |
+
+Under `squares` a candidate that rounds a few values is not credited with the
+cancellation of one that rounds every value, and the parts of a site add as a
+root-sum-of-squares too: the target bounds the root of the sum of their squared
+errors. Without the flag the last of the three whose lines the profile records
+is used. A value whose lines the profile does not record stops the compile.
 
 ### 5. See what changed
 

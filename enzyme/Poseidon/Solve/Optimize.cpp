@@ -57,6 +57,28 @@ std::string siteProfilePath(const Session &S, const Function &clone,
   return path.str().str();
 }
 
+// How the profile `P` of the site `F` sums rounding errors: as
+// -poseidon-error-sum says or, without it, the last of signed, absolute and
+// squares whose lines the profile records. A sum whose lines the profile does
+// not record is an error at the site.
+static Expected<ErrorSum>
+resolveErrorSum(const Options &O, const SiteProfileData &P, const Function &F) {
+  const bool squares = !P.map.empty() && P.map.begin()->second.hasSecondMoments;
+  if (O.Model.ErrorSum.empty())
+    return squares ? ErrorSum::Squares : ErrorSum::Absolute;
+  if (O.Model.ErrorSum == "signed")
+    return ErrorSum::Signed;
+  if (O.Model.ErrorSum == "absolute")
+    return ErrorSum::Absolute;
+  assert(O.Model.ErrorSum == "squares" && "validateOptions checked the value");
+  if (!squares && !P.map.empty())
+    return userError(F,
+                     "-poseidon-error-sum=squares sums squared errors, which "
+                     "needs the SumSqGrad and SumSqSens lines " +
+                         P.path + " does not have; re-run profile generation");
+  return ErrorSum::Squares;
+}
+
 // Reads the site's profile, checked against the canonical form its slots were
 // numbered against.
 static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
@@ -89,8 +111,10 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(P.map, F.getName(), O.Diagnostics.Print);
-  if (!P.map.empty() && P.map.begin()->second.hasSecondMoments)
-    P.moment = ErrorMoment::Second;
+  Expected<ErrorSum> errorSum = resolveErrorSum(O, P, F);
+  if (!errorSum)
+    return errorSum.takeError();
+  P.errorSum = *errorSum;
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
@@ -119,7 +143,7 @@ static Error putOnApplicationScale(Session &S, Function &F,
   const auto &profileMap = P.map;
   const auto &profileHeader = P.header;
 
-  const bool second = st.moment == ErrorMoment::Second;
+  const bool second = st.moment() == ErrorMoment::Second;
   double siteSumSens = 0.0;
   for (const auto &kv : profileMap)
     siteSumSens += second ? kv.second.sumSqSens : kv.second.sumSens;
@@ -319,12 +343,12 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
 
   buildSubgraphs(O, profile.map, st);
 
-  if (Error E = attachProfile(O, profile.map, st, st.subgraphs))
+  st.errorSum = profile.errorSum;
+  if (Error E = attachProfile(O, profile.map, st.errorSum, st, st.subgraphs))
     return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
-  st.moment = profile.moment;
   for (Subgraph &subgraph : st.subgraphs)
-    subgraph.moment = st.moment;
+    subgraph.moment = st.moment();
 
   if (st.subgraphs.empty() && !recognized)
     return false;
@@ -494,15 +518,15 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   const Options &O = S.Opts;
   // One table sums the sites' accuracy costs, which add up in one moment only.
   for (SiteState *st : sites)
-    if (st->moment != sites.front()->moment)
+    if (st->moment() != sites.front()->moment())
       return userError(
           *st->F,
           Twine("the profile of ") + st->F->getName() +
-              (st->moment == ErrorMoment::Second ? " records"
-                                                 : " does not record") +
+              (st->moment() == ErrorMoment::Second ? " records"
+                                                   : " does not record") +
               " the squared sums SumSqGrad and SumSqSens, and the profile of " +
               sites.front()->F->getName() +
-              (st->moment == ErrorMoment::Second ? " does not" : " does") +
+              (st->moment() == ErrorMoment::Second ? " does not" : " does") +
               ", so the two cannot be solved jointly; profile both with one "
               "profiler");
   // A site whose condition number diverged offers no candidate.
@@ -516,7 +540,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   SolveRecord record;
   record.tau = tau;
   record.siteTarget = siteTarget;
-  record.moment = sites.front()->moment;
+  record.moment = sites.front()->moment();
   const ArrayRef<SiteState *> scaled =
       solved.empty() ? sites : ArrayRef<SiteState *>(solved);
   for (SiteState *st : scaled) {

@@ -52,7 +52,7 @@ namespace poseidon {
 
 static Expected<std::optional<MatmulProfile>>
 loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
-                         ErrorMoment moment) {
+                         ErrorSum errorSum) {
   const ScalarLoopHandle *h = &m.scalarLoop();
   size_t fmaIdx = requireSlot(h->fma);
   auto fmaIt = profile.find(fmaIdx);
@@ -93,9 +93,9 @@ loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
            abInfo->minMagOperands[0]};
   out.b = {abInfo->minOperands[1], abInfo->maxOperands[1],
            abInfo->minMagOperands[1]};
-  out.gradSum = fmaInfo.sumAbsGrad;
+  out.gradSum = fmaInfo.weight(errorSum);
   out.sqGradSum = fmaInfo.sumSqGrad;
-  out.moment = moment;
+  out.moment = momentOf(errorSum);
   out.macs = fmaInfo.exec;
   return out;
 }
@@ -105,7 +105,7 @@ loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
 // the members and the execution counts their sum.
 static Expected<std::optional<MatmulProfile>>
 loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
-                        ErrorMoment moment) {
+                        ErrorSum errorSum) {
   const RuntimeGemmHandle &h = m.runtimeGemm();
   for (Instruction *fma : h.fmas) {
     auto it = profile.find(requireSlot(fma));
@@ -148,7 +148,7 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
     if (ai.minMagOperands[bo] > 0.0)
       bMinMag = bMinMag > 0.0 ? std::min(bMinMag, ai.minMagOperands[bo])
                               : ai.minMagOperands[bo];
-    gradSum += fIt->second.sumAbsGrad;
+    gradSum += fIt->second.weight(errorSum);
     sqGradSum += fIt->second.sumSqGrad;
     exec += fIt->second.exec;
   }
@@ -158,17 +158,17 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
   out.b = {bMin, bMax, bMinMag};
   out.gradSum = gradSum;
   out.sqGradSum = sqGradSum;
-  out.moment = moment;
+  out.moment = momentOf(errorSum);
   out.macs = exec;
   return out;
 }
 
 Expected<std::optional<MatmulProfile>>
 loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile,
-            ErrorMoment moment) {
+            ErrorSum errorSum) {
   if (m.isConstantShape())
-    return loadConstantShapeProfile(m, scalarProfile, moment);
-  return loadRuntimeShapeProfile(m, scalarProfile, moment);
+    return loadConstantShapeProfile(m, scalarProfile, errorSum);
+  return loadRuntimeShapeProfile(m, scalarProfile, errorSum);
 }
 
 namespace {

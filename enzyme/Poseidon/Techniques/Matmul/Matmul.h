@@ -484,7 +484,7 @@ public:
   double getAccCostDelta(size_t idx) const {
     std::optional<double> scale = targetScale();
     return scale ? accuracyCostOf(candidates[idx].domainError, *scale,
-                                  site().moment)
+                                  site().moment())
                  : candidates[idx].accuracyCost;
   }
 

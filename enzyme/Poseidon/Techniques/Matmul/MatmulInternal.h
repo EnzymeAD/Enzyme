@@ -249,8 +249,8 @@ struct CellStat {
 struct MatmulProfile {
   /// The ranges of A's and of B's elements.
   CellStat a, b;
-  /// The profiled |gradient| summed over the product's executions, the weight
-  /// of each output element's error.
+  /// The first-moment accuracy weight summed over the product's executions
+  /// (ProfileInfo::weight), the weight of each output element's error.
   double gradSum = 0.0;
   /// The profiled gradient^2 summed over the same executions, the weight of
   /// each output element's squared error in the second moment.
@@ -263,13 +263,13 @@ struct MatmulProfile {
   uint64_t macs = 0;
 };
 
-/// The product's statistics for an accuracy cost in moment `moment`; none when
-/// the profiling run never executed the product. A multiply of an executed
-/// product without its two operand ranges is an error: the profile is not of
-/// this program.
+/// The product's statistics for an accuracy cost that sums errors as
+/// `errorSum`; none when the profiling run never executed the product. A
+/// multiply of an executed product without its two operand ranges is an error:
+/// the profile is not of this program.
 llvm::Expected<std::optional<MatmulProfile>>
 loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile,
-            ErrorMoment moment);
+            ErrorSum errorSum);
 
 /// The accuracy of each query on the product `m`, all on the same sampled
 /// operands, with the domain error read off at kDefaultConfidence.
