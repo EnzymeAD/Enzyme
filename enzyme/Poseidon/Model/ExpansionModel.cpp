@@ -15,7 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ExpansionModel.h"
-#include "ExpansionRoutines.h"
+#include "Support/ExpansionRoutines.h"
 
 #include <cfloat>
 #include <cmath>
