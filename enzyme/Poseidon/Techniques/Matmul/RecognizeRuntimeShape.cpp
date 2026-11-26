@@ -725,6 +725,106 @@ struct RecognizedChain {
 
 } // namespace
 
+/// Appends to `out` the compares that hold where `cond` is `holds`, each with
+/// whether it is true there: `cond` itself, the conjuncts of a logical and that
+/// holds, or the disjuncts of a logical or that fails. False when a part of
+/// `cond` is not a compare.
+static bool holdingCompares(Value *cond, bool holds,
+                            SmallVectorImpl<std::pair<ICmpInst *, bool>> &out) {
+  Value *x, *y;
+  if (holds ? match(cond, m_LogicalAnd(m_Value(x), m_Value(y)))
+            : match(cond, m_LogicalOr(m_Value(x), m_Value(y)))) {
+    bool lhs = holdingCompares(x, holds, out);
+    return holdingCompares(y, holds, out) && lhs;
+  }
+  auto *cmp = dyn_cast<ICmpInst>(cond);
+  if (!cmp)
+    return false;
+  out.push_back({cmp, holds});
+  return true;
+}
+
+/// Whether `p` is a sum of products of launch indices and block dimensions
+/// with positive coefficients, which no launch makes negative.
+static bool nonNegativeLaunchForm(const Polynomial &p, const AtomTable &A) {
+  return llvm::all_of(p.t, [&](const auto &kv) {
+    return kv.second > 0 && !kv.first.empty() &&
+           llvm::all_of(kv.first, [&](unsigned a) {
+             const SCEV *S = A.byId[a];
+             auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
+             return U && (threadIndexAxis(U->getValue()) >= 0 ||
+                          blockIndexAxis(U->getValue()) >= 0 ||
+                          blockDimAxis(U->getValue()) >= 0);
+           });
+  });
+}
+
+/// Records the bound `cmp`, true where it is `holds`, puts on a launch index:
+/// index < extent from a less-than, index < C + 1 from index <= C, and
+/// index < 1 from index == 0 on a non-negative index, the forms LLVM gives a
+/// bound by a constant. Whether it is such a bound: a new index source, or the
+/// entry guard of one. An error for a launch index held to a nonzero constant,
+/// one plane of the index that the library call cannot place.
+static Expected<bool> addGuardIndex(ChainAnalysis &C, ICmpInst &cmp,
+                                    bool holds) {
+  ScalarEvolution &SE = C.SE;
+  const ICmpInst::Predicate pred =
+      holds ? cmp.getPredicate() : cmp.getInversePredicate();
+  const bool less = pred == ICmpInst::ICMP_SLT || pred == ICmpInst::ICMP_ULT;
+  const bool atMost = pred == ICmpInst::ICMP_SLE || pred == ICmpInst::ICMP_ULE;
+  const bool equal = pred == ICmpInst::ICMP_EQ;
+  auto *constant = dyn_cast<ConstantInt>(cmp.getOperand(1));
+  if (!less && !((atMost || equal) && constant))
+    return false;
+  const SCEV *SX = SE.getSCEV(cmp.getOperand(0));
+  if (!mentionsLaunchIndex(SX))
+    return false;
+  // An unexpandable guard is simply not an index source.
+  IndexSource idx;
+  Expected<Polynomial> form = C.expand(SX);
+  if (!form) {
+    consumeError(form.takeError());
+    return false;
+  }
+  idx.form = std::move(*form);
+  if (equal) {
+    if (!nonNegativeLaunchForm(idx.form, C.atoms))
+      return false;
+    if (!constant->isZero())
+      return refuse("the contraction runs only where a launch index equals " +
+                    Twine(constant->getSExtValue()) +
+                    ", one plane of the index, which the library call does "
+                    "not place");
+    idx.extent = Polynomial::constant(1);
+  } else if (atMost) {
+    const APInt &c = constant->getValue();
+    if (c.isNegative() || c.getActiveBits() > 62)
+      return false;
+    idx.extent = Polynomial::constant((int64_t)c.getZExtValue() + 1);
+  } else {
+    Expected<Polynomial> extent = C.expand(SE.getSCEV(cmp.getOperand(1)));
+    if (!extent) {
+      consumeError(extent.takeError());
+      return false;
+    }
+    idx.extent = std::move(*extent);
+  }
+  // The guard a rotated strided loop is entered through, on the loop's own
+  // bound. A guard of the same index with another bound is a second source
+  // of that index, which the signature check below refuses.
+  if (llvm::any_of(C.indices, [&](const IndexSource &prev) {
+        return (prev.form == idx.form ||
+                idx.form == Polynomial::atom(prev.sigAtom)) &&
+               prev.extent == idx.extent;
+      }))
+    return true;
+  if (!finishIndex(idx, C.atoms))
+    return false;
+  idx.name = "guarded";
+  C.indices.push_back(idx);
+  return true;
+}
+
 /// Finds the index sources dominating the contraction: block-strided thread
 /// loops around it and guards of a launch index against a bound. Returns the
 /// guard branches the sources come from.
@@ -758,50 +858,23 @@ collectIndexSources(ChainAnalysis &C, Function &F, DominatorTree &DT) {
     Value *cond;
     if (!match(br, m_Br(m_Value(cond), m_BasicBlock(), m_BasicBlock())))
       continue;
-    auto *cmp = dyn_cast<ICmpInst>(cond);
-    if (!cmp)
-      continue;
-    auto pred = cmp->getPredicate();
-    bool trueIsLess = pred == ICmpInst::ICMP_SLT || pred == ICmpInst::ICMP_ULT;
-    bool falseIsLess = pred == ICmpInst::ICMP_SGE || pred == ICmpInst::ICMP_UGE;
-    if (!trueIsLess && !falseIsLess)
-      continue;
-    BasicBlock *succ = br->getSuccessor(trueIsLess ? 0 : 1);
-    if (succ == &BB || !DT.dominates(BasicBlockEdge(&BB, succ), anchorBB))
-      continue;
-    const SCEV *SX = SE.getSCEV(cmp->getOperand(0));
-    if (!mentionsLaunchIndex(SX))
-      continue;
-    // An unexpandable guard is simply not an index source.
-    IndexSource idx;
-    Expected<Polynomial> form = C.expand(SX);
-    if (!form) {
-      consumeError(form.takeError());
-      continue;
+    for (unsigned s = 0; s < 2; ++s) {
+      BasicBlock *succ = br->getSuccessor(s);
+      if (succ == &BB || !DT.dominates(BasicBlockEdge(&BB, succ), anchorBB))
+        continue;
+      SmallVector<std::pair<ICmpInst *, bool>, 2> compares;
+      // The branch is an index bound when every compare it holds on the edge
+      // to the contraction is one.
+      bool isBound = holdingCompares(cond, /*holds=*/s == 0, compares);
+      for (auto [cmp, holds] : compares) {
+        Expected<bool> bound = addGuardIndex(C, *cmp, holds);
+        if (!bound)
+          return bound.takeError();
+        isBound &= *bound;
+      }
+      if (isBound)
+        indexBranches.insert(br);
     }
-    Expected<Polynomial> extent = C.expand(SE.getSCEV(cmp->getOperand(1)));
-    if (!extent) {
-      consumeError(extent.takeError());
-      continue;
-    }
-    idx.form = std::move(*form);
-    idx.extent = std::move(*extent);
-    // The guard a rotated strided loop is entered through, on the loop's own
-    // bound. A guard of the same index with another bound is a second source
-    // of that index, which the signature check below refuses.
-    if (llvm::any_of(C.indices, [&](const IndexSource &prev) {
-          return (prev.form == idx.form ||
-                  idx.form == Polynomial::atom(prev.sigAtom)) &&
-                 prev.extent == idx.extent;
-        })) {
-      indexBranches.insert(br);
-      continue;
-    }
-    if (!finishIndex(idx, C.atoms))
-      continue;
-    idx.name = "guarded";
-    C.indices.push_back(idx);
-    indexBranches.insert(br);
   }
   if (C.indices.empty())
     return refuse("no thread/CTA index source dominates the contraction");
