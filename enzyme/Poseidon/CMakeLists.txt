@@ -280,7 +280,8 @@ set(POSEIDON_SRC
     Solve/Pins.cpp
     Solve/Subgraphs.cpp
     Techniques/Precision/Narrowing.cpp
-    Techniques/SiteUnit.cpp
+    Core/Unit.cpp
+    Techniques/SubgraphUnit.cpp
     Core/FPNode.cpp
     Support/Utils.cpp
     Support/Diagnostics.cpp

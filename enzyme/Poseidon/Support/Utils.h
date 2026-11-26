@@ -29,6 +29,7 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/OptimizationLevel.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/JSON.h"
 
 #include "Enzyme/PassUtils.h"
 
@@ -38,6 +39,10 @@ namespace llvm {
 class PassBuilder;
 class SCEVExpander;
 class ScalarEvolution;
+} // namespace llvm
+
+namespace llvm {
+class DebugLoc;
 } // namespace llvm
 
 namespace poseidon {
@@ -119,6 +124,29 @@ void simplifyFunction(llvm::Function &F, llvm::PassBuilder &PB,
 /// F. Without a target no branch diverges, so a loop may be versioned on a
 /// loop-invariant condition.
 void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
+
+/// A source position; line 0 when there is none.
+struct SourceLoc {
+  /// The file as the debug location names it.
+  std::string file;
+  /// 1-based; line 0 is no position, column 0 an unknown column.
+  unsigned line = 0, col = 0;
+  /// Whether the location names a position.
+  bool valid() const { return line != 0; }
+};
+/// The position of a debug location; none for an empty one.
+SourceLoc locOf(const llvm::DebugLoc &DL);
+/// The position of `V`'s debug location; none for a value that is no
+/// instruction or has none.
+SourceLoc locOf(const llvm::Value *V);
+/// A position as the reports write it: "file", "line" and "col".
+llvm::json::Object locJSON(const SourceLoc &L);
+/// Sets o[key] to the position L, unless L is no position.
+void putLoc(llvm::json::Object &o, llvm::StringRef key, const SourceLoc &L);
+/// An instruction's source location as file:line:col; empty without one.
+std::string getSourceLocationStr(llvm::Value *V);
+/// A value as the IR prints it.
+std::string getValueStr(llvm::Value *V);
 
 } // namespace poseidon
 #endif // POSEIDON_SUPPORT_UTILS_H

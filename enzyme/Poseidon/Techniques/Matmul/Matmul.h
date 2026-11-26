@@ -10,10 +10,10 @@
 #define POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 
 #include "Core/NumberFormat.h"
+#include "Core/Unit.h"
 #include "Profile/ProfileReader.h"
 #include "Scheme.h"
 #include "Sites/LaunchManifest.h"
-#include "Techniques/SiteUnit.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"

@@ -14,10 +14,11 @@
 #ifndef POSEIDON_TECHNIQUES_PRECISION_PRECISION_H
 #define POSEIDON_TECHNIQUES_PRECISION_PRECISION_H
 
-#include "../SiteUnit.h"
 #include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
 #include "Model/CostModel.h"
+#include "Support/Diagnostics.h"
+#include "Techniques/SubgraphUnit.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"

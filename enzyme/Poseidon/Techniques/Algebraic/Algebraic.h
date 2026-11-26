@@ -14,9 +14,9 @@
 #ifndef POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H
 #define POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H
 
-#include "../SiteUnit.h"
 #include "Core/FPNode.h"
 #include "Model/CostModel.h"
+#include "Techniques/SubgraphUnit.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"

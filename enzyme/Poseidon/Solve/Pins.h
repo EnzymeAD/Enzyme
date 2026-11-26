@@ -14,8 +14,8 @@
 #ifndef POSEIDON_SOLVE_PINS_H
 #define POSEIDON_SOLVE_PINS_H
 
+#include "Core/Unit.h"
 #include "Solve/DP.h"
-#include "Techniques/SiteUnit.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"

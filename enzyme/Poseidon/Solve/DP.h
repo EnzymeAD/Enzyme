@@ -1,4 +1,4 @@
-//===- DP.h - optimization units and the solver over them -----------------===//
+//===- DP.h - the solver over optimization units --------------------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,17 +6,17 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Optimization units and the DP over them. A unit offers candidates, each with
-// a cost and an error change against the code as written, and has a
-// footprint, the instructions its candidates edit or consume. A strategy takes
-// at most one candidate per unit; the DP keeps, per cost, the strategy of
-// least error. The solver asks units about each other and never sees their
-// instructions.
+// The DP over optimization units (Core/Unit.h). A strategy takes at most one
+// candidate per unit; the DP keeps, per cost, the strategy of least error.
+// The solver asks units about each other and never sees their instructions.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_SOLVE_DP_H
 #define POSEIDON_SOLVE_DP_H
+
+#include "Core/Unit.h"
+#include "Support/Diagnostics.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -29,51 +29,6 @@
 #include <optional>
 
 namespace poseidon {
-
-class OptimizationUnit;
-
-/// A candidate taken: candidate `candidateIndex` of `unit`.
-struct SolutionStep {
-  /// The unit; owned by the site it was proposed for.
-  OptimizationUnit *unit;
-  /// The candidate's index among the unit's candidates.
-  size_t candidateIndex;
-
-  /// Candidate `candidateIndex` of `unit`.
-  SolutionStep(OptimizationUnit *unit, size_t candidateIndex)
-      : unit(unit), candidateIndex(candidateIndex) {}
-};
-
-/// An error met where it cannot be returned, kept until it can be; the first
-/// of several is kept.
-class DeferredError {
-public:
-  DeferredError() = default;
-  DeferredError(DeferredError &&) = default;
-  DeferredError &operator=(DeferredError &&) = default;
-  ~DeferredError() {
-    if (E)
-      llvm::consumeError(std::move(*E));
-  }
-  /// Keeps `New` unless an error is kept already, and then consumes it.
-  void set(llvm::Error New) {
-    if (E)
-      llvm::consumeError(std::move(New));
-    else
-      E = std::move(New);
-  }
-  /// The kept error, or success when there is none; nothing is kept after.
-  llvm::Error take() {
-    if (!E)
-      return llvm::Error::success();
-    llvm::Error Out = std::move(*E);
-    E.reset();
-    return Out;
-  }
-
-private:
-  std::optional<llvm::Error> E;
-};
 
 /// A cost on the DP's axis. The axis is integral so that a strategy reached
 /// in either order, or with a step displaced and charged back, has one key.
@@ -113,72 +68,6 @@ private:
 using CostMap = std::map<DPCost, double>;
 /// Per cost, that strategy.
 using SolutionMap = std::map<DPCost, llvm::SmallVector<SolutionStep>>;
-
-/// A place in the code the solver chooses for: the candidates it offers, their
-/// prices, and how its steps combine with other units'.
-class OptimizationUnit {
-public:
-  virtual ~OptimizationUnit();
-
-  /// The subclass, for isa<> and dyn_cast<>.
-  unsigned kind() const { return kindId; }
-  /// What the solver's progress lines call the unit's kind.
-  virtual llvm::StringRef kindName() const = 0;
-
-  /// How many candidates the unit offers.
-  virtual size_t numCandidates() const = 0;
-
-  /// Candidate i's cost change against the code as written, in cost-model units
-  /// over the profiled run, given the steps already in the strategy.
-  virtual double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
-  /// Candidate i's error change, on the application's scale, given the steps
-  /// already in the strategy.
-  virtual double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
-  /// The cost change, in cost-model units over the profiled run, by which
-  /// candidate i's price can be off: a price measured as a wall-clock ratio
-  /// repeats only to within it. 0 for a price exact on the model's terms.
-  virtual double costTieBand(size_t i) const { return 0.0; }
-  /// True when costDelta and errorDelta do not read `prior`. Only such a unit's
-  /// step can be displaced, its deltas charged back exactly.
-  virtual bool pricedAlone() const { return true; }
-  /// The pricings the unit has memoized so far.
-  virtual size_t memoizedPricings() const { return 0; }
-  /// Called before the solver asks for the deltas of every candidate against
-  /// each of `priors`, for a unit that prices several of them at once.
-  virtual void priceAhead(llvm::ArrayRef<llvm::ArrayRef<SolutionStep>> priors) {
-  }
-
-  /// True when taking a candidate consumes the footprint (a raise replaces the
-  /// loop that computes a product); false when it edits the footprint in place
-  /// and composes with the other such units on it.
-  virtual bool consumesFootprint() const = 0;
-  /// Whether the two footprints share an instruction. A footprint does not
-  /// overlap itself: a product is not in conflict with itself.
-  virtual bool footprintOverlaps(const OptimizationUnit &other) const = 0;
-  /// Whether the two units rewrite one output.
-  virtual bool rewritesSameOutputAs(const OptimizationUnit &other) const = 0;
-  /// Whether this unit's deltas depend on whether `earlier` was taken.
-  virtual bool pricedAgainst(const OptimizationUnit &earlier) const {
-    return false;
-  }
-  /// Whether every later unit admits and prices a step of this unit exactly
-  /// as a step of `earlier`.
-  virtual bool sameRewriteTargetAs(const OptimizationUnit &earlier) const {
-    return false;
-  }
-
-protected:
-  /// A unit of the subclass `kindId`.
-  explicit OptimizationUnit(unsigned kindId) : kindId(kindId) {}
-  OptimizationUnit(const OptimizationUnit &) = default;
-  OptimizationUnit(OptimizationUnit &&) = default;
-  OptimizationUnit &operator=(const OptimizationUnit &) = default;
-  OptimizationUnit &operator=(OptimizationUnit &&) = default;
-
-private:
-  /// The subclass, as kind() returns it.
-  unsigned kindId;
-};
 
 // In both orders below, `sites` lists each site's units in site order.
 

@@ -1,4 +1,4 @@
-//===- DP.cpp - optimization units and the solver over them ---------------===//
+//===- DP.cpp - the solver over optimization units ------------------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -31,8 +31,6 @@
 using namespace llvm;
 
 namespace poseidon {
-
-OptimizationUnit::~OptimizationUnit() = default;
 
 // `value` in cost-model units on the axis 2^exponent scales them to; none
 // when the axis cannot hold it.

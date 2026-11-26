@@ -13,6 +13,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
@@ -21,6 +22,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
@@ -198,5 +200,42 @@ void topoSort(const SetVector<Instruction *> &insts,
   for (Instruction *I : insts)
     dfsVisit(I);
 }
+
+SourceLoc locOf(const DebugLoc &DL) {
+  if (!DL)
+    return {};
+  return {DL->getFilename().str(), DL.getLine(), DL.getCol()};
+}
+
+SourceLoc locOf(const Value *V) {
+  if (auto *I = dyn_cast_or_null<Instruction>(V))
+    return locOf(I->getDebugLoc());
+  return {};
+}
+
+json::Object locJSON(const SourceLoc &L) {
+  json::Object o;
+  o["file"] = L.file;
+  o["line"] = (int64_t)L.line;
+  o["col"] = (int64_t)L.col;
+  return o;
+}
+
+void putLoc(json::Object &o, StringRef key, const SourceLoc &L) {
+  if (L.valid())
+    o[key] = locJSON(L);
+}
+
+std::string getSourceLocationStr(Value *V) {
+  if (auto *I = dyn_cast<Instruction>(V)) {
+    if (I->getDebugLoc()) {
+      SourceLoc L = locOf(I->getDebugLoc());
+      return (L.file + ":" + Twine(L.line) + ":" + Twine(L.col)).str();
+    }
+  }
+  return "";
+}
+
+std::string getValueStr(Value *V) { return formatv("{0}", *V).str(); }
 
 } // namespace poseidon

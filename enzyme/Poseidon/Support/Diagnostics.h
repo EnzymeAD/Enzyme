@@ -14,6 +14,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <optional>
 #include <string>
 
 namespace llvm {
@@ -52,7 +53,7 @@ void remarkMissed(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
 /// is. The compile fails through the diagnostic handler's error count, and the
 /// process that loaded the plugin is never ended by the pass. The one place an
 /// error is held rather than returned is the DP's search, which cannot unwind:
-/// a DeferredError (Solve/DP.h) keeps the first one it meets, a repricing
+/// a DeferredError (below) keeps the first one it meets, a repricing
 /// that fails or a cost that leaves the DP's axis, and solveSites returns it
 /// after the search.
 class UserError : public llvm::ErrorInfo<UserError> {
@@ -84,6 +85,37 @@ llvm::Error userError(const llvm::Twine &Message);
 /// Reports each error `E` holds as an error diagnostic in `Ctx`: a user error
 /// at its location, any other as a mistake of the whole compile.
 void diagnoseUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
+
+/// An error met where it cannot be returned, kept until it can be; the first
+/// of several is kept.
+class DeferredError {
+public:
+  DeferredError() = default;
+  DeferredError(DeferredError &&) = default;
+  DeferredError &operator=(DeferredError &&) = default;
+  ~DeferredError() {
+    if (E)
+      llvm::consumeError(std::move(*E));
+  }
+  /// Keeps `New` unless an error is kept already, and then consumes it.
+  void set(llvm::Error New) {
+    if (E)
+      llvm::consumeError(std::move(New));
+    else
+      E = std::move(New);
+  }
+  /// The kept error, or success when there is none; nothing is kept after.
+  llvm::Error take() {
+    if (!E)
+      return llvm::Error::success();
+    llvm::Error Out = std::move(*E);
+    E.reset();
+    return Out;
+  }
+
+private:
+  std::optional<llvm::Error> E;
+};
 
 } // namespace poseidon
 #endif // POSEIDON_SUPPORT_DIAGNOSTICS_H
