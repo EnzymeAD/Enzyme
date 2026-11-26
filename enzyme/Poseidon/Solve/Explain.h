@@ -43,7 +43,14 @@
 //              applied, false for a step an earlier one made moot), pin (the
 //              -poseidon-pin value that applies them again),
 //              selected (the frontier point selected: cost, the share it adds,
-//              accuracy_cost, modelled_rel_error), best_achievable_rel_error
+//              accuracy_cost, modelled_rel_error), time (when the cost model
+//              prices the site's memory traffic: arithmetic_as_written,
+//              arithmetic_selected, memory, combined_as_written and
+//              combined_selected in cost-model units over the profiled run,
+//              pnorm and band of the stream_combine rows, modelled_speedup,
+//              inside_band (a gain within the band) and taken (false when the
+//              selected point is no faster than the code as written, which
+//              stays)), best_achievable_rel_error
 //              (for "no_solution" under a target), cost_before, cost_after,
 //              modelled_rel_error_as_written, modelled_rel_error
 //   subgraphs  (solved sites) each optimization unit: id (S<i> an FP

@@ -91,6 +91,7 @@
 
 ; LOOSE: remark: matrix.c:1:0: Poseidon left 2 floating-point operation(s) as written that the profiling run never executed (matrix.c:9); profile an input that runs them{{$}}
 ; LOOSE: [poseidon] preprocess_tester: tau=1.000000e-04 S=3.818938e+03 A0=2.850360e-11 selected cost=-4.375000e-01 accCost=2.794345e-02 rel=7.317073e-06
+; LOOSE-NEXT: [poseidon] preprocess_tester: memory traffic not priced, the cost model has no stream rows; the arithmetic decides
 ; LOOSE-NEXT: remark: <unknown>:0:0: Poseidon runs all 4 operations in float; modelled error 7.5e-15 -> 7.3e-06, cost 1 -> 0.5625 (-44%) [P0_0]
 ; LOOSE: [poseidon] pin: tester:P0=All FP64(0%) + FP32(100%)
 

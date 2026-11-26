@@ -30,6 +30,9 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
+#include <cmath>
+#include <iterator>
 #include <optional>
 
 using namespace llvm;
@@ -210,6 +213,50 @@ profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
     cost += (double)it->second.exec * *price;
   }
   return cost;
+}
+
+Expected<std::optional<StreamPrices>> streamPrices(CostModelState &CM,
+                                                   const Function &F) {
+  static constexpr std::pair<StringLiteral, StringLiteral> Rows[] = {
+      {"stream_load", "double"},   {"stream_store", "double"},
+      {"stream_load", "float"},    {"stream_store", "float"},
+      {"stream_combine", "pnorm"}, {"stream_combine", "band"}};
+  if (none_of(Rows, [&](const auto &Row) {
+        return lookupCost(CM, Row.first, Row.second).has_value();
+      }))
+    return std::nullopt;
+  double Price[std::size(Rows)];
+  for (auto [Cost, Row] : zip(Price, Rows)) {
+    Expected<double> Found =
+        rowCost(CM, F, F.getSubprogram(), Row.first, Row.second);
+    if (!Found)
+      return Found.takeError();
+    Cost = *Found;
+  }
+  return StreamPrices{Price[0], Price[1], Price[2],
+                      Price[3], Price[4], Price[5]};
+}
+
+double StreamPrices::perByte(bool Store, uint64_t Width) const {
+  if (Width != 0 && Width <= 4)
+    return (Store ? StoreFloat : LoadFloat) / 4;
+  return (Store ? StoreDouble : LoadDouble) / 8;
+}
+
+double StreamPrices::combine(double Arith, double Memory) const {
+  double Hi = std::max(Arith, Memory), Lo = std::min(Arith, Memory);
+  if (Lo <= 0.0)
+    return Hi;
+  return Hi * std::pow(1.0 + std::pow(Lo / Hi, PNorm), 1.0 / PNorm);
+}
+
+double trafficCost(const StreamPrices &Prices,
+                   ArrayRef<TrafficRecord> Records) {
+  double Cost = 0.0;
+  for (const TrafficRecord &R : Records)
+    Cost += (double)R.LoadBytes * Prices.perByte(false, R.Width) +
+            (double)R.StoreBytes * Prices.perByte(true, R.Width);
+  return Cost;
 }
 
 static Expected<double> computeMaxCost(CostModelState &CM, BasicBlock *BB,

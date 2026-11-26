@@ -23,6 +23,7 @@
 #include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Core/Unit.h"
+#include "Model/CostModel.h"
 #include "Profile/ProfileReader.h"
 #include "Solve/DP.h"
 #include "Support/CacheKey.h"
@@ -57,7 +58,7 @@ llvm::StringRef selectorName(SolveSelector selector);
 
 /// Why a solve's selection took or passed over a frontier point, best first.
 enum class PointVerdict {
-  /// The point applied.
+  /// The point the target or the budget selected.
   Selected,
   /// It meets the target or the budget; the point selected is preferred.
   Outranked,
@@ -97,8 +98,20 @@ struct SolveRecord {
   bool siteTarget = false;
   /// The sites of a joint solve.
   std::vector<std::string> sites;
-  /// The cost of the point applied; none when nothing was applied.
+  /// The cost of the point the target or the budget selected; none when it
+  /// selected none.
   std::optional<DPCost> selected;
+  /// The site's time once its memory traffic is priced, in cost-model units
+  /// over the profiled run: its arithmetic, its memory, and the two combined,
+  /// for the code as written and at the selected point, and whether that point
+  /// is taken. Absent when the traffic is not priced.
+  struct Time {
+    double arithAsWritten, arithSelected, memory;
+    double combinedAsWritten, combinedSelected;
+    double pnorm, band;
+    bool taken;
+  };
+  std::optional<Time> time;
 };
 
 /// A site's DP table in the cache: the key of what it is solved from, the file
@@ -146,7 +159,10 @@ solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
 /// domain error; in the second moment, the root of the sum of their squares. A
 /// single site's table is read from or written to the cache when the site has
 /// one. `joint` marks a solve of the sites of -poseidon-solve-jointly, however
-/// many.
+/// many. Once the memory traffic of a single site is priced, its time is its
+/// arithmetic and its traffic combined, and a point selected for its cost
+/// replaces the code as written only when its combined time is lower; else
+/// nothing is applied.
 llvm::Expected<llvm::SmallVector<SolutionStep>>
 solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units,
@@ -154,7 +170,8 @@ solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            SolveRecord *record);
 
 /// What a site is solved from, for its solve and the explanation of it: the
-/// profile and its condition number, and the site's DP table in the cache.
+/// profile, its condition number and its memory traffic, and the site's DP
+/// table in the cache.
 struct SolvedFrom {
   static inline char ID;
   /// The profile the site is solved from.
@@ -166,6 +183,12 @@ struct SolvedFrom {
   std::optional<double> kappa;
   /// How the profiling run measured `kappa`.
   KappaMark kappaMark = KappaMark::None;
+  /// The cost model's stream rows, when it has them.
+  std::optional<StreamPrices> streamPrices;
+  /// What the profiled run's memory traffic cost, in cost-model units, when
+  /// the stream rows price it and the profile records it; otherwise why not.
+  std::optional<double> trafficCost;
+  std::string noTrafficReason;
   /// Set when the site is solved against the DP table cache.
   std::unique_ptr<DPTable> table;
 };

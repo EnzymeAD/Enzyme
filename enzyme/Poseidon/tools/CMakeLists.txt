@@ -65,17 +65,21 @@ install(
 # --- poseidon-calibrate
 
 # The GPU programs it runs, one per GPU runtime of the build: the operation
-# microbenchmark, and the library calibrator, which times the GEMM runtimes'
-# entry points and so links them.
+# microbenchmark, the streamed-traffic microbenchmark, and the library
+# calibrator, which times the GEMM runtimes' entry points and so links them.
 set(_calibrate_gpu_tools)
 if(POSEIDON_HAS_CUDA)
   add_executable(poseidon-calibrate-ops-cuda calibrate/ops_gpu.cu)
+  add_executable(poseidon-calibrate-stream-cuda calibrate/stream.cu)
   add_executable(poseidon-calibrate-library-cuda calibrate/library.cu)
   target_compile_definitions(
     poseidon-calibrate-library-cuda
     PRIVATE POSEIDON_TCEC=$<BOOL:${POSEIDON_HAS_TCEC}>)
   target_include_directories(
     poseidon-calibrate-ops-cuda
+    PRIVATE ${ENZYME_SOURCE_DIR}/include)
+  target_include_directories(
+    poseidon-calibrate-stream-cuda
     PRIVATE ${ENZYME_SOURCE_DIR}/include)
   target_include_directories(
     poseidon-calibrate-library-cuda
@@ -91,11 +95,12 @@ if(POSEIDON_HAS_CUDA)
       PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
   endif()
   install(
-    TARGETS poseidon-calibrate-ops-cuda poseidon-calibrate-library-cuda
+    TARGETS poseidon-calibrate-ops-cuda poseidon-calibrate-stream-cuda
+    poseidon-calibrate-library-cuda
     EXPORT PoseidonTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
   list(APPEND _calibrate_gpu_tools poseidon-clang poseidon-calibrate-ops-cuda
-       poseidon-calibrate-library-cuda)
+       poseidon-calibrate-stream-cuda poseidon-calibrate-library-cuda)
 endif()
 # poseidon_add_hip_tool(<name> <source> [<library>...])
 # The program <name> compiled from <source> as HIP by the plugin's clang and
@@ -131,12 +136,13 @@ function(poseidon_add_hip_tool name src)
 endfunction()
 if(POSEIDON_HAS_HIP)
   poseidon_add_hip_tool(poseidon-calibrate-ops-hip calibrate/ops_gpu.cu)
+  poseidon_add_hip_tool(poseidon-calibrate-stream-hip calibrate/stream.cu)
   poseidon_add_hip_tool(
     poseidon-calibrate-library-hip calibrate/library.cu
     $<TARGET_FILE:poseidon_gemm_hip> ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
   add_dependencies(poseidon-calibrate-library-hip poseidon_gemm_hip)
   list(APPEND _calibrate_gpu_tools poseidon-calibrate-ops-hip
-       poseidon-calibrate-library-hip)
+       poseidon-calibrate-stream-hip poseidon-calibrate-library-hip)
 endif()
 
 set(LLVM_LINK_COMPONENTS Support TargetParser)

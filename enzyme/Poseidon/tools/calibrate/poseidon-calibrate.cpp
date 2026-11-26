@@ -64,7 +64,8 @@ static cl::opt<bool>
 static cl::opt<std::string>
     Only("only", cl::init(""), cl::value_desc("arms"),
          cl::desc("Comma-separated subset of "
-                  "ops,ozaki,ozaki-rect,tcec,direct,inkernel,operand-min,"
+                  "ops,stream,ozaki,ozaki-rect,tcec,direct,inkernel,"
+                  "operand-min,"
                   "herbie-platform"));
 static cl::opt<std::string>
     Python("python", cl::init(POSEIDON_CALIBRATE_PYTHON),
@@ -127,7 +128,9 @@ enum class Calibrator {
   /// Per-op throughputs and the --device query.
   Ops,
   /// The library-call (library call) rows.
-  Library
+  Library,
+  /// Streamed memory traffic and its combination with arithmetic.
+  Stream
 };
 } // namespace
 
@@ -140,6 +143,9 @@ static StringRef calibratorName(Calibrator C, bool Hip) {
   case Calibrator::Library:
     return Hip ? "poseidon-calibrate-library-hip"
                : "poseidon-calibrate-library-cuda";
+  case Calibrator::Stream:
+    return Hip ? "poseidon-calibrate-stream-hip"
+               : "poseidon-calibrate-stream-cuda";
   }
   llvm_unreachable("every calibrator has a name");
 }
@@ -445,8 +451,8 @@ static std::string resolveCsv(const Device &D) {
 
 /// The arms --only takes.
 static constexpr StringLiteral Arms[] = {
-    "ops",  "herbie-platform", "ozaki",    "ozaki-rect",
-    "tcec", "direct",          "inkernel", "operand-min"};
+    "ops",        "herbie-platform", "stream", "ozaki",   "ozaki-rect",
+    "tcec",       "direct",          "inkernel", "operand-min"};
 
 /// Whether `Arm` measures a host as well as a GPU.
 static bool isHostArm(StringRef Arm) {
@@ -697,6 +703,41 @@ static void armLibrary(StringRef Csv, const Device &D, StringRef Arm,
   writeRows(
       Csv, Arm, Family,
       capture({tool(D, Calibrator::Library), Arm, utostr(RefN), utostr(Reps)}));
+}
+
+/// Measures the stream rows, which the harness fits against the fmuladd rows
+/// the ops arm wrote. The rows are written all together or not at all: a model
+/// with some of them stops every compile that reads it.
+static void armStream(StringRef Csv, const Device &D) {
+  if (alreadyMeasured(Csv, "stream", "stream_load"))
+    return;
+  CostModelState CM;
+  if (Error E = loadCostModel(CM, Csv))
+    fail(toString(std::move(E)));
+  std::optional<double> FmaD = lookupCost(CM, "fmuladd", "double");
+  std::optional<double> FmaF = lookupCost(CM, "fmuladd", "float");
+  if (!FmaD || !FmaF)
+    fail(Csv + " has no fmuladd,double and fmuladd,float rows, which the "
+               "stream arm fits against; run the ops arm first");
+  outs() << "poseidon-calibrate: measuring streamed memory traffic\n";
+  std::string D64 = formatv("{0}", format("%.17g", *FmaD)).str();
+  std::string F32 = formatv("{0}", format("%.17g", *FmaF)).str();
+  std::optional<std::string> Rows =
+      capture({tool(D, Calibrator::Stream), D64, F32});
+  if (!Rows)
+    fail("the stream calibration failed");
+  SmallVector<std::string, 6> Missing;
+  for (StringRef Row :
+       {"stream_load,double", "stream_load,float", "stream_store,double",
+        "stream_store,float", "stream_combine,pnorm", "stream_combine,band"})
+    if (none_of(llvm::split(*Rows, '\n'), [&](StringRef Line) {
+          return Line.trim().starts_with((Row + ",").str());
+        }))
+      Missing.push_back(Row.str());
+  if (!Missing.empty())
+    fail("the stream calibration produced no " + join(Missing, ", ") +
+         " row, so no stream row is written");
+  writeRows(Csv, "stream", "stream_load", Rows);
 }
 
 /// The extents `Shape` spells as `Count` positive integers joined by 'x'.
@@ -1237,6 +1278,7 @@ static int checkModel(const Device &D) {
   } Families[] = {
       {"fmul", "per-op throughputs", Everywhere},
       {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
+      {"stream_load", "streamed memory traffic", Gpu},
       {"library_ozaki_rel", "Ozaki-II library call", Gpu},
       {"library_tcec_rel", "error-corrected library call", Nvidia},
       {"library_direct_rel", "reduced-precision library call", Gpu},
@@ -1283,6 +1325,8 @@ int main(int argc, char **argv) {
       "fpext_/fptrunc_<from>_to_<to>,<from>,\n"
       "                   and on NVIDIA wmma_mma_<tile>,<in>_<acc>\n"
       "  herbie-platform  no rows: the Herbie platform <csv>.herbie.rkt\n"
+      "  stream           stream_load,<type>, stream_store,<type>,\n"
+      "                   stream_combine,pnorm and ,band\n"
       "  ozaki            library_ozaki_rel,nm<8..14> and ,dgemm\n"
       "  ozaki-rect       library_ozaki_rect_rel,nm<k>_m<M>n<N>k<K> and\n"
       "                   ,dgemm_m<M>n<N>k<K> (--product),\n"
@@ -1342,6 +1386,8 @@ int main(int argc, char **argv) {
   if (wants("ops") || wants("herbie-platform"))
     armHerbiePlatform(Csv);
   if (!D.Host) {
+    if (wants("stream"))
+      armStream(Csv, D);
     if (wants("ozaki"))
       armLibrary(Csv, D, "ozaki", "library_ozaki_rel");
     if (wants("ozaki-rect"))

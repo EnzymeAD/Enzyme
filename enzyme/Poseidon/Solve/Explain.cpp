@@ -359,6 +359,12 @@ static std::string siteSymbolOf(const Session &S, const Function &F) {
 // The schema identifier of every explanation; see Explainer::toJSON.
 static constexpr StringLiteral kSchema = "poseidon-explain/1";
 
+// Why a site, and each unit of the point it selected, stays as written when the
+// memory traffic leaves that point no faster.
+static constexpr StringLiteral kNotFaster =
+    "the selected frontier point is not faster than the code as written once "
+    "the memory traffic is priced";
+
 // The names of the site whose clone is F, or whose body is F when no clone was
 // made, where it is called and where it is written.
 static json::Object functionJSON(const Session &S, const Function &F) {
@@ -519,6 +525,9 @@ class Explainer final : public Explanation {
   std::optional<double> selectedAcc() const;
   // Why the solve left the site as written, when it applied no step.
   std::string siteLeftReason() const;
+  // Whether the selected point was left for the code as written, which its
+  // memory traffic makes no slower.
+  bool selectedNotTaken() const { return rec.time && !rec.time->taken; }
 
 public:
   Explainer(Session &Sess, Function &F, SiteState &st,
@@ -711,9 +720,13 @@ std::string Explainer::leftReason(const UnitExplanation &U) {
     if (!rec.selected && steps.empty())
       return "no solution on the site's frontier meets the target " +
              remarkNumber(tau);
+    if (selectedNotTaken())
+      return kNotFaster.str();
     return "its alternatives do not fit the target together with the "
            "selected rewrites";
   }
+  if (selectedNotTaken())
+    return kNotFaster.str();
   return "no alternative lowers the modelled error within the cost budget " +
          costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
 }
@@ -957,8 +970,11 @@ json::Object Explainer::toJSON() {
   if (before && delta)
     result["cost_after"] = scale.share(*before + *delta);
   putNum(result, "modelled_rel_error_as_written", relErr(0.0));
-  double acc = selectedAcc().value_or(
-      steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN());
+  double acc =
+      selectedNotTaken()
+          ? 0.0
+          : selectedAcc().value_or(
+                steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN());
   putNum(result, "modelled_rel_error", relErr(acc));
   json::Array appliedIds;
   json::Array stepList;
@@ -984,6 +1000,22 @@ json::Object Explainer::toJSON() {
       putNum(selected, "modelled_rel_error", relErr(point->second));
     }
     result["selected"] = std::move(selected);
+  }
+  if (rec.time) {
+    const SolveRecord::Time &t = *rec.time;
+    json::Object time;
+    putNum(time, "arithmetic_as_written", t.arithAsWritten);
+    putNum(time, "arithmetic_selected", t.arithSelected);
+    putNum(time, "memory", t.memory);
+    putNum(time, "combined_as_written", t.combinedAsWritten);
+    putNum(time, "combined_selected", t.combinedSelected);
+    putNum(time, "pnorm", t.pnorm);
+    putNum(time, "band", t.band);
+    const double speedup = t.combinedAsWritten / t.combinedSelected;
+    putNum(time, "modelled_speedup", speedup);
+    time["inside_band"] = speedup > 1.0 && speedup <= 1.0 + t.band;
+    time["taken"] = t.taken;
+    result["time"] = std::move(time);
   }
   if (rewritten) {
     result["status"] = "rewritten";
@@ -1117,6 +1149,8 @@ std::string Explainer::siteLeftReason() const {
   }
   if (rec.selector == SolveSelector::Pinned)
     return "no -poseidon-pin item names a candidate of this site";
+  if (selectedNotTaken())
+    return kNotFaster.str();
   if (st.get<SolvedFrom>().kappaMark == KappaMark::Diverged)
     return "the profiling runs diverged under the smallest perturbation, so "
            "the site offers no candidate";

@@ -47,6 +47,7 @@
 ; SITES-ONE-NEXT: DP table contains 4 entries.
 ; SITES-ONE: Minimum accuracy cost within budget: 2.184370e-06
 ; SITES-ONE-NEXT: Computation cost budget used: -3.000000e-01
+; SITES-ONE-NEXT: [poseidon] preprocess_tester_a,preprocess_tester_b: memory traffic not priced in a joint solve; the arithmetic decides
 ; SITES-ONE-NEXT: [poseidon] pin: {{$}}
 ; SITES-ONE: [poseidon] Finished optimizing preprocess_tester_a
 ; SITES-ONE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)

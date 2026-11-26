@@ -37,6 +37,7 @@
 namespace poseidon {
 
 struct ProfileInfo;
+struct TrafficRecord;
 
 /// An error at `F` unless the cost model of `S` is present and its native_arch
 /// header names this function's target-cpu. The first call resolves the model
@@ -71,6 +72,31 @@ llvm::Expected<double> profiledCost(
     const std::map<size_t, ProfileInfo> &profile,
     llvm::function_ref<std::optional<size_t>(const llvm::Instruction *)>
         slotOf);
+
+/// The price of an element a kernel streams from or to an array no cache holds,
+/// per scalar type, and the exponent p of the combination of a kernel's
+/// arithmetic time A and memory time M as (A^p + M^p)^(1/p), with the largest
+/// relative deviation of the measured times it was fitted to.
+struct StreamPrices {
+  double LoadDouble, StoreDouble, LoadFloat, StoreFloat;
+  double PNorm, Band;
+
+  /// The price of one byte of an array accessed `Width` bytes at a time: the
+  /// float rows up to 4 bytes, the double rows for wider or mixed (0) widths.
+  double perByte(bool Store, uint64_t Width) const;
+  /// A kernel's time from its arithmetic and its memory time.
+  double combine(double Arith, double Memory) const;
+};
+
+/// The model's stream rows; none when it has no stream row, an error at `F`
+/// naming the first missing one when it has some but not all.
+llvm::Expected<std::optional<StreamPrices>>
+streamPrices(CostModelState &CM, const llvm::Function &F);
+
+/// What moving the profiled run's traffic `Records` costs, in the cost model's
+/// units.
+double trafficCost(const StreamPrices &Prices,
+                   llvm::ArrayRef<TrafficRecord> Records);
 
 /// `Weight`, when given, is how often an instruction executes per execution of
 /// the function it is priced in.

@@ -186,6 +186,16 @@ def report_header(doc, emit):
     emit("  with Poseidon: modelled error %s, cost %s%s; applied %s" % (
         fmt_number(res.get("modelled_rel_error")), fmt_cost(after), pct,
         ", ".join(applied) if applied else "nothing"))
+    timing = res.get("time")
+    if timing:
+        emit("  memory traffic: arithmetic %s -> %s, memory %s, combined %s -> %s (pnorm %s); "
+             "modelled speedup %s, band %s%s; %s" % (
+                 fmt_number(timing.get("arithmetic_as_written")), fmt_number(timing.get("arithmetic_selected")),
+                 fmt_number(timing.get("memory")), fmt_number(timing.get("combined_as_written")),
+                 fmt_number(timing.get("combined_selected")), fmt_number(timing.get("pnorm")),
+                 fmt_number(timing.get("modelled_speedup"), 4), fmt_number(timing.get("band")),
+                 ", inside the band" if timing.get("inside_band") else "",
+                 "taken" if timing.get("taken") else "not taken, the code as written stays"))
     if res.get("reason"):
         emit("  %s: %s" % (res.get("status", "?").replace("_", " "), res["reason"]))
     return True

@@ -435,6 +435,65 @@ static void noteSinglePointFrontier(const SolutionMap &frontier,
                     "combination.\n";
 }
 
+// Whether the frontier point `selected`, of accuracy cost `selectedAcc`,
+// replaces the code as written once the site's memory traffic is priced. A
+// point the selection preferred to the code as written for its cost is taken
+// only when its arithmetic and its traffic combined cost less than the code as
+// written's. The selection did not prefer it for its cost when the code as
+// written was not selectable (it misses the target, or its cost the budget),
+// or when the selection ranks by accuracy and the point is more accurate; such
+// a point is taken whatever its time. `isAsWritten` says the point applies
+// nothing.
+static bool takesSelectedPoint(const Options &O, const SiteState &st,
+                               StringRef names, const CostScale &scale,
+                               DPCost selected, double selectedAcc,
+                               bool isAsWritten, double tau,
+                               bool asWrittenSelectable, SolveRecord *record) {
+  const bool print = O.Diagnostics.Print;
+  const SolvedFrom &from = st.get<SolvedFrom>();
+  if (!from.trafficCost) {
+    if (print)
+      llvm::errs() << "[poseidon] " << names << ": memory traffic not priced, "
+                   << from.noTrafficReason << "; the arithmetic decides\n";
+    return true;
+  }
+  const StreamPrices &prices = *from.streamPrices;
+  const double arith0 = st.profiledCost;
+  const double arith = arith0 * (1.0 + scale.share(selected));
+  const double memory = *from.trafficCost;
+  const double before = prices.combine(arith0, memory);
+  const double after = prices.combine(arith, memory);
+  const bool rankedByAccuracy = tau <= 0.0 || !O.Solver.TauCheapest;
+  const bool selectedForCost =
+      asWrittenSelectable && !(rankedByAccuracy && selectedAcc < 0.0);
+  const bool taken = isAsWritten || !selectedForCost || after < before;
+  if (record)
+    record->time = SolveRecord::Time{arith0, arith,        memory,      before,
+                                     after,  prices.PNorm, prices.Band, taken};
+  if (!print)
+    return taken;
+  const double speedup = before / after;
+  llvm::errs() << "[poseidon] " << names << ": arithmetic " << arith0 << " -> "
+               << arith << ", memory " << memory << ", combined (pnorm "
+               << prices.PNorm << ") " << before << " -> " << after
+               << ", modelled speedup " << speedup << ", band " << prices.Band
+               << ": ";
+  if (isAsWritten)
+    llvm::errs() << "the code as written is selected\n";
+  else if (!taken)
+    llvm::errs() << "not cheaper than the code as written, which stays\n";
+  else if (!(after < before))
+    llvm::errs() << (tau > 0.0 || asWrittenSelectable
+                         ? "taken for its accuracy\n"
+                         : "taken for the cost budget, which the code as "
+                           "written exceeds\n");
+  else if (speedup <= 1.0 + prices.Band)
+    llvm::errs() << "taken, its modelled gain inside the band\n";
+  else
+    llvm::errs() << "taken\n";
+  return taken;
+}
+
 SmallVector<OptimizationUnit *>
 solveOrder(const Options &O, ArrayRef<ArrayRef<SiteUnit *>> units) {
   SmallVector<SmallVector<OptimizationUnit *>, 4> siteUnits;
@@ -642,6 +701,23 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                                            "solution");
   if (record)
     record->selected = *best;
+  if (joint) {
+    if (print)
+      llvm::errs() << "[poseidon] " << names
+                   << ": memory traffic not priced in a joint solve; the "
+                      "arithmetic decides\n";
+    return costToSolutionMap.at(*best);
+  }
+  // The selector's own test of the code as written, the frontier point of
+  // cost 0 and accuracy cost 0.
+  const bool asWrittenSelectable =
+      tau > 0.0 ? selectable(0.0) && baseline / accScale <= tau
+                : 0 <= scale.fromShare(O.Solver.CostBudget);
+  if (!takesSelectedPoint(O, *sites.front(), names, scale, *best,
+                          costToAccuracyMap.at(*best),
+                          costToSolutionMap.at(*best).empty(), tau,
+                          asWrittenSelectable, record))
+    return SmallVector<SolutionStep>();
   return costToSolutionMap.at(*best);
 }
 

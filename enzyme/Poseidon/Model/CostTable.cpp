@@ -156,6 +156,10 @@ static bool isCostModelRow(StringRef Opcode, StringRef Type) {
            Opcode.consume_front("k") && !Opcode.consumeInteger(10, K) &&
            Opcode.empty() && !Type.empty();
   }
+  if (Opcode == "stream_combine")
+    return Type == "pnorm" || Type == "band";
+  if (Opcode == "stream_load" || Opcode == "stream_store")
+    return isScalarTypeName(Type);
   for (StringRef Cast : {"fpext_", "fptrunc_"})
     if (Opcode.consume_front(Cast)) {
       auto [From, To] = Opcode.split("_to_");

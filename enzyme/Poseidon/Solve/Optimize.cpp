@@ -340,6 +340,17 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
   if (!cost)
     return cost.takeError();
   st.profiledCost = *cost;
+  Expected<std::optional<StreamPrices>> prices =
+      streamPrices(S.get<CostModelState>(), F);
+  if (!prices)
+    return prices.takeError();
+  from.streamPrices = *prices;
+  if (!from.streamPrices)
+    from.noTrafficReason = "the cost model has no stream rows";
+  else if (profile.header.traffic.empty())
+    from.noTrafficReason = "its profile records no memory traffic";
+  else
+    from.trafficCost = trafficCost(*from.streamPrices, profile.header.traffic);
 
   buildSubgraphs(O, profile.map, st);
 
