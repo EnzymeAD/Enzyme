@@ -1,13 +1,23 @@
 // The library call runtimes (cuBLAS or hipBLAS build) against the library's
-// DGEMM, on random operands spanning 2^-8..2^8, for Integration/gemm_runtime_*.
+// DGEMM, on random operands spanning 2^-8..2^8 (the direct cases' A 2^-24..2^8),
+// for Integration/gemm_runtime_*.
 //   ozaki:    each Ozaki-II case's result bits digest to what an RTX 5090
 //             returns (every step is exact or correctly rounded), and its
 //             error is held to twice what that run measured.
-//   direct:   each reduced-precision mode is held to the a priori bound
-//             (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|, the native
-//             mode to gamma_K; on cuBLAS, FP32 (mode 4) and TF32 (mode 3) are
-//             bit exact against cublasSgemm and FAST_TF32 gpublasGemmEx of the
-//             rounded operands, and differ from each other.
+//   direct:   each reduced-precision mode is held to the a priori bound of
+//             operands rounded once, a to a(1 + d) + e with |d| <= u and |e|
+//             <= eta, and accumulated in FP32: (2u + u^2 + gamma_K (1 + u)^2)
+//             |A||B| plus (1 + gamma_K) (eta (1 + u) (|A| 1 + 1^T |B|) + K
+//             eta^2); the native mode to gamma_K. eta is half the format's
+//             smallest subnormal where the device's product keeps every
+//             subnormal operand, and the smallest operand it keeps where it
+//             reads smaller ones as zero: the floor poseidon-calibrate-library
+//             measures on the device, in the file the case is given. Rows of A
+//             wholly in FP16's subnormals fail a library that reads as zero an
+//             operand at or above that floor. On cuBLAS, FP32 (mode 4) and
+//             TF32 (mode 3) are bit exact against cublasSgemm and FAST_TF32
+//             gpublasGemmEx of the rounded operands, and differ from each
+//             other.
 //   empty:    K == 0 gives C = beta * C, touching nothing outside the view;
 //             M == 0 touches nothing.
 //   streams:  calls interleaved on two streams return the bits each returns alone.
@@ -59,13 +69,15 @@ double uniform() { // [0, 1), 53 bits
 }
 
 // Element (r, c) of a rows x cols operand: a random significand scaled by a
-// power of two per row and per column, so that every row and column of an
-// Ozaki operand gets its own shift.
-std::vector<double> operand(int rows, int cols, int colMajor) {
+// power of two per row, in [rowLow, rowLow + rowSpan), and per column, in
+// [-4, 4], so that every row and column of an Ozaki operand gets its own
+// shift.
+std::vector<double> operand(int rows, int cols, int colMajor, int rowLow = -4,
+                            int rowSpan = 9) {
   std::vector<double> v((size_t)rows * cols);
   for (int r = 0; r < rows; ++r)
     for (int c = 0; c < cols; ++c) {
-      int e = (r * 7) % 9 - 4 + (c * 5) % 9 - 4;
+      int e = (r * 7) % rowSpan + rowLow + (c * 5) % 9 - 4;
       double x = std::ldexp(uniform() - 0.5, e);
       v[colMajor ? (size_t)c * rows + r : (size_t)r * cols + c] = x;
     }
@@ -95,16 +107,29 @@ struct Problem {
   std::vector<double> A, B, C0;
   double *dA = nullptr, *dB = nullptr, *dC = nullptr, *dR = nullptr;
   std::vector<double> absAB; // (|A||B|)(r, c), in C's layout
+  // The row sums of |A| and the column sums of |B|.
+  std::vector<double> rowA, colB;
   int lda, ldb, ldc;
 
-  explicit Problem(const Shape &sh) : s(sh) {
-    A = operand(s.M, s.K, s.aColMajor);
+  // The rows of A span 2^aRowLow..2^(aRowLow + aRowSpan - 1) before their
+  // column's scale.
+  explicit Problem(const Shape &sh, int aRowLow = -4, int aRowSpan = 9)
+      : s(sh) {
+    A = operand(s.M, s.K, s.aColMajor, aRowLow, aRowSpan);
     B = operand(s.K, s.Ncols, s.bColMajor);
     C0 = operand(s.M, s.Ncols, s.cColMajor);
     lda = s.aColMajor ? s.M : s.K;
     ldb = s.bColMajor ? s.K : s.Ncols;
     ldc = s.cColMajor ? s.M : s.Ncols;
     absAB.assign((size_t)s.M * s.Ncols, 0.0);
+    rowA.assign(s.M, 0.0);
+    colB.assign(s.Ncols, 0.0);
+    for (int r = 0; r < s.M; ++r)
+      for (int k = 0; k < s.K; ++k)
+        rowA[r] += std::fabs(at(A, s.M, s.K, s.aColMajor, r, k));
+    for (int c = 0; c < s.Ncols; ++c)
+      for (int k = 0; k < s.K; ++k)
+        colB[c] += std::fabs(at(B, s.K, s.Ncols, s.bColMajor, k, c));
     for (int r = 0; r < s.M; ++r)
       for (int c = 0; c < s.Ncols; ++c) {
         double t = 0.0;
@@ -146,16 +171,24 @@ struct Problem {
     CK(gpuDeviceSynchronize());
   }
 
-  // Largest |C - R| / (|A||B| + |beta C|) over the result.
-  double error(std::vector<double> &out) {
+  // Largest |C - R| / allowed(r, c, |A||B| + |beta C|) over the result.
+  template <class Allowed>
+  double error(std::vector<double> &out, Allowed allowed) {
     std::vector<double> ref(C0.size());
     out.resize(C0.size());
     CK(gpuMemcpy(out.data(), dC, out.size() * 8, gpuMemcpyDeviceToHost));
     CK(gpuMemcpy(ref.data(), dR, ref.size() * 8, gpuMemcpyDeviceToHost));
     double e = 0.0;
-    for (size_t i = 0; i < out.size(); ++i)
-      e = std::fmax(e, std::fabs(out[i] - ref[i]) / absAB[i]);
+    for (int r = 0; r < s.M; ++r)
+      for (int c = 0; c < s.Ncols; ++c) {
+        size_t i = s.cColMajor ? (size_t)c * s.M + r : (size_t)r * s.Ncols + c;
+        e = std::fmax(e, std::fabs(out[i] - ref[i]) / allowed(r, c, absAB[i]));
+      }
     return e;
+  }
+  // Largest |C - R| / (|A||B| + |beta C|) over the result.
+  double error(std::vector<double> &out) {
+    return error(out, [](int, int, double absAB) { return absAB; });
   }
 };
 
@@ -220,6 +253,53 @@ double inputRoundoff(int mode) {
   default:
     return 0x1.0p-24;
   }
+}
+
+// The smallest subnormal of each mode's operand format (none for mode 0, whose
+// operands are not rounded).
+double smallestSubnormal(int mode) {
+  switch (mode) {
+  case 0:
+    return 0.0;
+  case 1:
+    return 0x1.0p-24;
+  case 2:
+    return 0x1.0p-133;
+  default:
+    return 0x1.0p-149;
+  }
+}
+
+// The value of the row library_direct_operand_min,`cls` in `path`, the rows
+// poseidon-calibrate-library's operand-min family prints: the smallest operand
+// magnitude the class's product keeps on this device.
+double operandFloor(const char *path, const char *cls) {
+  FILE *f = fopen(path, "r");
+  if (!f) {
+    printf("cannot read the operand floors in %s\n", path);
+    exit(2);
+  }
+  char key[64], line[256];
+  int n = snprintf(key, sizeof key, "library_direct_operand_min,%s,", cls);
+  double floor = 0.0;
+  while (fgets(line, sizeof line, f))
+    if (!strncmp(line, key, n))
+      floor = strtod(line + n, nullptr);
+  fclose(f);
+  if (!(floor > 0.0)) {
+    printf("%s has no row %s\n", path, key);
+    exit(2);
+  }
+  return floor;
+}
+
+// The largest error of reading an operand too small for a relative one, in a
+// mode whose product keeps no operand below `floor`: `floor` when that is
+// above the format's smallest subnormal, so that operands below it are read as
+// zero, else the half subnormal of rounding to nearest.
+double inputUnderflow(int mode, double floor) {
+  const double subnormal = smallestSubnormal(mode);
+  return floor > subnormal ? floor : subnormal / 2;
 }
 
 #ifndef __HIP__
@@ -389,13 +469,16 @@ int sgemm() {
 }
 #endif
 
-int direct() {
+// `floors` is the file of the device's operand floors.
+int direct(const char *floors) {
   int failed = 0;
+  const double floor16 = operandFloor(floors, "f16_f32");
+  const double floorBf16 = operandFloor(floors, "bf16_f32");
 #ifndef __HIP__
   failed |= sgemm();
 #endif
   for (const Shape &s : kShapes) {
-    Problem p(s);
+    Problem p(s, -20, 25);
     for (int mode : {0, 1, 2, 4}) {
       p.reset(p.dC);
       if (mode == 0)
@@ -407,18 +490,23 @@ int direct() {
                                 p.ldb, p.ldc, s.aColMajor, s.bColMajor,
                                 s.cColMajor, 1.0, s.beta, nullptr, mode);
       CK(gpuDeviceSynchronize());
-      std::vector<double> out;
-      double e = p.error(out);
-      const double u = inputRoundoff(mode);
+      const double floor = mode == 1 ? floor16 : mode == 2 ? floorBf16 : 0.0;
+      const double u = inputRoundoff(mode), eta = inputUnderflow(mode, floor);
       const double uacc = mode == 0 ? 0x1.0p-53 : 0x1.0p-24;
       const double gamma = s.K * uacc / (1 - s.K * uacc);
       // The reference DGEMM's own error is below gamma_K in FP64.
       const double bound = (mode ? 2 * u + u * u : 0.0) +
                            gamma * (1 + u) * (1 + u) +
                            s.K * 0x1.0p-53 / (1 - s.K * 0x1.0p-53);
-      bool ok = e <= bound;
-      printf("direct %s mode=%d err=%.3e bound=%.3e %s\n", s.name, mode, e,
-             bound, ok ? "ok" : "too large");
+      std::vector<double> out;
+      double e = p.error(out, [&](int r, int c, double absAB) {
+        return bound * absAB +
+               (1 + gamma) *
+                   (eta * (1 + u) * (p.rowA[r] + p.colB[c]) + s.K * eta * eta);
+      });
+      bool ok = e <= 1.0;
+      printf("direct %s mode=%d floor=%.3e err/bound=%.3e %s\n", s.name, mode,
+             floor, e, ok ? "ok" : "too large");
       failed |= !ok;
     }
   }
@@ -548,7 +636,8 @@ int streams() {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    printf("usage: %s ozaki|ozaki-record|direct|empty|streams|negative\n",
+    printf("usage: %s ozaki|ozaki-record|direct <floors>|empty|streams|"
+           "negative\n",
            argv[0]);
     return 2;
   }
@@ -557,9 +646,13 @@ int main(int argc, char **argv) {
     failed = ozaki(false);
   else if (!strcmp(argv[1], "ozaki-record"))
     failed = ozaki(true);
-  else if (!strcmp(argv[1], "direct"))
-    failed = direct();
-  else if (!strcmp(argv[1], "empty"))
+  else if (!strcmp(argv[1], "direct")) {
+    if (argc != 3) {
+      printf("direct takes the file of the device's operand floors\n");
+      return 2;
+    }
+    failed = direct(argv[2]);
+  } else if (!strcmp(argv[1], "empty"))
     failed = empty();
   else if (!strcmp(argv[1], "streams"))
     failed = streams();

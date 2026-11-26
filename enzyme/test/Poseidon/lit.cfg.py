@@ -70,6 +70,10 @@ config.substitutions += [
     # The tools.
     ('%poseidon_clangxx', os.path.join(poseidon_bin, 'poseidon-clang++')),
     ('%poseidon_clang', os.path.join(poseidon_bin, 'poseidon-clang')),
+    ('%poseidon_calibrate_library_cuda',
+     os.path.join(poseidon_bin, 'poseidon-calibrate-library-cuda')),
+    ('%poseidon_calibrate_library_hip',
+     os.path.join(poseidon_bin, 'poseidon-calibrate-library-hip')),
     ('%poseidon_calibrate', os.path.join(poseidon_bin, 'poseidon-calibrate')),
     ('%poseidon_kappa', os.path.join(poseidon_bin, 'poseidon-kappa')),
     ('%python', python),
