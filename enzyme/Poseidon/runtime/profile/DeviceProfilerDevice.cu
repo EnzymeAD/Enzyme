@@ -269,6 +269,40 @@ __poseidon_device_log_value(const char *funcName, size_t idx, double res,
   }
 }
 
+// One access of `width` bytes at `address` to the array of traffic record
+// `record` of a kernel site: a load (kind 0), a store (1) or both (2).
+extern "C" __device__ POSEIDON_PROBE_ATTRS void
+__poseidon_device_log_access(const char *funcName, int record,
+                             unsigned long long address, unsigned width,
+                             int kind) {
+  const DeviceProfileTable &T = __poseidon_profile_table;
+  if (T.metricOnly)
+    return;
+  if (T.funcReg && (record < 0 || record >= POSEIDON_MAX_TRAFFIC_RECORDS)) {
+    if (poseidonFirstFatal())
+      printf("[poseidon] traffic record %d of '%s' is beyond "
+             "POSEIDON_MAX_TRAFFIC_RECORDS (%d).\n",
+             record, funcName, (int)POSEIDON_MAX_TRAFFIC_RECORDS);
+    gpuTrap();
+  }
+  int fi = poseidonFuncIdx(funcName);
+  GPUTrafficSlot &S =
+      T.traffic[(size_t)fi * POSEIDON_MAX_TRAFFIC_RECORDS + record];
+  const unsigned long long end = address + width;
+  if (kind != 1) {
+    atomicMax(&S.loadLow, ~address);
+    atomicMax(&S.loadHigh, end);
+    atomicAdd(&S.loads, 1ULL);
+  }
+  if (kind != 0) {
+    atomicMax(&S.storeLow, ~address);
+    atomicMax(&S.storeHigh, end);
+    atomicAdd(&S.stores, 1ULL);
+  }
+  atomicOr(&S.widths, 1u << (31 - __clz((int)width)));
+  *T.trafficFunc = fi + 1;
+}
+
 extern "C" __device__ POSEIDON_PROBE_ATTRS void
 __poseidon_device_log_grad(const char *funcName, size_t idx, double value,
                            double grad) {

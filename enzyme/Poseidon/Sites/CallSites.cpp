@@ -723,7 +723,7 @@ int traceToArgIndex(const Value *v) {
   return A ? (int)A->getArgNo() : -1;
 }
 
-static bool isByValueParam(const Argument &A) {
+bool isByValueParam(const Argument &A) {
   return A.hasByValAttr() || A.getParent()->getAttributes().hasParamAttr(
                                  A.getArgNo(), kByValueParam);
 }

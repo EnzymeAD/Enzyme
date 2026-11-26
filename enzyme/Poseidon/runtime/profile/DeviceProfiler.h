@@ -42,6 +42,10 @@
 // is published through. Overflow aborts in __poseidon_device_publish_static.
 #define POSEIDON_PROFILE_STATIC_MAXLEN 4096
 
+// Arrays whose traffic one kernel site records: bounds the static count of
+// arrays a site reaches.
+#define POSEIDON_MAX_TRAFFIC_RECORDS 64
+
 // The device variable every profiled device module defines and the host half
 // of the same translation unit registers.
 #define POSEIDON_DEVICE_PROFILE_TABLE "__poseidon_profile_table"
@@ -130,6 +134,17 @@ struct GPUProfileSlot {
   uint32_t numOperands;
 };
 
+// The accesses of one launch to one array: the lowest address read or written
+// is stored complemented (see doubleToOrderedUint64Min), the highest end as
+// is, so that both fold with atomicMax from zero.
+struct GPUTrafficSlot {
+  unsigned long long loadLow, loadHigh;
+  unsigned long long storeLow, storeHigh;
+  unsigned long long loads, stores;
+  // Bit log2(w) set for an access of w bytes.
+  unsigned widths;
+};
+
 // The device allocations every profiled device module records into. Without
 // relocatable device code each module has its own copy of the device globals,
 // so the handles are one constant per module, written by the host half into
@@ -157,6 +172,12 @@ struct DeviceProfileTable {
   // through the same pointer-keyed registry the names use and copied verbatim
   // into the .fpprofile header. [maxFuncs][POSEIDON_PROFILE_STATIC_MAXLEN]
   char *staticByFunc;
+  // The traffic of the launch in flight, per function and array
+  // ([maxFuncs][POSEIDON_MAX_TRAFFIC_RECORDS]), and one plus the index of the
+  // function that recorded into it (0: none). The host folds each launch into
+  // the function's totals and clears both.
+  GPUTrafficSlot *traffic;
+  int *trafficFunc;
   // Kappa run: one site id per run; eps == 0 disables it.
   double kappaEps;
   int kappaSite;

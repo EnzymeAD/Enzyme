@@ -22,6 +22,16 @@
 // NumOperands and Operand[i] = [minimum, maximum, smallest nonzero magnitude
 // or 0] for each operand.
 //
+// The header of a kernel site also carries its memory traffic, one record per
+// array the kernel reaches. The profile-generate compile names the launch
+// value each record is reached through,
+//   TrafficArray = <record> <parameter> <byte offset of the field, or -1>
+// and the profiling run writes what each record moved over its launches,
+//   Traffic = <record> <bytes per access, 0 when they differ> <loads> <stores>
+//             <bytes read> <bytes written>
+// where the bytes are the extent of the addresses each launch touched, summed
+// over the launches.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_RUNTIME_PROFILE_PROFILE_FORMAT_H
@@ -116,6 +126,8 @@ inline constexpr char kProfileKeyCanonicalHash[] = "CanonicalHash";
 inline constexpr char kProfileKeyKappa[] = "Kappa";
 inline constexpr char kProfileKeyKappaMark[] = "KappaMark";
 inline constexpr char kProfileKeyExecuted[] = "Executed";
+inline constexpr char kProfileKeyTrafficArray[] = "TrafficArray";
+inline constexpr char kProfileKeyTraffic[] = "Traffic";
 // The words of a KappaMark line, which poseidon-kappa writes and the pass
 // reads: the condition number was measured (ok), changed less than the noise
 // of the runs (below-noise), held at no two neighbouring perturbations

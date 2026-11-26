@@ -49,6 +49,8 @@ static uint32_t *g_devGridByFunc = nullptr;
 static uint32_t *g_devBlockByFunc = nullptr;
 static unsigned long long *g_devLaunchByFunc = nullptr;
 static char *g_devStaticByFunc = nullptr;
+static GPUTrafficSlot *g_devTraffic = nullptr;
+static int *g_devTrafficFunc = nullptr;
 
 // What every profiled device module's table holds, and the host shadows of
 // those tables: one per translation unit, registered by that unit's module
@@ -104,12 +106,38 @@ static std::vector<T> poseidonReadBack(const T *from, size_t n) {
 }
 
 namespace {
+// The traffic of one array over every launch of a kernel site: the extents
+// each launch touched, summed.
+struct ArrayTraffic {
+  unsigned long long loads = 0, stores = 0;
+  unsigned long long loadBytes = 0, storeBytes = 0;
+  unsigned widths = 0;
+
+  ArrayTraffic &operator+=(const ArrayTraffic &o) {
+    loads += o.loads;
+    stores += o.stores;
+    loadBytes += o.loadBytes;
+    storeBytes += o.storeBytes;
+    widths |= o.widths;
+    return *this;
+  }
+};
+} // namespace
+
+// Per registry entry, per traffic record: what the launches so far moved.
+static std::map<int, std::vector<ArrayTraffic>> &launchTraffic() {
+  static auto *m = new std::map<int, std::vector<ArrayTraffic>>();
+  return *m;
+}
+
+namespace {
 // The tables read back at exit, a row per registry entry.
 struct ProfileTables {
   std::vector<char> names, statics;
   std::vector<GPUProfileSlot> slots;
   std::vector<uint32_t> grid, block; // three per row
   std::vector<unsigned long long> launches;
+  std::map<int, std::vector<ArrayTraffic>> traffic;
 
   char *name(int fi) { return &names[(size_t)fi * POSEIDON_FUNCNAME_MAXLEN]; }
   char *header(int fi) {
@@ -129,6 +157,7 @@ static ProfileTables readBackTables() {
   t.grid = poseidonReadBack(g_devGridByFunc, n * 3);
   t.block = poseidonReadBack(g_devBlockByFunc, n * 3);
   t.launches = poseidonReadBack(g_devLaunchByFunc, n);
+  t.traffic = launchTraffic();
   return t;
 }
 
@@ -158,6 +187,14 @@ static void mergeRow(ProfileTables &t, int to, int from) {
     t.block[to * 3 + d] = std::max(t.block[to * 3 + d], t.block[from * 3 + d]);
   }
   t.launches[to] += t.launches[from];
+  auto moved = t.traffic.find(from);
+  if (moved != t.traffic.end()) {
+    std::vector<ArrayTraffic> &into = t.traffic[to];
+    into.resize(POSEIDON_MAX_TRAFFIC_RECORDS);
+    for (size_t r = 0; r < moved->second.size(); ++r)
+      into[r] += moved->second[r];
+    t.traffic.erase(from);
+  }
   if (t.header(to)[0] == '\0')
     memcpy(t.header(to), t.header(from), POSEIDON_PROFILE_STATIC_MAXLEN);
 }
@@ -203,6 +240,18 @@ static std::string profileOf(ProfileTables &t, int fi) {
   out << "LaunchCount = " << t.launches[fi] << "\n";
   // Compile-time static data, already newline-terminated header lines.
   out << t.header(fi);
+  auto traffic = t.traffic.find(fi);
+  if (traffic != t.traffic.end())
+    for (size_t r = 0; r < traffic->second.size(); ++r) {
+      const ArrayTraffic &a = traffic->second[r];
+      if (!a.loads && !a.stores)
+        continue;
+      unsigned width =
+          __builtin_popcount(a.widths) == 1 ? 1u << __builtin_ctz(a.widths) : 0;
+      out << kProfileKeyTraffic << " = " << r << " " << width << " " << a.loads
+          << " " << a.stores << " " << a.loadBytes << " " << a.storeBytes
+          << "\n";
+    }
   for (size_t i = 0; i < g_slotCount; i++) {
     const GPUProfileSlot &slot = t.slotsOf(fi)[i];
     if (slot.exec == 0)
@@ -275,6 +324,8 @@ static void allocateTables(size_t nfuncs, size_t count) {
   const size_t lcBytes = nfuncs * sizeof(unsigned long long);
   const size_t stBytes = nfuncs * POSEIDON_PROFILE_STATIC_MAXLEN;
   const size_t slotBytes = nfuncs * count * sizeof(GPUProfileSlot);
+  const size_t trafficBytes =
+      nfuncs * POSEIDON_MAX_TRAFFIC_RECORDS * sizeof(GPUTrafficSlot);
   gpuError_t err = gpuSuccess;
   auto alloc = [&](void **p, size_t b) {
     gpuError_t e = gpuMalloc(p, b);
@@ -288,12 +339,15 @@ static void allocateTables(size_t nfuncs, size_t count) {
   alloc((void **)&g_devLaunchByFunc, lcBytes);
   alloc((void **)&g_devStaticByFunc, stBytes);
   alloc((void **)&g_devSlots, slotBytes);
+  alloc((void **)&g_devTraffic, trafficBytes);
+  alloc((void **)&g_devTrafficFunc, sizeof(int));
   if (err != gpuSuccess)
     fatal(
         "allocating the profile tables of %zu profiled functions of up to %zu "
         "probes each (%zu bytes) failed (%s).",
         nfuncs, count,
-        regBytes + nameBytes + 2 * dimBytes + lcBytes + stBytes + slotBytes,
+        regBytes + nameBytes + 2 * dimBytes + lcBytes + stBytes + slotBytes +
+            trafficBytes + sizeof(int),
         gpuGetErrorString(err));
   POSEIDON_GPU_CHECK(gpuMemset(g_devFuncReg, 0, regBytes));
   POSEIDON_GPU_CHECK(gpuMemset(g_devFuncNames, 0, nameBytes));
@@ -303,6 +357,8 @@ static void allocateTables(size_t nfuncs, size_t count) {
   POSEIDON_GPU_CHECK(gpuMemset(g_devStaticByFunc, 0, stBytes));
   // Zero is the initial state of every field (see doubleToOrderedUint64Min).
   POSEIDON_GPU_CHECK(gpuMemset(g_devSlots, 0, slotBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devTraffic, 0, trafficBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devTrafficFunc, 0, sizeof(int)));
   g_maxFuncs = (int)nfuncs;
   g_slotCount = count;
   g_table.maxFuncs = (int)nfuncs;
@@ -314,6 +370,8 @@ static void allocateTables(size_t nfuncs, size_t count) {
   g_table.staticByFunc = g_devStaticByFunc;
   g_table.slots = g_devSlots;
   g_table.slotCount = count;
+  g_table.traffic = g_devTraffic;
+  g_table.trafficFunc = g_devTrafficFunc;
 }
 
 // What the registered device modules profile: the tables hold the sum of
@@ -474,6 +532,40 @@ static void poseidonAllocRange(void *p, void *&base, size_t &size) {
 #endif
 }
 
+// Adds the extents the launch that just finished touched to its function's
+// traffic records, and clears them for the next launch.
+static void foldLaunchTraffic() {
+  if (!g_devTrafficFunc)
+    return;
+  int fi1 = 0;
+  POSEIDON_GPU_CHECK(
+      gpuMemcpy(&fi1, g_devTrafficFunc, sizeof(int), gpuMemcpyDeviceToHost));
+  if (!fi1)
+    return;
+  const int fi = fi1 - 1;
+  GPUTrafficSlot *dev =
+      g_devTraffic + (size_t)fi * POSEIDON_MAX_TRAFFIC_RECORDS;
+  GPUTrafficSlot launch[POSEIDON_MAX_TRAFFIC_RECORDS];
+  POSEIDON_GPU_CHECK(
+      gpuMemcpy(launch, dev, sizeof(launch), gpuMemcpyDeviceToHost));
+  POSEIDON_GPU_CHECK(gpuMemset(dev, 0, sizeof(launch)));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devTrafficFunc, 0, sizeof(int)));
+  std::vector<ArrayTraffic> &total = launchTraffic()[fi];
+  total.resize(POSEIDON_MAX_TRAFFIC_RECORDS);
+  for (int r = 0; r < POSEIDON_MAX_TRAFFIC_RECORDS; ++r) {
+    const GPUTrafficSlot &l = launch[r];
+    ArrayTraffic a;
+    a.loads = l.loads;
+    a.stores = l.stores;
+    if (l.loads)
+      a.loadBytes = l.loadHigh - ~l.loadLow;
+    if (l.stores)
+      a.storeBytes = l.storeHigh - ~l.storeLow;
+    a.widths = l.widths;
+    total[r] += a;
+  }
+}
+
 // A profiled kernel's launch with the shadows of its pointer arguments
 // (ShadowTable).
 extern "C" void
@@ -532,4 +624,5 @@ POSEIDON_LAUNCH_PROFILED(const void *func, int site, const unsigned *grid,
                 "the device heap (%zu MiB, POSEIDON_PROFILE_HEAP_MB) faults "
                 "this way too.",
                 site, gpuGetErrorString(e), g_heapBytes >> 20);
+  foldLaunchTraffic();
 }

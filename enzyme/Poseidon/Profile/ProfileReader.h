@@ -71,6 +71,21 @@ struct ProfileInfo {
 /// summed over them and reported about them does not depend on hashing.
 using ProfileMap = std::map<size_t, ProfileInfo>;
 
+/// The memory traffic of a kernel site's profiled run through one array: the
+/// extent of the addresses its launches touched, summed over the launches, per
+/// direction.
+struct TrafficRecord {
+  /// The launch value the array is reached through: a parameter, and the byte
+  /// offset of a pointer field of an aggregate parameter (-1: the parameter
+  /// itself). Param is -1 for an array reached otherwise.
+  int Param = -1;
+  int64_t Offset = -1;
+  /// Bytes per access; 0 when the accesses differ in width.
+  uint64_t Width = 0;
+  uint64_t Loads = 0, Stores = 0;
+  uint64_t LoadBytes = 0, StoreBytes = 0;
+};
+
 /// The KappaMark of a profile: how the profiling runs measured the condition
 /// number of the declared quantity of interest.
 enum class KappaMark { None, Ok, BelowNoise, Nonlinear, Diverged, Unmeasured };
@@ -100,6 +115,9 @@ struct SiteProfileHeader {
   KappaMark kappaMark = KappaMark::None;
   /// False for a site the profiling run instrumented and never executed.
   bool executed = true;
+  /// One record per array of a kernel site, in record order; empty for a
+  /// profile that records no traffic.
+  llvm::SmallVector<TrafficRecord, 4> traffic;
 };
 
 /// A site's profile: the file it was read from, its records and the canonical

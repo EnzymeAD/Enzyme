@@ -10,6 +10,7 @@
 
 #include "Core/FPNode.h"
 #include "Enzyme/Utils.h"
+#include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchManifest.h"
 #include "Support/Diagnostics.h"
@@ -19,6 +20,7 @@
 #include "Targets/Target.h"
 #include "poseidon/poseidon.h"
 #include "runtime/profile/DeviceProfiler.h"
+#include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -26,6 +28,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
@@ -50,6 +53,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 
 using namespace llvm;
 
@@ -289,6 +293,157 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
   }
 
   return targets.size();
+}
+
+/// (site name, record, address, bytes, kind).
+static FunctionType *logAccessType(LLVMContext &C) {
+  Type *I32 = Type::getInt32Ty(C);
+  return FunctionType::get(
+      Type::getVoidTy(C), {getInt8PtrTy(C), I32, Type::getInt64Ty(C), I32, I32},
+      false);
+}
+
+namespace {
+
+/// An array an access may reach: a launch value, or another object.
+struct TrafficRoot {
+  LaunchRef Ref;
+  const Value *Object = nullptr;
+
+  bool operator<(const TrafficRoot &O) const {
+    return std::tie(Ref, Object) < std::tie(O.Ref, O.Object);
+  }
+  bool operator==(const TrafficRoot &O) const {
+    return Ref == O.Ref && Object == O.Object;
+  }
+};
+
+} // namespace
+
+/// The arrays of global memory `Ptr` may point into; none for kernel parameter
+/// space, a local object, shared or constant memory.
+static SmallVector<TrafficRoot, 2> trafficRoots(const Value *Ptr,
+                                                const Target &T) {
+  SmallVector<TrafficRoot, 2> Roots;
+  auto global = [&](unsigned AS) {
+    return AS == 0 || AS == T.globalAddressSpace();
+  };
+  if (!global(Ptr->getType()->getPointerAddressSpace()))
+    return Roots;
+  SmallVector<const Value *, 4> Objects;
+  getUnderlyingObjects(Ptr, Objects, /*LI=*/nullptr, /*MaxLookup=*/0);
+  for (const Value *Obj : Objects) {
+    if (isa<ConstantPointerNull, UndefValue, AllocaInst>(Obj))
+      continue;
+    if (const auto *A = dyn_cast<Argument>(Obj)) {
+      if (!isByValueParam(*A))
+        Roots.push_back({LaunchRef{(int)A->getArgNo(), -1}, nullptr});
+      continue;
+    }
+    if (const auto *GV = dyn_cast<GlobalVariable>(Obj)) {
+      if (global(GV->getAddressSpace()))
+        Roots.push_back({LaunchRef{}, GV});
+      continue;
+    }
+    LaunchRef Field = launchFieldOf(Obj);
+    Roots.push_back(Field.param >= 0 ? TrafficRoot{Field, nullptr}
+                                     : TrafficRoot{LaunchRef{}, Obj});
+  }
+  llvm::sort(Roots);
+  Roots.erase(llvm::unique(Roots), Roots.end());
+  return Roots;
+}
+
+std::string instrumentTraffic(Function &clone, StringRef profileName) {
+  Module &M = *clone.getParent();
+  const Target &T = Target::of(M);
+  StringRef Hook = T.probes().LogAccess;
+  if (Hook.empty())
+    return "";
+  const DataLayout &DL = M.getDataLayout();
+
+  /// A load (kind 0), a store (1) or an atomic (2) of `Bytes` through `Ptr`,
+  /// counted against traffic record `Record`.
+  struct Access {
+    Instruction *I;
+    Value *Ptr;
+    uint64_t Bytes;
+    unsigned Kind;
+    unsigned Record;
+  };
+  SmallVector<Access, 32> Accesses;
+  std::map<SmallVector<TrafficRoot, 2>, unsigned> Records;
+  for (Instruction &I : instructions(clone)) {
+    Value *Ptr;
+    Type *Ty;
+    unsigned Kind;
+    if (auto *LI = dyn_cast<LoadInst>(&I)) {
+      Ptr = LI->getPointerOperand();
+      Ty = LI->getType();
+      Kind = 0;
+    } else if (auto *SI = dyn_cast<StoreInst>(&I)) {
+      Ptr = SI->getPointerOperand();
+      Ty = SI->getValueOperand()->getType();
+      Kind = 1;
+    } else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
+      Ptr = RMW->getPointerOperand();
+      Ty = RMW->getValOperand()->getType();
+      Kind = 2;
+    } else if (auto *CX = dyn_cast<AtomicCmpXchgInst>(&I)) {
+      Ptr = CX->getPointerOperand();
+      Ty = CX->getNewValOperand()->getType();
+      Kind = 2;
+    } else {
+      continue;
+    }
+    SmallVector<TrafficRoot, 2> Roots = trafficRoots(Ptr, T);
+    if (Roots.empty())
+      continue;
+    unsigned Record =
+        Records.try_emplace(std::move(Roots), Records.size()).first->second;
+    Accesses.push_back(
+        {&I, Ptr, DL.getTypeStoreSize(Ty).getFixedValue(), Kind, Record});
+  }
+  if (Accesses.empty())
+    return "";
+  if (Records.size() > POSEIDON_MAX_TRAFFIC_RECORDS) {
+    diagnose(clone, clone.getSubprogram(),
+             displayName(clone) + " reaches " + Twine(Records.size()) +
+                 " arrays, more than the " +
+                 Twine(POSEIDON_MAX_TRAFFIC_RECORDS) +
+                 " whose memory traffic a site records; its traffic is not "
+                 "profiled and it is priced on its arithmetic alone",
+             DS_Warning);
+    return "";
+  }
+
+  LLVMContext &Ctx = M.getContext();
+  FunctionCallee Probe = getProfilerHook(M, Hook, logAccessType(Ctx));
+  Constant *Name = getProfileNamePointer(M, clone.getName(), profileName);
+  for (const Access &A : Accesses) {
+    IRBuilder<> B(A.I);
+    CallInst *Call = B.CreateCall(
+        Probe,
+        {Name, B.getInt32(A.Record), B.CreatePtrToInt(A.Ptr, B.getInt64Ty()),
+         B.getInt32((uint32_t)A.Bytes), B.getInt32(A.Kind)});
+    // The probe touches only the profiler's tables, so the kernel's own loads
+    // and stores stay as analyzable as before it.
+    Call->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+    Call->setDoesNotThrow();
+    Call->setDebugLoc(A.I->getDebugLoc());
+  }
+
+  SmallVector<const TrafficRoot *, 8> ByRecord(Records.size(), nullptr);
+  for (const auto &[Roots, Record] : Records)
+    if (Roots.size() == 1 && Roots.front().Ref.param >= 0)
+      ByRecord[Record] = &Roots.front();
+  std::string Lines;
+  raw_string_ostream OS(Lines);
+  for (auto [Record, Root] : enumerate(ByRecord))
+    if (Root)
+      OS << kProfileKeyTrafficArray << " = " << Record << ' ' << Root->Ref.param
+         << ' ' << Root->Ref.offset << '\n';
+  return Lines;
 }
 
 void emitProfileStaticData(Function &clone, StringRef profileName,
@@ -538,8 +693,8 @@ static Error refuseProbe(const Target &target, const Function &caller) {
 static Error refuseUnservedProbes(const Target &target, Module &M) {
   const ProbeABI &P = target.probes();
   const StringRef probes[] = {
-      P.LogValue,  P.LogGradient,   P.PerturbF64,          P.PerturbF32,
-      P.BlockDims, P.PublishStatic, P.OverlappingArguments};
+      P.LogValue,  P.LogGradient,   P.PerturbF64,           P.PerturbF32,
+      P.BlockDims, P.PublishStatic, P.OverlappingArguments, P.LogAccess};
   for (Function &F : M)
     for (Instruction &I : instructions(F))
       if (const auto *call = dyn_cast<CallBase>(&I))
@@ -687,6 +842,8 @@ void predeclareInactiveProfilerProbes(Module &M) {
   // the calls the first run injected.
   getProfilerHook(M, P.PerturbF64, perturbType(Type::getDoubleTy(Ctx)));
   getProfilerHook(M, P.PerturbF32, perturbType(Type::getFloatTy(Ctx)));
+  if (!P.LogAccess.empty())
+    getProfilerHook(M, P.LogAccess, logAccessType(Ctx));
 }
 
 /// A static constructor cannot make the call: the runtime publishes its device

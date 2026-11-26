@@ -101,14 +101,14 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GEN: 1 warning generated when compiling for {{.*}}
 
 // The descriptor: three pointers in argument 1, the seed of the one written,
-// their offsets in the lambda, the same on both targets.
+// their offsets in the lambda and their traffic records, alike on both targets.
 // DESC: "library calls": [],
 // DESC-NEXT: "profile generation": [
 // DESC-NEXT: "_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 40 64"
 // DESC-NEXT: ],
 // DESC-NEXT: "profile headers": {
 // DESC-NEXT: "_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_": {
-// DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\n",
+// DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\nTrafficArray = 0 1 64\nTrafficArray = 1 1 16\nTrafficArray = 2 1 40\n",
 // DESC-NEXT: "profile": "_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14"
 
 // The kernel gains the three shadows and passes the body a copy of the lambda

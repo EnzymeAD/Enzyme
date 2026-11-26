@@ -59,11 +59,12 @@ using namespace llvm;
 namespace poseidon {
 
 /// Canonicalize, slot-number and instrument a clone of the site body `F`
-/// exactly as profile use canonicalizes and slot-numbers it. Null if the body
-/// holds nothing profilable. `staticOut`, if given, receives the header the
-/// profile will carry.
+/// exactly as profile use canonicalizes and slot-numbers it, with its memory
+/// traffic when `traffic` is set. Null if the body holds nothing profilable.
+/// `staticOut`, if given, receives the header the profile will carry.
 static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
-                                   std::string *staticOut = nullptr) {
+                                   std::string *staticOut = nullptr,
+                                   bool traffic = false) {
   Function *clone = canonicalize(F);
   S.SiteClones.push_back(clone);
   setSlotMetadata(*clone);
@@ -84,6 +85,8 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
     os << kProfileKeySiteId << " = " << siteId << '\n' << techniqueHeader;
     os << kProfileKeyCanonicalHash << " = " << canonicalFormHash(*clone)
        << '\n';
+    if (traffic)
+      os << instrumentTraffic(*clone, profileName);
   }
   emitProfileStaticData(*clone, profileName, staticData);
   if (staticOut)
@@ -513,7 +516,8 @@ static Expected<bool> profileKernel(Session &S, Function &K,
   CallInst *call = *outlined;
 
   std::string header;
-  Function *clone = instrumentedClone(S, *body, nextSiteId, &header);
+  Function *clone =
+      instrumentedClone(S, *body, nextSiteId, &header, /*traffic=*/true);
   if (!clone) {
     diagnose(K, body->getSubprogram(),
              displayName(K) +

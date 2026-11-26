@@ -153,12 +153,18 @@ int main(int argc, char **argv) {
 
 // Each of the three FMAs the m loop unrolls into runs nd ne np times and the
 // accumulation into y nd ne times; their gradients carry the seeds of y's
-// elements (outputSeed).
+// elements (outputSeed). Q and G are read, y is read and written.
 // PROF: MaxBlockDims = 1 64 1
 // PROF-NEXT: MaxGridDims = 192 1 1
 // PROF-NEXT: LaunchCount = 192
 // PROF-NEXT: SiteId = 0
 // PROF-NEXT: CanonicalHash = ec8a91ad004ef65f
+// PROF-NEXT: TrafficArray = 0 1 16
+// PROF-NEXT: TrafficArray = 1 1 48
+// PROF-NEXT: TrafficArray = 2 1 80
+// PROF-NEXT: Traffic = 0 8 7077888 0 294912 0
+// PROF-NEXT: Traffic = 1 8 7077888 0 294912 0
+// PROF-NEXT: Traffic = 2 8 36864 36864 294912 294912
 // PROF-NEXT: {{^0$}}
 // PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06

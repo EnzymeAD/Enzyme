@@ -128,7 +128,8 @@ const ProbeABI &deviceProbes() {
                           "__poseidon_device_publish_static",
                           /*RegisterStatic=*/"",
                           /*RuntimeAnchor=*/"",
-                          "__poseidon_device_overlapping_arguments"};
+                          "__poseidon_device_overlapping_arguments",
+                          "__poseidon_device_log_access"};
   return P;
 }
 

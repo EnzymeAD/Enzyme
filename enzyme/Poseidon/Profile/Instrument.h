@@ -33,6 +33,7 @@
 #include "llvm/Support/Error.h"
 
 #include <cstddef>
+#include <string>
 
 namespace llvm {
 class CallInst;
@@ -75,6 +76,16 @@ llvm::Constant *getStringPointer(llvm::Module &M, llvm::StringRef gvName,
 /// profile is written as `profileName`. Returns the number of instrumented
 /// instructions.
 size_t instrumentForProfiling(llvm::Function &clone, unsigned siteId,
+                              llvm::StringRef profileName);
+
+/// Place a traffic probe before every load, store and atomic of the kernel site
+/// clone `clone` that reaches global memory, one record per array the access
+/// may reach: a launch value (a pointer parameter or a pointer field of a
+/// by-value aggregate), or another object the pointer is derived from. The
+/// probes record under `profileName`. Returns the static header lines that name
+/// each launch value's record, empty when nothing is recorded; a site reaching
+/// more arrays than the profiler records is left without probes.
+std::string instrumentTraffic(llvm::Function &clone,
                               llvm::StringRef profileName);
 
 /// Embed the site's compile-time static data (header lines the profile-use

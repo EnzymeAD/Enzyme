@@ -66,6 +66,9 @@ struct ProbeABI {
   /// site whose arguments reach overlapping memory the pass gave separate
   /// shadows.
   llvm::StringRef OverlappingArguments = "";
+  /// (site name, traffic record, address, bytes, kind): one access of a kernel
+  /// site to global memory; empty where the profiler records no traffic.
+  llvm::StringRef LogAccess = "";
 };
 
 /// What the pass needs to know of the processor a module is compiled for:

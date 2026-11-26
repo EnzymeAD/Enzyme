@@ -82,11 +82,14 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
 #endif
 
 // llvm.exp.f64 becomes __ocml_exp_f64 once poseidon.h links it; each call is
-// profiled and differentiated by name, adding into the shadow of a.
+// profiled and differentiated by name, adding into the shadow of a. The load
+// of a passes its address to the traffic probe first.
 // CALLS-AMDGPU-LABEL: define amdgpu_kernel void @_Z4wavePdPKdi(
 // CALLS-AMDGPU-SAME: ptr addrspace(1) {{[^,]*}}%{{[0-9]+}}, ptr addrspace(1) {{[^,]*}}%[[A:[0-9]+]], i32 {{[^,]*}}%{{[0-9]+}}, ptr {{[^,]*}}%{{[0-9]+}}, ptr {{[^,]*}}%[[DA:[0-9]+]])
 // CALLS-AMDGPU: %[[DAG:[0-9]+]] = addrspacecast ptr %[[DA]] to ptr addrspace(1)
 // CALLS-AMDGPU: %[[XP:[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) %[[A]], i64 %[[I:[0-9]+]]
+// CALLS-AMDGPU-NEXT: %[[XA:[0-9]+]] = ptrtoint ptr addrspace(1) %[[XP]] to i64
+// CALLS-AMDGPU-NEXT: call void @__poseidon_device_log_access(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePdPKdi_poseidon_body to ptr), i32 0, i64 %[[XA]], i32 8, i32 0)
 // CALLS-AMDGPU-NEXT: %[[X:[0-9]+]] = load double, ptr addrspace(1) %[[XP]],
 // CALLS-AMDGPU: %[[NEG:[0-9]+]] = fneg double %[[X]],
 // CALLS-AMDGPU-NEXT: %[[NEGP:[0-9]+]] = call double @__poseidon_device_perturb(i32 0, double %[[NEG]])
@@ -114,7 +117,7 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
 // PROFILED-AMDGPU: {{^}}[poseidon] every site of {{.*}}device_math.cu was left alone; emitting the module as written{{$}}
 
 // Each libdevice call is profiled and differentiated by name, adding into the
-// shadow of a.
+// shadow of a. The load of a passes its address to the traffic probe first.
 // CALLS-NVPTX-LABEL: define ptx_kernel void @_Z4wavePfPKfi(
 // CALLS-NVPTX-SAME: ptr {{[^,]*}}[[O:%[0-9]+]], ptr {{[^,]*}}[[A:%[0-9]+]], i32 {{[^,]*}}[[N:%[0-9]+]], ptr {{[^,]*}}[[DO:%[0-9]+]], ptr {{[^,]*}}[[DA:%[0-9]+]])
 // CALLS-NVPTX-NEXT: call {{.*}}void @diffepreprocess__Z4wavePfPKfi_poseidon_body(ptr [[O]], ptr [[DO]], ptr [[A]], ptr [[DA]], i32 [[N]])
@@ -122,6 +125,8 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
 // CALLS-NVPTX-LABEL: define internal {{.*}}void @diffepreprocess__Z4wavePfPKfi_poseidon_body(
 // CALLS-NVPTX-SAME: ptr {{[^,]*}}%{{[0-9]+}}, ptr {{[^,]*}}%{{[0-9]+}}, ptr {{[^,]*}}[[PA:%[0-9]+]], ptr {{[^,]*}}[[PDA:%[0-9]+]], i32
 // CALLS-NVPTX: [[XP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[PA]], i64 [[I:%[0-9]+]]
+// CALLS-NVPTX-NEXT: [[XA:%[0-9]+]] = ptrtoint ptr [[XP]] to i64
+// CALLS-NVPTX-NEXT: call void @__poseidon_device_log_access(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z4wavePfPKfi_poseidon_body to ptr), i32 0, i64 [[XA]], i32 4, i32 0)
 // CALLS-NVPTX-NEXT: [[X:%[0-9]+]] = load float, ptr [[XP]],
 // CALLS-NVPTX: [[NEG:%[0-9]+]] = fneg float [[X]],
 // CALLS-NVPTX-NEXT: [[NEGP:%[0-9]+]] = call float @__poseidon_device_perturbf(i32 0, float [[NEG]])

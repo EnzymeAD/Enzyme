@@ -104,6 +104,10 @@ std::string launchRefString(const LaunchRef &r, llvm::StringRef prefix);
 /// values.
 constexpr llvm::StringLiteral kByValueParam = "poseidon-by-value";
 
+/// Whether `A` is a by-value aggregate: byval, or a kernel body's
+/// kByValueParam.
+bool isByValueParam(const llvm::Argument &A);
+
 /// The field of a by-value aggregate parameter `v` reads (a load at a constant
 /// offset from a parameter the body only reads, or an extractvalue of an
 /// aggregate parameter); an invalid ref otherwise.

@@ -21,7 +21,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
 #include <memory>
+#include <tuple>
 #include <unordered_map>
 
 using namespace llvm;
@@ -182,6 +184,10 @@ private:
   /// Whether the records read so far carry the second moments; none before
   /// the first record.
   std::optional<bool> SecondMoments;
+  /// The Traffic and TrafficArray lines by record, joined once the header is
+  /// read.
+  std::map<uint64_t, TrafficRecord> Traffic;
+  std::map<uint64_t, std::pair<int, int64_t>> TrafficArrays;
 
   Error refusal(const Twine &What) const {
     return userError(F, Path + ":" + Twine(LineNo) + ": " + What +
@@ -319,6 +325,29 @@ Error ProfileParser::header(StringRef Key, StringRef Value,
     if (Value != "0")
       return refusal(Twine(Key) + " " + Value + " is not 0");
     Header.executed = false;
+  } else if (Key == kProfileKeyTrafficArray) {
+    int64_t Fields[3];
+    if (Error E = integers<int64_t>(Value, Key, Fields))
+      return E;
+    if (Fields[0] < 0 || Fields[1] < 0 ||
+        Fields[1] > std::numeric_limits<int>::max() || Fields[2] < -1)
+      return refusal(Twine(Key) + " " + Value +
+                     " is not <record> <parameter> <offset>");
+    TrafficArrays[Fields[0]] = {(int)Fields[1], Fields[2]};
+  } else if (Key == kProfileKeyTraffic) {
+    uint64_t Fields[6];
+    if (Error E = integers<uint64_t>(Value, Key, Fields))
+      return E;
+    auto [It, Fresh] = Traffic.try_emplace(Fields[0]);
+    if (!Fresh)
+      return refusal("traffic record " + Twine(Fields[0]) +
+                     " is recorded twice");
+    TrafficRecord &R = It->second;
+    R.Width = Fields[1];
+    R.Loads = Fields[2];
+    R.Stores = Fields[3];
+    R.LoadBytes = Fields[4];
+    R.StoreBytes = Fields[5];
   } else {
     return refusal("'" + Key + "' is not a header key of a profile");
   }
@@ -406,6 +435,12 @@ Error ProfileParser::parse(ProfileMap &Records, SiteProfileHeader &Header) {
                      "' is neither a slot index nor 'key = value'");
     if (Error E = header(Key, Value, Header))
       return E;
+  }
+  for (auto &[Record, R] : Traffic) {
+    auto It = TrafficArrays.find(Record);
+    if (It != TrafficArrays.end())
+      std::tie(R.Param, R.Offset) = It->second;
+    Header.traffic.push_back(R);
   }
   return Error::success();
 }

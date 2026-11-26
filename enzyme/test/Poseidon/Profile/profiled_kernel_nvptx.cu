@@ -126,11 +126,11 @@ POSEIDON_OPTIMIZE __global__ void norm2(const double *a, double *y) {
 
 // MANIFEST: "profile headers": {
 // MANIFEST-NEXT: "_Z5norm2PKdPd": {
-// MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\n",
+// MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\nTrafficArray = 0 0 -1\nTrafficArray = 1 1 -1\n",
 // MANIFEST-NEXT: "profile": "_Z5norm2PKdPd"
 // MANIFEST-NEXT: },
 // MANIFEST-NEXT: "_Z5scalePdd": {
-// MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\n",
+// MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\nTrafficArray = 0 0 -1\n",
 // MANIFEST-NEXT: "profile": "_Z5scalePdd"
 // HOST: @llvm.global_ctors = {{.*}}{ i32 0, ptr @poseidon.register_static._Z5norm2PKdPd, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon.register_static._Z5scalePdd, ptr null }]
 // HOST-LABEL: define internal void @poseidon.register_static._Z5norm2PKdPd()
