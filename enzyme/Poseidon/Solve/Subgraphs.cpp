@@ -81,9 +81,11 @@ static void reportUnexecuted(const Function &F,
                    where + "); profile an input that runs them");
 }
 
-void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
-                    const SmallVectorImpl<RecognizedMatmul> &abstractMatmuls,
-                    FPGraph &G, SmallVectorImpl<Subgraph> &subgraphs) {
+void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
+                    SiteState &st) {
+  Function &F = *st.F;
+  FPGraph &G = st;
+  SmallVectorImpl<Subgraph> &subgraphs = st.subgraphs;
   auto &valueToNodeMap = G.valueToNodeMap;
   // An operation the run never executed is left as written, as an unexecuted
   // matrix product is: the profile gives it no range, which would leave its
@@ -96,7 +98,7 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
   SmallVector<const Instruction *, 8> unexecuted;
   SmallPtrSet<Instruction *, 32> reductionFMAs;
   if (O.Candidates.SubgraphReductions)
-    for (const auto &am : abstractMatmuls)
+    for (const RecognizedMatmul &am : st.get<MatmulSiteState>().matmuls)
       if (am.origin == RecognizedMatmul::Origin::ConstantShape &&
           am.scalarLoop.fma)
         reductionFMAs.insert(am.scalarLoop.fma);

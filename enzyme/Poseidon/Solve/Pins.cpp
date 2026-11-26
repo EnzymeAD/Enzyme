@@ -34,7 +34,7 @@ static std::optional<PinItem> parseUnitRef(StringRef s) {
   if (T == techniques().end())
     return std::nullopt;
   s = s.drop_front(T->Unit.letter.size());
-  item.kind = T->Unit.kind;
+  item.kind = &T->Unit;
   size_t digits = s.find_first_not_of("0123456789");
   if (digits == 0 || digits == StringRef::npos ||
       s.take_front(digits).getAsInteger(10, item.unit))
@@ -202,11 +202,11 @@ Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
     if (!namesSite(item, key, aliases))
       continue;
     const std::string &id = item.text;
-    const UnitKindInfo &kind = infoOf(item.kind);
+    const UnitKindInfo &kind = *item.kind;
     SiteUnit *unit = nullptr;
     size_t ofKind = 0;
     for (SiteUnit *u : st.units) {
-      if (u->unitKind() != item.kind)
+      if (&u->info() != &kind)
         continue;
       if (u->indexInKind() == item.unit)
         unit = u;

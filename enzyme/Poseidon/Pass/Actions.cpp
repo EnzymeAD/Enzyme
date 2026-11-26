@@ -22,7 +22,6 @@
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
-#include "Techniques/Matmul/Matmul.h"
 #include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -181,13 +180,13 @@ static Error reportUnprofiled(Session &S, CallBase *CI, const Function &body,
   return Error::success();
 }
 
-static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
-                                  ArrayRef<Value *> primalArgs) {
-  if (!S.Opts.Matmul.LibraryCalls)
-    return;
-  if (auto note = S.Matmul.GemmBodies.find(body);
-      note != S.Matmul.GemmBodies.end())
-    writeGemmDescriptor(S, *CI->getFunction(), primalArgs, note->second);
+// Tells every technique that the host launches the solved site `body` through
+// the kernel `CI` is in, with `primalArgs`.
+static void noteSiteLaunch(Session &S, CallBase *CI, const Function &body,
+                           ArrayRef<Value *> primalArgs) {
+  for (const Technique &T : techniques())
+    if (T.SiteLaunched)
+      T.SiteLaunched(S, body, *CI->getFunction(), primalArgs);
 }
 
 // Profile use, shared by both annotation forms: `CI` is the call the site's
@@ -210,7 +209,7 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       if (auto *done = dyn_cast_or_null<Function>(prior->second)) {
         if (done != F)
           noteRewritten(S, *CI->getFunction());
-        writeGemmDescriptorOf(S, CI, done, primalArgs);
+        noteSiteLaunch(S, CI, *done, primalArgs);
         if (O.Diagnostics.Print)
           llvm::errs() << "[poseidon] " << F->getName()
                        << ": same body and target as an earlier site; reusing "
@@ -267,8 +266,7 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       F->addFnAttr(kJointTau, exactDouble(tau));
       // The joint solve materializes F later; the wrapper's arguments are
       // recorded now, while primalArgs holds them.
-      if (O.Matmul.LibraryCalls)
-        addPendingLibraryCall(S, F, *CI->getFunction(), primalArgs);
+      noteSiteLaunch(S, CI, *F, primalArgs);
     } else {
       Expected<bool> optimized = optimizeSite(S, *F, tau);
       if (!optimized)
@@ -276,7 +274,7 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       if (*optimized)
         noteRewritten(S, *CI->getFunction());
 
-      writeGemmDescriptorOf(S, CI, F, primalArgs);
+      noteSiteLaunch(S, CI, *F, primalArgs);
 
       // The canonical clone's lowering may differ from the original body's at
       // ulp level, so a site with no rewrite calls the original body.

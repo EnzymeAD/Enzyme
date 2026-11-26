@@ -71,6 +71,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/Error.h"
 
@@ -105,9 +106,9 @@ void explainUnprofiled(Session &S, llvm::Function &F, double tau,
                        bool siteTarget, llvm::StringRef status,
                        llvm::StringRef cause, llvm::StringRef profile);
 
-/// The missed-optimization remark, once per compile, that no algebraic
-/// rewrite is proposed because no Herbie can run.
-void remarkNoHerbie(Session &S, llvm::Function &F);
+/// Where a remark about the site F points: its call, else F.
+llvm::DiagnosticLocation siteLocation(const Session &S,
+                                      const llvm::Function &F);
 
 /// Remarks and the explanation of the solve of the site of `st`; an operation
 /// of a subgraph the cost model has no row for is an error.

@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TECHNIQUES_SUBGRAPH_UNIT_H
-#define POSEIDON_TECHNIQUES_SUBGRAPH_UNIT_H
+#ifndef POSEIDON_CORE_SUBGRAPH_UNIT_H
+#define POSEIDON_CORE_SUBGRAPH_UNIT_H
 
 #include "Core/FPNode.h"
 #include "Core/Unit.h"
@@ -133,9 +133,9 @@ public:
 
 protected:
   /// An unbound unit of kind `kind` over `subgraph`, which must outlive it.
-  SubgraphUnit(UnitKind kind, Subgraph &subgraph)
+  SubgraphUnit(const UnitKindInfo &kind, Subgraph &subgraph)
       : SiteUnit(kind), subgraph(&subgraph) {}
 };
 
 } // namespace poseidon
-#endif // POSEIDON_TECHNIQUES_SUBGRAPH_UNIT_H
+#endif // POSEIDON_CORE_SUBGRAPH_UNIT_H

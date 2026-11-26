@@ -18,22 +18,15 @@
 #define POSEIDON_SOLVE_OPTIMIZE_H
 
 #include "Core/FPNode.h"
+#include "Core/Technique.h"
 #include "Core/Unit.h"
 #include "Profile/ProfileReader.h"
 #include "Solve/DP.h"
 #include "Support/CacheKey.h"
-#include "Techniques/Algebraic/Algebraic.h"
-#include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision/Precision.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Error.h"
 
@@ -156,8 +149,8 @@ solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            bool joint, SolveRecord *record);
 
 /// One site's solve: its FP graph, its profile's scale, the units proposed for
-/// it and the analyses its matrix products hold.
-struct SiteState : FPGraph {
+/// it and what each technique keeps for it.
+struct SiteState : FPGraph, TechniqueStates {
   /// The accuracy target written at the site; 0 when the site has none and
   /// -poseidon-tau applies.
   double tau = 0.0;
@@ -183,46 +176,17 @@ struct SiteState : FPGraph {
   double scaleFactor = 1.0;
   /// The site's FP subgraphs, the connected components of its operations.
   llvm::SmallVector<Subgraph, 1> subgraphs;
-  /// Backing storage for the matmuls; MatmulUnit::matmul points into this,
-  /// so it must outlive materialization.
-  llvm::SmallVector<RecognizedMatmul, 4> abstractMatmuls;
-  /// The algebraic units proposed for the site.
-  llvm::SmallVector<AlgebraicUnit, 4> algebraicUnits;
-  /// The precision units proposed for the site.
-  llvm::SmallVector<PrecisionUnit, 4> precisionUnits;
-  /// The matrix-product units proposed for the site.
-  llvm::SmallVector<MatmulUnit, 4> matmulUnits;
-  /// The site's units in site order (algebraicUnits, precisionUnits,
-  /// matmulUnits), each bound to this site.
+  /// The site's units, technique by technique in the order techniques() lists
+  /// them, each bound to this site.
   llvm::SmallVector<SiteUnit *, 8> units;
-  /// Whether the site's floating-point operations are rounded as written,
-  /// so that floating-point expansions can be proposed for them.
-  bool expansionSafe = true;
-  /// How many names of graph inputs Herbie's queries of the site's
-  /// subgraphs have used.
-  int herbieSymbols = 0;
-  /// The operand sampling of the matrix accuracy model, 0 for none.
-  unsigned matmulSampleLogBits = 0;
   /// Whether sealUnits has run.
   bool unitsSealed = false;
   /// Set when the site is solved against the DP table cache.
   std::unique_ptr<DPTable> table;
 
-  /// Analyses for the loop raises. The matmuls found hold raiseSE and SCEVs it
-  /// owns, so these outlive materialization. raiseSE is declared last so that
-  /// it is destroyed first: it references the others.
-  std::optional<llvm::DominatorTree> raiseDT;
-  /// The loop, assumption, library and scalar-evolution analyses of the site
-  /// clone, for the loop raises; built together with raiseDT.
-  std::optional<llvm::LoopInfo> raiseLI;
-  std::optional<llvm::AssumptionCache> raiseAC;
-  std::optional<llvm::TargetLibraryInfoImpl> raiseTLII;
-  std::optional<llvm::TargetLibraryInfo> raiseTLI;
-  std::optional<llvm::ScalarEvolution> raiseSE;
-
   /// Binds every unit to this site and lists it in `units`, technique by
-  /// technique. Once per site, after its last proposal: no unit is added
-  /// to algebraicUnits, precisionUnits or matmulUnits after it.
+  /// technique. Once per site, after its last proposal: no technique proposes
+  /// a unit for the site after it.
   void sealUnits(Session &S);
 };
 
@@ -255,13 +219,12 @@ constexpr llvm::StringLiteral kJointTau = "poseidon-joint-tau";
 /// Solves one DP over all sites of `M` marked with kJointTau.
 llvm::Expected<bool> solveJointly(Session &S, llvm::Module &M);
 
-/// The FP subgraphs of F, flood-filled over its optimizable instructions, and
-/// a node for every value they read or compute. The instructions `profileMap`
-/// records no execution of are in no subgraph.
-void buildSubgraphs(
-    const Options &O, llvm::Function &F, const ProfileMap &profileMap,
-    const llvm::SmallVectorImpl<RecognizedMatmul> &abstractMatmuls, FPGraph &G,
-    llvm::SmallVectorImpl<Subgraph> &subgraphs);
+/// The FP subgraphs of the site `st`, flood-filled over the optimizable
+/// instructions of its function, and a node of its graph for every value they
+/// read or compute. The instructions `profileMap` records no execution of are
+/// in no subgraph.
+void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
+                    SiteState &st);
 
 /// Sets the profiled sensitivity, gradient, execution count and value ranges
 /// of the subgraphs' nodes. A profile that gives an operand no range was not

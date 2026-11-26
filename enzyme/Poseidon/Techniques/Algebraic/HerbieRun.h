@@ -16,6 +16,8 @@
 #ifndef POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H
 #define POSEIDON_TECHNIQUES_ALGEBRAIC_HERBIE_RUN_H
 
+#include "Core/Technique.h"
+
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -58,7 +60,8 @@ inline constexpr llvm::StringLiteral kBuiltWithoutHerbie =
 /// What a compile keeps between its Herbie runs: the platform Herbie searches
 /// against, derived from the cost model once it is resolved, and the digest of
 /// each Herbie binary run.
-struct HerbieRunState {
+struct HerbieRunState : TechniqueState {
+  static inline char ID;
   /// The platform the compile's searches run against, once resolved.
   HerbiePlatform Platform;
   /// Whether `Platform` has been derived from the cost model.

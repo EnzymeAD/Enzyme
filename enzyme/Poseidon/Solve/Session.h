@@ -16,13 +16,12 @@
 #ifndef POSEIDON_SOLVE_SESSION_H
 #define POSEIDON_SOLVE_SESSION_H
 
+#include "Core/Technique.h"
 #include "Model/CostTable.h"
 #include "Sites/LaunchManifest.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Pins.h"
 #include "Support/Options.h"
-#include "Techniques/Algebraic/HerbieRun.h"
-#include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
@@ -45,9 +44,9 @@
 namespace poseidon {
 
 /// What one module's compile keeps across Poseidon's passes: its options, the
-/// sites found, and the state the solve and the hand-over to the host half
-/// build up.
-class Session {
+/// sites found, and the state the solve, the techniques and the hand-over to
+/// the host half build up.
+class Session : public TechniqueStates {
 public:
   /// A session compiling with `O`; `PB` must outlive it.
   Session(Options O, llvm::PassBuilder &PB, bool IsAsWritten = false)
@@ -91,14 +90,8 @@ public:
   /// The cost model the compile prices from, resolved on first use.
   CostModelState CostModel;
 
-  /// The Herbie runs of the compile and what they answered.
-  HerbieRunState Herbie;
-
   /// What this device module hands its host half.
   LaunchManifest Launches;
-
-  /// The matrix products found in the module and their pricing.
-  MatmulState Matmul;
 };
 
 /// The end of a pass a user error stopped: the error is reported, the module is

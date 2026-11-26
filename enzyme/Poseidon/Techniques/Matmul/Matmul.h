@@ -10,18 +10,23 @@
 #define POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 
 #include "Core/NumberFormat.h"
+#include "Core/Technique.h"
 #include "Core/Unit.h"
 #include "Profile/ProfileReader.h"
 #include "Scheme.h"
 #include "Sites/LaunchManifest.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/JSON.h"
@@ -42,7 +47,6 @@ namespace llvm {
 class Function;
 class Loop;
 class SCEV;
-class ScalarEvolution;
 } // namespace llvm
 
 namespace poseidon {
@@ -367,8 +371,8 @@ struct ChosenLibraryCall {
   SchemeVariant variant;
 };
 
-/// A site of a joint solve whose library-call descriptor is written after
-/// materialization: the kernel it is launched through and how the body's
+/// A site of a joint solve whose library-call descriptor is written once it is
+/// materialized: the kernel it is launched through and how the body's
 /// parameters map to that kernel's arguments.
 struct PendingGemm {
   /// The name of the wrapper kernel in the module.
@@ -387,13 +391,13 @@ struct InKernelTile {
 };
 
 /// What the matrix-product pipeline records over a compile.
-struct MatmulState {
+struct MatmulState : TechniqueState {
+  static inline char ID;
   /// The library call chosen for each optimized body clone, keyed by the
   /// clone.
   std::map<const llvm::Function *, ChosenLibraryCall> GemmBodies;
-  /// In the order the sites were split, so that of two sites of one wrapper the
-  /// same one is recorded last in every compile.
-  llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;
+  /// The launch of each site of a joint solve not yet materialized, by body.
+  llvm::DenseMap<const llvm::Function *, PendingGemm> PendingGemms;
 
   /// The tensor-core shapes the cost model prices, read at their first use in
   /// a compile.
@@ -433,8 +437,11 @@ public:
     double domainError = 0.0;
   };
 
+  /// The kind of the matrix-product units.
+  static constexpr UnitKindInfo Info = {"matrix product", "M", "a candidate",
+                                        false};
   /// An empty unit; `matmul` is set before it is solved.
-  MatmulUnit() : SiteUnit(UnitKind::Matmul) {}
+  MatmulUnit() : SiteUnit(Info) {}
 
   /// The product; it belongs to its function's recognition results, which
   /// outlive the unit.
@@ -456,8 +463,8 @@ public:
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
   /// Under an accuracy target, the site's accuracy scale
   /// (SiteState::accScale), which a candidate's domainError is multiplied by
-  /// on the DP's accuracy axis; none in a budget solve.
-  std::optional<double> targetScale;
+  /// on the DP's accuracy axis; none in a budget solve. The unit must be bound.
+  std::optional<double> targetScale() const;
 
   /// The cost of candidate `idx` over the profiling run, less the loop's as
   /// written: the change of its per-MAC cost times `executions`, in cost-model
@@ -473,8 +480,9 @@ public:
   /// targetScale, so that divided by the site's accuracy scale it is the
   /// product's relative output error; in a budget solve, accuracyCost.
   double getAccCostDelta(size_t idx) const {
-    return targetScale ? candidates[idx].domainError * *targetScale
-                       : candidates[idx].accuracyCost;
+    std::optional<double> scale = targetScale();
+    return scale ? candidates[idx].domainError * *scale
+                 : candidates[idx].accuracyCost;
   }
 
   /// Realizes candidate `candidateIndex` in place of the product. An error is a
@@ -484,7 +492,7 @@ public:
 
   /// Whether `U` is a MatmulUnit, for isa and dyn_cast.
   static bool classof(const OptimizationUnit *U) {
-    return U->kind() == unsigned(UnitKind::Matmul);
+    return &llvm::cast<SiteUnit>(U)->info() == &Info;
   }
   size_t numCandidates() const override { return candidates.size(); }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
@@ -518,6 +526,26 @@ public:
   std::string selectionText(size_t i) const override;
 };
 
+/// What the matrix-product technique keeps for a site.
+struct MatmulSiteState : TechniqueState {
+  static inline char ID;
+  /// The site's matrix products; MatmulUnit::matmul points into this, so it
+  /// must outlive materialization.
+  llvm::SmallVector<RecognizedMatmul, 4> matmuls;
+  /// The matrix-product units proposed for the site.
+  llvm::SmallVector<MatmulUnit, 4> units;
+  /// The dominator, loop, assumption, library and scalar-evolution analyses of
+  /// the site, for the loop raises. The matmuls found hold SE and SCEVs it
+  /// owns, so these outlive materialization. SE is declared last so that it is
+  /// destroyed first: it references the others.
+  std::optional<llvm::DominatorTree> DT;
+  std::optional<llvm::LoopInfo> LI;
+  std::optional<llvm::AssumptionCache> AC;
+  std::optional<llvm::TargetLibraryInfoImpl> TLII;
+  std::optional<llvm::TargetLibraryInfo> TLI;
+  std::optional<llvm::ScalarEvolution> SE;
+};
+
 /// The label of `opt` in candidate names and diagnostics.
 std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
@@ -538,22 +566,16 @@ llvm::Error generateMatmulCandidates(Session &S,
 
 // A raised GEMM materialized as a host library call (RealizeLibraryCall.cpp).
 
-/// Map body params to wrapper launch-arg indices via primalArgs and record the
-/// wrapper's library call descriptor.
-void writeGemmDescriptor(Session &S, llvm::Function &wrapper,
-                         llvm::ArrayRef<llvm::Value *> primalArgs,
-                         const ChosenLibraryCall &call);
-
-/// For a joint solve, whose notes exist only after materialization:
-/// addPendingLibraryCall records the body-parameter to wrapper-argument map
-/// when the site is split, and flushPendingLibraryCalls writes the
-/// descriptors afterwards.
-void addPendingLibraryCall(Session &S, const llvm::Function *body,
+/// Records that the host launches the solved site `body` through `wrapper`
+/// with `primalArgs`: writes the descriptor of the library call its solve
+/// chose, or, for a site of a joint solve, which is materialized later, keeps
+/// the launch for writePendingLibraryCall.
+void noteLibraryCallLaunch(Session &S, const llvm::Function &body,
                            llvm::Function &wrapper,
                            llvm::ArrayRef<llvm::Value *> primalArgs);
-/// Writes the descriptor of each pending site whose body was given a library
-/// call, and forgets every pending site.
-void flushPendingLibraryCalls(Session &S);
+/// Writes the descriptor of the library call the joint solve chose for the
+/// materialized site `body`, if it chose one, from the launch kept for it.
+void writePendingLibraryCall(Session &S, llvm::Function &body);
 
 /// Rewrite the launch in each launch stub that a library call descriptor in
 /// M's manifest matches into a call of the GEMM runtime. Host module only. An

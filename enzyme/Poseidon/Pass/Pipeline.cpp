@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/Technique.h"
 #include "PassInternal.h"
 #include "Profile/Instrument.h"
 #include "Sites/Annotations.h"
@@ -22,7 +23,6 @@
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -635,10 +635,14 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
     changed = *rewritten;
     changed |= registerProfiledKernels(O, M);
   } else {
-    Expected<bool> rewritten = rewriteGemmStubBodies(O, M);
-    if (!rewritten)
-      return stopOnError(S, M, rewritten.takeError());
-    changed = *rewritten;
+    for (const Technique &T : techniques()) {
+      if (!T.RewriteHost)
+        continue;
+      Expected<bool> rewritten = T.RewriteHost(O, M);
+      if (!rewritten)
+        return stopOnError(S, M, rewritten.takeError());
+      changed |= *rewritten;
+    }
   }
   return changed ? llvm::PreservedAnalyses::none()
                  : llvm::PreservedAnalyses::all();

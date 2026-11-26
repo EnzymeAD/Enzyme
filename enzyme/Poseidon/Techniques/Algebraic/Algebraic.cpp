@@ -62,8 +62,9 @@ namespace poseidon {
 // is derived from the resolved cost model.
 static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
                                                        const Function &F) {
-  HerbiePlatform &P = S.Herbie.Platform;
-  if (S.Herbie.PlatformResolved)
+  HerbieRunState &H = S.get<HerbieRunState>();
+  HerbiePlatform &P = H.Platform;
+  if (H.PlatformResolved)
     return &P;
 
   const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
@@ -103,7 +104,7 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
                            "; -poseidon-herbie-platform names a platform file "
                            "or a platform compiled into Herbie");
   }
-  S.Herbie.PlatformResolved = true;
+  H.PlatformResolved = true;
   return &P;
 }
 
@@ -251,6 +252,7 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
                                          const std::vector<std::string> &cores,
                                          StringRef label, const Function &F) {
   const Options &O = S.Opts;
+  HerbieRunState &State = S.get<HerbieRunState>();
   if (!O.Herbie.Binary.empty() && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] using Herbie binary '" << O.Herbie.Binary
                  << "'\n";
@@ -268,8 +270,8 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     const std::string RunLabel =
         Terms ? (label + " at " + Twine(*Terms) + " Taylor terms").str()
               : label.str();
-    Expected<HerbieRunResult> Run = runHerbie(cores, O, **Platform, Terms,
-                                              RunLabel, S.Herbie.HerbieDigests);
+    Expected<HerbieRunResult> Run =
+        runHerbie(cores, O, **Platform, Terms, RunLabel, State.HerbieDigests);
     if (!Run)
       return userError(F, toString(Run.takeError()));
     const HerbieRunResult &R = H.runs.emplace_back(std::move(*Run));
@@ -317,7 +319,7 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     }
     H.answers.push_back(std::move(*Read));
     H.sources.push_back({RunLabel, R.CacheFile});
-    ++(cached ? S.Herbie.Cached : S.Herbie.Fresh);
+    ++(cached ? State.Cached : State.Fresh);
   }
   return H;
 }
@@ -447,7 +449,7 @@ static Error collectHerbieRewrites(Session &S,
 }
 
 void reportHerbieAnswers(Session &S) {
-  HerbieRunState &H = S.Herbie;
+  HerbieRunState &H = S.get<HerbieRunState>();
   if (!H.Cached && !H.Fresh)
     return;
   if (S.Opts.Diagnostics.Print)

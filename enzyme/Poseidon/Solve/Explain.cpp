@@ -499,8 +499,7 @@ static void writeExplanation(const Session &S, const Function &F,
     errs() << "[poseidon] explanation written to " << path << '\n';
 }
 
-// Where a remark about a site points: its call, else the site's function.
-static DiagnosticLocation siteLocation(const Session &S, const Function &F) {
+DiagnosticLocation siteLocation(const Session &S, const Function &F) {
   auto site = S.SiteCalls.find(&F);
   return site != S.SiteCalls.end() && site->second
              ? DiagnosticLocation(site->second)
@@ -663,8 +662,10 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
 
 Error Explainer::addAlgebraicAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
-  for (size_t i = 0; i < st.algebraicUnits.size(); ++i) {
-    AlgebraicUnit &RU = st.algebraicUnits[i];
+  SmallVectorImpl<AlgebraicUnit> &algebraicUnits =
+      st.get<AlgebraicSiteState>().units;
+  for (size_t i = 0; i < algebraicUnits.size(); ++i) {
+    AlgebraicUnit &RU = algebraicUnits[i];
     if (RU.subgraph != &sg)
       continue;
     json::Object core;
@@ -780,8 +781,10 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
       ++k;
     }
 
-  for (size_t i = 0; i < st.precisionUnits.size(); ++i) {
-    PrecisionUnit &PU = st.precisionUnits[i];
+  SmallVectorImpl<PrecisionUnit> &precisionUnits =
+      st.get<PrecisionSiteState>().units;
+  for (size_t i = 0; i < precisionUnits.size(); ++i) {
+    PrecisionUnit &PU = precisionUnits[i];
     if (PU.subgraph != &sg)
       continue;
     auto describe = [&](Alt &A, PrecisionCandidate &cand) {
@@ -868,7 +871,7 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
       double acc = PU.getAccCostDelta(j);
       PrecisionUnit::AlgebraicUnitSet cos;
       for (const auto &[item, idx] : applied)
-        for (AlgebraicUnit &RU : st.algebraicUnits)
+        for (AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units)
           if (&RU == item && RU.subgraph == &sg)
             cos.insert(&RU);
       if (applied.count({&PU, j}) && !cos.empty()) {
@@ -1009,7 +1012,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     SmallVector<std::string, 2> why;
     if (sg) {
       bool hadRewrite = false;
-      for (const AlgebraicUnit &RU : st.algebraicUnits)
+      for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units)
         if (RU.subgraph == sg) {
           hadRewrite = true;
           if (!RU.unpricedReason.empty())
@@ -1019,7 +1022,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
             why.push_back("Herbie returned no alternative (" + RU.herbieStatus +
                           ")");
         }
-      for (const PrecisionUnit &PU : st.precisionUnits)
+      for (const PrecisionUnit &PU : st.get<PrecisionSiteState>().units)
         if (PU.subgraph == sg && !PU.unpricedReason.empty())
           why.push_back("its candidates could not be priced: " +
                         PU.unpricedReason);
@@ -1137,7 +1140,7 @@ Error Explainer::buildSubgraph(size_t s) {
       out["name"] = name;
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
-    for (const AlgebraicUnit &RU : st.algebraicUnits)
+    for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units)
       if (RU.subgraph == &sg && !RU.isArray() && RU.roots.front() == O) {
         out["fpcore"] = RU.expr;
         break;
@@ -1210,7 +1213,7 @@ Error Explainer::buildSubgraph(size_t s) {
 }
 
 Error Explainer::buildMatmul(size_t m) {
-  MatmulUnit &MU = st.matmulUnits[m];
+  MatmulUnit &MU = st.get<MatmulSiteState>().units[m];
   Unit U;
   U.id = formatv("M{0}", m).str();
   U.kind = "matmul";
@@ -1315,7 +1318,7 @@ Error Explainer::build() {
   for (size_t s = 0; s < st.subgraphs.size(); ++s)
     if (Error E = buildSubgraph(s))
       return E;
-  for (size_t m = 0; m < st.matmulUnits.size(); ++m)
+  for (size_t m = 0; m < st.get<MatmulSiteState>().units.size(); ++m)
     if (Error E = buildMatmul(m))
       return E;
   return Error::success();
@@ -1808,22 +1811,6 @@ void explainUnprofiled(Session &S, Function &F, double tau, bool siteTarget,
     return R;
   });
   explainLeftAlone(S, F, tau, siteTarget, status, cause, profile);
-}
-
-void remarkNoHerbie(Session &S, Function &F) {
-  if (S.Herbie.LackReported)
-    return;
-  S.Herbie.LackReported = true;
-  const std::string program = herbieProgram(S.Opts.Herbie);
-  OptimizationRemarkEmitter ORE(&F);
-  ORE.emit([&]() {
-    OptimizationRemarkMissed R(kRemarkPass, "NoHerbie", siteLocation(S, F),
-                               &F.getEntryBlock());
-    R << "Poseidon proposes no algebraic rewrites: "
-      << (program.empty() ? kBuiltWithoutHerbie.str()
-                          : "there is no Herbie at " + program);
-    return R;
-  });
 }
 
 Error explainSolve(Session &S, Function &F, SiteState &st,

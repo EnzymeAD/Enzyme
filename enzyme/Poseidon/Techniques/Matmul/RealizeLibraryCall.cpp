@@ -208,13 +208,14 @@ Error applyLibraryCall(Session &S, const RecognizedMatmul &m,
   // One descriptor per body: the host replaces or precedes its kernel's launch
   // with one library call, and the solve chooses for the body's products
   // independently.
-  if (S.Matmul.GemmBodies.count(F))
+  MatmulState &M = S.get<MatmulState>();
+  if (M.GemmBodies.count(F))
     return userError(anchorOf(m),
                      "a second matrix product of " + F->getName() +
                          " was selected to run as a library call, and a "
                          "kernel's launch takes one; leave out "
                          "-poseidon-matmul-library-calls for this body");
-  S.Matmul.GemmBodies[F] = {note, v};
+  M.GemmBodies[F] = {note, v};
   if (!note.standalone)
     fissionGemmForLibraryCall(S.Opts, *F, m);
   return Error::success();
@@ -271,9 +272,9 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
       std::move(message));
 }
 
-// Shared descriptor emit for the per-site path and the deferred joint-dp
-// flush: map C/A/B and the dimensions through `paramToArg` (body parameter to
-// wrapper launch argument), which libraryCallNote checked.
+// Shared descriptor emit for the per-site path and the joint solve: map C/A/B
+// and the dimensions through `paramToArg` (body parameter to wrapper launch
+// argument), which libraryCallNote checked.
 static void emitMappedDescriptor(Session &S, Function &wrapper,
                                  const ChosenLibraryCall &call,
                                  ArrayRef<int> paramToArg) {
@@ -303,25 +304,30 @@ static void emitMappedDescriptor(Session &S, Function &wrapper,
   emitDescriptor(S, wrapper.getName(), cArg, aArg, bArg, mapped, call.variant);
 }
 
-void writeGemmDescriptor(Session &S, Function &wrapper,
-                         ArrayRef<Value *> primalArgs,
-                         const ChosenLibraryCall &call) {
-  emitMappedDescriptor(S, wrapper, call, launchArgsOf(primalArgs));
-}
-
-void addPendingLibraryCall(Session &S, const Function *body, Function &wrapper,
+void noteLibraryCallLaunch(Session &S, const Function &body, Function &wrapper,
                            ArrayRef<Value *> primalArgs) {
-  S.Matmul.PendingGemms[body] = {wrapper.getName().str(),
-                                 launchArgsOf(primalArgs)};
+  if (!S.Opts.Matmul.LibraryCalls)
+    return;
+  MatmulState &M = S.get<MatmulState>();
+  if (S.Opts.Solver.SolveJointly) {
+    M.PendingGemms[&body] = {wrapper.getName().str(), launchArgsOf(primalArgs)};
+    return;
+  }
+  if (auto call = M.GemmBodies.find(&body); call != M.GemmBodies.end())
+    emitMappedDescriptor(S, wrapper, call->second, launchArgsOf(primalArgs));
 }
 
-void flushPendingLibraryCalls(Session &S) {
-  for (auto &[body, pg] : S.Matmul.PendingGemms)
-    // A site not materialized as a library call has no note.
-    if (auto n = S.Matmul.GemmBodies.find(body); n != S.Matmul.GemmBodies.end())
-      emitMappedDescriptor(S, *body->getParent()->getFunction(pg.wrapperName),
-                           n->second, pg.paramToArg);
-  S.Matmul.PendingGemms.clear();
+void writePendingLibraryCall(Session &S, Function &body) {
+  MatmulState &M = S.get<MatmulState>();
+  auto pending = M.PendingGemms.find(&body);
+  if (pending == M.PendingGemms.end())
+    return;
+  // A site not materialized as a library call has no call.
+  if (auto call = M.GemmBodies.find(&body); call != M.GemmBodies.end())
+    emitMappedDescriptor(
+        S, *body.getParent()->getFunction(pending->second.wrapperName),
+        call->second, pending->second.paramToArg);
+  M.PendingGemms.erase(pending);
 }
 
 namespace {

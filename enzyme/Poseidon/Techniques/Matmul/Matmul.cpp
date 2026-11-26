@@ -15,6 +15,7 @@
 #include "MatmulInternal.h"
 #include "Model/CostModel.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Optimize.h"
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
@@ -121,7 +122,7 @@ static Error reportRow(Session &S, const RecognizedMatmul &m, const Twine &what,
                                       " has no measured '" + row + "' row in " +
                                       costModelPath(S.CostModel) + "; " +
                                       measure + " measures it");
-  if (!S.Matmul.ReportedRows.insert(row).second)
+  if (!S.get<MatmulState>().ReportedRows.insert(row).second)
     return Error::success();
   const Instruction &at = anchorOf(m);
   diagnose(at,
@@ -277,7 +278,9 @@ static constexpr InKernelTile kInKernelTiles[] = {
 // is not proposed.
 static Expected<const SmallVector<InKernelTile, 16> *>
 getAvailableWmmaTargets(Session &S, const RecognizedMatmul &m) {
-  if (!S.Matmul.AvailableWmmaTargets) {
+  std::optional<SmallVector<InKernelTile, 16>> &available =
+      S.get<MatmulState>().AvailableWmmaTargets;
+  if (!available) {
     SmallVector<InKernelTile, 16> result;
     const auto &model = getCostModel(S.CostModel);
     for (const InKernelTile &t : kInKernelTiles) {
@@ -293,9 +296,9 @@ getAvailableWmmaTargets(Session &S, const RecognizedMatmul &m) {
                                           opcode + "," + prec, kCalibrate))
         return std::move(E);
     }
-    S.Matmul.AvailableWmmaTargets = std::move(result);
+    available = std::move(result);
   }
-  return &*S.Matmul.AvailableWmmaTargets;
+  return &*available;
 }
 
 // Static shared-memory preconditions at proposal time: a module whose kernel
@@ -847,7 +850,7 @@ static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
       16);
   if (!kHaveTcecRuntime) {
     if (P.S.Opts.Diagnostics.Print &&
-        !std::exchange(P.S.Matmul.ReportedNoTcecRuntime, true))
+        !std::exchange(P.S.get<MatmulState>().ReportedNoTcecRuntime, true))
       llvm::errs()
           << "[poseidon] matmul[" << P.m.id << "] " << P.m.M << 'x' << P.m.N
           << 'x' << P.m.K
@@ -1150,6 +1153,14 @@ std::string MatmulUnit::selectionText(size_t i) const {
 std::string MatmulUnit::choiceText(size_t i) const {
   return "matmul[" + std::to_string(matmul->id) + "] -> " +
          matmulOptionLabel(candidates[i]) + " (#" + std::to_string(i) + ")";
+}
+
+std::optional<double> MatmulUnit::targetScale() const {
+  // Under a target a product's relative error is a term of the site's
+  // relative error, which the DP reads as an accuracy cost over accScale.
+  if (site().tau > 0.0 || session().Opts.Solver.Tau > 0.0)
+    return site().accScale;
+  return std::nullopt;
 }
 
 void MatmulUnit::scaleErrors(double factor) {

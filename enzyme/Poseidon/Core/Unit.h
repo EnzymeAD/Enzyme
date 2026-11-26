@@ -62,8 +62,6 @@ class OptimizationUnit {
 public:
   virtual ~OptimizationUnit();
 
-  /// The subclass, for isa<> and dyn_cast<>.
-  unsigned kind() const { return kindId; }
   /// What the solver's progress lines call the unit's kind.
   virtual llvm::StringRef kindName() const = 0;
 
@@ -110,25 +108,17 @@ public:
   }
 
 protected:
-  /// A unit of the subclass `kindId`.
-  explicit OptimizationUnit(unsigned kindId) : kindId(kindId) {}
+  OptimizationUnit() = default;
   OptimizationUnit(const OptimizationUnit &) = default;
   OptimizationUnit(OptimizationUnit &&) = default;
   OptimizationUnit &operator=(const OptimizationUnit &) = default;
   OptimizationUnit &operator=(OptimizationUnit &&) = default;
-
-private:
-  /// The subclass, as kind() returns it.
-  unsigned kindId;
 };
 
-/// The kinds of unit, by the letter -poseidon-pin names them with.
-enum class UnitKind { Algebraic, Precision, Matmul };
-
-/// What the pass's fixed formats call one kind of unit.
+/// What the pass's fixed formats call one kind of unit. Each kind is one
+/// object, whose address identifies the kind: a unit class's classof compares
+/// a unit's info() with its own.
 struct UnitKindInfo {
-  /// The kind the row describes; rows are listed in UnitKind order.
-  UnitKind kind;
   /// What the solver's progress lines call the kind.
   llvm::StringLiteral noun;
   /// The letter of the ids <letter><i>_<j>, of the pins <letter><i>=<name>
@@ -140,9 +130,6 @@ struct UnitKindInfo {
   /// and a DP table step names its candidate by key as well as by position.
   bool pricingDrops;
 };
-
-/// The row of `kind`: the names of its technique (Core/Technique.h).
-const UnitKindInfo &infoOf(UnitKind kind);
 
 class SiteUnit;
 /// The unit a step takes a candidate of.
@@ -182,9 +169,8 @@ public:
     return boundIndex;
   }
 
-  UnitKind unitKind() const { return UnitKind(kind()); }
-  /// The row of the unit's kind.
-  const UnitKindInfo &info() const { return infoOf(unitKind()); }
+  /// The unit's kind, which its technique registers (Core/Technique.h).
+  const UnitKindInfo &info() const { return *kindInfo; }
   /// The noun of the unit's kind ("algebraic", "precision change").
   llvm::StringRef kindName() const final { return info().noun; }
 
@@ -239,9 +225,10 @@ public:
 
 protected:
   /// A unit of kind `kind`, unbound.
-  explicit SiteUnit(UnitKind kind) : OptimizationUnit(unsigned(kind)) {}
+  explicit SiteUnit(const UnitKindInfo &kind) : kindInfo(&kind) {}
 
 private:
+  const UnitKindInfo *kindInfo;
   Session *boundSession = nullptr;
   SiteState *boundSite = nullptr;
   FPGraph *boundGraph = nullptr;

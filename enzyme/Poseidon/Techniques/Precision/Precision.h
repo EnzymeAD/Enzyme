@@ -16,10 +16,11 @@
 
 #include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
+#include "Core/SubgraphUnit.h"
+#include "Core/Technique.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Support/Diagnostics.h"
-#include "Techniques/SubgraphUnit.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
@@ -97,6 +98,9 @@ llvm::Error proposePrecisionCandidates(
 /// the outputs the selected rewrites of the same subgraph leave.
 class PrecisionUnit : public SubgraphUnit<PrecisionCandidate> {
 public:
+  /// The kind of the precision units.
+  static constexpr UnitKindInfo Info = {"precision change", "P",
+                                        "a precision change", true};
   /// Each output's part of initialAccCost, by the output's node.
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
 
@@ -121,8 +125,7 @@ public:
   std::map<RepriceKey, double> accCostDeltaCache;
 
   /// An unbound unit over `subgraph`, which must outlive it.
-  explicit PrecisionUnit(Subgraph &subgraph)
-      : SubgraphUnit(UnitKind::Precision, subgraph) {}
+  explicit PrecisionUnit(Subgraph &subgraph) : SubgraphUnit(Info, subgraph) {}
 
   /// Prices the subgraph as written.
   llvm::Error priceAsWritten(CostModelState &CM);
@@ -144,7 +147,7 @@ public:
                         llvm::ArrayRef<SolutionStep> steps) const;
 
   static bool classof(const OptimizationUnit *U) {
-    return U->kind() == unsigned(UnitKind::Precision);
+    return &llvm::cast<SiteUnit>(U)->info() == &Info;
   }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
@@ -171,6 +174,16 @@ public:
 private:
   /// What a repricing by the solve could not price, whose cost it took as 0.
   DeferredError pricingError;
+};
+
+/// What the precision technique keeps for a site.
+struct PrecisionSiteState : TechniqueState {
+  static inline char ID;
+  /// The precision units proposed for the site.
+  llvm::SmallVector<PrecisionUnit, 4> units;
+  /// Whether the site's floating-point operations are rounded as written, so
+  /// that floating-point expansions can be proposed for them.
+  bool expansionSafe = true;
 };
 
 } // namespace poseidon

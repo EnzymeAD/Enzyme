@@ -17,10 +17,6 @@
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
-#include "Techniques/Algebraic/Algebraic.h"
-#include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision/Narrowing.h"
-#include "Techniques/Precision/Precision.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -28,14 +24,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Module.h"
@@ -189,11 +180,6 @@ static Error putOnApplicationScale(Session &S, Function &F,
   if (factor != 1.0)
     for (SiteUnit *unit : st.units)
       unit->scaleErrors(factor);
-  // Under a target a product's relative error is a term of the site's
-  // relative error, which the DP reads as an accuracy cost over accScale.
-  if (st.tau > 0.0 || O.Solver.Tau > 0.0)
-    for (MatmulUnit &unit : st.matmulUnits)
-      unit.targetScale = st.accScale;
   return Error::success();
 }
 
@@ -281,9 +267,9 @@ static Error priceUnlessCached(Session &S, SiteState &st,
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its
-// DP table is cached; false when F has no FP subgraph and no matrix product.
+// DP table is cached; false when F has no FP subgraph and no technique
+// recognized anything in it.
 static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
-                                          unsigned sampleLogBits,
                                           SiteState &st) {
   const Options &O = S.Opts;
   st.F = &F;
@@ -298,10 +284,10 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
     return std::move(E);
   st.profilePath = profile.path;
   st.canonicalHash = profile.canonicalHash;
-  st.matmulSampleLogBits = sampleLogBits;
+  bool recognized = false;
   for (const Technique &T : techniques())
     if (T.Recognize && T.Enabled(O))
-      T.Recognize(S, F, profile, st);
+      recognized |= T.Recognize(S, F, profile, st);
 
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
@@ -312,13 +298,13 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
     return cost.takeError();
   st.profiledCost = *cost;
 
-  buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st, st.subgraphs);
+  buildSubgraphs(O, profile.map, st);
 
   if (Error E = attachProfile(O, profile.map, st, st.subgraphs))
     return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
 
-  if (st.subgraphs.empty() && st.abstractMatmuls.empty())
+  if (st.subgraphs.empty() && !recognized)
     return false;
 
   for (const Technique &T : techniques())
@@ -429,8 +415,9 @@ static Expected<bool> materializeSolution(Session &S, Function &F,
         I->eraseFromParent();
       }
     }
-    narrowSharedStaging(S, F, /*announce=*/true, ParamNarrowing::Both, F);
-    demoteFPCastPHIs(F);
+    for (const Technique &T : techniques())
+      if (T.SiteApplied)
+        T.SiteApplied(S, F);
   }
 
   // The emitted site is cleaned up without the target, which versions a loop
@@ -528,19 +515,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
       redirectNoopSite(S.Sites, st->F, S.Opts.Diagnostics.Print);
     changed |= *siteChanged;
   }
-  // The library-call descriptors of a joint solve are known only once every
-  // site is materialized.
-  if (joint)
-    flushPendingLibraryCalls(S);
   return changed;
-}
-
-// The matrix accuracy model's operand sampling under `target`, 0 for none:
-// -poseidon-matmul-sample-log-bits when given. Uniform sampling over
-// [min, max] under-prices fixed-point Ozaki on matrices of wide dynamic range,
-// so a target defaults to a wide log-uniform range.
-static unsigned matmulSampleLogBits(const Options &O, double target) {
-  return O.Matmul.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
 }
 
 Expected<bool> optimizeSite(Session &S, Function &F, double tau) {
@@ -551,8 +526,7 @@ Expected<bool> optimizeSite(Session &S, Function &F, double tau) {
 
   const StringSet<> declared = declaredFunctions(*F.getParent());
   SiteState st;
-  Expected<bool> collected =
-      collectFPCandidates(S, F, tau, matmulSampleLogBits(O, target), st);
+  Expected<bool> collected = collectFPCandidates(S, F, tau, st);
   if (!collected)
     return collected.takeError();
   if (!*collected) {
@@ -625,8 +599,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   std::vector<std::unique_ptr<SiteState>> states;
   for (auto &[F, tau] : targets) {
     auto st = std::make_unique<SiteState>();
-    Expected<bool> collected =
-        collectFPCandidates(S, *F, tau, matmulSampleLogBits(O, tau), *st);
+    Expected<bool> collected = collectFPCandidates(S, *F, tau, *st);
     if (!collected)
       return collected.takeError();
     if (*collected) {

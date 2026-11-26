@@ -15,8 +15,9 @@
 #define POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H
 
 #include "Core/FPNode.h"
+#include "Core/SubgraphUnit.h"
+#include "Core/Technique.h"
 #include "Model/CostModel.h"
-#include "Techniques/SubgraphUnit.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
@@ -92,6 +93,9 @@ struct BoundaryCastFreq {
 /// group of its outputs as an array, at one FPCore precision.
 class AlgebraicUnit : public SubgraphUnit<AlgebraicCandidate> {
 public:
+  /// The kind of the algebraic units.
+  static constexpr UnitKindInfo Info = {"algebraic", "A",
+                                        "an algebraic rewrite", true};
   /// The core's FPCore body, over the subgraph's input symbols.
   std::string expr;
   /// Herbie's accuracy estimate of the core as written, as for a candidate.
@@ -119,7 +123,7 @@ public:
                          llvm::ArrayRef<llvm::Value *> outputs,
                          llvm::ArrayRef<double> grads, std::string expr,
                          uint64_t executions)
-      : SubgraphUnit(UnitKind::Algebraic, subgraph), expr(expr),
+      : SubgraphUnit(Info, subgraph), expr(expr),
         roots(outputs.begin(), outputs.end()),
         rootGrads(grads.begin(), grads.end()) {
     this->executions = executions;
@@ -146,7 +150,7 @@ public:
   BoundaryCastFreq boundaryCastFreq(const llvm::LoopInfo &LI) const;
 
   static bool classof(const OptimizationUnit *U) {
-    return U->kind() == unsigned(UnitKind::Algebraic);
+    return &llvm::cast<SiteUnit>(U)->info() == &Info;
   }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
@@ -175,6 +179,16 @@ private:
   void findErasableInstructions();
   /// What the operations a candidate erases cost per execution.
   double erasableCost = std::numeric_limits<double>::quiet_NaN();
+};
+
+/// What the algebraic technique keeps for a site.
+struct AlgebraicSiteState : TechniqueState {
+  static inline char ID;
+  /// The algebraic units proposed for the site.
+  llvm::SmallVector<AlgebraicUnit, 4> units;
+  /// How many names of graph inputs Herbie's queries of the site's subgraphs
+  /// have used.
+  int symbols = 0;
 };
 
 /// Prints how many Herbie answers the compile ran fresh and read from the
