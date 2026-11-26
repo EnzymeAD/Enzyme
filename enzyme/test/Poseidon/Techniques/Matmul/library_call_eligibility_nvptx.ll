@@ -16,7 +16,7 @@
 ; RUN: FileCheck --check-prefix=FISSION %s < %t/out.ll
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/q -poseidon-compilation-id=layout \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
-; RUN:   -S -o %t/quiet.ll 2> /dev/null
+; RUN:   -S -o %t/quiet.ll 2> %t/quiet.err
 ; RUN: diff %t/out.ll %t/quiet.ll
 ; RUN: sed 's/ozaki_stub\.cu/layout.cu/g' %S/../../Inputs/library_call/ozaki_stub_host.ll > %t/nt.ll
 ; RUN: sed 's/ozaki_stub\.cu/layout.cu/g; s/matmul_kernel/matmul_kerncc/g' %S/../../Inputs/library_call/ozaki_stub_host.ll > %t/nncolc.ll
