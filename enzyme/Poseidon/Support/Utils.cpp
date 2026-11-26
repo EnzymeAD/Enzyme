@@ -8,8 +8,6 @@
 
 #include "Utils.h"
 
-#include "Enzyme/PreprocessUtils.h"
-
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -89,6 +87,14 @@ void simplifyFunction(Function &F, PassBuilder &PB, OptimizationLevel Level,
   FunctionPassManager FPM =
       PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
   (void)FPM.run(F, FAM);
+}
+
+PassBuilder makePassBuilder(LLVMContext &C) {
+#if LLVM_VERSION_MAJOR >= 24
+  return PassBuilder(C);
+#else
+  return PassBuilder();
+#endif
 }
 
 void simplifyFunction(Function &F, OptimizationLevel Level) {

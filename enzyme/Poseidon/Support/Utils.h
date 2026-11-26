@@ -42,6 +42,9 @@ class ScalarEvolution;
 
 namespace poseidon {
 
+/// A PassBuilder without a target machine; LLVM 24 gives it the context.
+llvm::PassBuilder makePassBuilder(llvm::LLVMContext &C);
+
 /// A SCEVExpander that names the values it emits `name`; LLVM 22 dropped the
 /// DataLayout argument of its constructor.
 llvm::SCEVExpander makeSCEVExpander(llvm::ScalarEvolution &SE,
