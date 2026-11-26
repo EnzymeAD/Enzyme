@@ -28,7 +28,7 @@ class blas_modes<list<string> _modes> : BLASType<1, 0> {
   list<string> modes = _modes;
 }
 
-// cblas_layout must(!) allways be called layout, or the world will burn
+// cblas_layout must(!) always be called layout, or the world will burn
 def cblas_layout  : blas_modes<["CblasRowMajor","CblasColMajor"]>;
 def uplo          : blas_modes<["U","L","G"]> ;
 def cblas_uplo    : blas_modes<["CblasUpper","CblasLower"]> ;
@@ -132,7 +132,7 @@ class input<string _name> {
   string name = _name;
 }
 
-// only applicable to triangular matricies, like a regular use of $A
+// only applicable to triangular matrices, like a regular use of $A
 // except that the non-set terms are assured to be set to 0
 class zero_cached<string _name> {
   string name = _name;
@@ -195,7 +195,7 @@ class DiagUpdateSPMV<string _tmp> {
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ["x"],[len, fp, vinc<["n"]>],
                   [
-                  // dot must preceed scal, because scal modifies (Shadow $x)
+                  // dot must precede scal, because scal modifies (Shadow $x)
                   (BlasCall<"dot"> $n, $x, (Shadow $x)),
                   (BlasCall<"scal"> $n, $alpha, (Shadow $x))
                   ],

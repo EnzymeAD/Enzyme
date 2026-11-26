@@ -365,7 +365,7 @@ static const StringSet<> KnownInactiveFunctions = {
     "MPI_Get_processor_name",
     "MPI_Finalize",
     "MPI_Test",
-    "MPI_Probe", // double check potential syncronization
+    "MPI_Probe", // double check potential synchronization
     "MPI_Barrier",
     "MPI_Abort",
     "MPI_Get_count",
@@ -1280,7 +1280,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   // Otherwise we must fall back and assume this instruction to be active.
   ActiveInstructions.insert(I);
   if (EnzymePrintActivity)
-    llvm::errs() << "couldnt decide fallback as nonconstant instruction("
+    llvm::errs() << "couldn't decide fallback as nonconstant instruction("
                  << (int)directions << "):" << *I << "\n";
   if (noActiveWrite && directions == 3 && EnzymeEnableRecursiveHypotheses)
     ReEvaluateInstIfInactiveValue[I].insert(I);
@@ -1569,25 +1569,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               if (LoadReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *LoadReval << "\n";
+                               << " dependent on " << *LoadReval << "\n";
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
               }
               if (StoreReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *StoreReval << "\n";
+                               << " dependent on " << *StoreReval << "\n";
                 ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
               }
               if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *ValLoadReval << "\n";
+                               << " dependent on " << *ValLoadReval << "\n";
                 ReEvaluateValueIfInactiveValue[ValLoadReval].insert(Val);
               }
               if (ValStoreReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *ValStoreReval << "\n";
+                               << " dependent on " << *ValStoreReval << "\n";
                 ReEvaluateValueIfInactiveValue[ValStoreReval].insert(Val);
               }
             }
@@ -1804,7 +1804,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       // If our origin is a load of a known inactive (say inactive argument), we
       // are also inactive
       if (auto PN = dyn_cast<PHINode>(TmpOrig)) {
-        // Not taking fast path incase phi is recursive.
+        // Not taking fast path in case phi is recursive.
         Value *active = nullptr;
         for (auto &V : PN->incoming_values()) {
           if (!UpHypothesis->isConstantValue(TR, V.get())) {
@@ -2363,7 +2363,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // TODO this aliasing information is too conservative, the question
       // isn't merely aliasing but whether there is a path for THIS value to
-      // eventually be loaded by it not simply because there isnt aliasing
+      // eventually be loaded by it not simply because there isn't aliasing
 
       // If we haven't already shown a potentially active load
       // check if this loads the given value and is active
@@ -2664,7 +2664,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       // investigate more]
       ActiveMemory |= ActiveDown;
 
-      // If we go to an active return and only load it, however, that doesnt
+      // If we go to an active return and only load it, however, that doesn't
       // transfer derivatives and we can say this memory is inactive
 
       if (EnzymePrintActivity)
