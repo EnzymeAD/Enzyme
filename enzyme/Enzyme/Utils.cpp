@@ -4873,26 +4873,36 @@ llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
   }
 }
 
-// Implement the following logic to get the width of a matrix
+// Implement the following logic to get the leading dimension of a matrix
 // if (cache_A) {
-//   ld_A = (arg_transa == 'N') ? arg_k : arg_m;
+//   rows_A = (arg_transa == 'N') ? arg_m : arg_k;
+//   cols_A = (arg_transa == 'N') ? arg_k : arg_m;
+//   ld_A = (layout == CblasRowMajor) ? cols_A : rows_A;
 // } else {
 //   ld_A = arg_lda;
 // }
+// A cached matrix is stored without any padding, so its leading dimension is
+// its number of rows in the (default) column-major layout, and its number of
+// columns in the row-major layout. `layout` is only non-null for cblas.
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim1,
                                   llvm::Value *dim2, bool cacheMat, bool byRef,
-                                  bool cublas) {
+                                  bool cublas, llvm::Value *layout) {
   if (!cacheMat)
     return arg_ld;
 
   assert(trans.size() == 1);
 
-  llvm::Value *width =
-      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim2, dim1);
+  llvm::Value *normal = is_normal(B, trans[0], byRef, cublas);
+  llvm::Value *rows = CreateSelect(B, normal, dim2, dim1);
+  if (!layout)
+    return rows;
 
-  return width;
+  llvm::Value *cols = CreateSelect(B, normal, dim1, dim2);
+  llvm::Value *is_row_maj =
+      B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 101));
+  return CreateSelect(B, is_row_maj, cols, rows);
 }
 
 llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
