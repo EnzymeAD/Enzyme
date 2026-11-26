@@ -17,8 +17,10 @@
 // A profile is a header, lines "<key> = <value>", then one record per profiled
 // instruction executed: its slot index alone on a line, then, each on a line
 // of its own and in this order, MinRes, MaxRes, SumSens, SumGrad, SumAbsGrad,
-// Exec, NumOperands and Operand[i] = [minimum, maximum, smallest nonzero
-// magnitude or 0] for each operand.
+// SumSqGrad and SumSqSens (the sums of gradient^2 and of (gradient x value)^2,
+// both or neither, in every record of a profile or in none), Exec,
+// NumOperands and Operand[i] = [minimum, maximum, smallest nonzero magnitude
+// or 0] for each operand.
 //
 //===----------------------------------------------------------------------===//
 
@@ -129,7 +131,7 @@ inline constexpr char kProfileNeverExecuted[] = "Executed = 0";
 
 // What a profile records about one instruction.
 struct ProfileRecord {
-  double minRes, maxRes, sumSens, sumGrad, sumAbsGrad;
+  double minRes, maxRes, sumSens, sumGrad, sumAbsGrad, sumSqGrad, sumSqSens;
   uint64_t exec;
   std::vector<double> minOperands, maxOperands, minMagOperands;
 };
@@ -151,6 +153,8 @@ inline void writeProfileRecord(std::ostream &out, size_t slot,
   out << "\tSumSens = " << r.sumSens << "\n";
   out << "\tSumGrad = " << r.sumGrad << "\n";
   out << "\tSumAbsGrad = " << r.sumAbsGrad << "\n";
+  out << "\tSumSqGrad = " << r.sumSqGrad << "\n";
+  out << "\tSumSqSens = " << r.sumSqSens << "\n";
   out << "\tExec = " << r.exec << "\n";
   out << "\tNumOperands = " << r.minOperands.size() << "\n";
   for (size_t i = 0; i < r.minOperands.size(); ++i)

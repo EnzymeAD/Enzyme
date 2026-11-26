@@ -103,8 +103,11 @@ poseidon-clang++ -O2 -poseidon-profile-use -poseidon-tau=1e-8 app.cu -o app_opt
 It bounds a site's modelled relative error, a sum over the parts of the site:
 a matrix product contributes its relative output error (none as written), an
 FP subgraph its output error weighted by the profiled sensitivities and
-divided by the site's summed sensitivity. The cheapest set of rewrites that
-keeps the sum within the target is applied. The set is solved exactly;
+divided by the site's summed sensitivity. A profile that records the squared
+sums `SumSqGrad` and `SumSqSens` takes the rounding errors as independent: the
+parts' errors and the executions' errors within a part add as a
+root-sum-of-squares. The cheapest set of rewrites that keeps the error within
+the target is applied. The set is solved exactly;
 `-poseidon-early-prune` solves an approximation instead, faster on sites with
 many units, which drops a partial set for a cheaper, no less accurate one that
 the later choices admit alike.
@@ -167,7 +170,7 @@ plugin links into each device module it compiles for profile generation.
 
 | Folder | What it holds |
 |---|---|
-| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), the compile of a module and the states it holds for the later layers (`Session.h`), the optimization unit the solver chooses among (`Unit.h`), and a site's solve and what a technique provides the pass (`Technique.h`) |
+| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), how the accuracy model sums a site's rounding errors (`ErrorMoment.h`), the compile of a module and the states it holds for the later layers (`Session.h`), the optimization unit the solver chooses among (`Unit.h`), and a site's solve and what a technique provides the pass (`Technique.h`) |
 | `Model/` | The models every technique shares: the measured cost table and the cost of code over it, the sampling of a subgraph's inputs, the evaluation of an expression graph at a point, in floating point and exactly, and the unit over one FP subgraph priced on its samples (`SubgraphUnit.h`) |
 | `Techniques/` | One folder per technique, each with its own pricing and accuracy model: `Algebraic/` (Herbie), `Precision/` (narrowing and floating-point expansions), `Matmul/` (matrix products on tensor cores or as library calls); `Techniques.cpp` lists them |
 | `Solve/` | A site's FP subgraphs, the collection and pricing of its units, the DP over them (`Solve.h`), pins, and the explanation of the result |

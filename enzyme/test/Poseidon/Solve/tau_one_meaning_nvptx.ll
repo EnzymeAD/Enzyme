@@ -24,6 +24,10 @@
 ; RUN: %{err} %t/x6/matmul_body.explain.json | FileCheck --check-prefix=SUM-EXPLAIN %s
 ; RUN: %{opt} %s -o /dev/null -poseidon-tau=2.909958e-4 -poseidon-cache=%t/c7 -poseidon-explain=%t/x7 2>&1 | FileCheck --check-prefix=SHARE %s
 ; RUN: %{err} %t/x7/matmul_body.explain.json | FileCheck --check-prefix=SHARE-EXPLAIN %s
+; RUN: mkdir %t/squares
+; RUN: sed -e '/SumSens = /h' -e '/SumAbsGrad = /{p;s/SumAbsGrad/SumSqGrad/p;g;s/SumSens/SumSqSens/}' %S/Inputs/tau_one_meaning/matmul_body.fpprofile > %t/squares/matmul_body.fpprofile
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/squares -poseidon-early-prune -poseidon-enable-algebraic=false -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S -poseidon-print -o /dev/null -poseidon-tau=1e-4 -poseidon-matmul-sample-log-bits=0 -poseidon-cache=%t/c8 -poseidon-explain=%t/x8 2>&1 | FileCheck --check-prefix=SQUARES %s
+; RUN: %python -c "import json, math, sys; d = json.load(open(sys.argv[1])); a = {x['kind']: x for u in d['subgraphs'] for x in u['alternatives'] if x['status'] == 'applied'}; m = a['matmul']['modelled_domain_error']; p = a['precision']['modelled_error']; print('site %%.6e product %%.6e precision %%.6e root-sum-of-squares %%.6e' %% (d['result']['modelled_rel_error'], m, p, math.hypot(m, p)))" %t/x8/matmul_body.explain.json | FileCheck --check-prefix=SQUARES-EXPLAIN %s
 
 ; A site with a matrix product and elementwise work: the accuracy target at the
 ; site (poseidon_tau, site.ll) and on the command line select and emit the
@@ -46,6 +50,14 @@
 ; SHARE: [poseidon] preprocess_matmul_body: tau=2.909958e-04 {{.*}} rel=1.583396e-07{{$}}
 ; SHARE: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}
 ; SHARE-EXPLAIN: site 1.583396e-07 product 1.576873e-07
+
+; With the squared sums SumSqGrad and SumSqSens (squares: those of SumAbsGrad
+; and SumSens) a product's term is the square of its relative error and the
+; site's error the root of the sum of the units' squares.
+; SQUARES: [poseidon] domain error matmul in=f16 acc=f32 p95_relErr=1.080034e-04 (sumcost={{[0-9.e+-]+}})
+; SQUARES: [poseidon] preprocess_matmul_body: tau=1.000000e-04 S=5.101078e+04 A0=8.950759e-30 selected cost=-1.047433e-01 accCost=3.569322e-10 rel=8.364921e-08{{$}}
+; SQUARES: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}
+; SQUARES-EXPLAIN: site 8.364921e-08 product 8.275679e-08 precision 1.218625e-08 root-sum-of-squares 8.364921e-08{{$}}
 
 source_filename = "tcec_matmul.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

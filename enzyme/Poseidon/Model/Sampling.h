@@ -16,6 +16,8 @@
 #ifndef POSEIDON_MODEL_SAMPLING_H
 #define POSEIDON_MODEL_SAMPLING_H
 
+#include "Core/ErrorMoment.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -34,8 +36,10 @@ struct Subgraph;
 class FPGraph;
 class FPNode;
 
-/// The absolute error |goldVal - result|, in the units of the value.
-double sampleError(double goldVal, double result);
+/// What the error of `result` against `goldVal` contributes to an accuracy
+/// cost in moment `m`: |goldVal - result|, in the units of the value, or its
+/// square.
+double sampleError(double goldVal, double result, ErrorMoment m);
 
 /// The points one subgraph is priced at and what its original expressions
 /// evaluate to there. They depend on the subgraph's inputs and the seed alone,
@@ -47,8 +51,8 @@ public:
   using Point = llvm::MapVector<llvm::Value *, double>;
 
   /// At each point, the expression's exact value (MPFR, converged to 53 bits),
-  /// its value as written, and the absolute error of the latter, in the units
-  /// of the value; NaN where the exact value did not settle.
+  /// its value as written, and the error of the latter in the subgraph's
+  /// moment (sampleError); NaN where the exact value did not settle.
   struct Reference {
     /// One entry per point, in the order of the points.
     llvm::SmallVector<double, 4> gold, value, error;

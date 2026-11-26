@@ -473,10 +473,11 @@ static void printFrontier(const CostScale &scale,
 }
 
 // The -poseidon-print report of the point `best` the target `tau`, or the
-// budget when `tau` is 0, selected from the frontier of the solve of `names`;
-// none when nothing was selected.
+// budget when `tau` is 0, selected from the frontier of the solve of `names`,
+// whose accuracy costs are in moment `moment`; none when nothing was selected.
 static void printSelection(StringRef names, double tau, double accScale,
-                           double baseline, const CostScale &scale,
+                           double baseline, ErrorMoment moment,
+                           const CostScale &scale,
                            const CostMap &costToAccuracyMap,
                            std::optional<DPCost> best) {
   if (tau > 0.0) {
@@ -487,7 +488,9 @@ static void printSelection(StringRef names, double tau, double accScale,
       llvm::errs() << "[poseidon] No solution found that meets accuracy "
                       "tolerance "
                    << tau << "; the best relative accuracy in the DP table "
-                   << "is " << (baseline + bestAchievable) / accScale << '\n';
+                   << "is "
+                   << relativeError(baseline + bestAchievable, accScale, moment)
+                   << '\n';
       return;
     }
     const double accCost = costToAccuracyMap.at(*best);
@@ -495,7 +498,8 @@ static void printSelection(StringRef names, double tau, double accScale,
                  << " S=" << accScale << " A0=" << baseline
                  << " selected cost=" << scale.share(*best)
                  << " accCost=" << accCost
-                 << " rel=" << (baseline + accCost) / accScale << '\n';
+                 << " rel=" << relativeError(baseline + accCost, accScale, moment)
+                 << '\n';
     return;
   }
   if (!best) {
@@ -521,7 +525,9 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                        : nullptr;
 
   std::string names;
+  const ErrorMoment moment = sites.front()->moment;
   for (SiteState *st : sites) {
+    assert(st->moment == moment && "the sites of one solve share a moment");
     if (!names.empty())
       names += ",";
     names += st->F->getName().str();
@@ -612,7 +618,8 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
   }
   const DPCost budget = tau > 0.0 ? 0 : scale.fromShare(O.Solver.CostBudget);
   auto admits = [&](DPCost cost, double acc) {
-    return tau > 0.0 ? (baseline + acc) / accScale <= tau : cost <= budget;
+    return tau > 0.0 ? relativeError(baseline + acc, accScale, moment) <= tau
+                     : cost <= budget;
   };
   const std::optional<DPCost> best =
       tau > 0.0 ? selectUnderTarget(O, scale, costToAccuracyMap,
@@ -626,8 +633,8 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                                                    : PointVerdict::Excluded;
 
   if (print)
-    printSelection(names, tau, accScale, baseline, scale, costToAccuracyMap,
-                   best);
+    printSelection(names, tau, accScale, baseline, moment, scale,
+                   costToAccuracyMap, best);
   if (!best)
     return SmallVector<SolutionStep>();
 

@@ -15,11 +15,11 @@
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/c0 %s %t/other.o -o %t/gen0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > %t/gen0.out
 // RUN: diff %t/stock.out %t/gen0.out
-// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c0 %s %t/other.o -poseidon-print -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c0 %s %t/other.o -poseidon-print -o %t/use0 2>&1 | FileCheck --check-prefixes=LEVEL,LEVEL-O0 %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3 2>&1 | count 0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/gen3 > %t/gen3.out
 // RUN: diff %t/stock.out %t/gen3.out
-// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c3 %s %t/other.o -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c3 %s %t/other.o -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefixes=LEVEL,LEVEL-O3 %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-algebraic=0 -poseidon-cache=%t/c3q %s %t/other.o -o %t/use3q 2>&1 | count 0
 
 // POSEIDON_OPTIMIZE on host functions (called directly, through a pointer and
@@ -124,8 +124,11 @@ int main(int argc, char **argv) {
 
 // LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// At -O0 every split of energy short of FP32 throughout costs the same, and
+// the function split is the most accurate.
 // LEVEL: Applying solution for precision change
-// LEVEL: [poseidon] pin: _Z6energyPKdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL-O0: [poseidon] pin: _Z6energyPKdi:P0=Funcs FP64(50%) + FP32(50%)
+// LEVEL-O3: [poseidon] pin: _Z6energyPKdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change

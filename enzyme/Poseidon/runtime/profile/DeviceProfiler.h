@@ -121,6 +121,11 @@ struct GPUProfileSlot {
   // alternates in sign across executions, the magnitude sum cannot.
   double sumAbsGrad;
   double sumSens;
+  // Sums of gradient^2 and of (gradient x value)^2: independent rounding
+  // errors add as a root-sum-of-squares, so the accuracy model weighs their
+  // squares.
+  double sumSqGrad;
+  double sumSqSens;
   uint64_t exec;
   uint32_t numOperands;
 };

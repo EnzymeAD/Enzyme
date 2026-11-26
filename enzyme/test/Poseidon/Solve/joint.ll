@@ -61,6 +61,22 @@
 ; SITES-ONE-NEXT: call double @preprocess_tester_b(double %x, double %y)
 ; SITES-ONE-NOT: define double @preprocess_tester_a(
 
+; Sites solved jointly add their accuracy costs in one moment: two profiles
+; with the squared sums SumSqGrad and SumSqSens are solved together, one with
+; them and one without are refused.
+; RUN: mkdir -p %t/moments/mixed %t/moments/squares
+; RUN: cp %S/../Inputs/joint_profiles/tester_a.fpprofile %t/moments/mixed/
+; RUN: sed 's/^\(.SumAbsGrad = .*\)$/\1\n\tSumSqGrad = 1.0\n\tSumSqSens = 1.0/' %S/../Inputs/joint_profiles/tester_b.fpprofile > %t/moments/mixed/tester_b.fpprofile
+; RUN: sed 's/^\(.SumAbsGrad = .*\)$/\1\n\tSumSqGrad = 1.0\n\tSumSqSens = 1.0/' %S/../Inputs/joint_profiles/tester_a.fpprofile > %t/moments/squares/tester_a.fpprofile
+; RUN: cp %t/moments/mixed/tester_b.fpprofile %t/moments/squares/
+; RUN: not %opt %S/Inputs/two_sites.ll %{pass} -poseidon-profile-use=%t/moments/mixed -poseidon-enable-algebraic=false -poseidon-solve-jointly %{cm} -poseidon-cache= -poseidon-cost-budget=-0.4 -S -o /dev/null 2>&1 | FileCheck --check-prefix=MOMENTS-MIXED %s
+; RUN: %opt %S/Inputs/two_sites.ll %{pass} -poseidon-profile-use=%t/moments/squares -poseidon-enable-algebraic=false -poseidon-solve-jointly %{cm} -poseidon-cache= -poseidon-cost-budget=-0.4 -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=MOMENTS-SQUARES %s
+; MOMENTS-MIXED: error: <unknown>:0:0: in function preprocess_tester_b double (double, double): Poseidon: the profile of preprocess_tester_b records the squared sums SumSqGrad and SumSqSens, and the profile of preprocess_tester_a does not, so the two cannot be solved jointly; profile both with one profiler{{$}}
+; MOMENTS-SQUARES: [poseidon] Minimum accuracy cost within budget: 7.297045e-12
+; MOMENTS-SQUARES-NEXT: [poseidon] Computation cost budget used: -4.500000e-01
+; MOMENTS-SQUARES: [poseidon] pin: tester_a:P0=All FP64(0%) + FP32(100%)
+; MOMENTS-SQUARES: [poseidon] pin: tester_b:P0=All FP64(0%) + FP32(100%)
+
 ; A budget share that cannot be met (-400, inf, above 2^30) and a number flag
 ; given an empty value or nan are errors of a solve that reads them; a compile
 ; that solves nothing or solves under a target does not read the budget.

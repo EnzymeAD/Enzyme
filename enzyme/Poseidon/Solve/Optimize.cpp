@@ -38,6 +38,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
@@ -88,6 +89,8 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(P.map, F.getName(), O.Diagnostics.Print);
+  if (!P.map.empty() && P.map.begin()->second.hasSecondMoments)
+    P.moment = ErrorMoment::Second;
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
@@ -105,7 +108,8 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
 // Puts this site's error on the application's scale. kappa is the measured
 // response of the quantity of interest to a relative error eps on every
 // operation of the site; the profile predicts eps times the site's total
-// sensitivity for the same noise. Their ratio cancels the propagation within
+// sensitivity for the same noise (in the second moment, eps times the root of
+// the summed squared sensitivity). Their ratio cancels the propagation within
 // the site and leaves the downstream condition per unit of accuracy cost. A
 // site whose kappa run diverged has no finite condition number: it is solved
 // with no candidate (solveAndApply), under a target and under a budget.
@@ -115,9 +119,10 @@ static Error putOnApplicationScale(Session &S, Function &F,
   const auto &profileMap = P.map;
   const auto &profileHeader = P.header;
 
+  const bool second = st.moment == ErrorMoment::Second;
   double siteSumSens = 0.0;
   for (const auto &kv : profileMap)
-    siteSumSens += kv.second.sumSens;
+    siteSumSens += second ? kv.second.sumSqSens : kv.second.sumSens;
   // Per-output weights are already divided by each output's own total.
   if (!O.Profiling.OutputProfiles.empty()) {
     if (profileHeader.kappa)
@@ -165,7 +170,10 @@ static Error putOnApplicationScale(Session &S, Function &F,
                    "site is left as written",
                DS_Warning);
     else
-      factor = *profileHeader.kappa / sumSens;
+      factor = *profileHeader.kappa / (second ? std::sqrt(sumSens) : sumSens);
+    // A second-moment cost is a variance: it scales by the factor's square.
+    if (second)
+      factor *= factor;
     SolvedFrom &from = st.get<SolvedFrom>();
     from.kappa = profileHeader.kappa;
     from.kappaMark = profileHeader.kappaMark;
@@ -178,7 +186,8 @@ static Error putOnApplicationScale(Session &S, Function &F,
   }
   // The accuracy costs below are scaled by `factor`, so the level a tolerance
   // is compared against has to be scaled the same way; with a kappa this
-  // reduces to kappa itself, without one to the site's total sensitivity.
+  // reduces to kappa itself (its square in the second moment), without one to
+  // the site's total sensitivity.
   st.accScale = factor * siteSumSens;
   st.scaleFactor = factor;
   if (factor != 1.0)
@@ -313,6 +322,9 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
   if (Error E = attachProfile(O, profile.map, st, st.subgraphs))
     return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
+  st.moment = profile.moment;
+  for (Subgraph &subgraph : st.subgraphs)
+    subgraph.moment = st.moment;
 
   if (st.subgraphs.empty() && !recognized)
     return false;
@@ -480,6 +492,19 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
                                     ArrayRef<SiteState *> sites, double tau,
                                     bool siteTarget, bool joint) {
   const Options &O = S.Opts;
+  // One table sums the sites' accuracy costs, which add up in one moment only.
+  for (SiteState *st : sites)
+    if (st->moment != sites.front()->moment)
+      return userError(
+          *st->F,
+          Twine("the profile of ") + st->F->getName() +
+              (st->moment == ErrorMoment::Second ? " records"
+                                                 : " does not record") +
+              " the squared sums SumSqGrad and SumSqSens, and the profile of " +
+              sites.front()->F->getName() +
+              (st->moment == ErrorMoment::Second ? " does not" : " does") +
+              ", so the two cannot be solved jointly; profile both with one "
+              "profiler");
   // A site whose condition number diverged offers no candidate.
   SmallVector<SiteState *, 4> solved;
   SmallVector<ArrayRef<SiteUnit *>, 4> units;
@@ -491,6 +516,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   SolveRecord record;
   record.tau = tau;
   record.siteTarget = siteTarget;
+  record.moment = sites.front()->moment;
   const ArrayRef<SiteState *> scaled =
       solved.empty() ? sites : ArrayRef<SiteState *>(solved);
   for (SiteState *st : scaled) {

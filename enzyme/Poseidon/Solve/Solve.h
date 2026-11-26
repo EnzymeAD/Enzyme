@@ -18,6 +18,7 @@
 #ifndef POSEIDON_SOLVE_SOLVE_H
 #define POSEIDON_SOLVE_SOLVE_H
 
+#include "Core/ErrorMoment.h"
 #include "Core/FPNode.h"
 #include "Core/Session.h"
 #include "Core/Technique.h"
@@ -84,6 +85,8 @@ struct SolveRecord {
   double baseline = std::numeric_limits<double>::quiet_NaN();
   /// The sites' summed accuracy scale (SiteState::accScale).
   double accScale = 0.0;
+  /// The moment `table`, `baseline` and `accScale` are in, the sites'.
+  ErrorMoment moment = ErrorMoment::First;
   /// What the profiled run spent in the solved sites: the DP's cost axis is in
   /// shares of it.
   double profiledCost = 0.0;
@@ -135,12 +138,15 @@ solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
 /// `scale` of the sites' summed profiled cost, and selects a frontier point:
 /// under `tau` > 0 the one the target picks, else the most accurate one within
 /// -poseidon-cost-budget. Under `tau` a point's modelled relative error is
-/// (A0 + its accuracy cost) / `accScale`, the sites' summed accScale, A0 the
-/// accuracy cost of the sites as written: for one site, the sum over its units
-/// of an FP subgraph's accuracy cost over accScale (a per-operation relative
-/// rounding level) and a matrix product's relative domain error. A single
-/// site's table is read from or written to the cache when the site has one.
-/// `joint` marks a solve of the sites of -poseidon-solve-jointly, however many.
+/// relativeError(A0 + its accuracy cost, `accScale`) in the sites' moment,
+/// which they share, `accScale` the sites' summed accScale and A0 the accuracy
+/// cost of the sites as written. For one site in the first moment that is the
+/// sum over its units of an FP subgraph's accuracy cost over accScale (a
+/// per-operation relative rounding level) and a matrix product's relative
+/// domain error; in the second moment, the root of the sum of their squares. A
+/// single site's table is read from or written to the cache when the site has
+/// one. `joint` marks a solve of the sites of -poseidon-solve-jointly, however
+/// many.
 llvm::Expected<llvm::SmallVector<SolutionStep>>
 solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units,

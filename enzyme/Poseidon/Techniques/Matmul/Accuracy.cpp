@@ -51,7 +51,8 @@ using namespace llvm;
 namespace poseidon {
 
 static Expected<std::optional<MatmulProfile>>
-loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
+loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
+                         ErrorMoment moment) {
   const ScalarLoopHandle *h = &m.scalarLoop();
   size_t fmaIdx = requireSlot(h->fma);
   auto fmaIt = profile.find(fmaIdx);
@@ -93,6 +94,8 @@ loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
   out.b = {abInfo->minOperands[1], abInfo->maxOperands[1],
            abInfo->minMagOperands[1]};
   out.gradSum = fmaInfo.sumAbsGrad;
+  out.sqGradSum = fmaInfo.sumSqGrad;
+  out.moment = moment;
   out.macs = fmaInfo.exec;
   return out;
 }
@@ -101,7 +104,8 @@ loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
 // unrolled outer contraction level), so the operand ranges are the union over
 // the members and the execution counts their sum.
 static Expected<std::optional<MatmulProfile>>
-loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
+loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile,
+                        ErrorMoment moment) {
   const RuntimeGemmHandle &h = m.runtimeGemm();
   for (Instruction *fma : h.fmas) {
     auto it = profile.find(requireSlot(fma));
@@ -112,7 +116,7 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
   double aMax = std::numeric_limits<double>::lowest();
   double bMin = aMin, bMax = aMax;
   double aMinMag = 0.0, bMinMag = 0.0;
-  double gradSum = 0.0;
+  double gradSum = 0.0, sqGradSum = 0.0;
   uint64_t exec = 0;
   for (unsigned r = 0; r < h.fmas.size(); ++r) {
     Instruction *ab = h.fmuls[r] ? h.fmuls[r] : h.fmas[r];
@@ -145,6 +149,7 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
       bMinMag = bMinMag > 0.0 ? std::min(bMinMag, ai.minMagOperands[bo])
                               : ai.minMagOperands[bo];
     gradSum += fIt->second.sumAbsGrad;
+    sqGradSum += fIt->second.sumSqGrad;
     exec += fIt->second.exec;
   }
 
@@ -152,15 +157,18 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
   out.a = {aMin, aMax, aMinMag};
   out.b = {bMin, bMax, bMinMag};
   out.gradSum = gradSum;
+  out.sqGradSum = sqGradSum;
+  out.moment = moment;
   out.macs = exec;
   return out;
 }
 
 Expected<std::optional<MatmulProfile>>
-loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile) {
+loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile,
+            ErrorMoment moment) {
   if (m.isConstantShape())
-    return loadConstantShapeProfile(m, scalarProfile);
-  return loadRuntimeShapeProfile(m, scalarProfile);
+    return loadConstantShapeProfile(m, scalarProfile, moment);
+  return loadRuntimeShapeProfile(m, scalarProfile, moment);
 }
 
 namespace {
@@ -422,8 +430,9 @@ public:
       } else {
         result.nonFinite = true;
       }
-      if (sampleDen > 0.0 && std::isfinite(sampleErr / sampleDen))
-        relSamples.push_back(sampleErr / sampleDen);
+      double rel = relativeError(sampleErr, sampleDen, prof.moment);
+      if (sampleDen > 0.0 && std::isfinite(rel))
+        relSamples.push_back(rel);
     }
     if (finiteSamples == 0)
       return userError(anchorOf(m), Twine(describe(parts[j])) +
@@ -434,9 +443,9 @@ public:
   }
 
 private:
-  // Per sample, the error is the gradient-weighted absolute error summed over
-  // the outputs, and `den` the gradient-weighted FP64 result it is relative
-  // to.
+  // Per sample, the error is the weighted error summed over the outputs, and
+  // `den` the same weighting of the FP64 result it is relative to, both in the
+  // profile's moment.
   void runSample(unsigned s) {
     const size_t mk = (size_t)m.M * m.K;
     const size_t kn = (size_t)m.K * m.N;
@@ -454,9 +463,12 @@ private:
           accD += A[mi * m.K + ki] * B[ki * m.N + ni];
         gold[mi * m.N + ni] = accD;
       }
+    const double weight = prof.moment == ErrorMoment::First
+                              ? std::fabs(prof.gradSum)
+                              : prof.sqGradSum;
     double sampleDen = 0.0;
     for (size_t i = 0; i < mn; ++i)
-      sampleDen += std::fabs(prof.gradSum) * std::fabs(gold[i]);
+      sampleDen += weight * momentError(gold[i], 0.0, prof.moment);
     den[s] = sampleDen;
 
     for (size_t j = 0; j < parts.size(); ++j) {
@@ -483,7 +495,7 @@ private:
       }
       double sampleErr = 0.0;
       for (size_t i = 0; i < mn; ++i)
-        sampleErr += std::fabs(prof.gradSum) * std::fabs(gold[i] - cand[i]);
+        sampleErr += weight * momentError(gold[i], cand[i], prof.moment);
       err[j * numSamples + s] = sampleErr;
     }
   }
@@ -571,6 +583,9 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
   }
   key.addContent("operand statistics", operands);
   key.add("gradient sum", exactDouble(prof.gradSum));
+  // Only a second-moment cost reads the squared sum.
+  if (prof.moment == ErrorMoment::Second)
+    key.add("squared gradient sum", exactDouble(prof.sqGradSum));
   key.add("samples", std::to_string(numSamples));
   key.add("seed", std::to_string(O.Model.RandomSeed));
   key.add("sampling log bits", std::to_string(sampleLogBits));
@@ -635,13 +650,14 @@ bool Memo::lookup(const Options &O, MatmulAccuracy &result) const {
 }
 
 // A query's result from the error of its sampled part. Per sample, the error
-// is the gradient-weighted absolute error summed over the outputs; the
+// is the weighted error summed over the outputs in the profile's moment; the
 // accuracy cost is its mean over the samples where it is finite, and the
 // domain error (call-site budget) the kDefaultConfidence percentile of its
-// ratio to the weighted result, which cancels the size/exec scaling of the bare
-// sum. A format that overflowed on a sample, or flushes the smallest operand
-// magnitude the profile recorded, is out of range, as is a device whose product
-// reads it as zero: the absolute error is blind to a flushed operand.
+// ratio to the weighted result (the root of the ratio in the second moment),
+// which cancels the size/exec scaling of the bare sum. A format that overflowed
+// on a sample, or flushes the smallest operand magnitude the profile recorded,
+// is out of range, as is a device whose product reads it as zero: the absolute
+// error is blind to a flushed operand.
 static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
                              const MatmulAccuracyQuery &q,
                              const SampledError &e) {

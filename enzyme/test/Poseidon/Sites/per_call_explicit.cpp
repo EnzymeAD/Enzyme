@@ -126,10 +126,10 @@ int main() {
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.1: the site's own accuracy target 1.000000e-09 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: per_call_explicit.cpp:[[@LINE-55]]:3: remark: Poseidon left site shift as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-08 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: [poseidon] pin: _Z5shiftPKdPdi.poseidon.main.2:P0=Funcs FP64(50%) + FP32(50%)
+// USE-DAG: per_call_explicit.cpp:[[@LINE-56]]:3: remark: Poseidon left site shift as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-NOT: warning
 
-// RUNS: 0 0 1 0 0 0 1 0
+// RUNS: 0 0 1 0 0 0 1 1
 
 // LINK: undefined reference to `__poseidon_site_explicit'
 // LINK: undefined reference to `__poseidon_site_explicit_tau'

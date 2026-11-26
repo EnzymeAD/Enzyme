@@ -2,7 +2,7 @@
 ; DEFINE:   -poseidon-enable-algebraic=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S
 ; DEFINE: %{fma} = %S/../Inputs/fma_site_profile/tester.fpprofile
-; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/empty %t/metric_only %t/never_executed %t/site_id %t/truncated %t/field %t/dropped
+; RUN: rm -rf %t && split-file %s %t && mkdir -p %t/empty %t/metric_only %t/never_executed %t/site_id %t/truncated %t/field %t/dropped %t/squares %t/mixed
 ; RUN: echo "qoi 1" > %t/metric_only/metric.txt
 ; RUN: sed 's/^  %mul = fmul fast double %add, %z$/  %extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z/' %t/tester.ll > %t/drift.ll
 ; RUN: printf 'SiteId = 0\nCanonicalHash = f9f2bd660c90d989\nExecuted = 0\n\n' > %t/never_executed/tester.fpprofile
@@ -17,6 +17,11 @@
 ; RUN: not %{opt} < %t/tester.ll -o /dev/null -poseidon-profile-use=%t/field 2>&1 | FileCheck --check-prefix=FIELD %s
 ; RUN: sed '0,/MaxRes = .*/s//&\n\tSumValue = 1.0/' %{fma} > %t/dropped/tester.fpprofile
 ; RUN: not %{opt} < %t/tester.ll -o /dev/null -poseidon-profile-use=%t/dropped 2>&1 | FileCheck --check-prefix=DROPPED %s
+; RUN: sed 's/^\(.SumAbsGrad = .*\)$/\1\n\tSumSqGrad = 6.25\n\tSumSqSens = 25.0/' %{fma} > %t/squares/tester.fpprofile
+; RUN: sed '0,/SumSqSens/{/SumSq/d}' %t/squares/tester.fpprofile > %t/mixed/tester.fpprofile
+; RUN: %{opt} < %t/tester.ll -o /dev/null -poseidon-profile-use=%t/squares -poseidon-print 2>&1 | FileCheck --check-prefix=SQUARES %s
+; RUN: not %{opt} < %t/tester.ll -o /dev/null -poseidon-profile-use=%t/mixed 2>&1 | FileCheck --check-prefix=MIXED %s
+; RUN: not %{opt} < %t/tester.ll -o /dev/null -poseidon-profile-use=%t/squares -poseidon-output-profiles=%S/../Inputs/fma_site_profile 2>&1 | FileCheck --check-prefix=SQUARES-OUT %s
 ; RUN: %{opt} < %t/tester.ll -poseidon-profile-use=%t/never_executed -pass-remarks-missed=poseidon -poseidon-explain=%t/never -poseidon-print -o %t/never.ll 2> %t/never.err
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/never.err %t/never | FileCheck --check-prefix=NEVER-JSON %s
 ; RUN: FileCheck --check-prefix=NEVER --implicit-check-not=warning --implicit-check-not=Warning %s < %t/never.err
@@ -48,7 +53,9 @@
 ; (its slot indices are positions in it): the generating compile registers it,
 ; a body that produces it is solved, one that does not (drift.ll) is refused. A profile
 ; that does not parse, or has a line the format lacks, stops the compile naming
-; the file and line. A site without a profile to solve from: never executed
+; the file and line. The squared sums SumSqGrad and SumSqSens are read in
+; every record or in none (squares, mixed), and an output profile has them
+; when the site's profile does; S is then their sum. A site without a profile to solve from: never executed
 ; (header only) is left as written with a note; absent from a directory of
 ; others, left with a warning or refused under strict mode; a directory with no
 ; profile is refused. -poseidon-output-profiles directories follow the same rules.
@@ -71,6 +78,9 @@
 ; TRUNCATED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}truncated/tester.fpprofile:20: the record of slot 1 ends before its Operand[1] line; re-run profile generation
 ; FIELD: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}field/tester.fpprofile:8: Exec many is not a number; re-run profile generation
 ; DROPPED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}dropped/tester.fpprofile:5: expected the SumSens line of slot 0; re-run profile generation
+; SQUARES: [poseidon] preprocess_tester: tau=5.000000e-01 S=5.000000e+01 A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
+; MIXED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: {{.*}}mixed/tester.fpprofile:17: the record of slot 1 records the squared sums SumSqGrad and SumSqSens, and the records before it do not; re-run profile generation
+; SQUARES-OUT: error: {{.*}}preprocess_tester{{.*}}: Poseidon: output profile {{.*}}fma_site_profile/tester.fpprofile does not record the squared sums SumSqGrad and SumSqSens, and the site's profile does; both must come from the same profiling binary{{$}}
 ; NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/tester.fpprofile); left unchanged
 ; NEVER-REMARK: remark: <unknown>:0:0: Poseidon left the site unchanged: the profiling run instrumented this site and never executed it
 ; NEVER-JSON: preprocess_tester: never_executed; the profiling run instrumented this site and never executed it{{$}}

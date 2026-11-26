@@ -44,8 +44,8 @@ static constexpr size_t kReferencesPerTask = 8;
 // share kept so far by this factor.
 static constexpr double kDrawMargin = 1.25;
 
-double sampleError(double goldVal, double result) {
-  return std::fabs(goldVal - result);
+double sampleError(double goldVal, double result, ErrorMoment m) {
+  return momentError(goldVal, result, m);
 }
 
 namespace {
@@ -411,13 +411,14 @@ std::optional<double> SubgraphSamples::Reference::meanError() const {
 // The exact and the as-written value of `node` at `point`, and the error of
 // the latter, into entry `i` of `R`; whether the exact value did not settle.
 static bool evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
-                              SubgraphSamples::Reference &R, size_t i) {
+                              ErrorMoment m, SubgraphSamples::Reference &R,
+                              size_t i) {
   SmallVector<double, 1> results;
   bool unsettled = getMPFRValues({node}, point, results);
   R.gold[i] = results[0];
   getFPValues({node}, point, results);
   R.value[i] = results[0];
-  R.error[i] = sampleError(R.gold[i], R.value[i]);
+  R.error[i] = sampleError(R.gold[i], R.value[i], m);
   return unsettled;
 }
 
@@ -434,7 +435,8 @@ void SubgraphSamples::fillReferences(const FPNode *node, ArrayRef<Point> at,
                [&](size_t begin, size_t end) {
                  for (size_t i = begin; i < end; ++i)
                    unsettled += evaluateReference(const_cast<FPNode *>(node),
-                                                  at[which[i]], R, which[i]);
+                                                  at[which[i]], subgraph.moment,
+                                                  R, which[i]);
                });
   if (!unsettled)
     return;

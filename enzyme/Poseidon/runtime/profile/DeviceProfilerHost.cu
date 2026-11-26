@@ -148,6 +148,8 @@ static void mergeRow(ProfileTables &t, int to, int from) {
     a.sumGrad += b.sumGrad;
     a.sumAbsGrad += b.sumAbsGrad;
     a.sumSens += b.sumSens;
+    a.sumSqGrad += b.sumSqGrad;
+    a.sumSqSens += b.sumSqSens;
     a.exec += b.exec;
     a.numOperands = std::max(a.numOperands, b.numOperands);
   }
@@ -215,6 +217,8 @@ static std::string profileOf(ProfileTables &t, int fi) {
                     slot.sumSens,
                     slot.sumGrad,
                     slot.sumAbsGrad,
+                    slot.sumSqGrad,
+                    slot.sumSqSens,
                     slot.exec,
                     {},
                     {},

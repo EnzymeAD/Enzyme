@@ -466,13 +466,13 @@ class Explainer final : public Explanation {
   double relErr(double acc) const {
     if (!(S > 0.0) || !std::isfinite(A0) || !std::isfinite(acc))
       return std::numeric_limits<double>::quiet_NaN();
-    return (A0 + acc) / S;
+    return relativeError(A0 + acc, S, rec.moment);
   }
 
   double share(double acc) const {
     if (!(S > 0.0) || !std::isfinite(acc))
       return std::numeric_limits<double>::quiet_NaN();
-    return acc / S;
+    return relativeError(acc, S, rec.moment);
   }
 
   FPNode *nodeOf(Value *V) const {

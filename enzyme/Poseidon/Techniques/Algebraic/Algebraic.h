@@ -101,7 +101,8 @@ public:
   /// The outputs one candidate replaces, in array element order: the one
   /// output of a per-output core, all of them for an array core.
   llvm::SmallVector<llvm::Value *, 1> roots;
-  /// The gradient of each of `roots`, in the same order.
+  /// The accuracy weight of each of `roots` in its subgraph's moment: the
+  /// gradient sum, or the squared gradient sum in the second moment.
   llvm::SmallVector<double, 1> rootGrads;
   /// Whether Herbie returned an expression for the core.
   bool herbieAnswered = false;

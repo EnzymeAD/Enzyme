@@ -38,6 +38,8 @@ public:
                       0.0,
                       0.0,
                       0.0,
+                      0.0,
+                      0.0,
                       0,
                       {},
                       {},
@@ -75,6 +77,8 @@ public:
       sumGrad += grad;
       sumAbsGrad += std::fabs(grad);
       sumSens += std::fabs(grad * value);
+      sumSqGrad += grad * grad;
+      sumSqSens += (grad * value) * (grad * value);
     }
   }
 };

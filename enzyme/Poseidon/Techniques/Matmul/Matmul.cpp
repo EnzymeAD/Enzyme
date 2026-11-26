@@ -1088,18 +1088,19 @@ static void offerInRange(const Options &O, MatmulUnit &cm,
 }
 
 // Appends to `out` a unit with priced candidates for each product of
-// `matmuls` the profiling run executed. `sampleLogBits`: 0 samples operands
-// uniformly over the profiled [min, max]; B > 0 log-uniformly in magnitude
-// over [maxMag * 2^-B, maxMag]. An error is a user error about the profile or
-// the cost model.
+// `matmuls` the profiling run executed, its accuracy costs in moment `moment`.
+// `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
+// B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag]. An error is a
+// user error about the profile or the cost model.
 static Error generateMatmulCandidates(Session &S,
                                       ArrayRef<RecognizedMatmul> matmuls,
                                       const ProfileMap &scalarProfile,
+                                      ErrorMoment moment,
                                       unsigned sampleLogBits,
                                       SmallVectorImpl<MatmulUnit> &out) {
   for (const RecognizedMatmul &m : matmuls) {
     Expected<std::optional<MatmulProfile>> loaded =
-        loadProfile(m, scalarProfile);
+        loadProfile(m, scalarProfile, moment);
     if (!loaded)
       return loaded.takeError();
     std::optional<MatmulProfile> &prof = *loaded;
@@ -1461,8 +1462,8 @@ public:
     // log-uniform range.
     const unsigned sampleLogBits =
         O.Matmul.SampleLogBits.value_or(st.target > 0.0 ? 40 : 0);
-    return generateMatmulCandidates(S, M.matmuls, P.map, sampleLogBits,
-                                    M.units);
+    return generateMatmulCandidates(S, M.matmuls, P.map, st.moment,
+                                    sampleLogBits, M.units);
   }
 
   void bindUnits(Session &S, SiteState &st) const override {

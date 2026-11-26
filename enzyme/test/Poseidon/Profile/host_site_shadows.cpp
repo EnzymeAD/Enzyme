@@ -138,6 +138,8 @@ int main() {
 // PROF-NEXT: SumSens = 4.075769764{{[0-9]+}}e+02
 // PROF-NEXT: SumGrad = 6.605011246470{{[0-9]+}}e+01
 // PROF-NEXT: SumAbsGrad = 8.661119977248{{[0-9]+}}e+02
+// PROF-NEXT: SumSqGrad = 9.690972830498{{[0-9]+}}e+02
+// PROF-NEXT: SumSqSens = 2.992841263329{{[0-9]+}}e+02
 // PROF-NEXT: Exec = 825
 // PROF-NEXT: NumOperands = 3
 // PROF-NEXT: Operand[0] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
@@ -156,6 +158,8 @@ int main() {
 // FLUX-NEXT: SumSens = 1.9035803788{{[0-9]+}}e+01
 // FLUX-NEXT: SumGrad = -1.4719200107{{[0-9]+}}e+00
 // FLUX-NEXT: SumAbsGrad = 3.0554717623{{[0-9]+}}e+01
+// FLUX-NEXT: SumSqGrad = 5.5377054003{{[0-9]+}}e+01
+// FLUX-NEXT: SumSqSens = 2.1997792344{{[0-9]+}}e+01
 // FLUX-NEXT: Exec = 32
 // FLUX: {{^1$}}
 // FLUX-NEXT: MinRes = 5.00000000000000000e-01
@@ -163,6 +167,8 @@ int main() {
 // FLUX-NEXT: SumSens = 2.1531320261{{[0-9]+}}e+01
 // FLUX-NEXT: SumGrad = 1.8651746642{{[0-9]+}}e+00
 // FLUX-NEXT: SumAbsGrad = 3.4814760435{{[0-9]+}}e+01
+// FLUX-NEXT: SumSqGrad = 4.0261344721{{[0-9]+}}e+01
+// FLUX-NEXT: SumSqSens = 1.5695070868{{[0-9]+}}e+01
 // FLUX-NEXT: Exec = 32
 // FLUX: {{^2$}}
 // FLUX-NEXT: MinRes = -7.32500000000000040e-01
@@ -170,5 +176,7 @@ int main() {
 // FLUX-NEXT: SumSens = 1.9909248655{{[0-9]+}}e+01
 // FLUX-NEXT: SumGrad = 3.3370946750{{[0-9]+}}e+00
 // FLUX-NEXT: SumAbsGrad = 3.2326091102{{[0-9]+}}e+01
+// FLUX-NEXT: SumSqGrad = 3.4799021718{{[0-9]+}}e+01
+// FLUX-NEXT: SumSqSens = 1.3342142892{{[0-9]+}}e+01
 // FLUX-NEXT: Exec = 32
 // FLUX-NOT: {{^3$}}

@@ -10,7 +10,7 @@ import os
 import re
 import sys
 
-SUMS = ("SumSens", "SumGrad", "SumAbsGrad")
+SUMS = ("SumSens", "SumGrad", "SumAbsGrad", "SumSqGrad", "SumSqSens")
 
 
 def parse(path, ignore=()):

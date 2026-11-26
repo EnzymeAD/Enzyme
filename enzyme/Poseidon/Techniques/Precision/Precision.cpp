@@ -454,11 +454,11 @@ struct CandidateErrors {
 } // namespace
 
 // The errors of `candidate` at `outputs`, whose exact values at `points` are
-// `refs`.
+// `refs`, in moment `m`.
 static CandidateErrors
 scoreCandidate(const PrecisionCandidate &candidate, ArrayRef<FPNode *> outputs,
                ArrayRef<const SubgraphSamples::Reference *> refs,
-               ArrayRef<SubgraphSamples::Point> points) {
+               ArrayRef<SubgraphSamples::Point> points, ErrorMoment m) {
   CandidateErrors out;
   for (FPNode *node : outputs)
     out.at[node] = CandidateErrors::Mean();
@@ -472,7 +472,7 @@ scoreCandidate(const PrecisionCandidate &candidate, ArrayRef<FPNode *> outputs,
         out.nonFinite = true;
         return out;
       }
-      double error = sampleError(goldVal, result);
+      double error = sampleError(goldVal, result, m);
       if (!std::isnan(error)) {
         out.at[outputs[j]].sum += error;
         ++out.at[outputs[j]].count;
@@ -482,23 +482,24 @@ scoreCandidate(const PrecisionCandidate &candidate, ArrayRef<FPNode *> outputs,
   return out;
 }
 
-// Sets the accuracy cost of PU and of each candidate, the gradient-weighted
-// mean error at the outputs over the subgraph's samples, and drops the
-// candidates that cannot be scored. With no usable sample the unit keeps the
-// subgraph as written.
+// Sets the accuracy cost of PU and of each candidate, the mean error at the
+// outputs over the subgraph's samples weighted by the outputs' accuracy
+// weights, both in the subgraph's moment, and drops the candidates that cannot
+// be scored. With no usable sample the unit keeps the subgraph as written.
 static void priceAccuracy(const Options &O, PrecisionUnit &PU, FPGraph &G) {
   SubgraphSamples &samples = samplesOf(O, *PU.subgraph, G);
+  const ErrorMoment moment = PU.subgraph->moment;
   SmallVector<FPNode *, 4> outputs;
   SmallVector<const FPNode *, 4> nodes;
-  SmallVector<double, 4> grads;
+  SmallVector<double, 4> weights;
   for (Instruction *output : PU.subgraph->outputs) {
     FPNode *node = G.valueToNodeMap[output];
     outputs.push_back(node);
     nodes.push_back(node);
-    grads.push_back(node->grad);
+    weights.push_back(accuracyWeight(*node, moment));
   }
   std::optional<BaselineAccuracy> baseline =
-      PU.priceBaseline(samples, nodes, grads, O.Diagnostics.Print);
+      PU.priceBaseline(samples, nodes, weights, O.Diagnostics.Print);
   if (!baseline)
     return;
   ArrayRef<SubgraphSamples::Point> sampledPoints = baseline->points;
@@ -510,7 +511,8 @@ static void priceAccuracy(const Options &O, PrecisionUnit &PU, FPGraph &G) {
 
   SmallVector<CandidateErrors, 0> scored(PU.candidates.size());
   forEachIndex(O.Model.Threads, PU.candidates.size(), [&](size_t c) {
-    scored[c] = scoreCandidate(PU.candidates[c], outputs, refs, sampledPoints);
+    scored[c] = scoreCandidate(PU.candidates[c], outputs, refs, sampledPoints,
+                               moment);
   });
 
   SmallVector<PrecisionCandidate, 4> kept;
@@ -527,7 +529,7 @@ static void priceAccuracy(const Options &O, PrecisionUnit &PU, FPGraph &G) {
       const CandidateErrors::Mean &mean = errors.at[node];
       assert(mean.count != 0 && "No valid sample found for candidate subgraph");
       candidate.perOutputAccCost[node] =
-          mean.sum / mean.count * std::fabs(node->grad);
+          mean.sum / mean.count * accuracyWeight(*node, moment);
       candidate.accuracyCost += candidate.perOutputAccCost[node];
     }
     assert(!std::isnan(candidate.accuracyCost) &&

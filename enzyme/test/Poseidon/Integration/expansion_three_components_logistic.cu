@@ -1,6 +1,6 @@
 // A 24-step logistic map solved three ways against a binary128 host result: at
 // 1e-16 two components keep FP64 and three select Expansion3, far closer than
-// FP64; at 1e-15 the two-component rewrite is selected, the least accurate.
+// FP64; at 1e-14 the two-component rewrite is selected, the least accurate.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
@@ -9,7 +9,7 @@
 // RUN: %t/two.exe 1e-11 1e-8 | FileCheck --check-prefix=EXEC %s
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-algebraic=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-precision-expansion-components=3 -poseidon-tau=1e-16 %s -o %t/three.exe 2>&1 | FileCheck --check-prefix=THREE %s
 // RUN: %t/three.exe 0 1e-13 | FileCheck --check-prefix=EXEC %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-algebraic=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-precision-expansion-components=3 -poseidon-tau=1e-15 %s -o %t/loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-algebraic=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-precision-expansion-components=3 -poseidon-tau=1e-14 %s -o %t/loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
 // RUN: %t/loose.exe 1e-9 1e-6 | FileCheck --check-prefix=EXEC %s
 
 #include <cmath>

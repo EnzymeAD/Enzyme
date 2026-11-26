@@ -117,6 +117,8 @@ int main() {
 // CHECK: SiteId = 0
 // CHECK: SumGrad = -4.8372591333{{[0-9]+}}e+00
 // CHECK-NEXT: SumAbsGrad = 2.6151930816{{[0-9]+}}e+02
+// CHECK-NEXT: SumSqGrad = 2.8785001301{{[0-9]+}}e+02
+// CHECK-NEXT: SumSqSens = {{[0-9]\.[0-9]+}}e+04
 // CHECK-NEXT: Exec = 256
 
 // NULL-PRIMAL: |sum(y)| < 1e-12: 1, y[0] = {{-?[0-9]+\.[0-9]+}}

@@ -251,6 +251,8 @@ Error attachProfile(const Options &O, const ProfileMap &profileMap, FPGraph &G,
       auto node = valueToNodeMap[op];
       node->sens = profileInfo.sumSens;
       node->grad = profileInfo.sumAbsGrad;
+      if (profileInfo.hasSecondMoments)
+        node->sqGrad = profileInfo.sumSqGrad;
       node->executions = profileInfo.exec;
       node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
 

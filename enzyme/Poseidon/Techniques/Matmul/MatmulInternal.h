@@ -222,11 +222,13 @@ struct MatmulAccuracyQuery {
 
 /// The accuracy model's estimate for one candidate.
 struct MatmulAccuracy {
-  /// The mean over the sampled operands of the absolute error of the simulated
-  /// output tile, weighted by the profiled gradient; unnormalized.
+  /// The mean over the sampled operands of the error of the simulated output
+  /// tile in the profile's moment, weighted by the moment's profiled weight;
+  /// unnormalized.
   double accuracyCost = 0.0;
-  /// The relative domain error at kDefaultConfidence: the gradient-weighted
-  /// error over the same weighting of the FP64 output.
+  /// The relative domain error at kDefaultConfidence: the weighted error over
+  /// the same weighting of the FP64 output, the root of that quotient in the
+  /// second moment.
   double domainError = 0.0;
   /// Why the candidate's formats cannot hold the profiled operands or their
   /// product; empty when they can.
@@ -250,17 +252,24 @@ struct MatmulProfile {
   /// The profiled |gradient| summed over the product's executions, the weight
   /// of each output element's error.
   double gradSum = 0.0;
+  /// The profiled gradient^2 summed over the same executions, the weight of
+  /// each output element's squared error in the second moment.
+  double sqGradSum = 0.0;
+  /// The moment the accuracy cost is summed in, the site's.
+  ErrorMoment moment = ErrorMoment::First;
   /// The product's MACs over the profiling run, at profile scale: the
   /// executions of its multiply-adds, summed over the members of a
   /// runtime-shape product.
   uint64_t macs = 0;
 };
 
-/// None when the profiling run never executed the product. A multiply of an
-/// executed product without its two operand ranges is an error: the profile is
-/// not of this program.
+/// The product's statistics for an accuracy cost in moment `moment`; none when
+/// the profiling run never executed the product. A multiply of an executed
+/// product without its two operand ranges is an error: the profile is not of
+/// this program.
 llvm::Expected<std::optional<MatmulProfile>>
-loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile);
+loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile,
+            ErrorMoment moment);
 
 /// The accuracy of each query on the product `m`, all on the same sampled
 /// operands, with the domain error read off at kDefaultConfidence.

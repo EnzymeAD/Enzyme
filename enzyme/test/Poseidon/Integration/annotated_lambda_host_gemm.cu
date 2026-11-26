@@ -162,21 +162,29 @@ int main(int argc, char **argv) {
 // PROF-NEXT: {{^0$}}
 // PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06
+// PROF-NEXT: SumSqGrad = 2.5476433097{{[0-9]+}}e+06
+// PROF-NEXT: SumSqSens = 1.1367521132{{[0-9]+}}e+07
 // PROF-NEXT: Exec = 2359296
 // PROF-NEXT: NumOperands = 3
 // PROF: {{^1$}}
 // PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06
+// PROF-NEXT: SumSqGrad = 2.5476433097{{[0-9]+}}e+06
+// PROF-NEXT: SumSqSens = 1.2993728684{{[0-9]+}}e+07
 // PROF-NEXT: Exec = 2359296
 // PROF-NEXT: NumOperands = 3
 // PROF: {{^2$}}
 // PROF: SumGrad = -8.394494923{{[0-9]+}}e+00
 // PROF-NEXT: SumAbsGrad = 3.6795242903{{[0-9]+}}e+04
+// PROF-NEXT: SumSqGrad = 3.9806926714{{[0-9]+}}e+04
+// PROF-NEXT: SumSqSens = 7.4549103121{{[0-9]+}}e+04
 // PROF-NEXT: Exec = 36864
 // PROF-NEXT: NumOperands = 2
 // PROF: {{^3$}}
 // PROF: SumGrad = -5.372476751{{[0-9]+}}e+02
 // PROF-NEXT: SumAbsGrad = 2.3548955458{{[0-9]+}}e+06
+// PROF-NEXT: SumSqGrad = 2.5476433097{{[0-9]+}}e+06
+// PROF-NEXT: SumSqSens = 1.2994205866{{[0-9]+}}e+07
 // PROF-NEXT: Exec = 2359296
 // PROF-NEXT: NumOperands = 3
 // PROF-NOT: {{^[0-9]+$}}

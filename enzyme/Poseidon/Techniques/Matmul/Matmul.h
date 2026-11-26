@@ -9,6 +9,7 @@
 #ifndef POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 #define POSEIDON_TECHNIQUES_MATMUL_MATMUL_H
 
+#include "Core/ErrorMoment.h"
 #include "Core/NumberFormat.h"
 #include "Core/Technique.h"
 #include "Core/Unit.h"
@@ -437,9 +438,9 @@ struct MatmulCandidate {
   /// The candidate's cost per MAC of the product in cost-model units
   /// (reciprocal throughput), comparable with the unit's initialCompCost.
   std::optional<double> compCost;
-  /// The mean over the sampled operands of the absolute error of the simulated
-  /// output tile, weighted by the profiled gradient; unnormalized, it only
-  /// ranks candidates.
+  /// The mean over the sampled operands of the error of the simulated output
+  /// tile in the site's moment, weighted by the profiled gradient;
+  /// unnormalized, it only ranks candidates.
   double accuracyCost = 0.0;
   /// Relative domain error (sensitivity-weighted, normalized) at the
   /// confidence percentile, comparable to a domain tolerance; accuracyCost is
@@ -464,8 +465,8 @@ public:
   /// The descriptor of the product's library call, when it has one.
   std::optional<GemmBodyNote> library;
   /// Under an accuracy target, the site's accuracy scale
-  /// (SiteState::accScale), which a candidate's domainError is multiplied by
-  /// on the DP's accuracy axis; none in a budget solve. The unit must be bound.
+  /// (SiteState::accScale), which a candidate's domainError is put on the DP's
+  /// accuracy axis against; none in a budget solve. The unit must be bound.
   std::optional<double> targetScale() const;
 
   /// The cost of candidate `idx` over the profiling run, less the loop's as
@@ -475,12 +476,15 @@ public:
     return (*candidates[idx].compCost - initialCompCost) * (double)executions;
   }
   /// The error candidate `idx` adds on the DP's accuracy axis; the loop as
-  /// written has none. Under an accuracy target it is domainError times
-  /// targetScale, so that divided by the site's accuracy scale it is the
-  /// product's relative output error; in a budget solve, accuracyCost.
+  /// written has none. Under an accuracy target it is the accuracy cost that
+  /// stands for domainError against targetScale() in the site's moment
+  /// (accuracyCostOf): divided by the site's accuracy scale it is the
+  /// product's relative output error, or its square in the second moment; in a
+  /// budget solve, accuracyCost.
   double getAccCostDelta(size_t idx) const {
     std::optional<double> scale = targetScale();
-    return scale ? candidates[idx].domainError * *scale
+    return scale ? accuracyCostOf(candidates[idx].domainError, *scale,
+                                  site().moment)
                  : candidates[idx].accuracyCost;
   }
 

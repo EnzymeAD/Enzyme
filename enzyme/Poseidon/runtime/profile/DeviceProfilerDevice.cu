@@ -281,5 +281,7 @@ __poseidon_device_log_grad(const char *funcName, size_t idx, double value,
     atomicAddFinite(&slot->sumGrad, grad);
     atomicAddFinite(&slot->sumAbsGrad, fabs(grad));
     atomicAddFinite(&slot->sumSens, fabs(grad * value));
+    atomicAddFinite(&slot->sumSqGrad, grad * grad);
+    atomicAddFinite(&slot->sumSqSens, (grad * value) * (grad * value));
   }
 }

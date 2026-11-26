@@ -71,6 +71,8 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     if (p.sumAbsGrad < floorW) {
       p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
       p.sumAbsGrad = floorW;
+      if (p.hasSecondMoments)
+        p.sumSqGrad = std::max(p.sumSqGrad, floorW * floorW / (double)p.exec);
       ++floored;
     }
   }
@@ -88,7 +90,9 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                           const Function &F, bool print) {
   const StringRef functionName = F.getName();
   auto refusal = [&](const Twine &why) { return userError(F, why); };
-  std::unordered_map<size_t, double> grad, sens;
+  const bool second =
+      !profileMap.empty() && profileMap.begin()->second.hasSecondMoments;
+  std::unordered_map<size_t, double> grad, sens, sqGrad, sqSens;
   for (const std::string &dir : dirs) {
     SmallString<128> path(dir);
     sys::path::append(path, fileName);
@@ -96,9 +100,11 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     SiteProfileHeader header;
     if (Error E = parseProfileFile(path.str().str(), F, out, header))
       return E;
-    double total = 0.0;
-    for (const auto &kv : out)
+    double total = 0.0, sqTotal = 0.0;
+    for (const auto &kv : out) {
       total += kv.second.sumSens;
+      sqTotal += kv.second.sumSqSens;
+    }
     if (!(total > 0.0) || !std::isfinite(total))
       return refusal(Twine("output profile ") + path + " of " + functionName +
                      " carries no sensitivity; re-run profile "
@@ -110,6 +116,13 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                      Twine(out.size()) + " instructions, the site's profile " +
                      Twine(profileMap.size()) +
                      "; both must come from the same profiling binary.");
+    if (!out.empty() && out.begin()->second.hasSecondMoments != second)
+      return refusal(Twine("output profile ") + path +
+                     (second ? " does not record" : " records") +
+                     " the squared sums SumSqGrad and SumSqSens, and the "
+                     "site's profile " +
+                     (second ? "does" : "does not") +
+                     "; both must come from the same profiling binary");
     for (const auto &kv : out) {
       if (!profileMap.count(kv.first))
         return refusal(Twine("output profile ") + path + " names instruction " +
@@ -119,6 +132,10 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
       const ProfileInfo &p = kv.second;
       grad[kv.first] = std::max(grad[kv.first], p.sumAbsGrad / total);
       sens[kv.first] = std::max(sens[kv.first], p.sumSens / total);
+      if (second) {
+        sqGrad[kv.first] = std::max(sqGrad[kv.first], p.sumSqGrad / sqTotal);
+        sqSens[kv.first] = std::max(sqSens[kv.first], p.sumSqSens / sqTotal);
+      }
     }
   }
   for (auto &kv : profileMap) {
@@ -126,6 +143,10 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     p.sumGrad = grad[kv.first];
     p.sumAbsGrad = p.sumGrad;
     p.sumSens = sens[kv.first];
+    if (second) {
+      p.sumSqGrad = sqGrad[kv.first];
+      p.sumSqSens = sqSens[kv.first];
+    }
   }
   if (print)
     errs() << "[poseidon] " << functionName
@@ -158,6 +179,9 @@ private:
   StringRef Path;
   const Function &F;
   int64_t LineNo = 0;
+  /// Whether the records read so far carry the second moments; none before
+  /// the first record.
+  std::optional<bool> SecondMoments;
 
   Error refusal(const Twine &What) const {
     return userError(F, Path + ":" + Twine(LineNo) + ": " + What +
@@ -206,6 +230,11 @@ private:
       To = *Value;
     }
     return Error::success();
+  }
+
+  /// Whether the next line is a `Key` line; reads nothing.
+  bool nextIs(StringRef Key) const {
+    return !Lines.is_at_end() && (*Lines).trim().split(" = ").first == Key;
   }
 
   /// The value of the next line, which is the `Key` line of the record of
@@ -305,6 +334,20 @@ Error ProfileParser::record(size_t Slot, ProfileInfo &Info) {
         {"SumAbsGrad", &Info.sumAbsGrad}})
     if (Error E = number(Slot, Key, *Out))
       return E;
+  Info.hasSecondMoments = nextIs("SumSqGrad");
+  if (SecondMoments && *SecondMoments != Info.hasSecondMoments)
+    return refusal("the record of slot " + Twine(Slot) +
+                   (Info.hasSecondMoments ? " records" : " does not record") +
+                   " the squared sums SumSqGrad and SumSqSens, and the "
+                   "records before it " +
+                   (Info.hasSecondMoments ? "do not" : "do"));
+  SecondMoments = Info.hasSecondMoments;
+  if (Info.hasSecondMoments)
+    for (auto [Key, Out] :
+         {std::pair<StringRef, double *>{"SumSqGrad", &Info.sumSqGrad},
+          {"SumSqSens", &Info.sumSqSens}})
+      if (Error E = number(Slot, Key, *Out))
+        return E;
   if (Error E = number(Slot, "Exec", Info.exec))
     return E;
   unsigned NumOperands = 0;

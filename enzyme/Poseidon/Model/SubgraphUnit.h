@@ -42,20 +42,21 @@ struct BaselineAccuracy {
     const FPNode *node;
     /// The output's values at the points.
     const SubgraphSamples::Reference *ref;
-    /// Its mean absolute error there, in the units of the value.
+    /// Its mean error there in the subgraph's moment (sampleError).
     double error;
-    /// The output's gradient; its error is weighted by |grad|.
+    /// The output's accuracy weight (accuracyWeight); its error is weighted
+    /// by |grad|.
     double grad;
   };
   /// The samples' points, owned by the samples.
   llvm::ArrayRef<SubgraphSamples::Point> points;
   /// One entry per output, in the order they were given.
   llvm::SmallVector<Output, 4> outputs;
-  /// The outputs' mean absolute errors weighted by |gradient|, summed.
+  /// The outputs' mean errors weighted by |grad|, summed.
   double cost = 0.0;
 };
 
-/// The baseline of the outputs `nodes`, of gradients `grads`, on `samples`; an
+/// The baseline of the outputs `nodes`, of weights `grads`, on `samples`; an
 /// error saying why the subgraph cannot be priced when there are no points,
 /// every sample of an output scores NaN, or the weighted sum is not finite.
 llvm::Expected<BaselineAccuracy>
@@ -70,10 +71,10 @@ class SubgraphUnit : public CandidateUnit<UnitT, Candidate> {
 public:
   /// The subgraph, of the site the unit is bound to.
   Subgraph *subgraph;
-  /// The accuracy cost of the outputs as written: each output's mean absolute
-  /// error on the samples times |its gradient|, summed, and multiplied by the
-  /// site's error scale once scaleErrors has run. NaN until priced; 0 when the
-  /// subgraph cannot be priced.
+  /// The accuracy cost of the outputs as written: each output's mean error on
+  /// the samples times its accuracy weight, both in the subgraph's moment,
+  /// summed, and multiplied by the site's error scale once scaleErrors has run.
+  /// NaN until priced; 0 when the subgraph cannot be priced.
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
   /// Why the subgraph could not be priced; empty when it was.
   std::string unpricedReason;
@@ -97,7 +98,7 @@ public:
       c.accuracyCost *= factor;
   }
 
-  /// The baseline of the outputs `nodes`, of gradients `grads`, with
+  /// The baseline of the outputs `nodes`, of weights `grads`, with
   /// initialAccCost set to its cost; none when the subgraph cannot be priced,
   /// which drops every candidate and keeps the subgraph as written.
   std::optional<BaselineAccuracy>

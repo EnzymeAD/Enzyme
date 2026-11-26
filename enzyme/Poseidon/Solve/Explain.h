@@ -23,7 +23,8 @@
 //              from_cache (the DP table was read from the cache),
 //              sites (the IR functions of a joint solve)
 //   scale      (solved sites) accuracy_scale S and baseline_accuracy_cost A0:
-//              an accuracy cost a is the modelled relative error (A0 + a) / S;
+//              an accuracy cost a is the modelled relative error (A0 + a) / S,
+//              or its square root when the profile records second moments;
 //              profiled_cost, the cost-model units the profiled run spent, a
 //              cost share is a fraction of; kappa, kappa_mark and kappa_factor
 //              when the profiling run measured a condition number
@@ -58,8 +59,9 @@
 //              c_type (the C type of to; empty for an expansion), words (to
 //              in an explanation) and the indices of its ops), cost_delta,
 //              modelled_error, modelled_domain_error (of a product: its
-//              relative output error, its term of modelled_error under a
-//              target), herbie_error_bits, status ("applied", "pareto",
+//              relative output error, under a target its term of
+//              modelled_error, or of its square in the second moment),
+//              herbie_error_bits, status ("applied", "pareto",
 //              "rejected") and reason
 //   pareto     (solved sites) the frontier in cost order: budget (the
 //              -poseidon-cost-budget that selects the point; none for a point

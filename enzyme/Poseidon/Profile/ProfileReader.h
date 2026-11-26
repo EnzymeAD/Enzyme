@@ -15,6 +15,8 @@
 #ifndef POSEIDON_PROFILE_PROFILE_READER_H
 #define POSEIDON_PROFILE_PROFILE_READER_H
 
+#include "Core/ErrorMoment.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -45,6 +47,13 @@ struct ProfileInfo {
   /// Sum of |gradient|, the accuracy weight: the signed sum understates a value
   /// whose adjoint alternates in sign.
   double sumAbsGrad = 0.0;
+  /// Sums of gradient^2 and of (gradient x value)^2, the accuracy weight and
+  /// sensitivity of the second moment; read only when `hasSecondMoments`.
+  double sumSqGrad = 0.0;
+  double sumSqSens = 0.0;
+  /// Whether the profile records sumSqGrad and sumSqSens. A profile records
+  /// them in every record or in none.
+  bool hasSecondMoments = false;
   /// Number of times the instruction was executed in the profiling run.
   uint64_t exec = 0;
   /// Per operand; minMagOperands is the smallest nonzero |operand|, 0 if the
@@ -96,6 +105,9 @@ struct SiteProfileData {
   ProfileMap map;
   /// The profile's header.
   SiteProfileHeader header;
+  /// The moment its records are read in: the second when they record the
+  /// squared sums.
+  ErrorMoment moment = ErrorMoment::First;
   /// The canonical form hash of the site, as computed for this compile.
   std::string canonicalHash;
 };
@@ -129,10 +141,11 @@ llvm::Error requireMeasuredKappa(const SiteProfileHeader &header,
 /// the gradients of values of very different magnitude are not comparable:
 ///   ref      = max over profiled instructions of sumSens / exec
 ///   floor(v) = 1e-6 * ref * exec_v / max |v|
-/// A raised weight is written back into sumGrad and sumAbsGrad. A
-/// per-execution sensitivity below 1e-9 of ref is reported. A value that is
-/// always zero is left as it is. Returns the number of instructions whose
-/// weight was raised.
+/// A raised weight is written back into sumGrad and sumAbsGrad, and the
+/// squared gradient sum the floored per-execution gradient implies into
+/// sumSqGrad. A per-execution sensitivity below 1e-9 of ref is reported. A
+/// value that is always zero is left as it is. Returns the number of
+/// instructions whose weight was raised.
 unsigned applySensitivityFloor(ProfileMap &profileMap,
                                llvm::StringRef functionName, bool print);
 
@@ -141,7 +154,9 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
 /// error is its first-order error over its own total sensitivity, so every
 /// instruction is weighted by the largest of its per-output gradients, each
 /// divided by that output's total; summed over a site this bounds the worst
-/// output's error, and the site's accuracy scale is 1.
+/// output's error, and the site's accuracy scale is 1. The squared sums are
+/// merged alike, each over that output's total squared sensitivity; an output
+/// profile records them when the site's profile does.
 llvm::Error mergeOutputProfiles(ProfileMap &profileMap,
                                 llvm::ArrayRef<std::string> dirs,
                                 llvm::StringRef fileName,

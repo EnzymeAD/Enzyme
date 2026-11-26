@@ -588,7 +588,9 @@ void SubgraphCores::nameInputs(int &symbolCounter) {
 Expected<std::optional<EligibleOutput>>
 SubgraphCores::eligible(Instruction *output) const {
   FPNode &node = *G.valueToNodeMap[output];
-  if (node.grad == 0.) {
+  const double grad =
+      subgraph.moment == ErrorMoment::First ? node.grad : node.sqGrad;
+  if (grad == 0.) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Skipping zero gradient instruction: "
                    << *output << '\n';
@@ -617,7 +619,7 @@ SubgraphCores::eligible(Instruction *output) const {
                    << expr << '\n';
     return std::nullopt;
   }
-  return EligibleOutput{output, std::move(expr), node.grad, node.executions};
+  return EligibleOutput{output, std::move(expr), grad, node.executions};
 }
 
 Error SubgraphCores::addCores(ArrayRef<Value *> roots, ArrayRef<double> grads,
@@ -874,10 +876,11 @@ struct RegimeArmStats {
 struct ElementPricing {
   FPNode *node;
   // The output's original expression, its values at the samples, and its
-  // mean error there.
+  // mean error there, in `moment`, its subgraph's.
   const FPNode *orig = nullptr;
   const SubgraphSamples::Reference *ref = nullptr;
   double origCost = 0.0;
+  ErrorMoment moment = ErrorMoment::First;
   const std::string *exprForLog = nullptr;
   SmallVector<const FPNode *, 2> ifNodes;
 
@@ -942,7 +945,7 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
       break;
     }
 
-    double error = sampleError(goldVal, realVal);
+    double error = sampleError(goldVal, realVal, E.moment);
     if (!std::isnan(error)) {
       sum += error;
       ++count;
@@ -1031,7 +1034,7 @@ static void takeRound(const Options &O, ElementPricing &E, const RoundWork &W) {
                 [&](const RegimeArm &arm) { return E.starved(O, arm); }))
       continue;
     double origError = W.ref->error[p];
-    double error = sampleError(W.ref->gold[p], W.values[p]);
+    double error = sampleError(W.ref->gold[p], W.values[p], E.moment);
     if (std::isnan(error) || std::isnan(origError))
       continue;
     for (const RegimeArm &arm : W.arms[p]) {
@@ -1230,6 +1233,7 @@ RewriteAccuracy::prepare(const AlgebraicCandidate &candidate) const {
     E.orig = rootSamples[k].node;
     E.ref = rootSamples[k].ref;
     E.origCost = rootSamples[k].error;
+    E.moment = RU.subgraph->moment;
     E.exprForLog = &candidate.expr;
     if (O.Model.AlgebraicMinRegimeSamples > 0) {
       SmallPtrSet<const FPNode *, 32> seenIfs;

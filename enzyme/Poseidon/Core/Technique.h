@@ -21,6 +21,7 @@
 #ifndef POSEIDON_CORE_TECHNIQUE_H
 #define POSEIDON_CORE_TECHNIQUE_H
 
+#include "Core/ErrorMoment.h"
 #include "Core/FPNode.h"
 #include "Core/Session.h"
 #include "Core/Unit.h"
@@ -53,16 +54,20 @@ struct SiteState : FPGraph, AttachedStates {
   /// The accuracy target the site is solved against: the one written at the
   /// site, else -poseidon-tau; 0 for none.
   double target = 0.0;
-  /// Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
-  /// costs carry; the denominator that turns an accuracy cost into a
-  /// per-operation relative rounding level.
+  /// Sum of the profile's per-slot sumSens (sumSqSens in the second moment),
+  /// times the kappa factor the accuracy costs carry; the denominator that
+  /// turns an accuracy cost into a per-operation relative rounding level
+  /// (relativeError).
   double accScale = 0.0;
+  /// The moment the site's accuracy costs are summed in, its profile's.
+  ErrorMoment moment = ErrorMoment::First;
   /// What the profiled run spent in the site, in cost-model units: the
   /// execution count times the price of every operation the profile records.
   double profiledCost = 0.0;
   /// The factor the accuracy costs were multiplied by to put them on the
-  /// application's scale: kappa over the summed sensitivity, 1 without a
-  /// measured kappa.
+  /// application's scale: kappa over the summed sensitivity (the square of
+  /// kappa over the root of the summed squared sensitivity in the second
+  /// moment), 1 without a measured kappa.
   double scaleFactor = 1.0;
   /// The accumulating operations of the reduction loops a technique
   /// recognized, each of which -poseidon-subgraph-reductions admits as an FP

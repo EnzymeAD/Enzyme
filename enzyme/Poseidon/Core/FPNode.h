@@ -15,6 +15,8 @@
 #ifndef POSEIDON_CORE_FPNODE_H
 #define POSEIDON_CORE_FPNODE_H
 
+#include "Core/ErrorMoment.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -80,6 +82,9 @@ public:
   /// The accuracy weight: |gradient| of the declared metric with respect to
   /// the value, summed over the profiled executions; NaN without a record.
   double grad = std::numeric_limits<double>::quiet_NaN();
+  /// The second moment's weight, gradient^2 summed over the profiled
+  /// executions; NaN when the profile records no second moments.
+  double sqGrad = std::numeric_limits<double>::quiet_NaN();
   /// How often the profiling run executed the operation.
   uint64_t executions = 0;
 
@@ -137,6 +142,12 @@ protected:
   double lb = std::numeric_limits<double>::infinity();
   double ub = -std::numeric_limits<double>::infinity();
 };
+
+/// The weight of `node`'s sampled error in moment `m`: its summed |gradient|,
+/// or its summed squared gradient.
+inline double accuracyWeight(const FPNode &node, ErrorMoment m) {
+  return m == ErrorMoment::First ? std::fabs(node.grad) : node.sqGrad;
+}
 
 class FPLLValue;
 /// The number of operations input `V` is spelled as in a Herbie core, or 0 if
@@ -230,6 +241,8 @@ struct Subgraph {
   size_t outputsRewritten = 0;
   /// The points its units are priced at, while they are priced.
   std::shared_ptr<SubgraphSamples> samples;
+  /// The moment its accuracy costs are summed in, its site's.
+  ErrorMoment moment = ErrorMoment::First;
 
   Subgraph() = default;
   explicit Subgraph(llvm::SetVector<llvm::Value *> inputs,
