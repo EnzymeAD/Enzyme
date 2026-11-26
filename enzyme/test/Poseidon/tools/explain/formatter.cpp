@@ -1,5 +1,6 @@
-// poseidon-explain's formats on recorded explanations, and its errors on
-// overlapping rewrites, ASTs and explanations it cannot read.
+// poseidon-explain's formats on recorded explanations, the modelled times of a
+// site whose memory traffic is priced, and its errors on overlapping rewrites,
+// ASTs and explanations it cannot read.
 // DEFINE: %{explain} = %poseidon_explain %t/formatter/cancellation.explain.json
 // RUN: rm -rf %t && split-file %s %t
 // RUN: %{explain} --format report | FileCheck --check-prefix=REPORT %s
@@ -11,6 +12,7 @@
 // RUN: not %poseidon_explain %t/formatter --function no_such_site 2>&1 | FileCheck --check-prefix=NOMATCH %s
 // RUN: %poseidon_explain %t/formatter/rotation.explain.json --format source --source %t/formatter_rotation.cpp --clang %clang | FileCheck --check-prefix=ROT-SOURCE %s
 // RUN: %poseidon_explain %t/formatter/rotation.explain.json --format report | FileCheck --check-prefix=ROT-REPORT %s
+// RUN: %poseidon_explain %t/formatter/memory_kept.explain.json %t/formatter/memory_taken.explain.json --format report | FileCheck --check-prefix=MEMORY %s
 // RUN: %{explain} %t/formatter/overlap.explain.json --format source --source %t/formatter.cpp --clang %clang 2>&1 | FileCheck --check-prefix=OVERLAP %s
 // RUN: %poseidon_explain %t/formatter/mixed.explain.json --format source --source %t/formatter_rotation.cpp --clang %clang | FileCheck --check-prefix=MIXED %s
 // RUN: not %{explain} --format source --source %t/formatter.cpp --clang echo 2>&1 | FileCheck --check-prefix=BADAST --implicit-check-not=Traceback %s
@@ -70,6 +72,19 @@
 // ROT-REPORT-NEXT: output 1 (formatter_rotation.cpp:16:22): y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))
 // ROT-REPORT: profile: y in [-0.5, -0.05], x in [0.001, 1], z in [0.02, 0.06]; 1000 executions; 11 operations; cost 1
 // ROT-REPORT-NEXT: applied P0_10 (precision): Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations)
+
+// MEMORY: Poseidon site shortpoly(int, double const*, double*)  [_Z9shortpolyiPKdPd]
+// MEMORY-NEXT: accuracy target tau = 1e-06; cost model cm_sm_120_synthetic_stream.csv; selector dp
+// MEMORY-NEXT: as written:   modelled error 8e-18, cost 1
+// MEMORY-NEXT: with Poseidon: modelled error 8e-18, cost 1 (+0%); applied nothing
+// MEMORY-NEXT: memory traffic: arithmetic 4.2e+06 -> 5.3e+05, memory 8.4e+06, combined 8.4e+06 -> 8.4e+06 (pnorm 64); modelled speedup 1, band 0.05; not taken, the code as written stays{{$}}
+// MEMORY-NEXT: as written: the selected frontier point is not faster than the code as written once the memory traffic is priced{{$}}
+// MEMORY-EMPTY:
+// MEMORY-NEXT: Poseidon site midpoly(int, double const*, double*)  [_Z7midpolyiPKdPd]
+// MEMORY-NEXT: accuracy target tau = 1e-06; cost model cm_sm_120_synthetic_stream.csv; selector dp
+// MEMORY-NEXT: as written:   modelled error 1.5e-17, cost 1
+// MEMORY-NEXT: with Poseidon: modelled error 1.8e-08, cost 0.0644531 (-94%); applied P0_0
+// MEMORY-NEXT: memory traffic: arithmetic 8.4e+06 -> 5.4e+05, memory 8.4e+06, combined 8.5e+06 -> 8.4e+06 (pnorm 64); modelled speedup 1.011, band 0.05, inside the band; taken{{$}}
 
 // A second explanation of kernel applies A1_1 to the expression A0_1 rewrote.
 // OVERLAP: poseidon-explain: A1_1 overlaps an earlier rewrite; shown as a comment
@@ -190,3 +205,18 @@ __attribute__((noinline)) void rotation(const double *w, double *q, int n) {
           {"loc": {"file": "formatter_rotation.cpp", "line": 14, "col": 16}, "opcode": "cos", "float_call": "cosf"}],
   "alternatives": [{"id": "P0_10", "kind": "precision", "status": "applied", "changes": [{"ops": [5], "to": "FP32", "c_type": "float", "words": "float"}, {"ops": [7], "to": "FP16", "c_type": "_Float16", "words": "half"}],
    "summary": "sin (13:16) in float and cos (14:16) in half"}]}]}
+//--- formatter/memory_kept.explain.json
+{"schema": "poseidon-explain/1",
+ "function": {"name": "shortpoly(int, double const*, double*)", "symbol": "_Z9shortpolyiPKdPd"},
+ "target": {"cost_model": "cm_sm_120_synthetic_stream.csv", "selector": "dp", "tau": 1e-06, "tau_from": "flag"},
+ "result": {"applied": [], "cost_after": 1, "cost_before": 1, "modelled_rel_error": 7.965018429799085e-18, "modelled_rel_error_as_written": 7.965018429799085e-18,
+  "reason": "the selected frontier point is not faster than the code as written once the memory traffic is priced", "status": "as_written",
+  "time": {"arithmetic_as_written": 4194304, "arithmetic_selected": 532480, "band": 0.05, "combined_as_written": 8388608, "combined_selected": 8388608,
+   "inside_band": false, "memory": 8388608, "modelled_speedup": 1, "pnorm": 64, "taken": false}}}
+//--- formatter/memory_taken.explain.json
+{"schema": "poseidon-explain/1",
+ "function": {"name": "midpoly(int, double const*, double*)", "symbol": "_Z7midpolyiPKdPd"},
+ "target": {"cost_model": "cm_sm_120_synthetic_stream.csv", "selector": "dp", "tau": 1e-06, "tau_from": "flag"},
+ "result": {"applied": ["P0_0"], "cost_after": 0.064453125, "cost_before": 1, "modelled_rel_error": 1.8299647732257553e-08, "modelled_rel_error_as_written": 1.4636688611005975e-17, "status": "rewritten",
+  "time": {"arithmetic_as_written": 8388608, "arithmetic_selected": 540672, "band": 0.05, "combined_as_written": 8479953.952087583, "combined_selected": 8388608,
+   "inside_band": true, "memory": 8388608, "modelled_speedup": 1.0108892860517005, "pnorm": 64, "taken": true}}}

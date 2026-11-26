@@ -150,6 +150,7 @@
 ; SOLVE-NEXT: 1.516270e-13		-2.048000e+03		All FP64(30%) + FP32(70%)
 ; SOLVE-NOT: Applying solution
 ; SOLVE: [poseidon] preprocess__Z3dotPKdS0_Pdii_poseidon_body: tau=5.000000e-11 S=1.612859e+07 A0=5.545200e-29 selected cost=0.000000e+00 accCost=0.000000e+00 rel=1.854217e-18
+; SOLVE-NEXT: [poseidon] preprocess__Z3dotPKdS0_Pdii_poseidon_body: memory traffic not priced, the cost model has no stream rows; the arithmetic decides
 ; SOLVE-NEXT: [poseidon] pin: {{$}}
 ; SOLVE-NOT: Applying solution
 ; SOLVE: [poseidon] no rewrite applied for preprocess__Z3dotPKdS0_Pdii_poseidon_body; calling original body _Z3dotPKdS0_Pdii_poseidon_body (bit-transparent no-op)

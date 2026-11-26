@@ -9,8 +9,11 @@ measurement; each only makes the orderings the tests exercise hold):
   cm_gfx942_synthetic.csv  1 per float and 64 per double operation
   cm_sm_120_synthetic.csv  gpu_rows() with three in-kernel classes; _library
                            adds the library calls but TCEC, _tcec that too,
-                           _half half at half the float price; cm_sm_90 the
-                           same under sm_90
+                           _half half at half the float price, _stream
+                           streamed traffic at 1024 per double and 512 per
+                           float element moved, combined with p = 64 and a
+                           band of 5%, _stream_partial that without the band;
+                           cm_sm_90 the same under sm_90
   cm_sm_120_synthetic_floor_subnormal.csv  _library with every class's
                            operand floor at its format's smallest subnormal;
                            _floor_normal at its smallest normal
@@ -73,6 +76,9 @@ LIBRARY_ROWS = [("library_direct_rel,f16_f32", 2),
            [("library_ozaki_rel,nm%d" % k, k) for k in range(8, 15)] + \
            [("library_ozaki_rel,dgemm", 128)]
 TCEC_LIBRARY_ROWS = [("library_tcec_rel,fp16tcec", 7)]
+STREAM = ["stream_load,double,1024", "stream_store,double,1024",
+          "stream_load,float,512", "stream_store,float,512",
+          "stream_combine,pnorm,64", "stream_combine,band,0.05"]
 
 # The smallest normal and subnormal exponents of each narrow operand format,
 # and the classes whose operands are in it.
@@ -187,6 +193,10 @@ def main():
                if "tf32" not in r] +
               [r for r in floor_rows(level, {"library_direct_operand_min"})
                if "tf32" not in r])
+    write(out, "cm_sm_120_synthetic_stream.csv",
+          [gpu, "# native_arch=sm_120", types], gpu_rows() + STREAM)
+    write(out, "cm_sm_120_synthetic_stream_partial.csv",
+          [gpu, "# native_arch=sm_120", types], gpu_rows() + STREAM[:-1])
     write(out, "cm_sm_90_synthetic.csv",
           [gpu, "# native_arch=sm_90", types], gpu_rows())
     if len(sys.argv) > 3:

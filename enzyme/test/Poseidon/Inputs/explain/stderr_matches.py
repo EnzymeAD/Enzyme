@@ -37,6 +37,27 @@ for line in log:
         if got != list(m.groups()[1:]):
             fail("%s: %s against %s" % (ir, got, list(m.groups()[1:])))
 
+TIME = re.compile(r"^\[poseidon\] (\S+): arithmetic (\S+) -> (\S+), memory (\S+), "
+                  r"combined \(pnorm (\S+)\) (\S+) -> (\S+), modelled speedup (\S+), "
+                  r"band (\S+): (.+)$")
+UNPRICED = re.compile(r"^\[poseidon\] (\S+): memory traffic not priced")
+for line in log:
+    m = TIME.match(line)
+    if m:
+        doc = docs.get(m.group(1)) or fail("no explanation of " + m.group(1))
+        t = doc["result"].get("time") or fail(m.group(1) + ": no time")
+        got = [e(t[k]) for k in ("arithmetic_as_written", "arithmetic_selected", "memory", "pnorm",
+                                 "combined_as_written", "combined_selected", "modelled_speedup", "band")]
+        if got != list(m.groups()[1:9]):
+            fail("%s: %s against %s" % (m.group(1), got, list(m.groups()[1:9])))
+        if t["taken"] != (not m.group(10).startswith("not cheaper")):
+            fail(m.group(1) + ": taken")
+    m = UNPRICED.match(line)
+    if m:
+        for ir in m.group(1).split(","):
+            if "time" in (docs.get(ir) or fail("no explanation of " + ir))["result"]:
+                fail(ir + ": a time with the traffic not priced")
+
 applying = [l[len("[poseidon] Applying solution for "):] for l in log if l.startswith("[poseidon] Applying solution for ")]
 pins = [l[len("[poseidon] pin: "):] for l in log if l.startswith("[poseidon] pin: ")]
 choices = [s["choice"] for d in docs.values() for s in d["result"].get("steps", [])]

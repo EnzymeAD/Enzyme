@@ -48,7 +48,9 @@ foreach(
   sm_120_synthetic_floor_subnormal
   sm_120_synthetic_floor_normal
   gfx90a_synthetic_floor_subnormal
-  gfx90a_synthetic_floor_normal)
+  gfx90a_synthetic_floor_normal
+  sm_120_synthetic_stream
+  sm_120_synthetic_stream_partial)
   list(APPEND _outputs ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
 endforeach()
 set(_platforms "")
