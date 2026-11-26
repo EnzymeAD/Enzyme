@@ -97,7 +97,7 @@ llvm::cl::opt<bool>
                    cl::desc("Use fast math on derivative compuation"));
 llvm::cl::opt<bool> EnzymeMemmoveWarning(
     "enzyme-memmove-warning", cl::init(true), cl::Hidden,
-    cl::desc("Warn if using memmove implementation as a fallback for memmove"));
+    cl::desc("Unused: the derivative of memmove is implemented"));
 llvm::cl::opt<bool> EnzymeRuntimeError(
     "enzyme-runtime-error", cl::init(false), cl::Hidden,
     cl::desc("Emit Runtime errors instead of compile time ones"));
@@ -1417,14 +1417,19 @@ Function *getOrInsertAtomicFloatMinMax(Module &M, Type *T,
   return F;
 }
 
-/// Create function for type that is equivalent to memcpy but adds to
-/// destination rather than a direct copy; dst, src, numelems
-Function *getOrInsertDifferentialFloatMemcpy(
+/// Create the adjoint of a copy of numelems floating-point elements from src
+/// to dst: add the derivative of each dst element to that of its src element
+/// and zero it. For a memmove (`overlap`), the ranges may overlap; then each
+/// element must be read and zeroed as a destination before it gains the
+/// derivative of the element copied to it as a source (an element of src that
+/// is also one of dst, `src - dst` bytes on). The elements are visited from
+/// the last one if src is above dst, and from the first one otherwise.
+static Function *getOrInsertDifferentialFloatCopy(
     Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
-    bool atomic) {
+    bool atomic, bool overlap) {
   assert(elementType->isFloatingPointTy());
-  std::string name = "__enzyme_memcpy";
+  std::string name = overlap ? "__enzyme_memmove" : "__enzyme_memcpy";
   if (bitwidth != 64)
     name += std::to_string(bitwidth);
   name += "add_" + tofltstr(elementType) + "da" + std::to_string(dstalign) +
@@ -1522,7 +1527,18 @@ Function *getOrInsertDifferentialFloatMemcpy(
     idx->addIncoming(ConstantInt::get(num->getType(), 0),
                      runtimeActivity ? checkSrc : entry);
 
-    Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
+    // The element of this iteration.
+    Value *elem = idx;
+    if (overlap) {
+      Value *srcInt = B.CreatePtrToInt(src, num->getType());
+      Value *dstInt = B.CreatePtrToInt(dst, num->getType());
+      Value *backward = B.CreateICmpUGT(srcInt, dstInt, "backward");
+      Value *last = B.CreateNUWSub(
+          B.CreateNUWSub(num, ConstantInt::get(num->getType(), 1)), idx);
+      elem = B.CreateSelect(backward, last, idx, "elem");
+    }
+
+    Value *dsti = B.CreateInBoundsGEP(elementType, dst, elem, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
 
@@ -1565,7 +1581,7 @@ Function *getOrInsertDifferentialFloatMemcpy(
       dsts->setAlignment(Align(dstalign));
     }
 
-    Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
+    Value *srci = B.CreateInBoundsGEP(elementType, src, elem, "src.i");
     if (atomic) {
       B.CreateAtomicRMW(AtomicRMWInst::BinOp::FAdd, srci, dstl,
                         MaybeAlign(srcalign), AtomicOrdering::Monotonic,
@@ -2739,17 +2755,26 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
   return F;
 }
 
-// TODO implement differential memmove
+/// Create function for type that is equivalent to memcpy but adds to
+/// destination rather than a direct copy; dst, src, numelems
+Function *getOrInsertDifferentialFloatMemcpy(
+    Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic) {
+  return getOrInsertDifferentialFloatCopy(M, elementType, dstalign, srcalign,
+                                          dstaddr, srcaddr, bitwidth,
+                                          runtimeActivity, atomic,
+                                          /*overlap*/ false);
+}
+
+/// As getOrInsertDifferentialFloatMemcpy, for a copy whose source and
+/// destination may overlap.
 Function *getOrInsertDifferentialFloatMemmove(
     Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
     unsigned srcaddr, unsigned bitwidth, bool runtimeActivity, bool atomic) {
-  if (EnzymeMemmoveWarning)
-    llvm::errs()
-        << "warning: didn't implement memmove, using memcpy as fallback "
-           "which can result in errors\n";
-  return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth, runtimeActivity,
-                                            atomic);
+  return getOrInsertDifferentialFloatCopy(M, T, dstalign, srcalign, dstaddr,
+                                          srcaddr, bitwidth, runtimeActivity,
+                                          atomic, /*overlap*/ true);
 }
 
 FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
