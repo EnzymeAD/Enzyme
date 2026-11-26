@@ -84,3 +84,12 @@ TypeTreeAttr mlir::enzyme::getTypeTreeAttr(MLIRContext *context,
   return getTypeTreeNode(context, mapping.begin(), mapping.end(),
                          /*depth=*/0);
 }
+
+MTypeTree mlir::enzyme::pointerTo(MTypeTree pointee) {
+  pointee.insert({}, BaseType::Pointer);
+  return pointee.Only(-1, nullptr);
+}
+
+MTypeTree mlir::enzyme::everywhere(MConcreteType type) {
+  return MTypeTree(type).Only(-1, nullptr);
+}
