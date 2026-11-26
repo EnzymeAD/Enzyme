@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/Inputs/launch_stub_cache/launches_*.json %t/
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/launch_stub_cache -mllvm -poseidon-cache=%t -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
-; Host-side launches replaced by library dispatches, which read their operands from the launch's argument array, from the descriptors in the manifest of hoststub.cu, unit fixture, in Inputs/launch_stub_cache (a square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one); the pass runs at PipelineStart of the clang pipeline, which is why this drives clang on IR. Host IR from clang -x cuda --cuda-host-only -O0 -S -emit-llvm of
+; Host-side launches replaced by library calls, which read their operands from the launch's argument array, from the descriptors in the manifest of hoststub.cu, unit fixture, in Sites/Inputs/launch_stub_cache (a square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one); the pass runs at PipelineStart of the clang pipeline, which is why this drives clang on IR. Host IR from clang -x cuda --cuda-host-only -O0 -S -emit-llvm of
 ;   __global__ void gemm_kernel(const double *A, const double *B, double *C) {}
 ;   __global__ void gemm_tall_kernel(const double *A, const double *B, double *C,
 ;                                    int ncols) {}

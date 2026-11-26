@@ -22,7 +22,7 @@
 // RUN: not %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 12x 2>&1 | FileCheck --check-prefix=BAD %s
 // RUN: not %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x16x648 2>&1 | FileCheck --check-prefix=BAD %s
 
-// FIRST: poseidon-calibrate: measuring ozaki-rect host dispatch
+// FIRST: poseidon-calibrate: measuring ozaki-rect library call
 // FIRST: library_ozaki_rect_rel,nm8_m125k648,
 // FIRST: library_ozaki_rect_rel,nm14_m125k648,
 // FIRST: library_ozaki_rect_rel,nm8_m216k1029,
@@ -31,10 +31,10 @@
 // AGAIN: = 125x648 already measured
 // AGAIN-NOT: measuring
 
-// FORCE: poseidon-calibrate: measuring ozaki-rect host dispatch
+// FORCE: poseidon-calibrate: measuring ozaki-rect library call
 
 // FULL-NOT: already measured
-// FULL: poseidon-calibrate: measuring ozaki-rect host dispatch
+// FULL: poseidon-calibrate: measuring ozaki-rect library call
 // FULL: library_ozaki_rect_rel,nm8_m125n16k648,
 // FULL: library_ozaki_rect_rel,nm14_m125n16k648,
 // FULL: library_ozaki_rect_rel,dgemm_m125n16k648,

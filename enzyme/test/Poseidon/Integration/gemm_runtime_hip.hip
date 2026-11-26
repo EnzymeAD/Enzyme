@@ -1,4 +1,4 @@
-// The GEMM dispatch runtimes compiled as HIP, on hipBLAS, against
+// The library call runtimes compiled as HIP, on hipBLAS, against
 // hipblasDgemm (Inputs/gemm_runtime.cpp): every Ozaki-II case returns the bits
 // the CUDA runtime returns on an RTX 5090, and every direct mode but TF32,
 // which HIP lacks, stays within its a priori bound; an empty contraction

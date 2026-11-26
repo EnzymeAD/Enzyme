@@ -183,7 +183,7 @@ endforeach()
 # POSEIDON_AMDGPU_ARCH. HIP marks its error type nodiscard; the sources drop
 # the same results their CUDA builds drop.
 if(POSEIDON_HAS_HIP)
-  # hip_as_cuda.h, which every HIP build includes, includes hipBLAS.
+  # HipAsCuda.h, which every HIP build includes, includes hipBLAS.
   if(NOT EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
     message(
       FATAL_ERROR
@@ -257,14 +257,14 @@ set(POSEIDON_SRC
     Pass/Pipeline.cpp
     Model/Evaluators.cpp
     Techniques/Precision/Expansion.cpp
-    Techniques/Precision/ExpansionModel.cpp
+    Model/ExpansionModel.cpp
     Solve/Explain.cpp
     Pass/Flags.cpp
     Model/FPKind.cpp
     Techniques/Rewrite/Rewrite.cpp
     Model/FPCore.cpp
     Techniques/Rewrite/HerbieRun.cpp
-    Pass/Options.cpp
+    Support/Options.cpp
     Support/Parallel.cpp
     Solve/DP.cpp
     Support/UniformReal.cpp
@@ -288,7 +288,7 @@ set(POSEIDON_SRC
     Techniques/SiteUnit.cpp
     Model/FPNode.cpp
     Support/Utils.cpp
-    Pass/Diagnostics.cpp
+    Support/Diagnostics.cpp
     Techniques/Matmul/Accuracy.cpp
     Techniques/Matmul/Matmul.cpp
     Techniques/Matmul/Simulation.cpp
@@ -396,7 +396,7 @@ add_subdirectory(tools)
 
 # The Herbie the pass runs by default (tools/CMakeLists.txt).
 set_source_files_properties(
-  Pass/Options.cpp
+  Support/Options.cpp
   PROPERTIES
     COMPILE_DEFINITIONS
     POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")

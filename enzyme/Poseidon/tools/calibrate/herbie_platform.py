@@ -107,7 +107,7 @@ def cost(costs: Dict[Tuple[str, str], float],
         return costs[(op, precision)]
     raise RuntimeError(
         f"csv has no cost row {op},{precision}; measure it with "
-        f"poseidon-calibrate --force --only microbm"
+        f"poseidon-calibrate --force --only ops"
     )
 
 

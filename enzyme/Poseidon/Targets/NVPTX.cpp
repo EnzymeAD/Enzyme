@@ -53,9 +53,9 @@ static constexpr LaunchValue kSregValue[3] = {
 namespace {
 
 #ifdef POSEIDON_DEVICE_PROFILER
-// runtime/profile/DeviceProbes.cu, compiled by the build to NVPTX
+// runtime/profile/DeviceProfilerDevice.cu, compiled by the build to NVPTX
 // bitcode.
-#include "FPProfilerDevice.inc"
+#include "DeviceProfilerDevice.inc"
 #endif
 
 class NVPTXTarget final : public Target {

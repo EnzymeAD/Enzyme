@@ -4,7 +4,7 @@
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-12 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -poseidon-print -S -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --implicit-check-not='wrote descriptor' %s
 
@@ -14,7 +14,7 @@
 
 ; CHECK: Matmul[0]: 256x1x16 type=f64 origin=ConstantShape
 ; CHECK: [poseidon] preprocess_fused_body: the profile does not give the extent of the product's rows and columns
-; CHECK-NEXT: [poseidon] matmul[0] 256x1x16: host-dispatched Ozaki-II not proposed: the body is not a host-dispatchable GEMM
+; CHECK-NEXT: [poseidon] matmul[0] 256x1x16: library-call Ozaki-II not proposed: the body is not a library-call GEMM
 
 source_filename = "fused_index.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

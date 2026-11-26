@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 //
 // The state the two halves of the CUDA profiler share: the device half
-// (FPProfilerDevice.cu) updates it, the host half (FPProfilerCUDA.cu) allocates
-// it and writes the profile from it.
+// (DeviceProfilerDevice.cu) updates it, the host half (DeviceProfilerHost.cu)
+// allocates it and writes the profile from it.
 //
 //===----------------------------------------------------------------------===//
 
@@ -82,12 +82,12 @@ POSEIDON_HD inline double orderedUint64ToDoubleMin(uint64_t stored) {
   return orderedUint64ToDouble(~stored);
 }
 
-// `v` computed at the relative precision `eps`: the condition-number probe's
-// perturbation of a probed site's values, on the host and the device alike.
+// `v` computed at the relative precision `eps`: a kappa run's
+// perturbation of the measured site's values, on the host and the device alike.
 // The sign is a hash of the value's bits: a uniform (1+eps) factor commutes
 // through linear operations and cancellations ((1+eps)x - (1+eps)y =
-// (1+eps)(x-y)), hiding exactly the cancellation amplification the probe must
-// expose, while a deterministic +/-eps keyed on the value's bits models
+// (1+eps)(x-y)), hiding exactly the cancellation amplification the kappa run
+// must expose, while a deterministic +/-eps keyed on the value's bits models
 // independent per-operation rounding and stays reproducible across runs.
 POSEIDON_HD inline double poseidonPerturbed(double v, double eps) {
   uint64_t b;
@@ -140,7 +140,7 @@ struct DeviceProfileTable {
   // through the same pointer-keyed registry the names use and copied verbatim
   // into the .fpprofile header. [maxFuncs][POSEIDON_PROFILE_STATIC_MAXLEN]
   char *staticByFunc;
-  // Condition-number probe: one site id per run; eps == 0 disables it.
+  // Kappa run: one site id per run; eps == 0 disables it.
   double kappaEps;
   int kappaSite;
   // Nonzero in a run of the condition-number measurement, which reads only

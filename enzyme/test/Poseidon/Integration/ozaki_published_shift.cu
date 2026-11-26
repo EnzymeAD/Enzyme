@@ -1,5 +1,5 @@
 // The Ozaki-II runtime scales operands by the fast mode of GEMMul8 v3.1.1
-// (arXiv:2504.08009, arXiv:2606.29129; ozaki_rt.cu): a row a of A
+// (arXiv:2504.08009, arXiv:2606.29129; OzakiII.cu): a row a of A
 // is multiplied by 2^floor(log2P - log2||a||_2) and truncated toward zero.
 // With B = I every column of B has norm 1, so C = trunc(2^sft a) / 2^sft
 // shows each quantized row. nm = 10, log2P = 39.1204758:
@@ -16,7 +16,7 @@
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
-#include "gemm/GemmDispatch.h"
+#include "gemm/LibraryCalls.h"
 #include <cmath>
 #include <cstdio>
 

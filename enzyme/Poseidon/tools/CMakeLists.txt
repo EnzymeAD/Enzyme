@@ -65,7 +65,7 @@ install(
 # --- poseidon-calibrate
 
 # The GPU programs it runs, one per GPU runtime of the build: the operation
-# microbenchmark, and the dispatch calibrator, which times the GEMM runtimes'
+# microbenchmark, and the library calibrator, which times the GEMM runtimes'
 # entry points and so links them.
 set(_calibrate_gpu_tools)
 if(POSEIDON_HAS_CUDA)

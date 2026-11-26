@@ -270,8 +270,8 @@ header, with the project's license text.
 
 | Code | Location | Source | License | Relation |
 | --- | --- | --- | --- | --- |
-| Two-component expansion routines | `Techniques/Precision/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
-| Three- and four-component expansion routines, two-component division | `Techniques/Precision/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
+| Two-component expansion routines | `Model/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
+| Three- and four-component expansion routines, two-component division | `Model/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
 | Herbie platform declarations | `tools/calibrate/herbie_platform.py` | [Herbie](https://github.com/herbie-fp/herbie) `src/platforms/c.rkt`, commit 73ba1fe | MIT | The declarations' form, with the cost model's costs and operations |
 | Reference routines of a test | `test/Poseidon/Inputs/expansion_match/multifloats_subset.h` | MultiFloats.jl, commit 28041a3 | MIT | Translated from Julia, statement for statement |
 | Reference routines of a test | `test/Poseidon/Inputs/expansion_match/mx_real_subset.h` | mX_real, commit 72a35d6 | BSD 2-Clause | QxW routines verbatim; mX_real's operator dispatch condensed |
@@ -286,7 +286,7 @@ implementation named.
 
 | Code | Location | Algorithm | Reference implementation |
 | --- | --- | --- | --- |
-| Ozaki-II GEMM runtime | `runtime/gemm/OzakiII.cu`, `runtime/gemm/Schemes.h` | K. Ozaki, Y. Uchino, T. Imamura, [arXiv:2504.08009](https://arxiv.org/abs/2504.08009); fast-mode scaling as in GEMMul8 v3.1.1, which attributes it to S. Kawakami, D. Takahashi, [arXiv:2606.29129](https://arxiv.org/abs/2606.29129) | [GEMMul8](https://github.com/RIKEN-RCCS/GEMMul8) v3.1.1 (MIT): its constants and residue method, computed from their definitions, so that results agree bit for bit |
+| Ozaki-II GEMM runtime | `runtime/gemm/OzakiII.cu`, `runtime/gemm/SchemeConstants.h` | K. Ozaki, Y. Uchino, T. Imamura, [arXiv:2504.08009](https://arxiv.org/abs/2504.08009); fast-mode scaling as in GEMMul8 v3.1.1, which attributes it to S. Kawakami, D. Takahashi, [arXiv:2606.29129](https://arxiv.org/abs/2606.29129) | [GEMMul8](https://github.com/RIKEN-RCCS/GEMMul8) v3.1.1 (MIT): its constants and residue method, computed from their definitions, so that results agree bit for bit |
 | Host simulation of the GEMM runtimes | `Techniques/Matmul/Simulation.cpp` | The Ozaki-II runtime above; TCEC, H. Ootomo, R. Yokota, IJHPCA 36(4), 2022 | GEMMul8 v3.1.1, cuMpSGEMM (MIT): their arithmetic, modeled |
 | In-kernel split scheme | `Techniques/Matmul/RealizeInKernel.cpp` | The two-slice split of S. Markidis et al. (IPDPSW 2018), with the residual scaled as Ootomo and Yokota scale it, generalized to N slices | none |
 

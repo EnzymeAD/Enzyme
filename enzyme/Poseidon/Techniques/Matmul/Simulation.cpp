@@ -14,7 +14,7 @@
 
 #include "Simulation.h"
 
-#include "runtime/gemm/Schemes.h"
+#include "runtime/gemm/SchemeConstants.h"
 
 #include <algorithm>
 #include <cassert>

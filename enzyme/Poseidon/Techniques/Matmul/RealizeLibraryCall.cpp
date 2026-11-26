@@ -1,4 +1,4 @@
-//===- RealizeLibraryCall.cpp - host-side GEMM library dispatch -----------===//
+//===- RealizeLibraryCall.cpp - host-side GEMM library call ---------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,22 +6,22 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// See HostDispatch.h.
+// See RealizeLibraryCall.h.
 //
 //===----------------------------------------------------------------------===//
 
 #include "RealizeLibraryCall.h"
 #include "Enzyme/Utils.h"
 #include "Internal.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Sites/Annotations.h"
 #include "Sites/LaunchManifest.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "runtime/gemm/GemmDispatch.inc"
+#include "runtime/gemm/LibraryCalls.inc"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -63,23 +63,23 @@ std::string runtimeDimString(const RuntimeDim &d) {
 }
 
 // Replaces the GEMM result where the epilogue consumes it with a load from the
-// output buffer that the prepended host dispatch fills, so the reduction loop
+// output buffer that the prepended library call fills, so the reduction loop
 // dies. F stores a value that reaches the product to an argument, as it does
 // when its constant-shape note is not standalone.
-static void fissionGemmForDispatch(const Options &O, Function &F,
-                                   const RecognizedMatmul &m) {
+static void fissionGemmForLibraryCall(const Options &O, Function &F,
+                                      const RecognizedMatmul &m) {
   StoreInst *cStore = productStore(F, m);
   assert(cStore &&
          "a body with a fused note stores the product to an argument");
 
   // Replace the GEMM result where the epilogue consumes it with a load from the
-  // output buffer (filled by the prepended host dispatch); the reduction loop
+  // output buffer (filled by the prepended library call); the reduction loop
   // becomes dead. In-loop (recurrence) uses stay.
   Value *resultVal = cStore->getValueOperand();
   Value *outAddr = cStore->getPointerOperand();
   IRBuilder<> B(cStore);
   LoadInst *loaded =
-      B.CreateLoad(resultVal->getType(), outAddr, "dispatch.gemm");
+      B.CreateLoad(resultVal->getType(), outAddr, "library.gemm");
   SmallVector<Use *, 8> repl;
   for (Use &U : resultVal->uses()) {
     User *user = U.getUser();
@@ -209,7 +209,7 @@ libraryCallNote(const Session &S, const RecognizedMatmul &m) {
 Error applyLibraryCall(Session &S, const RecognizedMatmul &m,
                        const GemmBodyNote &note, const SchemeVariant &v) {
   assert(
-      S.Opts.Matmul.MatmulLibraryCalls &&
+      S.Opts.Matmul.LibraryCalls &&
       "library calls are proposed only under -poseidon-matmul-library-calls");
   Function *F = const_cast<Function *>(anchorOf(m).getFunction());
   // One descriptor per body: the host replaces or precedes its kernel's launch
@@ -223,7 +223,7 @@ Error applyLibraryCall(Session &S, const RecognizedMatmul &m,
                          "-poseidon-matmul-library-calls for this body");
   S.Matmul.GemmBodies[F] = {note, v};
   if (!note.standalone)
-    fissionGemmForDispatch(S.Opts, *F, m);
+    fissionGemmForLibraryCall(S.Opts, *F, m);
   return Error::success();
 }
 
@@ -316,15 +316,15 @@ void writeGemmDescriptor(Session &S, Function &wrapper,
   emitMappedDescriptor(S, wrapper, call, launchArgsOf(primalArgs));
 }
 
-void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
-                            ArrayRef<Value *> primalArgs) {
+void addPendingLibraryCall(Session &S, const Function *body, Function &wrapper,
+                           ArrayRef<Value *> primalArgs) {
   S.Matmul.PendingGemms[body] = {wrapper.getName().str(),
                                  launchArgsOf(primalArgs)};
 }
 
-void flushPendingGemmDispatches(Session &S) {
+void flushPendingLibraryCalls(Session &S) {
   for (auto &[body, pg] : S.Matmul.PendingGemms)
-    // A site not materialized as a host dispatch has no note.
+    // A site not materialized as a library call has no note.
     if (auto n = S.Matmul.GemmBodies.find(body); n != S.Matmul.GemmBodies.end())
       emitMappedDescriptor(S, *body->getParent()->getFunction(pg.wrapperName),
                            n->second, pg.paramToArg);
@@ -342,22 +342,22 @@ struct LaunchDesc : GemmBodyNote {
 };
 } // namespace
 
-// The entry points of runtime/gemm/GemmDispatch.inc.
-static const char *dispatchSym(Scheme s) {
+// The entry points of runtime/gemm/LibraryCalls.inc.
+static const char *libraryCallSymbol(Scheme s) {
   switch (s) {
 #define POSEIDON_GEMM_ENTRY(Entry, Symbol)                                     \
   case Scheme::Entry:                                                          \
     return #Symbol;
 #define POSEIDON_GEMM_ENTRY_MODE(Entry, Symbol, Mode)                          \
   POSEIDON_GEMM_ENTRY(Entry, Symbol)
-#include "runtime/gemm/GemmDispatch.inc"
+#include "runtime/gemm/LibraryCalls.inc"
   }
   llvm_unreachable("unknown Scheme");
 }
 
 // Whether the entry takes a last Mode parameter, the descriptor's modulus
 // field.
-static bool dispatchHasMode(Scheme s) {
+static bool libraryCallHasMode(Scheme s) {
   switch (s) {
 #define POSEIDON_GEMM_ENTRY(Entry, Symbol)                                     \
   case Scheme::Entry:                                                          \
@@ -365,12 +365,12 @@ static bool dispatchHasMode(Scheme s) {
 #define POSEIDON_GEMM_ENTRY_MODE(Entry, Symbol, Mode)                          \
   case Scheme::Entry:                                                          \
     return true;
-#include "runtime/gemm/GemmDispatch.inc"
+#include "runtime/gemm/LibraryCalls.inc"
   }
   llvm_unreachable("unknown Scheme");
 }
 
-static FunctionCallee getDispatchCallee(Module &M, Scheme scheme) {
+static FunctionCallee getLibraryCallee(Module &M, Scheme scheme) {
   LLVMContext &C = M.getContext();
   Type *Ptr = getInt8PtrTy(C);
   Type *I32 = Type::getInt32Ty(C);
@@ -379,17 +379,17 @@ static FunctionCallee getDispatchCallee(Module &M, Scheme scheme) {
   SmallVector<Type *, 16> params = {
       POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_TYPE, POSEIDON_GEMM_TYPE)};
 #undef POSEIDON_GEMM_TYPE
-  if (dispatchHasMode(scheme))
+  if (libraryCallHasMode(scheme))
     params.push_back(I32);
   return M.getOrInsertFunction(
-      dispatchSym(scheme),
+      libraryCallSymbol(scheme),
       FunctionType::get(Type::getVoidTy(C), params, false));
 }
 
 namespace {
-// The arguments of an entry by the names of GemmDispatch.inc, which values()
+// The arguments of an entry by the names of LibraryCalls.inc, which values()
 // puts in its order: a parameter the table renames does not compile here.
-struct DispatchArgs {
+struct LibraryCallArgs {
 #define POSEIDON_GEMM_FIELD(CType, IRType, Name) Value *Name = nullptr;
   POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_FIELD, POSEIDON_GEMM_FIELD)
 #undef POSEIDON_GEMM_FIELD
@@ -399,14 +399,15 @@ struct DispatchArgs {
     SmallVector<Value *, 16> v = {
         POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_VALUE, POSEIDON_GEMM_VALUE)};
 #undef POSEIDON_GEMM_VALUE
-    assert(!is_contained(v, nullptr) && "a dispatch argument is not set");
+    assert(!is_contained(v, nullptr) && "a library-call argument is not set");
     return v;
   }
 };
 } // namespace
 
-static Error readDispatchDescriptors(const Options &O, Module &M,
-                                     std::map<std::string, LaunchDesc> &descs) {
+static Error
+readLibraryCallDescriptors(const Options &O, Module &M,
+                           std::map<std::string, LaunchDesc> &descs) {
   return readDescriptors(
       O, M, LaunchKind::LibraryCall, [&](ArrayRef<StringRef> toks) -> Error {
         DescriptorCursor Cursor(toks);
@@ -523,7 +524,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
       (!launch || (d.launchCrop && !pop) || !d.assumedEqual.empty()))
     return userError(F, F.getSubprogram(),
                      Twine("the stub ") + F.getName() +
-                         " of a fused host-dispatched GEMM has no launch to "
+                         " of a fused library-call GEMM has no launch to "
                          "read the operands from, or a condition to check "
                          "first, and its kernel was fissioned device-side");
   if (!launch || (d.launchCrop && !pop)) {
@@ -543,7 +544,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
   auto I64 = [&](int64_t v) { return ConstantInt::get(i64, (uint64_t)v); };
   Value *argArray = launchArguments(*launch);
   // Resolved per descriptor: the scheme is a per-site solver decision.
-  FunctionCallee callee = getDispatchCallee(M, d.scheme);
+  FunctionCallee callee = getLibraryCallee(M, d.scheme);
 
   IRBuilder<> B(launch);
   auto value = [&](const LaunchRef &r, Type *T) {
@@ -588,7 +589,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
   Value *Cp = value({d.cParam, d.cOffset}, ptr);
   Value *Ap = value({d.aParam, d.aOffset}, ptr);
   Value *Bp = value({d.bParam, d.bOffset}, ptr);
-  DispatchArgs a;
+  LibraryCallArgs a;
   a.C = Cp;
   a.A = Ap;
   a.B = Bp;
@@ -606,7 +607,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
   a.beta = ConstantFP::get(dbl, d.beta);
   a.stream = launchStreamHandle(B, *launch);
   SmallVector<Value *, 16> args = a.values();
-  if (dispatchHasMode(d.scheme))
+  if (libraryCallHasMode(d.scheme))
     args.push_back(I32(d.modulusField));
   Value *holds = nullptr;
   for (const auto &[x, y] : d.assumedEqual) {
@@ -645,7 +646,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
     return true;
   errs() << "[poseidon] " << (d.standalone ? "replaced" : "prepended")
          << " the launch in stub " << F.getName() << " with "
-         << dispatchSym(d.scheme)
+         << libraryCallSymbol(d.scheme)
          << " (C=" << launchRefString({d.cParam, d.cOffset}, "arg")
          << " A=" << launchRefString({d.aParam, d.aOffset}, "arg")
          << " B=" << launchRefString({d.bParam, d.bOffset}, "arg") << ')';
@@ -660,7 +661,7 @@ static Expected<bool> rewriteStub(const Options &O, Module &M, Function &F,
 // function of its own that ends in the kernel's launch.
 Expected<bool> rewriteGemmStubBodies(const Options &O, Module &M) {
   std::map<std::string, LaunchDesc> descs;
-  if (Error E = readDispatchDescriptors(O, M, descs))
+  if (Error E = readLibraryCallDescriptors(O, M, descs))
     return std::move(E);
 
   bool changed = false;

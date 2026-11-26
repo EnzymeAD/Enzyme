@@ -5,7 +5,7 @@
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-tau=1e-6 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -poseidon-print -S -o %t/out.ll 2>&1 | FileCheck --implicit-check-not='Applying solution for matmul' %s
 ; RUN: FileCheck --check-prefix=IR --implicit-check-not=wmma --implicit-check-not=barrier %s < %t/out.ll
 

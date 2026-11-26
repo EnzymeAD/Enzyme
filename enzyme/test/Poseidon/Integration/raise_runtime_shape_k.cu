@@ -4,7 +4,7 @@
 // index, the contraction split across an unrolled outer level, and an
 // accumulating epilogue. findConstantShapeMatmuls rejects it (no constant trip);
 // findRuntimeShapeMatmuls must recognize it and report every dimension
-// symbolically, and the host dispatch must evaluate those dimensions from the
+// symbolically, and the library call must evaluate those dimensions from the
 // launch arguments. With no target the solve takes the most accurate candidate
 // that costs no more than the loop nest, cuBLAS's DGEMM, which replaces the
 // launch.

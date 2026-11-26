@@ -76,17 +76,17 @@ arms and `--gpu`.
 Six arms write disjoint row families into the same file; `--only` runs a
 subset, `--force` re-measures a family that is already there. A seventh,
 `herbie-platform`, measures nothing: it translates the CSV into
-`<csv>.herbie.rkt` beside it. It runs after `microbm` and in a full run, and
+`<csv>.herbie.rkt` beside it. It runs after `ops` and in a full run, and
 because it needs no device, `--only herbie-platform --out <csv>` also runs on a
 machine that does not have the GPU the CSV was measured on.
 
 | Arm | Rows | What is measured |
 |---|---|---|
-| microbm | `<op>,<type>,<cost>`, `wmma_mma_<shape>,<in>_<acc>,<rel>` | Saturated reciprocal throughput per (op, type), from dependent op chains on every SM, or on a host from JIT-compiled loops. On NVIDIA a tensor-core tile row exists when a real tiled WMMA GEMM of that scheme beats a scalar-FP64 GEMM of the same shape, and holds the ratio of their times; a compile reads only whether the row exists. Also writes the `# native_arch=` and `# scalar_types=` headers. |
-| ozaki | `library_ozaki_rel,nm<8..14>`, `library_ozaki_rel,dgemm` | Host-dispatched Ozaki-II GEMM per modulus count, and the native cuBLAS DGEMM. |
-| ozaki-rect | `library_ozaki_rect_rel,nm<8..14>_m<M>n<N>k<K>`, `library_ozaki_rect_rel,dgemm_m<M>n<N>k<K>`, `library_ozaki_rect_rel,nm<8..14>_m<M>k<K>` | Host dispatches at the `--product` and `--ozaki-rect` shapes, per MAC, after a warm-up call. A product `MxNxK` measures the Ozaki-II dispatch and the native DGEMM of a call with exactly those extents: a call with few columns does not amortize the conversion of its M x K operand, and a DGEMM with few columns runs far below the square rate. A shape `MxK` measures the Ozaki-II dispatch at 12288 columns, assuming a cost linear in the column count; it stands for a call whose column count is a run-time value, and is dearer per MAC for few columns than it says. The shapes are the ones the calls run at: a call whose three extents are constants of its compile and not a square is priced from the rows of its own shape, a square call from the square rows; a compile without them warns with the `--product` argument that measures them, and prices Ozaki-II meanwhile as the square product the call embeds in (the square row times the padding ratio) and the native DGEMM from the square row. The shape of a call whose extents are run-time values is not known to the compile: its Ozaki-II candidates are priced from the `MxK` rows of its profiled (M, K), named by `--ozaki-rect`, its native DGEMM from the square row. Rows of shapes a run does not name are kept. |
-| tcec | `library_tcec_rel,fp16tcec` | Host-dispatched error-corrected GEMM, on the cuMpSGEMM the compiler is built with. A compiler built without cuMpSGEMM has no such dispatch, and the arm says so and writes no row. |
-| direct | `library_direct_rel,<in>_<acc>` | Host-dispatched reduced-precision cuBLAS GEMM. |
+| ops | `<op>,<type>,<cost>`, `wmma_mma_<shape>,<in>_<acc>,<rel>` | Saturated reciprocal throughput per (op, type), from dependent op chains on every SM, or on a host from JIT-compiled loops. On NVIDIA a tensor-core tile row exists when a real tiled WMMA GEMM of that scheme beats a scalar-FP64 GEMM of the same shape, and holds the ratio of their times; a compile reads only whether the row exists. Also writes the `# native_arch=` and `# scalar_types=` headers. |
+| ozaki | `library_ozaki_rel,nm<8..14>`, `library_ozaki_rel,dgemm` | library-call Ozaki-II GEMM per modulus count, and the native cuBLAS DGEMM. |
+| ozaki-rect | `library_ozaki_rect_rel,nm<8..14>_m<M>n<N>k<K>`, `library_ozaki_rect_rel,dgemm_m<M>n<N>k<K>`, `library_ozaki_rect_rel,nm<8..14>_m<M>k<K>` | Host dispatches at the `--product` and `--ozaki-rect` shapes, per MAC, after a warm-up call. A product `MxNxK` measures the Ozaki-II library call and the native DGEMM of a call with exactly those extents: a call with few columns does not amortize the conversion of its M x K operand, and a DGEMM with few columns runs far below the square rate. A shape `MxK` measures the Ozaki-II library call at 12288 columns, assuming a cost linear in the column count; it stands for a call whose column count is a run-time value, and is dearer per MAC for few columns than it says. The shapes are the ones the calls run at: a call whose three extents are constants of its compile and not a square is priced from the rows of its own shape, a square call from the square rows; a compile without them warns with the `--product` argument that measures them, and prices Ozaki-II meanwhile as the square product the call embeds in (the square row times the padding ratio) and the native DGEMM from the square row. The shape of a call whose extents are run-time values is not known to the compile: its Ozaki-II candidates are priced from the `MxK` rows of its profiled (M, K), named by `--ozaki-rect`, its native DGEMM from the square row. Rows of shapes a run does not name are kept. |
+| tcec | `library_tcec_rel,fp16tcec` | library-call error-corrected GEMM, on the cuMpSGEMM the compiler is built with. A compiler built without cuMpSGEMM has no such dispatch, and the arm says so and writes no row. |
+| direct | `library_direct_rel,<in>_<acc>` | library-call reduced-precision cuBLAS GEMM. |
 | inkernel | `inkernel_rel,<class>`, `inkernel_rel,<class>_m<M>n<N>k<K>_<layout>` | Tensor-core raises inside a kernel, one class at a time: the harness `inkernel.cu` is compiled through `poseidon-clang++` with `-poseidon-pin`, so what is timed is the code a real solve emits. The class row is measured on a square product of `--n` (2048) with B strided along K; a product `MxNxK:<layout>` measures the rows of exactly those extents with B strided (`browmajor`) or contiguous (`bcolmajor`) along K. A product with few output columns or B contiguous along K does not run at the class row's rate: the raise of a product whose extents are constants of its compile is priced from the rows of its extents and layout, and a compile without them warns with the `--product` argument that measures them and prices it meanwhile from the class row. A product whose output extents are run-time values is priced from the class row. |
 | herbie-platform | none (writes `<csv>.herbie.rkt`) | Nothing. The per-op rows are translated into the Herbie platform the algebraic search ranks candidates by, so Herbie and the DP price the same device. A compile against a GPU CSV with no platform beside it aborts rather than search under another architecture's costs, and Herbie result caches are keyed by the platform name so one device's rewrites are never replayed for another. |
 
@@ -100,12 +100,12 @@ They write `cm_gfx<NNN>_<device>.csv` with the same row names in the same unit,
 and a compile for that processor finds it by its triple. Rows the device has no
 runtime or instruction for are absent, so the solver does not propose those
 classes: the WMMA tile rows and the in-kernel raises (NVPTX-only), the
-error-corrected dispatch (no HIP runtime) and `library_direct_rel,tf32_f32`
+error-corrected library call (no HIP runtime) and `library_direct_rel,tf32_f32`
 (hipBLAS has no TF32 compute type). Its Herbie platform is `hip-gfx<NNN>`.
 
 Every `*_rel` row is one number in one unit: the candidate's wall clock over the
 scalar-FP64 GEMM's, at the same shape on the same device, so the DP compares an
-in-kernel raise against a library dispatch directly. The in-kernel arm learns
+in-kernel raise against a library call directly. The in-kernel arm learns
 which candidates the pass proposes from the explanation (`-poseidon-explain`)
 of a compile of its harness (installed under `share/poseidon/tools/calibrate`),
 whose profile it records itself at extents of at most 128 with B in the layout

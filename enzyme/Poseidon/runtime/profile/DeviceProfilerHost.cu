@@ -1,4 +1,4 @@
-//===- DeviceProfiler.cu - host half of the CUDA profiler -----------------===//
+//===- DeviceProfilerHost.cu - host half of the CUDA profiler -------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -9,8 +9,8 @@
 // The host half of the CUDA profiler, a library a profile-generate build links
 // (libposeidon_profile_cuda, and compiled as HIP libposeidon_profile_hip): it
 // allocates the tables the probes of every profiled device module record into
-// (FPProfilerDevice.cu), writes each module's handles to them, and writes the
-// profile at exit.
+// (DeviceProfilerDevice.cu), writes each module's handles to them, and writes
+// the profile at exit.
 //
 //===----------------------------------------------------------------------===//
 
@@ -250,7 +250,7 @@ static std::string profileOf(ProfileTables &t, int fi) {
 
 static void writeDeviceProfiles() {
   poseidonProfileExitCheck();
-  // A probe run, or a program that profiled no kernel, has no tables.
+  // A kappa run, or a program that profiled no kernel, has no tables.
   if (!g_devSlots)
     return;
   ProfileTables t = readBackTables();

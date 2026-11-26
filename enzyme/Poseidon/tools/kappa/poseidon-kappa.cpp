@@ -21,7 +21,7 @@
 // exits 1. The scratch directories are removed on every exit. The profiling
 // run lists the sites to measure in the file POSEIDON_KAPPA_SITES names; a run
 // of the measurement has POSEIDON_KAPPA=child and POSEIDON_KAPPA_SITE /
-// POSEIDON_KAPPA_EPS, and writes its metric alone (FPProfiler.cpp).
+// POSEIDON_KAPPA_EPS, and writes its metric alone (Profiler.cpp).
 //
 //===----------------------------------------------------------------------===//
 

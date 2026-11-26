@@ -8,8 +8,8 @@
 
 #include "HostStubs.h"
 #include "../Sites/LaunchManifest.h"
-#include "Pass/Session.h"
 #include "Profile/ProfiledLaunch.h"
+#include "Solve/Session.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/RealizeLibraryCall.h"
 
@@ -24,7 +24,7 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
   if (S.Stopped || Target::of(M).isDevice() || !handsOverLaunches(O))
     return llvm::PreservedAnalyses::all();
   // Profile generation: every launch of an annotated kernel goes through the
-  // runtime helper that supplies its shadow buffers. Host dispatch
+  // runtime helper that supplies its shadow buffers. Library call
   // materializes only in the optimize phase: profile-gen builds instrument the
   // original kernel and do not link the runtime.
   bool changed = false;

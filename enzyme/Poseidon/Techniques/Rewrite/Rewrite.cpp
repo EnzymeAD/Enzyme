@@ -18,8 +18,8 @@
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/Sampling.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
@@ -70,11 +70,11 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
   const Target &T = Target::measuredOn(NativeArch);
   P.Name = T.herbiePlatform(NativeArch);
 
-  if (!S.Opts.Herbie.HerbiePlatform.empty()) {
+  if (!S.Opts.Herbie.Platform.empty()) {
     // A value that looks like a file is the platform itself; anything else is
     // a platform name compiled into the Herbie binary. The name keeps naming
     // the device family either way, and the digest below distinguishes files.
-    StringRef V(S.Opts.Herbie.HerbiePlatform);
+    StringRef V(S.Opts.Herbie.Platform);
     if (V.contains('/') || V.ends_with(".rkt"))
       P.Path = V.str();
     else
@@ -114,10 +114,10 @@ static constexpr unsigned kUnboundedCoreTimeout = 9999;
 // Herbie's per-core --timeout: -poseidon-herbie-timeout, else the subgraph's
 // wall-clock budget, which bounds it anyway.
 static unsigned herbieCoreTimeout(const Options &O) {
-  if (O.Herbie.HerbieTimeout)
-    return O.Herbie.HerbieTimeout;
-  if (O.Herbie.HerbieSubgraphTimeout)
-    return O.Herbie.HerbieSubgraphTimeout;
+  if (O.Herbie.Timeout)
+    return O.Herbie.Timeout;
+  if (O.Herbie.SubgraphTimeout)
+    return O.Herbie.SubgraphTimeout;
   return kUnboundedCoreTimeout;
 }
 
@@ -133,13 +133,13 @@ static Expected<HerbieRunOptions> herbieRunOptions(Session &S,
     return Platform.takeError();
   Opts.Platform = **Platform;
   Opts.Seed = O.Model.RandomSeed;
-  Opts.NumPoints = O.Herbie.HerbieNumPts;
-  Opts.NumIters = O.Herbie.HerbieNumIters;
-  Opts.NumEnodes = O.Herbie.HerbieNumEnodes;
+  Opts.NumPoints = O.Herbie.NumPoints;
+  Opts.NumIters = O.Herbie.NumIters;
+  Opts.NumEnodes = O.Herbie.NumEnodes;
   Opts.CoreTimeout = herbieCoreTimeout(O);
-  Opts.NumThreads = O.Herbie.HerbieNumThreads;
-  Opts.Processes = O.Herbie.HerbieProcesses;
-  Opts.SubgraphTimeout = O.Herbie.HerbieSubgraphTimeout;
+  Opts.NumThreads = O.Herbie.Threads;
+  Opts.Processes = O.Herbie.Processes;
+  Opts.SubgraphTimeout = O.Herbie.SubgraphTimeout;
   Opts.CacheDir = O.Herbie.Cache;
   Opts.Print = O.Diagnostics.Print;
   return Opts;
@@ -289,8 +289,8 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
                                          const std::vector<std::string> &cores,
                                          StringRef label, const Function &F) {
   const Options &O = S.Opts;
-  if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
-    llvm::errs() << "[poseidon] using Herbie binary '" << O.Herbie.HerbieBinary
+  if (!O.Herbie.Binary.empty() && O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] using Herbie binary '" << O.Herbie.Binary
                  << "'\n";
   Expected<HerbieRunOptions> RunOpts = herbieRunOptions(S, F);
   if (!RunOpts)
@@ -298,8 +298,7 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
   HerbieRunOptions &Opts = *RunOpts;
 
   SmallVector<std::optional<unsigned>, 2> TermCounts(
-      O.Herbie.HerbieNumTaylorTerms.begin(),
-      O.Herbie.HerbieNumTaylorTerms.end());
+      O.Herbie.NumTaylorTerms.begin(), O.Herbie.NumTaylorTerms.end());
   if (TermCounts.empty())
     TermCounts.push_back(std::nullopt);
   HerbieAnswers H;
@@ -552,11 +551,10 @@ static std::string rangePrecondition(const Options &O,
     const std::string lowerStr = roundTripDigits(lower),
                       upperStr = roundTripDigits(upper);
 
-    if (O.Herbie.HerbiePreFloorBits > 0 && lower < 0 && upper > 0 &&
+    if (O.Herbie.PreFloorBits > 0 && lower < 0 && upper > 0 &&
         std::isfinite(lower) && std::isfinite(upper)) {
-      const std::string floorStr = roundTripDigits(
-          std::ldexp(std::max(-lower, upper),
-                     -static_cast<int>(O.Herbie.HerbiePreFloorBits)));
+      const std::string floorStr = roundTripDigits(std::ldexp(
+          std::max(-lower, upper), -static_cast<int>(O.Herbie.PreFloorBits)));
       preconditions += " (or (<= " + lowerStr + " " + arg + " -" + floorStr +
                        ") (<= " + floorStr + " " + arg + " " + upperStr + "))";
       continue;
@@ -746,13 +744,13 @@ SubgraphCores::eligible(Instruction *output) const {
   if (!spelled)
     return spelled.takeError();
   std::string &expr = *spelled;
-  if (expr.length() > O.Candidates.MaxExprLength) {
+  if (expr.length() > O.Herbie.MaxExprLength) {
     remarkMissed(*output->getFunction(), output->getDebugLoc(),
                  "ExpressionTooLong",
                  "Poseidon does not send Herbie an output expression of " +
                      Twine(expr.length()) +
                      " characters, over -poseidon-herbie-max-expr-length=" +
-                     Twine(O.Candidates.MaxExprLength));
+                     Twine(O.Herbie.MaxExprLength));
     return std::nullopt;
   }
 
@@ -792,7 +790,7 @@ SmallVector<SmallVector<const EligibleOutput *, 8>, 2>
 SubgraphCores::arrayGroups(ArrayRef<EligibleOutput> eligible) const {
   auto groupKey = [&](const EligibleOutput &E) {
     std::string key = std::to_string(E.executions);
-    if (O.Herbie.HerbieArrayGrouping == "inputs") {
+    if (O.Herbie.ArrayGrouping == "inputs") {
       SmallSet<std::string, 8> args;
       getUniqueArgs(E.expr, args);
       std::vector<std::string> sorted(args.begin(), args.end());
@@ -815,12 +813,12 @@ SubgraphCores::arrayGroups(ArrayRef<EligibleOutput> eligible) const {
 }
 
 std::string SubgraphCores::arrayWeights(ArrayRef<Instruction *> outputs) const {
-  if (O.Herbie.HerbieArrayWeights == "none")
+  if (O.Herbie.ArrayWeights == "none")
     return "";
   SmallVector<double, 8> sens;
   for (Instruction *output : outputs) {
     const FPNode &N = *G.valueToNodeMap[output];
-    if (O.Herbie.HerbieArrayWeights == "gradient") {
+    if (O.Herbie.ArrayWeights == "gradient") {
       double lo = N.getLowerBound(), hi = N.getUpperBound();
       double meanMag = lo >= 0 || hi <= 0
                            ? (std::fabs(lo) + std::fabs(hi)) / 2
@@ -901,7 +899,7 @@ Error proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
       return E.takeError();
     if (!*E)
       continue;
-    if (S.Opts.Herbie.HerbieArrays)
+    if (S.Opts.Herbie.Arrays)
       eligible.push_back(std::move(**E));
     else if (Error Err =
                  cores.addPerOutputCores(**E, kHerbiePrecisions, perOutput))
@@ -1044,12 +1042,12 @@ struct ElementPricing {
 
   // Whether `arm` has fewer samples than -poseidon-rewrite-min-regime-samples.
   bool starved(const Options &O, const RegimeArm &arm) {
-    return regimeArmStats[arm].count < O.Model.MinRegimeSamples;
+    return regimeArmStats[arm].count < O.Model.RewriteMinRegimeSamples;
   }
   // Whether any arm has.
   bool starved(const Options &O) const {
     return any_of(regimeArmStats, [&](const auto &kv) {
-      return kv.second.count < O.Model.MinRegimeSamples;
+      return kv.second.count < O.Model.RewriteMinRegimeSamples;
     });
   }
 };
@@ -1115,8 +1113,8 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
       E.cost = sum / count;
     }
   }
-  if (!E.discard && O.Model.MaxBrokenShare >= 0.0 &&
-      broken > O.Model.MaxBrokenShare * n) {
+  if (!E.discard && O.Model.RewriteMaxBrokenShare >= 0.0 &&
+      broken > O.Model.RewriteMaxBrokenShare * n) {
     if (O.Diagnostics.Print)
       raw_string_ostream(E.diag)
           << "[poseidon] dropping candidate: relative error >= 1 on " << broken
@@ -1128,7 +1126,7 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
                 .str();
   }
   E.searching = !E.discard && !E.ifNodes.empty() && E.starved(O) &&
-                O.Model.RegimeSearchFactor > 0 && O.Model.NumSamples > 0;
+                O.Model.RewriteRegimeSearchFactor > 0 && O.Model.NumSamples > 0;
 }
 
 // Uniform marginal sampling weights each regime by its share of the profiled
@@ -1211,8 +1209,8 @@ static void takeRound(const Options &O, ElementPricing &E, const RoundWork &W) {
 // round's evaluations running concurrently.
 static void searchArms(const Options &O, SubgraphSamples &samples,
                        ArrayRef<ElementPricing *> elements) {
-  const size_t budget =
-      static_cast<size_t>(O.Model.RegimeSearchFactor) * O.Model.NumSamples;
+  const size_t budget = static_cast<size_t>(O.Model.RewriteRegimeSearchFactor) *
+                        O.Model.NumSamples;
   for (unsigned round = 1;; ++round) {
     SmallVector<ElementPricing *, 0> active;
     for (ElementPricing *E : elements)
@@ -1265,11 +1263,11 @@ static void chargeWorstArm(const Options &O, ElementPricing &E) {
       if (st.count)
         os << ':' << format("%.3e", st.candSum / st.count) << '/'
            << format("%.3e", st.origSum / st.count);
-      if (st.count < O.Model.MinRegimeSamples) {
+      if (st.count < O.Model.RewriteMinRegimeSamples) {
         E.discard = true;
         E.why = formatv("a regime-split arm is reached by fewer than {0} "
                         "samples",
-                        (unsigned)O.Model.MinRegimeSamples)
+                        (unsigned)O.Model.RewriteMinRegimeSamples)
                     .str();
         continue;
       }
@@ -1387,7 +1385,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
     E.ref = rootSamples[k].ref;
     E.origCost = rootSamples[k].error;
     E.exprForLog = &candidate.expr;
-    if (O.Model.MinRegimeSamples > 0) {
+    if (O.Model.RewriteMinRegimeSamples > 0) {
       SmallPtrSet<const FPNode *, 32> seenIfs;
       collectIfNodes(element, seenIfs, E.ifNodes);
     }

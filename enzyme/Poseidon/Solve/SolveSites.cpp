@@ -10,8 +10,8 @@
 #include "BuildIdentity.h"
 #include "Model/CostModel.h"
 #include "Optimize.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Techniques/Precision/Precision.h"
 #include "Techniques/Rewrite/Rewrite.h"
@@ -108,9 +108,9 @@ static Error keySiteTable(Session &S, const SiteState &st,
     }
   key.addContent("function body", body);
   key.add("device", getCostModelNativeArch(S.CostModel));
-  // Two builds of one source differ in whether the error-corrected dispatch is
-  // a candidate.
-  key.add("TCEC backend", kHaveTcecDispatch ? "cuMpSGEMM" : "none");
+  // Two builds of one source differ in whether the error-corrected library call
+  // is a candidate.
+  key.add("TCEC backend", kHaveTcecRuntime ? "cuMpSGEMM" : "none");
   key.addContent("cost model", costModelRows(S.CostModel));
   key.add("cost axis", "cost-model units times 2^(32 - log2 profiled cost)");
 
@@ -328,17 +328,17 @@ static Error checkToleranceInputs(const Function &at, StringRef siteName,
 static double baselineAccCost(ArrayRef<RewriteUnit> rewriteUnits,
                               ArrayRef<PrecisionUnit> precisionUnits,
                               unsigned &unpriced) {
-  SmallPtrSet<const Subgraph *, 4> subgraphsWithCS;
+  SmallPtrSet<const Subgraph *, 4> subgraphsWithPrecision;
   double baseline = 0.0;
   for (const auto &PU : precisionUnits) {
     baseline += PU.initialAccCost;
-    subgraphsWithCS.insert(PU.subgraph);
+    subgraphsWithPrecision.insert(PU.subgraph);
     if (!PU.unpricedReason.empty())
       unpriced += PU.subgraph->outputs.size();
   }
   SmallPtrSet<const Value *, 8> arrayPriced;
   for (const auto &RU : rewriteUnits) {
-    if (subgraphsWithCS.count(RU.subgraph))
+    if (subgraphsWithPrecision.count(RU.subgraph))
       continue;
     // A RewriteUnit with no candidates was never priced, so its share of the
     // baseline is unknown; it cannot appear in a solution either.
@@ -561,7 +561,7 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                    costToSolutionMap, baseline);
   }
 
-  if (O.Diagnostics.ShowTable)
+  if (O.Diagnostics.PrintDPTable)
     printDPTable(scale, costToAccuracyMap, costToSolutionMap);
 
   if (record) {

@@ -2,7 +2,7 @@
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
 ; DEFINE: %{flags} = -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; DEFINE:   -poseidon-tau=1e-12 -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 
@@ -26,7 +26,7 @@
 ; RUN: ls %t/write/c | FileCheck --allow-empty --check-prefix=WRITE-AFTER %s
 ; RUN: %clang -O0 -Wno-override-module -x ir --target=x86_64-unknown-linux-gnu %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/write/c -mllvm -poseidon-compilation-id=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: grep -v __poseidon_fp_optimize %{dev} > %t/write/siteless.ll
-; RUN: %opt %t/write/siteless.ll %{pass} -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/write/fresh -S -o /dev/null
+; RUN: %opt %t/write/siteless.ll %{pass} -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cache=%t/write/fresh -S -o /dev/null
 ; RUN: not ls %t/write/fresh
 ; RUN: %opt %t/write/siteless.ll %{pass} -poseidon-profile-generate -poseidon-cache=%t/write/freshgen -S -o /dev/null
 ; RUN: not ls %t/write/freshgen
@@ -94,37 +94,37 @@
 ; RUN: sed '/^target triple/a @__hip_cuid_0123abcd = global i8 0' %t/unit/host.ll > %t/unit/host_cuid.ll
 ; RUN: sed '/^target triple/a @__hip_cuid_89abcdef = global i8 0' %t/unit/host.ll > %t/unit/host_other_cuid.ll
 ; RUN: %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/options -poseidon-print 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-tau=1e-12 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-tau=1e-12 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-enable-matmul -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %opt %t/unit/dev_cuid.ll %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/cuid -poseidon-print 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
 ; RUN: cat %t/unit/cuid/launches_*.json | FileCheck --check-prefix=UNIT-CUID %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %opt %t/unit/dev_cuid.ll %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/named -poseidon-compilation-id=u -poseidon-print 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/named -mllvm -poseidon-compilation-id=u -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/named -mllvm -poseidon-compilation-id=u -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/named -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 
 ; UNIT-WROTE: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; UNIT-CUID: "unit": "0123abcd"
 
-; UNIT-DISPATCH: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozakiii_dgemm (C=arg2 A=arg0 B=arg1){{$}}
-; UNIT-DISPATCH-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
-; UNIT-DISPATCH: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
-; UNIT-DISPATCH: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
-; UNIT-DISPATCH: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; UNIT-DISPATCH: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
-; UNIT-DISPATCH-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
-; UNIT-DISPATCH-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
-; UNIT-DISPATCH-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
-; UNIT-DISPATCH-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
-; UNIT-DISPATCH-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
-; UNIT-DISPATCH-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; UNIT-DISPATCH-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
-; UNIT-DISPATCH-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; UNIT-DISPATCH-NEXT: call void @__poseidon_ozakiii_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 12)
-; UNIT-DISPATCH-NEXT: br label
-; UNIT-DISPATCH-NOT: call {{.*}}@cudaLaunchKernel(
+; UNIT-LIBRARY-CALL: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozakiii_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; UNIT-LIBRARY-CALL-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
+; UNIT-LIBRARY-CALL: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; UNIT-LIBRARY-CALL: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; UNIT-LIBRARY-CALL: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; UNIT-LIBRARY-CALL: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; UNIT-LIBRARY-CALL-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; UNIT-LIBRARY-CALL-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; UNIT-LIBRARY-CALL-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; UNIT-LIBRARY-CALL-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; UNIT-LIBRARY-CALL-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; UNIT-LIBRARY-CALL-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; UNIT-LIBRARY-CALL-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; UNIT-LIBRARY-CALL-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; UNIT-LIBRARY-CALL-NEXT: call void @__poseidon_ozakiii_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 12)
+; UNIT-LIBRARY-CALL-NEXT: br label
+; UNIT-LIBRARY-CALL-NOT: call {{.*}}@cudaLaunchKernel(
 
 ; The two kernels of the module below dispatch the product of matmul_body,
 ; matmul_kernel first in the module and alpha_kernel, with A and B swapped,
@@ -175,14 +175,14 @@
 ; nothing and succeeds against the same path. Profile generation for an NVPTX
 ; kernel needs Enzyme and the NVPTX device profiler.
 ; RUN: %if enzyme && nvptx-device-profiler %{ mkdir %t/unwritable && echo > %t/unwritable/file %}
-; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-DISPATCH -DCACHE=%t/unwritable/file/c %s %}
+; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-LIBRARY-CALL -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/unwritable/file/c -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=UNWRITABLE-PROFILE -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ %opt %{dev} %{pass} -poseidon-enable-matmul=false %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-NONE %s %}
 
-; UNWRITABLE-DISPATCH: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7){{$}}
-; UNWRITABLE-DISPATCH-NOT: wrote descriptor
-; UNWRITABLE-DISPATCH: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory; make the -poseidon-launch-dir directory, or else the -poseidon-cache one, writable{{$}}
-; UNWRITABLE-DISPATCH-NOT: wrote descriptor
+; UNWRITABLE-LIBRARY-CALL: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7){{$}}
+; UNWRITABLE-LIBRARY-CALL-NOT: wrote descriptor
+; UNWRITABLE-LIBRARY-CALL: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory; make the -poseidon-launch-dir directory, or else the -poseidon-cache one, writable{{$}}
+; UNWRITABLE-LIBRARY-CALL-NOT: wrote descriptor
 
 ; UNWRITABLE-PROFILE-NOT: [poseidon] _Z13matmul_kernelPKdS0_PdS1_: site
 ; UNWRITABLE-PROFILE: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory; make the -poseidon-launch-dir directory, or else the -poseidon-cache one, writable{{$}}

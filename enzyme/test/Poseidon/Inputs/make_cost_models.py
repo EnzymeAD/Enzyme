@@ -15,7 +15,7 @@ chosen only so that the orderings the tests exercise hold.
   cm_gfx942_synthetic.csv 1 per float and 64 per double operation
   cm_sm_120_synthetic.csv the GPU prices of gpu_rows(), with three in-kernel
                           tensor-core classes
-  cm_sm_120_synthetic_dispatch.csv  and the host-dispatched GEMMs but the
+  cm_sm_120_synthetic_library.csv  and the library-call GEMMs but the
                                     error-corrected one, which a build
                                     without cuMpSGEMM does not offer
   cm_sm_120_synthetic_tcec.csv      and that one too
@@ -72,12 +72,12 @@ INKERNEL = [("f16_f16", 15), ("f16_f32", 16), ("bf16_f32", 17),
             ("tcec_n2_tf32_f32", 44), ("tcec_n5_f16_f32", 66),
             ("tcec_n3_tf32_f32", 80), ("tcec_n5_tf32_f32", 182)]
 INKERNEL_LIT = {"f16_f32", "tcec_n2_f16_f32", "tcec_n3_f16_f32"}
-DISPATCH = [("library_direct_rel,f16_f32", 2),
+LIBRARY_ROWS = [("library_direct_rel,f16_f32", 2),
             ("library_direct_rel,bf16_f32", 3),
             ("library_direct_rel,tf32_f32", 4)] + \
            [("library_ozaki_rel,nm%d" % k, k) for k in range(8, 15)] + \
            [("library_ozaki_rel,dgemm", 128)]
-TCEC_DISPATCH = [("library_tcec_rel,fp16tcec", 7)]
+TCEC_LIBRARY_ROWS = [("library_tcec_rel,fp16tcec", 7)]
 
 
 def num(v):
@@ -102,7 +102,7 @@ def gfx_rows():
              "fptrunc_double_to_float,double,1"])
 
 
-def gpu_rows(inkernel=INKERNEL_LIT, dispatch=False, tcec=False, half=False):
+def gpu_rows(inkernel=INKERNEL_LIT, library=False, tcec=False, half=False):
     rows = ["%s,float,%d" % (op, p) for op, p in GPU_OPS]
     for op, p in GPU_OPS:
         scale = 512 if op in FP64_PIPE else 2 if op in SIGN_OR_INTEGRAL else 128
@@ -117,10 +117,10 @@ def gpu_rows(inkernel=INKERNEL_LIT, dispatch=False, tcec=False, half=False):
     rows += ["%s,64" % t for t in TILES]
     rows += ["inkernel_rel,%s,%s" % (c, num(k / 256))
              for c, k in INKERNEL if c in inkernel]
-    if dispatch:
-        rows += ["%s,%s" % (r, num(k / 256)) for r, k in DISPATCH]
+    if library:
+        rows += ["%s,%s" % (r, num(k / 256)) for r, k in LIBRARY_ROWS]
     if tcec:
-        rows += ["%s,%s" % (r, num(k / 256)) for r, k in TCEC_DISPATCH]
+        rows += ["%s,%s" % (r, num(k / 256)) for r, k in TCEC_LIBRARY_ROWS]
     return rows
 
 
@@ -159,11 +159,11 @@ def main():
     gpu = "# Lit fixture, synthetic: prices measured on no device."
     write(out, "cm_sm_120_synthetic.csv",
           [gpu, "# native_arch=sm_120", types], gpu_rows())
-    write(out, "cm_sm_120_synthetic_dispatch.csv",
-          [gpu, "# native_arch=sm_120", types], gpu_rows(dispatch=True))
+    write(out, "cm_sm_120_synthetic_library.csv",
+          [gpu, "# native_arch=sm_120", types], gpu_rows(library=True))
     write(out, "cm_sm_120_synthetic_tcec.csv",
           [gpu, "# native_arch=sm_120", types],
-          gpu_rows(dispatch=True, tcec=True))
+          gpu_rows(library=True, tcec=True))
     write(out, "cm_sm_120_synthetic_half.csv",
           [gpu, "# native_arch=sm_120", "# scalar_types=double,float,half"],
           gpu_rows(half=True))
@@ -177,7 +177,7 @@ def main():
     if len(sys.argv) > 2:
         write(out, "cm_gpu_synthetic.csv",
               [gpu, "# native_arch=" + sys.argv[2], types],
-              gpu_rows(inkernel={c for c, _ in INKERNEL}, dispatch=True,
+              gpu_rows(inkernel={c for c, _ in INKERNEL}, library=True,
                        tcec=True))
 
 

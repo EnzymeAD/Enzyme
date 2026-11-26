@@ -2,7 +2,7 @@
 ; DEFINE:   -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; DEFINE:   -poseidon-print -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} -poseidon-cache=%t/site -poseidon-explain=%t/site/ex -poseidon-print-dp-table 2>&1 | FileCheck --check-prefix=TABLE %s

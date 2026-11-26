@@ -1,4 +1,4 @@
-//===- Schemes.h - what the GEMM runtimes and the compiler share ----------===//
+//===- SchemeConstants.h - what the GEMM runtimes and the compiler share --===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -8,19 +8,19 @@
 //
 // What the GEMM runtimes share with the compiler, whose pricing and accuracy
 // model reproduce them: per scheme, its constants, the arithmetic the model
-// simulates, and the values of its entry's Mode argument (GemmDispatch.inc).
+// simulates, and the values of its entry's Mode argument (LibraryCalls.inc).
 // Included by both, in host and device code: keep it free of LLVM.
 //
 // The Ozaki-II constants and residue arithmetic reimplement those of the
 // algorithm of K. Ozaki, Y. Uchino and T. Imamura (arXiv:2504.08009) as
-// GEMMul8 v3.1.1 instantiates it (ozaki_rt.cu); no code is taken from GEMMul8
+// GEMMul8 v3.1.1 instantiates it (OzakiII.cu); no code is taken from GEMMul8
 // (https://github.com/RIKEN-RCCS/GEMMul8, RIKEN R-CCS, MIT License). The TCEC
 // scaling and the direct modes are Poseidon's own.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_RUNTIME_GEMM_SCHEMES_H
-#define POSEIDON_RUNTIME_GEMM_SCHEMES_H
+#ifndef POSEIDON_RUNTIME_GEMM_SCHEME_CONSTANTS_H
+#define POSEIDON_RUNTIME_GEMM_SCHEME_CONSTANTS_H
 
 #include <cfloat>
 #include <cmath>
@@ -324,4 +324,4 @@ enum PoseidonDirectMode : int {
   kDirectFp32 = 4,
 };
 
-#endif // POSEIDON_RUNTIME_GEMM_SCHEMES_H
+#endif // POSEIDON_RUNTIME_GEMM_SCHEME_CONSTANTS_H

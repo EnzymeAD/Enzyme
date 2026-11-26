@@ -9,7 +9,7 @@
 #include "FPNode.h"
 #include "FPCore.h"
 #include "FPFormat.h"
-#include "Pass/Diagnostics.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"

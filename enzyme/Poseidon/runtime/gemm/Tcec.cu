@@ -7,10 +7,10 @@
 //===----------------------------------------------------------------------===//
 //
 // Tensor-core error correction (TCEC), the F32-accuracy-class sibling of
-// ozaki_rt.cu. The product is cuMpSGEMM's, linked, not included (OzakiII.h):
-// its error correction accumulates outside the tensor cores with
-// round-to-nearest, which a GEMM library accumulating inside them does not
-// reproduce. It is built only with POSEIDON_CUMPSGEMM_ROOT.
+// OzakiII.cu. The product is cuMpSGEMM's, linked, not included
+// (SchemeConstants.h): its error correction accumulates outside the tensor
+// cores with round-to-nearest, which a GEMM library accumulating inside them
+// does not reproduce. It is built only with POSEIDON_CUMPSGEMM_ROOT.
 //
 // FP16 spans only about four decades, so an FP32 operand outside that window
 // splits into Inf or NaN limbs. Each operand is scaled by one power of two
@@ -29,7 +29,7 @@
 #include <cumpsgemm/cumpsgemm.hpp>
 
 #include "GemmRuntime.h"
-#include "Schemes.h"
+#include "SchemeConstants.h"
 
 using namespace poseidon::gemm;
 

@@ -4,12 +4,12 @@
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune \
 ; RUN:   -poseidon-cache=%t/cache -poseidon-enable-rewrite=false \
 ; RUN:   -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -S -o %t/out.ll
 ; RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 ; RUN: FileCheck --input-file=%t/out.ll %s
 
-; A body that stores the product into two arguments: the host dispatch writes
+; A body that stores the product into two arguments: the library call writes
 ; it where the body first stores it, and the fissioned body reads it back from
 ; there for the other store.
 

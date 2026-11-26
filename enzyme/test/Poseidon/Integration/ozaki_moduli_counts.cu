@@ -39,7 +39,7 @@
 #include <random>
 #include <vector>
 
-#include "gemm/GemmDispatch.h"
+#include "gemm/LibraryCalls.h"
 
 using poseidon::simulateOzakiIIDgemm;
 

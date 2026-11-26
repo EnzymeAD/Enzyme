@@ -44,4 +44,4 @@
 ; both TCEC chains) is not offered.
 ; matmul_tiny profile: the source raise_scalar_tcec_nvptx.ll gives with A[i] = 1e-9 * (1.0 + 0.001 * i), built with
 ; the RUN lines of Integration/raise_scalar_matmul_f64.cu (Poseidon + Enzyme plugins,
-; -poseidon-profile-generate, FPProfilerCUDA.cu, libposeidon_profile.a) and run on an sm_120 GPU.
+; -poseidon-profile-generate, DeviceProfilerHost.cu, libposeidon_profile.a) and run on an sm_120 GPU.

@@ -6,7 +6,7 @@
 // given for a split in either realization, and the label fragments.
 
 #include "Techniques/Matmul/Scheme.h"
-#include "runtime/gemm/Schemes.h"
+#include "runtime/gemm/SchemeConstants.h"
 
 #include "llvm/Support/raw_ostream.h"
 

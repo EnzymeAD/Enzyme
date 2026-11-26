@@ -40,8 +40,8 @@ namespace poseidon {
 namespace {
 
 #ifdef POSEIDON_DEVICE_PROFILER_AMDGPU
-// runtime/profile/DeviceProbes.cu, compiled as HIP to AMDGPU bitcode.
-#include "FPProfilerDeviceAMDGPU.inc"
+// runtime/profile/DeviceProfilerDevice.cu, compiled as HIP to AMDGPU bitcode.
+#include "DeviceProfilerDeviceAMDGPU.inc"
 #endif
 
 class AMDGPUTarget final : public Target {

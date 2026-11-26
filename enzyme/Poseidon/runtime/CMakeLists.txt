@@ -7,13 +7,13 @@
 # The headers the runtime sources include, for the HIP compiles' dependencies.
 set(POSEIDON_RUNTIME_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/HipAsCuda.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmDispatch.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmDispatch.inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/LibraryCalls.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/LibraryCalls.inc
     ${CMAKE_CURRENT_SOURCE_DIR}/gemm/GemmRuntime.h
     ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProfiler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/profile/ProfileFormat.h
     ${CMAKE_CURRENT_SOURCE_DIR}/profile/ShadowTable.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/Schemes.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gemm/SchemeConstants.h
     ${ENZYME_SOURCE_DIR}/include/poseidon/poseidon.h)
 set(POSEIDON_RUNTIME_HEADERS ${POSEIDON_RUNTIME_HEADERS} PARENT_SCOPE)
 
@@ -80,7 +80,7 @@ install(
 # of GPU code. It links no GPU runtime: it takes the program's own, the one the
 # program's device modules are registered with.
 poseidon_add_gpu_runtime(poseidon_profile_cuda poseidon_profile_hip SOURCES
-                         profile/DeviceProfiler.cu)
+                         profile/DeviceProfilerHost.cu)
 if(POSEIDON_HAS_CUDA)
   target_include_directories(
     poseidon_profile_cuda
@@ -91,14 +91,14 @@ endif()
 #                                DEFINES <definition>...)
 # The device half of the profiler as bitcode the plugin carries and links into
 # each device module it compiles for profile generation:
-# FPProfilerDevice<suffix>.bc compiled by COMPILE, embedded as the array
+# DeviceProfilerDevice<suffix>.bc compiled by COMPILE, embedded as the array
 # kDeviceProfiler<suffix> that the plugin source <consumer> includes, compiled
 # with DEFINES.
 function(poseidon_embed_device_profiler suffix consumer)
   cmake_parse_arguments(PARSE_ARGV 2 _arg "" "" "COMPILE;DEFINES")
-  set(_src ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProbes.cu)
-  set(_bc ${POSEIDON_BINARY_DIR}/FPProfilerDevice${suffix}.bc)
-  set(_inc ${POSEIDON_BINARY_DIR}/FPProfilerDevice${suffix}.inc)
+  set(_src ${CMAKE_CURRENT_SOURCE_DIR}/profile/DeviceProfilerDevice.cu)
+  set(_bc ${POSEIDON_BINARY_DIR}/DeviceProfilerDevice${suffix}.bc)
+  set(_inc ${POSEIDON_BINARY_DIR}/DeviceProfilerDevice${suffix}.inc)
   add_custom_command(
     OUTPUT ${_bc}
     COMMAND ${_arg_COMPILE} -emit-llvm -c ${_src} -o ${_bc}

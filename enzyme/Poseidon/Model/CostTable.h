@@ -56,7 +56,7 @@ struct CostModelState {
 
   /// The libm functions whose single-precision call, with its two casts, is
   /// priced below the double-precision call; computed once, on first use.
-  std::optional<std::unordered_set<std::string>> PTFuncs;
+  std::optional<std::unordered_set<std::string>> NarrowableFuncs;
 };
 
 /// The directory a compile looks a model up in by target-cpu:

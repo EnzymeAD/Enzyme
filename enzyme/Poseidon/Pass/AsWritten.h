@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The twin is compiled as a build without a profile would compile it, and
+// The copy is compiled as a build without a profile would compile it, and
 // takes from the rewritten module only the functions a rewrite reached.
 //
 //===----------------------------------------------------------------------===//
@@ -14,7 +14,7 @@
 #ifndef POSEIDON_PASS_AS_WRITTEN_H
 #define POSEIDON_PASS_AS_WRITTEN_H
 
-#include "Session.h"
+#include "Solve/Session.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/PassManager.h"
@@ -34,12 +34,13 @@ namespace poseidon {
 /// module as written, to compile as a build without the plugin would.
 std::unique_ptr<llvm::Module> snapshotAsWritten(const llvm::Module &M);
 
-/// Compiles `twin`, the module as written, with the default pipeline of
-/// `Phase` as a build without a profile, takes into it the functions in
+/// Compiles `asWrittenModule`, the module as written, with the default pipeline
+/// of `Phase` as a build without a profile, takes into it the functions in
 /// `rewritten`, those a rewrite reached, and gives M its contents. M is left as
-/// it is when the compile of `twin` reports an error or a rewritten function
-/// refers to what `twin` does not hold alike.
-void replaceWithAsWritten(llvm::Module &M, std::unique_ptr<llvm::Module> twin,
+/// it is when the compile of `asWrittenModule` reports an error or a rewritten
+/// function refers to what `asWrittenModule` does not hold alike.
+void replaceWithAsWritten(llvm::Module &M,
+                          std::unique_ptr<llvm::Module> asWrittenModule,
                           const Session &parent, llvm::PassBuilder &PB,
                           llvm::OptimizationLevel Level,
                           llvm::ThinOrFullLTOPhase Phase,

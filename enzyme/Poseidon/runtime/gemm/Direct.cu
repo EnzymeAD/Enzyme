@@ -28,7 +28,7 @@
 #endif
 
 #include "GemmRuntime.h"
-#include "Schemes.h"
+#include "SchemeConstants.h"
 
 using namespace poseidon::gemm;
 

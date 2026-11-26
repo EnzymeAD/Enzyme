@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// inkernel_calibrate: measure every in-kernel tensor-core raise class relative
+// inkernel: measure every in-kernel tensor-core raise class relative
 // to the naive scalar-FP64 GEMM, for the cost model:
 //     rel = (candidate wall clock) / (scalar-FP64 wall clock)
 // on the same kernel at the same shape. poseidon-calibrate compiles this file

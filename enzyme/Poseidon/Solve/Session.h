@@ -13,14 +13,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_PASS_SESSION_H
-#define POSEIDON_PASS_SESSION_H
+#ifndef POSEIDON_SOLVE_SESSION_H
+#define POSEIDON_SOLVE_SESSION_H
 
 #include "Model/CostTable.h"
-#include "Pass/Options.h"
 #include "Sites/LaunchManifest.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Pins.h"
+#include "Support/Options.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Rewrite/HerbieRun.h"
 
@@ -179,4 +179,4 @@ struct LocalAnalysisManagers {
 };
 
 } // namespace poseidon
-#endif // POSEIDON_PASS_SESSION_H
+#endif // POSEIDON_SOLVE_SESSION_H

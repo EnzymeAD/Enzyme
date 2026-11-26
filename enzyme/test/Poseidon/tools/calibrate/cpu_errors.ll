@@ -2,8 +2,8 @@
 ; RUN: printf '#!/bin/sh\nexec %python -S "$@"\n' > %t/python && chmod +x %t/python
 ; RUN: not %poseidon_calibrate --cpu x86-64 --python %t/python --out %t/cm.csv 2>&1 | FileCheck --check-prefix=PACKAGE %s
 ; RUN: not %poseidon_calibrate --cpu x86-64 --gpu 0 --out %t/cm.csv 2>&1 | FileCheck --check-prefix=BOTH %s
-; RUN: not %poseidon_calibrate --cpu x86-64 --only microbm,direct --out %t/cm.csv 2>&1 | FileCheck --check-prefix=GPUARM %s
-; RUN: not %poseidon_calibrate --cpu x86-64 --only microbn --out %t/cm.csv 2>&1 | FileCheck --check-prefix=NOARM %s
+; RUN: not %poseidon_calibrate --cpu x86-64 --only ops,direct --out %t/cm.csv 2>&1 | FileCheck --check-prefix=GPUARM %s
+; RUN: not %poseidon_calibrate --cpu x86-64 --only opz --out %t/cm.csv 2>&1 | FileCheck --check-prefix=NOARM %s
 ; RUN: test ! -e %t/cm.csv
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/joint_profiles -poseidon-enable-rewrite=false -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=COMPILE %s
 
@@ -36,6 +36,6 @@ attributes #0 = { "target-cpu"="x86-64-v3" }
 
 ; GPUARM: poseidon-calibrate: the direct arm measures a GPU, and --cpu a host{{$}}
 
-; NOARM: poseidon-calibrate: --only: there is no arm 'microbn'{{$}}
+; NOARM: poseidon-calibrate: --only: there is no arm 'opz'{{$}}
 
 ; COMPILE: error: {{.*}}Poseidon: no cost model for target-cpu 'x86-64-v3' in {{.*}}xdg-cache{{.}}poseidon; measure this host with 'poseidon-calibrate --cpu x86-64-v3', or name a model with -poseidon-cost-model=<csv> or POSEIDON_COST_MODEL{{$}}

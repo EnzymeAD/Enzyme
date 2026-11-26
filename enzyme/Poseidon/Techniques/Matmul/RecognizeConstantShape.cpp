@@ -8,11 +8,11 @@
 
 #include "Internal.h"
 #include "Model/FPFormat.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchManifest.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
 
@@ -840,7 +840,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
   if (note.cParam < 0)
     return refuse("the product is not stored through a pointer parameter");
 
-  // Host dispatch supports only a pure GEMM body: a self-overwriting library
+  // Library call supports only a pure GEMM body: a self-overwriting library
   // dispatch cannot represent a fused epilogue that may read its own output, so
   // the stored value (modulo lcssa) must be an instruction inside the loop.
   {
@@ -882,7 +882,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
     if (O.Model.StrictMode)
       return userError(
           F, F.getSubprogram(),
-          "strict mode: the host-dispatch geometry of " + F.getName() +
+          "strict mode: the library-call geometry of " + F.getName() +
               " is unrecoverable for a non-square GEMM at a changed deploy "
               "scale, so its candidate set would be reduced; profile at the "
               "deploy shape, or leave out -poseidon-strict-mode");
@@ -953,7 +953,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
   if (llvm::any_of(note.dims,
                    [](const RuntimeDim &d) { return d.add > kMaxDimConstant; }))
     return refuse("a dimension of the product is out of the range of the "
-                  "dispatch's int dimensions");
+                  "library call's int dimensions");
   note.standalone = (storeCount == 1);
   return note;
 }

@@ -47,7 +47,7 @@ struct Recorded {
 
 /// The header of a device site's profile, which the host half registers
 /// under the profile's name.
-struct LaunchProfileHeader {
+struct ProfileHeaderText {
   /// The name the profile is written and registered under.
   std::string profileName;
   /// The profile's header text, as the profiling runtime writes it.
@@ -59,9 +59,9 @@ struct LaunchProfileHeader {
 struct LaunchManifest {
   /// By kernel name, so that the manifest and its messages come out in one
   /// order whatever order the sites were solved in.
-  std::map<std::string, Recorded> HostDispatch, Profiling;
+  std::map<std::string, Recorded> LibraryCalls, Profiling;
   /// The profile headers of the profiled kernels, by kernel name.
-  std::map<std::string, LaunchProfileHeader> ProfileHeaders;
+  std::map<std::string, ProfileHeaderText> ProfileHeaders;
   /// What the device profiler's tables must hold for this module: the
   /// functions it profiles and the probes of the largest.
   unsigned ProfiledFunctions = 0, ProfiledSlots = 0;
@@ -82,7 +82,7 @@ enum class LaunchKind {
 };
 
 /// Whether the host half of this compile rewrites launch stubs from a manifest:
-/// under profile generation, and under profile use with host dispatch.
+/// under profile generation, and under profile use with library call.
 bool handsOverLaunches(const Options &O);
 
 /// Records "<wrapperName><payload>" as the `kind` descriptor of that kernel in

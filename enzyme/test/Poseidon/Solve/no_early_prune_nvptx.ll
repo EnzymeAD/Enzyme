@@ -126,9 +126,9 @@
 ; admits: the empty strategy is kept, and both solves keep d's options. The
 ; budget is below every frontier point, so only the solve runs.
 ; RUN: mkdir %t/two_matmuls
-; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefixes=TWO,TWO-PRUNE %s
+; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefixes=TWO,TWO-PRUNE %s
 ; RUN: cat %t/two_matmuls/prune/dp_*.json | FileCheck --check-prefix=TWO-TABLE %s
-; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact 2>&1 | FileCheck --check-prefixes=TWO,TWO-EXACT %s
+; RUN: %opt %S/../Inputs/no_early_prune/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/no_early_prune/two_matmuls -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact 2>&1 | FileCheck --check-prefixes=TWO,TWO-EXACT %s
 ; RUN: cat %t/two_matmuls/exact/dp_*.json | FileCheck --check-prefix=TWO-TABLE %s
 
 ; TWO-PRUNE-NOT: Exact DP

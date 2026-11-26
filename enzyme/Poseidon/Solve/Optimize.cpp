@@ -9,12 +9,12 @@
 #include "Optimize.h"
 #include "Explain.h"
 #include "Model/CostModel.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
 #include "SolveSites.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -182,7 +182,7 @@ static Error proposeSubgraphCandidates(Session &S, Function &F,
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
-    if (O.Candidates.EnableRewrites)
+    if (O.Candidates.EnableRewrite)
       if (Error E = proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
                                             symbolCounter, st, st.rewriteUnits))
         return E;
@@ -202,7 +202,7 @@ static Error proposeSubgraphCandidates(Session &S, Function &F,
 // operation of the site; the profile predicts eps times the site's total
 // sensitivity for the same noise. Their ratio cancels the propagation within
 // the site and leaves the downstream condition per unit of accuracy cost. A
-// site whose probe run diverged has no finite condition number: it is solved
+// site whose kappa run diverged has no finite condition number: it is solved
 // with no candidate (solveAndApply), under a target and under a budget.
 static Error putOnApplicationScale(Session &S, Function &F,
                                    const SiteProfileData &P, SiteState &st) {
@@ -641,10 +641,10 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
       redirectNoopSite(S.Sites, st->F, S.Opts.Diagnostics.Print);
     changed |= *siteChanged;
   }
-  // The host-dispatch descriptors of a joint solve are known only once every
+  // The library-call descriptors of a joint solve are known only once every
   // site is materialized.
   if (joint)
-    flushPendingGemmDispatches(S);
+    flushPendingLibraryCalls(S);
   return changed;
 }
 
@@ -653,7 +653,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
 // [min, max] under-prices fixed-point Ozaki on matrices of wide dynamic range,
 // so a target defaults to a wide log-uniform range.
 static unsigned matmulSampleLogBits(const Options &O, double target) {
-  return O.Model.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
+  return O.Matmul.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
 }
 
 Expected<bool> optimizeSite(Session &S, Function &F, double tau) {

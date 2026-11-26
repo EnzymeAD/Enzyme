@@ -26,7 +26,7 @@ struct Options;
 /// below returns a value whose components are normalized (|x[i+1]| <=
 /// ulp(x[i])/2), except the square root of an operand with a zero leading
 /// component, which is the operand. The emitters emit the routines of
-/// Techniques/Precision/ExpansionRoutines.h, operation for operation.
+/// Model/ExpansionRoutines.h, operation for operation.
 struct ExpansionValue {
   /// The components, each an F32 value, most significant first.
   llvm::SmallVector<llvm::Value *, 4> x;

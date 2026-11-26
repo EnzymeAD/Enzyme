@@ -15,7 +15,7 @@
 // CHECK: poseidon-calibrate: wrote {{.*}}cm.csv
 // CHECK: library_ozaki_rel,dgemm,1.0
 // CHECK: library_ozaki_rect_rel,nm8_m125k648,2.0
-// CHECK: poseidon-calibrate: tcec: the error-corrected dispatch has no HIP runtime; its row stays absent
+// CHECK: poseidon-calibrate: tcec: the error-corrected library call has no HIP runtime; its row stays absent
 // CHECK: library_direct_rel,f16_f32,0.5
 // CHECK: poseidon-calibrate: inkernel: tensor-core raises inside a kernel are NVPTX-only; their rows stay absent
 // CHECK: poseidon-calibrate: cost model: {{.*}}cm.csv

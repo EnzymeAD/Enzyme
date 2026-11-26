@@ -9,10 +9,10 @@
 #include "Instrument.h"
 
 #include "Enzyme/Utils.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchManifest.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
@@ -548,7 +548,7 @@ static Error refuseUnservedProbes(const Target &target, Module &M) {
 static Expected<std::unique_ptr<Module>>
 loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
   Expected<std::unique_ptr<Module>> parsed = parseBitcodeFile(
-      MemoryBufferRef(bitcode, "FPProfilerDevice.bc"), M.getContext());
+      MemoryBufferRef(bitcode, "DeviceProfilerDevice.bc"), M.getContext());
   if (!parsed)
     report_fatal_error(Twine("Poseidon: the device profiler bitcode does not "
                              "load: ") +

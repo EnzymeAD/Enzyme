@@ -1,6 +1,6 @@
-// The GEMM dispatch runtimes against a reference DGEMM of the same library, on
+// The library call runtimes against a reference DGEMM of the same library, on
 // random operands whose rows and columns span 2^-8..2^8, compiled as CUDA
-// (cuBLAS) or as HIP (hipBLAS). Driven by Integration/dispatch_rt_{cuda,hip}.
+// (cuBLAS) or as HIP (hipBLAS). Driven by Integration/gemm_runtime_{cuda,hip}.
 //
 //   ozaki:  every Ozaki-II case is also reduced to a digest of its result
 //           bits. The products are exact INT32 sums, the shifts come from the
@@ -38,7 +38,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
-#include "gemm/GemmDispatch.h"
+#include "gemm/LibraryCalls.h"
 #ifndef __HIP__
 #include <cublas_v2.h>
 #endif
@@ -188,7 +188,7 @@ struct OzakiCase {
   double err;    // and its error against cublasDgemm
 };
 
-// Recorded by the CUDA build on an RTX 5090 (dispatch_rt ozaki-record).
+// Recorded by the CUDA build on an RTX 5090 (gemm_runtime ozaki-record).
 const OzakiCase kOzaki[] = {
     {0, 8, 0xe612b0f4774dce33ull, 7.536001e-09},
     {0, 10, 0x2bba9479fcc93da1ull, 2.888180e-11},

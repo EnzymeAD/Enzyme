@@ -14,11 +14,11 @@
 
 #include "BuildIdentity.h"
 #include "Internal.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Simulation.h"
 #include "Sites/Canonicalize.h"
+#include "Solve/Session.h"
 #include "Support/CacheKey.h"
+#include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
 #include "Support/UniformReal.h"
 #include "Support/Utils.h"

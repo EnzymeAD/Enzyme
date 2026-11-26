@@ -1,4 +1,4 @@
-//===- RealizeLibraryCall.h - host-side GEMM library dispatch -------------===//
+//===- RealizeLibraryCall.h - host-side GEMM library call -----------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -32,23 +32,23 @@ struct Options;
 class Session;
 
 /// Map body params to wrapper launch-arg indices via primalArgs and record the
-/// wrapper's host dispatch descriptor.
+/// wrapper's library call descriptor.
 void writeGemmDescriptor(Session &S, llvm::Function &wrapper,
                          llvm::ArrayRef<llvm::Value *> primalArgs,
                          const ChosenLibraryCall &call);
 
 /// For a joint solve, whose notes exist only after materialization:
-/// addPendingGemmDispatch records the body-parameter to wrapper-argument map
-/// when the site is split, and flushPendingGemmDispatches writes the
+/// addPendingLibraryCall records the body-parameter to wrapper-argument map
+/// when the site is split, and flushPendingLibraryCalls writes the
 /// descriptors afterwards.
-void addPendingGemmDispatch(Session &S, const llvm::Function *body,
-                            llvm::Function &wrapper,
-                            llvm::ArrayRef<llvm::Value *> primalArgs);
+void addPendingLibraryCall(Session &S, const llvm::Function *body,
+                           llvm::Function &wrapper,
+                           llvm::ArrayRef<llvm::Value *> primalArgs);
 /// Writes the descriptor of each pending site whose body was given a library
 /// call, and forgets every pending site.
-void flushPendingGemmDispatches(Session &S);
+void flushPendingLibraryCalls(Session &S);
 
-/// Rewrite the launch in each launch stub that a host dispatch descriptor in
+/// Rewrite the launch in each launch stub that a library call descriptor in
 /// M's manifest matches into a call of the GEMM runtime. Host module only. An
 /// error for a descriptor that does not parse.
 llvm::Expected<bool> rewriteGemmStubBodies(const Options &O, llvm::Module &M);

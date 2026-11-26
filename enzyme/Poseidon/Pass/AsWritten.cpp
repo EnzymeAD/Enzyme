@@ -34,10 +34,10 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Runs the default pipeline of `Phase` on `twin` as a build without a profile,
-// the diagnostics already given for the module's sites silenced. False if it
-// reported an error.
-static bool compileAsWritten(Module &twin, const Session &parent,
+// Runs the default pipeline of `Phase` on `asWrittenModule` as a build without
+// a profile, the diagnostics already given for the module's sites silenced.
+// False if it reported an error.
+static bool compileAsWritten(Module &asWrittenModule, const Session &parent,
                              PassBuilder &PB, OptimizationLevel Level,
                              ThinOrFullLTOPhase Phase) {
   struct Quiet : DiagnosticHandler {
@@ -47,7 +47,7 @@ static bool compileAsWritten(Module &twin, const Session &parent,
       return true;
     }
   };
-  LLVMContext &C = twin.getContext();
+  LLVMContext &C = asWrittenModule.getContext();
   std::unique_ptr<DiagnosticHandler> handler = C.getDiagnosticHandler();
   auto quiet = std::make_unique<Quiet>();
   Quiet *q = quiet.get();
@@ -62,7 +62,7 @@ static bool compileAsWritten(Module &twin, const Session &parent,
         Phase == ThinOrFullLTOPhase::ThinLTOPreLink
             ? PB.buildThinLTOPreLinkDefaultPipeline(Level)
             : PB.buildPerModuleDefaultPipeline(Level, Phase);
-    MPM.run(twin, AMs.MAM);
+    MPM.run(asWrittenModule, AMs.MAM);
   }
   const bool failed = q->failed;
   C.setDiagnosticHandler(std::move(handler));
@@ -276,7 +276,7 @@ static void adoptModule(Module &M, Module &from) {
 
 std::unique_ptr<Module> snapshotAsWritten(const Module &M) {
   ValueToValueMapTy VMap;
-  std::unique_ptr<Module> twin = CloneModule(M, VMap);
+  std::unique_ptr<Module> asWrittenModule = CloneModule(M, VMap);
   // CloneModule orders each copy's uses as it creates them; a value the
   // bitcode reader gave its module, such as a function of libdevice, may have
   // its uses in another order, and a pass that visits predecessors or users in
@@ -298,16 +298,16 @@ std::unique_ptr<Module> snapshotAsWritten(const Module &M) {
     copy->sortUseList(
         [&](const Use &L, const Use &R) { return rank(L) < rank(R); });
   }
-  return twin;
+  return asWrittenModule;
 }
 
-void replaceWithAsWritten(Module &M, std::unique_ptr<Module> twin,
+void replaceWithAsWritten(Module &M, std::unique_ptr<Module> asWrittenModule,
                           const Session &parent, PassBuilder &PB,
                           OptimizationLevel Level, ThinOrFullLTOPhase Phase,
                           ArrayRef<Function *> rewritten) {
-  if (!compileAsWritten(*twin, parent, PB, Level, Phase))
+  if (!compileAsWritten(*asWrittenModule, parent, PB, Level, Phase))
     return;
-  if (!takeRewritten(*twin, rewritten)) {
+  if (!takeRewritten(*asWrittenModule, rewritten)) {
     if (parent.Opts.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << M.getName()
                    << ": a rewritten function refers to what the module as "
@@ -315,7 +315,7 @@ void replaceWithAsWritten(Module &M, std::unique_ptr<Module> twin,
                       "module\n";
     return;
   }
-  adoptModule(M, *twin);
+  adoptModule(M, *asWrittenModule);
   if (!parent.Opts.Diagnostics.Print)
     return;
   if (rewritten.empty())

@@ -42,7 +42,7 @@ foreach(
   cpu_noarch
   cpu_missing
   gfx942_synthetic
-  sm_120_synthetic_dispatch
+  sm_120_synthetic_library
   sm_120_synthetic_tcec
   sm_120_synthetic_half)
   list(APPEND _outputs ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)

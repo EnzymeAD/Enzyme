@@ -8,9 +8,9 @@
 
 #include "Narrowing.h"
 #include "Expansion.h"
-#include "Pass/Session.h"
 #include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/STLExtras.h"

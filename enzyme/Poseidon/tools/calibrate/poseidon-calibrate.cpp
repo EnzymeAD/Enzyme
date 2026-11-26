@@ -12,7 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Model/CostTable.h"
-#include "runtime/gemm/Schemes.h"
+#include "runtime/gemm/SchemeConstants.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
@@ -64,7 +64,7 @@ static cl::opt<bool>
 static cl::opt<std::string>
     Only("only", cl::init(""), cl::value_desc("arms"),
          cl::desc("Comma-separated subset of "
-                  "microbm,ozaki,ozaki-rect,tcec,direct,inkernel,"
+                  "ops,ozaki,ozaki-rect,tcec,direct,inkernel,"
                   "herbie-platform"));
 static cl::opt<std::string>
     Python("python", cl::init(POSEIDON_CALIBRATE_PYTHON),
@@ -101,11 +101,11 @@ static cl::opt<std::string> OzakiRect(
              "lacks"));
 static cl::opt<unsigned>
     RefN("n", cl::init(2048), cl::value_desc("N"),
-         cl::desc("Square reference shape the dispatch arms and "
+         cl::desc("Square reference shape the library arms and "
                   "the in-kernel class rows are timed at"));
 static cl::opt<unsigned>
     Reps("reps", cl::init(30), cl::value_desc("count"),
-         cl::desc("Timed repetitions of each dispatch and in-kernel "
+         cl::desc("Timed repetitions of each library call and in-kernel "
                   "measurement"));
 
 /// The directory of this executable.
@@ -126,7 +126,7 @@ namespace {
 enum class Calibrator {
   /// Per-op throughputs and the --device query.
   Ops,
-  /// The library-call (host dispatch) rows.
+  /// The library-call (library call) rows.
   Library
 };
 } // namespace
@@ -285,7 +285,7 @@ struct Device {
 } // namespace
 
 /// The exit status of a microbenchmark that finds no device of its vendor.
-constexpr int kMicrobmNoDevice = 2;
+constexpr int kExitNoDevice = 2;
 
 /// The GPU --gpu names, else the first the vendor's visible-devices variable
 /// lists, as the microbenchmark of each vendor this build has names it, CUDA's
@@ -325,7 +325,7 @@ static Device queryDevice() {
     int RC =
         sys::ExecuteAndWait(Exe, Argv, std::nullopt, Redirects, 0, 0, &Failure);
     std::string Why = StringRef(readFile(Err)).trim().str();
-    if (RC == kMicrobmNoDevice) {
+    if (RC == kExitNoDevice) {
       Reasons += ("\n  " + sys::path::filename(Exe) + ": " + Why).str();
       continue;
     }
@@ -445,12 +445,12 @@ static std::string resolveCsv(const Device &D) {
 
 /// The arms --only takes.
 static constexpr StringLiteral Arms[] = {
-    "microbm", "herbie-platform", "ozaki",   "ozaki-rect",
-    "tcec",    "direct",          "inkernel"};
+    "ops",  "herbie-platform", "ozaki",   "ozaki-rect",
+    "tcec", "direct",          "inkernel"};
 
 /// Whether `Arm` measures a host as well as a GPU.
 static bool isHostArm(StringRef Arm) {
-  return Arm == "microbm" || Arm == "herbie-platform";
+  return Arm == "ops" || Arm == "herbie-platform";
 }
 
 /// Whether this run measures `Arm`.
@@ -565,11 +565,11 @@ static int measureHost(const Device &D, StringRef Part) {
   return run(Argv, Part);
 }
 
-// A GPU is measured kMicrobmRuns times and each row is the median of its runs:
+// A GPU is measured kOpsRuns times and each row is the median of its runs:
 // a run another process or the host stretched is outvoted, and a row is never
 // the measurement of one disturbed run. A row is written when most runs wrote
 // it (a tile row exists only when its GEMM ran faster than the scalar one).
-constexpr unsigned kMicrobmRuns = 3;
+constexpr unsigned kOpsRuns = 3;
 
 static std::string medianOfRuns(ArrayRef<std::string> Runs) {
   std::string Out;
@@ -621,7 +621,7 @@ static bool isUsableModel(StringRef Rows) {
 }
 
 /// Measures the per-op rows into a new `Csv`.
-static void armMicrobm(StringRef Csv, const Device &D) {
+static void armOps(StringRef Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
     outs() << "poseidon-calibrate: per-op throughputs already measured: " << Csv
            << '\n';
@@ -635,10 +635,10 @@ static void armMicrobm(StringRef Csv, const Device &D) {
     outs() << "poseidon-calibrate: measuring per-op throughput\n";
     Rows = measureHost(D, Part) == 0 ? readFile(Part) : std::string();
   } else {
-    SmallVector<std::string, kMicrobmRuns> Runs;
-    for (unsigned I = 1; I <= kMicrobmRuns; ++I) {
+    SmallVector<std::string, kOpsRuns> Runs;
+    for (unsigned I = 1; I <= kOpsRuns; ++I) {
       outs() << "poseidon-calibrate: measuring per-op throughput, run " << I
-             << " of " << kMicrobmRuns << '\n';
+             << " of " << kOpsRuns << '\n';
       outs().flush();
       // The redirection does not truncate the file it writes.
       sys::fs::remove(Part);
@@ -649,7 +649,7 @@ static void armMicrobm(StringRef Csv, const Device &D) {
         break;
       Runs.push_back(std::move(Run));
     }
-    if (Runs.size() == kMicrobmRuns) {
+    if (Runs.size() == kOpsRuns) {
       Rows = medianOfRuns(Runs);
       writeFile(Part, Rows);
     }
@@ -689,11 +689,11 @@ static bool alreadyMeasured(StringRef Csv, StringRef Arm, StringRef Family) {
 
 /// Measures the dispatch family of `Arm`, which names it to the dispatch
 /// calibrator.
-static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
-                        StringRef Family) {
+static void armLibrary(StringRef Csv, const Device &D, StringRef Arm,
+                       StringRef Family) {
   if (alreadyMeasured(Csv, Arm, Family))
     return;
-  outs() << "poseidon-calibrate: measuring " << Arm << " host dispatch\n";
+  outs() << "poseidon-calibrate: measuring " << Arm << " library call\n";
   writeRows(
       Csv, Arm, Family,
       capture({tool(D, Calibrator::Library), Arm, utostr(RefN), utostr(Reps)}));
@@ -755,7 +755,7 @@ static SmallVector<ProductShape, 4> products() {
 /// the Ozaki-II rows of the --ozaki-rect (M, K). Rows of other shapes are
 /// kept.
 static void armOzakiRect(StringRef Csv, const Device &D) {
-  // Each shape as the dispatch calibrator takes it, and the key of its rows.
+  // Each shape as the library calibrator takes it, and the key of its rows.
   SmallVector<std::pair<std::string, std::string>, 8> Shapes;
   for (const ProductShape &P : products())
     Shapes.push_back({P.extents(), P.key()});
@@ -793,28 +793,28 @@ static void armOzakiRect(StringRef Csv, const Device &D) {
   }
   if (Argv.size() == Fixed)
     return;
-  outs() << "poseidon-calibrate: measuring ozaki-rect host dispatch\n";
+  outs() << "poseidon-calibrate: measuring ozaki-rect library call\n";
   SmallVector<StringRef, 8> Args(Argv.begin(), Argv.end());
   writeRows(Csv, "ozaki-rect", "library_ozaki_rect_rel", capture(Args));
 }
 
-/// Measures the error-corrected dispatch, which only a build with cuMpSGEMM
+/// Measures the error-corrected library call, which only a build with cuMpSGEMM
 /// has.
 static void armTcec(StringRef Csv, const Device &D) {
   if (D.Hip) {
-    outs()
-        << "poseidon-calibrate: tcec: the error-corrected dispatch has no HIP "
-           "runtime; its row stays absent\n";
+    outs() << "poseidon-calibrate: tcec: the error-corrected library call has "
+              "no HIP "
+              "runtime; its row stays absent\n";
     return;
   }
   if (!POSEIDON_CALIBRATE_TCEC) {
     outs() << "poseidon-calibrate: tcec: this build has no error-corrected "
-              "dispatch, "
+              "library call, "
               "which needs cuMpSGEMM (configure with "
               "-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>); its row stays absent\n";
     return;
   }
-  armDispatch(Csv, D, "tcec", "library_tcec_rel");
+  armLibrary(Csv, D, "tcec", "library_tcec_rel");
 }
 
 /// The time `Exe` reports for --reps runs of its kernel, if it runs.
@@ -1053,13 +1053,12 @@ static int checkModel(const Device &D) {
     const char *Family;
     const char *What;
     Where On;
-  } Families[] = {
-      {"fmul", "per-op throughputs", Everywhere},
-      {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
-      {"library_ozaki_rel", "Ozaki-II host dispatch", Gpu},
-      {"library_tcec_rel", "error-corrected host dispatch", Nvidia},
-      {"library_direct_rel", "reduced-precision host dispatch", Gpu},
-      {"inkernel_rel", "in-kernel tensor-core raises", Nvidia}};
+  } Families[] = {{"fmul", "per-op throughputs", Everywhere},
+                  {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
+                  {"library_ozaki_rel", "Ozaki-II library call", Gpu},
+                  {"library_tcec_rel", "error-corrected library call", Nvidia},
+                  {"library_direct_rel", "reduced-precision library call", Gpu},
+                  {"inkernel_rel", "in-kernel tensor-core raises", Nvidia}};
   for (const auto &F : Families) {
     if ((D.Host && F.On != Everywhere) || (D.Hip && F.On == Nvidia)) {
       outs() << "n/a         " << F.Family << "  (" << F.What << ": none on "
@@ -1091,7 +1090,7 @@ int main(int argc, char **argv) {
       "measure the Poseidon cost model of a GPU, or with --cpu of this host, "
       "or check an existing one\n\n"
       "Each arm writes its row families into the one CSV:\n"
-      "  microbm          <op>,<type> and "
+      "  ops          <op>,<type> and "
       "fpext_/fptrunc_<from>_to_<to>,<from>,\n"
       "                   and on NVIDIA wmma_mma_<tile>,<in>_<acc>\n"
       "  herbie-platform  no rows: the Herbie platform <csv>.herbie.rkt\n"
@@ -1142,23 +1141,23 @@ int main(int argc, char **argv) {
   if (!D.Host)
     outs() << ", id " << D.Id;
   outs() << ")\n";
-  if (wants("microbm"))
-    armMicrobm(Csv, D);
+  if (wants("ops"))
+    armOps(Csv, D);
   if (!sys::fs::exists(Csv))
     fail("no cost model at " + Csv +
-         "; run the microbm arm before the dispatch arms");
-  // Right after microbm, because it translates exactly what microbm wrote.
-  if (wants("microbm") || wants("herbie-platform"))
+         "; run the ops arm before the library arms");
+  // Right after ops, because it translates exactly what ops wrote.
+  if (wants("ops") || wants("herbie-platform"))
     armHerbiePlatform(Csv);
   if (!D.Host) {
     if (wants("ozaki"))
-      armDispatch(Csv, D, "ozaki", "library_ozaki_rel");
+      armLibrary(Csv, D, "ozaki", "library_ozaki_rel");
     if (wants("ozaki-rect"))
       armOzakiRect(Csv, D);
     if (wants("tcec"))
       armTcec(Csv, D);
     if (wants("direct"))
-      armDispatch(Csv, D, "direct", "library_direct_rel");
+      armLibrary(Csv, D, "direct", "library_direct_rel");
     if (wants("inkernel"))
       armInKernel(Csv, D);
   }

@@ -11,8 +11,8 @@
 #include "Annotations.h"
 #include "Enzyme/EnzymeCallMarkers.h"
 #include "Enzyme/Utils.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"

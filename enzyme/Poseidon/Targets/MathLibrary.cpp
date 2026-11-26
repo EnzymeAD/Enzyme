@@ -9,7 +9,7 @@
 #include "MathLibrary.h"
 #include "Target.h"
 
-#include "Pass/Diagnostics.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"

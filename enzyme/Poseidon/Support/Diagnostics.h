@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_PASS_DIAGNOSTICS_H
-#define POSEIDON_PASS_DIAGNOSTICS_H
+#ifndef POSEIDON_SUPPORT_DIAGNOSTICS_H
+#define POSEIDON_SUPPORT_DIAGNOSTICS_H
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -42,8 +42,8 @@ void remarkMissed(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
 /// A mistake in what the compile was given: where it is and what it is.
 ///
 /// A function that finds one returns it, and every caller passes it on, up to
-/// the entry of the running pass. There stopOnError (Pass/Session.h) reports it
-/// once through diagnoseUserErrors, leaves the module valid, and marks the
+/// the entry of the running pass. There stopOnError (Solve/Session.h) reports
+/// it once through diagnoseUserErrors, leaves the module valid, and marks the
 /// session stopped, so that the session's later passes leave the module as it
 /// is. The compile fails through the diagnostic handler's error count, and the
 /// process that loaded the plugin is never ended by the pass. The one place an
@@ -81,4 +81,4 @@ llvm::Error userError(const llvm::Twine &Message);
 void diagnoseUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
 
 } // namespace poseidon
-#endif // POSEIDON_PASS_DIAGNOSTICS_H
+#endif // POSEIDON_SUPPORT_DIAGNOSTICS_H

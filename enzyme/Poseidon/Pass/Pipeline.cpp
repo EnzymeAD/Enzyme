@@ -8,11 +8,9 @@
 
 #include "Actions.h"
 #include "AsWritten.h"
-#include "Pass/Diagnostics.h"
 #include "Pass/HostStubs.h"
 #include "Profile/Instrument.h"
 #include "Profile/SiteProfile.h"
-#include "Session.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"
@@ -21,6 +19,8 @@
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Optimize.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
@@ -565,9 +565,9 @@ struct FinalizePass : PassParent<FinalizePass> {
     });
     for (Function *F : rewritten)
       inlineDeviceMath(*F);
-    if (std::unique_ptr<Module> Twin = std::move(S.AsWritten))
+    if (std::unique_ptr<Module> Copy = std::move(S.AsWritten))
       if (PB)
-        replaceWithAsWritten(M, std::move(Twin), S, *PB, Level, Phase,
+        replaceWithAsWritten(M, std::move(Copy), S, *PB, Level, Phase,
                              rewritten.getArrayRef());
     return PreservedAnalyses::none();
   }
@@ -632,7 +632,7 @@ static void registerPasses(PassBuilder &PB) {
 
   auto loadHostStub = [](ModulePassManager &MPM, OptimizationLevel) {
     MPM.addPass(LowerSitesPass());
-    // Host-side GEMM dispatch rewrites the launch stub before inlining.
+    // Host-side library call rewrites the launch stub before inlining.
     MPM.addPass(HostStubPass());
   };
   PB.registerPipelineStartEPCallback(

@@ -1,5 +1,5 @@
-// The GEMM dispatch runtimes on cuBLAS against cublasDgemm (Inputs/
-// dispatch_rt.cpp): every Ozaki-II case returns the bits the HIP build is held
+// The library call runtimes on cuBLAS against cublasDgemm (Inputs/
+// gemm_runtime.cpp): every Ozaki-II case returns the bits the HIP build is held
 // to, every direct mode but TF32 stays within its a priori bound, the FP32
 // mode is cublasSgemm bit for bit and the TF32 mode the library's TF32 product
 // of operands rounded as the in-kernel raise rounds them, also with every

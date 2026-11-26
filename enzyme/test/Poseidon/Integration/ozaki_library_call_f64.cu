@@ -1,4 +1,4 @@
-// Ozaki-II host dispatch end to end through poseidon-clang++: a scalar FP64
+// Ozaki-II library call end to end through poseidon-clang++: a scalar FP64
 // GEMM kernel is profiled, solved under -poseidon-tau=1e-12 against the
 // device cost model, the error-budget selector picks an Ozaki-II moduli count,
 // the launch stub becomes a __poseidon_ozakiii_dgemm call, and the result is

@@ -112,7 +112,7 @@ static constexpr UserFlag kFlags[] = {
 #define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key,      \
                         ValueName, Description)                                \
   {Spelling, #Kind, #Role, ValueName, Description},
-#include "Pass/Options.def"
+#include "Support/Options.def"
 };
 
 /// Prints `text` from column `indent` to column 80, the first line from

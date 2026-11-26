@@ -103,7 +103,7 @@ static bool g_metricSet = false;
 // metric, so it records and writes nothing else.
 static bool g_metricOnly = false;
 
-// The site the condition-number probe perturbs in this run and by how much;
+// The site this kappa run perturbs and by how much;
 // eps 0 perturbs nothing.
 static int g_kappaSite = -1;
 static double g_kappaEps = 0.0;
@@ -116,7 +116,7 @@ static std::set<std::string> &writtenThisRun() {
   return *s;
 }
 
-class FPProfiler {
+class FunctionProfile {
 private:
   std::string functionName;
   // By slot index, the order the records are written in: the profile's bytes
@@ -125,7 +125,7 @@ private:
   static std::string dir;
 
 public:
-  FPProfiler(const std::string &funcName) : functionName(funcName) {}
+  FunctionProfile(const std::string &funcName) : functionName(funcName) {}
 
   static void setOutputDir(const std::string &dir_) { dir = dir_; }
 
@@ -166,18 +166,18 @@ public:
   }
 };
 
-std::string FPProfiler::dir;
+std::string FunctionProfile::dir;
 
-static std::unordered_map<std::string, std::unique_ptr<FPProfiler>>
+static std::unordered_map<std::string, std::unique_ptr<FunctionProfile>>
     profilerRegistry;
 static std::mutex registryMutex;
 
 // The profiler of the function funcName, created on its first record. Called
 // with registryMutex held.
-static FPProfiler &profilerFor(const char *funcName) {
-  std::unique_ptr<FPProfiler> &p = profilerRegistry[funcName];
+static FunctionProfile &profilerFor(const char *funcName) {
+  std::unique_ptr<FunctionProfile> &p = profilerRegistry[funcName];
   if (!p)
-    p = std::make_unique<FPProfiler>(funcName);
+    p = std::make_unique<FunctionProfile>(funcName);
   return *p;
 }
 
@@ -193,7 +193,7 @@ static std::set<std::string> &writtenElsewhere() {
 static void writeMetric() {
   if (!g_metricSet)
     return;
-  const std::string dir = FPProfiler::outputDir();
+  const std::string dir = FunctionProfile::outputDir();
   profileMkdirP(dir);
   char buf[64];
   std::snprintf(buf, sizeof(buf), "%.17g", g_metricValue);
@@ -307,7 +307,8 @@ static void answerKappaRequest() {
   const char *request = getenv("POSEIDON_KAPPA");
   if (g_kappaSite >= 0 || profileIsKappaChild() || !g_metricSet)
     return;
-  const std::map<int, std::string> sites = kappaSites(FPProfiler::outputDir());
+  const std::map<int, std::string> sites =
+      kappaSites(FunctionProfile::outputDir());
   if (sites.size() < 2)
     return;
   if (request && !strcmp(request, "0")) {
@@ -371,7 +372,7 @@ static void writeAllProfiles() {
   for (const auto &pair : staticHeaders())
     if (!profilerRegistry.count(pair.first) &&
         !writtenElsewhere().count(pair.first)) {
-      FPProfiler neverExecuted(pair.first);
+      FunctionProfile neverExecuted(pair.first);
       if (!holdsRecords(neverExecuted.getOutputPath()))
         neverExecuted.write();
     }
@@ -400,7 +401,7 @@ static int registerProfiler() {
   g_kappaSite = (int)profileEnvInteger("POSEIDON_KAPPA_SITE", -1);
   if (g_kappaSite >= 0)
     g_kappaEps = profileEnvPositiveReal("POSEIDON_KAPPA_EPS", 1e-6);
-  FPProfiler::setOutputDir(profileDirectory());
+  FunctionProfile::setOutputDir(profileDirectory());
 
   captureKappaArgv();
   std::atexit(writeAllProfilesAtExit);
@@ -430,9 +431,9 @@ void __poseidon_register_static(const char *funcName, const char *text) {
   staticHeaders()[funcName] = text;
 }
 
-// The condition-number probe's perturbation of a value of the host site
-// `site` (FPProfilerCUDA.h poseidonPerturbed); the identity unless this run
-// probes that site.
+// The kappa run's perturbation of a value of the host site
+// `site` (DeviceProfiler.h poseidonPerturbed); the identity unless this run
+// perturbs that site.
 double __poseidon_perturb(int site, double v) {
   return site == g_kappaSite && g_kappaEps != 0.0
              ? poseidonPerturbed(v, g_kappaEps)

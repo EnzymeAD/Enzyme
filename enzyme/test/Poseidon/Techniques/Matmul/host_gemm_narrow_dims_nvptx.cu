@@ -1,11 +1,11 @@
 // REQUIRES: cuda-toolkit
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
-// DEFINE: %{compile} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul
+// DEFINE: %{compile} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul
 // RUN: rm -rf %t && mkdir %t
 // RUN: mkdir -p %t/param && cp %S/../../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile %t/param/_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT_~572c7c860d062c97.fpprofile
-// RUN: %{compile} -DNT=short -DDT=int -mllvm -poseidon-profile-use=%t/param -mllvm -poseidon-cache=%t/cparam %s -o /dev/null 2>&1 | FileCheck --check-prefix=PARAM --implicit-check-not='wrote descriptor' --implicit-check-not='host-dispatch' %s
+// RUN: %{compile} -DNT=short -DDT=int -mllvm -poseidon-profile-use=%t/param -mllvm -poseidon-cache=%t/cparam %s -o /dev/null 2>&1 | FileCheck --check-prefix=PARAM --implicit-check-not='wrote descriptor' --implicit-check-not='library-call' %s
 // RUN: mkdir -p %t/field && cp %S/../../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile %t/field/_ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT_~5a6b68e8950a81c1.fpprofile
-// RUN: %{compile} -DNT=int -DDT=short -mllvm -poseidon-profile-use=%t/field -mllvm -poseidon-cache=%t/cfield %s -o /dev/null 2>&1 | FileCheck --check-prefix=FIELD --implicit-check-not='wrote descriptor' --implicit-check-not='host-dispatch' %s
+// RUN: %{compile} -DNT=int -DDT=short -mllvm -poseidon-profile-use=%t/field -mllvm -poseidon-cache=%t/cfield %s -o /dev/null 2>&1 | FileCheck --check-prefix=FIELD --implicit-check-not='wrote descriptor' --implicit-check-not='library-call' %s
 
 // The runtime-shape product of native_dgemm_runtime_cols_nvptx.cu with a 16-bit
 // dimension: the column count as a kernel parameter, or the row count as a
@@ -68,7 +68,7 @@ void reduce(int np, int ldq, int ne, DT nd, double *Q, double *Gp, double *y,
   (void)k;
 }
 
-// PARAM: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape product: a GEMM dimension depends on param0, an i16, but the host reads each launch value as an i32{{$}}
+// PARAM: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body]]: reduction chain of 3 loop(s) is not a library-call runtime-shape product: a GEMM dimension depends on param0, an i16, but the host reads each launch value as an i32{{$}}
 // PARAM: [poseidon] no rewrite applied for [[BODY]];
-// FIELD: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape product: a GEMM dimension depends on param1[+0], an i16, but the host reads each launch value as an i32{{$}}
+// FIELD: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body]]: reduction chain of 3 loop(s) is not a library-call runtime-shape product: a GEMM dimension depends on param1[+0], an i16, but the host reads each launch value as an i32{{$}}
 // FIELD: [poseidon] no rewrite applied for [[BODY]];

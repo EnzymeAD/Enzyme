@@ -14,12 +14,12 @@
 
 #include "Internal.h"
 #include "Model/CostModel.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
-#include "runtime/gemm/Schemes.h"
+#include "runtime/gemm/SchemeConstants.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -246,7 +246,7 @@ static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
     return std::optional<double>(baselinePerMac * rel);
   }
 
-  if (O.Matmul.MatmulCalibration) {
+  if (O.Matmul.Calibration) {
     if (O.Solver.Pin.empty())
       return userError(anchorOf(m),
                        "-poseidon-matmul-calibration requires -poseidon-pin, "
@@ -679,7 +679,7 @@ static Error proposeInKernelRaises(const Product &P, const InKernelSite &K,
 // Library-call realization, proposed under -poseidon-matmul-library-calls. The
 // body must be a GEMM the runtime can take over (recognition already
 // established it for a runtime-shape product). Each scheme is priced from
-// `baselinePerMac` times its measured *_dispatch_rel row, times the shape rule
+// `baselinePerMac` times its measured library_*_rel row, times the shape rule
 // the scheme's runtime needs to extrapolate that row to this shape.
 //===----------------------------------------------------------------------===//
 
@@ -688,7 +688,7 @@ struct LibrarySite {
   // The library call's descriptor; none when no library call can take the
   // place of the product.
   std::optional<GemmBodyNote> note;
-  bool dispatchable = false;
+  bool hasLibraryCall = false;
   // The M x Ncols x K the call runs at, when all three are constants of this
   // compile (a scalar-loop product's descriptor). The rows each shape reads
   // are listed above kCalibrate.
@@ -706,12 +706,12 @@ static Expected<LibrarySite> librarySite(Session &S,
     return found.takeError();
   L.note = std::move(*found);
   const std::optional<GemmBodyNote> &note = L.note;
-  L.dispatchable = note.has_value();
-  if (S.Opts.Diagnostics.Print && !L.dispatchable)
+  L.hasLibraryCall = note.has_value();
+  if (S.Opts.Diagnostics.Print && !L.hasLibraryCall)
     llvm::errs() << "[poseidon] matmul[" << m.id << "] " << m.M << 'x' << m.N
                  << 'x' << m.K
-                 << ": host-dispatched Ozaki-II not proposed: the body "
-                    "is not a host-dispatchable GEMM\n";
+                 << ": library-call Ozaki-II not proposed: the body "
+                    "is not a library-call GEMM\n";
   if (note && m.origin == RecognizedMatmul::Origin::ConstantShape)
     L.runShape = {(unsigned)note->dims[DimM].add,
                   (unsigned)note->dims[DimNcols].add,
@@ -753,7 +753,7 @@ static double squarePaddingRatio(const RecognizedMatmul &m) {
 // modulus count with neither row is not proposed.
 static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
                                    MatmulUnit &cm) {
-  if (!L.dispatchable)
+  if (!L.hasLibraryCall)
     return Error::success();
   const RecognizedMatmul &m = P.m;
   // The runtime's INT32 residue sums hold a reduction shorter than
@@ -817,12 +817,12 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
     measure += " --ozaki-rect " + shapeM + "x" + shapeK;
   if (!estimated.empty())
     if (Error E = reportEstimatedRow(
-            P.S, m, "ozaki-ii host dispatch at nm=" + estimated, rows, measure,
+            P.S, m, "ozaki-ii library call at nm=" + estimated, rows, measure,
             "as the square product it embeds in (the square row times " +
                 formatv("{0:F2}", padding) + ")"))
       return E;
   if (!missing.empty())
-    return reportMissingRow(P.S, m, "ozaki-ii host dispatch at nm=" + missing,
+    return reportMissingRow(P.S, m, "ozaki-ii library call at nm=" + missing,
                             rows, measure);
   return Error::success();
 }
@@ -835,29 +835,30 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
 // charged.
 static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
                                  MatmulUnit &cm) {
-  if (!L.dispatchable)
+  if (!L.hasLibraryCall)
     return Error::success();
   MatmulUnit::Option opt = libraryOption(
       SchemeVariant::tcec(FPKind::FP16, FPKind::FP32, 2), 16, 16, 16);
-  if (!kHaveTcecDispatch) {
+  if (!kHaveTcecRuntime) {
     if (P.S.Opts.Diagnostics.Print &&
         !std::exchange(P.S.Matmul.ReportedNoTcecRuntime, true))
-      llvm::errs() << "[poseidon] matmul[" << P.m.id << "] " << P.m.M << 'x'
-                   << P.m.N << 'x' << P.m.K
-                   << ": TCEC dispatch not proposed: this build has no TCEC "
-                      "runtime; configure it with "
-                      "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>\n";
+      llvm::errs()
+          << "[poseidon] matmul[" << P.m.id << "] " << P.m.M << 'x' << P.m.N
+          << 'x' << P.m.K
+          << ": TCEC library call not proposed: this build has no TCEC "
+             "runtime; configure it with "
+             "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>\n";
     cm.dropped.push_back(
         {matmulOptionLabel(opt),
          "this compiler was built without cuMpSGEMM, on which the "
-         "error-corrected dispatch runs; configure it with "
+         "error-corrected library call runs; configure it with "
          "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>"});
     return Error::success();
   }
   double rel =
       lookupCost(P.S.CostModel, "library_tcec_rel", "fp16tcec").value_or(-1.0);
   if (rel <= 0.0)
-    return reportMissingRow(P.S, P.m, "tcec host dispatch",
+    return reportMissingRow(P.S, P.m, "tcec library call",
                             "library_tcec_rel,fp16tcec", kCalibrate);
   opt.compCost = P.baselinePerMac * rel;
   cm.candidates.push_back(opt);
@@ -887,7 +888,7 @@ static constexpr LibraryDirectVariant kLibraryDirectVariants[] = {
 
 static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
-  if (!L.dispatchable)
+  if (!L.hasLibraryCall)
     return Error::success();
   const RecognizedMatmul &m = P.m;
   for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
@@ -895,10 +896,9 @@ static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
     double rel =
         lookupCost(P.S.CostModel, "library_direct_rel", cls).value_or(-1.0);
     if (rel <= 0.0) {
-      if (Error E = reportMissingRow(P.S, m,
-                                     Twine(schemeTag(d.variant)) + " " + cls +
-                                         " host dispatch",
-                                     "library_direct_rel," + cls, kCalibrate))
+      if (Error E = reportMissingRow(
+              P.S, m, Twine(schemeTag(d.variant)) + " " + cls + " library call",
+              "library_direct_rel," + cls, kCalibrate))
         return E;
       continue;
     }
@@ -919,7 +919,7 @@ static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // the row that replaces the estimate.
 static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
-  if (!L.dispatchable)
+  if (!L.hasLibraryCall)
     return Error::success();
   const RecognizedMatmul &m = P.m;
   // Extents of this compile are priced from the row measured at them, a
@@ -941,11 +941,11 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
     rel =
         lookupCost(P.S.CostModel, "library_ozaki_rel", "dgemm").value_or(-1.0);
   if (rel <= 0.0)
-    return reportMissingRow(P.S, m, "native-dgemm host dispatch",
+    return reportMissingRow(P.S, m, "native-dgemm library call",
                             "library_ozaki_rel,dgemm", kCalibrate);
   if (fromSquare && rectangular)
     if (Error E =
-            reportEstimatedRow(P.S, m, "native-dgemm host dispatch at " + shape,
+            reportEstimatedRow(P.S, m, "native-dgemm library call at " + shape,
                                "library_ozaki_rect_rel," + rectKey,
                                std::string(kCalibrate) + " --product " + shape,
                                "from the square 'library_ozaki_rel,dgemm' row"))
@@ -995,7 +995,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
     case RecognizedMatmul::Origin::RuntimeShape: {
       const RuntimeGemmHandle &g = *m.runtimeGemm;
       const unsigned R = g.fmas.size();
-      // Composed in the unit every "*_dispatch_rel" row is measured in: one
+      // Composed in the unit every "library_*_rel" row is measured in: one
       // MAC of this loop nest is one fma at the element type, plus the
       // epilogue's fadd amortized over the K-long reduction it closes.
       double bodySum = 0.0, epi = 0.0;
@@ -1021,7 +1021,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
       if (Error E = proposeInKernelRaises(P, inKernelSite(S, m), cm))
         return E;
     }
-    if (S.Opts.Matmul.MatmulLibraryCalls) {
+    if (S.Opts.Matmul.LibraryCalls) {
       Expected<LibrarySite> site = librarySite(S, m);
       if (!site)
         return site.takeError();
@@ -1049,7 +1049,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
     for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
       opt.accuracyCost = a.accuracyCost;
       opt.domainError = a.domainError;
-      if (a.outOfRange.empty() || !S.Opts.Model.ExcludeOutOfRange)
+      if (a.outOfRange.empty() || !S.Opts.Matmul.ExcludeOutOfRange)
         offered.push_back(opt);
       else
         cm.dropped.push_back({matmulOptionLabel(opt), a.outOfRange});
@@ -1062,7 +1062,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
                    << "] baseline: composed/MAC=" << baselinePerMac << '\n';
 
     // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
-    // per-MAC baseline, the unit the measured *_dispatch_rel rows use.
+    // per-MAC baseline, the unit the measured library_*_rel rows use.
     if (S.Opts.Diagnostics.Print) {
       llvm::errs() << "[poseidon] matmul[" << cm.matmul->id
                    << "] pricing: baseline/MAC=" << cm.initialCompCost

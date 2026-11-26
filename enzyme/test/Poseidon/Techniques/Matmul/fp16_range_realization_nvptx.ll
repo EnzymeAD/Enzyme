@@ -5,7 +5,7 @@
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau 2>&1 | FileCheck --check-prefix=TAU --implicit-check-not="TCEC dispatch not proposed" %s
+; RUN: %{opt} -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau 2>&1 | FileCheck --check-prefix=TAU --implicit-check-not="TCEC library call not proposed" %s
 ; RUN: cat %t/tau/matmul_accuracy_*.json | FileCheck --check-prefix=KEY %s
 ; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget
 ; RUN: cat %t/budget/dp_*.json | FileCheck --check-prefix=KEY %s

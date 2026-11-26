@@ -1,4 +1,4 @@
-//===- Pins.cpp - the items of -poseidon-pin -------------------===//
+//===- Pins.cpp - the items of -poseidon-pin ------------------------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -8,10 +8,10 @@
 
 #include "Pins.h"
 #include "Optimize.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
 #include "SolveSites.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"

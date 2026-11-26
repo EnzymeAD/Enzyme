@@ -2,7 +2,7 @@
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t/prof
 // RUN: sed -e 's/^MaxGridDims = 192 1 1$/MaxGridDims = 1536 1 1/' -e 's/^LaunchCount = 192$/LaunchCount = 1536/' %S/../../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile > %t/prof/_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~5cd777597848c628.fpprofile
-// RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/cm.csv && echo 'library_ozaki_rect_rel,dgemm_m24n1536k192,0.05' >> %t/cm.csv
+// RUN: cp %cost_models/cm_sm_120_synthetic_library.csv %t/cm.csv && echo 'library_ozaki_rect_rel,dgemm_m24n1536k192,0.05' >> %t/cm.csv
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c -mllvm -poseidon-cost-model=%t/cm.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul %s -o /dev/null 2>&1 | FileCheck --implicit-check-not='the native DGEMM runs at' %s
 
 // The native DGEMM candidate of a product whose column count is a run-time
@@ -70,7 +70,7 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
 }
 
 // CHECK: [poseidon]   profile shape M=24 Ncols=1536 K=192 (per-CTA tile 24x1, launches=1 CTAs/launch=1536 MACs=7077888)
-// CHECK: Poseidon: matrix product 0, 24x1x192: ozaki-ii host dispatch at nm=8, 9, 10, 11, 12, 13, 14 is priced as the square product it embeds in (the square row times 512.00): this device's cost model carries no measured 'library_ozaki_rect_rel,nm<nm>_m24k192' row; poseidon-calibrate --gpu <id> --ozaki-rect 24x192 measures it{{$}}
+// CHECK: Poseidon: matrix product 0, 24x1x192: ozaki-ii library call at nm=8, 9, 10, 11, 12, 13, 14 is priced as the square product it embeds in (the square row times 512.00): this device's cost model carries no measured 'library_ozaki_rect_rel,nm<nm>_m24k192' row; poseidon-calibrate --gpu <id> --ozaki-rect 24x192 measures it{{$}}
 // CHECK: [poseidon] matmul[0] pricing: baseline/MAC=5.146667e+02 executions=7077888
 // CHECK: [poseidon]   #10 native-dgemm cublas f64/f64  compCost/MAC=2.573333e+02  rel=5.000000e-01  domainError=5.102214e-16
 // CHECK: tau=1.000000e-12 {{.*}} rel=5.102214e-16{{$}}

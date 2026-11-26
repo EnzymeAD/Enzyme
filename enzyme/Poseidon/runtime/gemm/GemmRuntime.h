@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// What the runtimes of the entries of GemmDispatch.inc share: the error
+// What the runtimes of the entries of LibraryCalls.inc share: the error
 // policy, the per-device state a call holds, the body every entry runs, the
 // tiling of launches, the column-major form of a call of the library, and the
 // operand repacking of the runtimes that run an FP64 product through a
@@ -17,7 +17,7 @@
 #ifndef POSEIDON_RUNTIME_GEMM_GEMM_RUNTIME_H
 #define POSEIDON_RUNTIME_GEMM_GEMM_RUNTIME_H
 
-#include "GemmDispatch.h"
+#include "LibraryCalls.h"
 
 #ifndef __HIP__
 #include <cublas_v2.h>

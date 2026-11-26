@@ -1,4 +1,4 @@
-//===- library.cu - price the GEMM host dispatches ------------------------===//
+//===- library.cu - price the GEMM library calls --------------------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The *_dispatch_rel rows of a cost model: the time of a host-dispatched GEMM
+// The library_*_rel rows of a cost model: the time of a library-call GEMM
 // over the time of the naive scalar-FP64 GEMM at a square reference shape, so
 // that every dispatch family is priced in one unit:
 //
@@ -27,7 +27,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "runtime/gemm/GemmRuntime.h"
-#include "runtime/gemm/Schemes.h"
+#include "runtime/gemm/SchemeConstants.h"
 
 // The CUDA build defines it to whether cuMpSGEMM is linked.
 #ifndef POSEIDON_TCEC

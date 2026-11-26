@@ -199,7 +199,7 @@ struct RuntimeDim {
 /// and a field of one `arg<i>[+<offset>]`.
 std::string runtimeDimString(const RuntimeDim &d);
 
-/// The dimensions of a GEMM, in the order the dispatch entries take them.
+/// The dimensions of a GEMM, in the order the library-call entries take them.
 enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
 /// The number of GemmDim values.
 constexpr unsigned kNumGemmDims = 6;
@@ -209,10 +209,10 @@ constexpr unsigned kMaxDimFactors = 8;
 /// The most pairs of assumed-equal launch values a descriptor holds.
 constexpr unsigned kMaxAssumedEqual = 16;
 /// The largest magnitude of a dimension's constants and of its value, the int a
-/// dispatch entry takes.
+/// library-call entry takes.
 constexpr int64_t kMaxDimConstant = INT32_MAX;
 
-/// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
+/// The library-call descriptor of a GEMM in an optimized body. Operand roles
 /// and runtime-dimension factors name parameters of the body until the
 /// descriptor is written, and launch arguments of the wrapper kernel after.
 struct GemmBodyNote {
@@ -229,8 +229,8 @@ struct GemmBodyNote {
   /// the launch arguments, so a build profiled at one problem size runs at
   /// another.
   RuntimeDim dims[kNumGemmDims];
-  /// Storage orders as the dispatch entries take them: A or B column-major has
-  /// its reduction index contiguous, C column-major its row index.
+  /// Storage orders as the library-call entries take them: A or B column-major
+  /// has its reduction index contiguous, C column-major its row index.
   bool aColMajor = false, bColMajor = false, cColMajor = false;
   /// 1 accumulates into C.
   double beta = 0.0;
@@ -303,7 +303,7 @@ struct RecognizedMatmul {
     ConstantShape,
     /// A dense GEMM whose M / Ncols / K and leading dimensions are runtime
     /// expressions over the kernel's arguments, contracted across one or more
-    /// reduction loops (see RuntimeGemmHandle). Host dispatch only: an
+    /// reduction loops (see RuntimeGemmHandle). Library call only: an
     /// in-kernel raise needs compile-time tile extents.
     RuntimeShape,
   };

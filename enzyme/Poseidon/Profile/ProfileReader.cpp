@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ProfileReader.h"
-#include "Pass/Diagnostics.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "runtime/profile/ProfileFormat.h"
 
@@ -267,7 +267,7 @@ Error ProfileParser::header(StringRef Key, StringRef Value,
       return refusal(Twine(Key) + " " + Value + " is not a hexadecimal digest");
     Header.canonicalHash = Value.str();
   } else if (Key == kProfileKeySiteId) {
-    // The probe driver's; checked so that the driver reads it back.
+    // poseidon-kappa's; checked so that poseidon-kappa reads it back.
     if (Expected<int> Id = integer<int>(Value, Key); !Id)
       return Id.takeError();
   } else if (Key == kProfileKeyKappa) {

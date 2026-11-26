@@ -8,7 +8,7 @@
 //
 // The host module's launch stubs of the kernels a descriptor in its manifest
 // names, rewritten before inlining: for profile generation into a launch that
-// supplies the profiling kernel's shadows, and for host GEMM dispatch.
+// supplies the profiling kernel's shadows, and for host library call.
 //
 //===----------------------------------------------------------------------===//
 

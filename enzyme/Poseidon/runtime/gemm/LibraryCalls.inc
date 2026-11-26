@@ -1,4 +1,4 @@
-/*===- GemmDispatch.inc - the host GEMM dispatch entry points --*- C++ -*-===*\
+/*===- LibraryCalls.inc - the host library call entry points --*- C++ -*-===*\
 |*
 |* Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 |* Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -8,7 +8,7 @@
 /*
  * The one list of the entry points the pass replaces a matrix product's
  * launch with, included by the pass to build their prototypes and calls and
- * by the runtimes and their callers to declare them (GemmDispatch.h). An
+ * by the runtimes and their callers to declare them (LibraryCalls.h). An
  * includer defines the macros it uses; the others expand to nothing.
  *
  * POSEIDON_GEMM_PARAMS(P, LAST) lists the parameters every entry takes, in
@@ -19,7 +19,7 @@
  * parameters; POSEIDON_GEMM_ENTRY_MODE(Scheme, Symbol, Mode) one with a last
  * int parameter Mode. Scheme names its Scheme enumerator in the pass.
  *
- * The values of Mode (OzakiII.h):
+ * The values of Mode (SchemeConstants.h):
  *   __poseidon_ozakiii_dgemm   num_moduli kOzakiIIMinModuli..kOzakiIIMaxModuli;
  *                            the pass emits kOzakiIIModuliCounts only, the
  *                            smaller counts exist for direct callers.

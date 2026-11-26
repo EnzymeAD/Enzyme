@@ -90,8 +90,8 @@
 ; dispatch fixture cost model and candidate 12 once the model has no
 ; library_direct_rel,bf16_f32 row; its label names it under both.
 ; RUN: mkdir %t/label
-; RUN: grep -v '^library_direct_rel,bf16_f32,' %cost_models/cm_sm_120_synthetic_dispatch.csv > %t/label/cm_shifted.csv
-; RUN: %{dev} -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/label/full "-poseidon-pin=M0=native-dgemm cublas f64/f64" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefixes=LABEL-NATIVE,LABEL-FULL %s
+; RUN: grep -v '^library_direct_rel,bf16_f32,' %cost_models/cm_sm_120_synthetic_library.csv > %t/label/cm_shifted.csv
+; RUN: %{dev} -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cache=%t/label/full "-poseidon-pin=M0=native-dgemm cublas f64/f64" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefixes=LABEL-NATIVE,LABEL-FULL %s
 ; RUN: %{dev} -poseidon-cost-model=%t/label/cm_shifted.csv -poseidon-cache=%t/label/shifted "-poseidon-pin=M0=native-dgemm cublas f64/f64" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefixes=LABEL-NATIVE,LABEL-SHIFTED %s
 
 ; LABEL-NATIVE: [poseidon] Selecting M0=native-dgemm cublas f64/f64: matmul[0] -> native-dgemm cublas f64/f64
@@ -102,9 +102,9 @@
 
 ; The value a tolerance-selected product prints applies the same candidate,
 ; and the unit's dispatch manifest is the same, without the tolerance.
-; RUN: %{dev} -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/label/tau -poseidon-compilation-id=tcec -poseidon-tau=1e-7 -S -poseidon-print -o %t/label/tau.ll 2> %t/label/tau.err
+; RUN: %{dev} -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cache=%t/label/tau -poseidon-compilation-id=tcec -poseidon-tau=1e-7 -S -poseidon-print -o %t/label/tau.ll 2> %t/label/tau.err
 ; RUN: FileCheck --check-prefix=LABEL-TAU %s < %t/label/tau.err
-; RUN: %{dev} -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/label/pinned -poseidon-compilation-id=tcec -poseidon-print "-poseidon-pin=$(sed -n 's/^\[poseidon\] pin: //p' %t/label/tau.err | paste -sd, -)" -S -o %t/label/pinned.ll 2> %t/label/pinned.err
+; RUN: %{dev} -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-cache=%t/label/pinned -poseidon-compilation-id=tcec -poseidon-print "-poseidon-pin=$(sed -n 's/^\[poseidon\] pin: //p' %t/label/tau.err | paste -sd, -)" -S -o %t/label/pinned.ll 2> %t/label/pinned.err
 ; RUN: diff %t/label/tau.ll %t/label/pinned.ll
 ; RUN: diff %t/label/tau/launches_tcec_matmul.cu_*.json %t/label/pinned/launches_tcec_matmul.cu_*.json
 ; RUN: grep -E '^\[poseidon\] Applying solution for|^\[poseidon\] pin: |wrote descriptor' %t/label/tau.err > %t/label/tau.picks

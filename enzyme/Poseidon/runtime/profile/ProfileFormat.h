@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The FP profiler runtime (FPProfiler.cpp, FPProfilerCUDA.cu) writes the
+// The FP profiler runtime (Profiler.cpp, DeviceProfilerHost.cu) writes the
 // profile of a site to <name>.fpprofile, where <name> is the string the
 // compile gave the site's probes (SiteIdentity.h, bodyProfileStem).
 //

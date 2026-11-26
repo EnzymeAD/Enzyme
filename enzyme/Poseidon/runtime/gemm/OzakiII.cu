@@ -19,7 +19,7 @@
 //   (src/oz2/common/table.hpp);
 // - the shift formula, its rounding and the truncation (src/oz2/scaling/fast);
 // - the residue representatives and the byte-weight residue method
-//   (src/oz2/mod/mod_core.hpp; OzakiII.h).
+//   (src/oz2/mod/mod_core.hpp; SchemeConstants.h).
 //
 // The pipeline layout (one strided-batched INT8 GEMM per chunk of columns,
 // operands read in their own layouts) is this implementation's own.
@@ -64,7 +64,7 @@
 #include <utility>
 
 #include "GemmRuntime.h"
-#include "Schemes.h"
+#include "SchemeConstants.h"
 
 using namespace poseidon::gemm;
 
@@ -86,7 +86,7 @@ template <int NM, class F> __device__ __forceinline__ void forModuli(F &&f) {
 // Scaling shifts.
 // ---------------------------------------------------------------------------
 // A 32-lane tree over threadIdx.x of a 32-wide block row. A 64-lane wavefront
-// holds two such rows, and each half sums in this order (hip_as_cuda.h), so
+// holds two such rows, and each half sums in this order (HipAsCuda.h), so
 // HIP gives the CUDA shifts.
 __device__ __forceinline__ double warpSumUp(double s) {
   s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 16));

@@ -1,4 +1,4 @@
-//===- DeviceProbes.cu - device half of the CUDA profiler -----------------===//
+//===- DeviceProfilerDevice.cu - device half of the CUDA profiler ---------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -157,9 +157,9 @@ __poseidon_device_overlapping_arguments(const char *site, int a, int b) {
 #define POSEIDON_PROBE_ATTRS __attribute__((noinline))
 #endif
 
-// Condition-number probe on the value of a store a site makes through its own
-// pointer arguments: perturbs v by a relative eps when site is the probed site
-// (POSEIDON_KAPPA_SITE, POSEIDON_KAPPA_EPS). With eps == 0 it returns v
+// Kappa-run perturbation of the value of a store a site makes through its own
+// pointer arguments: perturbs v by a relative eps when site is the kappa run's
+// site (POSEIDON_KAPPA_SITE, POSEIDON_KAPPA_EPS). With eps == 0 it returns v
 // unchanged, so the baseline is bit-identical to an uninstrumented run.
 extern "C" __device__ __attribute__((noinline)) double
 __poseidon_device_perturb(int site, double v) {

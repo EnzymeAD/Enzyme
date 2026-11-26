@@ -1,9 +1,9 @@
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
-// RUN: env POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %poseidon_kappa -- %t/gen %t/runs > /dev/null 2> %t/probe.err
+// RUN: env POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %poseidon_kappa -- %t/gen %t/runs > /dev/null 2> %t/kappa.err
 // RUN: FileCheck --check-prefix=FOUR %s < %t/runs
-// RUN: FileCheck --check-prefix=MEASURE %s < %t/probe.err
+// RUN: FileCheck --check-prefix=MEASURE %s < %t/kappa.err
 // RUN: cat %t/prof/*_Z5gaussPKdPdi*.fpprofile | FileCheck --check-prefix=MEASURED %s
 // RUN: cat %t/prof/*_Z4wavePKdPdi*.fpprofile | FileCheck --check-prefix=MEASURED %s
 

@@ -29,7 +29,7 @@
 // the unannotated source compiled without the plugin has it, in the same order;
 // only the rewritten site differs. Under a tolerance no rewrite meets, the whole
 // code object is the one as written. The profile of `site` is the one its CUDA
-// twin Integration/rewritten_module_as_written.cu records; no gfx942 cost model
+// counterpart Integration/rewritten_module_as_written.cu records; no gfx942 cost model
 // is measured, so the compile prices from a synthetic one.
 // Without the unprofiled site the compile has nothing to warn about, and
 // both halves print nothing, whether the site is rewritten or no rewrite

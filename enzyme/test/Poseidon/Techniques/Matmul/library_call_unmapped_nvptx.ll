@@ -4,7 +4,7 @@
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune \
 ; RUN:   -poseidon-cache=%t/cache -poseidon-enable-rewrite=false \
 ; RUN:   -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-print \
-; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -S -o /dev/null 2>&1 | FileCheck --implicit-check-not='wrote descriptor' --implicit-check-not=fissioned %s
 
 ; The fused body of library_call_fused_nvptx.ll, its product's output a

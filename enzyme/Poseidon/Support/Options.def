@@ -80,7 +80,7 @@ POSEIDON_PROFILING_OPTION(
     "marker are never filtered")
 
 // Candidate classes.
-POSEIDON_CANDIDATE_OPTION(EnableRewrites, Bool, true, "poseidon-enable-rewrite",
+POSEIDON_CANDIDATE_OPTION(EnableRewrite, Bool, true, "poseidon-enable-rewrite",
                           Hidden, SolveInput, "",
                           "Use Herbie to rewrite floating-point expressions "
                           "(default: on when a Herbie can run)")
@@ -95,18 +95,19 @@ POSEIDON_CANDIDATE_OPTION(PrecisionExpansions, Bool, true,
                           "and wider sums of FP32 values) as precisions; =0 "
                           "leaves FP64, FP32, FP16 and BF16")
 POSEIDON_CANDIDATE_OPTION(
-    ExpansionComponents, Unsigned, 2, "poseidon-precision-expansion-components",
-    Hidden, SolveInput, "",
+    PrecisionExpansionComponents, Unsigned, 2,
+    "poseidon-precision-expansion-components", Hidden, SolveInput, "",
     "Widest FP32 floating-point expansion admitted as a precision candidate: "
     "2 = double-single only (default), 3 = also triple-float, 4 = also "
     "quad-float")
-POSEIDON_CANDIDATE_OPTION(EnableThreeTier, Bool, true,
+POSEIDON_CANDIDATE_OPTION(PrecisionThreeTier, Bool, true,
                           "poseidon-precision-three-tier", Hidden, SolveInput,
                           "",
                           "Also propose splitting an FP subgraph's operations, "
                           "by profiled sensitivity, among three precisions")
-POSEIDON_CANDIDATE_OPTION(TwoTierStep, Int, 10, "poseidon-precision-tier-step",
-                          Hidden, SolveInput, "",
+POSEIDON_CANDIDATE_OPTION(PrecisionTierStep, Int, 10,
+                          "poseidon-precision-tier-step", Hidden, SolveInput,
+                          "",
                           "Step, in percent of an FP subgraph's operations, "
                           "between the candidates that split them by profiled "
                           "sensitivity between two precisions (at least 5)")
@@ -115,31 +116,43 @@ POSEIDON_CANDIDATE_OPTION(EnableMatmul, Bool, true, "poseidon-enable-matmul",
                           "Propose computing the matrix products of scalar "
                           "multiply-add reduction loops on tensor cores, in "
                           "the kernel or as a library call")
-POSEIDON_CANDIDATE_OPTION(MaxExprLength, Unsigned, 10000,
-                          "poseidon-herbie-max-expr-length", Hidden, SolveInput,
-                          "",
-                          "Longest expression, in characters, of an output "
-                          "sent to Herbie; a longer one is not rewritten by "
-                          "Herbie")
 POSEIDON_CANDIDATE_OPTION(
-    MinUsesSplit, Unsigned, 0, "poseidon-subgraph-split-uses", Hidden,
+    SubgraphSplitUses, Unsigned, 0, "poseidon-subgraph-split-uses", Hidden,
     SolveInput, "",
     "Split an FP subgraph at an operation that at least "
     "this many of its operations use, when "
     "-poseidon-subgraph-split-ops operations feed it alone; "
     "0 splits at no such operation")
 POSEIDON_CANDIDATE_OPTION(
-    MinOpsSplit, Unsigned, 1, "poseidon-subgraph-split-ops", Hidden, SolveInput,
-    "",
+    SubgraphSplitOps, Unsigned, 1, "poseidon-subgraph-split-ops", Hidden,
+    SolveInput, "",
     "Split an FP subgraph at an operation that "
     "-poseidon-subgraph-split-uses of its operations use only "
     "when at least this many operations feed it alone")
 POSEIDON_CANDIDATE_OPTION(
-    SplitCalls, StringList, {}, "poseidon-subgraph-split-calls", Hidden,
+    SubgraphSplitCalls, StringList, {}, "poseidon-subgraph-split-calls", Hidden,
     SolveInput, "op,op,...",
     "Give every call to these operators (Herbie names, e.g. pow) its own FP "
     "subgraph with the operations only it uses, whatever "
     "-poseidon-subgraph-split-uses/-poseidon-subgraph-split-ops say")
+// Under -ffp-contract=on a contraction body is a single llvm.fmuladd, which the
+// triviality filter discards, so only a tensor-core raise could reach it. Off
+// by default: it adds elementwise candidates to every recognized reduction.
+POSEIDON_CANDIDATE_OPTION(SubgraphReductions, Bool, false,
+                          "poseidon-subgraph-reductions", Hidden, SolveInput,
+                          "",
+                          "Admit an FP subgraph of one operation when that is "
+                          "the accumulating multiply-add of a recognized "
+                          "scalar reduction loop")
+// A staging buffer narrows only when every reader agrees on a tier, so units
+// that share one must be one unit for the per-unit tier to be the buffer's.
+POSEIDON_CANDIDATE_OPTION(
+    SubgraphMergeStaging, Bool, false, "poseidon-subgraph-merge-staging",
+    Hidden, SolveInput, "",
+    "Merge FP subgraphs that share a staging buffer (a pointer argument or a "
+    "shared-memory global) into one optimization unit, so that the solver "
+    "cannot pick two storage precisions for one buffer; implies "
+    "-poseidon-precision-frequency-weighted")
 
 // Solver and budgets.
 POSEIDON_SOLVER_OPTION(
@@ -197,13 +210,6 @@ POSEIDON_MODEL_OPTION(RandomSeed, Unsigned, 239778888, "poseidon-random-seed",
                       Hidden, SolveInput, "",
                       "Seed of the accuracy model's samples and of Herbie's "
                       "search")
-POSEIDON_MODEL_OPTION(
-    SampleLogBits, OptionalUnsigned, std::nullopt,
-    "poseidon-matmul-sample-log-bits", Hidden, SolveInput, "",
-    "Sample a matrix product's accuracy inputs log-uniformly in magnitude over "
-    "[m * 2^-B, m], m the largest profiled magnitude and B this value; 0 "
-    "samples uniformly over the profiled range. Unset, a site solved under an "
-    "accuracy target takes B = 40 and any other solve samples uniformly")
 POSEIDON_MODEL_OPTION(StrictMode, Bool, false, "poseidon-strict-mode", Hidden,
                       SolveInput, "",
                       "Stop with an error, instead of a warning, where a site "
@@ -212,37 +218,46 @@ POSEIDON_MODEL_OPTION(StrictMode, Bool, false, "poseidon-strict-mode", Hidden,
                       "the floating-point flags rule out expansions, or a "
                       "product's geometry cannot be recovered")
 POSEIDON_MODEL_OPTION(
-    MinRegimeSamples, Unsigned, 32, "poseidon-rewrite-min-regime-samples",
-    Hidden, SolveInput, "",
+    RewriteMinRegimeSamples, Unsigned, 32,
+    "poseidon-rewrite-min-regime-samples", Hidden, SolveInput, "",
     "Every branch of a piecewise (if) rewrite must be priced on at least this "
     "many samples that take it, drawn from the profiled ranges by rejection "
     "when the others miss it; a rewrite with a branch that stays unsampled is "
     "dropped (0 = off)")
-POSEIDON_MODEL_OPTION(RegimeSearchFactor, Unsigned, 64,
+POSEIDON_MODEL_OPTION(RewriteRegimeSearchFactor, Unsigned, 64,
                       "poseidon-rewrite-regime-search-factor", Hidden,
                       SolveInput, "",
                       "Rejection-sampling budget for an under-sampled branch "
                       "of a piecewise rewrite, in multiples of "
                       "-poseidon-num-samples")
 POSEIDON_MODEL_OPTION(
-    MaxBrokenShare, Number, 0.01, "poseidon-rewrite-max-broken-share", Hidden,
-    SolveInput, "",
+    RewriteMaxBrokenShare, Number, 0.01, "poseidon-rewrite-max-broken-share",
+    Hidden, SolveInput, "",
     "Drop a Herbie candidate whose relative error reaches 1 (wrong sign or "
     "magnitude) on more than this share of the samples the original gets "
     "within 1; the gradient-weighted accuracy model is first order and cannot "
     "price such a change (negative = off)")
-POSEIDON_MODEL_OPTION(
-    ExcludeOutOfRange, Bool, true, "poseidon-matmul-exclude-out-of-range",
-    Hidden, SolveInput, "",
-    "Leave out of the solve a matrix-product candidate whose format flushes "
-    "the smallest nonzero operand magnitude the profile recorded to zero or "
-    "overflows on a sampled product; false offers it at its modelled error")
 POSEIDON_MODEL_OPTION(Threads, Unsigned, 1, "poseidon-threads", Hidden, Other,
                       "",
                       "Threads the accuracy model runs on (0 = all hardware "
                       "threads); its results do not depend on it")
+// A subgraph is billed at outputs[0]'s execution count, which over-bills the
+// once-per-thread code a reduction body feeds by the trip count; that is where
+// an expansion pays its FP64 boundary conversions.
+POSEIDON_MODEL_OPTION(PrecisionFrequencyWeighted, Bool, false,
+                      "poseidon-precision-frequency-weighted", Hidden,
+                      SolveInput, "",
+                      "Price each instruction of a frequency-heterogeneous FP "
+                      "subgraph at its own profiled execution count instead "
+                      "of the subgraph's")
 
 // Herbie and the result cache.
+POSEIDON_HERBIE_OPTION(MaxExprLength, Unsigned, 10000,
+                       "poseidon-herbie-max-expr-length", Hidden, SolveInput,
+                       "",
+                       "Longest expression, in characters, of an output "
+                       "sent to Herbie; a longer one is not rewritten by "
+                       "Herbie")
 POSEIDON_HERBIE_OPTION(Cache, String, "./.poseidon", "poseidon-cache", User,
                        Other, "directory",
                        "Directory Poseidon keeps its Herbie results, DP tables "
@@ -264,23 +279,23 @@ POSEIDON_HERBIE_OPTION(
 // split across workers and processes decides how soon they are answered, and
 // so whether a per-core timeout fires, but not a completed answer.
 POSEIDON_HERBIE_OPTION(
-    HerbieNumThreads, Int, 1, "poseidon-herbie-threads", Hidden, Other, "",
+    Threads, Int, 1, "poseidon-herbie-threads", Hidden, Other, "",
     "Herbie workers one FP subgraph's FPCores are searched on, each its own "
     "Herbie process unless -poseidon-herbie-processes says otherwise; every "
     "process holds a Racket heap, so a compile's memory and CPU use grow with "
     "this count, and a parallel build runs that many per compile job")
-POSEIDON_HERBIE_OPTION(HerbieTimeout, Unsigned, 0, "poseidon-herbie-timeout",
-                       Hidden, Other, "",
+POSEIDON_HERBIE_OPTION(Timeout, Unsigned, 0, "poseidon-herbie-timeout", Hidden,
+                       Other, "",
                        "Herbie's --timeout, in seconds, for each FPCore; 0 "
                        "takes -poseidon-herbie-subgraph-timeout")
-POSEIDON_HERBIE_OPTION(HerbieNumPts, Int, 1024, "poseidon-herbie-num-points",
+POSEIDON_HERBIE_OPTION(NumPoints, Int, 1024, "poseidon-herbie-num-points",
                        Hidden, SolveInput, "",
                        "Herbie's --num-points, the input points it judges "
                        "rewrites on")
-POSEIDON_HERBIE_OPTION(HerbieNumIters, Int, 6, "poseidon-herbie-num-iters",
-                       Hidden, SolveInput, "",
+POSEIDON_HERBIE_OPTION(NumIters, Int, 6, "poseidon-herbie-num-iters", Hidden,
+                       SolveInput, "",
                        "Herbie's --num-iters, the rounds of its search")
-POSEIDON_HERBIE_OPTION(HerbieNumEnodes, Int, 8000, "poseidon-herbie-num-enodes",
+POSEIDON_HERBIE_OPTION(NumEnodes, Int, 8000, "poseidon-herbie-num-enodes",
                        Hidden, SolveInput, "",
                        "Herbie's --num-enodes, the e-graph size its "
                        "algebraic search stops at")
@@ -288,7 +303,7 @@ POSEIDON_HERBIE_OPTION(HerbieNumEnodes, Int, 8000, "poseidon-herbie-num-enodes",
 // series' answers. Read in ascending order, each once; empty passes Herbie no
 // term count.
 POSEIDON_HERBIE_OPTION(
-    HerbieNumTaylorTerms, UnsignedList, {}, "poseidon-herbie-num-taylor-terms",
+    NumTaylorTerms, UnsignedList, {}, "poseidon-herbie-num-taylor-terms",
     Hidden, SolveInput, "n,n,...",
     "Search every FPCore once per term count, passing Herbie "
     "--num-taylor-terms <n>, and take the union of the answers, the fewest "
@@ -298,103 +313,87 @@ POSEIDON_HERBIE_OPTION(
 // timed-out core still writes results.json, and the wait for the process
 // backstops a Herbie that cannot exit.
 POSEIDON_HERBIE_OPTION(
-    HerbieSubgraphTimeout, Unsigned, 1800, "poseidon-herbie-subgraph-timeout",
-    Hidden, Other, "",
+    SubgraphTimeout, Unsigned, 1800, "poseidon-herbie-subgraph-timeout", Hidden,
+    Other, "",
     "Wall-clock seconds allowed for one FP subgraph's Herbie run, which also "
     "bounds Herbie's --timeout (0 = unbounded)")
 // Herbie's worker places share one Racket heap, so a single process with many
 // workers spends most of its time in collection; separate processes do not.
 POSEIDON_HERBIE_OPTION(
-    HerbieProcesses, Unsigned, 0, "poseidon-herbie-processes", Hidden, Other,
-    "",
+    Processes, Unsigned, 0, "poseidon-herbie-processes", Hidden, Other, "",
     "Herbie processes one subgraph's FPCores are split across (0 = one per "
     "-poseidon-herbie-threads worker, each with one worker; 1 = a single "
     "process with all workers)")
-POSEIDON_HERBIE_OPTION(HerbiePreFloorBits, Unsigned, 0,
+POSEIDON_HERBIE_OPTION(PreFloorBits, Unsigned, 0,
                        "poseidon-herbie-pre-floor-bits", Hidden, SolveInput, "",
                        "For a profiled range [lo, hi] with lo < 0 < hi, leave "
                        "|x| < max(-lo, hi) * 2^-K, K this value, out of "
                        "Herbie's :pre (0 = off)")
-POSEIDON_HERBIE_OPTION(HerbieBinary, String, "", "poseidon-herbie-binary",
-                       Hidden, Other, "",
+POSEIDON_HERBIE_OPTION(Binary, String, "", "poseidon-herbie-binary", Hidden,
+                       Other, "",
                        "Herbie executable to run (empty = the one the build "
                        "was configured with)")
 // Otherwise the platform is <csv>.herbie.rkt next to the resolved cost model.
-POSEIDON_HERBIE_OPTION(HerbiePlatform, String, "", "poseidon-herbie-platform",
-                       Hidden, Other, "",
+POSEIDON_HERBIE_OPTION(Platform, String, "", "poseidon-herbie-platform", Hidden,
+                       Other, "",
                        "Herbie platform: a platform file (a path that holds "
                        "'/' or ends in .rkt), or the name of one compiled into "
                        "Herbie")
 // One (array ...) core per precision for a subgraph's outputs, with the
 // subterms they share let*-bound: Herbie searches them jointly and the rewrite
 // is priced as one unit, so work the outputs share is costed and erased once.
-POSEIDON_HERBIE_OPTION(HerbieArrays, Bool, true, "poseidon-herbie-arrays",
-                       Hidden, SolveInput, "",
+POSEIDON_HERBIE_OPTION(Arrays, Bool, true, "poseidon-herbie-arrays", Hidden,
+                       SolveInput, "",
                        "Send a multi-output subgraph to Herbie as one array "
                        "FPCore per precision; per-output FPCores are sent only "
                        "for an array FPCore that returns nothing")
-POSEIDON_HERBIE_OPTION(HerbieArrayGrouping, String, "inputs",
+POSEIDON_HERBIE_OPTION(ArrayGrouping, String, "inputs",
                        "poseidon-herbie-array-grouping", Hidden, SolveInput, "",
                        "Which outputs share an array FPCore: 'inputs' (same "
                        "inputs and execution count) or 'executions' (same "
                        "execution count)")
 POSEIDON_HERBIE_OPTION(
-    HerbieArrayWeights, String, "sensitivity", "poseidon-herbie-array-weights",
+    ArrayWeights, String, "sensitivity", "poseidon-herbie-array-weights",
     Hidden, SolveInput, "",
     "How the elements of an array FPCore are weighed (:herbie-weights): "
     "'sensitivity' (profiled sum of |gradient * value|), 'gradient' "
     "(|gradient| times the mean magnitude of the profiled range, the weight of "
     "an ULP in the accuracy model), or 'none'")
 
-// Matmul raising and host dispatch.
-POSEIDON_MATMUL_OPTION(MatmulLibraryCalls, Bool, true,
+// Matrix products.
+POSEIDON_MATMUL_OPTION(
+    SampleLogBits, OptionalUnsigned, std::nullopt,
+    "poseidon-matmul-sample-log-bits", Hidden, SolveInput, "",
+    "Sample a matrix product's accuracy inputs log-uniformly in magnitude over "
+    "[m * 2^-B, m], m the largest profiled magnitude and B this value; 0 "
+    "samples uniformly over the profiled range. Unset, a site solved under an "
+    "accuracy target takes B = 40 and any other solve samples uniformly")
+POSEIDON_MATMUL_OPTION(
+    ExcludeOutOfRange, Bool, true, "poseidon-matmul-exclude-out-of-range",
+    Hidden, SolveInput, "",
+    "Leave out of the solve a matrix-product candidate whose format flushes "
+    "the smallest nonzero operand magnitude the profile recorded to zero or "
+    "overflows on a sampled product; false offers it at its modelled error")
+POSEIDON_MATMUL_OPTION(LibraryCalls, Bool, true,
                        "poseidon-matmul-library-calls", Hidden, SolveInput, "",
-                       "Propose Ozaki-II as a host-dispatched GEMM library "
+                       "Propose Ozaki-II as a library-call GEMM library "
                        "call, its only realization")
 // An uncalibrated class is proposed at a placeholder price so
 // poseidon-calibrate can materialize and time it; it requires
 // -poseidon-pin so that no DP solve ever consumes the placeholder.
-POSEIDON_MATMUL_OPTION(MatmulCalibration, Bool, false,
-                       "poseidon-matmul-calibration", Hidden, SolveInput, "",
+POSEIDON_MATMUL_OPTION(Calibration, Bool, false, "poseidon-matmul-calibration",
+                       Hidden, SolveInput, "",
                        "For poseidon-calibrate only: propose in-kernel "
                        "tensor-core raises the cost model has no "
                        "inkernel_rel row of, so that they can be built "
                        "and timed (requires -poseidon-pin)")
-
-// Under -ffp-contract=on a contraction body is a single llvm.fmuladd, which the
-// triviality filter discards, so only a tensor-core raise could reach it. Off
-// by default: it adds elementwise candidates to every recognized reduction.
-POSEIDON_CANDIDATE_OPTION(ReductionSubgraphs, Bool, false,
-                          "poseidon-subgraph-reductions", Hidden, SolveInput,
-                          "",
-                          "Admit an FP subgraph of one operation when that is "
-                          "the accumulating multiply-add of a recognized "
-                          "scalar reduction loop")
-// A staging buffer narrows only when every reader agrees on a tier, so units
-// that share one must be one unit for the per-unit tier to be the buffer's.
-POSEIDON_CANDIDATE_OPTION(
-    MergeSharedStaging, Bool, false, "poseidon-subgraph-merge-staging", Hidden,
-    SolveInput, "",
-    "Merge FP subgraphs that share a staging buffer (a pointer argument or a "
-    "shared-memory global) into one optimization unit, so that the solver "
-    "cannot pick two storage precisions for one buffer; implies "
-    "-poseidon-precision-frequency-weighted")
-// A subgraph is billed at outputs[0]'s execution count, which over-bills the
-// once-per-thread code a reduction body feeds by the trip count; that is where
-// an expansion pays its FP64 boundary conversions.
-POSEIDON_MODEL_OPTION(FreqWeightedPricing, Bool, false,
-                      "poseidon-precision-frequency-weighted", Hidden,
-                      SolveInput, "",
-                      "Price each instruction of a frequency-heterogeneous FP "
-                      "subgraph at its own profiled execution count instead "
-                      "of the subgraph's")
 
 // Diagnostics.
 POSEIDON_DIAGNOSTIC_OPTION(Print, Bool, false, "poseidon-print", Hidden, Other,
                            "",
                            "Print what the solve of each site considered and "
                            "chose on stderr")
-POSEIDON_DIAGNOSTIC_OPTION(ShowTable, Bool, false, "poseidon-print-dp-table",
+POSEIDON_DIAGNOSTIC_OPTION(PrintDPTable, Bool, false, "poseidon-print-dp-table",
                            Hidden, Other, "",
                            "Print the whole DP table of each solve (long for a "
                            "large program)")

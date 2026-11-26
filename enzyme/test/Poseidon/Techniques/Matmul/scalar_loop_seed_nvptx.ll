@@ -2,7 +2,7 @@
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; DEFINE:   -poseidon-print -S
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile %t/prof/seed_body.fpprofile

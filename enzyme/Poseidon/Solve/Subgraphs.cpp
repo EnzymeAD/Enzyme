@@ -8,9 +8,9 @@
 
 #include "Model/FPCore.h"
 #include "Optimize.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
 #include "Sites/Canonicalize.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -96,7 +96,7 @@ void buildSubgraphs(const Options &O, Function &F, const ProfileMap &profileMap,
   };
   SmallVector<const Instruction *, 8> unexecuted;
   SmallPtrSet<Instruction *, 32> reductionFMAs;
-  if (O.Candidates.ReductionSubgraphs)
+  if (O.Candidates.SubgraphReductions)
     for (const auto &am : abstractMatmuls)
       if (am.origin == RecognizedMatmul::Origin::ConstantShape &&
           am.scalarLoop.fma)
@@ -354,8 +354,9 @@ static bool isExpansionBottleneck(const Options &O, Instruction *I,
   if (subgraph.outputs.contains(I) && subgraph.outputs.size() <= 1) {
     return false;
   }
-  const bool forced = isa<CallInst>(I) && is_contained(O.Candidates.SplitCalls,
-                                                       getHerbieOperator(*I));
+  const bool forced =
+      isa<CallInst>(I) &&
+      is_contained(O.Candidates.SubgraphSplitCalls, getHerbieOperator(*I));
 
   unsigned internalUses = 0;
   for (auto *U : I->users()) {
@@ -366,21 +367,22 @@ static bool isExpansionBottleneck(const Options &O, Instruction *I,
     }
   }
 
-  if (!forced && (O.Candidates.MinUsesSplit == 0 ||
-                  internalUses < O.Candidates.MinUsesSplit)) {
+  if (!forced && (O.Candidates.SubgraphSplitUses == 0 ||
+                  internalUses < O.Candidates.SubgraphSplitUses)) {
     return false;
   }
 
   SetVector<Instruction *> movedOps = movedOperations(subgraph, I);
 
-  bool isBottleneck = forced || movedOps.size() >= O.Candidates.MinOpsSplit;
+  bool isBottleneck =
+      forced || movedOps.size() >= O.Candidates.SubgraphSplitOps;
   if (O.Diagnostics.Print && isBottleneck) {
     llvm::errs() << "[poseidon] Bottleneck: " << *I << '\n';
     llvm::errs() << "  Num of operations that would be moved: "
-                 << movedOps.size() << " (>=" << O.Candidates.MinOpsSplit
+                 << movedOps.size() << " (>=" << O.Candidates.SubgraphSplitOps
                  << ")\n";
     llvm::errs() << "  Num of internal uses: " << internalUses
-                 << " (>=" << O.Candidates.MinUsesSplit << ")\n";
+                 << " (>=" << O.Candidates.SubgraphSplitUses << ")\n";
     llvm::errs() << "  Operations that would be moved:\n";
     for (auto *op : movedOps) {
       llvm::errs() << '\t' << *op << '\n';
@@ -659,7 +661,7 @@ void shapeSubgraphs(const Options &O, Function &F,
   }
 
   // After splitting, so that a merged unit is never split again.
-  if (O.Candidates.MergeSharedStaging)
+  if (O.Candidates.SubgraphMergeStaging)
     mergeSharedStagingSubgraphs(O, subgraphs, F);
 }
 

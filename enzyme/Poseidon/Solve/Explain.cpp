@@ -10,11 +10,11 @@
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
 #include "SolveSites.h"
 #include "Support/CacheKey.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -595,8 +595,8 @@ class Explainer {
   void markSteps();
   Error buildSubgraph(size_t s);
   Error buildMatmul(size_t m);
-  Error addCOAlternatives(Unit &U, const Subgraph &sg);
-  Error addCSAlternatives(Unit &U, const Subgraph &sg);
+  Error addRewriteAlternatives(Unit &U, const Subgraph &sg);
+  Error addPrecisionAlternatives(Unit &U, const Subgraph &sg);
   // `cost` on the solve's axis; an error at the site when the axis cannot hold
   // it.
   Expected<int64_t> onAxis(double cost) const;
@@ -653,7 +653,7 @@ Expected<int64_t> Explainer::onAxis(double cost) const {
                        "cost");
 }
 
-Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
+Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
   for (size_t i = 0; i < st.rewriteUnits.size(); ++i) {
     RewriteUnit &RU = st.rewriteUnits[i];
@@ -779,7 +779,7 @@ Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
   return Error::success();
 }
 
-Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
+Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
   DenseMap<const FPNode *, unsigned> opIndex;
   unsigned k = 0;
@@ -1027,10 +1027,10 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
   if (!any) {
     SmallVector<std::string, 2> why;
     if (sg) {
-      bool hadCO = false;
+      bool hadRewrite = false;
       for (const RewriteUnit &RU : st.rewriteUnits)
         if (RU.subgraph == sg) {
-          hadCO = true;
+          hadRewrite = true;
           if (!RU.unpricedReason.empty())
             why.push_back("its candidates could not be priced: " +
                           RU.unpricedReason);
@@ -1042,8 +1042,8 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
         if (PU.subgraph == sg && !PU.unpricedReason.empty())
           why.push_back("its candidates could not be priced: " +
                         PU.unpricedReason);
-      if (!hadCO) {
-        if (!Sess.Opts.Candidates.EnableRewrites)
+      if (!hadRewrite) {
+        if (!Sess.Opts.Candidates.EnableRewrite)
           why.push_back("the algebraic search is disabled");
         else
           for (Instruction *O : sg->outputs) {
@@ -1218,9 +1218,9 @@ Error Explainer::buildSubgraph(size_t s) {
     }
   }
 
-  if (Error E = addCOAlternatives(U, sg))
+  if (Error E = addRewriteAlternatives(U, sg))
     return E;
-  if (Error E = addCSAlternatives(U, sg))
+  if (Error E = addPrecisionAlternatives(U, sg))
     return E;
   judge(U);
   U.left = leftReason(U, &sg);

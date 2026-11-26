@@ -8,12 +8,12 @@
 
 #include "Expansion.h"
 #include "Enzyme/Utils.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
+#include "Model/ExpansionRoutines.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
-#include "Techniques/Precision/ExpansionRoutines.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -44,7 +44,7 @@ struct PairValue {
   Value *lo;
 };
 
-// The arithmetic the routines of Techniques/Precision/ExpansionRoutines.h are
+// The arithmetic the routines of Model/ExpansionRoutines.h are
 // emitted with.
 struct IRArith {
   using F32 = Value *;

@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 //
 // The shadow buffers a profiled site's reverse pass takes, one per allocation
-// its pointer arguments reach, for host sites (FPProfilerHost.cpp) and
-// kernels (FPProfilerCUDA.cu) alike.
+// its pointer arguments reach, for host sites (Shadows.cpp) and
+// kernels (DeviceProfilerHost.cu) alike.
 //
 //===----------------------------------------------------------------------===//
 

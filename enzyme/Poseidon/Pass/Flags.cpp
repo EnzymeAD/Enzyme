@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
 #include "Sites/Annotations.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 
 #include "poseidon/poseidon.h"
@@ -109,14 +109,14 @@ namespace flags {
       Spelling, cl::desc(Description), cl::value_desc(ValueName),              \
       visibility(OptionRole::Role), cl::cat(Category),                         \
       valueModifier<OptionKind::Kind>(kDefaults.Group.Field));
-#include "Pass/Options.def"
+#include "Support/Options.def"
 } // namespace flags
 
 Options readOptions() {
   Options O;
 #define POSEIDON_OPTION(Group, Field, Kind, ...)                               \
   O.Group.Field = read<OptionKind::Kind>(flags::Group##Field);
-#include "Pass/Options.def"
+#include "Support/Options.def"
   for (auto [flag, dir] :
        {std::pair(&flags::ProfilingProfileGenerate,
                   &O.Profiling.ProfileGenerate),
@@ -126,12 +126,12 @@ Options readOptions() {
   // Rewriting runs Herbie: left to its default, it is off when no Herbie can
   // run, except under -poseidon-strict-mode, where a missing Herbie stays an
   // error.
-  if (!flags::CandidatesEnableRewrites.getNumOccurrences() &&
+  if (!flags::CandidatesEnableRewrite.getNumOccurrences() &&
       !O.Model.StrictMode && !sys::fs::exists(herbieProgram(O.Herbie))) {
-    O.Candidates.EnableRewrites = false;
+    O.Candidates.EnableRewrite = false;
     O.Candidates.RewritesLackHerbie = true;
   }
-  std::vector<unsigned> &terms = O.Herbie.HerbieNumTaylorTerms;
+  std::vector<unsigned> &terms = O.Herbie.NumTaylorTerms;
   llvm::sort(terms);
   terms.erase(llvm::unique(terms), terms.end());
   return O;
@@ -167,14 +167,13 @@ static Error validateCostBudget(double budget) {
 
 Error validateOptions(const Options &O) {
   const HerbieOptions &H = O.Herbie;
-  if (!is_contained({"inputs", "executions"}, H.HerbieArrayGrouping))
+  if (!is_contained({"inputs", "executions"}, H.ArrayGrouping))
     return userError(
-        "-poseidon-herbie-array-grouping=" + Twine(H.HerbieArrayGrouping) +
+        "-poseidon-herbie-array-grouping=" + Twine(H.ArrayGrouping) +
         " is not 'inputs' or 'executions'");
-  if (!is_contained({"sensitivity", "gradient", "none"}, H.HerbieArrayWeights))
-    return userError(
-        "-poseidon-herbie-array-weights=" + Twine(H.HerbieArrayWeights) +
-        " is not 'sensitivity', 'gradient' or 'none'");
+  if (!is_contained({"sensitivity", "gradient", "none"}, H.ArrayWeights))
+    return userError("-poseidon-herbie-array-weights=" + Twine(H.ArrayWeights) +
+                     " is not 'sensitivity', 'gradient' or 'none'");
   if (std::string err; !O.Profiling.Kernels.empty() &&
                        O.Profiling.Kernels != "all" &&
                        !Regex(O.Profiling.Kernels).isValid(err))
@@ -187,7 +186,7 @@ Error validateOptions(const Options &O) {
   const std::pair<StringRef, double> numbers[] = {
       {"poseidon-tau", O.Solver.Tau},
       {"poseidon-min-cost-share", O.Profiling.MinCostShare},
-      {"poseidon-rewrite-max-broken-share", O.Model.MaxBrokenShare}};
+      {"poseidon-rewrite-max-broken-share", O.Model.RewriteMaxBrokenShare}};
   for (const auto &[flag, value] : numbers)
     if (std::isnan(value))
       return noNumber(flag);

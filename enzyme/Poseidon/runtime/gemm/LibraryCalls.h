@@ -1,4 +1,4 @@
-//===- GemmDispatch.h - the host GEMM dispatch entry points ---------------===//
+//===- LibraryCalls.h - the host library call entry points ----------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The entry points of GemmDispatch.inc. Each computes
+// The entry points of LibraryCalls.inc. Each computes
 // C = alpha * (A @ B) + beta * C for A (M x K), B (K x Ncols) and C (M x Ncols)
 // in memory of the current device, each operand column-major (X[c * ld + r])
 // when its ColMajor flag is set and row-major (X[r * ld + c]) otherwise, on
@@ -16,8 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_RUNTIME_GEMM_GEMM_DISPATCH_H
-#define POSEIDON_RUNTIME_GEMM_GEMM_DISPATCH_H
+#ifndef POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H
+#define POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H
 
 #ifdef __HIP__
 #include "../HipAsCuda.h"
@@ -35,9 +35,9 @@
       POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_DECL, POSEIDON_GEMM_DECL_LAST),       \
       int Mode);
 extern "C" {
-#include "GemmDispatch.inc"
+#include "LibraryCalls.inc"
 }
 #undef POSEIDON_GEMM_DECL
 #undef POSEIDON_GEMM_DECL_LAST
 
-#endif // POSEIDON_RUNTIME_GEMM_GEMM_DISPATCH_H
+#endif // POSEIDON_RUNTIME_GEMM_LIBRARY_CALLS_H

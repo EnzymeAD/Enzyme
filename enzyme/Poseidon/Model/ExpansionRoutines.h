@@ -78,7 +78,7 @@
 //
 // The FP32 expansion routines, written once over the arithmetic they run on:
 // Techniques/Precision/Expansion.cpp emits them through an IRBuilder, and
-// Techniques/Precision/ExpansionModel.cpp evaluates them on host floats for the
+// Model/ExpansionModel.cpp evaluates them on host floats for the
 // accuracy model, so that the model computes what the emitted code computes.
 // Every operation is bound to a local, so that instructions are created in the
 // order written, and is given the name of the instruction it emits.
@@ -93,8 +93,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TECHNIQUES_PRECISION_EXPANSION_ROUTINES_H
-#define POSEIDON_TECHNIQUES_PRECISION_EXPANSION_ROUTINES_H
+#ifndef POSEIDON_MODEL_EXPANSION_ROUTINES_H
+#define POSEIDON_MODEL_EXPANSION_ROUTINES_H
 
 #include <limits>
 
@@ -883,4 +883,4 @@ private:
 
 } // namespace poseidon
 
-#endif // POSEIDON_TECHNIQUES_PRECISION_EXPANSION_ROUTINES_H
+#endif // POSEIDON_MODEL_EXPANSION_ROUTINES_H

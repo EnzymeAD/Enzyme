@@ -18,7 +18,7 @@
 // every Poseidon flag reaches the compiler through -Xclang, since HIP's driver
 // hands -mllvm to the device linker as well, profile generation tells Enzyme
 // that a HIP compile is an LTO pre-link compile, and the actions link the HIP
-// builds of the profiler and of the GEMM dispatch (the optimized build's
+// builds of the profiler and of the library call (the optimized build's
 // commands only: it links the ROCm installation's hipBLAS).
 
 // GEN: -Xclang -mllvm -Xclang -poseidon-profile-generate

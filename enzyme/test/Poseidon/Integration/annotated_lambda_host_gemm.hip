@@ -1,10 +1,10 @@
 // annotated_lambda_host_gemm.cu on an AMD GPU (MI300A), end to end through
 // poseidon-clang++ -x hip: profile generation shadows the three data pointers
-// inside the lambda and seeds the one written, and records what the CUDA twin
+// inside the lambda and seeds the one written, and records what the CUDA counterpart
 // records on an RTX 5090 (the same launch geometry, slot execution counts and
 // seeded adjoint counts, and the same canonical form). No gfx942 cost model
-// exists yet, so the optimized build takes its dispatch descriptor from
-// Inputs/host_gemm_hip, the one the CUDA twin's solve writes, under this
+// exists yet, so the optimized build takes its library-call descriptor from
+// Inputs/host_gemm_hip, the one the CUDA counterpart's solve writes, under this
 // kernel's name: the stub dispatches the dense product to the HIP Ozaki-II
 // runtime from the launch's arguments, and a padded tensor still runs the
 // kernel as written. The descriptor is in the manifest of this source under

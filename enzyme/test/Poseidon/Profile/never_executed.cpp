@@ -7,7 +7,7 @@
 // RUN: grep -E '^[0-9]+$' %t/prof/_Z3ranPKdPdi.fpprofile > %t/idx
 // RUN: FileCheck --check-prefix=ORDER %s < %t/idx
 // RUN: sort -n -c %t/idx
-// RUN: FileCheck --check-prefix=NOPROBE --allow-empty %s < %t/gen.err
+// RUN: FileCheck --check-prefix=NOKAPPA --allow-empty %s < %t/gen.err
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
 // RUN: %poseidon_clangxx -poseidon-profile-use=%t/prof -poseidon-early-prune %t/use.o -o %t/use
 // RUN: mkdir %t/deployed && cd %t/deployed && %t/use
@@ -16,7 +16,7 @@
 // The profiling runtime writes a profile for every site it instrumented, run or
 // not: one the run never executed gets its header and a line saying so, and
 // profile use leaves it as written with a note. A site that never ran is no
-// site for the condition-number probe, which needs two. The records of a site
+// site for a kappa run, which needs two. The records of a site
 // that ran are in slot order, whatever order the run first reached them in:
 // the profile's bytes are part of the key of the site's cached DP table. The
 // optimized program links the runtime for its poseidon_metric call and writes
@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
 // ORDER-NEXT: {{^}}1{{$}}
 // ORDER-NEXT: {{^}}2{{$}}
 
-// NOPROBE-NOT: [poseidon]
+// NOKAPPA-NOT: [poseidon]
 
 // USE-DAG: [poseidon] _Z7skippedPKdPdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/_Z7skippedPKdPdi.fpprofile); left unchanged
 // USE-DAG: preprocess__Z3ranPKdPdi_poseidon_body: tau=1.000000e-06

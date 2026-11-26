@@ -23,7 +23,7 @@
 
 #include "FPFormat.h"
 #include "FPNode.h"
-#include "Techniques/Precision/ExpansionModel.h"
+#include "Model/ExpansionModel.h"
 
 namespace poseidon {
 

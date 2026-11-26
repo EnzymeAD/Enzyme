@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_PASS_OPTIONS_H
-#define POSEIDON_PASS_OPTIONS_H
+#ifndef POSEIDON_SUPPORT_OPTIONS_H
+#define POSEIDON_SUPPORT_OPTIONS_H
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -128,7 +128,7 @@ struct HerbieOptions {
 #include "Options.def"
 };
 
-/// Matrix raising and host dispatch.
+/// Matrix raising and library call.
 struct MatmulOptions {
 #define POSEIDON_MATMUL_OPTION POSEIDON_FIELD
 #include "Options.def"
@@ -142,7 +142,8 @@ struct DiagnosticOptions {
 
 #undef POSEIDON_FIELD
 
-/// Every option of the compile, by group; Pass/Options.def documents each one.
+/// Every option of the compile, by group; Support/Options.def documents each
+/// one.
 struct Options {
   ProfilingOptions Profiling;
   CandidateOptions Candidates;
@@ -185,4 +186,4 @@ FlagValues notSolveInputs(const Options &O);
 FlagValues allFlagValues(const Options &O);
 
 } // namespace poseidon
-#endif // POSEIDON_PASS_OPTIONS_H
+#endif // POSEIDON_SUPPORT_OPTIONS_H

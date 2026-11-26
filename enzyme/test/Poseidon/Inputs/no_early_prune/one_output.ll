@@ -1,4 +1,4 @@
-source_filename = "exact_dp_one_output.cu"
+source_filename = "no_early_prune_one_output.cu"
 target triple = "nvptx64-nvidia-cuda"
 
 define double @tester(double %x, double %y, double %z) #0 {

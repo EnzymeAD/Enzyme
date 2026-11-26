@@ -8,7 +8,7 @@
 // RUN: cmp %t/f.a %t/prof/_Z1fPKdPdi.fpprofile
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/_Z1fPKdPdi.fpprofile
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/_Z1gPKdPdi.fpprofile
-// RUN: FileCheck --check-prefix=PROBE %s < %t/b.err
+// RUN: FileCheck --check-prefix=MEASURE %s < %t/b.err
 // RUN: env POSEIDON_KAPPA=0 POSEIDON_PROFILE_DIR=%t/declined %t/a > /dev/null
 // RUN: env POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/declined %poseidon_kappa -- %t/b > /dev/null
 // RUN: FileCheck --check-prefix=NOKAPPA %s < %t/declined/_Z1fPKdPdi.fpprofile
@@ -63,7 +63,7 @@ int main() {
 // MEASURED-NOT: Executed
 // MEASURED: MinRes =
 
-// PROBE: [poseidon] measuring the condition numbers of metric "y" at 2 sites: 3 more runs of this program
+// MEASURE: [poseidon] measuring the condition numbers of metric "y" at 2 sites: 3 more runs of this program
 
 // NOKAPPA-NOT: Kappa
 // NOKAPPA: MinRes =

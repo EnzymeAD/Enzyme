@@ -31,7 +31,7 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-#include "gemm/GemmDispatch.h"
+#include "gemm/LibraryCalls.h"
 
 #define CK(x)                                                                  \
   do {                                                                         \

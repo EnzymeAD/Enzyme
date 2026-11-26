@@ -22,9 +22,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Internal.h"
-#include "Pass/Options.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
 
@@ -60,7 +60,7 @@ using namespace llvm::PatternMatch;
 
 namespace poseidon {
 
-/// Why a reduction chain is not a dispatchable runtime-shape product.
+/// Why a reduction chain is not a library-call runtime-shape product.
 static Error refuse(const Twine &why) {
   return createStringError(inconvertibleErrorCode(), why);
 }
@@ -217,7 +217,8 @@ static LaunchRef launchValueOf(const Value *v) {
 /// Why the host cannot read the launch value `v` (at `r`) as a dimension or an
 /// assumed-equal operand, which it loads as an i32: a narrower integer would be
 /// read past its end, and a wider one would lose the bits it reads past 32,
-/// which the dispatch's int dimensions could not take anyway. None when it can.
+/// which the library call's int dimensions could not take anyway. None when it
+/// can.
 static std::optional<std::string> hostReadRefusal(const Value *v,
                                                   const LaunchRef &r) {
   auto *T = dyn_cast<IntegerType>(v->getType());
@@ -330,7 +331,7 @@ static Expected<RuntimeDim> runtimeDimOf(const Polynomial &p,
     if (kv.second < -kMaxDimConstant || kv.second > kMaxDimConstant)
       return refuse("a GEMM dimension has the constant " +
                     std::to_string(kv.second) +
-                    ", out of the range a dispatch dimension takes");
+                    ", out of the range a library-call dimension takes");
     if (kv.first.empty()) {
       out.add = kv.second;
       continue;
@@ -994,7 +995,7 @@ static Expected<OutputStore> findOutputStore(ArrayRef<ChainMember> chain) {
       }
       return refuse("the accumulator has a consumer that is not a store or a "
                     "single accumulating fadd (fused epilogue: not a "
-                    "dispatchable GEMM)");
+                    "library-call GEMM)");
     }
   }
   if (!out.store)
@@ -1469,7 +1470,7 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         am.scalarLoop.fma)
       claimed.insert(am.scalarLoop.fma);
 
-  // A library dispatch replaces the whole launch, so the body may store into
+  // A library call replaces the whole launch, so the body may store into
   // its arguments only the product.
   unsigned argStores = 0;
   for (Instruction &I : instructions(F))
@@ -1583,13 +1584,13 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
     if (R && argStores != 1)
       R = refuse("the body performs " + std::to_string(argStores) +
                  " argument-rooted stores, and only a pure GEMM body can be "
-                 "replaced by a library dispatch");
+                 "replaced by a library call");
     if (!R) {
       std::string why = toString(R.takeError());
       if (O.Diagnostics.Print)
         llvm::errs() << "[poseidon] " << F.getName() << ": reduction chain of "
                      << chain.size()
-                     << " loop(s) is not a dispatchable runtime-shape product: "
+                     << " loop(s) is not a library-call runtime-shape product: "
                      << why << '\n';
       continue;
     }

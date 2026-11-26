@@ -17,7 +17,7 @@
 #define POSEIDON_TECHNIQUES_MATMUL_SCHEME_H
 
 #include "Model/FPKind.h"
-#include "runtime/gemm/Schemes.h"
+#include "runtime/gemm/SchemeConstants.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -137,10 +137,10 @@ inline unsigned splitCapturedBits(const SchemeVariant &v) {
 // only in a build with it.
 #ifdef POSEIDON_TCEC_USE_CUMPSGEMM
 /// This build has __poseidon_tcec_dgemm.
-inline constexpr bool kHaveTcecDispatch = true;
+inline constexpr bool kHaveTcecRuntime = true;
 #else
 /// This build has no __poseidon_tcec_dgemm.
-inline constexpr bool kHaveTcecDispatch = false;
+inline constexpr bool kHaveTcecRuntime = false;
 #endif
 
 /// __poseidon_tcec_dgemm's compute mode: cuMpSGEMM's FP16TCEC is a two-slice

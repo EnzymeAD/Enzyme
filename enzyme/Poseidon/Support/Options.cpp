@@ -33,8 +33,7 @@ template <typename T> static std::string value(T v) {
 }
 
 std::string herbieProgram(const HerbieOptions &H) {
-  return H.HerbieBinary.empty() ? POSEIDON_HERBIE_DEFAULT_BINARY
-                                : H.HerbieBinary;
+  return H.Binary.empty() ? POSEIDON_HERBIE_DEFAULT_BINARY : H.Binary;
 }
 
 FlagValues solveFlagValues(const Options &O) {

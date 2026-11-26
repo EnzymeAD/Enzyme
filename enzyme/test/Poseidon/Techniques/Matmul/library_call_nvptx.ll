@@ -2,7 +2,7 @@
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; DEFINE:   -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../../Inputs/library_call/ozaki_stub_host.ll > %t/host.ll
@@ -126,12 +126,12 @@
 ; OFF-NOT: Applying solution for matmul
 ; OFF-NOT: wrote descriptor
 
-; Ozaki-II host dispatch selected by a tolerance: the scalar FP64 product of
+; Ozaki-II library call selected by a tolerance: the scalar FP64 product of
 ; raise_scalar_tcec_nvptx.ll (Inputs/stale_cache/matmul_device.ll, same
-; profile) priced against the in-kernel raises and the host-dispatch families
-; of cm_sm_120_synthetic_dispatch.csv. The cheapest candidate whose modelled
+; profile) priced against the in-kernel raises and the library-call families
+; of cm_sm_120_synthetic_library.csv. The cheapest candidate whose modelled
 ; domain error clears tau wins, so the Ozaki-II moduli count rises as tau
-; tightens. The device compile writes the dispatch descriptor into the unit's
+; tightens. The device compile writes the library-call descriptor into the unit's
 ; manifest (tenth field 2 = Ozaki-II, sixth field = nm), and the host compile
 ; of the kernel's launch stub (Inputs/library_call/ozaki_stub_host.ll, clang
 ; -x cuda --cuda-host-only -O0 -S -emit-llvm of

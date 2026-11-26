@@ -3,7 +3,7 @@
 ; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-print \
 ; DEFINE:   -S -o /dev/null
-; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv
+; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} %{cm} -poseidon-cache=%t/c -poseidon-tau=1e-2 2>&1 | FileCheck --check-prefix=F16 %s
 ; RUN: %{opt} %{cm} -poseidon-cache=%t/c -poseidon-tau=1e-3 2>&1 | FileCheck --check-prefix=F16 %s
@@ -22,8 +22,8 @@
 ; RUN: %{opt} %{cm} -poseidon-cache=%t/k -poseidon-matmul-library-calls=false -poseidon-tau=1e-6 2>&1 | FileCheck --check-prefix=TCEC2 %s
 ; RUN: %{opt} %{cm} -poseidon-cache=%t/k -poseidon-matmul-library-calls=false -poseidon-tau=1e-7 2>&1 | FileCheck --check-prefix=TCEC3 %s
 ; RUN: %{opt} %{cm} -poseidon-cache=%t/k -poseidon-matmul-library-calls=false -poseidon-tau=1e-8 2>&1 | FileCheck --check-prefix=WRITTEN %s
-; RUN: sed 's/^library_direct_rel,tf32_f32,.*/library_direct_rel,tf32_f32,0.00784375/' %cost_models/cm_sm_120_synthetic_dispatch.csv > %t/tie.csv
-; RUN: sed 's/^library_direct_rel,tf32_f32,.*/library_direct_rel,tf32_f32,0.0078671875/' %cost_models/cm_sm_120_synthetic_dispatch.csv > %t/apart.csv
+; RUN: sed 's/^library_direct_rel,tf32_f32,.*/library_direct_rel,tf32_f32,0.00784375/' %cost_models/cm_sm_120_synthetic_library.csv > %t/tie.csv
+; RUN: sed 's/^library_direct_rel,tf32_f32,.*/library_direct_rel,tf32_f32,0.0078671875/' %cost_models/cm_sm_120_synthetic_library.csv > %t/apart.csv
 ; RUN: %{opt} -poseidon-cost-model=%t/tie.csv -poseidon-cache=%t/tie -poseidon-tau=1e-3 2>&1 | FileCheck --check-prefix=TF32 %s
 ; RUN: %{opt} -poseidon-cost-model=%t/apart.csv -poseidon-cache=%t/apart -poseidon-tau=1e-3 2>&1 | FileCheck --check-prefix=F16 %s
 

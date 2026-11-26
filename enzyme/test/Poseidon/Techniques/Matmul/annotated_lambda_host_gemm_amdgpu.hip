@@ -6,7 +6,7 @@
 // RUN: not %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../../Inputs/host_gemm_hip -Xclang -mllvm -Xclang -poseidon-cache=%t/c90a -Xclang -mllvm -Xclang -poseidon-compilation-id=gfx90a-foreign -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 %s -o %t/k90a.co 2>&1 | FileCheck --check-prefix=FOREIGN -DARCH=gfx90a %s
 
 // The device half of Integration/annotated_lambda_host_gemm.hip for gfx942,
-// with the profile its CUDA twin records on an RTX 5090 (Inputs/host_gemm_hip):
+// with the profile its CUDA counterpart records on an RTX 5090 (Inputs/host_gemm_hip):
 // the gfx942 canonical form hashes like the NVPTX one, and the reduce is
 // recognized from HIP's work-item and work-group ids and the work-group size in
 // the implicit kernel arguments as the product the NVPTX compile finds. With no

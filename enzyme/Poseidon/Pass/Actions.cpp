@@ -9,8 +9,6 @@
 #include "Actions.h"
 
 #include "Model/CostModel.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Profile/Instrument.h"
 #include "Profile/ProfileReader.h"
 #include "Profile/SiteProfile.h"
@@ -21,6 +19,8 @@
 #include "Sites/SiteIdentity.h"
 #include "Solve/Explain.h"
 #include "Solve/Optimize.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Techniques/Matmul/RealizeLibraryCall.h"
 #include "Techniques/Rewrite/Rewrite.h"
@@ -184,7 +184,7 @@ static Error reportUnprofiled(Session &S, CallBase *CI, const Function &body,
 
 static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
                                   ArrayRef<Value *> primalArgs) {
-  if (!S.Opts.Matmul.MatmulLibraryCalls)
+  if (!S.Opts.Matmul.LibraryCalls)
     return;
   if (auto note = S.Matmul.GemmBodies.find(body);
       note != S.Matmul.GemmBodies.end())
@@ -268,8 +268,8 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       F->addFnAttr(kJointTau, exactDouble(tau));
       // The joint solve materializes F later; the wrapper's arguments are
       // recorded now, while primalArgs holds them.
-      if (O.Matmul.MatmulLibraryCalls)
-        addPendingGemmDispatch(S, F, *CI->getFunction(), primalArgs);
+      if (O.Matmul.LibraryCalls)
+        addPendingLibraryCall(S, F, *CI->getFunction(), primalArgs);
     } else {
       Expected<bool> optimized = optimizeSite(S, *F, tau);
       if (!optimized)

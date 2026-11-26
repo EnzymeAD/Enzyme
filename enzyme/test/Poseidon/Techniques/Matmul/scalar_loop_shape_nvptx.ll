@@ -6,7 +6,7 @@
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-6 \
-; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -poseidon-print -S -o %t/out.ll 2>&1 \
 ; RUN:   | FileCheck --implicit-check-not='Matmul[' --implicit-check-not='wrote descriptor' %s
 ; RUN: FileCheck --check-prefix=IR --implicit-check-not=wmma %s < %t/out.ll

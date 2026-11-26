@@ -2,7 +2,7 @@
 // From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t/prof
 // RUN: sed "s/^CanonicalHash = .*/CanonicalHash = 35f30366bcfd6f97/" %S/../../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile > %t/prof/_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~593be11166e236ce.fpprofile
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul %s -o /dev/null 2>&1 | FileCheck --implicit-check-not='wrote descriptor' --implicit-check-not='recognized GEMM' %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -mllvm -poseidon-print -mllvm -poseidon-enable-rewrite=0 -mllvm -poseidon-enable-precision=0 -mllvm -poseidon-enable-matmul %s -o /dev/null 2>&1 | FileCheck --implicit-check-not='wrote descriptor' --implicit-check-not='recognized GEMM' %s
 
 // The runtime-shape product of native_dgemm_runtime_cols_nvptx.cu with its
 // store kept to the lower triangle, i <= e. A library call writes every element
@@ -64,4 +64,4 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
   (void)k;
 }
 
-// CHECK: [poseidon] [[BODY:preprocess__ZL10CuKernel2D[^ ]+_poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape product: the output store is gated by a condition that is not a bound of the product's indices
+// CHECK: [poseidon] [[BODY:preprocess__ZL10CuKernel2D[^ ]+_poseidon_body]]: reduction chain of 3 loop(s) is not a library-call runtime-shape product: the output store is gated by a condition that is not a bound of the product's indices

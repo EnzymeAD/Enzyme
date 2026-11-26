@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TECHNIQUES_PRECISION_EXPANSION_MODEL_H
-#define POSEIDON_TECHNIQUES_PRECISION_EXPANSION_MODEL_H
+#ifndef POSEIDON_MODEL_EXPANSION_MODEL_H
+#define POSEIDON_MODEL_EXPANSION_MODEL_H
 
 namespace poseidon {
 
@@ -58,4 +58,4 @@ FloatExpansion expansionFmaSqr(const FloatExpansion &a,
                                const FloatExpansion &c);
 
 } // namespace poseidon
-#endif // POSEIDON_TECHNIQUES_PRECISION_EXPANSION_MODEL_H
+#endif // POSEIDON_MODEL_EXPANSION_MODEL_H

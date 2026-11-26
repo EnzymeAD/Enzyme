@@ -21,7 +21,7 @@
 // apply-expansion materializes every FP64 instruction of each function named
 // ex<n>_* as an n-component FP32 expansion, with no candidate selection in
 // between.
-#include "Techniques/Precision/ExpansionModel.h"
+#include "Model/ExpansionModel.h"
 #include "Support/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"

@@ -5,7 +5,7 @@
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cache=%t/c \
 ; RUN:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
 ; RUN:   -poseidon-enable-matmul -poseidon-tau=1e-12 -poseidon-print \
-; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
+; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
 ; RUN:   -S -o /dev/null 2>&1 | FileCheck --implicit-check-not='wrote descriptor' %s
 
 ; A library call reads and writes its operands from where their pointer

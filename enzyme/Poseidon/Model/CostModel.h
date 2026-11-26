@@ -63,7 +63,7 @@ llvm::Expected<double> profiledCost(
 /// FP64 on this device. A model without a row this needs is an error at `F`.
 /// The set is owned by `CM`.
 llvm::Expected<const std::unordered_set<std::string> *>
-ptFuncs(CostModelState &CM, const llvm::Function &F);
+narrowableFuncs(CostModelState &CM, const llvm::Function &F);
 
 /// `Weight`, when given, is how often an instruction executes per execution of
 /// the function it is priced in.

@@ -10,8 +10,6 @@
 
 #include "Enzyme/Utils.h"
 #include "Instrument.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "ProfileReader.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"
@@ -20,6 +18,8 @@
 #include "Sites/Markers.h"
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"

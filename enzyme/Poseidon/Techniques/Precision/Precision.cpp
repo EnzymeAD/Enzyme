@@ -19,10 +19,10 @@
 #include "Model/FPCore.h"
 #include "Model/Sampling.h"
 #include "Narrowing.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Session.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
+#include "Solve/Session.h"
+#include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -557,7 +557,8 @@ static void priceAccuracy(const Options &O, PrecisionUnit &PU, FPGraph &G) {
 // can span a loop body and code that runs once per thread, which one
 // execution count misprices, so merging shared-staging subgraphs implies it.
 static bool freqWeightedPricing(const Options &O) {
-  return O.Model.FreqWeightedPricing || O.Candidates.MergeSharedStaging;
+  return O.Model.PrecisionFrequencyWeighted ||
+         O.Candidates.SubgraphMergeStaging;
 }
 
 namespace {
@@ -994,7 +995,7 @@ static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
       return false;
     if (!O.Candidates.PrecisionExpansions)
       return false;
-    if (nComp > O.Candidates.ExpansionComponents)
+    if (nComp > O.Candidates.PrecisionExpansionComponents)
       return false;
   }
   if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar->count("half")))
@@ -1148,7 +1149,7 @@ void TierSweep::add(Assignment &assignment, std::string desc) {
 void TierSweep::twoTier(TierPair tiers, ArrayRef<FPLLValue *> sortedAsc,
                         StringRef label) {
   const size_t N = sortedAsc.size();
-  const int step = std::max(kMinTwoTierStep, O.Candidates.TwoTierStep);
+  const int step = std::max(kMinTwoTierStep, O.Candidates.PrecisionTierStep);
   size_t prev = N + 1;
   for (int pct = 0; pct <= 100 - step; pct += step) {
     size_t k = N * pct / 100;
@@ -1225,15 +1226,15 @@ Error proposePrecisionCandidates(
   // prices per precision, by ascending sensitivity. Stable: which tier an
   // operation of a tied sensitivity lands in follows the subgraph's order.
   Expected<const std::unordered_set<std::string> *> funcs =
-      ptFuncs(S.CostModel, F);
+      narrowableFuncs(S.CostModel, F);
   if (!funcs)
     return funcs.takeError();
-  const std::unordered_set<std::string> &PTFuncs = **funcs;
+  const std::unordered_set<std::string> &NarrowableFuncs = **funcs;
   SetVector<FPLLValue *> funcsSet, allSet;
   for (Instruction *I : subgraph.operations) {
     auto *node = cast<FPLLValue>(G.valueToNodeMap[I]);
     allSet.insert(node);
-    if (PTFuncs.count(operationName(*node)) != 0) {
+    if (NarrowableFuncs.count(operationName(*node)) != 0) {
       funcsSet.insert(node);
       if (O.Diagnostics.Print)
         llvm::errs() << "[poseidon] library call with a precision variant: "
@@ -1266,7 +1267,7 @@ Error proposePrecisionCandidates(
     if (!sortedFuncs.empty())
       sweep.twoTier(tp, sortedFuncs, "Funcs");
   }
-  if (O.Candidates.EnableThreeTier)
+  if (O.Candidates.PrecisionThreeTier)
     for (TierTriple tr : kCanonicalTriples)
       if (tiersAllowed(O, {tr.hi, tr.mid, tr.lo}, gpuMode, expansionSafe,
                        hwScalar))

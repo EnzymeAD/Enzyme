@@ -1,4 +1,4 @@
-source_filename = "exact_dp_joint.cu"
+source_filename = "no_early_prune_joint.cu"
 target triple = "nvptx64-nvidia-cuda"
 
 define double @tester_a(double %x, double %y, double %z) #0 {

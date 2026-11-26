@@ -9,7 +9,7 @@
 #include "CostModel.h"
 #include "FPCore.h"
 #include "FPFormat.h"
-#include "Pass/Diagnostics.h"
+#include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
@@ -210,9 +210,9 @@ profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
   return cost;
 }
 
-Expected<const std::unordered_set<std::string> *> ptFuncs(CostModelState &CM,
-                                                          const Function &F) {
-  if (!CM.PTFuncs) {
+Expected<const std::unordered_set<std::string> *>
+narrowableFuncs(CostModelState &CM, const Function &F) {
+  if (!CM.NarrowableFuncs) {
     std::unordered_set<std::string> funcs;
     for (const MathFunction &libm : mathFunctions()) {
       if (!libm.Libm)
@@ -236,9 +236,9 @@ Expected<const std::unordered_set<std::string> *> ptFuncs(CostModelState &CM,
       if (costFP32 + costFPCast < costFP64)
         funcs.insert(func.str());
     }
-    CM.PTFuncs = std::move(funcs);
+    CM.NarrowableFuncs = std::move(funcs);
   }
-  return &*CM.PTFuncs;
+  return &*CM.NarrowableFuncs;
 }
 
 static Expected<double> computeMaxCost(CostModelState &CM, BasicBlock *BB,

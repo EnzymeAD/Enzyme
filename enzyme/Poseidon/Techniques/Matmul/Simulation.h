@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // The products the host runtimes return for a library-call candidate, computed
-// on the host for the accuracy model (MatmulAccuracy.cpp): every step the
+// on the host for the accuracy model (Accuracy.cpp): every step the
 // runtime's source specifies, in its order and with its rounding. Free of
 // LLVM, so that a test can hold it against what a runtime returned. It models
 // the arithmetic of cuMpSGEMM and of GEMMul8 v3.1.1's fast mode as the

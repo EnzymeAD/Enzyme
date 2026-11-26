@@ -8,10 +8,10 @@
 
 #include "LaunchManifest.h"
 #include "Enzyme/Utils.h"
-#include "Pass/Diagnostics.h"
-#include "Pass/Options.h"
 #include "SiteIdentity.h"
 #include "Support/CacheKey.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
 
@@ -40,7 +40,7 @@ namespace poseidon {
 
 static std::map<std::string, Recorded> &recorded(LaunchManifest &L,
                                                  LaunchKind kind) {
-  return kind == LaunchKind::LibraryCall ? L.HostDispatch : L.Profiling;
+  return kind == LaunchKind::LibraryCall ? L.LibraryCalls : L.Profiling;
 }
 
 static constexpr LaunchKind kKinds[] = {LaunchKind::LibraryCall,
@@ -100,7 +100,7 @@ static std::optional<Manifest> manifestOf(const Options &O, const Module &M) {
 
 bool handsOverLaunches(const Options &O) {
   return O.Profiling.generatesProfile() ||
-         (O.Matmul.MatmulLibraryCalls && O.Profiling.usesProfile());
+         (O.Matmul.LibraryCalls && O.Profiling.usesProfile());
 }
 
 void recordDescriptor(LaunchManifest &L, LaunchKind kind, StringRef wrapperName,

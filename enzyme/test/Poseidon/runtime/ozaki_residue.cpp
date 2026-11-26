@@ -1,5 +1,5 @@
 // The residue arithmetic of the Ozaki-II runtime
-// (runtime/gemm/Schemes.h) on the host, against plain remainders, for
+// (runtime/gemm/SchemeConstants.h) on the host, against plain remainders, for
 // every modulus. The runtime's HIP build computes it with this code; its CUDA
 // build differs only in taking each four-byte dot product from __dp4a.
 //   weights: byte k of the weight words is 2^(8k) mod p, k = 0..7, by repeated
@@ -32,7 +32,7 @@
 // CHECK-NEXT: p=211 weights ok sums 0 differ int64 0 differ int32 0 differ
 // CHECK-NEXT: p=199 weights ok sums 0 differ int64 0 differ int32 0 differ
 
-#include "gemm/Schemes.h"
+#include "gemm/SchemeConstants.h"
 
 #include <cstdint>
 #include <cstdio>

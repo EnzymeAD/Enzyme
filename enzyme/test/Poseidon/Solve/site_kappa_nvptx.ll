@@ -47,13 +47,13 @@
 ; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=1.460363e+00
 ; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=1.245725e+00
 
-; A condition number the probe could not tell from the noise of the runs
+; A condition number the kappa runs could not tell from the noise of the runs
 ; would scale every error to zero; the site is solved as one without a
 ; condition number instead, with a warning.
 ; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; measure it with larger perturbation steps in POSEIDON_KAPPA_LADDER{{$}}
 ; NOISE: warning: {{.*}}condition number of preprocess_matmul_body
 
-; A site whose probe run diverged has no finite condition number: no candidate
+; A site whose kappa run diverged has no finite condition number: no candidate
 ; of it is offered, under a budget, under a target and in a joint solve, and
 ; the site is left as written. Its errors are not scaled.
 ; DIVERGED: warning: {{.*}}Poseidon: the profiling runs of preprocess_matmul_body diverged under the smallest perturbation, so no candidate can be traded against its accuracy and the site is left as written{{$}}
@@ -64,7 +64,7 @@
 ; Two annotated sites in one module, each carrying its condition number in its
 ; profile header: the accuracy cost of every candidate of a site, the matrix
 ; product's and the scalar subgraph's alike, is multiplied by the site's Kappa
-; divided by the total sensitivity its profile records; a site whose probe run
+; divided by the total sensitivity its profile records; a site whose kappa run
 ; diverged is scaled by a large finite factor instead. The bodies and profiles
 ; are the Inputs/matmul_site_profile and Inputs/expansion_two_components fixtures; the Kappa values,
 ; 1000 on the product and 0.001 on the scalar subgraph, make the scaling
