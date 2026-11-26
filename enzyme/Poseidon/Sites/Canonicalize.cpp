@@ -8,6 +8,7 @@
 
 #include "Canonicalize.h"
 
+#include "Enzyme/PreprocessUtils.h"
 #include "Enzyme/Utils.h"
 #include "SiteIdentity.h"
 #include "Support/Utils.h"
@@ -19,8 +20,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
-#include "llvm/Analysis/CallGraph.h"
-#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -218,43 +217,6 @@ std::string canonicalFormHash(const Function &F) {
   return utohexstr(h, /*LowerCase=*/true, /*Width=*/16);
 }
 
-namespace {
-
-struct CanonicalizeAnalyses {
-  LoopAnalysisManager LAM;
-  FunctionAnalysisManager FAM;
-  ModuleAnalysisManager MAM;
-
-  explicit CanonicalizeAnalyses(LLVMContext &Ctx) {
-    FAM.registerPass([] { return TypeBasedAA(); });
-    FAM.registerPass([] { return BasicAA(); });
-    MAM.registerPass([] { return GlobalsAA(); });
-    MAM.registerPass([] { return CallGraphAnalysis(); });
-    FAM.registerPass([] { return ScopedNoAliasAA(); });
-
-    MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
-    FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
-    LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
-    FAM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
-
-    FAM.registerPass([] {
-      AAManager AM;
-      AM.registerFunctionAnalysis<BasicAA>();
-      AM.registerFunctionAnalysis<TypeBasedAA>();
-      AM.registerModuleAnalysis<GlobalsAA>();
-      AM.registerFunctionAnalysis<ScopedNoAliasAA>();
-      return AM;
-    });
-
-    PassBuilder PB = makePassBuilder(Ctx);
-    PB.registerModuleAnalyses(MAM);
-    PB.registerFunctionAnalyses(FAM);
-    PB.registerLoopAnalyses(LAM);
-  }
-};
-
-} // namespace
-
 /// A noreturn call marked willreturn is UB, which turns the guard in front of
 /// an exit() into an assume in the clone that ships.
 static void setFullWillReturn(Function *NewF) {
@@ -381,51 +343,6 @@ static void canonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   FAM.invalidate(*F, PA);
 }
 
-static void removeRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
-  DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
-  for (BasicBlock &BB : *F) {
-    for (BasicBlock::iterator II = BB.begin(); isa<PHINode>(II);) {
-      PHINode *PN = cast<PHINode>(II);
-      ++II;
-      SmallPtrSet<Value *, 2> vals;
-      SmallPtrSet<PHINode *, 2> done;
-      SmallVector<PHINode *, 2> todo = {PN};
-      while (todo.size() > 0) {
-        PHINode *N = todo.back();
-        todo.pop_back();
-        if (done.count(N))
-          continue;
-        done.insert(N);
-        if (vals.size() == 0 && todo.size() == 0 && PN != N &&
-            DT.dominates(N, PN)) {
-          vals.insert(N);
-          break;
-        }
-        for (auto &v : N->incoming_values()) {
-          if (isa<UndefValue>(v))
-            continue;
-          if (auto *NN = dyn_cast<PHINode>(v)) {
-            todo.push_back(NN);
-            continue;
-          }
-          vals.insert(v);
-          if (vals.size() > 1)
-            break;
-        }
-        if (vals.size() > 1)
-          break;
-      }
-      if (vals.size() == 1) {
-        auto *V = *vals.begin();
-        if (!isa<Instruction>(V) || DT.dominates(cast<Instruction>(V), PN)) {
-          PN->replaceAllUsesWith(V);
-          PN->eraseFromParent();
-        }
-      }
-    }
-  }
-}
-
 namespace {
 
 /// The operand of a fused multiply-add that is negated before the fusion.
@@ -540,8 +457,10 @@ Function *canonicalize(Function &F) {
   setFullWillReturn(NewF);
   resetClonedGUID(NewF);
 
-  CanonicalizeAnalyses A(NewF->getContext());
-  FunctionAnalysisManager &FAM = A.FAM;
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  ModuleAnalysisManager MAM;
+  registerPreprocessAnalyses(LAM, FAM, MAM, NewF->getContext());
 
   auto run = [&](auto &&Pass) { FAM.invalidate(*NewF, Pass.run(*NewF, FAM)); };
   run(PromotePass());
@@ -558,7 +477,7 @@ Function *canonicalize(Function &F) {
   run(GVNPass());
 
   canonicalizeLoops(NewF, FAM);
-  removeRedundantPHI(NewF, FAM);
+  RemoveRedundantPHI(NewF, FAM);
   run(LoopSimplifyPass());
 
   for (auto &BB : *NewF) {
