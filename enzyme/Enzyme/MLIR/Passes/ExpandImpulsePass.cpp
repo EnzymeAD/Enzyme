@@ -1,4 +1,4 @@
-//===- ExpandImpulsePass.cpp - Expand Impulse region ops ----------------===//
+//===- ExpandImpulsePass.cpp - Lower the Impulse inference ops ------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,18 +6,24 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass that expands high-level Impulse region ops
-// (simulate, generate, regenerate, mcmc, mh, untraced_call) into lower-level
-// Impulse ops (sample, random, etc.) plus arith/math/cf.
+// This file implements the expand-impulse pass, which lowers the Impulse
+// inference ops into calls, arith and math ops and lower-level Impulse ops. It
+// lowers untraced_call, simulate, generate, regenerate and mh to calls of
+// clones of the model; the patterns for infer and infer_region are in the
+// ExpandImpulse*.cpp files next to it.
+//
 //===----------------------------------------------------------------------===//
+
+#include "ExpandImpulse.h"
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
-#include "Interfaces/HMCUtils.h"
+#include "Interfaces/DistBuilder.h"
 #include "Interfaces/ImpulseUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
@@ -26,7 +32,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/StringSet.h"
 
 #define DEBUG_TYPE "expand-impulse"
 
@@ -41,20 +47,25 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
-namespace {
-
-static int64_t computeTensorElementCount(RankedTensorType tensorType) {
-  int64_t elemCount = 1;
-  for (auto dim : tensorType.getShape()) {
-    if (dim == ShapedType::kDynamic)
-      return -1;
-    elemCount *= dim;
-  }
-  return elemCount;
+/// Returns the function `fnAttr` that `op` calls, or fails after emitting on
+/// `op` when its body is empty: a distribution site needs a `logpdf_fn`, or
+/// `opName` would recurse into its sampler.
+static FailureOr<FunctionOpInterface>
+lookupModelBody(Operation *op, SymbolRefAttr fnAttr, StringRef opName,
+                SymbolTableCollection &symbolTable) {
+  auto fn =
+      symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(op, fnAttr);
+  if (!fn.getFunctionBody().empty())
+    return fn;
+  return op->emitError("Impulse: calling `")
+         << opName
+         << "` on an empty function; if this is a distribution function, its "
+            "sample op should have a `logpdf_fn` attribute to avoid recursive `"
+         << opName << "` calls which is intended for generative functions";
 }
 
-using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
-
+/// Maps the symbol of every sample site of `fn`, nested ones included, to the
+/// site.
 static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
   SampleOpMap map;
   fn.walk([&](impulse::SampleOp sampleOp) {
@@ -64,12 +75,8 @@ static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
   return map;
 }
 
-static impulse::SampleOp findSampleBySymbol(const SampleOpMap &map,
-                                            Attribute targetSymbol) {
-  auto it = map.find(targetSymbol);
-  return it != map.end() ? it->second : nullptr;
-}
-
+/// Returns the number of trace columns the values of `sampleOp` take, or -1
+/// after emitting on `op` when a value is not a statically shaped tensor.
 static int64_t computeSampleElementCount(Operation *op,
                                          impulse::SampleOp sampleOp) {
   int64_t totalCount = 0;
@@ -80,16 +87,20 @@ static int64_t computeSampleElementCount(Operation *op,
       op->emitError("Expected ranked tensor type for sample result");
       return -1;
     }
-    int64_t elemCount = computeTensorElementCount(tensorType);
-    if (elemCount < 0) {
+    if (!tensorType.hasStaticShape()) {
       op->emitError("Dynamic tensor dimensions not supported");
       return -1;
     }
-    totalCount += elemCount;
+    totalCount += tensorType.getNumElements();
   }
   return totalCount;
 }
 
+/// Adds the number of trace columns the site at `address` takes to
+/// `positionSize`, looking each symbol after the first up in the generative
+/// function of the site before it. Returns false when a symbol has no site, and
+/// after emitting on `op` when the address continues past a site without a
+/// non-empty generative function or a value is dynamically shaped.
 static bool computePositionSizeForAddress(Operation *op,
                                           const SampleOpMap &sampleMap,
                                           ArrayRef<Attribute> address,
@@ -98,19 +109,19 @@ static bool computePositionSizeForAddress(Operation *op,
   if (address.empty())
     return false;
 
-  auto sampleOp = findSampleBySymbol(sampleMap, address[0]);
+  impulse::SampleOp sampleOp = sampleMap.lookup(address[0]);
   if (!sampleOp)
     return false;
 
   if (address.size() > 1) {
-    if (sampleOp.getLogpdfAttr()) {
+    if (sampleOp.getLogpdfFnAttr()) {
       op->emitError("Cannot select nested address in distribution function");
       return false;
     }
 
-    auto genFn = cast<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-    if (!genFn || genFn.getFunctionBody().empty()) {
+    auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        sampleOp, sampleOp.getFnAttr());
+    if (genFn.getFunctionBody().empty()) {
       op->emitError("Cannot find generative function for nested address");
       return false;
     }
@@ -128,6 +139,8 @@ static bool computePositionSizeForAddress(Operation *op,
   return true;
 }
 
+/// Returns the number of trace columns the sites of `fn` at the addresses in
+/// `selection` take, or -1 after emitting on `op` when one of them has none.
 static int64_t
 computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
                                 ArrayAttr selection,
@@ -153,10 +166,9 @@ computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
   return positionSize;
 }
 
-static int64_t
-computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
-                                  ArrayAttr selection, Attribute targetSymbol,
-                                  SymbolTableCollection &symbolTable) {
+int64_t impulse::computeOffsetForSampleInSelection(
+    Operation *op, FunctionOpInterface fn, ArrayAttr selection,
+    Attribute targetSymbol, SymbolTableCollection &symbolTable) {
   auto sampleMap = buildSampleOpMap(fn);
   int64_t offset = 0;
 
@@ -181,51 +193,100 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
-static SmallVector<impulse::SupportInfo>
-collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
-                               ArrayAttr selection, ArrayAttr allAddresses,
-                               SymbolTableCollection &symbolTable) {
-  auto sampleMap = buildSampleOpMap(fn);
-  SmallVector<impulse::SupportInfo> supports;
-  int64_t currentPositionOffset = 0;
-
-  for (auto addr : selection) {
-    auto address = cast<ArrayAttr>(addr);
-    if (address.empty())
-      continue;
-
-    // TODO: Handle nested cases
-    if (address.size() != 1)
-      continue;
-
-    auto targetSymbol = address[0];
-    auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
-    if (!sampleOp)
-      continue;
-
-    auto supportAttr = sampleOp.getSupportAttr();
-
-    int64_t sampleSize = computeSampleElementCount(op, sampleOp);
-    if (sampleSize < 0)
-      continue;
-
-    int64_t traceOffset = computeOffsetForSampleInSelection(
-        op, fn, allAddresses, targetSymbol, symbolTable);
-    if (traceOffset < 0) {
-      op->emitError("Symbol in selection not found in all_addresses - cannot "
-                    "determine trace offset for scattered selection");
-      return {};
+/// Returns the number of trace columns the site at `address` takes, looking
+/// the first symbol up in `sites` and each later one in the generative
+/// function of the site before it. Fails after emitting on `op` when a symbol
+/// has no site, the address continues past a site with a `logpdf_fn` or into
+/// an empty function, or a value of the site is not a statically shaped
+/// tensor.
+static FailureOr<int64_t> getAddressSize(Operation *op,
+                                         const SampleOpMap &sites,
+                                         ArrayAttr address,
+                                         SymbolTableCollection &symbolTable) {
+  SampleOpMap nestedSites;
+  const SampleOpMap *scope = &sites;
+  for (auto [depth, symbol] : llvm::enumerate(address.getValue())) {
+    impulse::SampleOp site = scope->lookup(symbol);
+    if (!site)
+      return op->emitError(
+          "Could not find sample with symbol in address chain");
+    if (depth + 1 == address.size()) {
+      int64_t size = computeSampleElementCount(op, site);
+      if (size < 0)
+        return failure();
+      return size;
     }
-
-    supports.emplace_back(currentPositionOffset, traceOffset, sampleSize,
-                          supportAttr);
-    currentPositionOffset += sampleSize;
+    if (site.getLogpdfFnAttr())
+      return op->emitError(
+          "Cannot select nested address in distribution function");
+    auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        site, site.getFnAttr());
+    if (genFn.getFunctionBody().empty())
+      return op->emitError(
+          "Cannot find generative function for nested address");
+    nestedSites = buildSampleOpMap(genFn);
+    scope = &nestedSites;
   }
-
-  return supports;
+  llvm_unreachable("an empty address has no site");
 }
 
-static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
+FailureOr<FlatTraceLayout>
+impulse::getFlatTraceLayout(Operation *op, FunctionOpInterface fn,
+                            ArrayAttr addresses,
+                            SymbolTableCollection &symbolTable) {
+  FlatTraceLayout layout;
+  layout.siteBySymbol = buildSampleOpMap(fn);
+  for (Attribute attr : addresses) {
+    auto address = cast<ArrayAttr>(attr);
+    if (address.empty())
+      return op->emitError("Empty address in selection");
+    FailureOr<int64_t> size =
+        getAddressSize(op, layout.siteBySymbol, address, symbolTable);
+    if (failed(size))
+      return failure();
+    layout.entries.push_back({address, layout.positionSize, *size});
+    layout.columnOf.try_emplace(address[0], layout.positionSize);
+    if (address.size() > 1)
+      layout.nestedSizeOf[address[0]] += *size;
+    layout.positionSize += *size;
+  }
+  return layout;
+}
+
+int64_t impulse::sampleRegionSize(impulse::SampleRegionOp site) {
+  int64_t size = 0;
+  for (Value result : llvm::drop_begin(site->getResults()))
+    size += cast<RankedTensorType>(result.getType()).getNumElements();
+  return size;
+}
+
+FailureOr<RegionTraceLayout>
+impulse::getRegionTraceLayout(impulse::InferRegionOp regionOp,
+                              bool topLevelOnly) {
+  RegionTraceLayout layout;
+  auto addSite = [&](impulse::SampleRegionOp site) {
+    if (Attribute address = site.getAddressAttr())
+      layout.siteByAddress[address] = site;
+  };
+  if (topLevelOnly)
+    for (auto site :
+         regionOp.getSampling().front().getOps<impulse::SampleRegionOp>())
+      addSite(site);
+  else
+    regionOp.getSampling().walk(addSite);
+  for (Attribute address : regionOp.getAllAddressesAttr()) {
+    impulse::SampleRegionOp site = layout.siteByAddress.lookup(address);
+    if (!site)
+      return failure();
+    layout.columnOf[address] = layout.positionSize;
+    layout.positionSize += sampleRegionSize(site);
+  }
+  return layout;
+}
+
+/// Returns the addresses of `selection` that continue past the symbol
+/// `targetSymbol`, without that first symbol.
+static ArrayAttr buildSubSelection(Builder &builder, ArrayAttr selection,
                                    Attribute targetSymbol) {
   SmallVector<Attribute> subAddresses;
   for (auto addr : selection) {
@@ -240,32 +301,1102 @@ static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
   return builder.getArrayAttr(subAddresses);
 }
 
-static int64_t
-computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
-                             ArrayAttr selection, Attribute targetSymbol,
-                             SymbolTableCollection &symbolTable) {
-  auto sampleMap = buildSampleOpMap(fn);
-  int64_t offset = 0;
+namespace {
+/// The trace, weight and Hastings correction carried from one sample site to
+/// the next while a function body is lowered. `offset` is the next trace
+/// column; it advances over both `impulse.if` branches, which take disjoint
+/// columns. `hastingsCorrection` is set only while a Hastings regenerate is
+/// lowered.
+struct SiteCarry {
+  Value trace;
+  Value weight;
+  int64_t offset;
+  Value hastingsCorrection = nullptr;
+};
+} // namespace
 
-  for (auto addr : selection) {
-    auto address = cast<ArrayAttr>(addr);
-    if (address.empty())
-      continue;
+/// Lowers one sample site of a function body, given the carry at the site.
+using ProcessSampleFn =
+    llvm::function_ref<LogicalResult(impulse::SampleOp, SiteCarry &)>;
 
-    if (address[0] == targetSymbol) {
-      return offset;
+/// Array of top-level addresses asking an `impulse.regenerate` for a `2 x N`
+/// weight: column `k` holds 1 and the log density of the site at address `k`
+/// where that site runs, else zeros.
+static constexpr llvm::StringLiteral kMHSiteScoresAttr =
+    "impulse.mh_site_scores";
+
+Value impulse::scalarAt(OpBuilder &b, Location loc, Value tensor,
+                        ArrayRef<int64_t> index) {
+  auto type = cast<RankedTensorType>(tensor.getType());
+  SmallVector<int64_t> limit, strides(index.size(), 1), ones(index.size(), 1);
+  for (int64_t i : index)
+    limit.push_back(i + 1);
+  Value slice = impulse::SliceOp::create(
+      b, loc, RankedTensorType::get(ones, type.getElementType()), tensor,
+      b.getDenseI64ArrayAttr(index), b.getDenseI64ArrayAttr(limit),
+      b.getDenseI64ArrayAttr(strides));
+  return impulse::ReshapeOp::create(
+      b, loc, RankedTensorType::get({}, type.getElementType()), slice);
+}
+
+/// Lowers the sample sites of `block` in program order with `processSample`,
+/// including those nested in the regions of its ops.
+static LogicalResult processImpulseBlock(Block &block,
+                                         PatternRewriter &rewriter,
+                                         SiteCarry &carry,
+                                         ProcessSampleFn processSample);
+
+/// Lowers the sample sites of both branches of `ifOp` with `processSample` and
+/// replaces `ifOp` with an `impulse.if` that also yields the trace, weight and
+/// Hastings correction of the branch taken, which become `carry`. Both
+/// branches start from the trace and weight of `carry`, so the columns of the
+/// sites of the branch not taken keep their values from before `ifOp`.
+static LogicalResult processImpulseIf(impulse::IfOp ifOp,
+                                      PatternRewriter &rewriter,
+                                      SiteCarry &carry,
+                                      ProcessSampleFn processSample) {
+  Location loc = ifOp.getLoc();
+  SiteCarry before = carry;
+
+  Block &trueBlock = ifOp.getTrueBranch().front();
+  if (failed(processImpulseBlock(trueBlock, rewriter, carry, processSample)))
+    return failure();
+  SiteCarry afterTrue = carry;
+
+  Block &falseBlock = ifOp.getFalseBranch().front();
+  carry.trace = before.trace;
+  carry.weight = before.weight;
+  carry.hastingsCorrection = before.hastingsCorrection;
+  if (failed(processImpulseBlock(falseBlock, rewriter, carry, processSample)))
+    return failure();
+
+  auto extendYield = [&](Block &block, const SiteCarry &branch) {
+    auto yield = cast<impulse::YieldOp>(block.getTerminator());
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(yield);
+    SmallVector<Value> operands(yield.getOperands().begin(),
+                                yield.getOperands().end());
+    operands.push_back(branch.trace);
+    operands.push_back(branch.weight);
+    if (branch.hastingsCorrection)
+      operands.push_back(branch.hastingsCorrection);
+    impulse::YieldOp::create(rewriter, yield.getLoc(), operands);
+    rewriter.eraseOp(yield);
+  };
+  extendYield(trueBlock, afterTrue);
+  extendYield(falseBlock, carry);
+
+  SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
+                                   ifOp.getResultTypes().end());
+  unsigned oldNumResults = ifOp.getNumResults();
+  newResultTypes.push_back(before.trace.getType());
+  // Not always scalar: an MH site-scores regenerate carries a vector.
+  newResultTypes.push_back(before.weight.getType());
+  if (before.hastingsCorrection)
+    newResultTypes.push_back(before.hastingsCorrection.getType());
+
+  rewriter.setInsertionPoint(ifOp);
+  auto newIf =
+      impulse::IfOp::create(rewriter, loc, newResultTypes, ifOp.getPredicate());
+  rewriter.inlineRegionBefore(ifOp.getTrueBranch(), newIf.getTrueBranch(),
+                              newIf.getTrueBranch().end());
+  rewriter.inlineRegionBefore(ifOp.getFalseBranch(), newIf.getFalseBranch(),
+                              newIf.getFalseBranch().end());
+
+  carry.trace = newIf.getResult(oldNumResults);
+  carry.weight = newIf.getResult(oldNumResults + 1);
+  if (before.hastingsCorrection)
+    carry.hastingsCorrection = newIf.getResult(oldNumResults + 2);
+
+  rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
+  return success();
+}
+
+static LogicalResult processImpulseBlock(Block &block,
+                                         PatternRewriter &rewriter,
+                                         SiteCarry &carry,
+                                         ProcessSampleFn processSample) {
+  SmallVector<Operation *> ops;
+  for (Operation &op : block)
+    ops.push_back(&op);
+
+  for (Operation *op : ops) {
+    if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
+      if (failed(processSample(sampleOp, carry)))
+        return failure();
+    } else if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
+      bool hasSample = false;
+      ifOp->walk([&](impulse::SampleOp) { hasSample = true; });
+      if (hasSample &&
+          failed(processImpulseIf(ifOp, rewriter, carry, processSample)))
+        return failure();
+    } else {
+      for (Region &region : op->getRegions())
+        for (Block &nested : region.getBlocks())
+          if (failed(
+                  processImpulseBlock(nested, rewriter, carry, processSample)))
+            return failure();
     }
+  }
+  return success();
+}
 
-    SmallVector<Attribute> tailAddresses(address.begin(), address.end());
-    if (!computePositionSizeForAddress(op, sampleMap, tailAddresses,
-                                       symbolTable, offset)) {
-      return -1;
+Value impulse::updateColumns(OpBuilder &builder, Location loc, Value tensor,
+                             Value update, int64_t column) {
+  Value row = emitI64ScalarConstant(builder, loc, 0);
+  Value col = emitI64ScalarConstant(builder, loc, column);
+  return impulse::DynamicUpdateSliceOp::create(
+      builder, loc, tensor.getType(), tensor, update, ValueRange{row, col});
+}
+
+Value impulse::writeTraceColumns(OpBuilder &builder, Location loc, Value trace,
+                                 Value value, int64_t column) {
+  auto valueType = cast<RankedTensorType>(value.getType());
+  auto rowType = RankedTensorType::get({1, valueType.getNumElements()},
+                                       valueType.getElementType());
+  Value row = impulse::ReshapeOp::create(builder, loc, rowType, value);
+  return updateColumns(builder, loc, trace, row, column);
+}
+
+/// Writes the `values` of `site` into `trace` one after another from column
+/// `offset` on, advancing `offset` past them. With `write` unset only `offset`
+/// advances. Fails on a dynamically shaped value.
+static LogicalResult appendSiteValues(OpBuilder &builder,
+                                      impulse::SampleOp site,
+                                      ArrayRef<Value> values, Value &trace,
+                                      int64_t &offset, bool write = true) {
+  for (Value value : values) {
+    auto type = cast<RankedTensorType>(value.getType());
+    if (!type.hasStaticShape())
+      return site.emitError("Impulse: dynamic tensor dimensions not supported");
+    if (write)
+      trace = writeTraceColumns(builder, site.getLoc(), trace, value, offset);
+    offset += type.getNumElements();
+  }
+  return success();
+}
+
+/// Returns the parameters of `site`: its inputs after the rng.
+static ValueRange siteParams(impulse::SampleOp site) {
+  ValueRange inputs = site.getInputs();
+  return inputs.empty() ? inputs : inputs.drop_front();
+}
+
+/// Draws fresh values for `site`: inline from its distribution when that has a
+/// loop-free sampler, else by calling its `fn`. Returns replacements for all
+/// results of `site`, the rng first.
+static SmallVector<Value> emitSiteDraw(OpBuilder &builder,
+                                       SymbolTableCollection &symbolTable,
+                                       impulse::SampleOp site) {
+  Location loc = site.getLoc();
+  if (impulse::DistAttr dist = site.getDistAttr();
+      dist && dist.hasLoopFreeSampler()) {
+    Value rng = site.getInputs().front();
+    Value sample = impulse::emitDistSampler(
+        builder, loc, dist, rng, siteParams(site),
+        cast<RankedTensorType>(site.getResult(1).getType()));
+    return {rng, sample};
+  }
+  auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      site, site.getFnAttr());
+  auto call = func::CallOp::create(builder, loc, fn.getName(),
+                                   fn.getResultTypes(), site.getInputs());
+  return SmallVector<Value>(call.getResults());
+}
+
+/// Returns the `logpdf_fn` function of `site`, or null for a site without
+/// one, after checking that it takes the `numValues` values of the site
+/// followed by its parameters. `call` names the call in the diagnostic.
+static FailureOr<FunctionOpInterface>
+verifySiteLogpdf(SymbolTableCollection &symbolTable, impulse::SampleOp site,
+                 size_t numValues, StringRef call = "logpdf call") {
+  if (!site.getLogpdfFnAttr())
+    return FunctionOpInterface();
+  auto logpdfFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      site, site.getLogpdfFnAttr());
+  if (numValues + siteParams(site).size() == logpdfFn.getNumArguments())
+    return logpdfFn;
+  return site.emitError("Impulse: failed to construct ")
+         << call << "; logpdf function has wrong number of arguments";
+}
+
+/// Emits the log density of `values` (the site's results after the rng) under
+/// `site`: from its distribution, or by calling `logpdfFn`, the function
+/// `verifySiteLogpdf` returned, on the values followed by the site's
+/// parameters.
+static Value emitSiteLogpdf(OpBuilder &builder, impulse::SampleOp site,
+                            FunctionOpInterface logpdfFn, ValueRange values) {
+  Location loc = site.getLoc();
+  if (impulse::DistAttr dist = site.getDistAttr())
+    return impulse::emitDistLogpdf(builder, loc, dist, values.front(),
+                                   siteParams(site));
+  SmallVector<Value> operands(values);
+  llvm::append_range(operands, siteParams(site));
+  return func::CallOp::create(builder, loc, logpdfFn.getName(),
+                              logpdfFn.getResultTypes(), operands)
+      .getResult(0);
+}
+
+SmallVector<Value> impulse::sliceTraceValues(OpBuilder &builder, Location loc,
+                                             Value trace, int64_t offset,
+                                             TypeRange types) {
+  SmallVector<Value> values;
+  for (Type type : types) {
+    auto tensorType = cast<RankedTensorType>(type);
+    values.push_back(emitRowSlice(builder, loc, trace, offset, tensorType));
+    offset += tensorType.getNumElements();
+  }
+  return values;
+}
+
+/// Returns replacements for the results of `site`: its rng input, then its
+/// values read from row 0 of `source` starting at column `offset`. Fails on a
+/// dynamically shaped value.
+static FailureOr<SmallVector<Value>> readSiteValues(OpBuilder &builder,
+                                                    impulse::SampleOp site,
+                                                    Value source,
+                                                    int64_t offset) {
+  SmallVector<Value> values{site.getInputs().front()};
+  for (Value result : llvm::drop_begin(site->getResults())) {
+    auto type = cast<RankedTensorType>(result.getType());
+    if (!type.hasStaticShape()) {
+      site.emitError("Impulse: dynamic tensor dimensions not supported");
+      return failure();
+    }
+    values.push_back(
+        emitRowSlice(builder, site.getLoc(), source, offset, type));
+    offset += type.getNumElements();
+  }
+  return values;
+}
+
+Value impulse::writeScoreCells(OpBuilder &builder, Location loc, Value trace,
+                               Value row0,
+                               ArrayRef<std::pair<int64_t, Value>> cells) {
+  auto traceType = cast<RankedTensorType>(trace.getType());
+  auto cellType = RankedTensorType::get({1, 1}, traceType.getElementType());
+  for (auto [column, score] : cells) {
+    Value cell = impulse::ReshapeOp::create(builder, loc, cellType, score);
+    Value columnIndex = emitI64ScalarConstant(builder, loc, column);
+    trace = impulse::DynamicUpdateSliceOp::create(
+        builder, loc, traceType, trace, cell, ValueRange{row0, columnIndex});
+  }
+  return trace;
+}
+
+/// Returns a `1 x width` trace whose leading columns are `values` and whose
+/// following columns hold `siteScores`, one score per column.
+static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
+                             ArrayRef<Value> siteScores, int64_t width) {
+  auto fullType = RankedTensorType::get({1, width}, builder.getF64Type());
+  Value zeroFull = emitSplatConstant(builder, loc, fullType, 0.0);
+  Value c0 = emitI64ScalarConstant(builder, loc, 0);
+  Value trace = impulse::DynamicUpdateSliceOp::create(
+      builder, loc, fullType, zeroFull, values, ValueRange{c0, c0});
+  int64_t firstScoreColumn =
+      cast<RankedTensorType>(values.getType()).getShape()[1];
+  SmallVector<std::pair<int64_t, Value>> cells;
+  for (auto [i, score] : llvm::enumerate(siteScores))
+    cells.push_back({firstScoreColumn + (int64_t)i, score});
+  return writeScoreCells(builder, loc, trace, c0, cells);
+}
+
+/// Packs `weight` and the Hastings correction `correction` into the weight
+/// vector of a Hastings regenerate.
+static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
+                                Value correction) {
+  auto vecType = RankedTensorType::get({2}, b.getF64Type());
+  auto oneType = RankedTensorType::get({1}, b.getF64Type());
+  Value acc = emitSplatConstant(b, loc, vecType, 0.0);
+  // Named array: a ValueRange over a braced list would dangle in the loop.
+  Value parts[] = {weight, correction};
+  for (auto [i, v] : llvm::enumerate(parts)) {
+    Value idx = emitI64ScalarConstant(b, loc, i);
+    Value flat = impulse::ReshapeOp::create(b, loc, oneType, v);
+    acc = impulse::DynamicUpdateSliceOp::create(b, loc, vecType, acc, flat,
+                                                ValueRange{idx});
+  }
+  return acc;
+}
+
+std::pair<Value, Value>
+impulse::unpackHastingsWeight(OpBuilder &b, Location loc, Value packed) {
+  return {scalarAt(b, loc, packed, {0}), scalarAt(b, loc, packed, {1})};
+}
+
+bool impulse::usesAnyOf(Operation *op, const DenseSet<Value> &values) {
+  auto inValues = [&](Value v) { return values.contains(v); };
+  if (llvm::any_of(op->getOperands(), inValues))
+    return true;
+  if (op->getNumRegions() == 0)
+    return false;
+  return op
+      ->walk([&](Operation *inner) {
+        return llvm::any_of(inner->getOperands(), inValues)
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
+/// Returns whether an address in `addresses` starts with the symbol of
+/// `sampleOp`.
+static bool addressInList(impulse::SampleOp sampleOp, ArrayAttr addresses) {
+  for (auto addr : addresses) {
+    auto address = cast<ArrayAttr>(addr);
+    if (!address.empty() && address[0] == sampleOp.getSymbolAttr())
+      return true;
+  }
+  return false;
+}
+
+/// Fails with a diagnostic naming `role` when the first address in
+/// `addresses` that starts with the symbol of `sampleOp` is nested.
+static LogicalResult verifyTopLevelAddress(impulse::SampleOp sampleOp,
+                                           ArrayAttr addresses,
+                                           StringRef role) {
+  for (Attribute attr : addresses) {
+    auto address = cast<ArrayAttr>(attr);
+    if (address.empty() || address[0] != sampleOp.getSymbolAttr())
+      continue;
+    if (address.size() == 1)
+      return success();
+    return sampleOp.emitError(
+               "Impulse: distribution function cannot have composite ")
+           << role << " address";
+  }
+  return success();
+}
+
+/// Returns the values in `fn` that regenerating `regenerateAddresses` can
+/// change. Taint stops at a site that is not regenerated, whose value comes
+/// from the trace; an op with regions is tainted when anything nested in it
+/// reads a tainted value.
+static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
+                                              ArrayAttr regenerateAddresses) {
+  DenseSet<Value> tainted;
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    auto taint = [&](auto values) {
+      for (Value v : values)
+        changed |= tainted.insert(v).second;
+    };
+    fn.getFunctionBody().walk([&](Operation *op) {
+      if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
+        if (addressInList(sampleOp, regenerateAddresses))
+          taint(llvm::drop_begin(op->getResults()));
+        return;
+      }
+      if (!usesAnyOf(op, tainted))
+        return;
+      taint(op->getResults());
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          taint(block.getArguments());
+    });
+  }
+  return tainted;
+}
+
+/// Returns whether every site of `fn` runs exactly once, as a score tail with
+/// one column per site requires: no `impulse.if`, and only top-level
+/// distribution sites.
+static bool supportsScoreTail(FunctionOpInterface fn) {
+  bool feasible = true;
+  fn.getFunctionBody().walk([&](Operation *op) {
+    if (isa<impulse::IfOp>(op))
+      feasible = false;
+    if (auto s = dyn_cast<impulse::SampleOp>(op))
+      if ((!s.getDistAttr() && !s.getLogpdfFnAttr()) ||
+          s->getParentOp() != fn.getOperation())
+        feasible = false;
+  });
+  return feasible;
+}
+
+//===----------------------------------------------------------------------===//
+// Traced lowerings of simulate, generate and regenerate
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// A clone of a model that simulate, generate or regenerate rewrites site by
+/// site into a function that also returns the trace of `allAddresses` and the
+/// weight.
+struct TracedClone {
+  FunctionOpInterface fn;
+  ArrayAttr allAddresses;
+  /// Where the sites at `allAddresses` sit on the trace.
+  FlatTraceLayout layout;
+  FunctionOpInterface newFn;
+  /// The op the body of `newFn` started with; the lowering's constants go
+  /// before it.
+  Operation *bodyStart = nullptr;
+  /// Width of the returned trace, wider than the positions with a score tail.
+  int64_t declaredWidth = 0;
+  /// The zero weight and the zero position trace at the start of `newFn`.
+  Value zeroWeight;
+  Value zeroTrace;
+  /// What the sites carry, from the zero trace and weight on.
+  SiteCarry carry;
+  /// The log density of each site in program order, for the score tail.
+  SmallVector<Value> siteScores;
+
+  int64_t positionSize() const { return layout.positionSize; }
+  bool hasScoreTail() const { return declaredWidth > layout.positionSize; }
+};
+
+/// A sub-model site of a traced lowering whose nested trace holds the
+/// addresses below it.
+struct NestedSite {
+  FunctionOpInterface genFn;
+  /// The addresses of `all_addresses` below the site, without its symbol.
+  ArrayAttr subAllAddresses;
+  /// Width of the nested trace and its first column in the caller's trace.
+  int64_t subPositionSize = 0;
+  int64_t mergeOffset = 0;
+
+  RankedTensorType getTraceType() {
+    return RankedTensorType::get({1, subPositionSize},
+                                 Float64Type::get(genFn.getContext()));
+  }
+  /// The result types of the nested op: its trace, a weight of `weightType`
+  /// and the results of `genFn`.
+  SmallVector<Type> getResultTypes(Type weightType) {
+    SmallVector<Type> types{getTraceType(), weightType};
+    llvm::append_range(types, genFn.getResultTypes());
+    return types;
+  }
+};
+} // namespace
+
+/// Lowers one sample site of a traced clone given the carry at the site, at
+/// an insertion point before the site, and returns the replacements for the
+/// site's results.
+using TracedSiteFn =
+    function_ref<FailureOr<SmallVector<Value>>(impulse::SampleOp, SiteCarry &)>;
+
+/// Looks up the model `op` calls, lays out its `allAddresses` and clones it
+/// for `mode` with a `declaredWidth`-wide trace and a `constraintSize`-wide
+/// constraint (see `cloneForMode`), then creates the zero weight and position
+/// trace at the start of the clone. `opName` names `op` in the diagnostics.
+/// Fails after emitting on `op` when the model is empty or the addresses take
+/// no column.
+static FailureOr<TracedClone>
+beginTracedClone(Operation *op, SymbolRefAttr fnAttr, ArrayAttr allAddresses,
+                 int64_t declaredWidth, ImpulseMode mode,
+                 int64_t constraintSize, StringRef opName,
+                 SymbolTableCollection &symbolTable) {
+  FailureOr<FunctionOpInterface> fn =
+      lookupModelBody(op, fnAttr, opName, symbolTable);
+  if (failed(fn))
+    return failure();
+  FailureOr<FlatTraceLayout> layout =
+      getFlatTraceLayout(op, *fn, allAddresses, symbolTable);
+  if (failed(layout))
+    return failure();
+  if (layout->positionSize <= 0)
+    return op->emitError("Impulse: failed to compute position size for ")
+           << opName;
+
+  TracedClone clone;
+  clone.fn = *fn;
+  clone.allAddresses = allAddresses;
+  clone.layout = std::move(*layout);
+  clone.declaredWidth = declaredWidth;
+  clone.newFn = cloneForMode(*fn, mode, declaredWidth, constraintSize);
+  clone.bodyStart = &clone.newFn.getFunctionBody().front().front();
+  OpBuilder entryBuilder(clone.bodyStart);
+  Location loc = clone.bodyStart->getLoc();
+  Type f64 = entryBuilder.getF64Type();
+  clone.zeroWeight =
+      emitSplatConstant(entryBuilder, loc, RankedTensorType::get({}, f64), 0.0);
+  clone.zeroTrace = emitSplatConstant(
+      entryBuilder, loc, RankedTensorType::get({1, clone.positionSize()}, f64),
+      0.0);
+  clone.carry = {clone.zeroTrace, clone.zeroWeight, /*offset=*/0};
+  return clone;
+}
+
+/// Resolves the sub-model site `site` of `clone`: its generative function and
+/// the addresses below it, with `subAllAddresses` empty when there are none.
+/// Fails after emitting on `site` when the clone has a score tail or the
+/// generative function is empty.
+static FailureOr<NestedSite>
+resolveNestedSite(Builder &builder, impulse::SampleOp site,
+                  const TracedClone &clone,
+                  SymbolTableCollection &symbolTable) {
+  if (clone.hasScoreTail())
+    return site.emitError("Impulse: score-tail traces do not support "
+                          "nested generative sites");
+  auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      site, site.getFnAttr());
+  if (genFn.getFunctionBody().empty())
+    return site.emitError(
+        "Impulse: generative function body is empty; "
+        "if this is a distribution, add a `logpdf_fn` attribute");
+  Attribute symbol = site.getSymbolAttr();
+  NestedSite nested;
+  nested.genFn = genFn;
+  nested.subAllAddresses =
+      buildSubSelection(builder, clone.allAddresses, symbol);
+  nested.subPositionSize = clone.layout.nestedSizeOf.lookup(symbol);
+  nested.mergeOffset = clone.layout.firstColumn(symbol);
+  return nested;
+}
+
+/// Adds the log density of `values` under `site` to the weight of `carry` and
+/// to the site scores of `clone`, and writes `values` into the trace of `carry`
+/// when `site` is at an address of `clone`. `call` names the logpdf call in
+/// the diagnostic.
+static LogicalResult scoreAndTraceSite(PatternRewriter &rewriter,
+                                       impulse::SampleOp site,
+                                       ArrayRef<Value> values,
+                                       TracedClone &clone, SiteCarry &carry,
+                                       SymbolTableCollection &symbolTable,
+                                       StringRef call = "logpdf call") {
+  FailureOr<FunctionOpInterface> logpdfFn =
+      verifySiteLogpdf(symbolTable, site, values.size(), call);
+  if (failed(logpdfFn))
+    return failure();
+  Value logpdf = emitSiteLogpdf(rewriter, site, *logpdfFn, values);
+  carry.weight =
+      arith::AddFOp::create(rewriter, site.getLoc(), carry.weight, logpdf);
+  if (clone.hasScoreTail())
+    clone.siteScores.push_back(logpdf);
+  if (!addressInList(site, clone.allAddresses))
+    return success();
+  return appendSiteValues(rewriter, site, values, carry.trace, carry.offset);
+}
+
+/// Writes `subTrace`, the trace of `nested`, into the trace `carry` holds and
+/// advances its offset past it.
+static void mergeNestedTrace(OpBuilder &builder, Location loc,
+                             const NestedSite &nested, Value subTrace,
+                             SiteCarry &carry) {
+  carry.trace =
+      updateColumns(builder, loc, carry.trace, subTrace, nested.mergeOffset);
+  carry.offset =
+      std::max(carry.offset, nested.mergeOffset + nested.subPositionSize);
+}
+
+/// Lowers the sample sites of `clone` with `lowerSite` and erases them, then
+/// rewrites each return of the clone to also return the trace, with the score
+/// tail when the clone has one, and the weight `weightOut` emits at the
+/// return, before the model's results. A weight whose type differs from the
+/// declared one retypes the clone's results. Replaces `op` by a call of the
+/// clone on `callOperands`. Fails after emitting on `op` when a site fails.
+static LogicalResult finishTracedClone(PatternRewriter &rewriter, Operation *op,
+                                       TracedClone &clone,
+                                       TracedSiteFn lowerSite,
+                                       function_ref<Value(Location)> weightOut,
+                                       ValueRange callOperands) {
+  FunctionOpInterface newFn = clone.newFn;
+  SmallVector<Operation *> loweredSites;
+  auto lowerAndReplace = [&](impulse::SampleOp site,
+                             SiteCarry &carry) -> LogicalResult {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(site);
+    FailureOr<SmallVector<Value>> replacements = lowerSite(site, carry);
+    if (failed(replacements))
+      return failure();
+    rewriter.replaceAllUsesWith(site->getResults(), *replacements);
+    loweredSites.push_back(site);
+    return success();
+  };
+  LogicalResult lowered = processImpulseBlock(
+      newFn.getFunctionBody().front(), rewriter, clone.carry, lowerAndReplace);
+  for (Operation *site : loweredSites)
+    rewriter.eraseOp(site);
+  if (failed(lowered))
+    return op->emitError("Impulse: failed to walk sample ops");
+
+  SmallVector<Type> returnTypes;
+  newFn.walk([&](func::ReturnOp retOp) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(retOp);
+    Location loc = retOp.getLoc();
+    SmallVector<Value> results{
+        clone.hasScoreTail()
+            ? appendScoreTail(rewriter, loc, clone.carry.trace,
+                              clone.siteScores, clone.declaredWidth)
+            : clone.carry.trace};
+    results.push_back(weightOut(loc));
+    llvm::append_range(results, retOp.getOperands());
+    auto newReturn = func::ReturnOp::create(rewriter, loc, results);
+    rewriter.eraseOp(retOp);
+    returnTypes = llvm::to_vector(newReturn.getOperandTypes());
+  });
+  if (returnTypes[1] != newFn.getResultTypes()[1])
+    newFn.setType(FunctionType::get(op->getContext(), newFn.getArgumentTypes(),
+                                    returnTypes));
+
+  rewriter.setInsertionPoint(op);
+  auto call = func::CallOp::create(rewriter, op->getLoc(), newFn.getName(),
+                                   newFn.getResultTypes(), callOperands);
+  rewriter.replaceOp(op, call.getResults());
+  return success();
+}
+
+namespace {
+/// Lowers the sites of a clone for one `impulse.regenerate`: selected sites
+/// are drawn afresh, the others read from the old trace or the constraint.
+/// The weight is the joint log density, or on a score-tail trace the change
+/// of the terms the move can change. `kMHHastingsAttr` adds the Hastings
+/// correction of the move to it, and `kMHSiteScoresAttr` replaces it with the
+/// liveness and log density of the listed sites.
+class RegenerateLowering {
+public:
+  RegenerateLowering(PatternRewriter &rewriter, impulse::RegenerateOp op,
+                     TracedClone &clone, SymbolTableCollection &symbolTable);
+
+  /// Checks a score-tail model, computes what the move can change and emits
+  /// the starting trace and weight of the clone, and for a Hastings move the
+  /// scores of the old sites it cannot evaluate inline. Fails after emitting
+  /// on the op.
+  LogicalResult prepare();
+  /// Lowers one site of the clone; see `TracedSiteFn`.
+  FailureOr<SmallVector<Value>> lowerSite(impulse::SampleOp site,
+                                          SiteCarry &carry);
+  /// Emits the weight the clone returns at `loc`.
+  Value emitWeightOut(Location loc);
+
+private:
+  /// A distribution site being lowered.
+  struct DistSite {
+    impulse::SampleOp op;
+    /// Its first column on the old trace, or -1 when it has none.
+    int64_t column;
+    bool isSelected;
+    /// Its column of `oldSiteScores` when its liveness can flip, else -1.
+    int64_t flipIdx;
+    /// Whether it ran before the move, set when its liveness can flip.
+    Value oldLive;
+  };
+
+  /// Emits the regenerate that scores the old sites of a Hastings move whose
+  /// density cannot be evaluated inline at the new state.
+  void emitOldSiteScores();
+  FailureOr<SmallVector<Value>> lowerDistSite(impulse::SampleOp op,
+                                              SiteCarry &carry);
+  FailureOr<SmallVector<Value>> lowerCallSite(impulse::SampleOp op,
+                                              SiteCarry &carry);
+  /// Returns the values of the site that is not regenerated: read from the
+  /// old trace or the constraint, and for a site whose liveness can flip,
+  /// redrawn unless it ran before.
+  FailureOr<SmallVector<Value>> readOrRedrawValues(DistSite &site);
+  /// Adds the term of `site` at `values` to the weight and the Hastings
+  /// correction of `carry`, and records its score for the score tail.
+  /// `termDirty` says whether the term can change under the move.
+  void accumulateSiteWeight(const DistSite &site, FunctionOpInterface logpdfFn,
+                            ArrayRef<Value> values, bool termDirty,
+                            SiteCarry &carry);
+  /// The `impulse.if` ops around `site` in the clone, innermost first.
+  SmallVector<impulse::IfOp> enclosingIfs(Operation *site);
+  /// Whether `site` sits in a branch whose predicate the move can change.
+  bool inFlippableBranch(Operation *site);
+  /// Whether `site` reads its value from the constraint when constrained. In
+  /// MH, constraint entries outside branches may be latent initial values.
+  bool readsConstraint(impulse::SampleOp site);
+  /// The `oldSiteScores` column of a latent whose liveness can flip: kept if
+  /// it ran before the move, else redrawn. -1 for other sites.
+  int64_t flipLatentIndex(impulse::SampleOp site, bool isSelected);
+  /// Emits whether the site at `oldSiteScores` column `k` ran before the move.
+  Value emitOldLive(Location loc, int64_t k);
+  /// Records `score` as the log density of the site at column `k` of the site
+  /// scores `acc`, and marks the site live.
+  Value recordSiteScore(Location loc, Value acc, int64_t k, Value score);
+
+  PatternRewriter &rewriter;
+  impulse::RegenerateOp op;
+  TracedClone &clone;
+  SymbolTableCollection &symbolTable;
+  ArrayAttr selection;
+  ArrayAttr constrainedAddresses;
+  /// The old trace and the constraint, arguments of the clone.
+  Value prevTrace;
+  Value constraint;
+  bool hastings;
+  bool scoring;
+  bool hasScoreTail;
+  /// Values the move can change, for the terms of a score-tail weight.
+  DenseSet<Value> scoreTailTaint;
+  /// Values a Hastings move can change, for the liveness of branches.
+  DenseSet<Value> hastingsTaint;
+  /// Site symbol -> column of the site scores weight or of `oldSiteScores`.
+  DenseMap<Attribute, int64_t> siteIndex;
+  /// `[liveness; old log density]` of the sites a Hastings move cannot score
+  /// inline, one column per site.
+  Value oldSiteScores;
+  /// Program-order index of the next distribution site, its score column.
+  int64_t siteOrdinal = 0;
+};
+} // namespace
+
+RegenerateLowering::RegenerateLowering(PatternRewriter &rewriter,
+                                       impulse::RegenerateOp op,
+                                       TracedClone &clone,
+                                       SymbolTableCollection &symbolTable)
+    : rewriter(rewriter), op(op), clone(clone), symbolTable(symbolTable),
+      selection(op.getSelectionAttr()),
+      constrainedAddresses(op.getConstrainedAddressesAttr()),
+      prevTrace(clone.newFn.getArgument(0)),
+      constraint(op.getConstraint() ? clone.newFn.getArgument(1) : Value()),
+      hastings(op->hasAttr(kMHHastingsAttr)),
+      scoring(
+          static_cast<bool>(op->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr))),
+      hasScoreTail(clone.hasScoreTail()) {}
+
+LogicalResult RegenerateLowering::prepare() {
+  OpBuilder entryBuilder(clone.bodyStart);
+  Location entryLoc = clone.bodyStart->getLoc();
+  Value initTrace = clone.zeroTrace;
+  Value initWeight = clone.zeroWeight;
+  // On a score-tail trace the weight is the sum over dirty terms (regenerated
+  // or dependent on one) of new minus old log density; clean terms cancel in
+  // the MH ratio. Taint is computed up front; fresh draws are added as they
+  // are created.
+  if (hasScoreTail) {
+    if (!supportsScoreTail(clone.newFn))
+      return op.emitError("Impulse: regenerate over a score-tail trace "
+                          "requires a straight-line body of top-level "
+                          "distribution sites");
+    scoreTailTaint = computeRegenerateTaint(clone.newFn, selection);
+    // Non-regenerated values are unchanged: start from the previous trace.
+    initTrace = emitColumnSlice(
+        entryBuilder, entryLoc,
+        cast<RankedTensorType>(clone.zeroTrace.getType()), prevTrace,
+        /*start=*/0);
+  }
+  if (scoring) {
+    auto siteScoresAttr = op->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
+    for (auto [k, addr] : llvm::enumerate(siteScoresAttr))
+      siteIndex[cast<ArrayAttr>(addr)[0]] = k;
+    auto scoresType = RankedTensorType::get({2, (int64_t)siteScoresAttr.size()},
+                                            entryBuilder.getF64Type());
+    initWeight = emitSplatConstant(entryBuilder, entryLoc, scoresType, 0.0);
+  } else if (hastings && !hasScoreTail) {
+    emitOldSiteScores();
+  }
+  clone.carry = {initTrace, initWeight, /*offset=*/0,
+                 hastings ? clone.zeroWeight : Value()};
+  return success();
+}
+
+void RegenerateLowering::emitOldSiteScores() {
+  hastingsTaint = computeRegenerateTaint(clone.newFn, selection);
+  SmallVector<Attribute> oldScoreAddrs;
+  clone.newFn.getFunctionBody().walk([&](impulse::SampleOp s) {
+    if (!s.getDistAttr() && !s.getLogpdfFnAttr())
+      return;
+    bool needsOld;
+    if (addressInList(s, selection))
+      needsOld = !enclosingIfs(s).empty() ||
+                 llvm::any_of(llvm::drop_begin(s.getInputs()), [&](Value v) {
+                   return hastingsTaint.contains(v);
+                 });
+    else
+      needsOld = !(constraint && constrainedAddresses &&
+                   addressInList(s, constrainedAddresses)) &&
+                 inFlippableBranch(s);
+    if (!needsOld)
+      return;
+    siteIndex[s.getSymbolAttr()] = oldScoreAddrs.size();
+    oldScoreAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
+  });
+  if (oldScoreAddrs.empty())
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(&clone.newFn.getFunctionBody().front());
+  auto scoresType = RankedTensorType::get({2, (int64_t)oldScoreAddrs.size()},
+                                          rewriter.getF64Type());
+  SmallVector<Type> scoreTypes{prevTrace.getType(), scoresType};
+  llvm::append_range(scoreTypes, clone.fn.getResultTypes());
+  SmallVector<Value> scoreInputs(
+      clone.newFn.getArguments().drop_front(constraint ? 2 : 1));
+  auto scoreOp = impulse::RegenerateOp::create(
+      rewriter, op.getLoc(), scoreTypes, op.getFnAttr(), scoreInputs, prevTrace,
+      constraint, clone.allAddresses, rewriter.getArrayAttr({}),
+      constraint ? constrainedAddresses : ArrayAttr(),
+      rewriter.getStringAttr(""));
+  scoreOp->setAttr(kMHSiteScoresAttr, rewriter.getArrayAttr(oldScoreAddrs));
+  oldSiteScores = scoreOp.getWeight();
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::lowerSite(impulse::SampleOp site, SiteCarry &carry) {
+  if (site.getDistAttr() || site.getLogpdfFnAttr())
+    return lowerDistSite(site, carry);
+  return lowerCallSite(site, carry);
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::lowerDistSite(impulse::SampleOp op, SiteCarry &carry) {
+  if (failed(verifyTopLevelAddress(op, selection, "selected")))
+    return failure();
+  DistSite site{op, clone.layout.firstColumn(op.getSymbolAttr()),
+                addressInList(op, selection), /*flipIdx=*/-1, Value()};
+  site.flipIdx = flipLatentIndex(op, site.isSelected);
+  FailureOr<SmallVector<Value>> sampledValues =
+      site.isSelected ? emitSiteDraw(rewriter, symbolTable, op)
+                      : readOrRedrawValues(site);
+  if (failed(sampledValues))
+    return failure();
+  ArrayRef<Value> values = ArrayRef<Value>(*sampledValues).drop_front();
+  if (hastings && !hasScoreTail && (site.isSelected || site.flipIdx >= 0))
+    hastingsTaint.insert(values.begin(), values.end());
+  FailureOr<FunctionOpInterface> logpdfFn =
+      verifySiteLogpdf(symbolTable, op, values.size());
+  if (failed(logpdfFn))
+    return failure();
+
+  bool termDirty = site.isSelected ||
+                   (hasScoreTail && llvm::any_of(siteParams(op), [&](Value v) {
+                      return scoreTailTaint.contains(v);
+                    }));
+  if (hasScoreTail && site.isSelected)
+    scoreTailTaint.insert(values.begin(), values.end());
+  accumulateSiteWeight(site, *logpdfFn, values, termDirty, carry);
+  ++siteOrdinal;
+
+  if (addressInList(op, clone.allAddresses) &&
+      failed(appendSiteValues(rewriter, op, values, carry.trace, carry.offset,
+                              /*write=*/!hasScoreTail || site.isSelected)))
+    return failure();
+  return sampledValues;
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::readOrRedrawValues(DistSite &site) {
+  impulse::SampleOp op = site.op;
+  bool isConstrained = false;
+  if (readsConstraint(op)) {
+    if (failed(verifyTopLevelAddress(op, constrainedAddresses, "constrained")))
+      return failure();
+    isConstrained = addressInList(op, constrainedAddresses);
+  }
+  int64_t readOffset = isConstrained
+                           ? computeOffsetForSampleInSelection(
+                                 this->op, clone.fn, constrainedAddresses,
+                                 op.getSymbolAttr(), symbolTable)
+                           : site.column;
+  FailureOr<SmallVector<Value>> values = readSiteValues(
+      rewriter, op, isConstrained ? constraint : prevTrace, readOffset);
+  if (failed(values) || site.flipIdx < 0)
+    return values;
+  Location loc = op.getLoc();
+  site.oldLive = emitOldLive(loc, site.flipIdx);
+  SmallVector<Value> drawn = emitSiteDraw(rewriter, symbolTable, op);
+  for (unsigned i = 1; i < values->size(); ++i)
+    (*values)[i] =
+        impulse::SelectOp::create(rewriter, loc, (*values)[i].getType(),
+                                  site.oldLive, (*values)[i], drawn[i]);
+  (*values)[0] = drawn[0];
+  return values;
+}
+
+void RegenerateLowering::accumulateSiteWeight(const DistSite &site,
+                                              FunctionOpInterface logpdfFn,
+                                              ArrayRef<Value> values,
+                                              bool termDirty,
+                                              SiteCarry &carry) {
+  impulse::SampleOp op = site.op;
+  Location loc = op.getLoc();
+  Value oldScore;
+  if (hasScoreTail)
+    oldScore = scalarAt(rewriter, loc, prevTrace,
+                        {0, clone.positionSize() + siteOrdinal});
+
+  if (scoring) {
+    auto it = siteIndex.find(op.getSymbolAttr());
+    if (it != siteIndex.end()) {
+      Value score = emitSiteLogpdf(rewriter, op, logpdfFn, values);
+      carry.weight = recordSiteScore(loc, carry.weight, it->second, score);
+    }
+    return;
+  }
+  if (hasScoreTail && !termDirty) {
+    clone.siteScores.push_back(oldScore);
+    return;
+  }
+
+  Value logpdf = emitSiteLogpdf(rewriter, op, logpdfFn, values);
+  Value contribution =
+      hasScoreTail
+          ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore).getResult()
+          : logpdf;
+  carry.weight =
+      arith::AddFOp::create(rewriter, loc, carry.weight, contribution);
+  if (hasScoreTail)
+    clone.siteScores.push_back(logpdf);
+  if (hastings && site.isSelected) {
+    // A prior draw's proposal density cancels its own term.
+    carry.hastingsCorrection = arith::AddFOp::create(
+        rewriter, loc, carry.hastingsCorrection, contribution);
+    if (!hasScoreTail && !siteIndex.count(op.getSymbolAttr())) {
+      // Parameters unchanged by the move: score the old value inline.
+      Value oldLogpdf = emitSiteLogpdf(
+          rewriter, op, logpdfFn,
+          sliceTraceValues(rewriter, loc, prevTrace, site.column,
+                           TypeRange(op->getResultTypes()).drop_front()));
+      carry.hastingsCorrection = arith::SubFOp::create(
+          rewriter, loc, carry.hastingsCorrection, oldLogpdf);
+    }
+  } else if (site.flipIdx >= 0) {
+    // Kept: old density, cancelled via oldSiteScores; fresh: new density.
+    Value term = arith::SelectOp::create(
+        rewriter, loc, site.oldLive,
+        scalarAt(rewriter, loc, oldSiteScores, {1, site.flipIdx}), logpdf);
+    carry.hastingsCorrection =
+        arith::AddFOp::create(rewriter, loc, carry.hastingsCorrection, term);
+  }
+}
+
+FailureOr<SmallVector<Value>>
+RegenerateLowering::lowerCallSite(impulse::SampleOp op, SiteCarry &carry) {
+  FailureOr<NestedSite> nested =
+      resolveNestedSite(rewriter, op, clone, symbolTable);
+  if (failed(nested))
+    return failure();
+  if (nested->subAllAddresses.empty())
+    return emitSiteDraw(rewriter, symbolTable, op);
+  if (nested->subPositionSize <= 0)
+    return op.emitError("Impulse: failed to compute sub-position size");
+  Location loc = op.getLoc();
+  Value subPrevTrace = emitColumnSlice(rewriter, loc, nested->getTraceType(),
+                                       prevTrace, nested->mergeOffset);
+
+  Attribute symbol = op.getSymbolAttr();
+  ArrayAttr subSelection = buildSubSelection(rewriter, selection, symbol);
+  Value subConstraint;
+  ArrayAttr subConstrainedForOp;
+  if (constraint && constrainedAddresses) {
+    ArrayAttr subConstrainedAddrs =
+        buildSubSelection(rewriter, constrainedAddresses, symbol);
+    if (!subConstrainedAddrs.empty()) {
+      int64_t subConstraintSize = computePositionSizeForSelection(
+          op, nested->genFn, subConstrainedAddrs, symbolTable);
+      int64_t subConstraintOffset = computeOffsetForSampleInSelection(
+          op, clone.fn, constrainedAddresses, symbol, symbolTable);
+      if (subConstraintSize > 0 && subConstraintOffset >= 0) {
+        auto subConstraintType = RankedTensorType::get({1, subConstraintSize},
+                                                       rewriter.getF64Type());
+        subConstraint = emitColumnSlice(rewriter, loc, subConstraintType,
+                                        constraint, subConstraintOffset);
+        subConstrainedForOp = subConstrainedAddrs;
+      }
     }
   }
 
-  return -1;
+  if (hastings) {
+    bool genHasIf = false;
+    nested->genFn.getFunctionBody().walk(
+        [&](impulse::IfOp) { genHasIf = true; });
+    bool inputsTainted =
+        llvm::any_of(llvm::drop_begin(op.getInputs()),
+                     [&](Value v) { return hastingsTaint.contains(v); });
+    if (inFlippableBranch(op) ||
+        (inputsTainted && (!subSelection.empty() || genHasIf)))
+      return op.emitError("Impulse: MH over a generative call whose sites can "
+                          "change liveness or parameters under the move is "
+                          "not supported");
+  }
+
+  Type weightType = hastings ? RankedTensorType::get({2}, rewriter.getF64Type())
+                             : clone.zeroWeight.getType();
+  auto nestedRegenerate = impulse::RegenerateOp::create(
+      rewriter, loc, nested->getResultTypes(weightType), op.getFnAttr(),
+      op.getInputs(), subPrevTrace, subConstraint, nested->subAllAddresses,
+      subSelection, subConstrainedForOp, rewriter.getStringAttr(""));
+  Value subWeight = nestedRegenerate.getWeight();
+  if (hastings) {
+    nestedRegenerate->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
+    auto [weight, correction] = unpackHastingsWeight(rewriter, loc, subWeight);
+    carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight, weight);
+    carry.hastingsCorrection = arith::AddFOp::create(
+        rewriter, loc, carry.hastingsCorrection, correction);
+  } else if (!scoring) {
+    carry.weight =
+        arith::AddFOp::create(rewriter, loc, carry.weight, subWeight);
+  }
+  mergeNestedTrace(rewriter, loc, *nested, nestedRegenerate.getNewTrace(),
+                   carry);
+  return SmallVector<Value>(nestedRegenerate.getOutputs());
 }
 
+Value RegenerateLowering::emitWeightOut(Location loc) {
+  const SiteCarry &carry = clone.carry;
+  if (!hastings)
+    return carry.weight;
+  Value correction = carry.hastingsCorrection;
+  if (oldSiteScores)
+    for (int64_t
+             k = 0,
+             e = cast<RankedTensorType>(oldSiteScores.getType()).getShape()[1];
+         k < e; ++k)
+      correction =
+          arith::SubFOp::create(rewriter, loc, correction,
+                                scalarAt(rewriter, loc, oldSiteScores, {1, k}));
+  return packHastingsWeight(rewriter, loc, carry.weight, correction);
+}
+
+SmallVector<impulse::IfOp> RegenerateLowering::enclosingIfs(Operation *site) {
+  SmallVector<impulse::IfOp> ifs;
+  for (Operation *p = site->getParentOp(); p && p != clone.newFn.getOperation();
+       p = p->getParentOp())
+    if (auto ifOp = dyn_cast<impulse::IfOp>(p))
+      ifs.push_back(ifOp);
+  return ifs;
+}
+
+bool RegenerateLowering::inFlippableBranch(Operation *site) {
+  return llvm::any_of(enclosingIfs(site), [&](impulse::IfOp ifOp) {
+    return hastingsTaint.contains(ifOp.getPredicate());
+  });
+}
+
+bool RegenerateLowering::readsConstraint(impulse::SampleOp site) {
+  if (!constraint || !constrainedAddresses)
+    return false;
+  return !(hastings || scoring) || !enclosingIfs(site).empty();
+}
+
+int64_t RegenerateLowering::flipLatentIndex(impulse::SampleOp site,
+                                            bool isSelected) {
+  if (!hastings || isSelected)
+    return -1;
+  auto it = siteIndex.find(site.getSymbolAttr());
+  return it == siteIndex.end() ? -1 : it->second;
+}
+
+Value RegenerateLowering::emitOldLive(Location loc, int64_t k) {
+  Value flag = scalarAt(rewriter, loc, oldSiteScores, {0, k});
+  Value half = emitSplatConstant(
+      rewriter, loc, cast<RankedTensorType>(clone.zeroWeight.getType()), 0.5);
+  return arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OGT, flag,
+                               half);
+}
+
+Value RegenerateLowering::recordSiteScore(Location loc, Value acc, int64_t k,
+                                          Value score) {
+  auto cellType = RankedTensorType::get({1, 1}, rewriter.getF64Type());
+  Value one = emitSplatConstant(rewriter, loc, cellType, 1.0);
+  Value scoreCell = impulse::ReshapeOp::create(rewriter, loc, cellType, score);
+  acc = impulse::DynamicUpdateSliceOp::create(
+      rewriter, loc, acc.getType(), acc, one,
+      ValueRange{emitI64ScalarConstant(rewriter, loc, 0),
+                 emitI64ScalarConstant(rewriter, loc, k)});
+  return impulse::DynamicUpdateSliceOp::create(
+      rewriter, loc, acc.getType(), acc, scoreCell,
+      ValueRange{emitI64ScalarConstant(rewriter, loc, 1),
+                 emitI64ScalarConstant(rewriter, loc, k)});
+}
+
+namespace {
+
+/// Lowers the Impulse inference ops. Runs of chained single-site MH moves are
+/// batched before the patterns run.
 struct ExpandImpulsePass
     : public enzyme::impl::ExpandImpulsePassBase<ExpandImpulsePass> {
   using ExpandImpulsePassBase::ExpandImpulsePassBase;
@@ -281,1989 +1412,345 @@ struct ExpandImpulsePass
 
     registry
         .insert<mlir::arith::ArithDialect, mlir::math::MathDialect,
-                mlir::complex::ComplexDialect, mlir::cf::ControlFlowDialect,
                 mlir::enzyme::EnzymeDialect, mlir::impulse::ImpulseDialect>();
   }
+};
 
-  struct LowerUntracedCallPattern
-      : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
-    using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
+/// Lowers `impulse.untraced_call` to a call of a clone of the callee whose
+/// sample sites draw fresh values.
+struct LowerUntracedCallPattern
+    : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
+  using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(impulse::UntracedCallOp CI,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
+  LogicalResult matchAndRewrite(impulse::UntracedCallOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+    auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        op, op.getFnAttr());
 
-      if (fn.getFunctionBody().empty()) {
-        CI.emitError("Impulse: trying to call an empty function");
-        return failure();
-      }
-
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Call);
-      FunctionOpInterface NewF = putils->newFunc;
-
-      SmallVector<Operation *, 4> toErase;
-      NewF.walk([&](impulse::SampleOp sampleOp) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(sampleOp);
-
-        auto distFn =
-            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                sampleOp, sampleOp.getFnAttr()));
-        auto distCall =
-            func::CallOp::create(rewriter, sampleOp.getLoc(), distFn.getName(),
-                                 distFn.getResultTypes(), sampleOp.getInputs());
-        sampleOp.replaceAllUsesWith(distCall);
-
-        toErase.push_back(sampleOp);
-      });
-
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
-
-      rewriter.setInsertionPoint(CI);
-      auto newCI =
-          func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                               NewF.getResultTypes(), CI.getOperands());
-
-      rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
-
-      return success();
+    if (fn.getFunctionBody().empty()) {
+      op.emitError("Impulse: trying to call an empty function");
+      return failure();
     }
-  };
 
-  struct LowerSimulatePattern
-      : public mlir::OpRewritePattern<impulse::SimulateOp> {
-    using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
+    FunctionOpInterface newFn = cloneForMode(fn, ImpulseMode::Call);
 
-    LogicalResult matchAndRewrite(impulse::SimulateOp CI,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
+    SmallVector<Operation *, 4> toErase;
+    newFn.walk([&](impulse::SampleOp sampleOp) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(sampleOp);
 
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+      rewriter.replaceAllUsesWith(
+          sampleOp->getResults(),
+          emitSiteDraw(rewriter, symbolTable, sampleOp));
+      toErase.push_back(sampleOp);
+    });
 
-      if (fn.getFunctionBody().empty()) {
-        CI.emitError(
-            "Impulse: calling `simulate` on an empty function; if this "
-            "is a distribution function, its sample op should have a "
-            "logpdf attribute to avoid recursive `simulate` calls which is "
-            "intended for generative functions");
-        return failure();
-      }
+    for (Operation *site : toErase)
+      rewriter.eraseOp(site);
 
-      ArrayAttr selection = CI.getSelectionAttr();
-      int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, selection, symbolTable);
-      if (positionSize <= 0) {
-        CI.emitError("Impulse: failed to compute position size for simulate");
-        return failure();
-      }
+    rewriter.setInsertionPoint(op);
+    auto call = func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
+                                     newFn.getResultTypes(), op.getOperands());
 
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Simulate,
-                                                  positionSize);
-      FunctionOpInterface NewF = putils->newFunc;
+    rewriter.replaceOp(op, call.getResults());
 
-      OpBuilder entryBuilder(putils->initializationBlock,
-                             putils->initializationBlock->begin());
-      Location initLoc = putils->initializationBlock->begin()->getLoc();
-      auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight =
-          arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
-                                    DenseElementsAttr::get(scalarType, 0.0));
-      Value weightAccumulator = zeroWeight;
+    return success();
+  }
+};
 
-      auto traceType =
-          RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
-      auto zeroTrace =
-          arith::ConstantOp::create(entryBuilder, initLoc, traceType,
-                                    DenseElementsAttr::get(traceType, 0.0));
-      Value currTrace = zeroTrace;
-      int64_t currentOffset = 0;
+/// Lowers `impulse.simulate` to a call of a clone of the model that draws
+/// every site and also returns the trace of `all_addresses` and the joint log
+/// density.
+struct LowerSimulatePattern
+    : public mlir::OpRewritePattern<impulse::SimulateOp> {
+  using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
 
-      SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(sampleOp);
+  LogicalResult matchAndRewrite(impulse::SimulateOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    int64_t declaredWidth =
+        cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
+    FailureOr<TracedClone> clone =
+        beginTracedClone(op, op.getFnAttr(), op.getAllAddressesAttr(),
+                         declaredWidth, ImpulseMode::Simulate,
+                         /*constraintSize=*/-1, "simulate", symbolTable);
+    if (failed(clone))
+      return failure();
 
-        SmallVector<Value> sampledValues; // Values to replace uses of sample op
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          // A1. Distribution function: call the distribution function.
-          auto distFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-
-          auto distCall = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), distFn.getName(),
-              distFn.getResultTypes(), sampleOp.getInputs());
-
-          sampledValues.append(distCall.getResults().begin(),
-                               distCall.getResults().end());
-
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-
-          // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
-          SmallVector<Value> logpdfOperands;
-          for (unsigned i = 1; i < sampledValues.size(); ++i) {
-            logpdfOperands.push_back(sampledValues[i]);
-          }
-          for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-            logpdfOperands.push_back(sampleOp.getOperand(i));
-          }
-
-          if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("Impulse: failed to construct logpdf call; "
-                               "logpdf function has wrong number of arguments");
-            return WalkResult::interrupt();
-          }
-
-          // A2. Compute and accumulate weight.
-          auto logpdf = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-              logpdfFn.getResultTypes(), logpdfOperands);
-          weightAccumulator =
-              arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                    weightAccumulator, logpdf.getResult(0));
-
-          // A3. Check if this sample is in the selection and insert into trace
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-
-          if (inSelection) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
-              }
-
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleType.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-              auto row0 = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-              auto colOff = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(
-                      i64S, rewriter.getI64IntegerAttr(currentOffset)));
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
-              currentOffset += numElements;
-            }
-          }
-        } else {
-          // B. Generative function: recursively simulate the nested function
-          auto genFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-
-          if (genFn.getFunctionBody().empty()) {
-            sampleOp.emitError(
-                "Impulse: generative function body is empty; "
-                "if this is a distribution, add a logpdf attribute");
-            return WalkResult::interrupt();
-          }
-
-          ArrayAttr subSelection =
-              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
-          if (subSelection.empty()) {
-            // No samples from this generative function are in the selection
-            // Just call the function directly
-            auto genCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), genFn.getName(),
-                genFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(genCall.getResults().begin(),
-                                 genCall.getResults().end());
-          } else {
-            int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subSelection, symbolTable);
-            if (subPositionSize <= 0) {
-              sampleOp.emitError(
-                  "Impulse: failed to compute sub-position size");
-              return WalkResult::interrupt();
-            }
-
-            // Build result types: (trace, weight, original_returns...)
-            auto subTraceType = RankedTensorType::get({1, subPositionSize},
-                                                      rewriter.getF64Type());
-            auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
-            SmallVector<Type> simResultTypes;
-            simResultTypes.push_back(subTraceType);
-            simResultTypes.push_back(scalarTy);
-            for (auto t : genFn.getResultTypes())
-              simResultTypes.push_back(t);
-
-            auto nestedSimulate = impulse::SimulateOp::create(
-                rewriter, sampleOp.getLoc(), simResultTypes,
-                sampleOp.getFnAttr(), sampleOp.getInputs(), subSelection);
-            auto subTrace = nestedSimulate.getTrace();
-            auto subWeight = nestedSimulate.getWeight();
-
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
-
-            int64_t mergeOffset = computeOffsetForNestedSample(
-                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
-            if (mergeOffset < 0) {
-              sampleOp.emitError("Impulse: failed to compute merge offset");
-              return WalkResult::interrupt();
-            }
-
-            auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-            auto row0 = arith::ConstantOp::create(
-                rewriter, sampleOp.getLoc(), i64S,
-                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-            auto colOff = arith::ConstantOp::create(
-                rewriter, sampleOp.getLoc(), i64S,
-                DenseElementsAttr::get(
-                    i64S, rewriter.getI64IntegerAttr(mergeOffset)));
-            currTrace = impulse::DynamicUpdateSliceOp::create(
-                            rewriter, sampleOp.getLoc(), traceType, currTrace,
-                            subTrace, ValueRange{row0, colOff})
-                            .getResult();
-            currentOffset =
-                std::max(currentOffset, mergeOffset + subPositionSize);
-
-            for (auto output : nestedSimulate.getOutputs())
-              sampledValues.push_back(output);
-          }
-        }
-
-        // D. Replace uses of the original sample op with the new values.
-        sampleOp.replaceAllUsesWith(sampledValues);
-
-        toErase.push_back(sampleOp);
-        return WalkResult::advance();
-      });
-
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
-
-      if (result.wasInterrupted()) {
-        CI.emitError("Impulse: failed to walk sample ops");
-        return failure();
-      }
-
-      // E. Rewrite the return to return (trace, weight, <original returns>...)
-      NewF.walk([&](func::ReturnOp retOp) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(retOp);
-        SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
-        newRetVals.push_back(weightAccumulator);
-        newRetVals.append(retOp.getOperands().begin(),
-                          retOp.getOperands().end());
-
-        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
-        rewriter.eraseOp(retOp);
-      });
-
-      rewriter.setInsertionPoint(CI);
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), CI.getInputs());
-
-      rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
-
-      return success();
-    }
-  };
-
-  struct LowerMCMCPattern : public mlir::OpRewritePattern<impulse::InferOp> {
-    bool debugDump;
-
-    LowerMCMCPattern(MLIRContext *context, bool debugDump,
-                     PatternBenefit benefit = 1)
-        : OpRewritePattern(context, benefit), debugDump(debugDump) {}
-
-    LogicalResult matchAndRewrite(impulse::InferOp mcmcOp,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-
-      bool hasLogpdfFn = static_cast<bool>(mcmcOp.getLogpdfFnAttr());
-
-      if (!hasLogpdfFn) {
-        auto fnAttr = mcmcOp.getFnAttr();
-        if (!fnAttr) {
-          mcmcOp.emitError("Impulse: either fn or logpdf_fn must be provided");
+    auto lowerSite = [&](impulse::SampleOp sampleOp,
+                         SiteCarry &carry) -> FailureOr<SmallVector<Value>> {
+      Location loc = sampleOp.getLoc();
+      if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
+        SmallVector<Value> sampledValues =
+            emitSiteDraw(rewriter, symbolTable, sampleOp);
+        if (failed(scoreAndTraceSite(
+                rewriter, sampleOp, ArrayRef<Value>(sampledValues).drop_front(),
+                *clone, carry, symbolTable)))
           return failure();
-        }
-        auto fn = cast<FunctionOpInterface>(
-            symbolTable.lookupNearestSymbolFrom(mcmcOp, fnAttr));
-        if (fn.getFunctionBody().empty()) {
-          mcmcOp.emitError("Impulse: calling `mcmc` on an empty function");
+        return sampledValues;
+      }
+
+      FailureOr<NestedSite> nested =
+          resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
+      if (failed(nested))
+        return failure();
+      if (nested->subAllAddresses.empty())
+        return emitSiteDraw(rewriter, symbolTable, sampleOp);
+      if (nested->subPositionSize <= 0)
+        return sampleOp.emitError(
+            "Impulse: failed to compute sub-position size");
+      auto nestedSimulate = impulse::SimulateOp::create(
+          rewriter, loc, nested->getResultTypes(clone->zeroWeight.getType()),
+          sampleOp.getFnAttr(), sampleOp.getInputs(), nested->subAllAddresses);
+      carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight,
+                                           nestedSimulate.getWeight());
+      mergeNestedTrace(rewriter, loc, *nested, nestedSimulate.getTrace(),
+                       carry);
+      return SmallVector<Value>(nestedSimulate.getOutputs());
+    };
+
+    return finishTracedClone(
+        rewriter, op, *clone, lowerSite,
+        [&](Location) { return clone->carry.weight; }, op.getInputs());
+  }
+};
+
+/// Lowers `impulse.mh` to a Hastings `impulse.regenerate` of the selection
+/// and an accept test.
+struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
+  using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::MHOp mhOp,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    FailureOr<FunctionOpInterface> fn =
+        lookupModelBody(mhOp, mhOp.getFnAttr(), "mh", symbolTable);
+    if (failed(fn))
+      return failure();
+
+    Location loc = mhOp.getLoc();
+
+    Value oldTrace = mhOp.getOriginalTrace();
+    Value oldWeight = mhOp.getOriginalWeight();
+    auto allAddresses = mhOp.getAllAddressesAttr();
+
+    Type traceType = oldTrace.getType();
+
+    auto nameAttr = mhOp.getNameAttr();
+    if (!nameAttr)
+      nameAttr = rewriter.getStringAttr("");
+
+    auto selection = mhOp.getSelectionAttr();
+
+    FailureOr<FlatTraceLayout> layout =
+        getFlatTraceLayout(mhOp, *fn, allAddresses, symbolTable);
+    if (failed(layout))
+      return failure();
+    // On a score-tail trace, regenerate returns the dirty-term weight delta.
+    int64_t width = cast<RankedTensorType>(traceType).getShape()[1];
+    bool hasScoreTail = width > layout->positionSize;
+
+    MHProposal proposal =
+        proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
+                        nameAttr, fn->getResultTypes());
+    proposal.changed = mhChangedColumnsFlat(*layout, selection, width);
+    MHStep step =
+        emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal, hasScoreTail);
+    rewriter.replaceOp(mhOp,
+                       {step.trace, step.weight, step.accepted, step.rng});
+    return success();
+  }
+};
+
+/// Lowers `impulse.generate` to a call of a clone of the model that reads the
+/// constrained sites from the constraint, draws the others and also returns
+/// the trace of `all_addresses` and the joint log density.
+struct LowerGeneratePattern
+    : public mlir::OpRewritePattern<impulse::GenerateOp> {
+  using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::GenerateOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    // Operand width, not the packed size: extra columns are simply ignored.
+    int64_t constraintSize =
+        cast<RankedTensorType>(op.getConstraint().getType()).getShape()[1];
+    int64_t declaredWidth =
+        cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
+    FailureOr<TracedClone> clone = beginTracedClone(
+        op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
+        ImpulseMode::Generate, constraintSize, "generate", symbolTable);
+    if (failed(clone))
+      return failure();
+    ArrayAttr constrainedAddresses = op.getConstrainedAddressesAttr();
+    Value constraint = clone->newFn.getArgument(0);
+
+    auto lowerSite = [&](impulse::SampleOp sampleOp,
+                         SiteCarry &carry) -> FailureOr<SmallVector<Value>> {
+      Location loc = sampleOp.getLoc();
+      if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
+        if (failed(verifyTopLevelAddress(sampleOp, constrainedAddresses,
+                                         "constrained")))
           return failure();
-        }
-      }
-
-      if (!mcmcOp.getStepSize()) {
-        mcmcOp.emitError("Impulse: MCMC requires step_size parameter");
-        return failure();
-      }
-
-      bool isHMC = mcmcOp.getHmcConfig().has_value();
-      bool isNUTS = mcmcOp.getNutsConfig().has_value();
-      if (!isHMC && !isNUTS) {
-        mcmcOp.emitError("Impulse: Unknown MCMC algorithm");
-        return failure();
-      }
-
-      auto loc = mcmcOp.getLoc();
-      auto invMass = mcmcOp.getInverseMassMatrix();
-      Value adaptedInvMass = invMass;
-      auto stepSize = mcmcOp.getStepSize();
-
-      auto inputs = mcmcOp.getInputs();
-      if (inputs.empty()) {
-        mcmcOp.emitError("Impulse: MCMC requires at least rng_state input");
-        return failure();
-      }
-
-      auto rngInput = inputs[0];
-
-      int64_t positionSize;
-      SmallVector<Value> fnInputs;
-      SmallVector<Type> fnResultTypes;
-      Value originalTrace;
-      ArrayAttr selection, allAddresses;
-      SmallVector<SupportInfo> supports;
-      FlatSymbolRefAttr logpdfFnAttr;
-
-      if (hasLogpdfFn) {
-        logpdfFnAttr = mcmcOp.getLogpdfFnAttr();
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
-        auto initialPos = mcmcOp.getInitialPosition();
-        auto initPosType = cast<RankedTensorType>(initialPos.getType());
-        positionSize = initPosType.getNumElements();
-        selection = mcmcOp.getSelectionAttr();
-        allAddresses = mcmcOp.getAllAddressesAttr();
-      } else {
-        fnInputs.assign(inputs.begin() + 1, inputs.end());
-        originalTrace = mcmcOp.getOriginalTrace();
-        selection = mcmcOp.getSelectionAttr();
-        allAddresses = mcmcOp.getAllAddressesAttr();
-
-        auto fn = cast<FunctionOpInterface>(
-            symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
-        positionSize =
-            computePositionSizeForSelection(mcmcOp, fn, selection, symbolTable);
-        if (positionSize <= 0)
-          return failure();
-
-        supports = collectSupportInfoForSelection(mcmcOp, fn, selection,
-                                                  allAddresses, symbolTable);
-
-        auto fnType = cast<FunctionType>(fn.getFunctionType());
-        fnResultTypes.assign(fnType.getResults().begin(),
-                             fnType.getResults().end());
-      }
-
-      int64_t numSamples = mcmcOp.getNumSamples();
-      int64_t thinning = mcmcOp.getThinning();
-      int64_t numWarmup = mcmcOp.getNumWarmup();
-
-      int64_t totalWarmup = numWarmup;
-      if (auto tw = mcmcOp.getTotalWarmup())
-        totalWarmup = *tw;
-      bool exposeAdaptation = !mcmcOp.getAdaptationStateOut().empty();
-      SmallVector<Value> adaptationInVals(mcmcOp.getAdaptationStateIn().begin(),
-                                          mcmcOp.getAdaptationStateIn().end());
-      bool hasAdaptationIn = !adaptationInVals.empty();
-
-      auto elemType =
-          cast<RankedTensorType>(stepSize.getType()).getElementType();
-      auto positionType = RankedTensorType::get({1, positionSize}, elemType);
-      auto scalarType = RankedTensorType::get({}, elemType);
-      auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
-      auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
-
-      // Algorithm-specific configuration
-      Value trajectoryLength;
-      Value maxDeltaEnergy;
-      int64_t maxTreeDepth = 0;
-
-      bool adaptStepSize = false;
-      bool adaptMassMatrix = false;
-      auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
-      if (isHMC) {
-        auto hmcConfig = mcmcOp.getHmcConfig().value();
-        double length = hmcConfig.getTrajectoryLength().getValueAsDouble();
-        trajectoryLength = arith::ConstantOp::create(
-            rewriter, loc, F64TensorType,
-            DenseElementsAttr::get(F64TensorType,
-                                   rewriter.getF64FloatAttr(length)));
-        adaptStepSize = hmcConfig.getAdaptStepSize();
-        adaptMassMatrix = hmcConfig.getAdaptMassMatrix();
-      } else {
-        auto nutsConfig = mcmcOp.getNutsConfig().value();
-        maxTreeDepth = nutsConfig.getMaxTreeDepth();
-        adaptStepSize = nutsConfig.getAdaptStepSize();
-        adaptMassMatrix = nutsConfig.getAdaptMassMatrix();
-        double maxDeltaEnergyVal =
-            nutsConfig.getMaxDeltaEnergy()
-                ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
-                : 1000.0;
-        maxDeltaEnergy = arith::ConstantOp::create(
-            rewriter, loc, F64TensorType,
-            DenseElementsAttr::get(
-                F64TensorType, rewriter.getF64FloatAttr(maxDeltaEnergyVal)));
-      }
-
-      bool diagonal = true;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        diagonal = (invMassType.getRank() == 1);
-      }
-
-      auto adaptedMassMatrixSqrt =
-          computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
-
-      auto autodiffAttrs = mcmcOp.getAutodiffAttrsAttr();
-
-      auto makeHMCContext = [&](Value currentInvMass,
-                                Value currentMassMatrixSqrt,
-                                Value currentStepSize) -> HMCContext {
-        if (hasLogpdfFn) {
-          return HMCContext(logpdfFnAttr, fnInputs, currentInvMass,
-                            currentMassMatrixSqrt, currentStepSize,
-                            trajectoryLength, positionSize, autodiffAttrs);
-        } else {
-          return HMCContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
-                            originalTrace, selection, allAddresses,
-                            currentInvMass, currentMassMatrixSqrt,
-                            currentStepSize, trajectoryLength, positionSize,
-                            supports, autodiffAttrs);
-        }
-      };
-
-      auto makeNUTSContext =
-          [&](Value currentInvMass, Value currentMassMatrixSqrt,
-              Value currentStepSize, Value U) -> NUTSContext {
-        if (hasLogpdfFn) {
-          return NUTSContext(logpdfFnAttr, fnInputs, currentInvMass,
-                             currentMassMatrixSqrt, currentStepSize,
-                             positionSize, U, maxDeltaEnergy, maxTreeDepth,
-                             autodiffAttrs);
-        } else {
-          return NUTSContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
-                             originalTrace, selection, allAddresses,
-                             currentInvMass, currentMassMatrixSqrt,
-                             currentStepSize, positionSize, supports, U,
-                             maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
-        }
-      };
-
-      Value currentQ, currentGrad, currentU, currentRng;
-
-      auto initialGrad = mcmcOp.getInitialGradient();
-      auto initialPE = mcmcOp.getInitialPotentialEnergy();
-
-      if (hasLogpdfFn && initialGrad && initialPE) {
-        currentQ = mcmcOp.getInitialPosition();
-        currentGrad = initialGrad;
-        currentU = initialPE;
-        currentRng = rngInput;
-      } else {
-        auto baseCtx =
-            makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
-        auto initState = InitHMC(
-            rewriter, loc, rngInput, baseCtx,
-            hasLogpdfFn ? mcmcOp.getInitialPosition() : Value(), debugDump);
-        currentQ = initState.q0;
-        currentGrad = initState.grad0;
-        currentU = initState.U0;
-        currentRng = initState.rng;
-      }
-
-      auto runSampleStepWithStepSize =
-          [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-              Value rng, Value currentStepSize) -> MCMCKernelResult {
-        if (isHMC) {
-          auto ctx = makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt,
-                                    currentStepSize);
-          return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
-        } else {
-          auto nutsCtx = makeNUTSContext(adaptedInvMass, adaptedMassMatrixSqrt,
-                                         currentStepSize, U);
-          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
-        }
-      };
-
-      Value adaptedStepSize = stepSize;
-
-      auto runSampleStepWithInvMass =
-          [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-              Value rng, Value currentStepSize, Value currentInvMass,
-              Value currentMassMatrixSqrt) -> MCMCKernelResult {
-        if (isHMC) {
-          auto ctx = makeHMCContext(currentInvMass, currentMassMatrixSqrt,
-                                    currentStepSize);
-          return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
-        } else {
-          auto nutsCtx = makeNUTSContext(currentInvMass, currentMassMatrixSqrt,
-                                         currentStepSize, U);
-          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
-        }
-      };
-
-      if (!adaptedInvMass) {
-        adaptedInvMass = arith::ConstantOp::create(
-            rewriter, loc, positionType,
-            DenseElementsAttr::get(positionType,
-                                   rewriter.getFloatAttr(elemType, 1.0)));
-        adaptedMassMatrixSqrt = arith::ConstantOp::create(
-            rewriter, loc, positionType,
-            DenseElementsAttr::get(positionType,
-                                   rewriter.getFloatAttr(elemType, 1.0)));
-      }
-
-      SmallVector<Value> finalAdaptationState;
-      auto packAdaptation = [&](const DualAveragingState &da,
-                                const WelfordState &w,
-                                Value widx) -> SmallVector<Value> {
-        SmallVector<Value> v;
-        for (Value x : da.toValues())
-          v.push_back(x);
-        v.push_back(w.mean);
-        v.push_back(w.m2);
-        v.push_back(w.n);
-        v.push_back(widx);
-        return v;
-      };
-
-      if (numWarmup > 0) {
-        auto c0 = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(0)));
-        auto c1 = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(1)));
-        auto numWarmupConst = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(numWarmup)));
-
-        auto schedule = buildAdaptationSchedule(totalWarmup);
-        int64_t numWindows = static_cast<int64_t>(schedule.size());
-
-        SmallVector<Value> windowEndConstants;
-        for (const auto &window : schedule) {
-          windowEndConstants.push_back(arith::ConstantOp::create(
-              rewriter, loc, i64TensorType,
-              DenseElementsAttr::get(i64TensorType,
-                                     rewriter.getI64IntegerAttr(window.end))));
-        }
-
-        auto numWindowsMinusOne = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(numWindows - 1)));
-        auto lastIterConst = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(
-                i64TensorType, rewriter.getI64IntegerAttr(totalWarmup - 1)));
-
-        if (!adaptedInvMass) {
-          adaptedInvMass = arith::ConstantOp::create(
-              rewriter, loc, positionType,
-              DenseElementsAttr::get(positionType,
-                                     rewriter.getFloatAttr(elemType, 1.0)));
-          adaptedMassMatrixSqrt = arith::ConstantOp::create(
-              rewriter, loc, positionType,
-              DenseElementsAttr::get(positionType,
-                                     rewriter.getFloatAttr(elemType, 1.0)));
-        }
-
-        Value initialStepSize = stepSize;
-        initialStepSize =
-            conditionalDump(rewriter, loc, initialStepSize,
-                            "MCMC: initial step size before warmup", debugDump);
-        DualAveragingState daState =
-            hasAdaptationIn
-                ? DualAveragingState::fromValues(
-                      ArrayRef<Value>(adaptationInVals).take_front(5))
-                : initDualAveraging(rewriter, loc, initialStepSize,
-                                    /*logOfProduct=*/true);
-
-        WelfordState welfordState;
-        WelfordConfig welfordConfig;
-        if (adaptMassMatrix) {
-          welfordState =
-              hasAdaptationIn
-                  ? WelfordState::fromValues(
-                        ArrayRef<Value>(adaptationInVals).slice(5, 3))
-                  : initWelford(rewriter, loc, positionSize, diagonal);
-          welfordConfig.diagonal = diagonal;
-          welfordConfig.regularize = true;
-        }
-
-        Value windowIdx =
-            hasAdaptationIn
-                ? adaptationInVals[8]
-                : arith::ConstantOp::create(
-                      rewriter, loc, i64TensorType,
-                      DenseElementsAttr::get(i64TensorType,
-                                             rewriter.getI64IntegerAttr(0)));
-
-        // Warmup loop carries by default:
-        // [q, grad, U, rng, stepSize, invMass, massMatrixSqrt, daState(5),
-        // welfordState(3)?, windowIdx]
-        SmallVector<Type> warmupLoopTypes = {positionType,
-                                             positionType,
-                                             scalarType,
-                                             currentRng.getType(),
-                                             scalarType, // stepSize
-                                             adaptedInvMass.getType(),
-                                             adaptedMassMatrixSqrt.getType()};
-        for (Type t : daState.getTypes())
-          warmupLoopTypes.push_back(t);
-        if (adaptMassMatrix) {
-          for (Type t : welfordState.getTypes())
-            warmupLoopTypes.push_back(t);
-        }
-        warmupLoopTypes.push_back(i64TensorType); // windowIdx
-
-        SmallVector<Value> warmupInitArgs = {currentQ,
-                                             currentGrad,
-                                             currentU,
-                                             currentRng,
-                                             initialStepSize,
-                                             adaptedInvMass,
-                                             adaptedMassMatrixSqrt};
-        for (Value v : daState.toValues())
-          warmupInitArgs.push_back(v);
-        if (adaptMassMatrix) {
-          for (Value v : welfordState.toValues())
-            warmupInitArgs.push_back(v);
-        }
-        warmupInitArgs.push_back(windowIdx);
-
-        auto warmupLoop =
-            impulse::ForOp::create(rewriter, loc, warmupLoopTypes, c0,
-                                   numWarmupConst, c1, warmupInitArgs);
-
-        Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
-        warmupBody->addArgument(i64TensorType, loc); // iteration index t
-        for (Type t : warmupLoopTypes)
-          warmupBody->addArgument(t, loc);
-
-        rewriter.setInsertionPointToStart(warmupBody);
-
-        Value iterT = warmupBody->getArgument(0);
-        Value iterTGlobal = iterT;
-        if (Value warmupOffset = mcmcOp.getWarmupOffset())
-          iterTGlobal =
-              arith::AddIOp::create(rewriter, loc, warmupOffset, iterT);
-        Value qLoop = warmupBody->getArgument(1);
-        Value gradLoop = warmupBody->getArgument(2);
-        Value ULoop = warmupBody->getArgument(3);
-        Value rngLoop = warmupBody->getArgument(4);
-        Value stepSizeLoop = warmupBody->getArgument(5);
-        Value invMassLoop = warmupBody->getArgument(6);
-        Value massMatrixSqrtLoop = warmupBody->getArgument(7);
-
-        SmallVector<Value> daStateLoopValues;
-        for (int i = 0; i < 5; ++i)
-          daStateLoopValues.push_back(warmupBody->getArgument(8 + i));
-        auto daStateLoop = DualAveragingState::fromValues(daStateLoopValues);
-
-        WelfordState welfordStateLoop;
-        Value windowIdxLoop;
-        if (adaptMassMatrix) {
-          SmallVector<Value> welfordStateLoopValues;
-          for (int i = 0; i < 3; ++i)
-            welfordStateLoopValues.push_back(warmupBody->getArgument(13 + i));
-          welfordStateLoop = WelfordState::fromValues(welfordStateLoopValues);
-          windowIdxLoop = warmupBody->getArgument(16);
-        } else {
-          windowIdxLoop = warmupBody->getArgument(13);
-        }
-
-        auto sample = runSampleStepWithInvMass(rewriter, loc, qLoop, gradLoop,
-                                               ULoop, rngLoop, stepSizeLoop,
-                                               invMassLoop, massMatrixSqrtLoop);
-
-        // Update dual averaging state
-        DualAveragingConfig daConfig;
-        DualAveragingState updatedDaState;
-        Value currentStepSizeFromDA;
-        Value finalStepSizeFromDA;
-
-        if (adaptStepSize) {
-          updatedDaState = updateDualAveraging(rewriter, loc, daStateLoop,
-                                               sample.accept_prob, daConfig);
-          currentStepSizeFromDA =
-              getStepSizeFromDualAveraging(rewriter, loc, updatedDaState);
-          finalStepSizeFromDA =
-              getStepSizeFromDualAveraging(rewriter, loc, updatedDaState, true);
-        } else {
-          updatedDaState = daStateLoop;
-          currentStepSizeFromDA = stepSizeLoop;
-          finalStepSizeFromDA = stepSizeLoop;
-        }
-
-        // Use log_step_size_avg at last iteration
-        auto isLastIter =
-            arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
-                                  iterTGlobal, lastIterConst);
-        Value adaptedStepSizeInLoop = impulse::SelectOp::create(
-            rewriter, loc, scalarType, isLastIter, finalStepSizeFromDA,
-            currentStepSizeFromDA);
-
-        const auto &floatSemantics =
-            cast<FloatType>(elemType).getFloatSemantics();
-        auto tinyConst = arith::ConstantOp::create(
-            rewriter, loc, scalarType,
-            DenseElementsAttr::get(
-                scalarType, FloatAttr::get(elemType, llvm::APFloat::getSmallest(
-                                                         floatSemantics))));
-        auto maxConst = arith::ConstantOp::create(
-            rewriter, loc, scalarType,
-            DenseElementsAttr::get(
-                scalarType, FloatAttr::get(elemType, llvm::APFloat::getLargest(
-                                                         floatSemantics))));
-        adaptedStepSizeInLoop = arith::MaximumFOp::create(
-            rewriter, loc, adaptedStepSizeInLoop, tinyConst);
-        adaptedStepSizeInLoop = arith::MinimumFOp::create(
-            rewriter, loc, adaptedStepSizeInLoop, maxConst);
-
-        auto windowIdxGtZero = arith::CmpIOp::create(
-            rewriter, loc, arith::CmpIPredicate::sgt, windowIdxLoop, c0);
-        auto windowIdxLtLast =
-            arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::slt,
-                                  windowIdxLoop, numWindowsMinusOne);
-        auto isMiddleWindow = arith::AndIOp::create(
-            rewriter, loc, windowIdxGtZero, windowIdxLtLast);
-
-        // Conditionally update Welford
-        WelfordState conditionalWelford;
-        if (adaptMassMatrix) {
-          auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
-          Value sample1D =
-              impulse::ReshapeOp::create(rewriter, loc, sampleType1D, sample.q);
-          WelfordState updatedWelfordAfterSample = updateWelford(
-              rewriter, loc, welfordStateLoop, sample1D, welfordConfig);
-
-          conditionalWelford.mean = impulse::SelectOp::create(
-              rewriter, loc, welfordStateLoop.mean.getType(), isMiddleWindow,
-              updatedWelfordAfterSample.mean, welfordStateLoop.mean);
-          conditionalWelford.m2 = impulse::SelectOp::create(
-              rewriter, loc, welfordStateLoop.m2.getType(), isMiddleWindow,
-              updatedWelfordAfterSample.m2, welfordStateLoop.m2);
-          conditionalWelford.n = impulse::SelectOp::create(
-              rewriter, loc, welfordStateLoop.n.getType(), isMiddleWindow,
-              updatedWelfordAfterSample.n, welfordStateLoop.n);
-        }
-
-        Value atWindowEnd = arith::ConstantOp::create(
-            rewriter, loc, i1TensorType,
-            DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
-
-        for (int64_t w = 0; w < numWindows; ++w) {
-          auto windowIdxIsW = arith::CmpIOp::create(
-              rewriter, loc, arith::CmpIPredicate::eq, windowIdxLoop,
-              arith::ConstantOp::create(
-                  rewriter, loc, i64TensorType,
-                  DenseElementsAttr::get(i64TensorType,
-                                         rewriter.getI64IntegerAttr(w))));
-          auto tEqualsWindowEnd =
-              arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
-                                    iterTGlobal, windowEndConstants[w]);
-          auto matchesThisWindow = arith::AndIOp::create(
-              rewriter, loc, windowIdxIsW, tEqualsWindowEnd);
-          atWindowEnd = arith::OrIOp::create(rewriter, loc, atWindowEnd,
-                                             matchesThisWindow);
-        }
-
-        Value newWindowIdx =
-            arith::AddIOp::create(rewriter, loc, windowIdxLoop, c1);
-        Value windowIdxAfterIncrement =
-            impulse::SelectOp::create(rewriter, loc, i64TensorType, atWindowEnd,
-                                      newWindowIdx, windowIdxLoop);
-
-        auto atMiddleWindowEnd =
-            arith::AndIOp::create(rewriter, loc, atWindowEnd, isMiddleWindow);
-
-        Value finalInvMass;
-        Value finalMassMatrixSqrt;
-        WelfordState finalWelfordState;
-        Value finalStepSizeValue;
-        DualAveragingState finalDaState;
-
-        SmallVector<Type> ifResultTypes;
-        ifResultTypes.push_back(invMassLoop.getType());
-        ifResultTypes.push_back(massMatrixSqrtLoop.getType());
-        if (adaptMassMatrix) {
-          ifResultTypes.push_back(conditionalWelford.mean.getType());
-          ifResultTypes.push_back(conditionalWelford.m2.getType());
-          ifResultTypes.push_back(conditionalWelford.n.getType());
-        }
-        for (Type t : updatedDaState.getTypes())
-          ifResultTypes.push_back(t);
-
-        auto ifOp = impulse::IfOp::create(rewriter, loc, ifResultTypes,
-                                          atMiddleWindowEnd);
-
-        {
-          Block *trueBranch = rewriter.createBlock(&ifOp.getTrueBranch());
-          rewriter.setInsertionPointToStart(trueBranch);
-
-          SmallVector<Value> trueYieldValues;
-
-          if (adaptMassMatrix) {
-            Value newInvMass = finalizeWelford(
-                rewriter, loc, conditionalWelford, welfordConfig);
-            Value newMassMatrixSqrt =
-                computeMassMatrixSqrt(rewriter, loc, newInvMass, positionType);
-            // finalizeWelford returns rank-1 diagonals; match the carried
-            // type.
-            if (newInvMass.getType() != invMassLoop.getType())
-              newInvMass = impulse::ReshapeOp::create(
-                  rewriter, loc, invMassLoop.getType(), newInvMass);
-            if (newMassMatrixSqrt.getType() != massMatrixSqrtLoop.getType())
-              newMassMatrixSqrt = impulse::ReshapeOp::create(
-                  rewriter, loc, massMatrixSqrtLoop.getType(),
-                  newMassMatrixSqrt);
-            auto reinitWelford =
-                initWelford(rewriter, loc, positionSize, diagonal);
-
-            trueYieldValues.push_back(newInvMass);
-            trueYieldValues.push_back(newMassMatrixSqrt);
-            trueYieldValues.push_back(reinitWelford.mean);
-            trueYieldValues.push_back(reinitWelford.m2);
-            trueYieldValues.push_back(reinitWelford.n);
-          } else {
-            trueYieldValues.push_back(invMassLoop);
-            trueYieldValues.push_back(massMatrixSqrtLoop);
-          }
-
-          if (adaptStepSize) {
-            auto reinitDaState =
-                initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
-            for (auto v : reinitDaState.toValues())
-              trueYieldValues.push_back(v);
-          } else {
-            for (auto v : updatedDaState.toValues())
-              trueYieldValues.push_back(v);
-          }
-
-          impulse::YieldOp::create(rewriter, loc, trueYieldValues);
-        }
-
-        {
-          Block *falseBranch = rewriter.createBlock(&ifOp.getFalseBranch());
-          rewriter.setInsertionPointToStart(falseBranch);
-
-          SmallVector<Value> falseYieldValues;
-          falseYieldValues.push_back(invMassLoop);
-          falseYieldValues.push_back(massMatrixSqrtLoop);
-          if (adaptMassMatrix) {
-            falseYieldValues.push_back(conditionalWelford.mean);
-            falseYieldValues.push_back(conditionalWelford.m2);
-            falseYieldValues.push_back(conditionalWelford.n);
-          }
-          for (auto v : updatedDaState.toValues())
-            falseYieldValues.push_back(v);
-
-          impulse::YieldOp::create(rewriter, loc, falseYieldValues);
-        }
-
-        rewriter.setInsertionPointAfter(ifOp);
-
-        size_t resultIdx = 0;
-        finalInvMass = ifOp.getResult(resultIdx++);
-        finalMassMatrixSqrt = ifOp.getResult(resultIdx++);
-        if (adaptMassMatrix) {
-          finalWelfordState.mean = ifOp.getResult(resultIdx++);
-          finalWelfordState.m2 = ifOp.getResult(resultIdx++);
-          finalWelfordState.n = ifOp.getResult(resultIdx++);
-        }
-        finalDaState.log_step_size = ifOp.getResult(resultIdx++);
-        finalDaState.log_step_size_avg = ifOp.getResult(resultIdx++);
-        finalDaState.gradient_avg = ifOp.getResult(resultIdx++);
-        finalDaState.step_count = ifOp.getResult(resultIdx++);
-        finalDaState.prox_center = ifOp.getResult(resultIdx++);
-
-        finalStepSizeValue = adaptedStepSizeInLoop;
-
-        SmallVector<Value> warmupYieldValues = {
-            sample.q,           sample.grad,  sample.U,           sample.rng,
-            finalStepSizeValue, finalInvMass, finalMassMatrixSqrt};
-        for (Value v : finalDaState.toValues())
-          warmupYieldValues.push_back(v);
-        if (adaptMassMatrix) {
-          for (Value v : finalWelfordState.toValues())
-            warmupYieldValues.push_back(v);
-        }
-        warmupYieldValues.push_back(windowIdxAfterIncrement);
-
-        impulse::YieldOp::create(rewriter, loc, warmupYieldValues);
-
-        rewriter.setInsertionPointAfter(warmupLoop);
-
-        currentQ = warmupLoop.getResult(0);
-        currentGrad = warmupLoop.getResult(1);
-        currentU = warmupLoop.getResult(2);
-        currentRng = warmupLoop.getResult(3);
-        adaptedStepSize = warmupLoop.getResult(4);
-        adaptedInvMass = warmupLoop.getResult(5);
-        adaptedMassMatrixSqrt = warmupLoop.getResult(6);
-
-        adaptedStepSize =
-            conditionalDump(rewriter, loc, adaptedStepSize,
-                            "MCMC: adapted step size after warmup", debugDump);
-        if (adaptMassMatrix) {
-          adaptedInvMass = conditionalDump(
-              rewriter, loc, adaptedInvMass,
-              "MCMC: adapted inverse mass matrix after warmup", debugDump);
-        }
-
-        if (exposeAdaptation) {
-          DualAveragingState finalDa = DualAveragingState::fromValues(
-              {warmupLoop.getResult(7), warmupLoop.getResult(8),
-               warmupLoop.getResult(9), warmupLoop.getResult(10),
-               warmupLoop.getResult(11)});
-          WelfordState finalW;
-          Value finalWidx;
-          if (adaptMassMatrix) {
-            finalW = WelfordState::fromValues({warmupLoop.getResult(12),
-                                               warmupLoop.getResult(13),
-                                               warmupLoop.getResult(14)});
-            finalWidx = warmupLoop.getResult(15);
-          } else {
-            finalW = initWelford(rewriter, loc, positionSize, diagonal);
-            finalWidx = warmupLoop.getResult(12);
-          }
-          finalAdaptationState = packAdaptation(finalDa, finalW, finalWidx);
-        }
-      }
-
-      if (exposeAdaptation && finalAdaptationState.empty()) {
-        DualAveragingState da =
-            hasAdaptationIn
-                ? DualAveragingState::fromValues(
-                      ArrayRef<Value>(adaptationInVals).take_front(5))
-                : initDualAveraging(rewriter, loc, stepSize,
-                                    /*logOfProduct=*/true);
-        WelfordState w =
-            hasAdaptationIn
-                ? WelfordState::fromValues(
-                      ArrayRef<Value>(adaptationInVals).slice(5, 3))
-                : initWelford(rewriter, loc, positionSize, diagonal);
-        Value widx =
-            hasAdaptationIn
-                ? adaptationInVals[8]
-                : arith::ConstantOp::create(
-                      rewriter, loc, i64TensorType,
-                      DenseElementsAttr::get(i64TensorType,
-                                             rewriter.getI64IntegerAttr(0)));
-        finalAdaptationState = packAdaptation(da, w, widx);
-      }
-
-      int64_t collectionSize = numSamples / thinning;
-      int64_t startIdx = numSamples % thinning;
-
-      auto samplesBufferType =
-          RankedTensorType::get({collectionSize, positionSize}, elemType);
-      auto diagnosticsBufferType =
-          // Diagnostics buffer has two columns: [is_accepted, is_divergent]
-          RankedTensorType::get({collectionSize, 2}, rewriter.getI1Type());
-      auto logDensityBufferType =
-          RankedTensorType::get({collectionSize}, elemType);
-
-      auto samplesBuffer = arith::ConstantOp::create(
-          rewriter, loc, samplesBufferType,
-          DenseElementsAttr::get(samplesBufferType,
-                                 rewriter.getFloatAttr(elemType, 0.0)));
-      auto diagnosticsBuffer = arith::ConstantOp::create(
-          rewriter, loc, diagnosticsBufferType,
-          DenseElementsAttr::get(diagnosticsBufferType,
-                                 rewriter.getBoolAttr(isNUTS)));
-      auto logDensityBuffer = arith::ConstantOp::create(
-          rewriter, loc, logDensityBufferType,
-          DenseElementsAttr::get(logDensityBufferType,
-                                 rewriter.getFloatAttr(elemType, 0.0)));
-
-      auto c0 = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
-      auto c1 = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
-      auto numSamplesConst = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 rewriter.getI64IntegerAttr(numSamples)));
-      auto startIdxConst = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 rewriter.getI64IntegerAttr(startIdx)));
-      auto thinningConst = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 rewriter.getI64IntegerAttr(thinning)));
-
-      Value finalQ, finalGrad, finalU, finalRng, finalSamplesBuffer,
-          finalDiagnosticsBuffer, finalLogDensityBuffer;
-      if (collectionSize == 0) {
-        finalQ = currentQ;
-        finalGrad = currentGrad;
-        finalU = currentU;
-        finalRng = currentRng;
-        finalSamplesBuffer = samplesBuffer;
-        finalDiagnosticsBuffer = diagnosticsBuffer;
-        finalLogDensityBuffer = logDensityBuffer;
-      } else {
-        // Loop carries: [q, grad, U, rng, samplesBuffer, diagnosticsBuffer,
-        // logDensityBuffer]
-        SmallVector<Type> loopResultTypes = {
-            positionType,         positionType,      scalarType,
-            currentRng.getType(), samplesBufferType, diagnosticsBufferType,
-            logDensityBufferType};
-        auto forLoopOp = impulse::ForOp::create(
-            rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
-            ValueRange{currentQ, currentGrad, currentU, currentRng,
-                       samplesBuffer, diagnosticsBuffer, logDensityBuffer});
-
-        Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
-        loopBody->addArgument(i64TensorType, loc);        // i (iteration index)
-        loopBody->addArgument(positionType, loc);         // q
-        loopBody->addArgument(positionType, loc);         // grad
-        loopBody->addArgument(scalarType, loc);           // U
-        loopBody->addArgument(currentRng.getType(), loc); // rng
-        loopBody->addArgument(samplesBufferType, loc);    // samplesBuffer
-        loopBody->addArgument(diagnosticsBufferType, loc); // diagnosticsBuffer
-        loopBody->addArgument(logDensityBufferType, loc);  // logDensityBuffer
-
-        rewriter.setInsertionPointToStart(loopBody);
-        Value iterIdx = loopBody->getArgument(0);
-        Value qLoop = loopBody->getArgument(1);
-        Value gradLoop = loopBody->getArgument(2);
-        Value ULoop = loopBody->getArgument(3);
-        Value rngLoop = loopBody->getArgument(4);
-        Value samplesBufferLoop = loopBody->getArgument(5);
-        Value diagnosticsBufferLoop = loopBody->getArgument(6);
-        Value logDensityBufferLoop = loopBody->getArgument(7);
-
-        auto sample = runSampleStepWithStepSize(
-            rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, adaptedStepSize);
-        auto q_constrained =
-            impulse::constrainPosition(rewriter, loc, sample.q, supports);
-
-        // Storage index: idx = (i - start_idx) / thinning
-        auto iMinusStart =
-            arith::SubIOp::create(rewriter, loc, iterIdx, startIdxConst);
-        auto storageIdx =
-            arith::DivSIOp::create(rewriter, loc, iMinusStart, thinningConst);
-
-        // Store condition:
-        // (i >= start_idx) && ((i - start_idx) % thinning == 0)
-        auto geStartIdx = arith::CmpIOp::create(
-            rewriter, loc, arith::CmpIPredicate::sge, iterIdx, startIdxConst);
-        auto modThinning =
-            arith::RemSIOp::create(rewriter, loc, iMinusStart, thinningConst);
-        auto modIsZero = arith::CmpIOp::create(
-            rewriter, loc, arith::CmpIPredicate::eq, modThinning, c0);
-        auto shouldStore =
-            arith::AndIOp::create(rewriter, loc, geStartIdx, modIsZero);
-
-        auto zeroCol = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(0)));
-        auto updatedSamplesBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, samplesBufferType, samplesBufferLoop, q_constrained,
-            ValueRange{storageIdx, zeroCol});
-        auto selectedSamplesBuffer = impulse::SelectOp::create(
-            rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
-            samplesBufferLoop);
-
-        auto oneCol = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(1)));
-        auto accepted1x1 = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1, 1}, rewriter.getI1Type()),
-            sample.accepted);
-        auto divergent1x1 = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1, 1}, rewriter.getI1Type()),
-            sample.divergent);
-        auto updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, diagnosticsBufferType, diagnosticsBufferLoop,
-            accepted1x1, ValueRange{storageIdx, zeroCol});
-        updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, diagnosticsBufferType, updatedDiagnosticsBuffer,
-            divergent1x1, ValueRange{storageIdx, oneCol});
-        auto selectedDiagnosticsBuffer = impulse::SelectOp::create(
-            rewriter, loc, diagnosticsBufferType, shouldStore,
-            updatedDiagnosticsBuffer, diagnosticsBufferLoop);
-
-        auto negU = arith::NegFOp::create(rewriter, loc, sample.U);
-        auto logDensity1D = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1}, elemType), negU);
-        auto updatedLogDensityBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, logDensityBufferType, logDensityBufferLoop,
-            logDensity1D, ValueRange{storageIdx});
-        auto selectedLogDensityBuffer = impulse::SelectOp::create(
-            rewriter, loc, logDensityBufferType, shouldStore,
-            updatedLogDensityBuffer, logDensityBufferLoop);
-
-        impulse::YieldOp::create(rewriter, loc,
-                                 ValueRange{sample.q, sample.grad, sample.U,
-                                            sample.rng, selectedSamplesBuffer,
-                                            selectedDiagnosticsBuffer,
-                                            selectedLogDensityBuffer});
-
-        rewriter.setInsertionPointAfter(forLoopOp);
-        finalQ = forLoopOp.getResult(0);
-        finalGrad = forLoopOp.getResult(1);
-        finalU = forLoopOp.getResult(2);
-        finalRng = forLoopOp.getResult(3);
-        finalSamplesBuffer = forLoopOp.getResult(4);
-        finalDiagnosticsBuffer = forLoopOp.getResult(5);
-        finalLogDensityBuffer = forLoopOp.getResult(6);
-      }
-
-      finalSamplesBuffer =
-          conditionalDump(rewriter, loc, finalSamplesBuffer,
-                          "MCMC: collected samples", debugDump);
-
-      SmallVector<Value> replacements = {finalSamplesBuffer,
-                                         finalDiagnosticsBuffer,
-                                         finalLogDensityBuffer,
-                                         finalRng,
-                                         finalQ,
-                                         finalGrad,
-                                         finalU,
-                                         adaptedStepSize,
-                                         adaptedInvMass};
-      if (exposeAdaptation)
-        replacements.append(finalAdaptationState.begin(),
-                            finalAdaptationState.end());
-      rewriter.replaceOp(mcmcOp, replacements);
-
-      return success();
-    }
-  };
-
-  struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
-    using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(impulse::MHOp mhOp,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(mhOp, mhOp.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        mhOp.emitError(
-            "Impulse: calling `mh` on an empty function; if this is a "
-            "distribution function, its sample op should have a logpdf "
-            "attribute to avoid recursive `mh` calls which is intended for "
-            "generative functions");
-        return failure();
-      }
-
-      auto loc = mhOp.getLoc();
-
-      Value oldTrace = mhOp.getOperand(0);
-      Value oldWeight = mhOp.getOperand(1);
-      SmallVector<Value> inputs;
-      for (unsigned i = 2; i < mhOp.getNumOperands(); ++i)
-        inputs.push_back(mhOp.getOperand(i));
-      auto selection = mhOp.getSelectionAttr();
-
-      auto traceType = oldTrace.getType();
-      auto weightType = cast<RankedTensorType>(oldWeight.getType());
-      auto rngStateType = inputs[0].getType();
-
-      // 1. Create regenerate op with the same function and selection
-      auto nameAttr = mhOp.getNameAttr();
-      if (!nameAttr)
-        nameAttr = rewriter.getStringAttr("");
-
-      auto regenerateAddresses = mhOp.getRegenerateAddressesAttr();
-
-      SmallVector<Type> regenResultTypes;
-      regenResultTypes.push_back(traceType);
-      regenResultTypes.push_back(weightType);
-      for (auto t : fn.getResultTypes())
-        regenResultTypes.push_back(t);
-
-      auto regenerateOp = rewriter.create<impulse::RegenerateOp>(
-          loc,
-          /*resultTypes*/ regenResultTypes,
-          /*fn*/ mhOp.getFnAttr(),
-          /*inputs*/ inputs,
-          /*original_trace*/ oldTrace,
-          /*selection*/ selection,
-          /*regenerate_addresses*/ regenerateAddresses,
-          /*name*/ nameAttr);
-
-      Value newTrace = regenerateOp.getNewTrace();
-      Value newWeight = regenerateOp.getWeight();
-      Value newRng = regenerateOp.getOutputs()[0];
-
-      // 2. Compute log_alpha = new_weight - old_weight
-      auto logAlpha =
-          arith::SubFOp::create(rewriter, loc, newWeight, oldWeight);
-
-      // 3. Sample uniform random in (0, 1) and compute log
-      auto zeroConst = arith::ConstantOp::create(
-          rewriter, loc, weightType, DenseElementsAttr::get(weightType, 0.0));
-      auto oneConst = arith::ConstantOp::create(
-          rewriter, loc, weightType, DenseElementsAttr::get(weightType, 1.0));
-
-      auto randomOp = impulse::RandomOp::create(
-          rewriter, loc, TypeRange{rngStateType, weightType}, newRng, zeroConst,
-          oneConst,
-          impulse::RngDistributionAttr::get(rewriter.getContext(),
-                                            impulse::RngDistribution::UNIFORM));
-      auto logRand = math::LogOp::create(rewriter, loc, randomOp.getResult());
-      Value finalRng = randomOp.getOutputRngState();
-
-      // 4. Check if proposal is accepted: log(rand()) < log_alpha
-      auto accepted = arith::CmpFOp::create(
-          rewriter, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
-
-      // 5. Select trace and weight based on acceptance
-      auto selectedTrace = impulse::SelectOp::create(
-          rewriter, loc, traceType, accepted, newTrace, oldTrace);
-      auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
-                                                    newWeight, oldWeight);
-
-      rewriter.replaceOp(mhOp,
-                         {selectedTrace, selectedWeight, accepted, finalRng});
-      return success();
-    }
-  };
-
-  struct LowerGeneratePattern
-      : public mlir::OpRewritePattern<impulse::GenerateOp> {
-    using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(impulse::GenerateOp CI,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        CI.emitError(
-            "Impulse: calling `generate` on an empty function; if this "
-            "is a distribution function, its sample op should have a "
-            "logpdf attribute to avoid recursive `generate` calls which is "
-            "intended for generative functions");
-        return failure();
-      }
-
-      ArrayAttr selection = CI.getSelectionAttr();
-      int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, selection, symbolTable);
-      if (positionSize <= 0) {
-        CI.emitError("Impulse: failed to compute position size for generate");
-        return failure();
-      }
-
-      int64_t constraintSize = computePositionSizeForSelection(
-          CI, fn, CI.getConstrainedAddressesAttr(), symbolTable);
-      if (constraintSize < 0) {
-        CI.emitError("Impulse: failed to compute constraint size for generate");
-        return failure();
-      }
-
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Generate,
-                                                  positionSize, constraintSize);
-      FunctionOpInterface NewF = putils->newFunc;
-
-      OpBuilder entryBuilder(putils->initializationBlock,
-                             putils->initializationBlock->begin());
-      Location initLoc = putils->initializationBlock->begin()->getLoc();
-
-      auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight =
-          arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
-                                    DenseElementsAttr::get(scalarType, 0.0));
-      Value weightAccumulator = zeroWeight;
-
-      auto traceType =
-          RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
-      auto zeroTrace =
-          arith::ConstantOp::create(entryBuilder, initLoc, traceType,
-                                    DenseElementsAttr::get(traceType, 0.0));
-      Value currTrace = zeroTrace;
-      Value constraint = NewF.getArgument(0);
-      int64_t currentTraceOffset = 0;
-
-      SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(sampleOp);
-
+        bool isConstrained = addressInList(sampleOp, constrainedAddresses);
         SmallVector<Value> sampledValues;
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          // A1. Distribution function: call the distribution function.
-          bool isConstrained = false;
-          int64_t constrainedOffset = -1;
-          for (auto addr : CI.getConstrainedAddressesAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError(
-                    "Impulse: distribution function cannot have composite "
-                    "constrained address");
-                return WalkResult::interrupt();
-              }
-              isConstrained = true;
-              constrainedOffset = computeOffsetForSampleInSelection(
-                  CI, fn, CI.getConstrainedAddressesAttr(),
-                  sampleOp.getSymbolAttr(), symbolTable);
-              break;
-            }
-          }
-
-          if (isConstrained) {
-            // Extract sampled values from constraint tensor
-            sampledValues.resize(sampleOp.getNumResults());
-            sampledValues[0] = sampleOp.getOperand(0); // RNG state
-
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
-              }
-
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), sliceType, constraint,
-                  rewriter.getDenseI64ArrayAttr({0, constrainedOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, constrainedOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              auto extracted = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), resultType, sliced);
-              sampledValues[i] = extracted.getResult();
-              constrainedOffset += numElements;
-            }
-
-            // Compute weight via logpdf using constrained values.
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "Impulse: failed to construct logpdf call for constrained "
-                  "sample; logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
-            }
-
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
-          } else {
-            // Unconstrained: call the distribution function
-            auto distFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getFnAttr()));
-
-            auto distCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), distFn.getName(),
-                distFn.getResultTypes(), sampleOp.getInputs());
-
-            sampledValues.append(distCall.getResults().begin(),
-                                 distCall.getResults().end());
-
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "Impulse: failed to construct logpdf call; "
-                  "logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
-            }
-
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
-          }
-
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-
-          if (inSelection) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
-              }
-
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleType.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-              auto row0 = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-              auto colOff = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(
-                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
-              currentTraceOffset += numElements;
-            }
-          }
+        if (isConstrained) {
+          int64_t constrainedOffset = computeOffsetForSampleInSelection(
+              op, clone->fn, constrainedAddresses, sampleOp.getSymbolAttr(),
+              symbolTable);
+          FailureOr<SmallVector<Value>> read =
+              readSiteValues(rewriter, sampleOp, constraint, constrainedOffset);
+          if (failed(read))
+            return failure();
+          sampledValues = std::move(*read);
         } else {
-          // B. Generative function: recursively generate the nested function
-          auto genFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-
-          if (genFn.getFunctionBody().empty()) {
-            sampleOp.emitError(
-                "Impulse: generative function body is empty; "
-                "if this is a distribution, add a logpdf attribute");
-            return WalkResult::interrupt();
-          }
-
-          ArrayAttr subSelection =
-              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
-          ArrayAttr subConstrainedAddrs =
-              buildSubSelection(rewriter, CI.getConstrainedAddressesAttr(),
-                                sampleOp.getSymbolAttr());
-
-          if (subSelection.empty()) {
-            // No samples from this generative function are in the selection
-            // Just call the function directly
-            auto genCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), genFn.getName(),
-                genFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(genCall.getResults().begin(),
-                                 genCall.getResults().end());
-          } else {
-            int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subSelection, symbolTable);
-            int64_t subConstraintSize = computePositionSizeForSelection(
-                sampleOp, genFn, subConstrainedAddrs, symbolTable);
-            if (subPositionSize <= 0 || subConstraintSize < 0) {
-              sampleOp.emitError("Impulse: failed to compute sub-position or "
-                                 "sub-constraint size");
-              return WalkResult::interrupt();
-            }
-
-            Value subConstraint;
-            auto subConstraintType = RankedTensorType::get(
-                {1, subConstraintSize}, rewriter.getF64Type());
-
-            if (subConstraintSize > 0) {
-              int64_t subConstraintOffset = computeOffsetForNestedSample(
-                  sampleOp, fn, CI.getConstrainedAddressesAttr(),
-                  sampleOp.getSymbolAttr(), symbolTable);
-
-              subConstraint = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), subConstraintType, constraint,
-                  rewriter.getDenseI64ArrayAttr({0, subConstraintOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, subConstraintOffset + subConstraintSize}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-            } else {
-              subConstraint = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), subConstraintType,
-                  DenseElementsAttr::get(subConstraintType, {0.0}));
-            }
-
-            // Build result types: (trace, weight, original_returns...)
-            auto subTraceType = RankedTensorType::get({1, subPositionSize},
-                                                      rewriter.getF64Type());
-            auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
-            SmallVector<Type> genResultTypes;
-            genResultTypes.push_back(subTraceType);
-            genResultTypes.push_back(scalarTy);
-            for (auto t : genFn.getResultTypes())
-              genResultTypes.push_back(t);
-
-            auto nestedGenerate = impulse::GenerateOp::create(
-                rewriter, sampleOp.getLoc(), genResultTypes,
-                sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
-                subSelection, subConstrainedAddrs);
-
-            Value subTrace = nestedGenerate.getTrace();
-            Value subWeight = nestedGenerate.getWeight();
-
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
-
-            int64_t mergeOffset = computeOffsetForNestedSample(
-                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
-
-            auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-            auto row0 = arith::ConstantOp::create(
-                rewriter, sampleOp.getLoc(), i64S,
-                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-            auto colOff = arith::ConstantOp::create(
-                rewriter, sampleOp.getLoc(), i64S,
-                DenseElementsAttr::get(
-                    i64S, rewriter.getI64IntegerAttr(mergeOffset)));
-            currTrace = impulse::DynamicUpdateSliceOp::create(
-                            rewriter, sampleOp.getLoc(), traceType, currTrace,
-                            subTrace, ValueRange{row0, colOff})
-                            .getResult();
-            currentTraceOffset =
-                std::max(currentTraceOffset, mergeOffset + subPositionSize);
-
-            for (auto output : nestedGenerate.getOutputs())
-              sampledValues.push_back(output);
-          }
+          if (impulse::DistAttr dist = sampleOp.getDistAttr();
+              dist && !dist.hasLoopFreeSampler())
+            return sampleOp.emitError(
+                "Impulse: distribution sampler is not "
+                "emittable; the site must be constrained");
+          sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
         }
-
-        sampleOp.replaceAllUsesWith(sampledValues);
-        toErase.push_back(sampleOp);
-        return WalkResult::advance();
-      });
-
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
-
-      if (result.wasInterrupted()) {
-        CI.emitError("Impulse: failed to walk sample ops");
-        return failure();
+        if (failed(scoreAndTraceSite(
+                rewriter, sampleOp, ArrayRef<Value>(sampledValues).drop_front(),
+                *clone, carry, symbolTable,
+                isConstrained ? "logpdf call for constrained sample"
+                              : "logpdf call")))
+          return failure();
+        return sampledValues;
       }
 
-      // Rewrite the return to return (trace, weight, <original returns>...)
-      NewF.walk([&](func::ReturnOp retOp) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(retOp);
-
-        SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
-        newRetVals.push_back(weightAccumulator);
-        newRetVals.append(retOp.getOperands().begin(),
-                          retOp.getOperands().end());
-
-        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
-        rewriter.eraseOp(retOp);
-      });
-
-      rewriter.setInsertionPoint(CI);
-      SmallVector<Value> operands;
-      operands.push_back(CI.getConstraint());
-      operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), operands);
-
-      rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
-
-      return success();
-    }
-  };
-
-  struct LowerRegeneratePattern
-      : public mlir::OpRewritePattern<impulse::RegenerateOp> {
-    using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(impulse::RegenerateOp CI,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        CI.emitError(
-            "Impulse: calling `regenerate` on an empty function; if this "
-            "is a distribution function, its sample op should have a "
-            "logpdf attribute to avoid recursive `regenerate` calls which is "
-            "intended for generative functions");
+      FailureOr<NestedSite> nested =
+          resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
+      if (failed(nested))
         return failure();
+      if (nested->subAllAddresses.empty())
+        return emitSiteDraw(rewriter, symbolTable, sampleOp);
+      Attribute symbol = sampleOp.getSymbolAttr();
+      ArrayAttr subConstrainedAddrs =
+          buildSubSelection(rewriter, constrainedAddresses, symbol);
+      int64_t subConstraintSize = computePositionSizeForSelection(
+          sampleOp, nested->genFn, subConstrainedAddrs, symbolTable);
+      if (nested->subPositionSize <= 0 || subConstraintSize < 0)
+        return sampleOp.emitError("Impulse: failed to compute sub-position "
+                                  "or sub-constraint size");
+
+      auto subConstraintType =
+          RankedTensorType::get({1, subConstraintSize}, rewriter.getF64Type());
+      Value subConstraint;
+      if (subConstraintSize > 0) {
+        int64_t subConstraintOffset = computeOffsetForSampleInSelection(
+            sampleOp, clone->fn, constrainedAddresses, symbol, symbolTable);
+        subConstraint = emitColumnSlice(rewriter, loc, subConstraintType,
+                                        constraint, subConstraintOffset);
+      } else {
+        subConstraint =
+            emitSplatConstant(rewriter, loc, subConstraintType, 0.0);
       }
+      auto nestedGenerate = impulse::GenerateOp::create(
+          rewriter, loc, nested->getResultTypes(clone->zeroWeight.getType()),
+          sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
+          nested->subAllAddresses, subConstrainedAddrs);
+      carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight,
+                                           nestedGenerate.getWeight());
+      mergeNestedTrace(rewriter, loc, *nested, nestedGenerate.getTrace(),
+                       carry);
+      return SmallVector<Value>(nestedGenerate.getOutputs());
+    };
 
-      ArrayAttr selection = CI.getSelectionAttr();
-      int64_t positionSize =
-          computePositionSizeForSelection(CI, fn, selection, symbolTable);
-      if (positionSize <= 0) {
-        CI.emitError("Impulse: failed to compute position size for regenerate");
-        return failure();
-      }
+    SmallVector<Value> callOperands{op.getConstraint()};
+    llvm::append_range(callOperands, op.getInputs());
+    return finishTracedClone(
+        rewriter, op, *clone, lowerSite,
+        [&](Location) { return clone->carry.weight; }, callOperands);
+  }
+};
 
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Regenerate,
-                                                  positionSize);
-      FunctionOpInterface NewF = putils->newFunc;
+/// Lowers `impulse.regenerate` to a call of a clone of the model that redraws
+/// the selected sites, reads the others from the old trace and also returns
+/// the new trace and the weight that `RegenerateLowering` describes.
+struct LowerRegeneratePattern
+    : public mlir::OpRewritePattern<impulse::RegenerateOp> {
+  using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
 
-      OpBuilder entryBuilder(putils->initializationBlock,
-                             putils->initializationBlock->begin());
-      Location initLoc = putils->initializationBlock->begin()->getLoc();
+  LogicalResult matchAndRewrite(impulse::RegenerateOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    bool hasConstraint = static_cast<bool>(op.getConstraint());
+    // Operand width, not the packed size, as in generate.
+    int64_t constraintSize =
+        hasConstraint
+            ? cast<RankedTensorType>(op.getConstraint().getType()).getShape()[1]
+            : -1;
+    int64_t declaredWidth =
+        cast<RankedTensorType>(op.getNewTrace().getType()).getShape()[1];
+    FailureOr<TracedClone> clone = beginTracedClone(
+        op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
+        ImpulseMode::Regenerate, constraintSize, "regenerate", symbolTable);
+    if (failed(clone))
+      return failure();
+    RegenerateLowering lowering(rewriter, op, *clone, symbolTable);
+    if (failed(lowering.prepare()))
+      return failure();
 
-      auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight =
-          arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
-                                    DenseElementsAttr::get(scalarType, 0.0));
-      Value weightAccumulator = zeroWeight;
-
-      auto traceType =
-          RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
-      auto zeroTrace =
-          arith::ConstantOp::create(entryBuilder, initLoc, traceType,
-                                    DenseElementsAttr::get(traceType, 0.0));
-      Value currTrace = zeroTrace;
-
-      Value prevTrace = NewF.getArgument(0);
-      int64_t currentTraceOffset = 0;
-
-      SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(sampleOp);
-
-        SmallVector<Value> sampledValues;
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          // A1. Distribution function: call the distribution function.
-          bool isSelected = false;
-          for (auto addr : CI.getRegenerateAddressesAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError(
-                    "Impulse: distribution function cannot have composite "
-                    "selected address");
-                return WalkResult::interrupt();
-              }
-              isSelected = true;
-              break;
-            }
-          }
-
-          int64_t sampleOffset = computeOffsetForSampleInSelection(
-              CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
-
-          if (isSelected) {
-            // A2. Regenerate: call the distribution function.
-            auto distFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getFnAttr()));
-
-            auto distCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), distFn.getName(),
-                distFn.getResultTypes(), sampleOp.getInputs());
-
-            sampledValues.append(distCall.getResults().begin(),
-                                 distCall.getResults().end());
-          } else {
-            // B. Generative function: extract from original trace.
-            sampledValues.resize(sampleOp.getNumResults());
-            sampledValues[0] = sampleOp.getOperand(0); // RNG state
-
-            int64_t extractOffset = sampleOffset;
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
-              }
-
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), sliceType, prevTrace,
-                  rewriter.getDenseI64ArrayAttr({0, extractOffset}),
-                  rewriter.getDenseI64ArrayAttr(
-                      {1, extractOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              auto extracted = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), resultType, sliced);
-              sampledValues[i] = extracted.getResult();
-              extractOffset += numElements;
-            }
-          }
-
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-
-          SmallVector<Value> logpdfOperands;
-          for (unsigned i = 1; i < sampledValues.size(); ++i) {
-            logpdfOperands.push_back(sampledValues[i]);
-          }
-          for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-            logpdfOperands.push_back(sampleOp.getOperand(i));
-          }
-
-          if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("Impulse: failed to construct logpdf call; "
-                               "logpdf function has wrong number of arguments");
-            return WalkResult::interrupt();
-          }
-
-          auto logpdf = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-              logpdfFn.getResultTypes(), logpdfOperands);
-          weightAccumulator =
-              arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                    weightAccumulator, logpdf.getResult(0));
-
-          bool inSelection = false;
-          for (auto addr : selection) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              inSelection = true;
-              break;
-            }
-          }
-
-          if (inSelection) {
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto sampleValue = sampledValues[i];
-              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
-              int64_t numElements = computeTensorElementCount(sampleType);
-              if (numElements < 0) {
-                sampleOp.emitError(
-                    "Impulse: dynamic tensor dimensions not supported");
-                return WalkResult::interrupt();
-              }
-
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleType.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-              auto row0 = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-              auto colOff = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(
-                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
-              currentTraceOffset += numElements;
-            }
-          }
-        } else {
-          // B. Generative function: recursively regenerate the nested function
-          auto genFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-
-          if (genFn.getFunctionBody().empty()) {
-            sampleOp.emitError(
-                "Impulse: generative function body is empty; "
-                "if this is a distribution, add a logpdf attribute");
-            return WalkResult::interrupt();
-          }
-
-          ArrayAttr subSelection =
-              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
-          ArrayAttr subRegenerateAddrs =
-              buildSubSelection(rewriter, CI.getRegenerateAddressesAttr(),
-                                sampleOp.getSymbolAttr());
-
-          if (subSelection.empty()) {
-            auto genCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), genFn.getName(),
-                genFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(genCall.getResults().begin(),
-                                 genCall.getResults().end());
-          } else {
-            int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subSelection, symbolTable);
-            if (subPositionSize <= 0) {
-              sampleOp.emitError(
-                  "Impulse: failed to compute sub-position size");
-              return WalkResult::interrupt();
-            }
-
-            int64_t mergeOffset = computeOffsetForNestedSample(
-                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
-            if (mergeOffset < 0) {
-              sampleOp.emitError("Impulse: failed to compute merge offset");
-              return WalkResult::interrupt();
-            }
-
-            auto subTraceType = RankedTensorType::get({1, subPositionSize},
-                                                      rewriter.getF64Type());
-            Value subPrevTrace = impulse::SliceOp::create(
-                rewriter, sampleOp.getLoc(), subTraceType, prevTrace,
-                rewriter.getDenseI64ArrayAttr({0, mergeOffset}),
-                rewriter.getDenseI64ArrayAttr(
-                    {1, mergeOffset + subPositionSize}),
-                rewriter.getDenseI64ArrayAttr({1, 1}));
-
-            // Build result types: (new_trace, weight, original_returns...)
-            auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
-            SmallVector<Type> regenResultTypes;
-            regenResultTypes.push_back(subTraceType);
-            regenResultTypes.push_back(scalarTy);
-            for (auto t : genFn.getResultTypes())
-              regenResultTypes.push_back(t);
-
-            auto nestedRegenerate = impulse::RegenerateOp::create(
-                rewriter, sampleOp.getLoc(), regenResultTypes,
-                sampleOp.getFnAttr(), sampleOp.getInputs(), subPrevTrace,
-                subSelection, subRegenerateAddrs);
-
-            Value subTrace = nestedRegenerate.getNewTrace();
-            Value subWeight = nestedRegenerate.getWeight();
-
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
-
-            auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-            auto row0 = arith::ConstantOp::create(
-                rewriter, sampleOp.getLoc(), i64S,
-                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-            auto colOff = arith::ConstantOp::create(
-                rewriter, sampleOp.getLoc(), i64S,
-                DenseElementsAttr::get(
-                    i64S, rewriter.getI64IntegerAttr(mergeOffset)));
-            currTrace = impulse::DynamicUpdateSliceOp::create(
-                            rewriter, sampleOp.getLoc(), traceType, currTrace,
-                            subTrace, ValueRange{row0, colOff})
-                            .getResult();
-            currentTraceOffset =
-                std::max(currentTraceOffset, mergeOffset + subPositionSize);
-
-            for (auto output : nestedRegenerate.getOutputs())
-              sampledValues.push_back(output);
-          }
-        }
-
-        sampleOp.replaceAllUsesWith(sampledValues);
-        toErase.push_back(sampleOp);
-        return WalkResult::advance();
-      });
-
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
-
-      if (result.wasInterrupted()) {
-        CI.emitError("Impulse: failed to walk sample ops");
-        return failure();
-      }
-
-      NewF.walk([&](func::ReturnOp retOp) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(retOp);
-
-        SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
-        newRetVals.push_back(weightAccumulator);
-        newRetVals.append(retOp.getOperands().begin(),
-                          retOp.getOperands().end());
-
-        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
-        rewriter.eraseOp(retOp);
-      });
-
-      rewriter.setInsertionPoint(CI);
-      SmallVector<Value> operands;
-      operands.push_back(CI.getOriginalTrace());
-      operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), operands);
-
-      rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
-
-      return success();
-    }
-  };
+    SmallVector<Value> callOperands{op.getOriginalTrace()};
+    if (hasConstraint)
+      callOperands.push_back(op.getConstraint());
+    llvm::append_range(callOperands, op.getInputs());
+    return finishTracedClone(
+        rewriter, op, *clone,
+        [&](impulse::SampleOp site, SiteCarry &carry) {
+          return lowering.lowerSite(site, carry);
+        },
+        [&](Location loc) { return lowering.emitWeightOut(loc); },
+        callOperands);
+  }
 };
 
 } // end anonymous namespace
 
+/// Applies `patterns` to `root` and fails when they do not converge, a pattern
+/// emits an error or an inference op is left. A pattern that fails after an
+/// error leaves its op in place, and the driver can visit the op again and
+/// repeat the error, so each error is reported once.
+static LogicalResult lowerInferenceOps(Operation *root,
+                                       RewritePatternSet &&patterns) {
+  bool hadError = false;
+  llvm::StringSet<> reported;
+  ScopedDiagnosticHandler reportOnce(root->getContext(), [&](Diagnostic &diag) {
+    if (diag.getSeverity() != DiagnosticSeverity::Error)
+      return failure();
+    hadError = true;
+    std::string key;
+    llvm::raw_string_ostream os(key);
+    os << diag.getLocation() << ": " << diag;
+    return success(!reported.insert(key).second);
+  });
+  if (failed(applyPatternsGreedily(root, std::move(patterns))) || hadError)
+    return failure();
+  root->walk([](Operation *op) {
+    if (isa<impulse::UntracedCallOp, impulse::SimulateOp, impulse::GenerateOp,
+            impulse::RegenerateOp, impulse::MHOp, impulse::InferOp,
+            impulse::InferRegionOp>(op))
+      op->emitError("Impulse: expand-impulse could not lower this op");
+  });
+  return failure(hadError);
+}
+
 void ExpandImpulsePass::runOnOperation() {
+  // Must run before the per-op MH patterns lower these moves.
+  batchMHRuns(getOperation());
+
   RewritePatternSet patterns(&getContext());
   patterns.add<LowerUntracedCallPattern, LowerSimulatePattern,
                LowerGeneratePattern, LowerMHPattern, LowerRegeneratePattern>(
       &getContext());
-  patterns.add<LowerMCMCPattern>(&getContext(), debugDump);
+  populateExpandImpulseHMCVIPatterns(patterns, debugDump);
+  populateExpandImpulseMHGibbsPatterns(patterns);
 
-  mlir::GreedyRewriteConfig config;
-
-  if (failed(
-          applyPatternsGreedily(getOperation(), std::move(patterns), config))) {
+  if (failed(lowerInferenceOps(getOperation(), std::move(patterns)))) {
     signalPassFailure();
     return;
   }

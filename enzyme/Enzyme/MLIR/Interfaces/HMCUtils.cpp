@@ -12,6 +12,8 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
+#include "Interfaces/ImpulseUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -23,34 +25,97 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::impulse;
 
+namespace {
+/// The leapfrog state after one integration step and the RNG state after it.
+struct IntegrationResult {
+  Value q;
+  Value p;
+  Value grad;
+  Value potentialEnergy;
+  Value rng;
+};
+
+/// The potential energy at a position, its gradient and the RNG state after
+/// computing them.
+struct GradientResult {
+  Value potentialEnergy; // U(q) = -log p(q)
+  Value grad;            // dU/dq
+  Value rng;             // Updated RNG state
+};
+
+/// A point of a leapfrog trajectory.
+struct IntegratorState {
+  Value q;
+  Value p;
+  Value grad;
+};
+
+/// A NUTS tree: its leftmost and rightmost leaves, its proposal and the
+/// statistics of its leaves. toValues and fromValues list the fields in
+/// declaration order.
+struct NUTSTreeState {
+  static constexpr unsigned kNumValues = 18;
+
+  Value qLeft, pLeft, gradLeft;
+  Value qRight, pRight, gradRight;
+  Value qProposal, gradProposal, potentialEnergyProposal, hamiltonianProposal;
+  Value depth, weight, turning, diverging;
+  Value sumAcceptProbs, numProposals, pSum;
+  Value rng;
+
+  SmallVector<Value> toValues() const;
+  static NUTSTreeState fromValues(ValueRange values);
+  SmallVector<Type> getTypes() const;
+};
+
+/// A subtree and the momentum checkpoints of its iterative U-turn check.
+struct SubtreeBuildResult {
+  NUTSTreeState tree;
+  Value pCkpts;
+  Value pSumCkpts;
+};
+} // namespace
+
 SmallVector<Value> NUTSTreeState::toValues() const {
-  return {q_left,        p_left,        grad_left,
-          q_right,       p_right,       grad_right,
-          q_proposal,    grad_proposal, U_proposal,
-          H_proposal,    depth,         weight,
-          turning,       diverging,     sum_accept_probs,
-          num_proposals, p_sum,         rng};
+  return {qLeft,
+          pLeft,
+          gradLeft,
+          qRight,
+          pRight,
+          gradRight,
+          qProposal,
+          gradProposal,
+          potentialEnergyProposal,
+          hamiltonianProposal,
+          depth,
+          weight,
+          turning,
+          diverging,
+          sumAcceptProbs,
+          numProposals,
+          pSum,
+          rng};
 }
 
-NUTSTreeState NUTSTreeState::fromValues(ArrayRef<Value> values) {
-  assert(values.size() == 18 && "Expected 18 NUTSTreeState fields");
-  return {.q_left = values[0],
-          .p_left = values[1],
-          .grad_left = values[2],
-          .q_right = values[3],
-          .p_right = values[4],
-          .grad_right = values[5],
-          .q_proposal = values[6],
-          .grad_proposal = values[7],
-          .U_proposal = values[8],
-          .H_proposal = values[9],
+NUTSTreeState NUTSTreeState::fromValues(ValueRange values) {
+  assert(values.size() == kNumValues && "Expected 18 NUTSTreeState fields");
+  return {.qLeft = values[0],
+          .pLeft = values[1],
+          .gradLeft = values[2],
+          .qRight = values[3],
+          .pRight = values[4],
+          .gradRight = values[5],
+          .qProposal = values[6],
+          .gradProposal = values[7],
+          .potentialEnergyProposal = values[8],
+          .hamiltonianProposal = values[9],
           .depth = values[10],
           .weight = values[11],
           .turning = values[12],
           .diverging = values[13],
-          .sum_accept_probs = values[14],
-          .num_proposals = values[15],
-          .p_sum = values[16],
+          .sumAcceptProbs = values[14],
+          .numProposals = values[15],
+          .pSum = values[16],
           .rng = values[17]};
 }
 
@@ -61,17 +126,9 @@ SmallVector<Type> NUTSTreeState::getTypes() const {
   return types;
 }
 
-Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
-                               StringRef label, bool debugDump) {
-  if (debugDump) {
-    return enzyme::DumpOp::create(builder, loc, value.getType(), value,
-                                  builder.getStringAttr(label))
-        .getOutput();
-  }
-  return value;
-}
-
-/// `tensor<1xN>` is a diagonal mass; `tensor<1x1>` stays on the dense path.
+/// Whether the HMC kernels treat a mass tensor of type `t` as a diagonal:
+/// `tensor<N>` for every N and `tensor<1xN>` for N > 1. `tensor<1x1>` is a
+/// dense 1x1 matrix.
 static bool isDiagonalMass(RankedTensorType t) {
   return t.getRank() == 1 ||
          (t.getRank() == 2 && t.getShape()[0] == 1 && t.getShape()[1] != 1);
@@ -80,71 +137,38 @@ static bool isDiagonalMass(RankedTensorType t) {
 /// Creates a 2D identity matrix of the specified type.
 static Value createIdentityMatrix(OpBuilder &builder, Location loc,
                                   RankedTensorType matrixType) {
-  assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
-  assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
-         "Expected square matrix type");
-
-  int64_t size = matrixType.getShape()[0];
-  auto elemType = matrixType.getElementType();
-
-  SmallVector<Attribute> values;
-  values.reserve(size * size);
-  for (int64_t i = 0; i < size; ++i) {
-    for (int64_t j = 0; j < size; ++j) {
-      double val = (i == j) ? 1.0 : 0.0;
-      values.push_back(builder.getFloatAttr(elemType, val));
-    }
-  }
-
-  auto denseAttr = DenseElementsAttr::get(matrixType, values);
-  return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
-}
-
-/// Creates a permutation matrix of size n x n.
-static Value createPermutationMatrix(OpBuilder &builder, Location loc,
-                                     RankedTensorType matrixType) {
-  assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
-  assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
-         "Expected square matrix type");
-
-  int64_t size = matrixType.getShape()[0];
-  auto elemType = matrixType.getElementType();
-
-  SmallVector<Attribute> values;
-  values.reserve(size * size);
-  for (int64_t i = 0; i < size; ++i) {
-    for (int64_t j = 0; j < size; ++j) {
-      double val = (j == size - 1 - i) ? 1.0 : 0.0;
-      values.push_back(builder.getFloatAttr(elemType, val));
-    }
-  }
-
-  auto denseAttr = DenseElementsAttr::get(matrixType, values);
-  return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
+  return emitMatrixConstant(builder, loc, matrixType, [](int64_t i, int64_t j) {
+    return i == j ? 1.0 : 0.0;
+  });
 }
 
 /// Computes A[::-1, ::-1] using permutation matrix through P @ A @ P.
 static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
                                    Value matrix) {
   auto matrixType = cast<RankedTensorType>(matrix.getType());
-  auto P = createPermutationMatrix(builder, loc, matrixType);
+  int64_t size = matrixType.getShape()[0];
+  Value permutation = emitMatrixConstant(
+      builder, loc, matrixType,
+      [size](int64_t i, int64_t j) { return j == size - 1 - i ? 1.0 : 0.0; });
 
   // PA = P @ A
-  auto PA = impulse::DotOp::create(
-      builder, loc, matrixType, P, matrix, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({1}),
-      builder.getDenseI64ArrayAttr({0}));
+  auto rowsReversed = impulse::DotOp::create(
+      builder, loc, matrixType, permutation, matrix,
+      builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
 
   // PAP = PA @ P
-  return impulse::DotOp::create(
-      builder, loc, matrixType, PA, P, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({1}),
-      builder.getDenseI64ArrayAttr({0}));
+  return impulse::DotOp::create(builder, loc, matrixType, rowsReversed,
+                                permutation, builder.getDenseI64ArrayAttr({1}),
+                                builder.getDenseI64ArrayAttr({0}));
 }
 
-Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
-                                      Value invMass, Value momentum,
-                                      RankedTensorType positionType) {
+/// Computes `v = M^-1 @ p`
+/// If `invMass` is nullptr, returns `momentum` unchanged (assumes identity)
+/// If `invMass` is a diagonal matrix, computes `v = invMass * momentum`
+/// If `invMass` is a dense matrix, computes `v = invMass @ momentum`
+static Value applyInverseMassMatrix(OpBuilder &builder, Location loc,
+                                    Value invMass, Value momentum,
+                                    RankedTensorType positionType) {
   if (!invMass) {
     return momentum;
   }
@@ -158,10 +182,9 @@ Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
     return arith::MulFOp::create(builder, loc, diagMass, momentum);
   } else if (invMassType.getRank() == 2) {
     // Dense: v = invMass @ p
-    return impulse::DotOp::create(
-        builder, loc, positionType, momentum, invMass,
-        builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
+    return impulse::DotOp::create(builder, loc, positionType, momentum, invMass,
+                                  builder.getDenseI64ArrayAttr({1}),
+                                  builder.getDenseI64ArrayAttr({0}));
   }
 
   emitError(loc, "ProbProg: Provided invMass must have rank 1 or 2, got rank " +
@@ -169,15 +192,14 @@ Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
   return nullptr;
 }
 
-Value impulse::computeKineticEnergy(OpBuilder &builder, Location loc,
-                                    Value momentum, Value invMass,
-                                    RankedTensorType positionType) {
+/// Computes `K = 0.5 * p^T @ M^-1 @ p`
+static Value computeKineticEnergy(OpBuilder &builder, Location loc,
+                                  Value momentum, Value invMass,
+                                  RankedTensorType positionType) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
 
   // v = M^-1 @ p
   auto v =
@@ -185,10 +207,9 @@ Value impulse::computeKineticEnergy(OpBuilder &builder, Location loc,
 
   // K = 0.5 * p^T @ v
   // For 2D tensors [1, N], contract over both dimensions to get scalar
-  auto pDotV = impulse::DotOp::create(
-      builder, loc, scalarType, momentum, v, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({0, 1}),
-      builder.getDenseI64ArrayAttr({0, 1}));
+  auto pDotV = impulse::DotOp::create(builder, loc, scalarType, momentum, v,
+                                      builder.getDenseI64ArrayAttr({0, 1}),
+                                      builder.getDenseI64ArrayAttr({0, 1}));
 
   return arith::MulFOp::create(builder, loc, halfConst, pDotV);
 }
@@ -201,15 +222,11 @@ Value impulse::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
   }
 
   auto invMassType = cast<RankedTensorType>(invMass.getType());
-  auto elemType = invMassType.getElementType();
 
   if (isDiagonalMass(invMassType)) {
     // Diagonal: mass_matrix_sqrt = 1/sqrt(invMass)
     auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
-    auto onesVector = arith::ConstantOp::create(
-        builder, loc, invMassType,
-        DenseElementsAttr::get(invMassType,
-                               builder.getFloatAttr(elemType, 1.0)));
+    Value onesVector = emitSplatConstant(builder, loc, invMassType, 1.0);
     return arith::DivFOp::create(builder, loc, onesVector, sqrtInvMass);
   } else {
     // Dense: mass_matrix_sqrt = M^{1/2}
@@ -235,19 +252,16 @@ Value impulse::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
   }
 }
 
-std::pair<Value, Value>
-impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
-                        Value invMass, Value massMatrixSqrt,
-                        RankedTensorType positionType, bool debugDump) {
+/// Samples momentum from `N(0, M)` where M is the mass matrix, drawing from
+/// `rng`.
+static Value sampleMomentum(OpBuilder &builder, Location loc, Value rng,
+                            Value invMass, Value massMatrixSqrt,
+                            RankedTensorType positionType, bool debugDump) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
   rng = conditionalDump(builder, loc, rng, "sampleMomentum: input rng state",
                         debugDump);
@@ -259,11 +273,10 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
       impulse::RngDistributionAttr::get(builder.getContext(),
                                         impulse::RngDistribution::NORMAL));
 
-  auto rngOut = randomOp.getOutputRngState();
   auto eps = randomOp.getResult();
 
   if (!massMatrixSqrt) {
-    return {eps, rngOut};
+    return eps;
   }
 
   auto massMatrixSqrtType = cast<RankedTensorType>(massMatrixSqrt.getType());
@@ -272,223 +285,202 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
     // Diagonal: p = massMatrixSqrt * eps (element-wise)
     auto diagSqrt =
         impulse::ReshapeOp::create(builder, loc, positionType, massMatrixSqrt);
-    auto p = arith::MulFOp::create(builder, loc, diagSqrt, eps);
-    return {p, rngOut};
+    return arith::MulFOp::create(builder, loc, diagSqrt, eps);
   } else {
     // Dense: p = massMatrixSqrt @ eps
-    auto p = impulse::DotOp::create(
+    return impulse::DotOp::create(
         builder, loc, positionType, eps, massMatrixSqrt,
-        builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
         builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
-    return {p, rngOut};
   }
 }
 
-static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
-                                    Value position2d, Value fullTrace,
-                                    const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto c0 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-
-  Value result = fullTrace;
-  for (const auto &info : ctx.supports) {
-    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
-    auto posOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.offset)));
-    SmallVector<Value> extractIndices{c0, posOffset};
-    auto slice = impulse::DynamicSliceOp::create(
-        builder, loc, sliceType, position2d, extractIndices,
-        builder.getDenseI64ArrayAttr({1, info.size}));
-
-    auto traceOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.traceOffset)));
-    SmallVector<Value> updateIndices{c0, traceOffset};
+/// Copies the columns of every site in `supports` from row 0 of `src` into
+/// row 0 of `dst`, from position to trace columns if `toTrace`, else back.
+/// `zeroIndex` is a rank-0 `i64` zero.
+static Value copySiteColumns(OpBuilder &builder, Location loc, Value src,
+                             Value dst, Value zeroIndex,
+                             ArrayRef<SupportInfo> supports, bool toTrace) {
+  Type elemType = cast<RankedTensorType>(src.getType()).getElementType();
+  Value result = dst;
+  for (const SupportInfo &info : supports) {
+    int64_t srcColumn = toTrace ? info.constrainedOffset : info.traceOffset;
+    int64_t dstColumn = toTrace ? info.traceOffset : info.constrainedOffset;
+    auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
+    Value srcIndex = emitI64ScalarConstant(builder, loc, srcColumn);
+    Value slice = impulse::DynamicSliceOp::create(
+        builder, loc, sliceType, src, ValueRange{zeroIndex, srcIndex},
+        builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
+    Value dstIndex = emitI64ScalarConstant(builder, loc, dstColumn);
     result = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, traceType, result, slice, updateIndices);
+        builder, loc, dst.getType(), result, slice,
+        ValueRange{zeroIndex, dstIndex});
   }
   return result;
 }
 
+/// Reads the constrained position, the values of the sites in `ctx.supports`,
+/// from row 0 of `fullTrace`.
 static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType2d = RankedTensorType::get({1, ctx.positionSize}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto c0 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, positionType2d,
-      DenseElementsAttr::get(positionType2d,
-                             builder.getFloatAttr(elemType, 0.0)));
-  Value result = zeroConst;
-  for (const auto &info : ctx.supports) {
-    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
-    auto traceOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.traceOffset)));
-    SmallVector<Value> extractIndices{c0, traceOffset};
-    auto slice = impulse::DynamicSliceOp::create(
-        builder, loc, sliceType, fullTrace, extractIndices,
-        builder.getDenseI64ArrayAttr({1, info.size}));
-
-    auto posOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.offset)));
-    SmallVector<Value> updateIndices{c0, posOffset};
-    result = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, positionType2d, result, slice, updateIndices);
-  }
-  return result;
+  auto positionType2d = RankedTensorType::get(
+      {1, ctx.getConstrainedPositionSize()}, ctx.elementType);
+  Value zeroIndex = emitI64ScalarConstant(builder, loc, 0);
+  Value position = emitSplatConstant(builder, loc, positionType2d, 0.0);
+  return copySiteColumns(builder, loc, fullTrace, position, zeroIndex,
+                         ctx.supports, /*toTrace=*/false);
 }
 
-GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
-                                                    Location loc,
-                                                    Value position, Value rng,
-                                                    const HMCContext &ctx) {
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
+/// Writes `qConstrained` into the original trace and emits a generate op of
+/// the model on that trace.
+static GenerateOp emitGenerateAt(OpBuilder &builder, Location loc,
+                                 Value qConstrained, Value rng,
+                                 const ModelContext &ctx) {
+  Value zeroIndex = emitI64ScalarConstant(builder, loc, 0);
+  Value fullTrace =
+      copySiteColumns(builder, loc, qConstrained, ctx.originalTrace, zeroIndex,
+                      ctx.supports, /*toTrace=*/true);
+  SmallVector<Value> inputs{rng};
+  llvm::append_range(inputs, ctx.fnInputs);
+  SmallVector<Type> resultTypes{
+      RankedTensorType::get({1, ctx.getFullTraceSize()}, ctx.elementType),
+      ctx.getScalarType()};
+  llvm::append_range(resultTypes, ctx.fnResultTypes);
+  return impulse::GenerateOp::create(
+      builder, loc, resultTypes, ctx.fn, inputs, fullTrace, ctx.allAddresses,
+      ctx.allAddresses, builder.getStringAttr(""));
+}
 
-  auto gradSeed = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-
-  bool isCustomLogpdf = ctx.hasCustomLogpdf();
-  auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-  Value autodiffPosition = position;
-  auto autodiffPositionType = positionType;
-  auto autodiffGradType = positionType;
-  if (isCustomLogpdf) {
-    autodiffPosition =
-        impulse::ReshapeOp::create(builder, loc, flatType, position);
-    autodiffPositionType = flatType;
-    autodiffGradType = flatType;
+Value impulse::emitModelLogDensity(OpBuilder &builder, Location loc,
+                                   Value qConstrained, Value &rng,
+                                   const ModelContext &ctx) {
+  if (ctx.hasLogpdfRegion()) {
+    Block &lpBlock = ctx.logpdfRegion->front();
+    SmallVector<Value> args;
+    for (auto [arg, column] :
+         llvm::zip(lpBlock.getArguments(), ctx.logpdfArgOffsets))
+      args.push_back(emitRowSlice(builder, loc, qConstrained, column,
+                                  cast<RankedTensorType>(arg.getType())));
+    return cloneBlockBody(builder, lpBlock, args).front();
   }
+  GenerateOp generateOp = emitGenerateAt(builder, loc, qConstrained, rng, ctx);
+  if (!generateOp.getOutputs().empty())
+    rng = generateOp.getOutputs().front();
+  return generateOp.getWeight();
+}
 
-  SmallVector<Value> autodiffInputs{autodiffPosition, gradSeed};
-  SmallVector<NamedAttribute> adAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr({enzyme::ActivityAttr::get(
-              builder.getContext(), enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto attr : ctx.autodiffAttrs)
-      adAttrs.push_back(attr);
-  }
-  auto autodiffOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{scalarType, rng.getType(), autodiffGradType},
-      autodiffInputs, adAttrs);
-
-  Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
-  autodiffBlock->addArgument(autodiffPositionType, loc);
-
-  builder.setInsertionPointToStart(autodiffBlock);
-  Value qArg = autodiffBlock->getArgument(0);
-
-  if (isCustomLogpdf) {
-    SmallVector<Value> callArgs;
-    callArgs.push_back(qArg);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+/// Emits the logpdf symbol at `position` and returns the log density. A
+/// single-block body is inlined because the adjoint of a call re-runs the
+/// callee's forward pass; anything else stays a call.
+static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
+                                    Value position, const HMCContext &ctx) {
+  SmallVector<Value> args{position};
+  args.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+  auto fn = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+      builder.getInsertionBlock()->getParentOp(), ctx.logpdfFn);
+  if (!fn || !llvm::hasSingleElement(fn.getFunctionBody())) {
     auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, callArgs);
-    Value U = arith::NegFOp::create(builder, loc, callOp.getResult(0));
-    // TODO(#2695): handle hybrid case
-    enzyme::YieldOp::create(builder, loc, {U, rng});
-  } else {
-    auto traceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-
-    Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    Value fullTrace = scatterPositionToTrace(builder, loc, q_constrained,
-                                             ctx.originalTrace, ctx);
-
-    SmallVector<Value> generateInputs;
-    generateInputs.push_back(rng);
-    generateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-    SmallVector<Type> generateResultTypes;
-    generateResultTypes.push_back(traceType);
-    generateResultTypes.push_back(scalarType);
-    generateResultTypes.append(ctx.fnResultTypes.begin(),
-                               ctx.fnResultTypes.end());
-
-    auto generateOp = impulse::GenerateOp::create(
-        builder, loc, generateResultTypes, ctx.fn, generateInputs, fullTrace,
-        ctx.allAddresses, ctx.allAddresses, builder.getStringAttr(""));
-
-    Value negWeight =
-        arith::NegFOp::create(builder, loc, generateOp.getWeight());
-    Value jacobianCorrection =
-        computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
-    Value U =
-        arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
-
-    SmallVector<Value> yieldValues{U, generateOp.getResult(2)};
-    enzyme::YieldOp::create(builder, loc, yieldValues);
+                                       TypeRange{ctx.getScalarType()}, args);
+    return callOp.getResult(0);
   }
 
-  builder.setInsertionPointAfter(autodiffOp);
-
-  Value grad = autodiffOp.getResult(2);
-  if (isCustomLogpdf) {
-    grad = impulse::ReshapeOp::create(builder, loc, positionType, grad);
-  }
-
-  return {
-      autodiffOp.getResult(0), // U
-      grad,                    // grad
-      autodiffOp.getResult(1)  // rng
-  };
+  return cloneBlockBody(builder, fn.getFunctionBody().front(), args).front();
 }
 
-IntegrationResult impulse::computeIntegrationStep(OpBuilder &builder,
-                                                  Location loc,
-                                                  const IntegratorState &leaf,
-                                                  Value rng, Value direction,
+/// Emits the potential U(q) = -log p(qConstrained) - log|det J(q)| and
+/// advances `rng` as emitModelLogDensity does.
+static Value emitPotential(OpBuilder &builder, Location loc, Value q,
+                           Value qConstrained, Value &rng,
+                           const HMCContext &ctx) {
+  Value logDensity = emitModelLogDensity(builder, loc, qConstrained, rng, ctx);
+  Value negLogDensity = arith::NegFOp::create(builder, loc, logDensity);
+  Value logAbsDetJacobian =
+      constrainPositionLogAbsDetJacobian(builder, loc, q, ctx.supports);
+  return arith::SubFOp::create(builder, loc, negLogDensity, logAbsDetJacobian);
+}
+
+/// Whether the potential calls the logpdf symbol, which takes the position
+/// flattened to `tensor<N>`.
+static bool usesLogpdfSymbol(const HMCContext &ctx) {
+  return ctx.hasCustomLogpdf() && !ctx.hasLogpdfRegion();
+}
+
+/// Reshapes a `1xN` position to the `tensor<N>` argument of the logpdf symbol.
+static Value flattenPosition(OpBuilder &builder, Location loc, Value position,
+                             const HMCContext &ctx) {
+  auto flatType = RankedTensorType::get({ctx.positionSize}, ctx.elementType);
+  return impulse::ReshapeOp::create(builder, loc, flatType, position);
+}
+
+/// Emits the gradient region of the potential at `autodiffPosition`, which is
+/// flat when the potential calls the logpdf symbol, seeded with `gradSeed`.
+/// The returned gradient has the position type.
+static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
+                                            Value autodiffPosition,
+                                            Value gradSeed, Value rng,
+                                            const HMCContext &ctx) {
+  bool useSymbol = usesLogpdfSymbol(ctx);
+  ValueAndGradient potential = emitGradientRegion(
+      builder, loc, autodiffPosition, gradSeed, rng, ctx.autodiffAttrs,
+      [&](ValueRange args, Value &bodyRng) -> Value {
+        Value qArg = args.front();
+        if (useSymbol) {
+          Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
+          // TODO(#2695): handle hybrid case
+          return arith::NegFOp::create(builder, loc, logDensity);
+        }
+        // `supports` is empty in logpdf mode; that logpdf has its own
+        // Jacobians.
+        Value qConstrained =
+            constrainPosition(builder, loc, qArg, ctx.supports);
+        return emitPotential(builder, loc, qArg, qConstrained, bodyRng, ctx);
+      });
+
+  Value grad = potential.grads.front();
+  if (useSymbol)
+    grad =
+        impulse::ReshapeOp::create(builder, loc, ctx.getPositionType(), grad);
+  return {potential.value, grad, rng};
+}
+
+/// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
+static GradientResult computePotentialAndGradient(OpBuilder &builder,
+                                                  Location loc, Value position,
+                                                  Value rng,
                                                   const HMCContext &ctx) {
+  Value gradSeed = emitSplatConstant(builder, loc, ctx.getScalarType(), 1.0);
+  Value autodiffPosition = usesLogpdfSymbol(ctx)
+                               ? flattenPosition(builder, loc, position, ctx)
+                               : position;
+  return emitPotentialGradient(builder, loc, autodiffPosition, gradSeed, rng,
+                               ctx);
+}
+
+/// Computes a single leapfrog integration step.
+/// Specifically:
+///   - `p_half = p - (eps/2) * grad`
+///   - `q_new = q + eps * M^-1 * p_half`
+///   - `grad_new = dU/dq(q_new)`
+///   - `p_new = p_half - (eps/2) * grad_new`
+static IntegrationResult computeIntegrationStep(OpBuilder &builder,
+                                                Location loc,
+                                                const IntegratorState &leaf,
+                                                Value rng, Value direction,
+                                                const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
 
   auto negStepSize = arith::NegFOp::create(builder, loc, ctx.stepSize);
   Value signedStepSize = impulse::SelectOp::create(
       builder, loc, scalarType, direction, ctx.stepSize, negStepSize);
 
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
 
-  ArrayRef<int64_t> shape = positionType.getShape();
-  auto stepSizeBroadcast =
-      BroadcastOp::create(builder, loc, positionType, signedStepSize,
-                          builder.getDenseI64ArrayAttr(shape));
+  Value stepSizeBroadcast =
+      emitBroadcastScalar(builder, loc, signedStepSize, positionType);
   auto halfStep =
       arith::MulFOp::create(builder, loc, halfConst, signedStepSize);
-  auto halfStepBroadcast =
-      BroadcastOp::create(builder, loc, positionType, halfStep,
-                          builder.getDenseI64ArrayAttr(shape));
+  Value halfStepBroadcast =
+      emitBroadcastScalar(builder, loc, halfStep, positionType);
 
   // 1. Half step momentum: p_half = p - 0.5 * eps * grad
   auto deltaP1 =
@@ -509,21 +501,19 @@ IntegrationResult impulse::computeIntegrationStep(OpBuilder &builder,
       arith::MulFOp::create(builder, loc, halfStepBroadcast, gradResult.grad);
   Value pNew = arith::SubFOp::create(builder, loc, pHalf, deltaP2);
 
-  return {qNew, pNew, gradResult.grad, gradResult.U, gradResult.rng};
+  return {qNew, pNew, gradResult.grad, gradResult.potentialEnergy,
+          gradResult.rng};
 }
 
-Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
-                            Value pRight, Value pSum, const NUTSContext &ctx) {
+/// U-turn termination criterion.
+/// Returns `true` if U-turn detected in the trajectory.
+static Value checkTurning(OpBuilder &builder, Location loc, Value pLeft,
+                          Value pRight, Value pSum, const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
 
   Value vLeft =
       applyInverseMassMatrix(builder, loc, ctx.invMass, pLeft, positionType);
@@ -531,25 +521,22 @@ Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
       applyInverseMassMatrix(builder, loc, ctx.invMass, pRight, positionType);
 
   // p_sum_centered = p_sum - (p_left + p_right) / 2
-  auto halfBroadcast = BroadcastOp::create(
-      builder, loc, positionType, halfConst,
-      builder.getDenseI64ArrayAttr(positionType.getShape()));
+  Value halfBroadcast =
+      emitBroadcastScalar(builder, loc, halfConst, positionType);
 
   auto pLeftPlusPRight = arith::AddFOp::create(builder, loc, pLeft, pRight);
   auto halfSum =
       arith::MulFOp::create(builder, loc, halfBroadcast, pLeftPlusPRight);
   Value pSumCentered = arith::SubFOp::create(builder, loc, pSum, halfSum);
 
-  auto leftAngle = impulse::DotOp::create(
-      builder, loc, scalarType, vLeft, pSumCentered,
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({0, 1}),
-      builder.getDenseI64ArrayAttr({0, 1}));
-  auto rightAngle = impulse::DotOp::create(
-      builder, loc, scalarType, vRight, pSumCentered,
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({0, 1}),
-      builder.getDenseI64ArrayAttr({0, 1}));
+  auto leftAngle =
+      impulse::DotOp::create(builder, loc, scalarType, vLeft, pSumCentered,
+                             builder.getDenseI64ArrayAttr({0, 1}),
+                             builder.getDenseI64ArrayAttr({0, 1}));
+  auto rightAngle =
+      impulse::DotOp::create(builder, loc, scalarType, vRight, pSumCentered,
+                             builder.getDenseI64ArrayAttr({0, 1}),
+                             builder.getDenseI64ArrayAttr({0, 1}));
 
   // turning = (left_angle <= 0) OR (right_angle <= 0)
   auto leftNeg = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
@@ -560,27 +547,27 @@ Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
   return arith::OrIOp::create(builder, loc, leftNeg, rightNeg);
 }
 
-Value impulse::computeUniformTransitionProb(OpBuilder &builder, Location loc,
-                                            Value currentWeight,
-                                            Value newWeight) {
+/// Computes the uniform transition probability for subtree combination.
+/// Specifically: `sigmoid(new_weight - current_weight)`.
+static Value computeUniformTransitionProb(OpBuilder &builder, Location loc,
+                                          Value currentWeight,
+                                          Value newWeight) {
   Value weightDiff =
       arith::SubFOp::create(builder, loc, newWeight, currentWeight);
   return impulse::LogisticOp::create(builder, loc, weightDiff.getType(),
                                      weightDiff);
 }
 
-Value impulse::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
-                                           Value currentWeight, Value newWeight,
-                                           Value turning, Value diverging) {
+/// Computes the biased transition probability for main tree combination.
+/// Specifically: `min(1, exp(new_weight - current_weight))`, zeroed if
+/// turning or diverging.
+static Value computeBiasedTransitionProb(OpBuilder &builder, Location loc,
+                                         Value currentWeight, Value newWeight,
+                                         Value turning, Value diverging) {
   auto resultType = cast<RankedTensorType>(currentWeight.getType());
-  auto elemType = resultType.getElementType();
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, resultType,
-      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, resultType,
-      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, resultType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, resultType, 1.0);
 
   Value weightDiff =
       arith::SubFOp::create(builder, loc, newWeight, currentWeight);
@@ -593,39 +580,48 @@ Value impulse::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
                                  zeroConst, clippedProb);
 }
 
-NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
-                                    const NUTSTreeState &tree,
-                                    const NUTSTreeState &subTree,
-                                    Value direction, Value rng, bool biased,
-                                    const NUTSContext &ctx) {
+/// Combines a tree with a newly-built subtree during NUTS doubling process.
+///
+/// The `subtree` is merged into `tree` based on `direction`:
+///   - If going right (`direction` is true), then we keep `tree`'s left
+///   boundary, takes `subtree`'s right boundary
+///   - If going left (`direction` is false), then we take `subtree`'s left
+///   boundary, keeps `tree`'s right boundary
+///
+/// Proposal selection has two options:
+///   - Biased kernel (`biased` is true):
+///     `prob = min(1, exp(subtree.weight - tree.weight))`,
+///     zeroed if `turning` or `diverging`
+///   - Uniform kernel (`biased` is false):
+///     `prob = sigmoid(subtree.weight - tree.weight)`
+///
+/// Also checks the U-turn criterion on the combined momentum sum.
+static NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
+                                  const NUTSTreeState &tree,
+                                  const NUTSTreeState &subTree, Value direction,
+                                  Value rng, bool biased,
+                                  const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
   auto qLeft = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.q_left, subTree.q_left);
+                                         tree.qLeft, subTree.qLeft);
   auto pLeft = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.p_left, subTree.p_left);
+                                         tree.pLeft, subTree.pLeft);
   auto gradLeft = impulse::SelectOp::create(
-      builder, loc, positionType, direction, tree.grad_left, subTree.grad_left);
+      builder, loc, positionType, direction, tree.gradLeft, subTree.gradLeft);
   auto qRight = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                          subTree.q_right, tree.q_right);
+                                          subTree.qRight, tree.qRight);
   auto pRight = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                          subTree.p_right, tree.p_right);
-  auto gradRight =
-      impulse::SelectOp::create(builder, loc, positionType, direction,
-                                subTree.grad_right, tree.grad_right);
+                                          subTree.pRight, tree.pRight);
+  auto gradRight = impulse::SelectOp::create(
+      builder, loc, positionType, direction, subTree.gradRight, tree.gradRight);
 
-  auto combinedWeight = impulse::LogAddExpOp::create(
-      builder, loc, scalarType, tree.weight, subTree.weight);
+  auto combinedWeight =
+      impulse::emitLogAddExp(builder, loc, tree.weight, subTree.weight);
 
   // Compute transition probability
   Value transitionProb;
@@ -649,27 +645,26 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
   auto acceptNew = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, uniformSample, transitionProb);
 
-  auto qProposal =
-      impulse::SelectOp::create(builder, loc, positionType, acceptNew,
-                                subTree.q_proposal, tree.q_proposal);
+  auto qProposal = impulse::SelectOp::create(
+      builder, loc, positionType, acceptNew, subTree.qProposal, tree.qProposal);
   auto gradProposal =
       impulse::SelectOp::create(builder, loc, positionType, acceptNew,
-                                subTree.grad_proposal, tree.grad_proposal);
+                                subTree.gradProposal, tree.gradProposal);
   auto UProposal = impulse::SelectOp::create(
-      builder, loc, scalarType, acceptNew, subTree.U_proposal, tree.U_proposal);
+      builder, loc, scalarType, acceptNew, subTree.potentialEnergyProposal,
+      tree.potentialEnergyProposal);
   auto HProposal = impulse::SelectOp::create(
-      builder, loc, scalarType, acceptNew, subTree.H_proposal, tree.H_proposal);
+      builder, loc, scalarType, acceptNew, subTree.hamiltonianProposal,
+      tree.hamiltonianProposal);
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   auto combinedDepth = arith::AddIOp::create(builder, loc, tree.depth, oneI64);
 
   Value combinedTurning;
   if (biased) {
     auto turningCheck = checkTurning(
         builder, loc, pLeft, pRight,
-        arith::AddFOp::create(builder, loc, tree.p_sum, subTree.p_sum), ctx);
+        arith::AddFOp::create(builder, loc, tree.pSum, subTree.pSum), ctx);
     combinedTurning =
         arith::OrIOp::create(builder, loc, subTree.turning, turningCheck);
   } else {
@@ -678,38 +673,107 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
 
   auto combinedDiverging =
       arith::OrIOp::create(builder, loc, tree.diverging, subTree.diverging);
-  auto sumAcceptProbs = arith::AddFOp::create(
-      builder, loc, tree.sum_accept_probs, subTree.sum_accept_probs);
-  auto numProposals = arith::AddIOp::create(builder, loc, tree.num_proposals,
-                                            subTree.num_proposals);
-  auto pSum = arith::AddFOp::create(builder, loc, tree.p_sum, subTree.p_sum);
+  auto sumAcceptProbs = arith::AddFOp::create(builder, loc, tree.sumAcceptProbs,
+                                              subTree.sumAcceptProbs);
+  auto numProposals = arith::AddIOp::create(builder, loc, tree.numProposals,
+                                            subTree.numProposals);
+  auto pSum = arith::AddFOp::create(builder, loc, tree.pSum, subTree.pSum);
 
-  return {.q_left = qLeft,
-          .p_left = pLeft,
-          .grad_left = gradLeft,
-          .q_right = qRight,
-          .p_right = pRight,
-          .grad_right = gradRight,
-          .q_proposal = qProposal,
-          .grad_proposal = gradProposal,
-          .U_proposal = UProposal,
-          .H_proposal = HProposal,
+  return {.qLeft = qLeft,
+          .pLeft = pLeft,
+          .gradLeft = gradLeft,
+          .qRight = qRight,
+          .pRight = pRight,
+          .gradRight = gradRight,
+          .qProposal = qProposal,
+          .gradProposal = gradProposal,
+          .potentialEnergyProposal = UProposal,
+          .hamiltonianProposal = HProposal,
           .depth = combinedDepth,
           .weight = combinedWeight,
           .turning = combinedTurning,
           .diverging = combinedDiverging,
-          .sum_accept_probs = sumAcceptProbs,
-          .num_proposals = numProposals,
-          .p_sum = pSum,
+          .sumAcceptProbs = sumAcceptProbs,
+          .numProposals = numProposals,
+          .pSum = pSum,
           .rng = rngOut};
 }
 
-InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
-                                 const HMCContext &ctx, Value initialPosition,
-                                 bool debugDump) {
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
+/// Whether the site's support is not all of R, so that its values are mapped
+/// onto it.
+static bool isConstrainedSite(const SupportInfo &info) {
+  return info.support && info.support.getKind() != impulse::SupportKind::REAL;
+}
+
+/// Maps a `1xN` position site by site from constrained to unconstrained
+/// coordinates or back. Returns `position` itself when no site is constrained.
+static Value transformPosition(OpBuilder &builder, Location loc, Value position,
+                               ArrayRef<SupportInfo> supports,
+                               bool toUnconstrained) {
+  if (llvm::none_of(supports, isConstrainedSite))
+    return position;
+
+  auto inputType = cast<RankedTensorType>(position.getType());
+  Type elemType = inputType.getElementType();
+  int64_t inSize = inputType.getShape()[1];
+  int64_t outSize = 0;
+  for (const SupportInfo &info : supports)
+    outSize += toUnconstrained ? info.unconstrainedSize : info.constrainedSize;
+
+  auto positionType1D = RankedTensorType::get({inSize}, elemType);
+  Value position1D =
+      impulse::ReshapeOp::create(builder, loc, positionType1D, position);
+
+  SmallVector<Value> slices;
+  for (const SupportInfo &info : supports) {
+    int64_t offset =
+        toUnconstrained ? info.constrainedOffset : info.unconstrainedOffset;
+    int64_t size =
+        toUnconstrained ? info.constrainedSize : info.unconstrainedSize;
+    auto sliceType = RankedTensorType::get({size}, elemType);
+    Value slice =
+        impulse::SliceOp::create(builder, loc, sliceType, position1D,
+                                 builder.getDenseI64ArrayAttr({offset}),
+                                 builder.getDenseI64ArrayAttr({offset + size}),
+                                 builder.getDenseI64ArrayAttr({1}));
+    if (isConstrainedSite(info))
+      slice = toUnconstrained
+                  ? emitUnconstrain(builder, loc, info.support, slice)
+                  : emitConstrain(builder, loc, info.support, slice);
+    slices.push_back(slice);
+  }
+
+  Value result1D = slices.front();
+  if (slices.size() > 1) {
+    auto resultType1D = RankedTensorType::get({outSize}, elemType);
+    result1D = emitSplatConstant(builder, loc, resultType1D, 0.0);
+
+    // The slices tile [0, outSize) exactly, so the zero init is never read.
+    int64_t offset = 0;
+    for (Value slice : slices) {
+      Value resultIdx = emitI64ScalarConstant(builder, loc, offset);
+      result1D = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, resultType1D, result1D, slice, ValueRange{resultIdx});
+      offset += cast<RankedTensorType>(slice.getType()).getShape()[0];
+    }
+  }
+
+  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
+  return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
+}
+
+/// Transform an entire position vector from constrained to unconstrained space
+/// based on the support information.
+static Value unconstrainPosition(OpBuilder &builder, Location loc,
+                                 Value constrained,
+                                 ArrayRef<SupportInfo> supports) {
+  return transformPosition(builder, loc, constrained, supports,
+                           /*toUnconstrained=*/true);
+}
+
+ChainPoint impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
+                            const HMCContext &ctx, Value initialPosition) {
+  RankedTensorType scalarType = ctx.getScalarType();
 
   auto initSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
@@ -721,225 +785,114 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   Value q0;
   Value U0;
-
-  if (ctx.hasCustomLogpdf()) {
+  bool useSymbol = usesLogpdfSymbol(ctx);
+  if (useSymbol) {
     q0 = initialPosition;
-    auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-    auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Flat);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+    SmallVector<Value> callArgs{flattenPosition(builder, loc, q0, ctx)};
+    llvm::append_range(callArgs, ctx.fnInputs);
     auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
                                        TypeRange{scalarType}, callArgs);
     U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
   } else {
-    auto fullTraceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-
-    // 1. Extract initial position vector (constrained)
-    auto q0_constrained =
-        gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
-
-    // 2. Unconstrain to get position vector for HMC
-    q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
-
-    // 3. Compute initial potential energy: U0 = -weight + correction
-    Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
-                                                 ctx.originalTrace, ctx);
-
-    SmallVector<Value> generateInputsInit;
-    generateInputsInit.push_back(rngForAutodiff);
-    generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-    SmallVector<Type> generateResultTypesInit;
-    generateResultTypesInit.push_back(fullTraceType);
-    generateResultTypesInit.push_back(scalarType);
-    generateResultTypesInit.append(ctx.fnResultTypes.begin(),
-                                   ctx.fnResultTypes.end());
-
-    auto generateOpInit = impulse::GenerateOp::create(
-        builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
-        fullTraceInit, ctx.allAddresses, ctx.allAddresses,
-        builder.getStringAttr(""));
-
-    auto weight0 = generateOpInit.getWeight();
-    auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
-    auto jacobian0 =
-        computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
-    U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+    Value q0Constrained;
+    if (ctx.hasCustomLogpdf()) {
+      q0 = initialPosition;
+      q0Constrained = constrainPosition(builder, loc, q0, ctx.supports);
+    } else {
+      q0Constrained =
+          gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
+      q0 = unconstrainPosition(builder, loc, q0Constrained, ctx.supports);
+    }
+    Value rngForPotential = rngForAutodiff;
+    U0 = emitPotential(builder, loc, q0, q0Constrained, rngForPotential, ctx);
   }
 
-  // 4. Compute initial gradient at q0
-  bool isCustomLogpdf = ctx.hasCustomLogpdf();
-  auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-  Value autodiffQ0 = q0;
-  auto autodiffQ0Type = positionType;
-  auto autodiffGradType = positionType;
-  if (isCustomLogpdf) {
-    autodiffQ0 = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-    autodiffQ0Type = flatType;
-    autodiffGradType = flatType;
-  }
+  Value autodiffQ0 = useSymbol ? flattenPosition(builder, loc, q0, ctx) : q0;
+  Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
+  GradientResult gradient = emitPotentialGradient(
+      builder, loc, autodiffQ0, gradSeed, rngForAutodiff, ctx);
 
-  auto gradSeedInit = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  SmallVector<Value> autodiffInputs{autodiffQ0, gradSeedInit};
-  SmallVector<NamedAttribute> adInitAttrs{
-      builder.getNamedAttr(
-          "activity",
-          builder.getArrayAttr({enzyme::ActivityAttr::get(
-              builder.getContext(), enzyme::Activity::enzyme_active)})),
-      builder.getNamedAttr(
-          "ret_activity",
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)})),
-  };
-  if (ctx.autodiffAttrs) {
-    for (auto attr : ctx.autodiffAttrs)
-      adInitAttrs.push_back(attr);
-  }
-  auto autodiffInit = enzyme::AutoDiffRegionOp::create(
-      builder, loc,
-      TypeRange{scalarType, rngForAutodiff.getType(), autodiffGradType},
-      autodiffInputs, adInitAttrs);
-
-  Block *autodiffInitBlock = builder.createBlock(&autodiffInit.getBody());
-  autodiffInitBlock->addArgument(autodiffQ0Type, loc);
-
-  builder.setInsertionPointToStart(autodiffInitBlock);
-  auto q0Arg = autodiffInitBlock->getArgument(0);
-
-  if (isCustomLogpdf) {
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Arg);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOpInner = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                            TypeRange{scalarType}, callArgs);
-    auto U0_init =
-        arith::NegFOp::create(builder, loc, callOpInner.getResult(0));
-    enzyme::YieldOp::create(builder, loc, {U0_init, rngForAutodiff});
-  } else {
-    auto fullTraceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-    auto q0Arg_constrained =
-        constrainPosition(builder, loc, q0Arg, ctx.supports);
-    Value fullTraceInner = scatterPositionToTrace(
-        builder, loc, q0Arg_constrained, ctx.originalTrace, ctx);
-
-    SmallVector<Value> generateInputsInner;
-    generateInputsInner.push_back(rngForAutodiff);
-    generateInputsInner.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-    SmallVector<Type> generateResultTypesInner;
-    generateResultTypesInner.push_back(fullTraceType);
-    generateResultTypesInner.push_back(scalarType);
-    generateResultTypesInner.append(ctx.fnResultTypes.begin(),
-                                    ctx.fnResultTypes.end());
-
-    auto generateOpInner = impulse::GenerateOp::create(
-        builder, loc, generateResultTypesInner, ctx.fn, generateInputsInner,
-        fullTraceInner, ctx.allAddresses, ctx.allAddresses,
-        builder.getStringAttr(""));
-
-    auto negWeightInit =
-        arith::NegFOp::create(builder, loc, generateOpInner.getWeight());
-    auto jacobianInit =
-        computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
-    auto U0_init =
-        arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
-
-    SmallVector<Value> yieldValues{U0_init, generateOpInner.getResult(2)};
-    enzyme::YieldOp::create(builder, loc, yieldValues);
-  }
-  builder.setInsertionPointAfter(autodiffInit);
-
-  Value grad0 = autodiffInit.getResult(2);
-  if (isCustomLogpdf) {
-    grad0 = impulse::ReshapeOp::create(builder, loc, positionType, grad0);
-  }
-
-  return {q0, U0, grad0, rngForSampleKernel};
+  return {q0, gradient.grad, U0, rngForSampleKernel};
 }
 
-MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
-                                    Value grad, Value U, Value rng,
-                                    const HMCContext &ctx, bool debugDump) {
+namespace {
+/// The RNG state, momentum and Hamiltonian of the trajectory of one MCMC
+/// transition.
+struct TransitionStart {
+  Value rngKernel;
+  Value momentum;
+  Value hamiltonian;
+};
+} // namespace
+
+/// Splits `rng`, samples a fresh momentum and adds its kinetic energy to
+/// `potentialEnergy`. Advances `rng` to the key of the next transition;
+/// `rngKernel` seeds the trajectory of this one.
+static TransitionStart startTransition(OpBuilder &builder, Location loc,
+                                       Value potentialEnergy, Value &rng,
+                                       const HMCContext &ctx) {
+  RankedTensorType positionType = ctx.getPositionType();
+  auto split = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
+      rng);
+  Value rngMomentum = split.getResult(1);
+  // The logpdf mode draws the momentum from the unsplit key.
+  if (!ctx.hasCustomLogpdf()) {
+    auto momentumSplit = impulse::RandomSplitOp::create(
+        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
+    rngMomentum = momentumSplit.getResult(0);
+  }
+  Value momentum =
+      sampleMomentum(builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt,
+                     positionType, ctx.debugDump);
+  Value kineticEnergy =
+      computeKineticEnergy(builder, loc, momentum, ctx.invMass, positionType);
+  Value hamiltonian =
+      arith::AddFOp::create(builder, loc, potentialEnergy, kineticEnergy);
+  rng = split.getResult(0);
+  return {split.getResult(2), momentum, hamiltonian};
+}
+
+MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc,
+                                    const ChainPoint &start,
+                                    const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  // 0. Compute num_steps and adjusted step_size
-  // num_steps = ceil(trajectory_length / step_size)
-  // adjusted_step_size = trajectory_length / num_steps
-  auto trajDivStep =
-      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
-  auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
-  auto numSteps =
-      arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
-  auto adjustedStepSize =
-      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+  Value numSteps, adjustedStepSize;
+  if (ctx.numSteps > 0) {
+    numSteps = emitI64ScalarConstant(builder, loc, ctx.numSteps);
+    adjustedStepSize = ctx.stepSize;
+  } else {
+    auto trajDivStep =
+        arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
+    auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
+    numSteps =
+        arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
+    adjustedStepSize =
+        arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+  }
 
   auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 
-  // 1. Split RNG: [rngNext, rngMomentum, rngTransition]
-  auto sampleKernelSplit = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
-      rng);
-  auto rngNext = sampleKernelSplit.getResult(0);
-  auto rngMomentum = sampleKernelSplit.getResult(1);
-  auto rngTransition = sampleKernelSplit.getResult(2);
+  Value rngNext = start.rng;
+  auto [rngTransition, p0, initialHamiltonian] =
+      startTransition(builder, loc, start.potentialEnergy, rngNext, ctx);
 
-  // 2. Sample fresh momentum p ~ N(0, M)
-  Value rngForMomentum = rngMomentum;
-  if (!ctx.hasCustomLogpdf()) {
-    auto momSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
-    rngForMomentum = momSplit.getResult(0);
-  }
-  auto [p0, rngAfterMomentum] =
-      sampleMomentum(builder, loc, rngForMomentum, ctx.invMass,
-                     ctx.massMatrixSqrt, positionType, debugDump);
+  Value direction = emitI1ScalarConstant(builder, loc, true);
 
-  // 3. Compute K0 = 0.5 * p^T * M^-1 * p
-  auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
+  Value c0 = emitI64ScalarConstant(builder, loc, 0);
+  Value c1 = emitI64ScalarConstant(builder, loc, 1);
 
-  // 4. Compute H0 = U + K0
-  auto H0 = arith::AddFOp::create(builder, loc, U, K0);
-
-  // 5. Leapfrog integration loop
-  auto direction = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-
-  auto c0 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto c1 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-
-  // Loop carries: [q, p, grad, U, rng]
   SmallVector<Type> loopResultTypes = {positionType, positionType, positionType,
                                        scalarType, rngTransition.getType()};
   auto forLoopOp =
       impulse::ForOp::create(builder, loc, loopResultTypes, c0, numSteps, c1,
-                             ValueRange{q, p0, grad, U, rngTransition});
+                             ValueRange{start.q, p0, start.grad,
+                                        start.potentialEnergy, rngTransition});
 
-  Block *loopBody = builder.createBlock(&forLoopOp.getRegion());
-  loopBody->addArgument(i64TensorType, loc);           // iv
-  loopBody->addArgument(positionType, loc);            // q
-  loopBody->addArgument(positionType, loc);            // p
-  loopBody->addArgument(positionType, loc);            // gradient
-  loopBody->addArgument(scalarType, loc);              // U
-  loopBody->addArgument(rngTransition.getType(), loc); // rng
-
-  builder.setInsertionPointToStart(loopBody);
+  Block *loopBody = createForBody(builder, forLoopOp);
   auto qLoop = loopBody->getArgument(1);
   auto pLoop = loopBody->getArgument(2);
   auto gradLoop = loopBody->getArgument(3);
@@ -949,9 +902,9 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto step = computeIntegrationStep(builder, loc, leaf, rngLoop, direction,
                                      adjustedCtx);
 
-  // Yield [q, p, grad, U, rng]
   impulse::YieldOp::create(
-      builder, loc, ValueRange{step.q, step.p, step.grad, step.U, step.rng});
+      builder, loc,
+      ValueRange{step.q, step.p, step.grad, step.potentialEnergy, step.rng});
 
   builder.setInsertionPointAfter(forLoopOp);
   auto qProposal = forLoopOp.getResult(0);
@@ -960,25 +913,17 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto UProposal = forLoopOp.getResult(3);
   auto rngAfterLeapfrog = forLoopOp.getResult(4);
 
-  // 6. Compute K1, H1 for proposal
   auto K1 =
       computeKineticEnergy(builder, loc, pProposal, ctx.invMass, positionType);
   auto H1 = arith::AddFOp::create(builder, loc, UProposal, K1);
 
-  // 7. MH accept/reject
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
-  // α = min(1, exp(H0 - H1))
-  auto dH = arith::SubFOp::create(builder, loc, H0, H1);
+  auto dH = arith::SubFOp::create(builder, loc, initialHamiltonian, H1);
   auto expDH = math::ExpOp::create(builder, loc, dH);
   auto accProb = arith::MinimumFOp::create(builder, loc, oneConst, expDH);
 
-  // u ~ Uniform(0, 1)
   auto randomOp = impulse::RandomOp::create(
       builder, loc, TypeRange{rngAfterLeapfrog.getType(), scalarType},
       rngAfterLeapfrog, zeroConst, oneConst,
@@ -986,142 +931,37 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                         impulse::RngDistribution::UNIFORM));
   auto randUniform = randomOp.getResult();
 
-  // accepted = u < α
   auto acceptedTensor = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
-  // HMC doesn't collect divergence information so set to false
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
+  // HMC does not detect divergent trajectories.
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
 
-  // 8. Select between original and proposal
   auto qFinal = impulse::SelectOp::create(builder, loc, positionType,
-                                          acceptedTensor, qProposal, q);
+                                          acceptedTensor, qProposal, start.q);
   auto gradFinal = impulse::SelectOp::create(
-      builder, loc, positionType, acceptedTensor, gradProposal, grad);
-  auto UFinal = impulse::SelectOp::create(builder, loc, scalarType,
-                                          acceptedTensor, UProposal, U);
+      builder, loc, positionType, acceptedTensor, gradProposal, start.grad);
+  auto potentialEnergyFinal =
+      impulse::SelectOp::create(builder, loc, scalarType, acceptedTensor,
+                                UProposal, start.potentialEnergy);
 
-  return {qFinal,     gradFinal, UFinal, acceptedTensor,
-          falseConst, accProb,   rngNext};
+  return {{qFinal, gradFinal, potentialEnergyFinal, rngNext},
+          acceptedTensor,
+          falseConst,
+          accProb};
 }
 
-MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
-                                     Value grad, Value U, Value rng,
-                                     const NUTSContext &ctx, bool debugDump) {
+/// Builds a base tree (leaf node) by taking one leapfrog step.
+static NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
+                                   const IntegratorState &leaf, Value rng,
+                                   Value direction, const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  // 1. Split RNG: [rngNext, rngMomentum, rngTree]
-  auto sampleKernelSplit = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
-      rng);
-  auto rngNext = sampleKernelSplit.getResult(0);
-  auto rngMomentum = sampleKernelSplit.getResult(1);
-  auto rngTree = sampleKernelSplit.getResult(2);
-
-  // 2. Sample fresh momentum p ~ N(0, M)
-  Value rngForMomentum = rngMomentum;
-  if (!ctx.hasCustomLogpdf()) {
-    auto momSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
-    rngForMomentum = momSplit.getResult(0);
-  }
-  auto [p0, rngAfterMomentum] =
-      sampleMomentum(builder, loc, rngForMomentum, ctx.invMass,
-                     ctx.massMatrixSqrt, positionType, debugDump);
-
-  // 3. Compute K0 = 0.5 * p^T * M^-1 * p
-  auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
-
-  // 4. Compute H0 = U + K0
-  auto H0 = arith::AddFOp::create(builder, loc, U, K0);
-
-  // 5. Initialize NUTS tree state
-  auto iterCtx = ctx.withH0(H0);
-
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-
-  NUTSTreeState initialTree = {.q_left = q,
-                               .p_left = p0,
-                               .grad_left = grad,
-                               .q_right = q,
-                               .p_right = p0,
-                               .grad_right = grad,
-                               .q_proposal = q,
-                               .grad_proposal = grad,
-                               .U_proposal = U,
-                               .H_proposal = H0,
-                               .depth = zeroI64,
-                               .weight = zeroConst,
-                               .turning = falseConst,
-                               .diverging = falseConst,
-                               .sum_accept_probs = zeroConst,
-                               .num_proposals = zeroI64,
-                               .p_sum = p0,
-                               .rng = rngTree};
-
-  // 6. Build NUTS tree
-  auto finalTree = buildTree(builder, loc, initialTree, iterCtx, debugDump);
-
-  // 7. NUTS always accepts the proposal (implicit acceptance in the tree)
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-
-  // 8. Compute mean acceptance probability for step size adaptation
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto numProposalsClamped =
-      arith::MaxSIOp::create(builder, loc, finalTree.num_proposals, oneI64);
-  auto numProposalsFloat =
-      arith::SIToFPOp::create(builder, loc, scalarType, numProposalsClamped);
-  auto meanAcceptProb = arith::DivFOp::create(
-      builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
-
-  return {finalTree.q_proposal,
-          finalTree.grad_proposal,
-          finalTree.U_proposal,
-          trueConst,
-          finalTree.diverging,
-          meanAcceptProb,
-          rngNext};
-}
-
-NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
-                                     const IntegratorState &leaf, Value rng,
-                                     Value direction, const NUTSContext &ctx) {
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
-
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
 
   IntegrationResult leap =
       computeIntegrationStep(builder, loc, leaf, rng, direction, ctx);
@@ -1129,22 +969,20 @@ NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
   auto qNew = leap.q;
   auto pNew = leap.p;
   auto gradNew = leap.grad;
-  auto UNew = leap.U;
+  auto potentialEnergyNew = leap.potentialEnergy;
   auto rngOut = leap.rng;
 
   auto KNew =
       computeKineticEnergy(builder, loc, pNew, ctx.invMass, positionType);
-  auto HNew = arith::AddFOp::create(builder, loc, UNew, KNew);
-  Value deltaH = arith::SubFOp::create(builder, loc, HNew, ctx.H0);
+  auto hamiltonianNew =
+      arith::AddFOp::create(builder, loc, potentialEnergyNew, KNew);
+  Value deltaH = arith::SubFOp::create(builder, loc, hamiltonianNew, ctx.H0);
 
   // NaN check
   auto isNan = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::UNE,
                                      deltaH, deltaH);
-  auto infConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(
-          scalarType, builder.getFloatAttr(
-                          elemType, std::numeric_limits<double>::infinity())));
+  Value infConst = emitSplatConstant(builder, loc, scalarType,
+                                     std::numeric_limits<double>::infinity());
   deltaH = arith::SelectOp::create(builder, loc, scalarType, isNan, infConst,
                                    deltaH);
 
@@ -1159,355 +997,62 @@ NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
   auto acceptProb =
       arith::MinimumFOp::create(builder, loc, oneConst, expNegDelta);
 
-  return {.q_left = qNew,
-          .p_left = pNew,
-          .grad_left = gradNew,
-          .q_right = qNew,
-          .p_right = pNew,
-          .grad_right = gradNew,
-          .q_proposal = qNew,
-          .grad_proposal = gradNew,
-          .U_proposal = UNew,
-          .H_proposal = HNew,
+  return {.qLeft = qNew,
+          .pLeft = pNew,
+          .gradLeft = gradNew,
+          .qRight = qNew,
+          .pRight = pNew,
+          .gradRight = gradNew,
+          .qProposal = qNew,
+          .gradProposal = gradNew,
+          .potentialEnergyProposal = potentialEnergyNew,
+          .hamiltonianProposal = hamiltonianNew,
           .depth = zeroI64,
           .weight = treeWeight,
           .turning = falseConst,
           .diverging = diverging,
-          .sum_accept_probs = acceptProb,
-          .num_proposals = oneI64,
-          .p_sum = pNew,
+          .sumAcceptProbs = acceptProb,
+          .numProposals = oneI64,
+          .pSum = pNew,
           .rng = rngOut};
 }
 
-IntegratorState impulse::getLeafFromTree(OpBuilder &builder, Location loc,
-                                         const NUTSTreeState &tree,
-                                         Value direction,
-                                         const NUTSContext &ctx) {
+/// Extracts an appropriate leaf based on direction.
+static IntegratorState getLeafFromTree(OpBuilder &builder, Location loc,
+                                       const NUTSTreeState &tree,
+                                       Value direction,
+                                       const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
 
   auto leafQ = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.q_right, tree.q_left);
+                                         tree.qRight, tree.qLeft);
   auto leafP = impulse::SelectOp::create(builder, loc, positionType, direction,
-                                         tree.p_right, tree.p_left);
+                                         tree.pRight, tree.pLeft);
   auto leafGrad = impulse::SelectOp::create(
-      builder, loc, positionType, direction, tree.grad_right, tree.grad_left);
+      builder, loc, positionType, direction, tree.gradRight, tree.gradLeft);
   return {leafQ, leafP, leafGrad};
 }
 
-SubtreeBuildResult
-impulse::buildIterativeSubtree(OpBuilder &builder, Location loc,
-                               const NUTSTreeState &initialTree,
-                               Value direction, Value pCkpts, Value pSumCkpts,
-                               const NUTSContext &ctx, bool debugDump) {
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+/// Computes checkpoint indices from leaf index for iterative turning check.
+static std::pair<Value, Value>
+leafIdxToCheckpointIdxs(OpBuilder &builder, Location loc, Value leafIdx) {
 
-  // 2 ^ (initialTree.depth)
-  auto maxNumProposals =
-      arith::ShLIOp::create(builder, loc, oneI64, initialTree.depth);
-
-  SmallVector<Type> whileTypes = initialTree.getTypes();
-  whileTypes.push_back(pCkptsType);
-  whileTypes.push_back(pCkptsType);
-  whileTypes.push_back(i64TensorType);
-
-  SmallVector<Value> whileInitVals = initialTree.toValues();
-  whileInitVals[15] = zeroI64; // zero `num_proposals`
-  whileInitVals.push_back(pCkpts);
-  whileInitVals.push_back(pSumCkpts);
-  whileInitVals.push_back(zeroI64);
-
-  auto whileOp =
-      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
-
-  // Check: num_proposals < max_num_proposals && !turning && !diverging
-  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
-  for (auto type : whileTypes)
-    condBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(condBlock);
-  SmallVector<Value> condTreeArgs(condBlock->getArguments().begin(),
-                                  condBlock->getArguments().begin() + 18);
-  NUTSTreeState condTree = NUTSTreeState::fromValues(condTreeArgs);
-
-  auto numProposalsCheck =
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
-                            condTree.num_proposals, maxNumProposals);
-  auto notTurning =
-      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
-  auto notDiverging =
-      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
-  auto continueCond = arith::AndIOp::create(
-      builder, loc,
-      arith::AndIOp::create(builder, loc, numProposalsCheck, notTurning),
-      notDiverging);
-
-  // Yield continue condition
-  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
-
-  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
-  for (auto type : whileTypes)
-    bodyBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(bodyBlock);
-
-  SmallVector<Value> bodyTreeArgs(bodyBlock->getArguments().begin(),
-                                  bodyBlock->getArguments().begin() + 18);
-  NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyTreeArgs);
-  auto bodyPCkpts = bodyBlock->getArgument(18);
-  auto bodyPSumCkpts = bodyBlock->getArgument(19);
-  auto bodyLeafIdx = bodyBlock->getArgument(20);
-
-  // Extract leaf based on direction
-  IntegratorState leaf =
-      getLeafFromTree(builder, loc, bodyTree, direction, ctx);
-
-  auto rngSplit2 = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType()},
-      bodyTree.rng);
-  auto rngNext = rngSplit2.getResult(0);
-  auto rngCombine = rngSplit2.getResult(1);
-
-  // Build base tree
-  NUTSTreeState newLeaf =
-      buildBaseTree(builder, loc, leaf, rngNext, direction, ctx);
-
-  // First leaf check
-  auto isFirstLeaf = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::eq, bodyTree.num_proposals, zeroI64);
-
-  SmallVector<Type> treeTypes = newLeaf.getTypes();
-  auto ifOp = impulse::IfOp::create(builder, loc, treeTypes, isFirstLeaf);
-  {
-    Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
-    builder.setInsertionPointToStart(trueBranch);
-    impulse::YieldOp::create(builder, loc, newLeaf.toValues());
-  }
-  {
-    Block *falseBranch = builder.createBlock(&ifOp.getFalseBranch());
-    builder.setInsertionPointToStart(falseBranch);
-    NUTSTreeState combinedTree =
-        combineTrees(builder, loc, bodyTree, newLeaf, direction, rngCombine,
-                     /*biased=*/false, ctx);
-    impulse::YieldOp::create(builder, loc, combinedTree.toValues());
-  }
-
-  builder.setInsertionPointAfter(ifOp);
-  NUTSTreeState updatedTree = NUTSTreeState::fromValues(
-      SmallVector<Value>(ifOp.getResults().begin(), ifOp.getResults().end()));
-  updatedTree.rng = rngNext;
-
-  // Update and check iterative turning
-  auto [ckptIdxMin, ckptIdxMax] =
-      leafIdxToCheckpointIdxs(builder, loc, bodyLeafIdx);
-  auto [updatedPCkpts, updatedPSumCkpts] = updateCheckpoints(
-      builder, loc, bodyLeafIdx, ckptIdxMax, newLeaf.p_right, updatedTree.p_sum,
-      bodyPCkpts, bodyPSumCkpts, ctx, debugDump);
-  auto iterativeTurning = checkIterativeTurning(
-      builder, loc, newLeaf.p_right, updatedTree.p_sum, updatedPCkpts,
-      updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx, debugDump);
-
-  updatedTree.turning =
-      impulse::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
-                                newLeaf.turning, iterativeTurning);
-
-  auto nextLeafIdx = arith::AddIOp::create(builder, loc, bodyLeafIdx, oneI64);
-
-  SmallVector<Value> yieldVals = updatedTree.toValues();
-  yieldVals.push_back(updatedPCkpts);
-  yieldVals.push_back(updatedPSumCkpts);
-  yieldVals.push_back(nextLeafIdx);
-  impulse::YieldOp::create(builder, loc, yieldVals);
-
-  builder.setInsertionPointAfter(whileOp);
-
-  SmallVector<Value> resultTreeArgs(whileOp.getResults().begin(),
-                                    whileOp.getResults().begin() + 18);
-  NUTSTreeState resultTree = NUTSTreeState::fromValues(resultTreeArgs);
-  auto resultPCkpts = whileOp.getResult(18);
-  auto resultPSumCkpts = whileOp.getResult(19);
-
-  // `combineTrees` increments depth at each leaf building step; we need to
-  // restore to target depth here
-  resultTree.depth = initialTree.depth;
-
-  return {resultTree, resultPCkpts, resultPSumCkpts};
-}
-
-SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
-                                       const NUTSTreeState &tree,
-                                       Value direction, Value pCkpts,
-                                       Value pSumCkpts, const NUTSContext &ctx,
-                                       bool debugDump) {
-  auto rngSplit2 = impulse::RandomSplitOp::create(
-      builder, loc, TypeRange{tree.rng.getType(), tree.rng.getType()},
-      tree.rng);
-  auto rngSubtree = rngSplit2.getResult(0);
-  auto rngTransition = rngSplit2.getResult(1);
-
-  NUTSTreeState subTreeInit = tree;
-  subTreeInit.rng = rngSubtree;
-  auto subtreeResult = buildIterativeSubtree(
-      builder, loc, subTreeInit, direction, pCkpts, pSumCkpts, ctx, debugDump);
-
-  // Tree combine using *biased* transition kernel
-  NUTSTreeState combinedTree =
-      combineTrees(builder, loc, tree, subtreeResult.tree, direction,
-                   rngTransition, /*biased=*/true, ctx);
-
-  return {combinedTree, subtreeResult.pCkpts, subtreeResult.pSumCkpts};
-}
-
-NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
-                                 const NUTSTreeState &initialTree,
-                                 const NUTSContext &ctx, bool debugDump) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto F64TensorType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
-
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, F64TensorType,
-      DenseElementsAttr::get(F64TensorType, builder.getF64FloatAttr(0.5)));
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, F64TensorType,
-      DenseElementsAttr::get(F64TensorType, builder.getF64FloatAttr(0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, F64TensorType,
-      DenseElementsAttr::get(F64TensorType, builder.getF64FloatAttr(1.0)));
-
-  auto maxTreeDepth = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(ctx.maxTreeDepth)));
-
-  auto checkpointType =
-      RankedTensorType::get({ctx.maxTreeDepth, ctx.positionSize}, elemType);
-
-  SmallVector<Type> whileTypes = initialTree.getTypes();
-  SmallVector<Value> whileInitVals = initialTree.toValues();
-
-  auto whileOp =
-      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
-
-  // Check: (depth < maxTreeDepth) && !turning && !diverging
-  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
-  for (auto type : whileTypes)
-    condBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(condBlock);
-
-  SmallVector<Value> condArgs(condBlock->getArguments().begin(),
-                              condBlock->getArguments().end());
-  NUTSTreeState condTree = NUTSTreeState::fromValues(condArgs);
-
-  auto depthCheck = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::slt, condTree.depth, maxTreeDepth);
-  auto notTurning =
-      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
-  auto notDiverging =
-      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
-
-  // Yield continue condition
-  auto continueCond = arith::AndIOp::create(
-      builder, loc, arith::AndIOp::create(builder, loc, depthCheck, notTurning),
-      notDiverging);
-
-  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
-
-  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
-  for (auto type : whileTypes)
-    bodyBlock->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(bodyBlock);
-
-  SmallVector<Value> bodyArgs(bodyBlock->getArguments().begin(),
-                              bodyBlock->getArguments().end());
-  NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyArgs);
-
-  // Create fresh checkpoint tensors
-  auto zeroCkpts = arith::ConstantOp::create(
-      builder, loc, checkpointType,
-      DenseElementsAttr::get(checkpointType, builder.getF64FloatAttr(0.0)));
-  Value bodyPCkpts = zeroCkpts;
-  Value bodyPSumCkpts = zeroCkpts;
-
-  auto rngSplit3 = impulse::RandomSplitOp::create(
-      builder, loc,
-      TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType(),
-                bodyTree.rng.getType()},
-      bodyTree.rng);
-  auto rngNext = rngSplit3.getResult(0);
-  auto rngDir = rngSplit3.getResult(1);
-  auto rngDbl = rngSplit3.getResult(2);
-
-  auto directionRandom = impulse::RandomOp::create(
-      builder, loc, TypeRange{rngDir.getType(), F64TensorType}, rngDir,
-      zeroConst, oneConst,
-      impulse::RngDistributionAttr::get(builder.getContext(),
-                                        impulse::RngDistribution::UNIFORM));
-  auto direction =
-      arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLT,
-                            directionRandom.getResult(), halfConst);
-
-  // Double the tree
-  NUTSTreeState treeToDouble = bodyTree;
-  treeToDouble.rng = rngDbl;
-  auto doubleResult = doubleTree(builder, loc, treeToDouble, direction,
-                                 bodyPCkpts, bodyPSumCkpts, ctx, debugDump);
-
-  NUTSTreeState treeToYield = doubleResult.tree;
-  treeToYield.rng = rngNext;
-  impulse::YieldOp::create(builder, loc, treeToYield.toValues());
-
-  builder.setInsertionPointAfter(whileOp);
-
-  SmallVector<Value> results(whileOp.getResults().begin(),
-                             whileOp.getResults().end());
-  return NUTSTreeState::fromValues(results);
-}
-
-std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
-                                                         Location loc,
-                                                         Value leafIdx) {
-  auto i64TensorType = cast<RankedTensorType>(leafIdx.getType());
-
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneConst = emitI64ScalarConstant(builder, loc, 1);
 
   // idx_max = popcount(leafIdx >> 1)
   auto shiftedIdx = arith::ShRUIOp::create(builder, loc, leafIdx, oneConst);
-  auto idxMax =
-      impulse::PopcountOp::create(builder, loc, i64TensorType, shiftedIdx);
+  auto idxMax = math::CtPopOp::create(builder, loc, shiftedIdx);
 
   // num_subtrees = popcount((~leafIdx & (leafIdx + 1)) - 1)
   auto leafIdxPlusOne = arith::AddIOp::create(builder, loc, leafIdx, oneConst);
 
-  auto minusOneConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(-1)));
+  Value minusOneConst = emitI64ScalarConstant(builder, loc, -1);
   auto notLeafIdx = arith::XOrIOp::create(builder, loc, leafIdx, minusOneConst);
 
   Value andResult =
       arith::AndIOp::create(builder, loc, notLeafIdx, leafIdxPlusOne);
   Value andMinusOne = arith::SubIOp::create(builder, loc, andResult, oneConst);
-  Value numSubtrees =
-      impulse::PopcountOp::create(builder, loc, i64TensorType, andMinusOne);
+  Value numSubtrees = math::CtPopOp::create(builder, loc, andMinusOne);
 
   // idx_min = idx_max - num_subtrees + 1
   Value idxMaxMinusNumSubtrees =
@@ -1518,20 +1063,17 @@ std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
   return {idxMin, idxMax};
 }
 
-Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
-                                     Value pSum, Value pCkpts, Value pSumCkpts,
-                                     Value idxMin, Value idxMax,
-                                     const NUTSContext &ctx, bool debugDump) {
+/// Checkpoint-based iterative turning check.
+static Value checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
+                                   Value pSum, Value pCkpts, Value pSumCkpts,
+                                   Value idxMin, Value idxMax,
+                                   const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
 
   // Iterate from `idx_max` down to `idx_min`, check turning at each checkpoint
   SmallVector<Type> whileTypes = {i64TensorType, i1TensorType};
@@ -1549,9 +1091,7 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
 
   auto iGeMin = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
                                       iCond, idxMin);
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
   auto notTurning = arith::XOrIOp::create(builder, loc, turningCond, trueConst);
   auto continueLoop = arith::AndIOp::create(builder, loc, iGeMin, notTurning);
 
@@ -1563,9 +1103,7 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   builder.setInsertionPointToStart(bodyBlock);
   Value iBody = bodyBlock->getArgument(0);
 
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
   Value pLeft = impulse::DynamicSliceOp::create(
       builder, loc, positionType, pCkpts, ValueRange{iBody, zeroI64},
       builder.getDenseI64ArrayAttr({1, ctx.positionSize}));
@@ -1587,18 +1125,14 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   return whileOp.getResult(1);
 }
 
-std::pair<Value, Value>
-impulse::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
-                           Value ckptIdxMax, Value p, Value pSum, Value pCkpts,
-                           Value pSumCkpts, const NUTSContext &ctx,
-                           bool debugDump) {
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+/// Update checkpoint arrays at even leaf indices.
+static std::pair<Value, Value> updateCheckpoints(OpBuilder &builder,
+                                                 Location loc, Value leafIdx,
+                                                 Value ckptIdxMax, Value p,
+                                                 Value pSum, Value pCkpts,
+                                                 Value pSumCkpts) {
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
 
   Value leafIdxBit0 = arith::AndIOp::create(builder, loc, leafIdx, oneI64);
   Value isEven = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
@@ -1637,39 +1171,344 @@ impulse::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
   return {finalPCkpts, finalPSumCkpts};
 }
 
+/// Builds a subtree iteratively by appending leaves one at a time.
+static SubtreeBuildResult
+buildIterativeSubtree(OpBuilder &builder, Location loc,
+                      const NUTSTreeState &initialTree, Value direction,
+                      Value pCkpts, Value pSumCkpts, const NUTSContext &ctx) {
+  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+  auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+
+  // 2 ^ (initialTree.depth)
+  auto maxNumProposals =
+      arith::ShLIOp::create(builder, loc, oneI64, initialTree.depth);
+
+  // The loop carries the tree, then these.
+  enum : unsigned {
+    kPCkpts = NUTSTreeState::kNumValues,
+    kPSumCkpts,
+    kLeafIdx,
+  };
+  SmallVector<Type> whileTypes = initialTree.getTypes();
+  whileTypes.push_back(pCkptsType);
+  whileTypes.push_back(pCkptsType);
+  whileTypes.push_back(i64TensorType);
+
+  NUTSTreeState startTree = initialTree;
+  startTree.numProposals = zeroI64;
+  SmallVector<Value> whileInitVals = startTree.toValues();
+  whileInitVals.push_back(pCkpts);
+  whileInitVals.push_back(pSumCkpts);
+  whileInitVals.push_back(zeroI64);
+
+  auto whileOp =
+      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
+
+  // Check: num_proposals < max_num_proposals && !turning && !diverging
+  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
+  for (auto type : whileTypes)
+    condBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(condBlock);
+  NUTSTreeState condTree = NUTSTreeState::fromValues(
+      condBlock->getArguments().take_front(NUTSTreeState::kNumValues));
+
+  auto numProposalsCheck =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
+                            condTree.numProposals, maxNumProposals);
+  auto notTurning =
+      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
+  auto notDiverging =
+      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
+  auto continueCond = arith::AndIOp::create(
+      builder, loc,
+      arith::AndIOp::create(builder, loc, numProposalsCheck, notTurning),
+      notDiverging);
+
+  // Yield continue condition
+  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
+
+  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
+  for (auto type : whileTypes)
+    bodyBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(bodyBlock);
+
+  NUTSTreeState bodyTree = NUTSTreeState::fromValues(
+      bodyBlock->getArguments().take_front(NUTSTreeState::kNumValues));
+  Value bodyPCkpts = bodyBlock->getArgument(kPCkpts);
+  Value bodyPSumCkpts = bodyBlock->getArgument(kPSumCkpts);
+  Value bodyLeafIdx = bodyBlock->getArgument(kLeafIdx);
+
+  // Extract leaf based on direction
+  IntegratorState leaf =
+      getLeafFromTree(builder, loc, bodyTree, direction, ctx);
+
+  auto rngSplit2 = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType()},
+      bodyTree.rng);
+  auto rngNext = rngSplit2.getResult(0);
+  auto rngCombine = rngSplit2.getResult(1);
+
+  // Build base tree
+  NUTSTreeState newLeaf =
+      buildBaseTree(builder, loc, leaf, rngNext, direction, ctx);
+
+  // First leaf check
+  auto isFirstLeaf = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::eq, bodyTree.numProposals, zeroI64);
+
+  SmallVector<Type> treeTypes = newLeaf.getTypes();
+  auto ifOp = impulse::IfOp::create(builder, loc, treeTypes, isFirstLeaf);
+  {
+    Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
+    builder.setInsertionPointToStart(trueBranch);
+    impulse::YieldOp::create(builder, loc, newLeaf.toValues());
+  }
+  {
+    Block *falseBranch = builder.createBlock(&ifOp.getFalseBranch());
+    builder.setInsertionPointToStart(falseBranch);
+    NUTSTreeState combinedTree =
+        combineTrees(builder, loc, bodyTree, newLeaf, direction, rngCombine,
+                     /*biased=*/false, ctx);
+    impulse::YieldOp::create(builder, loc, combinedTree.toValues());
+  }
+
+  builder.setInsertionPointAfter(ifOp);
+  NUTSTreeState updatedTree = NUTSTreeState::fromValues(ifOp.getResults());
+  updatedTree.rng = rngNext;
+
+  // Update and check iterative turning
+  auto [ckptIdxMin, ckptIdxMax] =
+      leafIdxToCheckpointIdxs(builder, loc, bodyLeafIdx);
+  auto [updatedPCkpts, updatedPSumCkpts] =
+      updateCheckpoints(builder, loc, bodyLeafIdx, ckptIdxMax, newLeaf.pRight,
+                        updatedTree.pSum, bodyPCkpts, bodyPSumCkpts);
+  auto iterativeTurning = checkIterativeTurning(
+      builder, loc, newLeaf.pRight, updatedTree.pSum, updatedPCkpts,
+      updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx);
+
+  updatedTree.turning =
+      impulse::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
+                                newLeaf.turning, iterativeTurning);
+
+  auto nextLeafIdx = arith::AddIOp::create(builder, loc, bodyLeafIdx, oneI64);
+
+  SmallVector<Value> yieldVals = updatedTree.toValues();
+  yieldVals.push_back(updatedPCkpts);
+  yieldVals.push_back(updatedPSumCkpts);
+  yieldVals.push_back(nextLeafIdx);
+  impulse::YieldOp::create(builder, loc, yieldVals);
+
+  builder.setInsertionPointAfter(whileOp);
+
+  NUTSTreeState resultTree = NUTSTreeState::fromValues(
+      whileOp.getResults().take_front(NUTSTreeState::kNumValues));
+  Value resultPCkpts = whileOp.getResult(kPCkpts);
+  Value resultPSumCkpts = whileOp.getResult(kPSumCkpts);
+
+  // `combineTrees` increments depth at each leaf building step; we need to
+  // restore to target depth here
+  resultTree.depth = initialTree.depth;
+
+  return {resultTree, resultPCkpts, resultPSumCkpts};
+}
+
+/// Tree doubling by building a subtree of same depth and combining.
+static SubtreeBuildResult doubleTree(OpBuilder &builder, Location loc,
+                                     const NUTSTreeState &tree, Value direction,
+                                     Value pCkpts, Value pSumCkpts,
+                                     const NUTSContext &ctx) {
+  auto rngSplit2 = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{tree.rng.getType(), tree.rng.getType()},
+      tree.rng);
+  auto rngSubtree = rngSplit2.getResult(0);
+  auto rngTransition = rngSplit2.getResult(1);
+
+  NUTSTreeState subTreeInit = tree;
+  subTreeInit.rng = rngSubtree;
+  auto subtreeResult = buildIterativeSubtree(builder, loc, subTreeInit,
+                                             direction, pCkpts, pSumCkpts, ctx);
+
+  // Tree combine using *biased* transition kernel
+  NUTSTreeState combinedTree =
+      combineTrees(builder, loc, tree, subtreeResult.tree, direction,
+                   rngTransition, /*biased=*/true, ctx);
+
+  return {combinedTree, subtreeResult.pCkpts, subtreeResult.pSumCkpts};
+}
+
+/// Main NUTS tree building loop.
+static NUTSTreeState buildTree(OpBuilder &builder, Location loc,
+                               const NUTSTreeState &initialTree,
+                               const NUTSContext &ctx) {
+  Type elemType = ctx.elementType;
+  RankedTensorType scalarType = ctx.getScalarType();
+
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
+
+  Value maxTreeDepth = emitI64ScalarConstant(builder, loc, ctx.maxTreeDepth);
+
+  auto checkpointType =
+      RankedTensorType::get({ctx.maxTreeDepth, ctx.positionSize}, elemType);
+
+  SmallVector<Type> whileTypes = initialTree.getTypes();
+  SmallVector<Value> whileInitVals = initialTree.toValues();
+
+  auto whileOp =
+      impulse::WhileOp::create(builder, loc, whileTypes, whileInitVals);
+
+  // Check: (depth < maxTreeDepth) && !turning && !diverging
+  Block *condBlock = builder.createBlock(&whileOp.getConditionRegion());
+  for (auto type : whileTypes)
+    condBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(condBlock);
+
+  NUTSTreeState condTree = NUTSTreeState::fromValues(condBlock->getArguments());
+
+  auto depthCheck = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::slt, condTree.depth, maxTreeDepth);
+  auto notTurning =
+      arith::XOrIOp::create(builder, loc, condTree.turning, trueConst);
+  auto notDiverging =
+      arith::XOrIOp::create(builder, loc, condTree.diverging, trueConst);
+
+  // Yield continue condition
+  auto continueCond = arith::AndIOp::create(
+      builder, loc, arith::AndIOp::create(builder, loc, depthCheck, notTurning),
+      notDiverging);
+
+  impulse::YieldOp::create(builder, loc, ValueRange{continueCond});
+
+  Block *bodyBlock = builder.createBlock(&whileOp.getBodyRegion());
+  for (auto type : whileTypes)
+    bodyBlock->addArgument(type, loc);
+
+  builder.setInsertionPointToStart(bodyBlock);
+
+  NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyBlock->getArguments());
+
+  // Create fresh checkpoint tensors
+  Value zeroCkpts = emitSplatConstant(builder, loc, checkpointType, 0.0);
+  Value bodyPCkpts = zeroCkpts;
+  Value bodyPSumCkpts = zeroCkpts;
+
+  auto rngSplit3 = impulse::RandomSplitOp::create(
+      builder, loc,
+      TypeRange{bodyTree.rng.getType(), bodyTree.rng.getType(),
+                bodyTree.rng.getType()},
+      bodyTree.rng);
+  auto rngNext = rngSplit3.getResult(0);
+  auto rngDir = rngSplit3.getResult(1);
+  auto rngDbl = rngSplit3.getResult(2);
+
+  auto directionRandom = impulse::RandomOp::create(
+      builder, loc, TypeRange{rngDir.getType(), scalarType}, rngDir, zeroConst,
+      oneConst,
+      impulse::RngDistributionAttr::get(builder.getContext(),
+                                        impulse::RngDistribution::UNIFORM));
+  auto direction =
+      arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLT,
+                            directionRandom.getResult(), halfConst);
+
+  // Double the tree
+  NUTSTreeState treeToDouble = bodyTree;
+  treeToDouble.rng = rngDbl;
+  auto doubleResult = doubleTree(builder, loc, treeToDouble, direction,
+                                 bodyPCkpts, bodyPSumCkpts, ctx);
+
+  NUTSTreeState treeToYield = doubleResult.tree;
+  treeToYield.rng = rngNext;
+  impulse::YieldOp::create(builder, loc, treeToYield.toValues());
+
+  builder.setInsertionPointAfter(whileOp);
+
+  return NUTSTreeState::fromValues(whileOp.getResults());
+}
+
+MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc,
+                                     const ChainPoint &start,
+                                     const NUTSContext &ctx) {
+  auto scalarType = ctx.getScalarType();
+
+  Value rngNext = start.rng;
+  auto [rngTree, p0, initialHamiltonian] =
+      startTransition(builder, loc, start.potentialEnergy, rngNext, ctx);
+
+  auto iterCtx = ctx.withH0(initialHamiltonian);
+
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+
+  NUTSTreeState initialTree = {.qLeft = start.q,
+                               .pLeft = p0,
+                               .gradLeft = start.grad,
+                               .qRight = start.q,
+                               .pRight = p0,
+                               .gradRight = start.grad,
+                               .qProposal = start.q,
+                               .gradProposal = start.grad,
+                               .potentialEnergyProposal = start.potentialEnergy,
+                               .hamiltonianProposal = initialHamiltonian,
+                               .depth = zeroI64,
+                               .weight = zeroConst,
+                               .turning = falseConst,
+                               .diverging = falseConst,
+                               .sumAcceptProbs = zeroConst,
+                               .numProposals = zeroI64,
+                               .pSum = p0,
+                               .rng = rngTree};
+
+  auto finalTree = buildTree(builder, loc, initialTree, iterCtx);
+
+  // The tree itself selects the proposal, so the transition always accepts.
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  auto numProposalsClamped =
+      arith::MaxSIOp::create(builder, loc, finalTree.numProposals, oneI64);
+  auto numProposalsFloat =
+      arith::SIToFPOp::create(builder, loc, scalarType, numProposalsClamped);
+  auto meanAcceptProb = arith::DivFOp::create(
+      builder, loc, finalTree.sumAcceptProbs, numProposalsFloat);
+
+  return {{finalTree.qProposal, finalTree.gradProposal,
+           finalTree.potentialEnergyProposal, rngNext},
+          trueConst,
+          finalTree.diverging,
+          meanAcceptProb};
+}
+
 DualAveragingState impulse::initDualAveraging(OpBuilder &builder, Location loc,
                                               Value stepSize,
                                               bool logOfProduct) {
   auto stepSizeType = cast<RankedTensorType>(stepSize.getType());
   auto elemType = stepSizeType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  // prox_center: log(10 * step_size) at warmup start, or log(10) +
-  // log(step_size) at window-end re-inits
   Value proxCenter;
   if (logOfProduct) {
-    auto tenConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 10.0)));
+    Value tenConst = emitSplatConstant(builder, loc, scalarType, 10.0);
     Value scaled = arith::MulFOp::create(builder, loc, tenConst, stepSize);
     proxCenter = math::LogOp::create(builder, loc, scaled);
   } else {
-    auto log10Const = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, std::log(10.0))));
+    Value log10Const =
+        emitSplatConstant(builder, loc, scalarType, std::log(10.0));
     Value logStepSize = math::LogOp::create(builder, loc, stepSize);
     proxCenter = arith::AddFOp::create(builder, loc, log10Const, logStepSize);
   }
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
 
   return {
       .log_step_size = zeroConst,
@@ -1693,36 +1532,25 @@ impulse::updateDualAveraging(OpBuilder &builder, Location loc,
   auto acceptProbType = cast<RankedTensorType>(acceptProb.getType());
   auto elemType = acceptProbType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
   // t = t + 1
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value tNew = arith::AddIOp::create(builder, loc, state.step_count, oneI64);
   Value tFloat = arith::SIToFPOp::create(builder, loc, scalarType, tNew);
 
   // t0
-  auto t0Const = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, config.t0)));
+  Value t0Const = emitSplatConstant(builder, loc, scalarType, config.t0);
 
   // g = target_accept_prob - accept_prob
-  auto targetConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(
-          scalarType,
-          builder.getFloatAttr(elemType, config.target_accept_prob)));
+  Value targetConst =
+      emitSplatConstant(builder, loc, scalarType, config.target_accept_prob);
   Value g = arith::SubFOp::create(builder, loc, targetConst, acceptProb);
 
   // t_plus_t0 = t + t0
   Value tPlusT0 = arith::AddFOp::create(builder, loc, tFloat, t0Const);
 
   // weight = 1 / (t + t0)
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
   Value weight = arith::DivFOp::create(builder, loc, oneConst, tPlusT0);
 
   // decay = 1 - weight = 1 - 1/(t + t0)
@@ -1737,10 +1565,7 @@ impulse::updateDualAveraging(OpBuilder &builder, Location loc,
 
   // x_t = prox_center - sqrt(t) / gamma * g_avg
   Value sqrtT = math::SqrtOp::create(builder, loc, tFloat);
-  auto gammaConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, config.gamma)));
+  Value gammaConst = emitSplatConstant(builder, loc, scalarType, config.gamma);
   Value sqrtTOverGamma = arith::DivFOp::create(builder, loc, sqrtT, gammaConst);
   Value adjustment =
       arith::MulFOp::create(builder, loc, sqrtTOverGamma, gAvgNew);
@@ -1748,10 +1573,8 @@ impulse::updateDualAveraging(OpBuilder &builder, Location loc,
       arith::SubFOp::create(builder, loc, state.prox_center, adjustment);
 
   // weight_t = t^(-kappa)
-  auto negKappaConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, -config.kappa)));
+  Value negKappaConst =
+      emitSplatConstant(builder, loc, scalarType, -config.kappa);
   Value weightT = math::PowFOp::create(builder, loc, tFloat, negKappaConst);
 
   // x_avg = (1 - weight_t) * x_avg + weight_t * x_t
@@ -1783,30 +1606,21 @@ Value impulse::getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
 WelfordState impulse::initWelford(OpBuilder &builder, Location loc,
                                   int64_t positionSize, bool diagonal) {
   auto elemType = builder.getF64Type();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto meanType = RankedTensorType::get({positionSize}, elemType);
 
-  Value mean = arith::ConstantOp::create(
-      builder, loc, meanType,
-      DenseElementsAttr::get(meanType, builder.getFloatAttr(elemType, 0.0)));
+  Value mean = emitSplatConstant(builder, loc, meanType, 0.0);
 
   // Diagonal -> tensor<positionSize>
   // Dense -> tensor<positionSize x positionSize>
   Value m2;
   if (diagonal) {
-    m2 = arith::ConstantOp::create(
-        builder, loc, meanType,
-        DenseElementsAttr::get(meanType, builder.getFloatAttr(elemType, 0.0)));
+    m2 = emitSplatConstant(builder, loc, meanType, 0.0);
   } else {
     auto m2Type = RankedTensorType::get({positionSize, positionSize}, elemType);
-    m2 = arith::ConstantOp::create(
-        builder, loc, m2Type,
-        DenseElementsAttr::get(m2Type, builder.getFloatAttr(elemType, 0.0)));
+    m2 = emitSplatConstant(builder, loc, m2Type, 0.0);
   }
 
-  Value n = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value n = emitI64ScalarConstant(builder, loc, 0);
 
   return {mean, m2, n};
 }
@@ -1824,18 +1638,14 @@ WelfordState impulse::updateWelford(OpBuilder &builder, Location loc,
 
   auto sampleType = cast<RankedTensorType>(sample.getType());
   auto elemType = sampleType.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value nNew = arith::AddIOp::create(builder, loc, state.n, oneI64);
 
   auto scalarType = RankedTensorType::get({}, elemType);
   Value nFloat = arith::SIToFPOp::create(builder, loc, scalarType, nNew);
 
-  Value nBroadcast = BroadcastOp::create(builder, loc, sampleType, nFloat,
-                                         sampleType.getShape());
+  Value nBroadcast = emitBroadcastScalar(builder, loc, nFloat, sampleType);
 
   Value deltaPre = arith::SubFOp::create(builder, loc, sample, state.mean);
 
@@ -1854,8 +1664,6 @@ WelfordState impulse::updateWelford(OpBuilder &builder, Location loc,
     auto m2Type = cast<RankedTensorType>(state.m2.getType());
     Value outerProduct = impulse::DotOp::create(
         builder, loc, m2Type, deltaPost, deltaPre,
-        /*lhs_batching_dimensions=*/builder.getDenseI64ArrayAttr({}),
-        /*rhs_batching_dimensions=*/builder.getDenseI64ArrayAttr({}),
         /*lhs_contracting_dimensions=*/builder.getDenseI64ArrayAttr({}),
         /*rhs_contracting_dimensions=*/builder.getDenseI64ArrayAttr({}));
     m2New = arith::AddFOp::create(builder, loc, state.m2, outerProduct);
@@ -1871,17 +1679,13 @@ Value impulse::finalizeWelford(OpBuilder &builder, Location loc,
   auto m2Type = cast<RankedTensorType>(state.m2.getType());
   auto elemType = m2Type.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value nMinus1 = arith::SubIOp::create(builder, loc, state.n, oneI64);
   Value nMinus1Float =
       arith::SIToFPOp::create(builder, loc, scalarType, nMinus1);
 
-  Value nMinus1Bcast = BroadcastOp::create(builder, loc, m2Type, nMinus1Float,
-                                           m2Type.getShape());
+  Value nMinus1Bcast = emitBroadcastScalar(builder, loc, nMinus1Float, m2Type);
 
   Value cov = arith::DivFOp::create(builder, loc, state.m2, nMinus1Bcast);
 
@@ -1893,32 +1697,26 @@ Value impulse::finalizeWelford(OpBuilder &builder, Location loc,
   if (config.regularize) {
     Value nFloat = arith::SIToFPOp::create(builder, loc, scalarType, state.n);
 
-    auto fiveConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 5.0)));
+    Value fiveConst = emitSplatConstant(builder, loc, scalarType, 5.0);
     Value nPlusFive = arith::AddFOp::create(builder, loc, nFloat, fiveConst);
 
     Value scale = arith::DivFOp::create(builder, loc, nFloat, nPlusFive);
-    Value scaleBcast =
-        BroadcastOp::create(builder, loc, m2Type, scale, m2Type.getShape());
+    Value scaleBcast = emitBroadcastScalar(builder, loc, scale, m2Type);
     Value scaledCov = arith::MulFOp::create(builder, loc, scaleBcast, cov);
 
-    auto shrinkageBaseConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 1e-3 * 5.0)));
+    Value shrinkageBaseConst =
+        emitSplatConstant(builder, loc, scalarType, 1e-3 * 5.0);
     Value shrinkage =
         arith::DivFOp::create(builder, loc, shrinkageBaseConst, nPlusFive);
 
     if (config.diagonal) {
-      Value shrinkageBcast = BroadcastOp::create(builder, loc, m2Type,
-                                                 shrinkage, m2Type.getShape());
+      Value shrinkageBcast =
+          emitBroadcastScalar(builder, loc, shrinkage, m2Type);
       cov = arith::AddFOp::create(builder, loc, scaledCov, shrinkageBcast);
     } else {
       Value identity = createIdentityMatrix(builder, loc, m2Type);
-      Value shrinkageBcast = BroadcastOp::create(builder, loc, m2Type,
-                                                 shrinkage, m2Type.getShape());
+      Value shrinkageBcast =
+          emitBroadcastScalar(builder, loc, shrinkage, m2Type);
       Value shrinkageI =
           arith::MulFOp::create(builder, loc, shrinkageBcast, identity);
       cov = arith::AddFOp::create(builder, loc, scaledCov, shrinkageI);
@@ -1979,195 +1777,21 @@ SmallVector<AdaptWindow> impulse::buildAdaptationSchedule(int64_t numSteps) {
   return schedule;
 }
 
-Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
-                                   Value constrained,
-                                   ArrayRef<SupportInfo> supports) {
-  bool hasConstraints = false;
-  for (const auto &info : supports) {
-    if (info.support && info.support.getKind() != impulse::SupportKind::REAL) {
-      hasConstraints = true;
-      break;
-    }
-  }
-  if (!hasConstraints || supports.empty())
-    return constrained;
-
-  auto inputType = cast<RankedTensorType>(constrained.getType());
-  auto elemType = inputType.getElementType();
-  int64_t positionSize = inputType.getShape()[1];
-
-  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
-  Value constrained1D =
-      impulse::ReshapeOp::create(builder, loc, positionType1D, constrained);
-
-  SmallVector<Value> slices;
-  for (const auto &info : supports) {
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
-    auto slice = impulse::SliceOp::create(
-        builder, loc, sliceType, constrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
-        builder.getDenseI64ArrayAttr({1}));
-    Value unconstrainedSlice;
-    if (info.support && info.support.getKind() != impulse::SupportKind::REAL) {
-      unconstrainedSlice =
-          transforms::unconstrain(builder, loc, slice, info.support);
-    } else {
-      unconstrainedSlice = slice;
-    }
-
-    slices.push_back(unconstrainedSlice);
-  }
-
-  Value result1D;
-  if (slices.size() == 1) {
-    result1D = slices[0];
-  } else {
-    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
-    result1D = arith::ConstantOp::create(
-        builder, loc, resultType1D,
-        DenseElementsAttr::get(resultType1D,
-                               builder.getFloatAttr(elemType, 0.0)));
-
-    auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
-    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
-    auto elemType0D = RankedTensorType::get({}, elemType);
-    int64_t offset = 0;
-    for (size_t i = 0; i < slices.size(); ++i) {
-      auto sliceType = cast<RankedTensorType>(slices[i].getType());
-      int64_t sliceSize = sliceType.getShape()[0];
-
-      for (int64_t j = 0; j < sliceSize; ++j) {
-        auto elemIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(j)));
-        auto resultIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(offset + j)));
-
-        auto elemSliced = impulse::DynamicSliceOp::create(
-            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
-            builder.getDenseI64ArrayAttr({1}));
-        auto elem =
-            impulse::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
-
-        auto resultSliced = impulse::ReshapeOp::create(
-            builder, loc, RankedTensorType::get({1}, elemType), elem);
-        result1D = impulse::DynamicUpdateSliceOp::create(
-            builder, loc, resultType1D, result1D, resultSliced,
-            ValueRange{resultIdx});
-      }
-
-      offset += sliceSize;
-    }
-  }
-
-  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
-  return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
-}
-
 Value impulse::constrainPosition(OpBuilder &builder, Location loc,
                                  Value unconstrained,
                                  ArrayRef<SupportInfo> supports) {
-  bool hasConstraints = false;
-  for (const auto &info : supports) {
-    if (info.support && info.support.getKind() != impulse::SupportKind::REAL) {
-      hasConstraints = true;
-      break;
-    }
-  }
-  if (!hasConstraints || supports.empty())
-    return unconstrained;
-
-  auto inputType = cast<RankedTensorType>(unconstrained.getType());
-  auto elemType = inputType.getElementType();
-  int64_t positionSize = inputType.getShape()[1];
-
-  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
-  Value unconstrained1D =
-      impulse::ReshapeOp::create(builder, loc, positionType1D, unconstrained);
-
-  SmallVector<Value> slices;
-  for (const auto &info : supports) {
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
-    auto slice = impulse::SliceOp::create(
-        builder, loc, sliceType, unconstrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
-        builder.getDenseI64ArrayAttr({1}));
-
-    Value constrainedSlice;
-    if (info.support && info.support.getKind() != impulse::SupportKind::REAL) {
-      constrainedSlice =
-          transforms::constrain(builder, loc, slice, info.support);
-    } else {
-      constrainedSlice = slice;
-    }
-
-    slices.push_back(constrainedSlice);
-  }
-
-  Value result1D;
-  if (slices.size() == 1) {
-    result1D = slices[0];
-  } else {
-    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
-    result1D = arith::ConstantOp::create(
-        builder, loc, resultType1D,
-        DenseElementsAttr::get(resultType1D,
-                               builder.getFloatAttr(elemType, 0.0)));
-
-    auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
-    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
-    auto elemType0D = RankedTensorType::get({}, elemType);
-    int64_t offset = 0;
-    for (size_t i = 0; i < slices.size(); ++i) {
-      auto sliceType = cast<RankedTensorType>(slices[i].getType());
-      int64_t sliceSize = sliceType.getShape()[0];
-
-      for (int64_t j = 0; j < sliceSize; ++j) {
-        auto elemIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(j)));
-        auto resultIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(offset + j)));
-
-        auto elemSliced = impulse::DynamicSliceOp::create(
-            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
-            builder.getDenseI64ArrayAttr({1}));
-        auto elem =
-            impulse::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
-
-        auto resultSliced =
-            impulse::ReshapeOp::create(builder, loc, elemType1DSlice, elem);
-        result1D = impulse::DynamicUpdateSliceOp::create(
-            builder, loc, resultType1D, result1D, resultSliced,
-            ValueRange{resultIdx});
-      }
-
-      offset += sliceSize;
-    }
-  }
-
-  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
-  return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
+  return transformPosition(builder, loc, unconstrained, supports,
+                           /*toUnconstrained=*/false);
 }
 
-Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
-                                              Value unconstrained,
-                                              ArrayRef<SupportInfo> supports) {
+Value impulse::constrainPositionLogAbsDetJacobian(
+    OpBuilder &builder, Location loc, Value unconstrained,
+    ArrayRef<SupportInfo> supports) {
   auto inputType = cast<RankedTensorType>(unconstrained.getType());
   auto elemType = inputType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  Value total = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  Value total = emitSplatConstant(builder, loc, scalarType, 0.0);
 
   if (supports.empty())
     return total;
@@ -2178,19 +1802,19 @@ Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
       impulse::ReshapeOp::create(builder, loc, positionType1D, unconstrained);
 
   for (const auto &info : supports) {
-    if (!info.support || info.support.getKind() == impulse::SupportKind::REAL)
+    if (!isConstrainedSite(info))
       continue;
 
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto sliceType = RankedTensorType::get({info.unconstrainedSize}, elemType);
     auto slice = impulse::SliceOp::create(
         builder, loc, sliceType, unconstrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({info.unconstrainedOffset}),
+        builder.getDenseI64ArrayAttr(
+            {info.unconstrainedOffset + info.unconstrainedSize}),
         builder.getDenseI64ArrayAttr({1}));
-    auto jacobian =
-        transforms::logAbsDetJacobian(builder, loc, slice, info.support);
-
-    total = arith::AddFOp::create(builder, loc, total, jacobian);
+    Value logAbsDetJacobian =
+        emitConstrainLogAbsDetJacobian(builder, loc, info.support, slice);
+    total = arith::AddFOp::create(builder, loc, total, logAbsDetJacobian);
   }
 
   return total;

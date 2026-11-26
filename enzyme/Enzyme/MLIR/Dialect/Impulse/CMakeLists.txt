@@ -2,7 +2,7 @@ add_mlir_dialect(ImpulseOps impulse)
 add_mlir_doc(Dialect ImpulseDialect Impulse/ -gen-dialect-doc)
 add_mlir_doc(ImpulseOps ImpulseOps Impulse/ -gen-op-doc)
 
-set(LLVM_TARGET_DEFINITIONS ImpulseOps.td)
+set(LLVM_TARGET_DEFINITIONS ImpulseAttributes.td)
 mlir_tablegen(ImpulseAttributeInterfaces.h.inc -gen-attr-interface-decls)
 mlir_tablegen(ImpulseAttributes.h.inc -gen-attrdef-decls
               -attrdefs-dialect=impulse)
@@ -26,5 +26,6 @@ add_mlir_dialect_library(
   MLIRImpulseAttributesIncGen
   LINK_LIBS
   PUBLIC
+  MLIRFuncDialect
   MLIRIR
   MLIREnzyme)

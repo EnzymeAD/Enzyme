@@ -447,6 +447,7 @@ td_library(
     name = "ImpulseDialectTdFiles",
     srcs = [
         "Enzyme/MLIR/Dialect/Impulse/Dialect.td",
+        "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.td",
         "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.td",
     ],
     includes = ["."],
@@ -746,7 +747,7 @@ gentbl_cc_library(
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.td",
     deps = [":ImpulseDialectTdFiles"],
 )
 
@@ -759,7 +760,7 @@ gentbl_cc_library(
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.td",
     deps = [":ImpulseDialectTdFiles"],
 )
 
@@ -1085,6 +1086,9 @@ cc_library(
         "@llvm-project//mlir:MemorySlotInterfaces",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:OpenMPDialect",
+        "@llvm-project//mlir:PDLDialect",
+        "@llvm-project//mlir:PDLInterpDialect",
+        "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Rewrite",
         "@llvm-project//mlir:SCFDialect",
@@ -1093,6 +1097,8 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:ToLLVMIRTranslation",
+        "@llvm-project//mlir:TransformDialect",
+        "@llvm-project//mlir:TransformDialectInterfaces",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",

@@ -13,6 +13,32 @@ include "mlir/IR/OpBase.td"
 def Impulse_Dialect : Dialect {
   let name = "impulse";
   let summary = "A probabilistic programming dialect";
+  let description = [{
+    Probabilistic programs and inference over them. A model is a function
+    whose random choices are `impulse.sample` sites. A model takes an RNG
+    state as its first argument and returns the advanced state as its first
+    result; likewise, an op that runs a model or a sampler takes the RNG state
+    as the first of its `inputs`, and the first of its `outputs`, if it has
+    them, is the advanced state.
+
+    A site is named within its model by its `symbol`. Its address is the array
+    of the symbols of the sites on the call path from the outermost model down
+    to the site, ending with its own. The `all_addresses` of an op lists the
+    sites in the order in which they run, those of the true branch of an
+    `impulse.if` before those of its false branch.
+
+    A trace of an address array is a `tensor<1xNxT>` that holds the flattened
+    values of the sites of the array, in the order of the array; the values of
+    a site that does not run are zero. A score-tail trace holds, after these N
+    values, one more column per sample site of the model, in the order the
+    sites appear in the model, with the log density of that site; an op takes
+    a trace wider than N as a score-tail trace. The traces that
+    `impulse.simulate`, `impulse.generate`, `impulse.regenerate` and
+    `impulse.mh` take and return have element type `f64`, and their weights
+    are `tensor<f64>`.
+
+    The `name` attribute of an op is a label without semantics.
+  }];
   let cppNamespace = "::mlir::impulse";
   let dependentDialects = [
     "mlir::enzyme::EnzymeDialect",
@@ -26,7 +52,5 @@ def Impulse_Dialect : Dialect {
 
 class Impulse_Op<string mnemonic, list<Trait> traits = []>
     : Op<Impulse_Dialect, mnemonic, traits>;
-
-class Impulse_Type<string name> : TypeDef<Impulse_Dialect, name>;
 
 #endif // IMPULSE_DIALECT_TD

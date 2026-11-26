@@ -5,8 +5,8 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @normal(%s#0, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<2>, name="t" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @normal(%s#0, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<2>, name="t" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %s#1, %t#1 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 
@@ -14,12 +14,12 @@ module {
     %init_trace = arith.constant dense<[[0.0, 0.0]]> : tensor<1x2xf64>
     %inv_mass = arith.constant dense<[2.0, 3.0]> : tensor<2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      inverse_mass_matrix = %inv_mass
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_inverse_mass_matrix = %inv_mass
+      init_step_size = %step_size
       <{ hmc_config = #impulse.hmc_config<trajectory_length = 1.0>,
         name = "hmc_diag", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], num_warmup = 0, num_samples = 1 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 
@@ -27,12 +27,12 @@ module {
     %init_trace = arith.constant dense<[[0.0, 0.0]]> : tensor<1x2xf64>
     %inv_mass = arith.constant dense<[2.0, 3.0]> : tensor<2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      inverse_mass_matrix = %inv_mass
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_inverse_mass_matrix = %inv_mass
+      init_step_size = %step_size
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts_diag", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], num_warmup = 0, num_samples = 1 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }
@@ -98,11 +98,11 @@ module {
 // CHECK-NEXT: %[[N_P:.+]] = arith.mulf %[[N_SQRT_2D]], {{.*}} : tensor<1x2xf64>
 // CHECK-NEXT: %[[N_INV_2D:.+]] = impulse.reshape %[[N_INV_MASS]] : (tensor<2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: arith.mulf %[[N_INV_2D]], %[[N_P]] : tensor<1x2xf64>
-// CHECK-NEXT: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
+// CHECK-NEXT: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
 // CHECK: impulse.while
 // CHECK: impulse.while
 // CHECK: impulse.reshape %[[N_INV_MASS]] : (tensor<2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: arith.mulf {{.*}} : tensor<1x2xf64>
 // CHECK: impulse.reshape %[[N_INV_MASS]] : (tensor<2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: arith.mulf {{.*}} : tensor<1x2xf64>
-// CHECK-NEXT: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
+// CHECK-NEXT: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]

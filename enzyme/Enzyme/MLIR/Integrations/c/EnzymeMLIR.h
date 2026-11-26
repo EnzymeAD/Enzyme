@@ -117,23 +117,57 @@ typedef enum {
   EnzymeSupportKind_Interval = 3,
   EnzymeSupportKind_GreaterThan = 4,
   EnzymeSupportKind_LessThan = 5,
+  EnzymeSupportKind_Simplex = 6,
 } EnzymeSupportKind;
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeSupportAttrGet(
-    MlirContext ctx, EnzymeSupportKind kind, bool hasLowerBound,
-    double lowerBound, bool hasUpperBound, double upperBound);
+MLIR_CAPI_EXPORTED MlirAttribute
+enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
+                     bool hasLowerBound, double lowerBound, bool hasUpperBound,
+                     double upperBound, int64_t eventSize);
 
+/// `numSteps` = 0 derives the leapfrog step count from `trajectoryLength`.
 MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
                                                         double trajectoryLength,
                                                         bool adaptStepSize,
-                                                        bool adaptMassMatrix);
+                                                        bool adaptMassMatrix,
+                                                        int64_t numSteps);
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
     MlirContext ctx, int64_t maxTreeDepth, bool hasMaxDeltaEnergy,
     double maxDeltaEnergy, bool adaptStepSize, bool adaptMassMatrix);
 
+typedef enum {
+  EnzymeGuideKind_AutoNormal = 0,
+  EnzymeGuideKind_AutoMultivariateNormal = 1,
+  EnzymeGuideKind_AutoDelta = 2,
+} EnzymeGuideKind;
+
+typedef enum {
+  EnzymeOptimizerKind_Adam = 0,
+  EnzymeOptimizerKind_SGD = 1,
+  EnzymeOptimizerKind_ClippedAdam = 2,
+  EnzymeOptimizerKind_Momentum = 3,
+  EnzymeOptimizerKind_RMSProp = 4,
+  EnzymeOptimizerKind_Adagrad = 5,
+  EnzymeOptimizerKind_RMSPropMomentum = 6,
+} EnzymeOptimizerKind;
+
+MLIR_CAPI_EXPORTED MlirAttribute enzymeVIConfigAttrGet(
+    MlirContext ctx, EnzymeGuideKind guideKind,
+    EnzymeOptimizerKind optimizerKind, int64_t numParticles, bool hasInitScale,
+    double initScale, bool hasAdamB1, double adamB1, bool hasAdamB2,
+    double adamB2, bool hasAdamEps, double adamEps, bool hasClipNorm,
+    double clipNorm, bool hasInitRadius, double initRadius,
+    bool hasMomentumMass, double momentumMass, bool hasRmspropGamma,
+    double rmspropGamma, bool hasRmspropEps, double rmspropEps,
+    bool stableUpdate);
+
+MLIR_CAPI_EXPORTED MlirAttribute enzymeMHConfigAttrGet(MlirContext ctx);
+
+MLIR_CAPI_EXPORTED MlirAttribute enzymeGibbsConfigAttrGet(MlirContext ctx);
+
 MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
-                                                     uint64_t ptr);
+                                                     uint64_t id);
 
 #ifdef __cplusplus
 } // extern "C"

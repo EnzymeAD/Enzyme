@@ -58,6 +58,17 @@ def DifferentiatePass : Pass<"enzyme"> {
 
 def ExpandImpulsePass : Pass<"expand-impulse"> {
   let summary = "Materialize Impulse ops to probabilistic programming algorithms";
+  let description = [{
+    Replaces `impulse.untraced_call`, `impulse.simulate`, `impulse.generate`,
+    `impulse.regenerate`, `impulse.mh`, `impulse.infer` and
+    `impulse.infer_region` with the computation they denote. A model that one
+    of these ops runs is cloned into a function in which every sample site is
+    replaced by the code that draws or reads its value and scores it, and an
+    inference op becomes the code of its algorithm, with gradients computed
+    by `enzyme.autodiff_region`. `impulse.infer` with `gibbs_config` must be
+    in region form, and `impulse.infer_region` needs a non-empty `logpdf`
+    region. With `postpasses`, that pass pipeline then runs on the result.
+  }];
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
@@ -77,8 +88,75 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
       /*CLI argument=*/"debug-dump",
       /*type=*/"bool",
       /*default=*/"false",
-      /*description=*/"Enable debug dump"
+      /*description=*/"Insert enzyme.dump ops that print intermediate values"
     >,
+  ];
+}
+
+def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
+  let summary = "Inline impulse.infer ops into impulse.infer_region ops.";
+  let description = [{
+    Converts `impulse.infer` into `impulse.infer_region`. With `fn`, the body
+    of `fn` becomes `sampling`, every `impulse.sample` becomes an
+    `impulse.sample_region` whose regions hold the sampler and the log density
+    of the site and whose `support` is that of its `dist` when the site has
+    none, the sites of a model that a site runs take the place of that site
+    under its address, and `logpdf` stays empty. With `logpdf_fn`, the body
+    of `logpdf_fn` becomes `logpdf` and `sampling` stays empty. An op whose
+    model or algorithm the region form does not support is left unchanged.
+  }];
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "math::MathDialect",
+    "enzyme::EnzymeDialect",
+    "impulse::ImpulseDialect",
+  ];
+}
+
+def SICMPass : Pass<"sicm"> {
+  let summary = "Sample-invariant code motion";
+  let description = [{
+    For each `impulse.infer_region`, moves the sample-invariant computation,
+    which does not depend on the values of the sites in `selection`, above
+    the op: first out of `sampling`, then out of `logpdf`. When `logpdf` is
+    empty, the pass builds it from the optimized `sampling` if every site of
+    `sampling` has an address and a log density and is nested in no op other
+    than `impulse.if`, the sites in `selection` are at the top level of
+    `sampling`, and `all_addresses` lists exactly the sites; building it
+    empties the `logpdf` region of every site. Each region gets up to `max-iterations`
+    rounds, stopping after a round that changes nothing, of (1) the rewrite
+    rules, which split a sample-dependent op into sample-dependent and
+    sample-invariant parts, and (2) hoisting the sample-invariant ops. The
+    rules are those of every loaded dialect that implements
+    `SICMRuleSetInterface` or, with `schedule`, the patterns of the
+    `transform.apply_patterns` ops in the `schedule-entry-point` sequence of a
+    transform script. Each round also moves every constant to the entry block
+    of the closest enclosing region that is isolated from above, merging
+    equal constants.
+  }];
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "impulse::ImpulseDialect",
+  ];
+  let options = [
+    Option<"maxIterations", "max-iterations", "int64_t", "10",
+           "Maximum rewrite+hoist iterations per region">,
+    ListOption<"ruleOptions", "rule-options", "std::string",
+               "Options of the rule sets, each as key=value">,
+    Option<"schedule", "schedule", "std::string", "\"\"",
+           "Transform script (file path) that lists the rewrite rules: "
+           "every rewrite step applies the patterns of the descriptors in "
+           "the transform.apply_patterns ops of its schedule-entry-point "
+           "sequence. Empty: the rules of every loaded rule set.">,
+    Option<"scheduleEntryPoint", "schedule-entry-point", "std::string",
+           "\"__transform_main\"",
+           "Named sequence of the schedule script that lists the rules.">,
+    Option<"verifyIncrementalAnalysis", "verify-incremental-analysis", "bool",
+           "false",
+           "Debug: after every IR change of a rewrite step, compare the "
+           "incrementally updated sample-dependence analyses with a fresh "
+           "analysis of the IR, and fail with an error if one misses a "
+           "sample-dependent value.">,
   ];
 }
 
