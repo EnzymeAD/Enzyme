@@ -63,8 +63,8 @@
 ; KEY-OLD: DP table for preprocess_tester cached to
 ; KEY-BAD: DP table for preprocess_tester cached to
 ; KEY-HIT-NOT: cached to
-; KEY-A: Applying solution for precision change All FP64(70%) + FP32(30%)
-; KEY-PICK-A: Applying solution for precision change All FP64(70%) + FP32(30%)
+; KEY-A: Applying solution for precision change All FP64(80%) + FP32(20%) (#6)
+; KEY-PICK-A: Applying solution for precision change All FP64(80%) + FP32(20%) (#6)
 ; KEY-PICK-B: Applying solution for precision change Funcs FP64(70%) + FP32(30%)
 
 ; Changing one input of the table (profile byte, cost-model row, solve flag,

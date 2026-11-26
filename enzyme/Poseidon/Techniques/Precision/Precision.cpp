@@ -33,6 +33,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -52,6 +53,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -977,6 +979,42 @@ static std::string fmtTiers(ArrayRef<std::pair<NumberFormat, int>> tierPcts) {
   return s;
 }
 
+// How far a sum of n nonnegative doubles can be from the exact sum, relative to
+// itself, whatever the order of the additions: (n - 1)u / (1 - 2(n - 1)u).
+static double summationErrorBound(uint64_t n) {
+  double nu = (double)(n > 0 ? n - 1 : 0) * 0x1p-53;
+  return 2 * nu < 1 ? nu / (1 - 2 * nu)
+                    : std::numeric_limits<double>::infinity();
+}
+
+// `ops` in ascending order of sensitivity. A sensitivity is a sum over the
+// operation's executions, added in an order the profiling run does not fix,
+// so it is known only to within summationErrorBound of itself. A run of
+// operations whose neighboring sensitivities are that close keeps its order in
+// `ops`: the tiers of a split do not depend on the order of the additions.
+static SmallVector<FPLLValue *> sortBySensitivity(ArrayRef<FPLLValue *> ops) {
+  auto tied = [](const FPLLValue *a, const FPLLValue *b) {
+    return std::fabs(a->sens - b->sens) <=
+           summationErrorBound(a->executions) * a->sens +
+               summationErrorBound(b->executions) * b->sens;
+  };
+  auto order = to_vector(seq<unsigned>(0, ops.size()));
+  stable_sort(order, [&](unsigned a, unsigned b) {
+    return ops[a]->sens < ops[b]->sens;
+  });
+  for (auto *first = order.begin(); first != order.end();) {
+    auto *last = std::next(first);
+    while (last != order.end() && tied(ops[*std::prev(last)], ops[*last]))
+      ++last;
+    llvm::sort(first, last);
+    first = last;
+  }
+  SmallVector<FPLLValue *> sorted;
+  for (unsigned i : order)
+    sorted.push_back(ops[i]);
+  return sorted;
+}
+
 // Records each operation's measured frequency of `subgraph` in `freq`, so the
 // baseline walk and every candidate's weight each instruction by its own,
 // snapped onto the classes of loop depth the candidate walk sees.
@@ -1213,8 +1251,7 @@ proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
     PU.frequencies.outBoundaryFreqScale = *scale;
 
   // The operations, and the calls of the library functions the cost model
-  // prices per precision, by ascending sensitivity. Stable: which tier an
-  // operation of a tied sensitivity lands in follows the subgraph's order.
+  // prices per precision, by ascending sensitivity.
   Expected<const std::unordered_set<std::string> *> funcs =
       narrowableFuncs(S, F);
   if (!funcs)
@@ -1231,13 +1268,10 @@ proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
                      << *I << '\n';
     }
   }
-  SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
-  SmallVector<FPLLValue *> sortedAllOps(allSet.begin(), allSet.end());
-  auto bySens = [](const FPLLValue *a, const FPLLValue *b) {
-    return a->sens < b->sens;
-  };
-  stable_sort(sortedFuncs, bySens);
-  stable_sort(sortedAllOps, bySens);
+  SmallVector<FPLLValue *> sortedFuncs =
+      sortBySensitivity(funcsSet.getArrayRef());
+  SmallVector<FPLLValue *> sortedAllOps =
+      sortBySensitivity(allSet.getArrayRef());
 
   const bool gpuMode = Target::of(F).isDevice();
   const std::unordered_set<std::string> *hwScalar = nullptr;
