@@ -47,6 +47,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <array>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -73,8 +74,7 @@ static Value *changedLibmCall(IRBuilder<> &B, CallInst *CI,
   StringRef funcName = CI->getCalledFunction()->getName();
   std::string newFuncName = getLibmFunctionForPrecision(funcName, newType);
   if (newFuncName.empty())
-    report_fatal_error("Poseidon: no " +
-                       formatOf(getPrecisionChangeType(newType)).Name +
+    report_fatal_error("Poseidon: no " + formatOf(newType)->Name +
                        " variant of the library call " + getValueStr(CI));
 
   Type *funcType = newType;
@@ -147,7 +147,7 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
 
   IRBuilder<> Builder(I);
   Builder.setFastMathFlags(I->getFastMathFlags());
-  Type *newType = getLLVMFPType(change.newType, I->getContext());
+  Type *newType = llvmTypeForFPKind(I->getContext(), change.newType);
 
   // An operand in the new precision: its changed value, or a cast of it.
   auto convert = [&](Value *operand) -> Value * {
@@ -284,22 +284,15 @@ void ChangeTarget::changeFormat(PrecisionChange &change,
   for (Instruction *I : sorted)
     changePrecision(I, change, oldToNew);
 
-  for (auto &[oldV, newV] : oldToNew) {
-    auto *oldI = cast<Instruction>(oldV);
-    SmallPtrSet<Instruction *, 8> users;
-    for (User *user : oldI->users()) {
-      assert(isa<Instruction>(user) &&
-             "[poseidon:precision] Unexpected non-instruction user of a "
-             "changed instruction");
-      if (!insts.contains(cast<Instruction>(user)))
-        users.insert(cast<Instruction>(user));
-    }
-
-    if (!users.empty()) {
-      IRBuilder<> builder =
-          builderAt(oldI->getParent(), ++BasicBlock::iterator(oldI));
-      Value *casted = builder.CreateFPCast(
-          newV, getLLVMFPType(change.oldType, builder.getContext()));
+  for (auto &KV : oldToNew) {
+    auto *oldI = cast<Instruction>(KV.first);
+    Value *newV = KV.second;
+    if (Value *casted = restoreOutside(
+            oldI, [&](Instruction *U) { return insts.contains(U); },
+            [&](IRBuilder<> &B) {
+              return B.CreateFPCast(
+                  newV, llvmTypeForFPKind(B.getContext(), change.oldType));
+            })) {
       if (VMap) {
         assert(VMap->count(clonedToOriginal[oldI]) &&
                "a changed clone operation maps back to an operation");
@@ -307,16 +300,7 @@ void ChangeTarget::changeFormat(PrecisionChange &change,
       } else if (graph) {
         graph->replaceErased(oldI, casted);
       }
-      for (Instruction *user : users)
-        user->replaceUsesOfWith(oldI, casted);
     }
-
-    assert(all_of(oldI->users(),
-                  [&](User *user) {
-                    return insts.contains(cast<Instruction>(user));
-                  }) &&
-           "[poseidon:precision] Unexpected external user of a changed "
-           "instruction");
     if (!oldI->use_empty())
       oldI->replaceAllUsesWith(PoisonValue::get(oldI->getType()));
     oldI->eraseFromParent();
@@ -656,7 +640,7 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
   bool ptHasExpansion = false, wantsPairs = false;
   for (PrecisionChange &ch : pt.changes) {
     ptHasExpansion |= expansionComponents(ch.newType) != 0;
-    wantsPairs |= ch.newType == PrecisionChangeType::Expansion2;
+    wantsPairs |= ch.newType == FPKind::Expansion2;
   }
   pt.apply(S, subgraph, &VMap, /*graph=*/nullptr, &expandedComponents);
   // An Expansion2 change that converts nothing (unsupported instructions)
@@ -850,22 +834,8 @@ CandidateClone::cone(ArrayRef<size_t> roots) const {
                        "priced over is left in its simplified clone. Refusing "
                        "to fabricate a cost.");
 
-  SmallPtrSet<Value *, 8> seen;
-  SmallVector<Value *, 8> todo(clonedOutputs.begin(), clonedOutputs.end());
-  SmallVector<Instruction *, 32> coneInsts;
-  while (!todo.empty()) {
-    Value *cur = todo.pop_back_val();
-    if (!seen.insert(cur).second || clonedInputs.contains(cur))
-      continue;
-    if (auto *I = dyn_cast<Instruction>(cur)) {
-      coneInsts.push_back(I);
-      if (auto *CI = dyn_cast<CallInst>(I))
-        append_range(todo, CI->args());
-      else
-        append_range(todo, I->operands());
-    }
-  }
-  return coneInsts;
+  return backwardCone(clonedOutputs.getArrayRef(),
+                      [&](Value *V) { return clonedInputs.contains(V); });
 }
 
 Expected<double> CandidateClone::cost(Session &S, const Subgraph &subgraph,
@@ -935,59 +905,38 @@ static Expected<double> priceCandidate(Session &S, Subgraph &subgraph,
 static constexpr int kThreeTierStep = 20;
 static constexpr int kMinTwoTierStep = 5;
 
-namespace {
-
-struct TierPair {
-  PrecisionChangeType hi;
-  PrecisionChangeType lo;
+// The tiers of a candidate, widest first.
+static const std::array<FPKind, 2> kCanonicalPairs[] = {
+    {FPKind::FP64, FPKind::FP32},
+    {FPKind::FP64, FPKind::Expansion2},
+    {FPKind::FP64, FPKind::FP16},
+    {FPKind::FP64, FPKind::BF16},
+    {FPKind::Expansion2, FPKind::FP32},
+    {FPKind::Expansion2, FPKind::FP16},
+    {FPKind::Expansion2, FPKind::BF16},
+    {FPKind::FP32, FPKind::FP16},
+    {FPKind::FP32, FPKind::BF16},
+    {FPKind::FP64, FPKind::Expansion3},
+    {FPKind::Expansion3, FPKind::Expansion2},
+    {FPKind::Expansion3, FPKind::FP32},
+    {FPKind::FP64, FPKind::Expansion4},
+    {FPKind::Expansion4, FPKind::Expansion3},
+    {FPKind::Expansion4, FPKind::Expansion2},
+    {FPKind::Expansion4, FPKind::FP32},
 };
 
-struct TierTriple {
-  PrecisionChangeType hi;
-  PrecisionChangeType mid;
-  PrecisionChangeType lo;
-};
-
-} // namespace
-
-static const TierPair kCanonicalPairs[] = {
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP32},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2},
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::BF16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::BF16},
-    {PrecisionChangeType::FP32, PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP32, PrecisionChangeType::BF16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion3},
-    {PrecisionChangeType::Expansion3, PrecisionChangeType::Expansion2},
-    {PrecisionChangeType::Expansion3, PrecisionChangeType::FP32},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion4},
-    {PrecisionChangeType::Expansion4, PrecisionChangeType::Expansion3},
-    {PrecisionChangeType::Expansion4, PrecisionChangeType::Expansion2},
-    {PrecisionChangeType::Expansion4, PrecisionChangeType::FP32},
-};
-
-static const TierTriple kCanonicalTriples[] = {
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
-     PrecisionChangeType::FP32},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
-     PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
-     PrecisionChangeType::BF16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
-     PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
-     PrecisionChangeType::BF16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32,
-     PrecisionChangeType::FP16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32,
-     PrecisionChangeType::BF16},
+static const std::array<FPKind, 3> kCanonicalTriples[] = {
+    {FPKind::FP64, FPKind::Expansion2, FPKind::FP32},
+    {FPKind::FP64, FPKind::Expansion2, FPKind::FP16},
+    {FPKind::FP64, FPKind::Expansion2, FPKind::BF16},
+    {FPKind::FP64, FPKind::FP32, FPKind::FP16},
+    {FPKind::FP64, FPKind::FP32, FPKind::BF16},
+    {FPKind::Expansion2, FPKind::FP32, FPKind::FP16},
+    {FPKind::Expansion2, FPKind::FP32, FPKind::BF16},
 };
 
 // `hwScalar` is the target's scalar types; null off the GPU.
-static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
+static bool precAllowed(const Options &O, FPKind t, bool gpuMode,
                         bool expansionSafe,
                         const std::unordered_set<std::string> *hwScalar) {
   if (unsigned nComp = expansionComponents(t)) {
@@ -998,26 +947,25 @@ static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
     if (nComp > O.Candidates.PrecisionExpansionComponents)
       return false;
   }
-  if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar->count("half")))
+  if (t == FPKind::FP16 && (!gpuMode || !hwScalar->count("half")))
     return false;
-  if (t == PrecisionChangeType::BF16 && (!gpuMode || !hwScalar->count("bf16")))
+  if (t == FPKind::BF16 && (!gpuMode || !hwScalar->count("bf16")))
     return false;
   return true;
 }
 
 // Whether every tier of a tier pair or triple is allowed.
-static bool tiersAllowed(const Options &O, ArrayRef<PrecisionChangeType> tiers,
-                         bool gpuMode, bool expansionSafe,
+static bool tiersAllowed(const Options &O, ArrayRef<FPKind> tiers, bool gpuMode,
+                         bool expansionSafe,
                          const std::unordered_set<std::string> *hwScalar) {
-  return all_of(tiers, [&](PrecisionChangeType t) {
+  return all_of(tiers, [&](FPKind t) {
     return precAllowed(O, t, gpuMode, expansionSafe, hwScalar);
   });
 }
 
 // The tiers of a candidate with the percentage of the operations each takes,
 // as its description lists them: "FP64(20%) + FP32(80%)".
-static std::string
-fmtTiers(ArrayRef<std::pair<PrecisionChangeType, int>> tierPcts) {
+static std::string fmtTiers(ArrayRef<std::pair<FPKind, int>> tierPcts) {
   std::string s;
   for (const auto &[t, pct] : tierPcts) {
     if (!s.empty())
@@ -1093,32 +1041,31 @@ namespace {
 // profiled sensitivity, the most sensitive in the widest tier.
 class TierSweep {
 public:
-  TierSweep(const Options &O, PrecisionUnit &PU, PrecisionChangeType current)
+  TierSweep(const Options &O, PrecisionUnit &PU, FPKind current)
       : O(O), PU(PU), current(current) {}
 
-  // Two tiers, the share of `tiers.hi` from 0% up in steps of
+  // Two tiers, the share of the wider from 0% up in steps of
   // -poseidon-precision-tier-step, over `sortedAsc` (ascending sensitivity).
-  void twoTier(TierPair tiers, ArrayRef<FPLLValue *> sortedAsc,
+  void twoTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
                StringRef label);
   // Three tiers, the shares in steps of kThreeTierStep.
-  void threeTier(TierTriple tiers, ArrayRef<FPLLValue *> sortedAsc,
+  void threeTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
                  StringRef label);
 
 private:
-  using Assignment =
-      SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 3>;
-
   // The description of a candidate of `label` (All or Funcs) with `tiers`,
   // announced under -poseidon-print.
   std::string describe(StringRef label, StringRef kind,
                        const std::string &tiers, size_t N) const;
-  // Adds the candidate that moves each tier of `assignment` off the current
-  // format, unless it moves nothing.
-  void add(Assignment &assignment, std::string desc);
+  // Adds the candidate that computes the operations of `sortedAsc` from the
+  // cumulative share `cuts[i - 1]` to `cuts[i]` (percent, most sensitive
+  // first; the last tier ends at 100) in `tiers[i]`, unless it moves nothing.
+  void add(ArrayRef<FPKind> tiers, ArrayRef<int> cuts,
+           ArrayRef<FPLLValue *> sortedAsc, StringRef label, StringRef kind);
 
   const Options &O;
   PrecisionUnit &PU;
-  PrecisionChangeType current;
+  FPKind current;
 };
 
 } // namespace
@@ -1134,11 +1081,25 @@ std::string TierSweep::describe(StringRef label, StringRef kind,
   return desc + tiers;
 }
 
-void TierSweep::add(Assignment &assignment, std::string desc) {
+void TierSweep::add(ArrayRef<FPKind> tiers, ArrayRef<int> cuts,
+                    ArrayRef<FPLLValue *> sortedAsc, StringRef label,
+                    StringRef kind) {
+  const size_t N = sortedAsc.size();
+  SmallVector<std::pair<FPKind, int>, 3> shares;
   SmallVector<PrecisionChange, 3> changes;
-  for (auto &[type, ops] : assignment)
+  int prevPct = 0;
+  size_t prevK = 0;
+  for (auto [i, type] : enumerate(tiers)) {
+    const int pct = i < cuts.size() ? cuts[i] : 100;
+    const size_t k = N * pct / 100;
+    shares.emplace_back(type, pct - prevPct);
+    SetVector<FPLLValue *> ops(sortedAsc.end() - k, sortedAsc.end() - prevK);
     if (type != current && !ops.empty())
       changes.emplace_back(ops, current, type);
+    prevPct = pct;
+    prevK = k;
+  }
+  std::string desc = describe(label, kind, fmtTiers(shares), N);
   if (changes.empty())
     return;
   PrecisionCandidate cand{std::move(changes), std::move(desc)};
@@ -1146,7 +1107,7 @@ void TierSweep::add(Assignment &assignment, std::string desc) {
   PU.candidates.push_back(std::move(cand));
 }
 
-void TierSweep::twoTier(TierPair tiers, ArrayRef<FPLLValue *> sortedAsc,
+void TierSweep::twoTier(ArrayRef<FPKind> tiers, ArrayRef<FPLLValue *> sortedAsc,
                         StringRef label) {
   const size_t N = sortedAsc.size();
   const int step = std::max(kMinTwoTierStep, O.Candidates.PrecisionTierStep);
@@ -1156,21 +1117,12 @@ void TierSweep::twoTier(TierPair tiers, ArrayRef<FPLLValue *> sortedAsc,
     if (k == prev)
       continue;
     prev = k;
-    std::string desc =
-        describe(label, "two-tier",
-                 fmtTiers({{tiers.hi, pct}, {tiers.lo, 100 - pct}}), N);
-    Assignment assignment;
-    assignment.emplace_back(
-        tiers.hi, SetVector<FPLLValue *>(sortedAsc.end() - k, sortedAsc.end()));
-    assignment.emplace_back(
-        tiers.lo,
-        SetVector<FPLLValue *>(sortedAsc.begin(), sortedAsc.end() - k));
-    add(assignment, std::move(desc));
+    add(tiers, {pct}, sortedAsc, label, "two-tier");
   }
 }
 
-void TierSweep::threeTier(TierTriple tiers, ArrayRef<FPLLValue *> sortedAsc,
-                          StringRef label) {
+void TierSweep::threeTier(ArrayRef<FPKind> tiers,
+                          ArrayRef<FPLLValue *> sortedAsc, StringRef label) {
   const size_t N = sortedAsc.size();
   const int step = kThreeTierStep;
   for (int pctHi = step; pctHi <= 100 - 2 * step; pctHi += step) {
@@ -1180,22 +1132,7 @@ void TierSweep::threeTier(TierTriple tiers, ArrayRef<FPLLValue *> sortedAsc,
       size_t k1 = N * pctHiMid / 100;
       if (k0 == 0 || k0 >= k1 || k1 >= N)
         continue;
-      std::string desc = describe(label, "three-tier",
-                                  fmtTiers({{tiers.hi, pctHi},
-                                            {tiers.mid, pctHiMid - pctHi},
-                                            {tiers.lo, 100 - pctHiMid}}),
-                                  N);
-      Assignment assignment;
-      assignment.emplace_back(
-          tiers.hi,
-          SetVector<FPLLValue *>(sortedAsc.end() - k0, sortedAsc.end()));
-      assignment.emplace_back(
-          tiers.mid,
-          SetVector<FPLLValue *>(sortedAsc.end() - k1, sortedAsc.end() - k0));
-      assignment.emplace_back(
-          tiers.lo,
-          SetVector<FPLLValue *>(sortedAsc.begin(), sortedAsc.end() - k1));
-      add(assignment, std::move(desc));
+      add(tiers, {pctHi, pctHiMid}, sortedAsc, label, "three-tier");
     }
   }
 }
@@ -1258,19 +1195,17 @@ Error proposePrecisionCandidates(
       return types.takeError();
     hwScalar = *types;
   }
-  TierSweep sweep(O, PU,
-                  getPrecisionChangeType(subgraph.outputs[0]->getType()));
-  for (TierPair tp : kCanonicalPairs) {
-    if (!tiersAllowed(O, {tp.hi, tp.lo}, gpuMode, expansionSafe, hwScalar))
+  TierSweep sweep(O, PU, formatOf(subgraph.outputs[0]->getType())->Kind);
+  for (ArrayRef<FPKind> tp : kCanonicalPairs) {
+    if (!tiersAllowed(O, tp, gpuMode, expansionSafe, hwScalar))
       continue;
     sweep.twoTier(tp, sortedAllOps, "All");
     if (!sortedFuncs.empty())
       sweep.twoTier(tp, sortedFuncs, "Funcs");
   }
   if (O.Candidates.PrecisionThreeTier)
-    for (TierTriple tr : kCanonicalTriples)
-      if (tiersAllowed(O, {tr.hi, tr.mid, tr.lo}, gpuMode, expansionSafe,
-                       hwScalar))
+    for (ArrayRef<FPKind> tr : kCanonicalTriples)
+      if (tiersAllowed(O, tr, gpuMode, expansionSafe, hwScalar))
         sweep.threeTier(tr, sortedAllOps, "All");
 
   // Zero candidates for a nonempty subgraph means every tier was filtered
@@ -1550,14 +1485,12 @@ Error PrecisionUnit::price() {
 }
 
 void PrecisionUnit::scaleErrors(double factor) {
-  initialAccCost *= factor;
+  SubgraphUnit::scaleErrors(factor);
   for (auto &[node, cost] : perOutputInitialAccCost)
     cost *= factor;
-  for (PrecisionCandidate &cand : candidates) {
-    cand.accuracyCost *= factor;
+  for (PrecisionCandidate &cand : candidates)
     for (auto &[node, cost] : cand.perOutputAccCost)
       cost *= factor;
-  }
 }
 
 void PrecisionUnit::printPriced(raw_ostream &OS) {

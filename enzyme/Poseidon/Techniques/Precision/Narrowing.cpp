@@ -84,6 +84,35 @@ private:
 
 } // namespace
 
+// Calls `visit(I, viaCast)` on each instruction that uses `V`, directly or
+// through constants, depth first, with whether its path passes an
+// addrspacecast expression; stops at the first `visit` that returns false and
+// returns whether none did.
+template <typename ValueT, typename Visit>
+static bool allInstructionUsers(ValueT &V, Visit visit) {
+  using UserPtr = decltype(*V.user_begin());
+  SmallVector<std::pair<UserPtr, bool>> users;
+  for (UserPtr U : V.users())
+    users.push_back({U, false});
+  SmallPtrSet<UserPtr, 16> seen;
+  while (!users.empty()) {
+    auto [U, viaCast] = users.pop_back_val();
+    if (!seen.insert(U).second)
+      continue;
+    if (auto *I = dyn_cast<Instruction>(U)) {
+      if (!visit(*I, viaCast))
+        return false;
+      continue;
+    }
+    auto *CE = dyn_cast<ConstantExpr>(U);
+    const bool cast =
+        viaCast || (CE && CE->getOpcode() == Instruction::AddrSpaceCast);
+    for (UserPtr CU : U->users())
+      users.push_back({CU, cast});
+  }
+  return true;
+}
+
 SiteLaunch::SiteLaunch(const Session &S, const Function &F,
                        const Function &Proxy)
     : F(F) {
@@ -94,20 +123,12 @@ SiteLaunch::SiteLaunch(const Session &S, const Function &F,
 
   SmallVector<const Function *> callers;
   auto addCallersOf = [&](const Function &Callee) {
-    SmallVector<const User *> users(Callee.users());
-    SmallPtrSet<const User *, 16> seen;
-    while (!users.empty()) {
-      const User *U = users.pop_back_val();
-      if (!seen.insert(U).second)
-        continue;
-      if (auto *I = dyn_cast<Instruction>(U)) {
-        const Function *Caller = I->getFunction();
-        if (!site.contains(Caller) && mates.insert(Caller).second)
-          callers.push_back(Caller);
-      } else if (isa<Constant>(U)) {
-        users.append(U->user_begin(), U->user_end());
-      }
-    }
+    allInstructionUsers(Callee, [&](const Instruction &I, bool) {
+      const Function *Caller = I.getFunction();
+      if (!site.contains(Caller) && mates.insert(Caller).second)
+        callers.push_back(Caller);
+      return true;
+    });
   };
   for (const Function *SiteFunction : site)
     addCallersOf(*SiteFunction);
@@ -141,32 +162,12 @@ bool SiteLaunch::callsSite(const Instruction &I) const {
 }
 
 bool SiteLaunch::onlySiteAccesses(const GlobalVariable &G) const {
-  // Each use, with whether it reaches G through an addrspacecast.
-  SmallVector<std::pair<const User *, bool>> uses;
-  for (const User *U : G.users())
-    uses.push_back({U, false});
-  SmallPtrSet<const User *, 16> seen;
-  while (!uses.empty()) {
-    auto [U, generic] = uses.pop_back_val();
-    if (!seen.insert(U).second)
-      continue;
-    if (auto *I = dyn_cast<Instruction>(U)) {
-      const Function *Accessor = I->getFunction();
-      if (Accessor == &F) {
-        if (!generic && !isa<AddrSpaceCastInst>(I))
-          return false;
-      } else if (mates.contains(Accessor) && !callsSite(*I)) {
-        return false;
-      }
-      continue;
-    }
-    auto *CE = dyn_cast<ConstantExpr>(U);
-    const bool viaCast =
-        generic || (CE && CE->getOpcode() == Instruction::AddrSpaceCast);
-    for (const User *CU : U->users())
-      uses.push_back({CU, viaCast});
-  }
-  return true;
+  return allInstructionUsers(G, [&](const Instruction &I, bool generic) {
+    const Function *Accessor = I.getFunction();
+    if (Accessor == &F)
+      return generic || isa<AddrSpaceCastInst>(I);
+    return !mates.contains(Accessor) || callsSite(I);
+  });
 }
 
 // The first reader of the staged load L that neither rounds it to FP32 nor
@@ -584,19 +585,11 @@ static SmallVector<unsigned, 2> stagedParams(const Session &S, Function &F,
 // The instructions of F that use G, through constant expressions or not.
 static SmallVector<Instruction *> usersIn(Function &F, GlobalVariable &G) {
   SmallVector<Instruction *> found;
-  SmallVector<User *> users(G.users());
-  SmallPtrSet<User *, 16> seen;
-  while (!users.empty()) {
-    User *U = users.pop_back_val();
-    if (!seen.insert(U).second)
-      continue;
-    if (auto *I = dyn_cast<Instruction>(U)) {
-      if (I->getFunction() == &F)
-        found.push_back(I);
-    } else if (isa<Constant>(U)) {
-      users.append(U->user_begin(), U->user_end());
-    }
-  }
+  allInstructionUsers(G, [&](Instruction &I, bool) {
+    if (I.getFunction() == &F)
+      found.push_back(&I);
+    return true;
+  });
   return found;
 }
 

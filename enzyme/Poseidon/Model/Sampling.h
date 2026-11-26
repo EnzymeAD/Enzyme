@@ -84,9 +84,10 @@ public:
 private:
   struct RoundReference;
 
-  /// A warning, when `unsettled` of the `points` references just computed did
-  /// not settle.
-  void warnUnsettled(unsigned unsettled, size_t points) const;
+  /// Fills entry `which[i]` of `R`, sized for `at` when empty, with the
+  /// reference of `node` at `at[which[i]]`; warns of those that did not settle.
+  void fillReferences(const FPNode *node, llvm::ArrayRef<Point> at,
+                      llvm::ArrayRef<size_t> which, Reference &R) const;
 
   const Options &O;
   const Subgraph &subgraph;

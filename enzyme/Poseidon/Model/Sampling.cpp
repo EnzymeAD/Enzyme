@@ -17,6 +17,7 @@
 #include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Instructions.h"
@@ -419,7 +420,21 @@ static bool evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
   return unsettled;
 }
 
-void SubgraphSamples::warnUnsettled(unsigned unsettled, size_t points) const {
+void SubgraphSamples::fillReferences(const FPNode *node, ArrayRef<Point> at,
+                                     ArrayRef<size_t> which,
+                                     Reference &R) const {
+  if (R.gold.empty()) {
+    R.gold.resize(at.size());
+    R.value.resize(at.size());
+    R.error.resize(at.size());
+  }
+  std::atomic<unsigned> unsettled{0};
+  forEachBlock(O.Model.Threads, which.size(), kReferencesPerTask,
+               [&](size_t begin, size_t end) {
+                 for (size_t i = begin; i < end; ++i)
+                   unsettled += evaluateReference(const_cast<FPNode *>(node),
+                                                  at[which[i]], R, which[i]);
+               });
   if (!unsettled)
     return;
   const Instruction &At = *subgraph.outputs.front();
@@ -427,7 +442,7 @@ void SubgraphSamples::warnUnsettled(unsigned unsettled, size_t points) const {
            "the exact value of an expression of this subgraph did not settle "
            "within " +
                Twine(kMaxMPFRPrecision) + " bits at " + Twine(unsettled) +
-               " of " + Twine(points) +
+               " of " + Twine(which.size()) +
                " sample points, which the accuracy model counts as NaN",
            DS_Warning);
 }
@@ -439,17 +454,7 @@ SubgraphSamples::reference(const FPNode *node) {
   if (!fresh)
     return R;
   ArrayRef<Point> at = cantFail(points());
-  R.gold.resize(at.size());
-  R.value.resize(at.size());
-  R.error.resize(at.size());
-  std::atomic<unsigned> unsettled{0};
-  forEachBlock(O.Model.Threads, at.size(), kReferencesPerTask,
-               [&](size_t begin, size_t end) {
-                 for (size_t i = begin; i < end; ++i)
-                   unsettled += evaluateReference(const_cast<FPNode *>(node),
-                                                  at[i], R, i);
-               });
-  warnUnsettled(unsettled, at.size());
+  fillReferences(node, at, to_vector<0>(seq<size_t>(0, at.size())), R);
   return R;
 }
 
@@ -476,27 +481,15 @@ SubgraphSamples::roundReference(const FPNode *node, unsigned round,
   while (perRound.size() < round)
     perRound.push_back(std::make_unique<RoundReference>());
   RoundReference &RR = *perRound[round - 1];
-  if (RR.computed.empty()) {
-    RR.values.gold.resize(at.size());
-    RR.values.value.resize(at.size());
-    RR.values.error.resize(at.size());
+  if (RR.computed.empty())
     RR.computed.resize(at.size(), 0);
-  }
   SmallVector<size_t, 0> todo;
   for (size_t p : which)
     if (!RR.computed[p]) {
       RR.computed[p] = 1;
       todo.push_back(p);
     }
-  std::atomic<unsigned> unsettled{0};
-  forEachBlock(O.Model.Threads, todo.size(), kReferencesPerTask,
-               [&](size_t begin, size_t end) {
-                 for (size_t i = begin; i < end; ++i)
-                   unsettled +=
-                       evaluateReference(const_cast<FPNode *>(node),
-                                         at[todo[i]], RR.values, todo[i]);
-               });
-  warnUnsettled(unsettled, todo.size());
+  fillReferences(node, at, todo, RR.values);
   return RR.values;
 }
 

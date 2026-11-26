@@ -56,10 +56,9 @@ const std::string &costModelPath(CostModelState &CM) {
 
 std::string userCacheDir() {
   SmallString<256> Dir;
-  if (const char *X = std::getenv("XDG_CACHE_HOME"); X && *X)
-    sys::path::append(Dir, X, "poseidon");
-  else if (const char *H = std::getenv("HOME"); H && *H)
-    sys::path::append(Dir, H, ".cache", "poseidon");
+  if (!sys::path::cache_directory(Dir))
+    return "";
+  sys::path::append(Dir, "poseidon");
   return std::string(Dir);
 }
 

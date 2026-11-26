@@ -69,8 +69,8 @@ struct LowerFPCore : PassParent<LowerFPCore> {
           GlobalValue::InternalLinkage, "", M);
       FPGraph G;
       for (auto [Symbol, Arg] : zip(StringRef("xy"), Scratch->args())) {
-        auto *Node = G.create<FPLLValue>(&Arg, nullptr,
-                                         &formatOf(PrecisionChangeType::FP64));
+        auto *Node =
+            G.create<FPLLValue>(&Arg, nullptr, &formatOf(FPKind::FP64));
         Node->symbol = std::string(1, Symbol);
         G.valueToNodeMap[&Arg] = Node;
         G.symbolToValueMap[Node->symbol] = &Arg;

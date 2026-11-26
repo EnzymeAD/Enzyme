@@ -107,44 +107,6 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
   return &P;
 }
 
-// Herbie's --timeout has no unbounded value; this one stands for no limit of
-// Poseidon's.
-static constexpr unsigned kUnboundedCoreTimeout = 9999;
-
-// Herbie's per-core --timeout: -poseidon-herbie-timeout, else the subgraph's
-// wall-clock budget, which bounds it anyway.
-static unsigned herbieCoreTimeout(const Options &O) {
-  if (O.Herbie.Timeout)
-    return O.Herbie.Timeout;
-  if (O.Herbie.SubgraphTimeout)
-    return O.Herbie.SubgraphTimeout;
-  return kUnboundedCoreTimeout;
-}
-
-// How this compile runs Herbie: its -poseidon-herbie-* flags.
-static Expected<HerbieRunOptions> herbieRunOptions(Session &S,
-                                                   const Function &F) {
-  const Options &O = S.Opts;
-  HerbieRunOptions Opts;
-  Opts.Program = herbieProgram(O.Herbie);
-  Opts.CacheOnly = !sys::fs::exists(Opts.Program);
-  Expected<const HerbiePlatform *> Platform = herbiePlatform(S, F);
-  if (!Platform)
-    return Platform.takeError();
-  Opts.Platform = **Platform;
-  Opts.Seed = O.Model.RandomSeed;
-  Opts.NumPoints = O.Herbie.NumPoints;
-  Opts.NumIters = O.Herbie.NumIters;
-  Opts.NumEnodes = O.Herbie.NumEnodes;
-  Opts.CoreTimeout = herbieCoreTimeout(O);
-  Opts.NumThreads = O.Herbie.Threads;
-  Opts.Processes = O.Herbie.Processes;
-  Opts.SubgraphTimeout = O.Herbie.SubgraphTimeout;
-  Opts.CacheDir = O.Herbie.Cache;
-  Opts.Print = O.Diagnostics.Print;
-  return Opts;
-}
-
 namespace {
 // A point of a core's cost-accuracy curve: [cost, error in bits].
 struct HerbiePoint {
@@ -292,10 +254,10 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
   if (!O.Herbie.Binary.empty() && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] using Herbie binary '" << O.Herbie.Binary
                  << "'\n";
-  Expected<HerbieRunOptions> RunOpts = herbieRunOptions(S, F);
-  if (!RunOpts)
-    return RunOpts.takeError();
-  HerbieRunOptions &Opts = *RunOpts;
+  Expected<const HerbiePlatform *> Platform = herbiePlatform(S, F);
+  if (!Platform)
+    return Platform.takeError();
+  const std::string Program = herbieProgram(O.Herbie);
 
   SmallVector<std::optional<unsigned>, 2> TermCounts(
       O.Herbie.NumTaylorTerms.begin(), O.Herbie.NumTaylorTerms.end());
@@ -303,12 +265,11 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     TermCounts.push_back(std::nullopt);
   HerbieAnswers H;
   for (std::optional<unsigned> Terms : TermCounts) {
-    Opts.TaylorTerms = Terms;
     const std::string RunLabel =
         Terms ? (label + " at " + Twine(*Terms) + " Taylor terms").str()
               : label.str();
-    Expected<HerbieRunResult> Run =
-        runHerbie(cores, Opts, RunLabel, S.Herbie.HerbieDigests);
+    Expected<HerbieRunResult> Run = runHerbie(cores, O, **Platform, Terms,
+                                              RunLabel, S.Herbie.HerbieDigests);
     if (!Run)
       return userError(F, toString(Run.takeError()));
     const HerbieRunResult &R = H.runs.emplace_back(std::move(*Run));
@@ -317,13 +278,13 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     if (R.Result == HerbieRunResult::Outcome::Failed)
       return userError(
           F,
-          Twine(Opts.CacheDir.empty() ? "no cache is kept"
-                                      : "the cache " + Opts.CacheDir +
-                                            " holds no Herbie answer") +
+          Twine(O.Herbie.Cache.empty() ? "no cache is kept"
+                                       : "the cache " + O.Herbie.Cache +
+                                             " holds no Herbie answer") +
               " for " + RunLabel +
-              (Opts.Program.empty() ? ", and " + kBuiltWithoutHerbie.str()
-                                    : ", and the Herbie at " + Opts.Program +
-                                          " cannot run (" + R.Failure + ")") +
+              (Program.empty() ? ", and " + kBuiltWithoutHerbie.str()
+                               : ", and the Herbie at " + Program +
+                                     " cannot run (" + R.Failure + ")") +
               "; point -poseidon-herbie-binary at a Herbie, or turn algebraic "
               "rewriting off with -poseidon-enable-rewrite=0");
     if (!R.Warning.empty())
@@ -701,6 +662,14 @@ public:
                       CoreBatch &batch) const;
 
 private:
+  // A core of `body`, which computes `roots` of gradients `grads`, at each of
+  // `precs`, with the properties `extra`, into `batch`; `what` names it in the
+  // -poseidon-print line.
+  Error addCores(ArrayRef<Value *> roots, ArrayRef<double> grads,
+                 const std::string &body, uint64_t executions,
+                 ArrayRef<const char *> precs, StringRef extra, StringRef what,
+                 CoreBatch &batch) const;
+
   // The :herbie-weights property of an array core of `outputs`, which weighs
   // each output by its profiled sensitivity; empty for none.
   std::string arrayWeights(ArrayRef<Instruction *> outputs) const;
@@ -763,25 +732,33 @@ SubgraphCores::eligible(Instruction *output) const {
   return EligibleOutput{output, std::move(expr), node.grad, node.executions};
 }
 
-Error SubgraphCores::addPerOutputCores(const EligibleOutput &E,
-                                       ArrayRef<const char *> precs,
-                                       CoreBatch &batch) const {
+Error SubgraphCores::addCores(ArrayRef<Value *> roots, ArrayRef<double> grads,
+                              const std::string &body, uint64_t executions,
+                              ArrayRef<const char *> precs, StringRef extra,
+                              StringRef what, CoreBatch &batch) const {
   SmallSet<std::string, 8> args;
-  getUniqueArgs(E.expr, args);
+  getUniqueArgs(body, args);
   std::string precondition = rangePrecondition(O, args, G);
   for (const char *prec : precs) {
-    RewriteUnit RU(subgraph, {E.output}, {E.grad}, E.expr, E.executions);
+    std::string herbieInput =
+        fpcoreText(args, prec, precondition, extra, batch.units.size(), body);
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] " << what << ":\n" << herbieInput << '\n';
+    batch.inputs.push_back(herbieInput);
+    RewriteUnit &RU =
+        batch.units.emplace_back(subgraph, roots, grads, body, executions);
     if (Error Err = RU.priceAsWritten(S.CostModel))
       return Err;
     RU.herbiePrecision = prec;
-    std::string herbieInput =
-        fpcoreText(args, prec, precondition, "", batch.units.size(), E.expr);
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] Herbie input:\n" << herbieInput << '\n';
-    batch.inputs.push_back(herbieInput);
-    batch.units.push_back(RU);
   }
   return Error::success();
+}
+
+Error SubgraphCores::addPerOutputCores(const EligibleOutput &E,
+                                       ArrayRef<const char *> precs,
+                                       CoreBatch &batch) const {
+  return addCores({E.output}, {E.grad}, E.expr, E.executions, precs, "",
+                  "Herbie input", batch);
 }
 
 SmallVector<SmallVector<const EligibleOutput *, 8>, 2>
@@ -856,28 +833,12 @@ Error SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
     roots.push_back(E->output);
     grads.push_back(E->grad);
   }
-  Expected<std::string> core = arrayCoreBody(outputs, G, subgraph.inputs);
-  if (!core)
-    return core.takeError();
-  const std::string &body = *core;
-  SmallSet<std::string, 8> args;
-  getUniqueArgs(body, args);
-  std::string precondition = rangePrecondition(O, args, G);
-  std::string weights = arrayWeights(outputs);
-  for (const char *prec : kHerbiePrecisions) {
-    std::string herbieInput =
-        fpcoreText(args, prec, precondition, weights, batch.units.size(), body);
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] Herbie array input:\n" << herbieInput << '\n';
-    batch.inputs.push_back(herbieInput);
-    RewriteUnit &RU =
-        batch.units.emplace_back(subgraph, ArrayRef<Value *>(roots), grads,
-                                 body, group.front()->executions);
-    if (Error Err = RU.priceAsWritten(S.CostModel))
-      return Err;
-    RU.herbiePrecision = prec;
-  }
-  return Error::success();
+  Expected<std::string> body = arrayCoreBody(outputs, G, subgraph.inputs);
+  if (!body)
+    return body.takeError();
+  return addCores(roots, grads, *body, group.front()->executions,
+                  kHerbiePrecisions, arrayWeights(outputs),
+                  "Herbie array input", batch);
 }
 
 Error proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
@@ -1508,22 +1469,16 @@ private:
 
 } // namespace
 
-// The type the scratch function of a node of `dtype` over `argTypes` returns:
+// The type the scratch function of a node of `format` over `argTypes` returns:
 // its first floating-point (or vector of floating-point) argument's.
-static Type *scratchReturnType(ArrayRef<Type *> argTypes, StringRef dtype,
-                               LLVMContext &Ctx) {
-  auto isFP = [](Type *T) {
-    if (T->isFloatingPointTy())
-      return true;
-    auto *VT = dyn_cast<VectorType>(T);
-    return VT && VT->getElementType()->isFloatingPointTy();
-  };
-  if (auto It = find_if(argTypes, isFP); It != argTypes.end())
+static Type *scratchReturnType(ArrayRef<Type *> argTypes,
+                               const FPFormatInfo *format, LLVMContext &Ctx) {
+  if (auto It =
+          find_if(argTypes, [](Type *T) { return T->isFPOrFPVectorTy(); });
+      It != argTypes.end())
     return *It;
-  if (dtype == "f32")
-    return Type::getFloatTy(Ctx);
-  if (dtype == "f16")
-    return Type::getHalfTy(Ctx);
+  if (format && (format->Kind == FPKind::FP32 || format->Kind == FPKind::FP16))
+    return format->LLVMType(Ctx);
   return Type::getDoubleTy(Ctx);
 }
 
@@ -1563,8 +1518,7 @@ ScratchFunction::ScratchFunction(Module &M, const std::string &expr,
       stack.push_back(op);
   }
 
-  Type *ReturnType = scratchReturnType(
-      argTypes, parsedNode->format ? parsedNode->format->Dtype : "", Ctx);
+  Type *ReturnType = scratchReturnType(argTypes, parsedNode->format, Ctx);
   // An array candidate returns all of its elements, so none is dead and the
   // subterms they share are simplified into one computation before costing.
   const bool isArray = parsedNode->is(fpcore::Array);
@@ -1848,26 +1802,11 @@ double RewriteUnit::getCompCostDelta(size_t candidateIndex) {
          (double)executions;
 }
 
-// The instructions `V` is computed by, back to `inputs`.
-static void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
-                             SmallPtrSetImpl<Instruction *> &exprInsts,
-                             SmallPtrSetImpl<Value *> &visited) {
-  if (!V || inputs.contains(V) || !visited.insert(V).second)
-    return;
-  auto *I = dyn_cast<Instruction>(V);
-  if (!I)
-    return;
-  exprInsts.insert(I);
-  for (Value *op : fpOperands(*I))
-    collectExprInsts(op, inputs, exprInsts, visited);
-}
-
 void RewriteUnit::findErasableInstructions() {
-  SmallPtrSet<Value *, 8> visited;
   SmallPtrSet<Instruction *, 8> exprInsts;
-  for (Value *root : roots)
-    collectExprInsts(root, subgraph->inputs, exprInsts, visited);
-  visited.clear();
+  for (Instruction *I : backwardCone(
+           roots, [&](Value *V) { return subgraph->inputs.contains(V); }))
+    exprInsts.insert(I);
 
   // Seeded in IR order, not in the order the pointers happened to hash: the
   // topological sort below is stable, so its input order decides the order the

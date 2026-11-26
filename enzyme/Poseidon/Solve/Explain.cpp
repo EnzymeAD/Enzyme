@@ -101,21 +101,21 @@ static std::string typeName(Type *T) {
   return s;
 }
 
-static std::string precisionWords(PrecisionChangeType t) {
+static std::string precisionWords(FPKind t) {
   if (unsigned k = expansionComponents(t))
     return formatv("a {0}-component float expansion", k).str();
   switch (t) {
-  case PrecisionChangeType::BF16:
+  case FPKind::BF16:
     return "bfloat16";
-  case PrecisionChangeType::FP16:
+  case FPKind::FP16:
     return "half";
-  case PrecisionChangeType::FP32:
+  case FPKind::FP32:
     return "float";
-  case PrecisionChangeType::FP64:
+  case FPKind::FP64:
     return "double";
-  case PrecisionChangeType::FP80:
+  case FPKind::FP80:
     return "long double";
-  case PrecisionChangeType::FP128:
+  case FPKind::FP128:
     return "quad";
   default:
     return formatOf(t).Name.str();
@@ -823,7 +823,7 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
           A.changedOps.push_back(w);
           if (!expansionComponents(ch.newType))
             dtypes[node] =
-                dtypeOfType(getLLVMFPType(ch.newType, F.getContext()));
+                dtypeOfType(llvmTypeForFPKind(F.getContext(), ch.newType));
         }
         c["ops"] = std::move(idx);
         A.changes.push_back(std::move(c));

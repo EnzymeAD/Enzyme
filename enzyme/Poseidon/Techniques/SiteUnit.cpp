@@ -14,6 +14,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
@@ -143,12 +144,6 @@ void putLoc(json::Object &o, StringRef key, const SourceLoc &L) {
     o[key] = locJSON(L);
 }
 
-void putLoc(json::Object &o, StringRef key, Value *V) {
-  if (auto *I = dyn_cast<Instruction>(V))
-    if (I->getDebugLoc())
-      o[key] = locJSON(locOf(I->getDebugLoc()));
-}
-
 std::string getSourceLocationStr(Value *V) {
   if (auto *I = dyn_cast<Instruction>(V)) {
     if (I->getDebugLoc()) {
@@ -159,11 +154,6 @@ std::string getSourceLocationStr(Value *V) {
   return "";
 }
 
-std::string getValueStr(Value *V) {
-  std::string str;
-  raw_string_ostream OS(str);
-  V->print(OS);
-  return str;
-}
+std::string getValueStr(Value *V) { return formatv("{0}", *V).str(); }
 
 } // namespace poseidon

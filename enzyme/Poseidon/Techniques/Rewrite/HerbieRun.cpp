@@ -8,6 +8,7 @@
 
 #include "HerbieRun.h"
 #include "../../Support/CacheKey.h"
+#include "../../Support/Options.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -61,18 +62,19 @@ static std::string herbieBinaryDigest(StringRef Program,
 // The arguments that decide what Herbie returns for a core. Its timeouts and
 // worker count are left out: they decide only how soon it returns and whether
 // a core times out, and an answer in which one did is not cached.
-static SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts) {
+static SmallVector<std::string>
+herbieSearchArgs(const Options &O, std::optional<unsigned> TaylorTerms) {
   // Herbie prunes alternatives by tree cost unless told otherwise, paying a
   // shared subterm once per occurrence; the emitted code computes it once.
   SmallVector<std::string> Args = {
-      "--seed",       std::to_string(Opts.Seed),
-      "--num-points", std::to_string(Opts.NumPoints),
-      "--num-iters",  std::to_string(Opts.NumIters),
-      "--num-enodes", std::to_string(Opts.NumEnodes),
+      "--seed",       std::to_string(O.Model.RandomSeed),
+      "--num-points", std::to_string(O.Herbie.NumPoints),
+      "--num-iters",  std::to_string(O.Herbie.NumIters),
+      "--num-enodes", std::to_string(O.Herbie.NumEnodes),
       "--disable",    "generate:proofs",
       "--enable",     "reduce:dag-cost"};
-  if (Opts.TaylorTerms)
-    Args.append({"--num-taylor-terms", std::to_string(*Opts.TaylorTerms)});
+  if (TaylorTerms)
+    Args.append({"--num-taylor-terms", std::to_string(*TaylorTerms)});
   return Args;
 }
 
@@ -157,48 +159,63 @@ struct ProcessOutcome {
 };
 } // namespace
 
-static ShardPlan planShards(size_t numCores, const HerbieRunOptions &Opts) {
+// Herbie's --timeout has no unbounded value; this one stands for no limit of
+// Poseidon's.
+static constexpr unsigned kUnboundedCoreTimeout = 9999;
+
+// Herbie's per-core --timeout: -poseidon-herbie-timeout, else the subgraph's
+// wall-clock budget, which bounds it anyway.
+static unsigned herbieCoreTimeout(const HerbieOptions &H) {
+  if (H.Timeout)
+    return H.Timeout;
+  if (H.SubgraphTimeout)
+    return H.SubgraphTimeout;
+  return kUnboundedCoreTimeout;
+}
+
+static ShardPlan planShards(size_t numCores, const Options &O) {
+  const HerbieOptions &H = O.Herbie;
+  const unsigned coreTimeout = herbieCoreTimeout(H);
   ShardPlan plan;
-  const unsigned numThreads = std::max(1, Opts.NumThreads);
+  const unsigned numThreads = std::max(1, H.Threads);
   plan.shards = (unsigned)std::max<size_t>(
-      1,
-      std::min<size_t>(Opts.Processes ? Opts.Processes : numThreads, numCores));
+      1, std::min<size_t>(H.Processes ? H.Processes : numThreads, numCores));
   plan.threadsPerShard = std::max<unsigned>(
       1, std::min<size_t>((numThreads + plan.shards - 1) / plan.shards,
                           (numCores + plan.shards - 1) / plan.shards));
-  plan.coreTimeout = (unsigned)Opts.CoreTimeout;
+  plan.coreTimeout = coreTimeout;
   plan.wallBudget = 0;
-  if (Opts.SubgraphTimeout == 0)
+  if (H.SubgraphTimeout == 0)
     return plan;
-  plan.coreTimeout =
-      std::min<unsigned>((unsigned)Opts.CoreTimeout, Opts.SubgraphTimeout);
+  plan.coreTimeout = std::min(coreTimeout, H.SubgraphTimeout);
   unsigned perShard = (unsigned)((numCores + plan.shards - 1) / plan.shards);
   unsigned rounds = std::max<unsigned>(
       1, (perShard + plan.threadsPerShard - 1) / plan.threadsPerShard);
   plan.wallBudget = plan.coreTimeout * rounds + plan.coreTimeout / 10 + 60;
-  if (Opts.Print && plan.coreTimeout < (unsigned)Opts.CoreTimeout)
+  if (O.Diagnostics.Print && plan.coreTimeout < coreTimeout)
     llvm::errs() << "[poseidon] Herbie per-core --timeout clamped from "
-                 << Opts.CoreTimeout << " s to " << plan.coreTimeout
+                 << coreTimeout << " s to " << plan.coreTimeout
                  << " s by -poseidon-herbie-subgraph-timeout\n";
   return plan;
 }
 
 // The command line of one shard, without its input file and output directory.
-static SmallVector<std::string> herbieCommand(const HerbieRunOptions &Opts,
-                                              const ShardPlan &plan) {
-  const HerbiePlatform &Platform = Opts.Platform;
+static SmallVector<std::string>
+herbieCommand(const Options &O, StringRef Program,
+              const HerbiePlatform &Platform,
+              std::optional<unsigned> TaylorTerms, const ShardPlan &plan) {
   SmallVector<std::string> args = {
-      Opts.Program, "report",
-      "--timeout",  std::to_string(plan.coreTimeout),
-      "--threads",  std::to_string(plan.threadsPerShard)};
-  args.append(herbieSearchArgs(Opts));
+      Program.str(), "report",
+      "--timeout",   std::to_string(plan.coreTimeout),
+      "--threads",   std::to_string(plan.threadsPerShard)};
+  args.append(herbieSearchArgs(O, TaylorTerms));
   // "default" is Herbie's own choice of platform, which it makes when it is
   // not told one; a host cost model leaves it there.
   if (Platform.Name == "default" && Platform.Path.empty())
     return args;
   args.push_back("--platform");
   args.push_back(Platform.Path.empty() ? Platform.Name : Platform.Path);
-  if (Opts.Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] using Herbie platform '" << Platform.Name
                  << '\''
                  << (Platform.Path.empty()
@@ -211,17 +228,17 @@ static SmallVector<std::string> herbieCommand(const HerbieRunOptions &Opts,
 
 // The digest of the question: the cores, the search arguments and the
 // platform Herbie ranks candidates by.
-static std::string questionDigest(ArrayRef<std::string> Cores,
-                                  const HerbieRunOptions &Opts) {
+static std::string questionDigest(ArrayRef<std::string> Cores, const Options &O,
+                                  const HerbiePlatform &Platform,
+                                  std::optional<unsigned> TaylorTerms) {
   std::string joinedCores;
   for (const std::string &expr : Cores) {
     joinedCores += expr;
     joinedCores += '\n';
   }
   CacheKey question;
-  question.add("Herbie platform",
-               Opts.Platform.Name + " " + Opts.Platform.Digest);
-  question.add("Herbie arguments", join(herbieSearchArgs(Opts), " "));
+  question.add("Herbie platform", Platform.Name + " " + Platform.Digest);
+  question.add("Herbie arguments", join(herbieSearchArgs(O, TaylorTerms), " "));
   question.addContent("cores", joinedCores);
   return question.digest();
 }
@@ -230,14 +247,14 @@ static std::string questionDigest(ArrayRef<std::string> Cores,
 // Herbie has to run. Without a Herbie, a question the cache does not answer is
 // an error naming its cache file.
 static Expected<std::optional<HerbieRunResult>>
-readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
+readCachedAnswer(const AnswerCache &cache, StringRef Program, bool Print,
                  StringRef Label) {
   HerbieRunResult Run;
   CacheEntryRead cached =
       readCacheEntry(cache.answerPath, cache.answeredBy, cache.unchecked);
   if (cached.value) {
     raw_string_ostream(Run.ResultsJson) << *cached.value;
-    if (Opts.Print)
+    if (Print)
       llvm::errs() << "[poseidon] Using cached Herbie output from "
                    << cache.answerPath
                    << "\n[poseidon] Herbie output: " << Run.ResultsJson << '\n';
@@ -251,7 +268,7 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
                              "the Herbie cache file " + cache.answerPath +
                                  " for " + Label + " is not a cache entry (" +
                                  cached.unreadable + ")");
-  if (Opts.Print && (!cached.unreadable.empty() || !cached.differs.empty()))
+  if (Print && (!cached.unreadable.empty() || !cached.differs.empty()))
     llvm::errs() << "[poseidon] Herbie " << Label << ": the cache file "
                  << cache.answerPath << " holds "
                  << (cached.unreadable.empty()
@@ -263,9 +280,9 @@ readCachedAnswer(const AnswerCache &cache, const HerbieRunOptions &Opts,
         inconvertibleErrorCode(),
         "no Herbie answer for " + Label + " is cached in " + cache.answerPath +
             ", and " +
-            (Opts.Program.empty()
+            (Program.empty()
                  ? kBuiltWithoutHerbie.str()
-                 : "there is no Herbie at " + Opts.Program + " to compute it") +
+                 : "there is no Herbie at " + Program + " to compute it") +
             "; copy here the -poseidon-cache directory of a compile that ran "
             "Herbie, or turn algebraic rewriting off with "
             "-poseidon-enable-rewrite=0");
@@ -419,14 +436,17 @@ static std::string printed(double v) {
 }
 
 // Why a run that wrote no usable results.json failed.
-static std::string noResultsReason(const HerbieRunOptions &Opts, int status) {
-  if (Opts.TaylorTerms && !takesTaylorTerms(Opts.Program))
+static std::string noResultsReason(StringRef Program,
+                                   const HerbiePlatform &Platform,
+                                   std::optional<unsigned> TaylorTerms,
+                                   int status) {
+  if (TaylorTerms && !takesTaylorTerms(Program))
     return "-poseidon-herbie-num-taylor-terms passes it --num-taylor-terms, "
            "which it does not take ('report --help' does not list it); use a "
            "Herbie built with the option, or leave the flag out";
-  std::string where = Opts.Platform.Name;
-  if (!Opts.Platform.Path.empty())
-    where += ", " + Opts.Platform.Path;
+  std::string where = Platform.Name;
+  if (!Platform.Path.empty())
+    where += ", " + Platform.Path;
   return (Twine("it exited with status ") + Twine(status) +
           " and wrote no usable results.json (platform " + where +
           "); its own diagnostics are on stderr above")
@@ -436,25 +456,23 @@ static std::string noResultsReason(const HerbieRunOptions &Opts, int status) {
 // Where the answer to the question `keyDigest` is filed, the platform name
 // leading the file name so that one device's answers are told apart from
 // another's at a glance; the entry records the Herbie that gave it.
-static AnswerCache answerCache(const HerbieRunOptions &Opts,
+static AnswerCache answerCache(StringRef CacheDir,
+                               const HerbiePlatform &Platform,
                                StringRef keyDigest, StringRef binaryDigest) {
   AnswerCache cache;
   cache.answeredBy.add("Herbie binary", binaryDigest);
   cache.haveHerbie = !binaryDigest.empty();
   if (!cache.haveHerbie)
     cache.unchecked.push_back("Herbie binary");
-  if (Opts.CacheDir.empty())
+  if (CacheDir.empty())
     return cache;
-  std::string keyStem = Opts.Platform.Name + "_" + keyDigest.str();
-  cache.answerPath = inDirectory(Opts.CacheDir, "herbie_" + keyStem + ".json");
+  std::string keyStem = Platform.Name + "_" + keyDigest.str();
+  cache.answerPath = inDirectory(CacheDir, "herbie_" + keyStem + ".json");
   return cache;
 }
 
-static void announceRun(const HerbieRunOptions &Opts, StringRef Label,
-                        size_t numCores, const ShardPlan &plan,
+static void announceRun(StringRef Label, size_t numCores, const ShardPlan &plan,
                         ArrayRef<std::string> command, StringRef keyDigest) {
-  if (!Opts.Print)
-    return;
   llvm::errs() << "[poseidon] Executing Herbie (" << plan.shards
                << " process(es), one input file and output directory "
                   "each) with arguments: ";
@@ -500,20 +518,25 @@ stoppedRun(const ProcessOutcome &ran, StringRef Label, unsigned wallBudget) {
   return Run;
 }
 
-Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
-                                    const HerbieRunOptions &Opts,
-                                    StringRef Label,
-                                    HerbieBinaryDigests &Digests) {
-  const ShardPlan plan = planShards(Cores.size(), Opts);
-  const SmallVector<std::string> command = herbieCommand(Opts, plan);
-  const std::string keyDigest = questionDigest(Cores, Opts);
-  const std::string binaryDigest =
-      Opts.CacheOnly ? std::string()
-                     : herbieBinaryDigest(Opts.Program, Digests);
-  const AnswerCache cache = answerCache(Opts, keyDigest, binaryDigest);
-  if (!Opts.CacheDir.empty()) {
+Expected<HerbieRunResult>
+runHerbie(const std::vector<std::string> &Cores, const Options &O,
+          const HerbiePlatform &Platform, std::optional<unsigned> TaylorTerms,
+          StringRef Label, HerbieBinaryDigests &Digests) {
+  const std::string Program = herbieProgram(O.Herbie);
+  const bool Print = O.Diagnostics.Print;
+  const StringRef CacheDir = O.Herbie.Cache;
+  const ShardPlan plan = planShards(Cores.size(), O);
+  const SmallVector<std::string> command =
+      herbieCommand(O, Program, Platform, TaylorTerms, plan);
+  const std::string keyDigest = questionDigest(Cores, O, Platform, TaylorTerms);
+  const std::string binaryDigest = sys::fs::exists(Program)
+                                       ? herbieBinaryDigest(Program, Digests)
+                                       : std::string();
+  const AnswerCache cache =
+      answerCache(CacheDir, Platform, keyDigest, binaryDigest);
+  if (!CacheDir.empty()) {
     Expected<std::optional<HerbieRunResult>> cached =
-        readCachedAnswer(cache, Opts, Label);
+        readCachedAnswer(cache, Program, Print, Label);
     if (!cached)
       return cached.takeError();
     if (*cached)
@@ -524,8 +547,9 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
   if (Error E = files.create(Cores))
     return std::move(E);
   HerbieRunResult Run;
-  announceRun(Opts, Label, Cores.size(), plan, command, keyDigest);
-  ProcessOutcome ran = runShards(files, command, Opts.Program, plan.wallBudget);
+  if (Print)
+    announceRun(Label, Cores.size(), plan, command, keyDigest);
+  ProcessOutcome ran = runShards(files, command, Program, plan.wallBudget);
   if (ran.executionFailed) {
     Run.Failure = ran.executionError;
     return Run;
@@ -536,7 +560,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
 
   std::optional<json::Value> answer = readShardResults(files, Run.ResultsJson);
   if (!answer) {
-    Run.Failure = noResultsReason(Opts, ran.status);
+    Run.Failure = noResultsReason(Program, Platform, TaylorTerms, ran.status);
     return Run;
   }
   if (ran.status != 0)
@@ -544,7 +568,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
         ("Herbie " + Label + " exited with status " + Twine(ran.status) +
          " but wrote a usable results.json, which is used")
             .str();
-  if (Opts.Print)
+  if (Print)
     llvm::errs() << "[poseidon] Herbie output: " << Run.ResultsJson << '\n';
   if (size_t timedOut = timedOutCores(*answer)) {
     if (!Run.Warning.empty())
@@ -557,15 +581,15 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
          "answer is not cached, so the next compile runs Herbie again")
             .str();
   } else if (!cache.answerPath.empty()) {
-    if (Error E = writeAnswer(Opts.CacheDir, cache.answerPath, cache.answeredBy,
+    if (Error E = writeAnswer(CacheDir, cache.answerPath, cache.answeredBy,
                               std::move(*answer)))
       return std::move(E);
-    if (Opts.Print)
+    if (Print)
       llvm::errs() << "[poseidon] Saved Herbie output to cache file "
                    << cache.answerPath << '\n';
     Run.CacheFile = cache.answerPath;
   }
-  if (Opts.Print)
+  if (Print)
     llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
                  << ran.seconds
                  << " s, a fresh answer of the Herbie with digest "

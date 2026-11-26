@@ -39,7 +39,7 @@ FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
       nodePrecisions[node] = change.newType;
       nodeChange[node] = index;
       auto *CI = dyn_cast<CallInst>(node->value);
-      if (change.newType == PrecisionChangeType::FP32 && CI &&
+      if (change.newType == FPKind::FP32 && CI &&
           approxSqrtF32Of(*CI) != Intrinsic::not_intrinsic)
         approxSqrtError[node] =
             Target::of(*CI->getModule()).approxSqrtF32Error();
@@ -77,9 +77,8 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     if (kept != components.end() && nodeChange.at(o) == nodeChange.at(node))
       return kept->second;
     double v = getResult(o);
-    return o->hasPrecision(PrecisionChangeType::FP32)
-               ? expansionFromF32((float)v, n)
-               : expansionFromF64(v, n);
+    return o->hasPrecision(FPKind::FP32) ? expansionFromF32((float)v, n)
+                                         : expansionFromF64(v, n);
   };
   // A value multiplied by itself is materialized as a square.
   const bool sameFactor =
@@ -102,20 +101,20 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
                    : expansionFma(operand(0), operand(1), operand(2));
   components[node] = r;
-  cache.try_emplace(node, node->hasPrecision(PrecisionChangeType::FP32)
+  cache.try_emplace(node, node->hasPrecision(FPKind::FP32)
                               ? (double)expansionToF32(r)
                               : expansionToF64(r));
   return true;
 }
 
-PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
+FPKind FPEvaluator::getNodePrecision(const FPNode *node) const {
   auto it = nodePrecisions.find(node);
   if (it != nodePrecisions.end())
     return it->second;
   const FPFormatInfo *F = node->format;
-  assert(F && F->Kind != FPKind::Invalid &&
+  assert(F && F->Matrix &&
          "an evaluated node has a format the matrix model has a kind for");
-  return F->Precision;
+  return F->Kind;
 }
 
 // Whether comparison `pred` holds between two values whose order is `order`
@@ -174,16 +173,15 @@ bool FPEvaluator::evaluateLogic(const FPNode *node,
 }
 
 double FPEvaluator::evaluateOperation(const FPNode *node,
-                                      PrecisionChangeType nodePrec) const {
-  const bool useReducedFloat = nodePrec == PrecisionChangeType::FP32 ||
-                               nodePrec == PrecisionChangeType::FP16 ||
-                               nodePrec == PrecisionChangeType::BF16;
-  const FPKind kind = formatOf(nodePrec).Kind;
+                                      FPKind nodePrec) const {
+  const bool useReducedFloat = nodePrec == FPKind::FP32 ||
+                               nodePrec == FPKind::FP16 ||
+                               nodePrec == FPKind::BF16;
   // A binary16 or bfloat16 operation is computed in binary32 and rounded.
   auto truncToPrec = [&](float val) -> float {
-    if (kind != FPKind::BF16 && kind != FPKind::FP16)
+    if (nodePrec != FPKind::BF16 && nodePrec != FPKind::FP16)
       return val;
-    return static_cast<float>(roundToPrec((double)val, kind));
+    return static_cast<float>(roundToPrec((double)val, nodePrec));
   };
   auto toF = [&](double v) { return truncToPrec(static_cast<float>(v)); };
   auto operand = [&](unsigned i) { return getResult(node->operands[i]); };
@@ -231,11 +229,10 @@ void FPEvaluator::evaluateNode(const FPNode *node,
   if (evaluateLogic(node, inputValues))
     return;
 
-  PrecisionChangeType nodePrec = getNodePrecision(node);
+  FPKind nodePrec = getNodePrecision(node);
   for (const auto &operand : node->operands)
     evaluateNode(operand, inputValues);
-  if (nodePrec == PrecisionChangeType::FP80 ||
-      nodePrec == PrecisionChangeType::FP128)
+  if (nodePrec == FPKind::FP80 || nodePrec == FPKind::FP128)
     llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
   if (const unsigned nExp = expansionComponents(nodePrec))
     if (evaluateExpansionNode(node, nExp))

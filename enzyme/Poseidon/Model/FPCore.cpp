@@ -371,14 +371,14 @@ Expected<FPNode *> FPCoreParser::parseLiteral(const std::string &expr) {
   const FPFormatInfo *format;
   if (std::regex_match(expr, matches, constantPattern)) {
     format = StringSwitch<const FPFormatInfo *>(matches[3].str())
-                 .Case("binary64", &formatOf(PrecisionChangeType::FP64))
-                 .Case("binary32", &formatOf(PrecisionChangeType::FP32))
+                 .Case("binary64", &formatOf(FPKind::FP64))
+                 .Case("binary32", &formatOf(FPKind::FP32))
                  .Default(nullptr);
     if (!format)
       return malformed("a literal of the unmodelled format " + matches[3].str(),
                        expr);
   } else if (std::regex_match(expr, matches, plainConstantPattern)) {
-    format = &formatOf(PrecisionChangeType::FP64);
+    format = &formatOf(FPKind::FP64);
   } else {
     return nullptr;
   }
@@ -437,8 +437,8 @@ Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
   } else if (size_t pos = head.find('.'); pos != StringRef::npos) {
     op = head.substr(0, pos);
     format = formatOfDtype(head.substr(pos + 1));
-    if (!format || (format->Precision != PrecisionChangeType::FP64 &&
-                    format->Precision != PrecisionChangeType::FP32))
+    if (!format ||
+        (format->Kind != FPKind::FP64 && format->Kind != FPKind::FP32))
       return malformed("the operator " + head + " of an unmodelled format",
                        expr);
   }
@@ -461,9 +461,9 @@ Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
   // destination precision, which makes it an identity at that precision.
   if (!format) {
     if (O == &fpcore::ToBinary32)
-      format = &formatOf(PrecisionChangeType::FP32);
+      format = &formatOf(FPKind::FP32);
     else if (O == &fpcore::ToBinary64)
-      format = &formatOf(PrecisionChangeType::FP64);
+      format = &formatOf(FPKind::FP64);
   }
 
   auto *node = G.create<FPNode>(*O, format);
@@ -829,62 +829,11 @@ std::string renderC(const FPNode &node, const CRendering &how,
   return e.text;
 }
 
-static bool isRenderableFPCore(
-    StringRef expr,
-    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  static const std::regex number(R"(^[-+]?(\d+(\.\d+)?(/\d+)?|inf\.0)$)");
-  SmallVector<std::pair<bool, bool>, 8> groups;
-  bool expectHead = false;
-  size_t i = 0;
-  while (i < expr.size()) {
-    char c = expr[i];
-    if (std::isspace((unsigned char)c)) {
-      ++i;
-      continue;
-    }
-    if (c == '(' || expr.substr(i).starts_with("#s(")) {
-      i += c == '(' ? 1 : 3;
-      groups.push_back({false, !groups.empty() && groups.back().first});
-      expectHead = true;
-      continue;
-    }
-    if (c == ')') {
-      if (groups.empty())
-        return false;
-      groups.pop_back();
-      expectHead = false;
-      ++i;
-      continue;
-    }
-    size_t j = i;
-    while (j < expr.size() && !std::isspace((unsigned char)expr[j]) &&
-           expr[j] != '(' && expr[j] != ')')
-      ++j;
-    std::string atom = expr.substr(i, j - i).str();
-    i = j;
-    if (expectHead) {
-      expectHead = false;
-      if (atom == "literal" && !groups.empty())
-        groups.back().first = true;
-      continue;
-    }
-    bool inLiteral =
-        !groups.empty() && (groups.back().first || groups.back().second);
-    if (inLiteral || symbolToValueMap.count(atom) ||
-        std::regex_match(atom, number))
-      continue;
-    return false;
-  }
-  return groups.empty();
-}
-
 SmallVector<std::string, 1>
 fpcoreToC(StringRef expr, FPGraph &G, const CRendering &how,
           StringRef resultDtype,
           SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
   SmallVector<std::string, 1> out;
-  if (!isRenderableFPCore(expr, G.symbolToValueMap))
-    return out;
   Expected<FPNode *> parsed = parseHerbieExpr(expr, G, approxSpecs, how.inputs);
   if (!parsed) {
     consumeError(parsed.takeError());

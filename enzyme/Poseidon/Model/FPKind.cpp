@@ -9,7 +9,6 @@
 #include "FPKind.h"
 
 #include "llvm/ADT/APFloat.h"
-#include "llvm/Support/ErrorHandling.h"
 
 #include <cassert>
 #include <cmath>
@@ -22,76 +21,58 @@ using namespace llvm;
 namespace poseidon {
 
 const char *fpKindName(FPKind k) {
-  switch (k) {
-  case FPKind::FP16:
-    return "f16";
-  case FPKind::BF16:
-    return "bf16";
-  case FPKind::TF32:
-    return "tf32";
-  case FPKind::FP32:
-    return "f32";
-  case FPKind::FP64:
-    return "f64";
-  case FPKind::INT8:
-    return "s8";
-  case FPKind::INT32:
-    return "s32";
-  case FPKind::Invalid:
-    return "invalid";
-  }
-  llvm_unreachable("unknown FPKind value");
+  static constexpr const char *kNames[] = {
+      "invalid",
+#define FP_FORMAT(Kind, Name, Dtype, ...) Dtype,
+#include "Model/FPFormat.def"
+  };
+  return kNames[unsigned(k)];
 }
 
-// nullptr for kinds with no FP rounding semantics (F64, Invalid, S8/S32).
 static const fltSemantics *semanticsForKind(FPKind k) {
-  switch (k) {
-  case FPKind::FP16:
-    return &APFloat::IEEEhalf();
-  case FPKind::BF16:
-    return &APFloat::BFloat();
-  case FPKind::TF32:
-    return &APFloat::FloatTF32();
-  case FPKind::FP32:
-    return &APFloat::IEEEsingle();
-  case FPKind::FP64:
-  case FPKind::Invalid:
-  case FPKind::INT8:
-  case FPKind::INT32:
-    return nullptr;
-  }
-  return nullptr;
+  static constexpr const fltSemantics &(*kSemantics[])() = {
+      nullptr,
+#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, Storage, Semantics, ...) \
+  Semantics,
+#include "Model/FPFormat.def"
+  };
+  return kSemantics[unsigned(k)] ? &kSemantics[unsigned(k)]() : nullptr;
+}
+
+namespace {
+struct Format {
+  int precision = 0, minExponent = 0;
+  double subnormalUlp = 0.0;
+  uint64_t maxFinite = 0;
+};
+} // namespace
+
+static Format formatOf(FPKind k) {
+  Format f;
+  const fltSemantics *sem = semanticsForKind(k);
+  if (!sem)
+    return f;
+  assert(APFloat::semanticsHasInf(*sem) && "overflow does not round to inf");
+  f.precision = APFloat::semanticsPrecision(*sem);
+  f.minExponent = APFloat::semanticsMinExponent(*sem);
+  f.subnormalUlp = std::ldexp(1.0, f.minExponent - f.precision + 1);
+  APFloat largest = APFloat::getLargest(*sem);
+  bool losesInfo;
+  largest.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven,
+                  &losesInfo);
+  f.maxFinite = largest.bitcastToAPInt().getZExtValue();
+  return f;
 }
 
 Rounding::Rounding(FPKind k) : kind(k) {
   assert(k != FPKind::INT8 && k != FPKind::INT32 &&
          "an integer format has no floating-point rounding");
-  const fltSemantics *sem = semanticsForKind(k);
-  if (!sem)
-    return;
-  struct Format {
-    int precision, minExponent;
-    double subnormalUlp;
-    uint64_t maxFinite;
-  };
-  auto formatOf = [](FPKind narrow) {
-    const fltSemantics &sem = *semanticsForKind(narrow);
-    assert(APFloat::semanticsHasInf(sem) && "overflow does not round to inf");
-    Format f;
-    f.precision = APFloat::semanticsPrecision(sem);
-    f.minExponent = APFloat::semanticsMinExponent(sem);
-    f.subnormalUlp = std::ldexp(1.0, f.minExponent - f.precision + 1);
-    APFloat largest = APFloat::getLargest(sem);
-    bool losesInfo;
-    largest.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven,
-                    &losesInfo);
-    f.maxFinite = largest.bitcastToAPInt().getZExtValue();
-    return f;
-  };
   static const Format formats[] = {
-      formatOf(FPKind::FP16), formatOf(FPKind::BF16), formatOf(FPKind::TF32),
-      formatOf(FPKind::FP32)};
-  const Format &f = formats[(int)k - (int)FPKind::FP16];
+      formatOf(FPKind::Invalid),
+#define FP_FORMAT(Kind, ...) formatOf(FPKind::Kind),
+#include "Model/FPFormat.def"
+  };
+  const Format &f = formats[unsigned(k)];
   precision = f.precision;
   minExponent = f.minExponent;
   subnormalUlp = f.subnormalUlp;

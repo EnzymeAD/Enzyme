@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/IRBuilder.h"
@@ -68,6 +69,14 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 /// The sum of v's components rounded to `targetTy`, F32 or F64, at B.
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
+
+/// Gives each reader of `I` that `inside` rejects the value `restore` emits
+/// right after `I` (after the PHIs, for a PHI); that value, or null when every
+/// reader is inside.
+llvm::Value *
+restoreOutside(llvm::Instruction *I,
+               llvm::function_ref<bool(llvm::Instruction *)> inside,
+               llvm::function_ref<llvm::Value *(llvm::IRBuilder<> &)> restore);
 
 /// Materialize `instsToChange`, in an order where an operation follows its
 /// operands, as an n-component expansion and erase them, with the FP64 PHIs the

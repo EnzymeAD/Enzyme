@@ -41,7 +41,7 @@ namespace poseidon {
 struct FPCoreOperator;
 struct FPFormatInfo;
 class FPGraph;
-enum class PrecisionChangeType;
+enum class FPKind;
 
 /// A node of the expression graph: an operation, with its operands, of a
 /// parsed rewrite. Values of the program and literals are the subclasses
@@ -89,7 +89,7 @@ public:
   /// Whether the node's operator is the row `O`.
   bool is(const FPCoreOperator &O) const { return op == &O; }
   /// Whether the node's value has the format of precision `P`.
-  bool hasPrecision(PrecisionChangeType P) const;
+  bool hasPrecision(FPKind P) const;
   /// Appends `operand`, a node of the same graph.
   void addOperand(FPNode *operand);
   bool hasSymbol() const { return !symbol.empty(); }
@@ -167,6 +167,8 @@ class FPConst : public FPNode {
 private:
   std::string strValue;
 
+  /// An FPCore literal, a decimal, an infinity or an exact rational, as the
+  /// nearest double.
   static double literalValue(const std::string &strValue);
 
 public:

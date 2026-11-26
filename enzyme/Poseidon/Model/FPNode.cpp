@@ -65,8 +65,8 @@ static Value *mathLibraryCall(IRBuilder<> &b, Module *M, StringRef name,
 
 FPNode::NodeType FPNode::getType() const { return ntype; }
 
-bool FPNode::hasPrecision(PrecisionChangeType P) const {
-  return format && format->Precision == P;
+bool FPNode::hasPrecision(FPKind P) const {
+  return format && format->Kind == P;
 }
 
 void FPNode::addOperand(FPNode *operand) { operands.push_back(operand); }
@@ -332,8 +332,7 @@ void FPGraph::replaceErased(Value *erased, Value *now) {
   node->value = nullptr;
 }
 
-// An FPCore literal, a decimal or an exact rational, as the nearest double.
-static double literalToDouble(const std::string &str) {
+double FPConst::literalValue(const std::string &str) {
   size_t div = str.find('/');
   if (div == std::string::npos)
     return std::strtod(str.c_str(), nullptr);
@@ -352,29 +351,11 @@ static double literalToDouble(const std::string &str) {
   return result;
 }
 
-double FPConst::literalValue(const std::string &strValue) {
-  if (strValue == "+inf.0") {
-    return std::numeric_limits<double>::infinity();
-  }
-  if (strValue == "-inf.0") {
-    return -std::numeric_limits<double>::infinity();
-  }
-
-  return literalToDouble(strValue);
-}
-
 Value *FPConst::getLLValue(IRBuilder<> &builder,
                            const ValueToValueMapTy *VMap) {
   Type *Ty = llvmTypeOf(format, builder);
   assert(Ty && "a literal has a format of an LLVM type");
-  if (strValue == "+inf.0") {
-    return ConstantFP::getInfinity(Ty, false);
-  }
-  if (strValue == "-inf.0") {
-    return ConstantFP::getInfinity(Ty, true);
-  }
-
-  return ConstantFP::get(Ty, literalToDouble(strValue));
+  return ConstantFP::get(Ty, literalValue(strValue));
 }
 
 bool FPConst::classof(const FPNode *N) {

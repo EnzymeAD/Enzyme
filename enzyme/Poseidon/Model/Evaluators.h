@@ -37,7 +37,7 @@ inline constexpr unsigned kMaxMPFRPrecision = 1024;
 class FPEvaluator {
 private:
   llvm::DenseMap<const FPNode *, double> cache;
-  std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
+  std::unordered_map<const FPNode *, FPKind> nodePrecisions;
   /// The position, among the candidate's changes, of the change a node
   /// belongs to.
   std::unordered_map<const FPNode *, size_t> nodeChange;
@@ -47,13 +47,12 @@ private:
   std::unordered_map<const FPNode *, double> approxSqrtError;
 
   bool evaluateExpansionNode(const FPNode *node, unsigned n);
-  PrecisionChangeType getNodePrecision(const FPNode *node) const;
+  FPKind getNodePrecision(const FPNode *node) const;
   /// An if, and, or, not, TRUE or FALSE; false for any other node.
   bool evaluateLogic(const FPNode *node,
                      const llvm::MapVector<llvm::Value *, double> &inputValues);
   /// Any other operation, its operands evaluated, at `nodePrec`.
-  double evaluateOperation(const FPNode *node,
-                           PrecisionChangeType nodePrec) const;
+  double evaluateOperation(const FPNode *node, FPKind nodePrec) const;
 
 public:
   /// An evaluator of the candidate whose precision changes are `changes`;

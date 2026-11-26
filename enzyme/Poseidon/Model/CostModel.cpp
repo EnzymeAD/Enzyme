@@ -294,40 +294,41 @@ Expected<double> compCost(CostModelState &CM, Function *F, InstWeight Weight,
   return computeMaxCost(CM, &F->getEntryBlock(), MaxCost, Visited, Weight, At);
 }
 
+SmallVector<Instruction *, 32>
+backwardCone(ArrayRef<Value *> roots, function_ref<bool(Value *)> isInput) {
+  SmallPtrSet<Value *, 8> seen;
+  SmallVector<Value *, 8> todo(roots);
+  SmallVector<Instruction *, 32> cone;
+  while (!todo.empty()) {
+    Value *cur = todo.pop_back_val();
+    if (!seen.insert(cur).second || isInput(cur))
+      continue;
+    if (auto *I = dyn_cast<Instruction>(cur)) {
+      cone.push_back(I);
+      append_range(todo, fpOperands(*I));
+    }
+  }
+  return cone;
+}
+
 Expected<double> compCost(CostModelState &CM, ArrayRef<Value *> outputs,
                           const SetVector<Value *> &inputs,
                           const DenseMap<const Instruction *, uint64_t> *opExec,
                           uint64_t normalizer) {
   assert(!outputs.empty() && "a cost walk needs at least one output");
-  SmallPtrSet<Value *, 8> seen;
-  SmallVector<Value *, 8> todo;
   double cost = 0;
-
-  todo.insert(todo.end(), outputs.begin(), outputs.end());
-  while (!todo.empty()) {
-    Value *cur = todo.pop_back_val();
-    if (!seen.insert(cur).second)
-      continue;
-
-    if (inputs.contains(cur))
-      continue;
-
-    if (auto *I = dyn_cast<Instruction>(cur)) {
-      Expected<double> instCost = instructionCost(CM, I);
-      if (!instCost)
-        return instCost.takeError();
-      if (opExec && normalizer) {
-        auto it = opExec->find(I);
-        if (it != opExec->end())
-          *instCost *= (double)it->second / (double)normalizer;
-      }
-      cost += *instCost;
-
-      for (Value *operand : fpOperands(*I))
-        todo.push_back(operand);
+  for (Instruction *I :
+       backwardCone(outputs, [&](Value *V) { return inputs.contains(V); })) {
+    Expected<double> instCost = instructionCost(CM, I);
+    if (!instCost)
+      return instCost.takeError();
+    if (opExec && normalizer) {
+      auto it = opExec->find(I);
+      if (it != opExec->end())
+        *instCost *= (double)it->second / (double)normalizer;
     }
+    cost += *instCost;
   }
-
   return cost;
 }
 

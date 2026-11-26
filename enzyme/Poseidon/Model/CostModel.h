@@ -75,6 +75,12 @@ using InstWeight = llvm::function_ref<double(const llvm::Instruction &)>;
 llvm::Expected<double> compCost(CostModelState &CM, llvm::Function *F,
                                 InstWeight Weight, const llvm::Instruction *At);
 
+/// The instructions that compute `roots` from the values `isInput` accepts,
+/// depth first from the last root.
+llvm::SmallVector<llvm::Instruction *, 32>
+backwardCone(llvm::ArrayRef<llvm::Value *> roots,
+             llvm::function_ref<bool(llvm::Value *)> isInput);
+
 /// The summed prices of the instructions that compute `outputs` from
 /// `inputs`, in the cost model's units per execution. With `opExec`, each
 /// priced instruction is weighted by its measured execution count over

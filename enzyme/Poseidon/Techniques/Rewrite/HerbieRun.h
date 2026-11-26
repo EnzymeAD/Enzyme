@@ -26,6 +26,8 @@
 
 namespace poseidon {
 
+struct Options;
+
 /// The Herbie platform a search runs against: the cost table Herbie ranks its
 /// rewrite candidates by. It is part of the cache key: a rewrite Herbie
 /// proposed against another device's costs is that device's answer.
@@ -38,46 +40,6 @@ struct HerbiePlatform {
   /// Content digest of Path, so a recalibrated device (same Name, different
   /// prices) is a different key. Empty when Path is empty.
   std::string Digest;
-};
-
-/// How to run Herbie.
-struct HerbieRunOptions {
-  /// The Herbie binary, empty in a build without Herbie.
-  std::string Program;
-  /// Program names no file, so only the cache can answer, with the answer any
-  /// Herbie gave.
-  bool CacheOnly = false;
-  /// The platform the search runs against.
-  HerbiePlatform Platform;
-
-  /// Herbie's --seed; with the three fields below, it decides the rewrites
-  /// Herbie returns, and so is part of the cache key.
-  unsigned Seed = 0;
-  /// Herbie's --num-points: the sample points it evaluates a candidate on.
-  int NumPoints = 0;
-  /// Herbie's --num-iters: its rounds of rewriting.
-  int NumIters = 0;
-  /// Herbie's --num-enodes: the size its e-graphs are cut off at.
-  int NumEnodes = 0;
-  /// Herbie's --num-taylor-terms; none leaves Herbie its own cap.
-  std::optional<unsigned> TaylorTerms;
-
-  /// Herbie's per-core --timeout, in seconds. With the fields below it is not
-  /// part of the cache key: an answer in which a core timed out is not cached.
-  int CoreTimeout = 0;
-  /// Worker threads in all, and the processes they are split across; 0
-  /// processes is one per thread.
-  int NumThreads = 1;
-  /// The Herbie processes the threads are split across; 0 for one per thread.
-  unsigned Processes = 0;
-  /// The wall-clock budget, in seconds, the per-core timeout is clamped to and
-  /// the processes are killed after; 0 waits for as long as Herbie takes.
-  unsigned SubgraphTimeout = 0;
-
-  /// The directory of cached results; empty for none.
-  std::string CacheDir;
-  /// Print the command line, the platform and the cache traffic.
-  bool Print = false;
 };
 
 /// The digest of a file's contents, which is never empty; "" when the file
@@ -150,15 +112,16 @@ struct HerbieRunResult {
 /// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache: the
 /// answer this Herbie gave, else a run, whose answer replaces the cached one
 /// unless a core in it timed out.
-/// With `Opts.CacheOnly`, the cached answer is the one any Herbie gave, and a
-/// question the cache does not answer is an error naming its cache file.
+/// When the Herbie of `O` names no file, the cached answer is the one any
+/// Herbie gave, and a question the cache does not answer is an error naming its
+/// cache file. `TaylorTerms`, when given, is Herbie's --num-taylor-terms.
 /// `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". A cache
 /// file, or a temporary file or directory for Herbie, that cannot be written is
 /// an error that names the path.
-llvm::Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
-                                          const HerbieRunOptions &Opts,
-                                          llvm::StringRef Label,
-                                          HerbieBinaryDigests &Digests);
+llvm::Expected<HerbieRunResult>
+runHerbie(const std::vector<std::string> &Cores, const Options &O,
+          const HerbiePlatform &Platform, std::optional<unsigned> TaylorTerms,
+          llvm::StringRef Label, HerbieBinaryDigests &Digests);
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_REWRITE_HERBIE_RUN_H

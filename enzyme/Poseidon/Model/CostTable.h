@@ -60,8 +60,8 @@ struct CostModelState {
 };
 
 /// The directory a compile looks a model up in by target-cpu:
-/// $XDG_CACHE_HOME/poseidon, else $HOME/.cache/poseidon; empty when neither
-/// variable is set.
+/// "poseidon" in sys::path::cache_directory ($XDG_CACHE_HOME, else
+/// ~/.cache); empty when there is none.
 std::string userCacheDir();
 
 /// Parses the model the request names, and fails unless every line is a header

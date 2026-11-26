@@ -139,9 +139,7 @@ public:
   std::optional<size_t> positionOfOrdinal(size_t ordinal) const;
   /// The candidates pricing dropped, by name, each with why.
   virtual llvm::ArrayRef<std::pair<std::string, std::string>>
-  droppedCandidates() const {
-    return {};
-  }
+  droppedCandidates() const = 0;
   /// Candidate i as the line selecting it by -poseidon-pin names it.
   virtual std::string selectionText(size_t i) const = 0;
   /// Candidate i as the DP table print and the materialization log name it.
@@ -296,8 +294,6 @@ SourceLoc locOf(const llvm::Value *V);
 llvm::json::Object locJSON(const SourceLoc &L);
 /// Sets o[key] to the position L, unless L is no position.
 void putLoc(llvm::json::Object &o, llvm::StringRef key, const SourceLoc &L);
-/// Sets o[key] to the source location of the instruction V, unless it has none.
-void putLoc(llvm::json::Object &o, llvm::StringRef key, llvm::Value *V);
 /// An instruction's source location as file:line:col; empty without one.
 std::string getSourceLocationStr(llvm::Value *V);
 /// A value as the IR prints it.

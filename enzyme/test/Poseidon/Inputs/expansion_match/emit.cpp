@@ -319,10 +319,10 @@ FPNode *nodeOf(Value *V, FPGraph &G) {
   return node;
 }
 
-PrecisionChangeType expansionType(unsigned n) {
-  return n == 2   ? PrecisionChangeType::Expansion2
-         : n == 3 ? PrecisionChangeType::Expansion3
-                  : PrecisionChangeType::Expansion4;
+FPKind expansionType(unsigned n) {
+  return n == 2   ? FPKind::Expansion2
+         : n == 3 ? FPKind::Expansion3
+                  : FPKind::Expansion4;
 }
 
 std::string outPath(const char *file) {
@@ -386,9 +386,8 @@ void modelApplied(std::vector<AppFn> &fns) {
       SetVector<FPLLValue *> nodes;
       for (Instruction *I : ch)
         nodes.insert(cast<FPLLValue>(G.valueToNodeMap.at(I)));
-      changes.emplace_back(
-          nodes, f32 ? PrecisionChangeType::FP32 : PrecisionChangeType::FP64,
-          expansionType(a.n));
+      changes.emplace_back(nodes, f32 ? FPKind::FP32 : FPKind::FP64,
+                           expansionType(a.n));
     }
     PrecisionCandidate pt(changes, "expansion-match");
     for (size_t i = 0; i < pts.size() / 3; ++i) {

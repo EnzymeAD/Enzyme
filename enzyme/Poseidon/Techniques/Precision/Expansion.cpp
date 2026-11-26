@@ -515,34 +515,46 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
   return ExpansionValue{};
 }
 
+Value *restoreOutside(Instruction *I, function_ref<bool(Instruction *)> inside,
+                      function_ref<Value *(IRBuilder<> &)> restore) {
+  SmallVector<Use *, 4> outside;
+  for (Use &U : I->uses()) {
+    auto *userI = dyn_cast<Instruction>(U.getUser());
+    if (!userI || !inside(userI))
+      outside.push_back(&U);
+  }
+  if (outside.empty())
+    return nullptr;
+  BasicBlock::iterator restorePos = std::next(BasicBlock::iterator(I));
+  if (isa<PHINode>(I))
+    // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
+    restorePos = I->getParent()->getFirstNonPHIIt();
+  IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
+  Value *restored = restore(RestoreB);
+  assert(restored->getType() == I->getType() &&
+         "a restore has the type of the value it restores");
+  for (Use *U : outside)
+    U->set(restored);
+  return restored;
+}
+
 // Gives every use of a converted instruction outside the conversion the
 // instruction's restore, recorded in `restoredValues` if given.
 static void restoreExternalUses(ExpansionMap &expansionMap,
                                 const SmallPtrSetImpl<Instruction *> &changed,
                                 DenseMap<Value *, Value *> *restoredValues) {
-  for (auto &[val, v] : expansionMap) {
-    auto *I = dyn_cast<Instruction>(val);
+  for (auto &KV : expansionMap) {
+    auto *I = dyn_cast<Instruction>(KV.first);
     if (!I || !changed.count(I))
       continue;
-    SmallVector<Use *, 4> externalUses;
-    for (Use &U : I->uses()) {
-      auto *userI = dyn_cast<Instruction>(U.getUser());
-      if (!userI || !expansionMap.count(userI) || !changed.count(userI))
-        externalUses.push_back(&U);
-    }
-    if (externalUses.empty())
-      continue;
-    BasicBlock::iterator restorePos = std::next(BasicBlock::iterator(I));
-    if (isa<PHINode>(I))
-      // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
-      restorePos = I->getParent()->getFirstNonPHIIt();
-    IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
-    Value *restored = emitExpansionToFP(RestoreB, v, I->getType());
-    assert(restored->getType() == I->getType() &&
-           "unexpected restored value type");
-    for (Use *U : externalUses)
-      U->set(restored);
-    if (restoredValues)
+    const ExpansionValue &v = KV.second;
+    Value *restored = restoreOutside(
+        I,
+        [&](Instruction *U) {
+          return expansionMap.count(U) && changed.count(U);
+        },
+        [&](IRBuilder<> &B) { return emitExpansionToFP(B, v, I->getType()); });
+    if (restored && restoredValues)
       (*restoredValues)[I] = restored;
   }
 }

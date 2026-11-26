@@ -11,91 +11,60 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
 
 namespace poseidon {
 
+// The LLVMType column as one function type (getInt8Ty returns an IntegerType);
+// null for an expansion.
+template <auto Get> static Type *storage(LLVMContext &C) {
+  if constexpr (Get == nullptr)
+    return nullptr;
+  else
+    return Get(C);
+}
+
 static constexpr FPFormatInfo kFormats[] = {
-    {PrecisionChangeType::BF16, FPKind::BF16, "bf16", "bf16", "__bf16", "BF16",
-     Type::getBFloatTy},
-    {PrecisionChangeType::FP16, FPKind::FP16, "f16", "half", "_Float16", "FP16",
-     Type::getHalfTy},
-    {PrecisionChangeType::FP32, FPKind::FP32, "f32", "float", "float", "FP32",
-     Type::getFloatTy},
-    {PrecisionChangeType::FP64, FPKind::FP64, "f64", "double", "double", "FP64",
-     Type::getDoubleTy},
-    {PrecisionChangeType::FP80, FPKind::Invalid, "f80", "fp80", "long double",
-     "FP80", Type::getX86_FP80Ty},
-    {PrecisionChangeType::FP128, FPKind::Invalid, "f128", "fp128", "__float128",
-     "FP128", Type::getFP128Ty},
-    {PrecisionChangeType::Expansion2, FPKind::Invalid, "", "", "", "Expansion2",
-     nullptr},
-    {PrecisionChangeType::Expansion3, FPKind::Invalid, "", "", "", "Expansion3",
-     nullptr},
-    {PrecisionChangeType::Expansion4, FPKind::Invalid, "", "", "", "Expansion4",
-     nullptr},
+#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, LLVMType, Semantics,     \
+                  Components, Matrix)                                          \
+  {FPKind::Kind,      Name,       Dtype, CostType, CType,                      \
+   storage<LLVMType>, Components, Matrix},
+#include "Model/FPFormat.def"
 };
 
-const FPFormatInfo &formatOf(PrecisionChangeType P) {
-  const FPFormatInfo *F = find_if(
-      kFormats, [&](const FPFormatInfo &F) { return F.Precision == P; });
-  assert(F != std::end(kFormats) && "every precision has a row");
-  return *F;
+const FPFormatInfo &formatOf(FPKind K) {
+  assert(K != FPKind::Invalid && "Invalid has no row");
+  return kFormats[unsigned(K) - 1];
 }
+
+// A format no graph value has (TF32, the integer formats, an expansion) has no
+// C type, so a float is FP32 and an i8 is no format.
+static bool isGraphFormat(const FPFormatInfo &F) { return !F.CType.empty(); }
 
 const FPFormatInfo *formatOf(Type *T) {
   const FPFormatInfo *F = find_if(kFormats, [&](const FPFormatInfo &F) {
-    return F.LLVMType && F.LLVMType(T->getContext()) == T;
+    return isGraphFormat(F) && F.LLVMType(T->getContext()) == T;
   });
   return F == std::end(kFormats) ? nullptr : F;
 }
 
 const FPFormatInfo *formatOfDtype(StringRef Dtype) {
   const FPFormatInfo *F = find_if(kFormats, [&](const FPFormatInfo &F) {
-    return !F.Dtype.empty() && F.Dtype == Dtype;
+    return isGraphFormat(F) && F.Dtype == Dtype;
   });
   return F == std::end(kFormats) ? nullptr : F;
 }
 
 FPKind fpKindFromType(Type *T) {
   const FPFormatInfo *F = formatOf(T);
-  return F ? F->Kind : FPKind::Invalid;
+  return F && F->Matrix ? F->Kind : FPKind::Invalid;
 }
 
 Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
-  switch (k) {
-  case FPKind::FP16:
-    return Type::getHalfTy(ctx);
-  case FPKind::BF16:
-    return Type::getBFloatTy(ctx);
-  case FPKind::TF32:
-  case FPKind::FP32:
-    return Type::getFloatTy(ctx);
-  case FPKind::FP64:
-    return Type::getDoubleTy(ctx);
-  case FPKind::INT8:
-    return Type::getInt8Ty(ctx);
-  case FPKind::INT32:
-    return Type::getInt32Ty(ctx);
-  case FPKind::Invalid:
-    break;
-  }
-  llvm_unreachable("no LLVM type for an invalid format");
-}
-
-Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
-  const FPFormatInfo &F = formatOf(type);
-  if (!F.LLVMType)
-    llvm_unreachable("Unsupported FP precision");
-  return F.LLVMType(context);
-}
-
-PrecisionChangeType getPrecisionChangeType(Type *type) {
-  if (const FPFormatInfo *F = formatOf(type))
-    return F->Precision;
-  llvm_unreachable("Unsupported FP precision");
+  const FPFormatInfo &F = formatOf(k);
+  assert(!F.Components && "an expansion has no LLVM type");
+  return F.LLVMType(ctx);
 }
 
 } // namespace poseidon

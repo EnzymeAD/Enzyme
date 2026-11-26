@@ -1,0 +1,40 @@
+//===- FPFormat.def - the number formats of the pass ------------*- C++ -*-===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// One row per format:
+// FP_FORMAT(Kind, Name, Dtype, CostType, CType, LLVMType, Semantics,
+//           Components, Matrix)
+//   Name        reports and precision candidates ("FP64")
+//   Dtype       the graph dtype and fpKindName, which cache keys contain
+//   CostType    the cost-model type column
+//   CType       the C type of a rendered expression; empty for a format no
+//               graph value has
+//   LLVMType    the LLVM type a value is held in; null for an expansion
+//   Semantics   what roundToPrec rounds to; null for a format every double is
+//               already in, or an integer format
+//   Components  of an FP32 expansion; 0 for any other format
+//   Matrix      an operand or accumulator format of the matrix model
+//
+//===----------------------------------------------------------------------===//
+
+// clang-format off
+FP_FORMAT(FP16, "FP16", "f16", "half", "_Float16", llvm::Type::getHalfTy, &llvm::APFloat::IEEEhalf, 0, true)
+FP_FORMAT(BF16, "BF16", "bf16", "bf16", "__bf16", llvm::Type::getBFloatTy, &llvm::APFloat::BFloat, 0, true)
+FP_FORMAT(TF32, "TF32", "tf32", "", "", llvm::Type::getFloatTy, &llvm::APFloat::FloatTF32, 0, true)
+FP_FORMAT(FP32, "FP32", "f32", "float", "float", llvm::Type::getFloatTy, &llvm::APFloat::IEEEsingle, 0, true)
+FP_FORMAT(FP64, "FP64", "f64", "double", "double", llvm::Type::getDoubleTy, nullptr, 0, true)
+FP_FORMAT(FP80, "FP80", "f80", "fp80", "long double", llvm::Type::getX86_FP80Ty, nullptr, 0, false)
+FP_FORMAT(FP128, "FP128", "f128", "fp128", "__float128", llvm::Type::getFP128Ty, nullptr, 0, false)
+FP_FORMAT(INT8, "INT8", "s8", "", "", llvm::Type::getInt8Ty, nullptr, 0, true)
+FP_FORMAT(INT32, "INT32", "s32", "", "", llvm::Type::getInt32Ty, nullptr, 0, true)
+FP_FORMAT(Expansion2, "Expansion2", "", "", "", nullptr, nullptr, 2, false)
+FP_FORMAT(Expansion3, "Expansion3", "", "", "", nullptr, nullptr, 3, false)
+FP_FORMAT(Expansion4, "Expansion4", "", "", "", nullptr, nullptr, 4, false)
+// clang-format on
+
+#undef FP_FORMAT
