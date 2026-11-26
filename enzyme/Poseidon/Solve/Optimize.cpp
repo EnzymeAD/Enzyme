@@ -83,32 +83,27 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     return E;
   if (Error E = requireCanonicalHash(P.header, canonicalHash, P.path, F))
     return E;
-  auto &profileMap = P.map;
-  auto &profileHeader = P.header;
-  const std::string &profilePath = P.path;
-  if (profileMap.empty())
-    diagnose(F,
-             "the profile " + profilePath + " records no operation of the site",
+  if (P.map.empty())
+    diagnose(F, "the profile " + P.path + " records no operation of the site",
              DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
-    if (Error E = mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
+    if (Error E = mergeOutputProfiles(P.map, O.Profiling.OutputProfiles,
                                       siteProfileFile(S.Sites, F),
                                       canonicalHash, F, O.Diagnostics.Print))
       return E;
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
-  applySensitivityFloor(profileMap, F.getName(), O.Diagnostics.Print);
+  applySensitivityFloor(P.map, F.getName(), O.Diagnostics.Print);
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
-    if (Error E = requireMeasuredKappa(profileHeader, profilePath, F))
+    if (Error E = requireMeasuredKappa(P.header, P.path, F))
       return E;
-  if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
+  if (O.Diagnostics.Print && P.header.launchCount > 0) {
     llvm::errs() << "[poseidon] profile header for " << F.getName()
-                 << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ','
-                 << profileHeader.maxBlockDim[1] << ','
-                 << profileHeader.maxBlockDim[2]
-                 << ") LaunchCount=" << profileHeader.launchCount << '\n';
+                 << ": MaxBlockDims=(" << P.header.maxBlockDim[0] << ','
+                 << P.header.maxBlockDim[1] << ',' << P.header.maxBlockDim[2]
+                 << ") LaunchCount=" << P.header.launchCount << '\n';
   }
   return Error::success();
 }
@@ -118,41 +113,31 @@ static void recognizeMatrixProducts(Session &S, Function &F,
                                     const SiteProfileData &P, SiteState &st) {
   const Options &O = S.Opts;
   const Target &T = Target::of(F);
-  const auto &profileMap = P.map;
-  const auto &profileHeader = P.header;
-  auto &abstractMatmuls = st.abstractMatmuls;
-
-  auto &raiseDT = st.raiseDT;
-  auto &raiseLI = st.raiseLI;
-  auto &raiseAC = st.raiseAC;
-  auto &raiseTLII = st.raiseTLII;
-  auto &raiseTLI = st.raiseTLI;
-  auto &raiseSE = st.raiseSE;
   if (T.isDevice() && O.Candidates.EnableMatmul) {
-    raiseDT.emplace(F);
-    raiseLI.emplace(*raiseDT);
-    raiseAC.emplace(F);
-    raiseTLII.emplace(Triple(F.getParent()->getTargetTriple()));
-    raiseTLI.emplace(*raiseTLII, &F);
-    raiseSE.emplace(F, *raiseTLI, *raiseAC, *raiseDT, *raiseLI);
+    st.raiseDT.emplace(F);
+    st.raiseLI.emplace(*st.raiseDT);
+    st.raiseAC.emplace(F);
+    st.raiseTLII.emplace(Triple(F.getParent()->getTargetTriple()));
+    st.raiseTLI.emplace(*st.raiseTLII, &F);
+    st.raiseSE.emplace(F, *st.raiseTLI, *st.raiseAC, *st.raiseDT, *st.raiseLI);
     // The constant-trip products are the in-kernel raise's.
     if (T.hasInKernelMatrixRaise())
-      findConstantShapeMatmuls(O, F, *raiseSE, *raiseLI, profileHeader,
-                               abstractMatmuls);
+      findConstantShapeMatmuls(O, F, *st.raiseSE, *st.raiseLI, P.header,
+                               st.abstractMatmuls);
     // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
     // skips whatever that one claimed, so a product both recognize keeps the
     // constant-trip candidate set.
-    findRuntimeShapeMatmuls(O, F, *raiseSE, *raiseLI, profileHeader, profileMap,
-                            abstractMatmuls);
+    findRuntimeShapeMatmuls(O, F, *st.raiseSE, *st.raiseLI, P.header, P.map,
+                            st.abstractMatmuls);
   }
 
-  if (O.Diagnostics.Print && !abstractMatmuls.empty()) {
-    llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
+  if (O.Diagnostics.Print && !st.abstractMatmuls.empty()) {
+    llvm::errs() << "[poseidon] Found " << st.abstractMatmuls.size()
                  << " matrix product(s) in " << F.getName() << '\n';
     auto dimStr = [](unsigned d) -> std::string {
       return d == ~0u ? std::string("?") : std::to_string(d);
     };
-    for (const auto &m : abstractMatmuls) {
+    for (const auto &m : st.abstractMatmuls) {
       llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
                    << dimStr(m.N) << 'x' << dimStr(m.K)
                    << " type=" << fpKindName(m.elemType) << " origin="
@@ -284,13 +269,6 @@ static Error putOnApplicationScale(Session &S, Function &F,
   return Error::success();
 }
 
-// Prints every collected candidate with its priced deltas.
-static void printCandidates(Session &S, SiteState &st) {
-  if (S.Opts.Diagnostics.Print)
-    for (SiteUnit *unit : st.units)
-      unit->printPriced(llvm::errs());
-}
-
 static Error priceCandidates(SiteState &st) {
   for (SiteUnit *unit : st.units)
     if (Error E = unit->price())
@@ -416,12 +394,7 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   // on yet still reports what it recognized before it refuses.
   if (Error E = requireCostModel(S.CostModel, F))
     return std::move(E);
-  Expected<double> cost = profiledCost(
-      S.CostModel, F, profile.map, [](const Instruction &I, size_t &slot) {
-        std::optional<size_t> found = slotOf(&I);
-        slot = found.value_or(0);
-        return found.has_value();
-      });
+  Expected<double> cost = profiledCost(S.CostModel, F, profile.map, slotOf);
   if (!cost)
     return cost.takeError();
   st.profiledCost = *cost;
@@ -453,13 +426,14 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
 
   if (Error E = putOnApplicationScale(S, F, profile, st))
     return std::move(E);
-  if (st.table && st.table->hit) {
-    if (O.Diagnostics.Print)
+  if (O.Diagnostics.Print) {
+    if (st.table && st.table->hit)
       llvm::errs() << "[poseidon] " << F.getName()
                    << ": candidates not priced; the DP table read from the "
                       "cache holds the prices its solve used\n";
-  } else {
-    printCandidates(S, st);
+    else
+      for (SiteUnit *unit : st.units)
+        unit->printPriced(llvm::errs());
   }
 
   return true;
@@ -513,7 +487,6 @@ static Expected<bool> materializeSolution(Session &S, Function &F,
                                           SiteState &st,
                                           ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
-  auto &subgraphs = st.subgraphs;
   Expected<SmallVector<SolutionStep>> applied = applySolution(O, steps);
   if (!applied)
     return applied.takeError();
@@ -524,23 +497,19 @@ static Expected<bool> materializeSolution(Session &S, Function &F,
     llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << '\n';
 
   if (changed) {
-    for (auto &subgraph : subgraphs) {
+    for (Subgraph &subgraph : st.subgraphs) {
       // Intermediate operations cannot be erased safely.
       if (subgraph.outputsRewritten != subgraph.outputs.size())
         continue;
-      for (auto *I : subgraph.operations) {
-        if (!I->use_empty()) {
+      for (Instruction *I : subgraph.operations) {
+        if (!I->use_empty())
           I->replaceAllUsesWith(PoisonValue::get(I->getType()));
-        }
         I->eraseFromParent();
       }
     }
-  }
-
-  if (changed)
     narrowSharedStaging(S, F, /*announce=*/true, ParamNarrowing::Both, F);
-  if (changed)
     demoteFPCastPHIs(F);
+  }
 
   // The emitted site is cleaned up without the target, which versions a loop
   // on a loop-invariant condition: that keeps a comparison of an operand left

@@ -193,13 +193,13 @@ Expected<double> instructionCost(CostModelState &CM, const Instruction *I,
 
 Expected<double>
 profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
-             function_ref<bool(const Instruction &, size_t &)> slotOf) {
+             function_ref<std::optional<size_t>(const Instruction *)> slotOf) {
   double cost = 0.0;
   for (const Instruction &I : instructions(F)) {
-    size_t slot;
-    if (!slotOf(I, slot))
+    std::optional<size_t> slot = slotOf(&I);
+    if (!slot)
       continue;
-    auto it = profile.find(slot);
+    auto it = profile.find(*slot);
     if (it == profile.end())
       continue;
     Expected<double> price = instructionCost(CM, &I);

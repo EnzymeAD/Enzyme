@@ -166,6 +166,18 @@ static void runAlwaysInliner(Module &M, ModuleAnalysisManager &MAM) {
   Inline.run(M, MAM);
 }
 
+// Checks M's site annotations and lowers its per-call sites, then, for a
+// profile action, records the markers' identities; true when M changed.
+static Expected<bool> lowerAnnotatedSites(Session &S, Module &M) {
+  Error errors = checkSiteAnnotations(M);
+  Expected<bool> perCall = lowerPerCallSites(S.Opts, S.Sites, M);
+  if (!perCall || errors)
+    return joinErrors(std::move(errors), perCall.takeError());
+  if (S.Opts.Profiling.profileAction())
+    recordMarkerIdentities(S.Sites, M);
+  return *perCall;
+}
+
 namespace {
 
 // One module pass for both phases, at OptimizerEarly so that profile
@@ -180,14 +192,10 @@ struct OptimizePass : PassParent<OptimizePass> {
     if (Error E = requirePluginOrder(O, M))
       return stopOnError(S, M, std::move(E));
 
-    Error errors = checkSiteAnnotations(M);
-    Expected<bool> perCall = lowerPerCallSites(O, S.Sites, M);
-    if (!perCall || errors)
-      return stopOnError(S, M,
-                         joinErrors(std::move(errors), perCall.takeError()));
+    Expected<bool> perCall = lowerAnnotatedSites(S, M);
+    if (!perCall)
+      return stopOnError(S, M, perCall.takeError());
     bool changed = *perCall;
-    if (O.Profiling.profileAction())
-      recordMarkerIdentities(S.Sites, M);
     Expected<bool> deviceCalls = lowerDeviceCallSites(O, M);
     if (!deviceCalls)
       return stopOnError(S, M, deviceCalls.takeError());
@@ -250,17 +258,17 @@ static bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
 // The end of the error about a derivative request still unlowered where the
 // pass expects Enzyme to have run: why, when the phase says, and what to pass.
 // A pass run by pipeline name is not told which phase it runs in.
-static std::string unloweredRequestReason(bool phaseKnown,
-                                          ThinOrFullLTOPhase Phase,
-                                          OptimizationLevel Level) {
-  if (phaseKnown && enzymeDeferredToPostLink(Phase, Level))
+static std::string
+unloweredRequestReason(std::optional<ThinOrFullLTOPhase> Phase,
+                       OptimizationLevel Level) {
+  if (!Phase)
+    return "; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin, "
+           "and in an LTO pre-link compile -mllvm -enzyme-lto-prelink=1";
+  if (enzymeDeferredToPostLink(*Phase, Level))
     return ", which Enzyme leaves to the post-link run of an LTO pre-link "
            "compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang "
            "-mllvm -Xclang -enzyme-lto-prelink=1)";
-  if (phaseKnown)
-    return "; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin";
-  return "; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin, and "
-         "in an LTO pre-link compile -mllvm -enzyme-lto-prelink=1";
+  return "; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin";
 }
 
 namespace {
@@ -271,14 +279,12 @@ namespace {
 struct DeferredSitePass : PassParent<DeferredSitePass> {
   PassBuilder *PB;
   OptimizationLevel Level;
-  ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
-  bool PhaseKnown = false;
+  // None when run by pipeline name, which does not say the phase.
+  std::optional<ThinOrFullLTOPhase> Phase;
 
-  DeferredSitePass(PassBuilder *PB, OptimizationLevel Level)
-      : PB(PB), Level(Level) {}
   DeferredSitePass(PassBuilder *PB, OptimizationLevel Level,
-                   ThinOrFullLTOPhase Phase)
-      : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
+                   std::optional<ThinOrFullLTOPhase> Phase = std::nullopt)
+      : PB(PB), Level(Level), Phase(Phase) {}
 
   // The canonical prefix, over the deferred bodies only: nothing follows this
   // pass, so a module-wide run would change the code of every other function.
@@ -362,11 +368,10 @@ struct DeferredSitePass : PassParent<DeferredSitePass> {
       if (callsEnzymeRequest(*B))
         return stopOnError(
             S, M,
-            userError(*B,
-                      Twine("the marked body ") + B->getName() +
-                          " still holds an __enzyme_* request that nothing "
-                          "lowered" +
-                          unloweredRequestReason(PhaseKnown, Phase, Level)));
+            userError(*B, Twine("the marked body ") + B->getName() +
+                              " still holds an __enzyme_* request that nothing "
+                              "lowered" +
+                              unloweredRequestReason(Phase, Level)));
     // The canonical form of a deferred site is taken here, in both phases, so
     // that the slots the profile was numbered against are the ones the solve
     // sees.
@@ -454,14 +459,10 @@ struct LowerSitesPass : PassParent<LowerSitesPass> {
           return stopOnError(S, M, std::move(E));
       changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
     }
-    Error errors = checkSiteAnnotations(M);
-    Expected<bool> perCall = lowerPerCallSites(O, S.Sites, M);
-    if (!perCall || errors)
-      return stopOnError(S, M,
-                         joinErrors(std::move(errors), perCall.takeError()));
+    Expected<bool> perCall = lowerAnnotatedSites(S, M);
+    if (!perCall)
+      return stopOnError(S, M, perCall.takeError());
     changed |= *perCall;
-    if (O.Profiling.profileAction())
-      recordMarkerIdentities(S.Sites, M);
     Expected<bool> deviceSites = propagateDeviceSites(O, M);
     if (!deviceSites)
       return stopOnError(S, M, deviceSites.takeError());
@@ -506,14 +507,13 @@ struct AsWrittenSnapshotPass : PassParent<AsWrittenSnapshotPass> {
 struct FinalizePass : PassParent<FinalizePass> {
   PassBuilder *PB = nullptr;
   OptimizationLevel Level = OptimizationLevel::O3;
-  ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
-  // Run by pipeline name, the pass is not told which phase it runs in.
-  bool PhaseKnown = false;
+  // None when run by pipeline name, which does not say the phase.
+  std::optional<ThinOrFullLTOPhase> Phase;
 
   FinalizePass() = default;
   FinalizePass(PassBuilder *PB, OptimizationLevel Level,
                ThinOrFullLTOPhase Phase)
-      : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
+      : PB(PB), Level(Level), Phase(Phase) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
@@ -527,7 +527,7 @@ struct FinalizePass : PassParent<FinalizePass> {
             S, M,
             userError(Twine("profile generation emitted a derivative request "
                             "that nothing lowered") +
-                      unloweredRequestReason(PhaseKnown, Phase, Level)));
+                      unloweredRequestReason(Phase, Level)));
     const Target &T = Target::of(M);
     if (Error E = finalizeModule(S, M))
       return stopOnError(S, M, std::move(E));
@@ -565,7 +565,7 @@ struct FinalizePass : PassParent<FinalizePass> {
       inlineDeviceMath(*F);
     if (std::unique_ptr<Module> Copy = std::move(S.AsWritten))
       if (PB)
-        replaceWithAsWritten(M, std::move(Copy), S, *PB, Level, Phase,
+        replaceWithAsWritten(M, std::move(Copy), S, *PB, Level, *Phase,
                              rewritten.getArrayRef());
     return PreservedAnalyses::none();
   }

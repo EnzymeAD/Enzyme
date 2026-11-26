@@ -108,13 +108,22 @@ def outputs_c(unit):
     return [orig] if orig else []
 
 
+def fmt_range(lo, hi):
+    """[lo, hi] to the fewest significant digits, at least 3, that tell the two
+    apart."""
+    digits = 3
+    while lo != hi and digits < 17 and fmt_number(lo, digits) == fmt_number(hi, digits):
+        digits += 1
+    return "[%s, %s]" % (fmt_number(lo, digits), fmt_number(hi, digits))
+
+
 def ranges(unit):
     """The profiled range of each named input of a unit."""
     out = []
     for inp in unit.get("inputs", []):
         label = inp.get("name") or inp.get("var")
         if label and "min" in inp:
-            out.append("%s in [%s, %s]" % (label, fmt_number(inp["min"], 3), fmt_number(inp["max"], 3)))
+            out.append("%s in %s" % (label, fmt_range(inp["min"], inp["max"])))
     return out
 
 

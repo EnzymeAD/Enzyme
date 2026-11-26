@@ -19,17 +19,14 @@
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision/Precision.h"
 #include "Techniques/Rewrite/Rewrite.h"
-#include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -103,22 +100,8 @@ static std::string typeName(Type *T) {
 static std::string precisionWords(FPKind t) {
   if (unsigned k = expansionComponents(t))
     return formatv("a {0}-component float expansion", k).str();
-  switch (t) {
-  case FPKind::BF16:
-    return "bfloat16";
-  case FPKind::FP16:
-    return "half";
-  case FPKind::FP32:
-    return "float";
-  case FPKind::FP64:
-    return "double";
-  case FPKind::FP80:
-    return "long double";
-  case FPKind::FP128:
-    return "quad";
-  default:
-    return formatOf(t).Name.str();
-  }
+  const FPFormatInfo &format = formatOf(t);
+  return (format.Words.empty() ? format.Name : format.Words).str();
 }
 
 static std::string opWord(StringRef op) {
@@ -345,30 +328,24 @@ public:
 
 } // namespace
 
-static bool isPolynomial(StringRef expr) {
-  static const StringSet<> arith = {"+",   "-",   "*",       "/",     "neg",
-                                    "fma", "pow", "literal", "approx"};
-  bool head = false;
-  size_t i = 0;
-  while (i < expr.size()) {
-    char c = expr[i];
-    if (c == '(' || expr.substr(i).starts_with("#s(")) {
-      i += c == '(' ? 1 : 3;
-      head = true;
+// Whether the FPCore expression `expr` is arithmetic only: a series rather
+// than a call of another function. Parsing adds to `G`.
+static bool isPolynomial(StringRef expr, FPGraph &G) {
+  static constexpr StringLiteral kArithmetic[] = {"+",   "-",   "*",  "/",
+                                                  "neg", "fma", "pow"};
+  Expected<FPNode *> root = parseHerbieExpr(expr, G);
+  if (!root) {
+    consumeError(root.takeError());
+    return false;
+  }
+  SmallVector<const FPNode *, 8> work = {*root};
+  while (!work.empty()) {
+    const FPNode *N = work.pop_back_val();
+    if (N->getType() != FPNode::NodeType::Node)
       continue;
-    }
-    if (c == ')' || std::isspace((unsigned char)c)) {
-      ++i;
-      continue;
-    }
-    size_t j = i;
-    while (j < expr.size() && !std::isspace((unsigned char)expr[j]) &&
-           expr[j] != '(' && expr[j] != ')')
-      ++j;
-    if (head && !arith.contains(expr.substr(i, j - i).split('.').first))
+    if (!is_contained(kArithmetic, N->op->Name))
       return false;
-    head = false;
-    i = j;
+    append_range(work, N->operands);
   }
   return true;
 }
@@ -383,14 +360,39 @@ firstInIROrder(Function &F, const SmallPtrSetImpl<const Value *> &set) {
 
 namespace {
 
+// How the solve treated a candidate, in the order the remarks list rejected
+// ones: closest to being taken first.
+enum class Standing {
+  Applied,
+  // Above the target alone, and cheaper than as written.
+  CheaperAboveTarget,
+  // On a frontier point the selection passed over.
+  Pareto,
+  Near,
+  Far,
+  // Never priced.
+  Dropped,
+};
+
+// The `status` of a candidate in the explanation.
+static StringRef statusName(Standing standing) {
+  switch (standing) {
+  case Standing::Applied:
+    return "applied";
+  case Standing::Pareto:
+    return "pareto";
+  default:
+    return "rejected";
+  }
+}
+
 struct Alt {
-  std::string id, kind, summary, fpcore, precision, status, reason;
+  std::string id, kind, summary, fpcore, precision, reason;
   std::string inKernelClass;
   SmallVector<std::string, 1> c;
   SmallVector<unsigned, 1> outputs;
   bool approx = false, series = false;
   std::string approxNote;
-  SmallVector<std::string, 2> approxRanges;
   std::optional<int64_t> costDelta;
   std::optional<double> accDelta, err, domainError;
   std::optional<double> bitsBefore, bitsAfter;
@@ -400,7 +402,7 @@ struct Alt {
   const Instruction *at = nullptr;
   const SiteUnit *item = nullptr;
   size_t index = 0;
-  int rank = 9;
+  Standing standing = Standing::Far;
   double baseAcc = std::numeric_limits<double>::quiet_NaN();
   std::optional<int64_t> baseCost;
 };
@@ -469,16 +471,11 @@ static json::Object targetJSON(const Options &O, double tau, bool siteTarget) {
   return target;
 }
 
-// The directory of -poseidon-explain.
-static const std::string &explanationDir(const Options &O) {
-  return O.Diagnostics.Explain;
-}
-
 // Writes `doc`, the explanation of a site, as <stem>.explain.json into the
 // explanation directory.
 static void writeExplanation(const Session &S, const Function &F,
                              StringRef stem, json::Object doc) {
-  const std::string &dir = explanationDir(S.Opts);
+  const std::string &dir = S.Opts.Diagnostics.Explain;
   if (auto EC = sys::fs::create_directories(dir)) {
     diagnose(F,
              "cannot create the explanation directory " + dir + ": " +
@@ -522,9 +519,11 @@ class Explainer {
   // An overlay: fpcoreToC may add to the graph it is given, and the
   // explanation must leave the solve's own as it is.
   FPGraph scratch;
-  std::set<std::pair<const SiteUnit *, size_t>> applied, skipped, onPareto,
-      inSelected;
-  std::map<std::pair<const SiteUnit *, size_t>, int64_t> firstBudget;
+  std::set<std::pair<const SiteUnit *, size_t>> applied, skipped;
+  // Per candidate on the frontier, the best verdict of the points that hold
+  // it, and the cheapest of those points.
+  std::map<std::pair<const SiteUnit *, size_t>, std::pair<PointVerdict, DPCost>>
+      onFrontier;
   std::vector<Unit> units;
   double A0, S, tau;
   // Puts the units' cost changes on the axis the solve compared them on.
@@ -549,6 +548,16 @@ class Explainer {
     if (!(S > 0.0) || !std::isfinite(A0) || !std::isfinite(acc))
       return std::numeric_limits<double>::quiet_NaN();
     return (A0 + acc) / S;
+  }
+
+  // A's accuracy cost change `acc` and the modelled error it gives, when
+  // finite.
+  void setAccuracy(Alt &A, double acc) const {
+    if (!std::isfinite(acc))
+      return;
+    A.accDelta = acc;
+    if (double e = relErr(acc); std::isfinite(e))
+      A.err = e;
   }
 
   double share(double acc) const {
@@ -602,6 +611,8 @@ class Explainer {
   // it.
   Expected<int64_t> onAxis(double cost) const;
   void judge(Unit &U);
+  // A candidate on the frontier point `point` the selection passed over.
+  void markPareto(Alt &A, DPCost point) const;
   std::string leftReason(const Unit &U, const Subgraph *sg);
   std::optional<int64_t> appliedDelta() const;
   std::optional<int64_t> costBefore() const;
@@ -629,16 +640,13 @@ void Explainer::markSteps() {
   for (const SolutionStep &step : steps)
     if (!applied.count(keyOf(step)))
       skipped.insert(keyOf(step));
-  for (const auto &[cost, sol] : rec.solutions)
+  for (const auto &[cost, sol] : rec.solutions) {
+    const PointVerdict verdict = rec.verdicts.at(cost);
     for (const SolutionStep &step : sol) {
-      onPareto.insert(keyOf(step));
-      firstBudget.try_emplace(keyOf(step), cost);
+      auto [it, fresh] = onFrontier.try_emplace(keyOf(step), verdict, cost);
+      if (!fresh && verdict < it->second.first)
+        it->second = {verdict, cost};
     }
-  if (rec.selected) {
-    auto it = rec.solutions.find(*rec.selected);
-    if (it != rec.solutions.end())
-      for (const SolutionStep &step : it->second)
-        inSelected.insert(keyOf(step));
   }
 }
 
@@ -703,7 +711,7 @@ Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
           continue;
         SmallVector<std::string, 1> specC = fpcoreToC(spec, scratch, how, "");
         std::string specText = clip(specC.empty() ? spec : specC[0], 120);
-        if (!isPolynomial(impl)) {
+        if (!isPolynomial(impl, scratch)) {
           SmallVector<std::string, 1> implC = fpcoreToC(impl, scratch, how, "");
           notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
                           " in place of " + specText);
@@ -711,17 +719,6 @@ Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
         }
         A.series = true;
         notes.push_back("series approximation of " + specText);
-        SmallSet<std::string, 8> args;
-        getUniqueArgs(spec, args);
-        for (const std::string &arg : args) {
-          auto sv = scratch.symbolToValueMap.find(arg);
-          if (sv == scratch.symbolToValueMap.end() || !sv->second)
-            continue;
-          std::string label = leafLabel(sv->second);
-          std::string r = rangeOf(sv->second, label.empty() ? arg : label);
-          if (!r.empty() && !llvm::is_contained(A.approxRanges, r))
-            A.approxRanges.push_back(r);
-        }
       }
       A.approx = !specs.empty();
       if (StringRef(expr).contains("(if"))
@@ -752,13 +749,7 @@ Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
           return c.takeError();
         A.costDelta = *c;
       }
-      double acc = RU.getAccCostDelta(j);
-      if (std::isfinite(acc)) {
-        A.accDelta = acc;
-        double e = relErr(acc);
-        if (std::isfinite(e))
-          A.err = e;
-      }
+      setAccuracy(A, RU.getAccCostDelta(j));
       if (std::isfinite(RU.herbieBits)) {
         if (std::isfinite(RU.initialHerbieAccuracy))
           A.bitsBefore = (1.0 - RU.initialHerbieAccuracy) * RU.herbieBits;
@@ -770,9 +761,8 @@ Error Explainer::addRewriteAlternatives(Unit &U, const Subgraph &sg) {
     for (const auto &[expr, why] : RU.dropped) {
       Alt A;
       fill(A, expr);
-      A.status = "rejected";
+      A.standing = Standing::Dropped;
       A.reason = "the accuracy model dropped it: " + why;
-      A.rank = 4;
       U.alts.push_back(std::move(A));
     }
   }
@@ -897,12 +887,7 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
                   : a->second;
       }
       A.costDelta = cost;
-      if (std::isfinite(acc)) {
-        A.accDelta = acc;
-        double e = relErr(acc);
-        if (std::isfinite(e))
-          A.err = e;
-      }
+      setAccuracy(A, acc);
       U.alts.push_back(std::move(A));
     }
     for (const auto &[desc, why] : PU.dropped) {
@@ -910,9 +895,8 @@ Error Explainer::addPrecisionAlternatives(Unit &U, const Subgraph &sg) {
       A.kind = "precision";
       A.summary = desc;
       A.at = sg.outputs[0];
-      A.status = "rejected";
+      A.standing = Standing::Dropped;
       A.reason = "pricing dropped it: " + why;
-      A.rank = 4;
       U.alts.push_back(std::move(A));
     }
   }
@@ -925,8 +909,7 @@ void Explainer::judge(Unit &U) {
       continue;
     auto key = std::make_pair(A.item, A.index);
     if (applied.count(key)) {
-      A.status = "applied";
-      A.rank = -1;
+      A.standing = Standing::Applied;
       U.applied = true;
       if (rec.selector == SolveSelector::Pinned)
         A.reason = "selected by -poseidon-pin";
@@ -936,43 +919,33 @@ void Explainer::judge(Unit &U) {
         A.reason = "part of the most accurate solution within the cost budget";
       continue;
     }
-    A.status = "rejected";
     if (skipped.count(key)) {
       A.reason = "another selected rewrite of the same output was applied "
                  "first";
-      A.rank = 3;
+      A.standing = Standing::Far;
       continue;
     }
-    if (inSelected.count(key)) {
-      A.reason = "it edits instructions a selected matrix-product raise "
-                 "consumes";
-      A.rank = 3;
+    auto frontier = onFrontier.find(key);
+    if (frontier != onFrontier.end() &&
+        frontier->second.first == PointVerdict::Outranked) {
+      markPareto(A, frontier->second.second);
       continue;
     }
     if (tau > 0.0 && A.err && *A.err > tau) {
       A.reason =
           "modelled error " + num(*A.err) + " is above the target " + num(tau);
-      A.rank = A.costDelta && *A.costDelta < 0 ? 0 : 2;
+      A.standing = A.costDelta && *A.costDelta < 0
+                       ? Standing::CheaperAboveTarget
+                       : Standing::Near;
       continue;
     }
     if (A.costDelta && A.accDelta && *A.costDelta >= 0 && *A.accDelta >= 0) {
       A.reason = "neither cheaper nor more accurate than as written";
-      A.rank = 3;
+      A.standing = Standing::Far;
       continue;
     }
-    if (onPareto.count(key)) {
-      A.status = "pareto";
-      A.reason = "on the Pareto frontier";
-      auto b = firstBudget.find(key);
-      auto sol = b == firstBudget.end() ? rec.solutions.end()
-                                        : rec.solutions.find(b->second);
-      if (sol != rec.solutions.end()) {
-        std::string ids;
-        for (const SolutionStep &step : sol->second)
-          ids += (ids.empty() ? "" : ",") + stepId(step);
-        A.reason += "; -poseidon-pin=" + ids + " applies it";
-      }
-      A.rank = 1;
+    if (frontier != onFrontier.end()) {
+      markPareto(A, frontier->second.second);
       continue;
     }
     const Alt *dom = nullptr;
@@ -991,7 +964,7 @@ void Explainer::judge(Unit &U) {
     if (dom) {
       A.reason = "dominated by " + dom->id +
                  ", which costs no more and is at least as accurate";
-      A.rank = 3;
+      A.standing = Standing::Far;
       continue;
     }
     const Alt *rival = nullptr;
@@ -1004,7 +977,7 @@ void Explainer::judge(Unit &U) {
                      ? "the selected " + rival->id + " rewrites the same output"
                      : "the subgraph takes one precision assignment, and " +
                            rival->id + " was selected";
-      A.rank = 3;
+      A.standing = Standing::Far;
       continue;
     }
     if (tau == 0.0 && A.costDelta &&
@@ -1012,12 +985,20 @@ void Explainer::judge(Unit &U) {
       A.reason = "its cost change " + costStr(*A.costDelta) +
                  " is above the budget " +
                  costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
-      A.rank = 2;
+      A.standing = Standing::Near;
       continue;
     }
     A.reason = "not on the Pareto frontier of the site";
-    A.rank = A.accDelta && *A.accDelta < 0 ? 2 : 3;
+    A.standing = A.accDelta && *A.accDelta < 0 ? Standing::Near : Standing::Far;
   }
+}
+
+void Explainer::markPareto(Alt &A, DPCost point) const {
+  std::string ids;
+  for (const SolutionStep &step : rec.solutions.at(point))
+    ids += (ids.empty() ? "" : ",") + stepId(step);
+  A.standing = Standing::Pareto;
+  A.reason = "on the Pareto frontier; -poseidon-pin=" + ids + " applies it";
 }
 
 std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
@@ -1269,12 +1250,7 @@ Error Explainer::buildMatmul(size_t m) {
     if (!c)
       return c.takeError();
     A.costDelta = *c;
-    double acc = MU.getAccCostDelta(j);
-    if (std::isfinite(acc)) {
-      A.accDelta = acc;
-      if (std::isfinite(relErr(acc)))
-        A.err = relErr(acc);
-    }
+    setAccuracy(A, MU.getAccCostDelta(j));
     if (std::isfinite(o.domainError))
       A.domainError = o.domainError;
     A.baseCost = U.baseCost;
@@ -1285,9 +1261,8 @@ Error Explainer::buildMatmul(size_t m) {
     A.kind = "matmul";
     A.summary = label;
     A.at = U.root;
-    A.status = "rejected";
+    A.standing = Standing::Dropped;
     A.reason = "not offered: " + why;
-    A.rank = 4;
     U.alts.push_back(std::move(A));
   }
   judge(U);
@@ -1301,7 +1276,7 @@ std::optional<int64_t> Explainer::appliedDelta() const {
   bool complete = true;
   for (const Unit &U : units)
     for (const Alt &A : U.alts)
-      if (A.status == "applied") {
+      if (A.standing == Standing::Applied) {
         if (A.costDelta)
           total += *A.costDelta;
         else
@@ -1525,7 +1500,7 @@ json::Object Explainer::toJSON() {
           bits["after"] = *A.bitsAfter;
         a["herbie_error_bits"] = std::move(bits);
       }
-      a["status"] = A.status;
+      a["status"] = statusName(A.standing);
       if (!A.reason.empty())
         a["reason"] = A.reason;
       alts.push_back(std::move(a));
@@ -1540,7 +1515,8 @@ json::Object Explainer::toJSON() {
     for (const auto &[cost, acc] : rec.table) {
       json::Object p;
       int64_t b = cost;
-      if (selectable(acc))
+      const PointVerdict verdict = rec.verdicts.at(cost);
+      if (verdict != PointVerdict::Unselectable)
         p["budget"] = scale.share(b);
       if (before)
         p["cost"] = scale.share(*before + b);
@@ -1554,7 +1530,7 @@ json::Object Explainer::toJSON() {
             ids.push_back(id);
         }
       p["applied"] = std::move(ids);
-      if (rec.selected && *rec.selected == b)
+      if (verdict == PointVerdict::Selected)
         p["selected"] = true;
       pareto.push_back(std::move(p));
     }
@@ -1590,7 +1566,7 @@ void Explainer::emitRemarks() {
   unsigned nApplied = 0;
   for (const Unit &U : units)
     for (const Alt &A : U.alts)
-      nApplied += A.status == "applied";
+      nApplied += A.standing == Standing::Applied;
 
   ORE.emit([&]() {
     OptimizationRemarkAnalysis R(kRemarkPass, "Site", siteLoc,
@@ -1652,7 +1628,7 @@ void Explainer::emitRemarks() {
           << " more output" << (U.outC.size() > 2 ? "s" : "");
       R << ": ";
       if (!U.inputRanges.empty())
-        R << ore::NV("Ranges", joinWords(U.inputRanges)) << "; ";
+        R << ore::NV("Ranges", join(U.inputRanges, ", ")) << "; ";
       R << ore::NV("Executions", U.executions) << " executions";
       if (std::isfinite(U.sensitivity))
         R << ", sensitivity " << ore::NV("Sensitivity", num(U.sensitivity));
@@ -1662,7 +1638,7 @@ void Explainer::emitRemarks() {
 
   for (const Unit &U : units)
     for (const Alt &A : U.alts) {
-      if (A.status != "applied" || !A.at)
+      if (A.standing != Standing::Applied || !A.at)
         continue;
       std::string costChange;
       if (A.baseCost && A.costDelta)
@@ -1686,9 +1662,9 @@ void Explainer::emitRemarks() {
             R << "Poseidon rewrote " << ore::NV("Expr", clip(orig)) << " as "
               << ore::NV("Rewritten", clip(now));
             std::string how = A.approxNote;
-            if (!A.approxRanges.empty())
+            if (A.series && !U.inputRanges.empty())
               how +=
-                  ", valid on the profiled range " + joinWords(A.approxRanges);
+                  ", valid on the profiled range " + join(U.inputRanges, ", ");
             if (!how.empty())
               R << " (" << ore::NV("Technique", how) << ")";
             if (!errChange.empty())
@@ -1744,12 +1720,12 @@ void Explainer::emitRemarks() {
       });
     SmallVector<const Alt *, 8> rejected;
     for (const Alt &A : U.alts)
-      if (A.status != "applied")
+      if (A.standing != Standing::Applied)
         rejected.push_back(&A);
     std::stable_sort(rejected.begin(), rejected.end(),
                      [](const Alt *a, const Alt *b) {
-                       if (a->rank != b->rank)
-                         return a->rank < b->rank;
+                       if (a->standing != b->standing)
+                         return a->standing < b->standing;
                        if (a->err && b->err)
                          return *a->err < *b->err;
                        return false;
@@ -1760,7 +1736,7 @@ void Explainer::emitRemarks() {
       ORE.emit([&]() {
         OptimizationRemarkMissed R(kRemarkPass, "Rejected", at);
         R << "Poseidon "
-          << (A.status == "pareto" ? "did not select " : "rejected ")
+          << (A.standing == Standing::Pareto ? "did not select " : "rejected ")
           << ore::NV("Kind", kindWords(A.kind));
         if (!A.id.empty())
           R << " " << ore::NV("Id", A.id);
@@ -1792,7 +1768,7 @@ bool explainWanted(const Options &O, const Function &F) {
 void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
                       StringRef status, StringRef reason, StringRef profile,
                       bool body) {
-  if (explanationDir(S.Opts).empty())
+  if (S.Opts.Diagnostics.Explain.empty())
     return;
   json::Object result{{"status", status}, {"reason", reason}};
   if (!profile.empty())
@@ -1854,7 +1830,7 @@ Error explainSolve(Session &S, Function &F, SiteState &st,
                    ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
   const bool remarks =
       OptimizationRemarkEmitter::allowExtraAnalysis(F, kRemarkPass);
-  const bool write = !explanationDir(S.Opts).empty();
+  const bool write = !S.Opts.Diagnostics.Explain.empty();
   if (!remarks && !write)
     return Error::success();
   Explainer E(S, F, st, steps, rec);

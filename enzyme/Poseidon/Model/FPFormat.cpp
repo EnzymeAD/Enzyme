@@ -26,9 +26,9 @@ template <auto Get> static Type *storage(LLVMContext &C) {
 }
 
 static constexpr FPFormatInfo kFormats[] = {
-#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, LLVMType, Semantics,     \
-                  Components, Matrix)                                          \
-  {FPKind::Kind,      Name,       Dtype, CostType, CType,                      \
+#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, Words, LLVMType,         \
+                  Semantics, Components, Matrix)                               \
+  {FPKind::Kind,      Name,       Dtype, CostType, CType, Words,               \
    storage<LLVMType>, Components, Matrix},
 #include "Model/FPFormat.def"
 };

@@ -368,39 +368,45 @@ StringRef selectorName(SolveSelector selector) {
   llvm_unreachable("every selector has a name");
 }
 
-bool selectable(double accCost) { return std::isfinite(accCost); }
+// Whether a budget or an accuracy target can select a frontier point of this
+// accuracy cost. A point whose cost is not finite stays on the frontier when
+// nothing cheaper beats it, and no selection takes it.
+static bool selectable(double accCost) { return std::isfinite(accCost); }
+
+// Whether the target or the budget admits a frontier point of this cost and
+// accuracy cost.
+using Admits = function_ref<bool(DPCost cost, double acc)>;
 
 // The most accurate selectable point within the budget. The frontier's
 // accuracy cost falls as its cost rises, so each selectable point is the
 // one its own share selects.
-static std::optional<DPCost> selectWithinBudget(const Options &O,
-                                                const CostScale &scale,
-                                                const CostMap &frontier) {
-  const DPCost budget = scale.fromShare(O.Solver.CostBudget);
+static std::optional<DPCost> selectWithinBudget(const CostMap &frontier,
+                                                Admits withinBudget) {
   std::optional<DPCost> best;
   for (const auto &[cost, acc] : frontier)
-    if (cost <= budget && selectable(acc) &&
+    if (withinBudget(cost, acc) && selectable(acc) &&
         (!best || acc < frontier.at(*best)))
       best = cost;
   return best;
 }
 
-// The selectable point whose modelled relative error (baseline + accuracy
-// cost) / accScale is at most `tau`: the cheapest one under
-// -poseidon-tau-cheapest, else the most accurate one. Two costs that differ by
-// less than the cheapest point's steps can be mispriced by (costTieBand) are a
-// tie: of the points within the target that save cost and are no costlier than
-// that, the most accurate is taken, the cheaper of two equally accurate ones.
-static std::optional<DPCost>
-selectUnderTarget(const Options &O, const CostScale &scale,
-                  const CostMap &frontier, const SolutionMap &solutions,
-                  double baseline, double accScale, double tau) {
-  auto meets = [&](double acc) {
-    return selectable(acc) && (baseline + acc) / accScale <= tau;
+// The selectable point whose modelled relative error is within the target:
+// the cheapest one under -poseidon-tau-cheapest, else the most accurate one.
+// Two costs that differ by less than the cheapest point's steps can be
+// mispriced by (costTieBand) are a tie: of the points within the target that
+// save cost and are no costlier than that, the most accurate is taken, the
+// cheaper of two equally accurate ones.
+static std::optional<DPCost> selectUnderTarget(const Options &O,
+                                               const CostScale &scale,
+                                               const CostMap &frontier,
+                                               const SolutionMap &solutions,
+                                               Admits withinTarget) {
+  auto meets = [&](DPCost cost, double acc) {
+    return selectable(acc) && withinTarget(cost, acc);
   };
   std::optional<DPCost> best;
   for (const auto &[cost, acc] : frontier) {
-    if (!meets(acc))
+    if (!meets(cost, acc))
       continue;
     if (!best) {
       best = cost;
@@ -424,7 +430,7 @@ selectUnderTarget(const Options &O, const CostScale &scale,
   for (auto it = frontier.upper_bound(*best);
        it != frontier.end() && it->first < 0 && it->first <= *best + *width;
        ++it)
-    if (meets(it->second) && it->second < frontier.at(tied))
+    if (meets(it->first, it->second) && it->second < frontier.at(tied))
       tied = it->first;
   if (tied != *best && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] cost " << scale.share(tied) << " ties with "
@@ -594,7 +600,6 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                       "Pareto-optimal\n";
   }
 
-  std::optional<DPCost> best;
   if (tau > 0.0) {
     if (unpriced && !loadedFromCache && print)
       llvm::errs() << "[poseidon] " << names << ": " << unpriced
@@ -604,8 +609,23 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
     if (Error E =
             checkToleranceInputs(*sites.front()->F, names, accScale, baseline))
       return std::move(E);
-    best = selectUnderTarget(O, scale, costToAccuracyMap, costToSolutionMap,
-                             baseline, accScale, tau);
+  }
+  const DPCost budget = tau > 0.0 ? 0 : scale.fromShare(O.Solver.CostBudget);
+  auto admits = [&](DPCost cost, double acc) {
+    return tau > 0.0 ? (baseline + acc) / accScale <= tau : cost <= budget;
+  };
+  const std::optional<DPCost> best =
+      tau > 0.0 ? selectUnderTarget(O, scale, costToAccuracyMap,
+                                    costToSolutionMap, admits)
+                : selectWithinBudget(costToAccuracyMap, admits);
+  if (record)
+    for (const auto &[cost, acc] : costToAccuracyMap)
+      record->verdicts[cost] = cost == best        ? PointVerdict::Selected
+                               : !selectable(acc)  ? PointVerdict::Unselectable
+                               : admits(cost, acc) ? PointVerdict::Outranked
+                                                   : PointVerdict::Excluded;
+
+  if (tau > 0.0) {
     if (!best) {
       double bestAchievable = std::numeric_limits<double>::infinity();
       for (const auto &pair : costToAccuracyMap)
@@ -625,7 +645,6 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                    << " accCost=" << accCost
                    << " rel=" << (baseline + accCost) / accScale << '\n';
   } else {
-    best = selectWithinBudget(O, scale, costToAccuracyMap);
     if (!best) {
       if (print)
         llvm::errs() << "[poseidon] No solution found within the computation "

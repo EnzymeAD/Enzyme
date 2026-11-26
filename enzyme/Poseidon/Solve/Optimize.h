@@ -63,6 +63,18 @@ enum class SolveSelector {
 /// The selector as the explanation spells it: "dp", "joint" or "pinned".
 llvm::StringRef selectorName(SolveSelector selector);
 
+/// Why a solve's selection took or passed over a frontier point, best first.
+enum class PointVerdict {
+  /// The point applied.
+  Selected,
+  /// It meets the target or the budget; the point selected is preferred.
+  Outranked,
+  /// It is above the accuracy target or the cost budget.
+  Excluded,
+  /// Its accuracy cost is not finite, so no target or budget selects it.
+  Unselectable,
+};
+
 /// How a site's solve went, for its explanation: the frontier it searched and
 /// the point it chose.
 struct SolveRecord {
@@ -75,6 +87,8 @@ struct SolveRecord {
   CostMap table;
   /// Per cost on the frontier, its strategy.
   SolutionMap solutions;
+  /// Per cost on the frontier, why the selection took or passed over it.
+  std::map<DPCost, PointVerdict> verdicts;
   /// The accuracy cost of the site as written; NaN when it was not computed.
   double baseline = std::numeric_limits<double>::quiet_NaN();
   /// The sites' summed accuracy scale (SiteState::accScale).
@@ -140,11 +154,6 @@ llvm::Expected<llvm::SmallVector<SolutionStep>>
 solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
            bool joint, SolveRecord *record);
-
-/// Whether a budget or an accuracy target can select a frontier point of this
-/// accuracy cost. A point whose cost is not finite stays on the frontier when
-/// nothing cheaper beats it, and no selection takes it.
-bool selectable(double accCost);
 
 /// One site's solve: its FP graph, its profile's scale, the units proposed for
 /// it and the analyses its matrix products hold.

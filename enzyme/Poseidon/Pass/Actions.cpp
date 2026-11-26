@@ -371,12 +371,7 @@ static Expected<double> profiledSiteCost(Session &S, Function &body) {
       return std::move(E);
     if (Error E = requireCostModel(S.CostModel, *clone))
       return std::move(E);
-    return profiledCost(S.CostModel, *clone, profileMap,
-                        [](const Instruction &I, size_t &slot) {
-                          std::optional<size_t> found = slotOf(&I);
-                          slot = found.value_or(0);
-                          return found.has_value();
-                        });
+    return profiledCost(S.CostModel, *clone, profileMap, slotOf);
   }();
   // An error names the clone, so the clone outlives it.
   if (!cost)

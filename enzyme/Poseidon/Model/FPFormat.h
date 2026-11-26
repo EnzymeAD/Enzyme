@@ -31,7 +31,7 @@ class FPLLValue;
 /// A row of FPFormat.def.
 struct FPFormatInfo {
   FPKind Kind;
-  llvm::StringLiteral Name, Dtype, CostType, CType;
+  llvm::StringLiteral Name, Dtype, CostType, CType, Words;
   llvm::Type *(*LLVMType)(llvm::LLVMContext &);
   unsigned Components;
   bool Matrix;

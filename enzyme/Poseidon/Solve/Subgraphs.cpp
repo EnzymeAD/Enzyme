@@ -15,7 +15,7 @@
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
 
-#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/IntEqClasses.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -488,44 +488,27 @@ static void mergeSharedStagingSubgraphs(const Options &O,
   for (const Subgraph &subgraph : subgraphs)
     touched.push_back(touchedObjects(subgraph, stagingObjectOf));
 
-  SmallVector<unsigned, 8> parent(subgraphs.size());
-  for (unsigned i = 0; i < parent.size(); ++i)
-    parent[i] = i;
-  auto find = [&](unsigned x) -> unsigned {
-    while (parent[x] != x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  };
-  auto unite = [&](unsigned a, unsigned b) {
-    a = find(a);
-    b = find(b);
-    if (a != b)
-      parent[b] = a;
-  };
+  IntEqClasses classes(subgraphs.size());
   for (size_t i = 0; i < subgraphs.size(); ++i)
     for (size_t j = i + 1; j < subgraphs.size(); ++j)
-      for (const Value *O : touched[i])
-        if (touched[j].count(O)) {
-          unite(i, j);
-          break;
-        }
-
-  MapVector<unsigned, SmallVector<unsigned, 8>> groups;
-  for (unsigned i = 0; i < subgraphs.size(); ++i)
-    groups[find(i)].push_back(i);
-  if (groups.size() == subgraphs.size())
+      if (llvm::any_of(touched[i],
+                       [&](const Value *O) { return touched[j].count(O); }))
+        classes.join(i, j);
+  classes.compress();
+  if (classes.getNumClasses() == subgraphs.size())
     return; // nothing shares a buffer
+  SmallVector<SmallVector<unsigned, 8>, 8> groups(classes.getNumClasses());
+  for (unsigned i = 0; i < subgraphs.size(); ++i)
+    groups[classes[i]].push_back(i);
 
   SmallVector<Subgraph, 8> merged;
-  for (auto &kv : groups) {
-    if (kv.second.size() == 1) {
-      merged.push_back(subgraphs[kv.second.front()]);
+  for (ArrayRef<unsigned> group : groups) {
+    if (group.size() == 1) {
+      merged.push_back(subgraphs[group.front()]);
       continue;
     }
     Subgraph M;
-    for (unsigned idx : kv.second) {
+    for (unsigned idx : group) {
       for (Instruction *Op : subgraphs[idx].operations)
         M.operations.insert(Op);
       for (Instruction *Out : subgraphs[idx].outputs)
@@ -533,7 +516,7 @@ static void mergeSharedStagingSubgraphs(const Options &O,
     }
     // An input of one member may be produced by another member; those edges
     // are internal to the merged unit and must not be re-declared as inputs.
-    for (unsigned idx : kv.second)
+    for (unsigned idx : group)
       for (Value *In : subgraphs[idx].inputs) {
         auto *I = dyn_cast<Instruction>(In);
         if (I && (M.operations.contains(I) || M.outputs.contains(I)))
@@ -542,10 +525,10 @@ static void mergeSharedStagingSubgraphs(const Options &O,
       }
     if (O.Diagnostics.Print) {
       SmallPtrSet<const Value *, 4> objs;
-      for (unsigned idx : kv.second)
+      for (unsigned idx : group)
         for (const Value *O : touched[idx])
           objs.insert(O);
-      llvm::errs() << "[poseidon] merged " << kv.second.size()
+      llvm::errs() << "[poseidon] merged " << group.size()
                    << " FP subgraphs sharing " << objs.size()
                    << " staging buffer(s) into one optimization unit ("
                    << M.operations.size() << " operations, " << M.inputs.size()
@@ -555,9 +538,7 @@ static void mergeSharedStagingSubgraphs(const Options &O,
     merged.push_back(std::move(M));
   }
 
-  subgraphs.clear();
-  for (auto &M : merged)
-    subgraphs.push_back(std::move(M));
+  subgraphs = std::move(merged);
 }
 
 static void splitSubgraphs(const Options &O,

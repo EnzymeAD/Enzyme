@@ -32,7 +32,8 @@ const char *fpKindName(FPKind k) {
 static const fltSemantics *semanticsForKind(FPKind k) {
   static constexpr const fltSemantics &(*kSemantics[])() = {
       nullptr,
-#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, Storage, Semantics, ...) \
+#define FP_FORMAT(Kind, Name, Dtype, CostType, CType, Words, Storage,          \
+                  Semantics, ...)                                              \
   Semantics,
 #include "Model/FPFormat.def"
   };

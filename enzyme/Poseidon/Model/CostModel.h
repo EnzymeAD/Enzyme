@@ -53,11 +53,12 @@ scalarTypes(CostModelState &CM, const llvm::Function &F);
 
 /// What the profiled run spent in `F`, in the cost model's units: every
 /// operation the profile records, its execution count times its price.
-/// `slotOf` gives an instruction's profile slot, or false for an instruction
+/// `slotOf` gives an instruction's profile slot, or none for an instruction
 /// without one.
 llvm::Expected<double> profiledCost(
     CostModelState &CM, const llvm::Function &F, const ProfileMap &profile,
-    llvm::function_ref<bool(const llvm::Instruction &, size_t &)> slotOf);
+    llvm::function_ref<std::optional<size_t>(const llvm::Instruction *)>
+        slotOf);
 
 /// The libm calls that are cheaper computed at FP32 and converted back than at
 /// FP64 on this device. A model without a row this needs is an error at `F`.
