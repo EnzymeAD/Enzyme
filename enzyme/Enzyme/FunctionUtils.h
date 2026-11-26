@@ -40,6 +40,7 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "PreprocessUtils.h"
 #include "Utils.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -74,12 +75,6 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // readonly_or_throw, as they only either read externally visible state, throw
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
-
-namespace llvm {
-class PassBuilder;
-}
-
-llvm::PassBuilder makePassBuilder(llvm::LLVMContext &Ctx);
 
 class PreProcessCache {
 public:
