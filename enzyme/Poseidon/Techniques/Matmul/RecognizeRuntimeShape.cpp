@@ -1025,8 +1025,8 @@ static std::optional<AddressSplit> splitAll(const Polynomial &p,
   return out;
 }
 
-/// The store the final accumulator reaches, through phis, casts and at most
-/// one accumulating fadd.
+/// The store the final accumulator reaches, through phis and at most one
+/// accumulating fadd.
 static Expected<OutputStore> findOutputStore(ArrayRef<ChainMember> chain) {
   // The chain's own phis/fmas are internal recurrences, not consumers.
   SmallPtrSet<const Value *, 24> internal;
@@ -1057,7 +1057,10 @@ static Expected<OutputStore> findOutputStore(ArrayRef<ChainMember> chain) {
       auto *I = dyn_cast<Instruction>(U);
       if (!I)
         continue;
-      if (isa<PHINode>(I) || isa<CastInst>(I)) {
+      if (isa<CastInst>(I))
+        return refuse("the accumulator is converted before it is stored, and "
+                      "the library call stores it as computed");
+      if (isa<PHINode>(I)) {
         wl.push_back(I);
         continue;
       }
@@ -1412,6 +1415,10 @@ static Expected<RecognizedChain> analyzeChain(Function &F, ScalarEvolution &SE,
   for (const ChainMember &m : chain)
     if (m.aLoad->getType() != eltTy || m.bLoad->getType() != eltTy)
       return refuse("chain members disagree on element type");
+  // A runtime-shape product has no realization but the library call.
+  if (std::optional<std::string> why =
+          libraryElementRefusal(fpKindFromType(eltTy)))
+    return refuse(*why);
 
   ChainAnalysis C(SE, chain);
   RecognizedChain out;

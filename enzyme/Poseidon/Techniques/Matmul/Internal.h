@@ -86,6 +86,10 @@ const llvm::CallBase *siteCallOf(const Session &S, const llvm::Function &F);
 /// and other uses that follow. Null if F has none.
 llvm::StoreInst *productStore(llvm::Function &F, const RecognizedMatmul &m);
 
+/// Why no library call computes a product whose elements are `elem`: every
+/// entry of the runtime is a GEMM of doubles. None for doubles.
+std::optional<std::string> libraryElementRefusal(FPKind elem);
+
 /// The extents of the output of a constant-trip product at the reduction length
 /// of the compile, in elements.
 struct OutputExtents {

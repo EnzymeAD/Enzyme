@@ -770,6 +770,13 @@ constantOutputExtents(const RecognizedMatmul &m, const ThreadIndexBounds &guard,
   return std::nullopt;
 }
 
+std::optional<std::string> libraryElementRefusal(FPKind elem) {
+  if (elem == FPKind::FP64)
+    return std::nullopt;
+  return "the product's elements are " + std::string(fpKindName(elem)) +
+         ", and every library-call entry is a GEMM of doubles";
+}
+
 Expected<std::optional<GemmBodyNote>>
 constantShapeLibraryNote(const Options &O, Function &F,
                          const RecognizedMatmul &m) {
@@ -787,6 +794,8 @@ constantShapeLibraryNote(const Options &O, Function &F,
   // dispatch dimension is m.K. Require FP64, A contiguous along K, and B either
   // row-major K-strided by N or col-major (K-contiguous).
   const ScalarLoopHandle &h = m.scalarLoop;
+  if (std::optional<std::string> why = libraryElementRefusal(m.elemType))
+    return refuse(*why);
   int64_t K = (int64_t)m.K;
   if (m.K == ~0u || K <= 0)
     return refuse("the reduction length is not known");
