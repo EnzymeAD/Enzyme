@@ -14,14 +14,17 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -S 2> %t/noprofile.err | FileCheck --check-prefixes=NOPROFILE,FP64 %s
 ; RUN: FileCheck --check-prefix=NOPROFILE-WARN %s < %t/noprofile.err
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/noop -poseidon-cost-budget=0 -S 2> %t/noop.err | FileCheck --check-prefixes=NOOP,FP64 %s
-; RUN: count 0 < %t/noop.err
+; RUN: %if nvptx-registered-target %{ count 0 < %t/noop.err %}
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S 2> %t/inlined.err | FileCheck --check-prefix=INLINED %s
-; RUN: count 0 < %t/inlined.err
+; RUN: %if nvptx-registered-target %{ count 0 < %t/inlined.err %}
 
 ; A kernel carrying POSEIDON_OPTIMIZE is a site whose annotated computation is
 ; its whole body: same code and same profile as expansion_two_components_nvptx.ll, with no
 ; marker call and no shadow arguments. The second run reaches the same site by
-; name with -poseidon-kernels instead of the attribute.
+; name with -poseidon-kernels instead of the attribute. A run that applies
+; nothing and one that inlines the rewritten body print nothing; opt itself
+; warns that it cannot create the target machine of an nvptx64 module when
+; LLVM has no NVPTX target, so their silence is checked only where it has one.
 
 ; ModuleID = 'annotated_kernel.cu'
 source_filename = "annotated_kernel.cu"

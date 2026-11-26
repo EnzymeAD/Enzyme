@@ -18,20 +18,28 @@
 ; RUN: %{opt} -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-matmul-library-calls=false -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OFF %s
 
-; A compile prints nothing but warnings and errors. Given a cost model with a
-; row for every candidate of the product (each class row also as the row of
+; A compile prints nothing but warnings and errors. Given a cost model of the
+; module's sm_120 with a row for every candidate of the product (the synthetic
+; one and the in-kernel classes it lacks, each class row also as the row of
 ; this shape), it has nothing to warn about: the device half that dispatches
 ; the product, the host half that applies the dispatch and a device half that
-; raises the product in-kernel print nothing. The explanation names the cost
-; row class of each in-kernel candidate, which poseidon-calibrate measures.
-; RUN: cp %gpu_cost_model %t/rows.csv
-; RUN: printf 'wmma_mma_m8n8k4,f64_f64,1024\ninkernel_rel,f64_f64,1\nlibrary_direct_rel,f32_f32,1\n' >> %t/rows.csv
+; raises the product in-kernel print nothing. opt itself warns that it cannot
+; create the target machine of an nvptx64 module when LLVM has no NVPTX target,
+; so the silence of the device halves is checked only where it has one. The
+; explanation names the cost row class of each in-kernel candidate, which
+; poseidon-calibrate measures.
+; RUN: cp %cost_models/cm_sm_120_synthetic_tcec.csv %t/rows.csv
+; RUN: printf 'wmma_mma_m8n8k4,f64_f64,1024\nlibrary_direct_rel,f32_f32,1\n' >> %t/rows.csv
+; RUN: for c in f16_f16 bf16_f32 tf32_f32 f64_f64 tcec_n5_f16_f32 tcec_n2_bf16_f32 tcec_n2_tf32_f32 tcec_n3_tf32_f32 tcec_n5_tf32_f32; do \
+; RUN:   echo "inkernel_rel,$c,1"; done >> %t/rows.csv
 ; RUN: sed -n 'p; s/^\(inkernel_rel,[a-z0-9_]*\),/\1_m16n16k16_browmajor,/p' %t/rows.csv > %t/complete.csv
-; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -S -o %t/quiet.ll 2>&1 | count 0
+; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -S -o %t/quiet.ll 2> %t/quiet.err
+; RUN: %if nvptx-registered-target %{ count 0 < %t/quiet.err %}
 ; RUN: ls %t/quiet/launches_*.json
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/quiet -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -o %t/quiet_host.ll 2>&1 | count 0
 ; RUN: grep -q __poseidon_ozakiii_dgemm %t/quiet_host.ll
-; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-matmul-library-calls=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet_raise -poseidon-tau=1e-6 -poseidon-explain=%t/quiet_raise -S -o %t/quiet_raise.ll 2>&1 | count 0
+; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-matmul-library-calls=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet_raise -poseidon-tau=1e-6 -poseidon-explain=%t/quiet_raise -S -o %t/quiet_raise.ll 2> %t/quiet_raise.err
+; RUN: %if nvptx-registered-target %{ count 0 < %t/quiet_raise.err %}
 ; RUN: grep -q llvm.nvvm.wmma %t/quiet_raise.ll
 ; RUN: FileCheck --check-prefix=CLASS %s < %t/quiet_raise/matmul_body.explain.json
 
