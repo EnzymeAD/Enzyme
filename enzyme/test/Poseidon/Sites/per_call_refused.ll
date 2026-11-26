@@ -8,16 +8,10 @@
 ; RUN: %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -S -emit-llvm -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=OFFIR %s < %t/off.ll
 ; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE --implicit-check-not=error: %s
-; A call through __poseidon_optimize that cannot be a site is an error in a
-; compile that generates or uses a profile, and the call runs as written with
-; a warning in any other: the identity's argument is no function, or the
-; function is variadic, has no body here or is called with another signature;
-; so is an identity with more than one use. In device code the copy made for
-; the call is reached through an invoke. The opt of LLVM 21 and 22 exits at its
-; first error, so the compiles with several refused calls run through clang,
-; which reports every error and warning of a compile once, for a host or a
-; device triple, although it lowers these calls at the start of the pipeline
-; and again before the optimizer.
+; A call through __poseidon_optimize that cannot be a site (no function, a
+; variadic one, no body, another signature, an identity used twice, an invoke)
+; is an error under a profile action and runs as written with a warning
+; otherwise; clang reports each once for host and device triples.
 
 ; INVOKE: error: <unknown>:0:0: in function k void (ptr): Poseidon: vol at call 0 in k is reached through an invoke, so this call cannot be a Poseidon site
 
@@ -38,8 +32,6 @@ define double @sq(double %x) {
 
 ; ERR: error: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it
 ; OFF: warning: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it; the call runs as written
-; Without a profile action every such call goes through no identity: it calls
-; what the identity was given.
 ; OFFIR-LABEL: define double @indirect(ptr %fp, double %x)
 ; OFFIR-NEXT: %r = call double %fp(double %x)
 ; OFFIR-NEXT: ret double %r

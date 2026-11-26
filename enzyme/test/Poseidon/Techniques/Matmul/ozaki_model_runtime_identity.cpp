@@ -1,22 +1,13 @@
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
-// RUN:     -I%S/../../../../Poseidon -I%S/../../../../Poseidon/Techniques/Matmul \
-// RUN:     %S/../../../../Poseidon/Techniques/Matmul/Simulation.cpp %s \
-// RUN:     -o %t/model
-// RUN: sed -n 's|^// OZAKI\(.*digest=[0-9a-f]*\).*|// MODEL\1|p' \
-// RUN:     %S/../../Inputs/gemm_runtime.cpp > %t/runtime.check
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math -I%S/../../../../Poseidon -I%S/../../../../Poseidon/Techniques/Matmul %S/../../../../Poseidon/Techniques/Matmul/Simulation.cpp %s -o \
+// RUN:   %t/model
+// RUN: sed -n 's|^// OZAKI\(.*digest=[0-9a-f]*\).*|// MODEL\1|p' %S/../../Inputs/gemm_runtime.cpp > %t/runtime.check
 // RUN: FileCheck --check-prefix=CASES --implicit-check-not=MODEL %s < %t/runtime.check
-// RUN: %t/model | FileCheck --check-prefix=MODEL --match-full-lines \
-// RUN:     %t/runtime.check
+// RUN: %t/model | FileCheck --check-prefix=MODEL --match-full-lines %t/runtime.check
 
-// The accuracy model's Ozaki-II product (simulateOzakiIIDgemm), run on the
-// host, returns the digests Inputs/gemm_runtime.cpp records for the runtime
-// (operands generated the same way): a row-major square at N = 256, a skinny
-// product with A row-major and B and C column-major (beta = 1), and a nearly
-// square one with the opposite layouts, at 8, 10, 13 and 14 moduli. Each
-// operand is laid out as the runtime reads it, since that fixes the order of
-// its sum of squares.
-//
+// The accuracy model's Ozaki-II product (simulateOzakiIIDgemm) returns the
+// digests Inputs/gemm_runtime.cpp records for the runtime on the same operands,
+// each laid out as the runtime reads it (that fixes its sum of squares' order).
 // CASES-COUNT-8: // MODEL
 
 #include "Simulation.h"

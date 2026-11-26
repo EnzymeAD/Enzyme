@@ -5,24 +5,16 @@
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -poseidon-print -Rpass-missed=poseidon -o %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
-//
-// Without the plugin a call with an explicit list does not link; with it and
-// without a profile action every call runs as written.
 // RUN: not %clang -x c++ -O2 -I%poseidon_profile_inc %s -o %t/noplugin 2>&1 | FileCheck --check-prefix=LINK %s
 // RUN: %clang -x c++ -O2 -I%poseidon_profile_inc %loadClangPoseidon %s -lstdc++ -lm -o %t/plain
 // RUN: %t/plain | FileCheck --check-prefix=SAME %s
-//
 // RUN: not %clang -x c++ -O1 -gline-tables-only -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-early-prune -DLISTS %s -o /dev/null 2>&1 | FileCheck --check-prefix=LISTS %s
 
-// __poseidon_optimize takes either list. An explicit one, with Enzyme's
-// activity markers and shadows the caller provides, makes the call a site over
-// the function itself, as the marker does: its profile is named after the
-// function, its value comes back, also in the profiling run, and its target
-// is the first argument of __poseidon_optimize_tau. poseidon_tau gives the
-// target of a marker call only. __poseidon_fp_optimize and
-// __enzyme_fp_optimize are other names of the call, with the same reading of
-// their lists: an automatic list with a pointer is a per-call site like one
-// written with __poseidon_optimize.
+// __poseidon_optimize takes either list: an explicit one makes the call a site
+// over the function itself, an automatic one with a pointer a per-call site;
+// __poseidon_fp_optimize and __enzyme_fp_optimize read their lists the same
+// way. Without the plugin an explicit list does not link; with it and no
+// profile action every call runs as written.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -111,10 +103,6 @@ int main() {
 
 // SAME: 1 1 1 1 1 1 1 1
 
-// The explicit calls are sites over the functions themselves, the two of wave
-// one site with one profile; the automatic calls with a pointer are per-call
-// sites, also with a target, and the automatic call with scalars alone
-// stays a marker site.
 // PROFILES: _Z2sqdd.fpprofile
 // PROFILES-NEXT: _Z4dampPKdd.fpprofile
 // PROFILES-NEXT: _Z4wavePKdPdi.fpprofile
@@ -123,28 +111,24 @@ int main() {
 // PROFILES-NEXT: _Z5shiftPKdPdi.poseidon.main.2.fpprofile
 // PROFILES-NEXT: _Z6energyPKdi.fpprofile
 
-// Each site is solved against its own target: wave, energy, scale, sq and the
-// second shift rewritten, damp and the first shift left as written, the two
-// calls of wave one solve.
+// Each site is solved against its own target.
 // USE-DAG: [poseidon] preprocess__Z4wavePKdPdi: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] _Z4wavePKdPdi: same body and target as an earlier site; reusing its solve (preprocess__Z4wavePKdPdi)
 // USE-DAG: [poseidon] preprocess__Z6energyPKdi: the site's own accuracy target 1.000000e-03 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z6energyPKdi:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z4dampPKdd: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: per_call_explicit.cpp:[[@LINE-61]]:14: remark: Poseidon left site damp as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
+// USE-DAG: per_call_explicit.cpp:[[@LINE-55]]:14: remark: Poseidon left site damp as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5scalePKdPdi.poseidon.main.0: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z5scalePKdPdi.poseidon.main.0:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z2sqdd: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z2sqdd:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.1: the site's own accuracy target 1.000000e-09 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: per_call_explicit.cpp:[[@LINE-61]]:3: remark: Poseidon left site shift as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
+// USE-DAG: per_call_explicit.cpp:[[@LINE-55]]:3: remark: Poseidon left site shift as written: the selected frontier point leaves the site as written [-Rpass-missed=poseidon]
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-08 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z5shiftPKdPdi.poseidon.main.2:P0=Funcs FP64(50%) + FP32(50%)
 // USE-NOT: warning
 
-// The rewritten calls differ from the functions run as written, the calls left
-// unchanged do not.
 // RUNS: 0 0 1 0 0 0 1 0
 
 // LINK: undefined reference to `__poseidon_site_explicit'

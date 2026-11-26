@@ -1,41 +1,31 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-early-prune \
 ; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=true -S
+; DEFINE: %{fn} = -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 \
-; RUN:   | FileCheck --check-prefix=NATIVE %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_missing.csv -poseidon-cache=%t/missing 2>&1 \
-; RUN:   | FileCheck --check-prefix=MISSING %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 \
-; RUN:   | FileCheck --check-prefix=FOREIGN %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 \
-; RUN:   | FileCheck --check-prefix=NOARCH %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cache=%t/none 2>&1 \
-; RUN:   | FileCheck --check-prefix=NOMODEL %s
+; RUN: %{opt} %{fn} -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 | FileCheck --check-prefix=NATIVE %s
+; RUN: not %{opt} %{fn} -poseidon-cost-model=%cost_models/cm_cpu_missing.csv -poseidon-cache=%t/missing 2>&1 | FileCheck --check-prefix=MISSING %s
+; RUN: not %{opt} %{fn} -poseidon-cost-model=%cost_models/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 | FileCheck --check-prefix=FOREIGN %s
+; RUN: not %{opt} %{fn} -poseidon-cost-model=%cost_models/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 | FileCheck --check-prefix=NOARCH %s
+; RUN: not %{opt} %{fn} -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NOMODEL %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float,1') > %t/twice.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 \
-; RUN:   | FileCheck --check-prefix=TWICE %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 | FileCheck --check-prefix=TWICE %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fwibble,double,3') > %t/unknown.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/unknown.csv -poseidon-cache=%t/unknown 2>&1 \
-; RUN:   | FileCheck --check-prefix=UNKNOWN -DLINE=$(wc -l < %t/unknown.csv) %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/unknown.csv -poseidon-cache=%t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN -DLINE=$(wc -l < %t/unknown.csv) %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float') > %t/short.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 \
-; RUN:   | FileCheck --check-prefix=SHORT -DLINE=$(wc -l < %t/short.csv) %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 | FileCheck --check-prefix=SHORT -DLINE=$(wc -l < %t/short.csv) %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,bf16,nan') > %t/nan.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nan.csv -poseidon-cache=%t/nan 2>&1 \
-; RUN:   | FileCheck --check-prefix=NAN -DLINE=$(wc -l < %t/nan.csv) %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nan.csv -poseidon-cache=%t/nan 2>&1 | FileCheck --check-prefix=NAN -DLINE=$(wc -l < %t/nan.csv) %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,bf16,-1') > %t/negative.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/negative.csv -poseidon-cache=%t/negative 2>&1 \
-; RUN:   | FileCheck --check-prefix=NEGATIVE -DLINE=$(wc -l < %t/negative.csv) %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/negative.csv -poseidon-cache=%t/negative 2>&1 | FileCheck --check-prefix=NEGATIVE -DLINE=$(wc -l < %t/negative.csv) %s
 ; RUN: sed 's/^# scalar_types=double,float$/# scalar_types=double,float,fp16/' %cost_models/cm_cpu_native.csv > %t/scalar.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/scalar.csv -poseidon-cache=%t/scalar 2>&1 \
-; RUN:   | FileCheck --check-prefix=SCALAR %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/scalar.csv -poseidon-cache=%t/scalar 2>&1 | FileCheck --check-prefix=SCALAR %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo '# native_arch=x86-64') > %t/repeated.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/repeated.csv -poseidon-cache=%t/repeated 2>&1 \
-; RUN:   | FileCheck --check-prefix=REPEATED -DLINE=$(wc -l < %t/repeated.csv) %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/repeated.csv -poseidon-cache=%t/repeated 2>&1 | FileCheck --check-prefix=REPEATED -DLINE=$(wc -l < %t/repeated.csv) %s
 ; RUN: sed 's/^fadd,float,1$/fadd,float,1e12/' %cost_models/cm_cpu_native.csv > %t/axis.csv
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/axis.csv -poseidon-cache=%t/axis 2>&1 \
-; RUN:   | FileCheck --check-prefix=AXIS %s
-; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row, a row of no family Poseidon reads or with a price that is not a finite non-negative number, a header given twice, a scalar type that is no format, and no model at all each stop the compile with an error instead of substituting a price. So does a row that prices a candidate's cost change beyond what the DP's cost axis holds.
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/axis.csv -poseidon-cache=%t/axis 2>&1 | FileCheck --check-prefix=AXIS %s
+; The measured CSV is the only price source: a model whose native_arch matches
+; the target-cpu is used as is (2 FP64 ops at 4 = 8); every malformed model is an
+; error naming the file, line and row.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:
@@ -51,7 +41,6 @@ entry:
 }
 
 declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; NATIVE: Initial ComputationCost: 8.000000e+00

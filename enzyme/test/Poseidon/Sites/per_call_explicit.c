@@ -7,14 +7,9 @@
 // RUN: %t/use | FileCheck --check-prefix=RUNS %s
 // RUN: not %clang -fsyntax-only -I%poseidon_profile_inc -DMACRO %s 2>&1 | FileCheck --check-prefix=MACRO %s
 
-// C has no overloading, so __poseidon_optimize takes the automatic list only,
-// and an explicit list there does not compile. An explicit list is a call of
-// the marker the program declares, under either of its names, and reads as
-// it reads in C++: with activity markers it is a site over the function, and
-// an automatic list with a pointer is a per-call site. Its value is the
-// function's, in the profiling run too. A per-call form returns the call's
-// value, C's argument conversions apply (a float and an int reach a function of
-// doubles), and its target may be a macro.
+// In C __poseidon_optimize takes the automatic list only; an explicit list is
+// a marker call under either name and reads as in C++. A per-call form returns
+// the call's value with C's argument conversions, and its target may be a macro.
 
 #include "poseidon/poseidon.h"
 #include <math.h>
@@ -74,8 +69,6 @@ int main(void) {
 // PROFILES-NEXT: scale.poseidon.main.0.fpprofile
 // PROFILES-NEXT: sq.fpprofile
 // PROFILES-NEXT: wave.fpprofile
-// Each site is rewritten, and the rewritten calls differ from the functions run
-// as written.
 // USE-DAG: [poseidon] preprocess_wave: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: wave:P0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_scale.poseidon.main.0: tau=1.000000e-06

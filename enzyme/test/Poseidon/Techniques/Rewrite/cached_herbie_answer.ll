@@ -5,13 +5,10 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c2 -poseidon-tau-cheapest=false -poseidon-print -S 2>&1 | FileCheck --check-prefixes=CHECK,ACCURATE %s
 ; RUN: %opt < %s %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/fma_site_profile -poseidon-early-prune -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-precision=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/long -poseidon-herbie-max-expr-length=1 -pass-remarks-missed=poseidon -o /dev/null 2>&1 | FileCheck --check-prefix=LONG %s
 
-; Cached Herbie output replayed from Inputs/fma_opt_cache without invoking Herbie: (x + y) * z  -->  fma(x, z, y * z)
-;
-; The site's tolerance of 0.5 is an enormous per-operation relative rounding
-; level, so the two arms take opposite ends of the same cached frontier:
-; CHEAPEST (the default) takes the binary32 core, ACCURATE the binary64 one.
-; An expression over -poseidon-herbie-max-expr-length is not sent to Herbie,
-; which a missed-optimization remark says.
+; Herbie answers replayed from Inputs/fma_opt_cache for (x + y) * z: at the
+; site's tau of 0.5 the default takes the cheapest point of the cached frontier,
+; binary32 (CHEAPEST), -poseidon-tau-cheapest=false the binary64 one (ACCURATE);
+; an output over -poseidon-herbie-max-expr-length is not sent, with a remark.
 
 ; LONG: remark: <unknown>:0:0: Poseidon does not send Herbie an output expression of {{[0-9]+}} characters, over -poseidon-herbie-max-expr-length=1{{$}}
 
@@ -29,13 +26,10 @@ entry:
 }
 
 declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; CHECK: [poseidon] Using cached Herbie output from {{.*}}herbie_default_958ABA9C1BC0AE00.json
 
-; The selection line reports the tolerance in the unit it is compared in: the
-; original FP64 body sits at A0/S = 1.08e-15, the chosen point at `rel`.
 ; CHEAPEST: [poseidon] preprocess_tester: tau=5.000000e-01 S=1.500000e+02 A0=1.618931e-13 selected cost=-2.500000e-01 accCost=7.671461e-05 rel=5.114307e-07{{$}}
 ; CHEAPEST: Applying solution for (* (+ v0 v1) v2) --(0)-> (fma.f32 v1 v2 (*.f32 v2 v0)){{$}}
 ; CHEAPEST: [poseidon] pin: tester:R1=(fma.f32 v1 v2 (*.f32 v2 v0)){{$}}

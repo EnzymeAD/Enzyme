@@ -11,22 +11,12 @@
 ; RUN: sed -i -e '10s/NumOperands = 2/NumOperands = 0/' -e '11,12d' %t/foreign/tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/foreign -poseidon-early-prune -poseidon-cost-budget=-0.3 -poseidon-cache=%t/foreign-cache -o /dev/null 2>&1 | FileCheck --check-prefix=FOREIGN %s
 
-; A subgraph whose profiled input range holds no interval of finite values
-; cannot be sampled and has no priced precision candidate: it is left as
-; written and the compile goes on. A profile that gives an operation no range
-; for an operand was not generated from this program, and the compile stops
-; naming the operand (FOREIGN). The profiled run saw @tester's x at
-; infinity, and @tester_nan only takes the square root of negative numbers.
-; Under a tolerance the profile of @tester_nan, which carries no sensitivity,
-; is an error of its own.
-;
-; Profiles: this module through the host profiler, driven by
-;   for (int i = 0; i < 64; ++i) {
-;     double x = 1.0 + i, y = 0.5 + (i % 7) * 0.25, o, d = 1.0;
-;     site(i == 0 ? INFINITY : x, y, &o, &d);
-;     d = 1.0;
-;     site_nan(-x, y, &o, &d);
-;   }
+; A subgraph whose profiled input range holds no finite interval cannot be
+; sampled: no priced precision candidate, left as written (BUDGET, IR); under a
+; tolerance the profile of @tester_nan, with no sensitivity, is an error (TAU).
+; A profile giving an operation no operand range was not generated from this
+; program: the compile stops naming the operand (FOREIGN). Profiles from the
+; host profiler: @tester saw x = infinity, @tester_nan only sqrt of negatives.
 
 ; IR-LABEL: define void @tester(double %x, double %y, ptr %o)
 ; IR-NEXT: entry:
@@ -80,7 +70,6 @@ entry:
 
 declare double @llvm.sqrt.f64(double)
 declare void @__poseidon_fp_optimize(ptr, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; BUDGET: [poseidon] subgraph cannot be priced (the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values); discarding its 2 precision change candidate(s) and keeping the original body{{$}}

@@ -7,18 +7,14 @@
 // RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -S -emit-llvm -o - | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
 // RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/use1 -S -emit-llvm -o - | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
 // RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto=thin -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen1 -S -emit-llvm -o - | FileCheck --check-prefix=PGEN --implicit-check-not=__enzyme_fwddiff %s
+// RUN: %if nvptx-registered-target %{ %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o - | FileCheck --check-prefix=PTX --implicit-check-not=jvp_body.left %s %}
 // RUN: not %opt %t/dev.ll %loadPoseidon -passes="poseidon,poseidon-deferred-sites" -S -o /dev/null 2>&1 | FileCheck --check-prefix=BYNAME --implicit-check-not=error: %s
 
-// A site whose body is the user's own derivative request is handled after
-// Enzyme lowers that request. In an LTO pre-link compile, the phase of every
-// HIP device compile, Enzyme defers the request to the post-link run unless
-// -enzyme-lto-prelink is given, and a HIP device link loads no plugin: without
-// the option the compile stops there and says why (with no profile, with one,
-// and generating one) instead of leaving an undefined __enzyme_* symbol to the
-// link; with it the request is lowered, and the kernel calls the module's
-// copy of the tangent or, generating a profile, the profiled tangent. Run by
-// pipeline name, the pass is not told its phase and names the deferral only as
-// a possibility. The source is that of deferred_left_copy_nvptx.cu.
+// A site whose body is the user's derivative request, in an LTO pre-link
+// compile (where Enzyme defers it unless -enzyme-lto-prelink): without the
+// option the compile stops and says why; with it the kernel calls the lowered
+// copy, or the profiled tangent. Outside LTO the copy a site left alone calls
+// is the module's own, with a name PTX can spell (PTX).
 
 #include "poseidon/poseidon.h"
 
@@ -54,8 +50,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 // DEFERRED: {{^}}error: <unknown>:0:0: in function jvp_body void (ptr, ptr, ptr, ptr): Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered, which Enzyme leaves to the post-link run of an LTO pre-link compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang -mllvm -Xclang -enzyme-lto-prelink=1){{$}}
 // DEFERRED: exit status 1
 
-// The kernel passes its locals to the module's copy of the lowered tangent,
-// which computes y = x * x + 1 and dy = 2 * dx * x.
+// The lowered copy computes y = x * x + 1 and dy = 2 * dx * x.
 // LOWERED-LABEL: define dso_local ptx_kernel void @_Z3jvpPKdS0_PdS1_(
 // LOWERED-SAME: ptr {{.*}}[[X:%[0-9]+]], ptr {{.*}}[[DX:%[0-9]+]], ptr {{.*}}[[Y:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]])
 // LOWERED-DAG: [[XV:%[0-9]+]] = load double, ptr [[X]],
@@ -78,9 +73,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 // LOWERED-DAG: store double [[QYV]], ptr [[QY]],
 // LOWERED: {{^}}}
 
-// Generating a profile, the kernel passes each local with its shadow (x's and
-// dx's zeroed, y's and dy's seeded 1.0) to the profiled tangent, which computes
-// y and dy from the same expressions, each through its probe.
+// Generating, each local goes with its shadow to the profiled tangent.
 // PGEN-LABEL: define dso_local ptx_kernel void @_Z3jvpPKdS0_PdS1_(
 // PGEN-SAME: ptr {{.*}}[[X:%[0-9]+]], ptr {{.*}}[[DX:%[0-9]+]], ptr {{.*}}[[Y:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]])
 // PGEN-DAG: [[XV:%[0-9]+]] = load double, ptr [[X]],
@@ -110,5 +103,13 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 // PGEN-DAG: store double [[BDP]], ptr [[BDY]],
 // PGEN-DAG: store double [[BYP]], ptr [[BY]],
 // PGEN: {{^}}}
+
+// PTX: .visible .func jvp_body(
+// PTX-LABEL: .entry _Z3jvpPKdS0_PdS1_(
+// PTX: call.uni fwddiffeqf_$_left, (param0, param1, param2, param3);
+// PTX: ret;
+// PTX-LABEL: .func fwddiffeqf_$_left(
+// PTX: fma.rn.f64 {{.*}}, 0d3FF0000000000000;
+// PTX: ret;
 
 // BYNAME: {{^}}error: <unknown>:0:0: in function jvp_body void (ptr, ptr, ptr, ptr): Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin, and in an LTO pre-link compile -mllvm -enzyme-lto-prelink=1{{$}}

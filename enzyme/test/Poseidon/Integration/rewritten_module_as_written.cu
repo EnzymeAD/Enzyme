@@ -13,11 +13,8 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c %s -o %t/use
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
 
-// In a module where a site is rewritten, every function no rewrite reached is
-// the one as written: a kernel that is no site, and a site the profiling run
-// never reached, inline libdevice's square root as the plain build does,
-// although the solve kept it out of line in the whole module. The site itself
-// is rewritten to FP32.
+// Next to a site rewritten to FP32, a kernel that is no site and an unreached
+// site are as written: libdevice's square root inlined as in the plain build.
 
 #include "poseidon/poseidon.h"
 #include <cmath>

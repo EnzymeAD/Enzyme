@@ -4,20 +4,20 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv \
 ; DEFINE:   -poseidon-cost-budget=1e9 -poseidon-print -S -o /dev/null
 ; DEFINE: %{rewrites} = %python -c "import json, sys; print('\\n'.join(a['id'] + ' ' + a['fpcore'] for u in json.load(open(sys.argv[1]))['subgraphs'] for a in u['alternatives'] if a.get('id', '').startswith('R0_')))"
-; RUN: rm -rf %t && mkdir %t
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/herbie_taylor_terms %{opt} \
+; RUN: rm -rf %t && split-file %s %t/h
+; RUN: env FAKE_HERBIE_DIR=%t/h %{opt} \
 ; RUN:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; RUN:   -poseidon-herbie-num-taylor-terms=4,2 -poseidon-cache=%t/c -poseidon-explain=%t/r24 > %t/out24 2>&1
 ; RUN: FileCheck --check-prefix=SEARCH24 %s < %t/out24
 ; RUN: grep '^fake-herbie:' %t/out24 | FileCheck --check-prefix=CALLS24 %s
 ; RUN: %{rewrites} %t/r24/tester.explain.json | FileCheck --check-prefix=UNION24 %s
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/herbie_taylor_terms %{opt} \
+; RUN: env FAKE_HERBIE_DIR=%t/h %{opt} \
 ; RUN:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; RUN:   -poseidon-herbie-num-taylor-terms=4 -poseidon-cache=%t/c -poseidon-explain=%t/r4 > %t/out4 2>&1
 ; RUN: FileCheck --check-prefix=SEARCH4 %s < %t/out4
 ; RUN: not grep '^fake-herbie:' %t/out4
 ; RUN: %{rewrites} %t/r4/tester.explain.json | FileCheck --check-prefix=UNION4 %s
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/herbie_taylor_terms %{opt} \
+; RUN: env FAKE_HERBIE_DIR=%t/h %{opt} \
 ; RUN:   -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; RUN:   -poseidon-herbie-num-taylor-terms=6,4 -poseidon-cache=%t/c -poseidon-explain=%t/r46 > %t/out46 2>&1
 ; RUN: FileCheck --check-prefix=SEARCH46 %s < %t/out46
@@ -25,7 +25,7 @@
 ; RUN: %{rewrites} %t/r46/tester.explain.json | FileCheck --check-prefix=UNION46 %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh \
 ; RUN:   -poseidon-cache=%t/unset 2>&1 | FileCheck --check-prefix=UNSET %s
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/herbie_taylor_terms/no_option not %{opt} -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
+; RUN: env FAKE_HERBIE_DIR=%t/h/no_option not %{opt} -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; RUN:   -poseidon-herbie-num-taylor-terms=4 -poseidon-cache=%t/old 2>&1 | FileCheck --check-prefix=NOOPTION %s
 
 ; -poseidon-herbie-num-taylor-terms searches a subgraph once per term count,
@@ -75,3 +75,17 @@
 ; UNSET: [poseidon] Saved Herbie output to cache file {{.*}}herbie_default_7D7D1B4F7D656892.json
 
 ; NOOPTION: error: {{.*}}Poseidon: the cache {{.*}}old holds no Herbie answer for subgraph 0 of preprocess_tester at {{[0-9]+}} Taylor terms, and the Herbie at {{.*}}fake-herbie.sh cannot run (-poseidon-herbie-num-taylor-terms passes it --num-taylor-terms, which it does not take ('report --help' does not list it); use a Herbie built with the option, or leave the flag out)
+
+;--- answers
+log
+terms2.json | --num-taylor-terms 2
+terms4.json | --num-taylor-terms 4
+terms6.json | --num-taylor-terms 6
+;--- terms2.json
+{"tests":[{"bits":64,"name":"0","status":"imp-start","prec":"binary64","output":"(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))","cost-accuracy":[[1.0,30.0],[1.4,0.6,"(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))"],[[1.5,0.5,"(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) #s(literal 0 binary64) (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)))"]]]}]}
+;--- terms4.json
+{"tests":[{"bits":64,"name":"0","status":"imp-start","prec":"binary64","output":"(/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))","cost-accuracy":[[1.0,30.0],[1.3,0.6,"(/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))"],[[1.4,0.6,"(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))"]]]}]}
+;--- terms6.json
+{"tests":[{"bits":64,"name":"0","status":"imp-start","prec":"binary64","output":"(/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))","cost-accuracy":[[1.0,30.0],[1.3,0.6,"(/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))"],[[1.2,0.7,"(-.f64 (sqrt.f64 (fma.f64 v0 v0 (*.f64 v1 v1))) v0)"]]]}]}
+;--- no_option/answers
+refuse --num-taylor-terms

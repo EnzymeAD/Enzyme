@@ -10,14 +10,9 @@
 // RUN: not %poseidon_calibrate --cpu $(cat %t/cpu) --cpu-iterations=1000 --cpu-chain-only --out %t/chain.csv 2>&1 | FileCheck --check-prefix=FOLD %s
 // RUN: test ! -e %t/chain.csv
 
-// poseidon-calibrate --cpu measures this host for the target-cpu a compile
-// without -march uses, at a token iteration count, and files the model in the
-// user cache, where that compile finds it by its target-cpu. The CSV carries
-// the headers and the arithmetic, comparison and conversion rows; the compile
-// reads every libm row of both formats when it decides which calls a
-// precision change may retype, so it stops if one is missing. Timed in the
-// chain through itself, fneg folds away (fneg of fneg is the value): the
-// microbenchmark finds no instruction of it in the loop and measures nothing.
+// poseidon-calibrate --cpu files a model of this host's default target-cpu in
+// the user cache, where a compile finds it and reads every row it needs. Timed
+// in a chain through itself, fneg folds away and is measured as nothing.
 
 #include "poseidon/poseidon.h"
 #include <cmath>

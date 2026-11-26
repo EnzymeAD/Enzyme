@@ -1,4 +1,4 @@
-// Operands for the expansion_*_identity.cpp tests: n FP32 components in eight
+// Operands for expansion_identity.cpp: n FP32 components in eight
 // classes, each drawn from a fixed seed so that every run sees the same cases.
 #ifndef EXPANSION_MATCH_GEN_H
 #define EXPANSION_MATCH_GEN_H

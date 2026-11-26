@@ -15,11 +15,9 @@
 // UNSUPPORTED: global-fp-contract
 
 // The driver's -ffp-contract=on, and a user's -ffp-contract=fast or -ffast-math
-// after it, which marks every floating-point operation 'contract'. From LLVM 24
-// that mark reaches only the operations that carry it and the expansion code
-// carries none, so the site of Inputs/expansion_two_components gets its expansion in all
-// three modes, and the kernel's FP32 fused multiply-adds are the expansion's
-// own 15 (three per fmuladd): nothing of the expansion is fused further.
+// after it: from LLVM 24 the 'contract' mark reaches only the operations that
+// carry it, so the site of Inputs/expansion_two_components gets its expansion
+// in all three modes and the kernel's FP32 FMAs are the expansion's own 15.
 
 #include "poseidon/poseidon.h"
 

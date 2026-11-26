@@ -1,7 +1,5 @@
-// A full poseidon-calibrate run on an NVIDIA GPU measures every arm it can,
-// the in-kernel class rows last. The GPU tools and poseidon-clang++ are
-// stand-ins; calibrate_device_probe.c covers a device query that fails.
-//
+// A full poseidon-calibrate run on an NVIDIA GPU (stand-ins for the GPU tools
+// and poseidon-clang++) measures every arm it can, the in-kernel rows last.
 // UNSUPPORTED: tcec-cumpsgemm
 // RUN: rm -rf %t && mkdir -p %t/bin %t/cm
 // RUN: cp %poseidon_calibrate %t/bin/

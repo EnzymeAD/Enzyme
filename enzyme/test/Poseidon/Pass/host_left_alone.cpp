@@ -12,13 +12,9 @@
 // RUN: %t/use > %t/use.out
 // RUN: paste -d' ' %t/stock.out %t/use.out | awk '{ print ($1 == $4), ($2 == $5), ($3 == $6) }' | FileCheck --check-prefix=SAME %s
 
-// A host module whose sites the solve all leaves alone is the code as written:
-// the sites' bodies were kept out of line and the module went through the
-// canonical prefix, so the module is compiled once more from its state before
-// that, as a build without a profile compiles it, and that result is emitted.
-// Without it the loop over qpoint is no longer vectorized. When a site is
-// rewritten, every function the rewrite reached comes from the rewritten
-// module: here both callers the annotated function's wrapper was inlined into.
+// A host module whose sites are all left alone is emitted as a build without a
+// profile compiles it; when one is rewritten, every function the rewrite
+// reached (both callers of sq) comes from the rewritten module.
 
 #include "poseidon/poseidon.h"
 #include <cstdio>
@@ -68,6 +64,4 @@ int main() {
 // USE-DAG: Applying solution for precision change All FP64(0%) + FP32(100%)
 // USE: [poseidon] {{.*}}host_left_alone.cpp: {{[0-9]+}} function(s) a rewrite reached; every other function as written
 
-// The two callers of the rewritten sq differ from plain clang's program; the
-// site left alone does not.
 // SAME: 0 0 1

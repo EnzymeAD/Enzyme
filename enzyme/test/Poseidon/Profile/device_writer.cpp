@@ -7,13 +7,9 @@
 // RUN: diff %t/last.expected %t/last/k_ran.fpprofile
 // RUN: FileCheck --check-prefix=NEVER %s < %t/last/k_never.fpprofile
 
-// The two exit writers of a profile-generate CUDA or HIP program, without
-// a GPU: the device profiler's is played by deviceWriter, which writes what
-// it writes for a kernel that ran and reports it as the device profiler does.
-// Both kernels' headers are registered with the host profiler, as the host
-// half of their unit registers them. Whichever exit handler runs first, the
-// kernel that ran keeps exactly the device writer's profile and the one that
-// never ran gets its header and `Executed = 0`.
+// The host and device exit writers of a CUDA or HIP profiling run, the device
+// one played by deviceWriter: whichever runs first, a kernel that ran keeps
+// the device profile exactly and one that never ran gets `Executed = 0`.
 
 #include <cstdio>
 #include <cstdlib>
@@ -65,9 +61,8 @@ static bool deviceLast() {
   return m && !strcmp(m, "device-last");
 }
 
-// Ahead of the host profiler's own static initializer, which registers its
-// exit handler, as the registration constructors the host half emits are: an
-// exit handler registered here runs after that one.
+// Ahead of the host profiler's initializer, as the host half's registration
+// constructors are: an exit handler registered here runs after its own.
 __attribute__((constructor(101))) static void early() {
   __poseidon_register_static("k_ran",
                                 "SiteId = 0\nCanonicalHash = 00000000000000aa\n");
@@ -85,7 +80,6 @@ int main() {
 
 // DEVICE-FIRST: k_ran not written yet
 // DEVICE-LAST: k_ran written by the host profiler first
-
 // NEVER: SiteId = 1
 // NEVER-NEXT: CanonicalHash = 00000000000000bb
 // NEVER-NEXT: Executed = 0

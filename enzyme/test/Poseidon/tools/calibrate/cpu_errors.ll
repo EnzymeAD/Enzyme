@@ -7,10 +7,8 @@
 ; RUN: test ! -e %t/cm.csv
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../../Inputs/joint_profiles -poseidon-enable-rewrite=false -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=COMPILE %s
 
-; poseidon-calibrate --cpu stops with one error, and writes nothing, for an
-; interpreter without llvmlite, together with --gpu, and for an arm that
-; measures a GPU or does not exist. A compile for a host target-cpu with no
-; model in the user cache names the command that measures one.
+; poseidon-calibrate --cpu stops with one error and writes nothing; a compile
+; for a target-cpu with no model in the user cache names the command for one.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:

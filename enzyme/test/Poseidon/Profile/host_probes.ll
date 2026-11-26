@@ -1,116 +1,12 @@
 ; REQUIRES: enzyme
-; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-generate -S | FileCheck %s
+; RUN: rm -rf %t && split-file %s %t
+; RUN: %opt < %t/probes.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-generate -S | FileCheck %s
+; RUN: %opt < %t/fixed.ll %loadPoseidon -passes=poseidon -poseidon-profile-generate -S | FileCheck --check-prefix=FIXED-REQ %s
+; RUN: %opt < %t/fixed.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck --check-prefix=FIXED %s
 
-%struct.Gradients = type { double, double }
-
-define double @test_maxnum_zero(double %x) {
-entry:
-  %cmp = fcmp ogt double %x, 0.0
-  %result = select i1 %cmp, double %x, double 0.0
-  ret double %result
-}
-
-define double @test_maxnum_zero_reversed(double %x) {
-entry:
-  %cmp = fcmp olt double %x, 0.0
-  %result = select i1 %cmp, double 0.0, double %x
-  ret double %result
-}
-
-define double @test_maxnum_general(double %x, double %y) {
-entry:
-  %cmp = fcmp ogt double %x, %y
-  %result = select i1 %cmp, double %x, double %y
-  ret double %result
-}
-
-define double @test_minnum_general(double %x, double %y) {
-entry:
-  %cmp = fcmp olt double %x, %y
-  %result = select i1 %cmp, double %x, double %y
-  ret double %result
-}
-
-define double @test_combined(double %x, double %y, double %z) {
-entry:
-  %cmp1 = fcmp ogt double %x, 0.0
-  %max_x = select i1 %cmp1, double %x, double 0.0
-  %cmp2 = fcmp olt double %max_x, %y
-  %min_xy = select i1 %cmp2, double %max_x, double %y
-  %result = fadd fast double %min_xy, %z
-  ret double %result
-}
-
-define double @test_fadd(double %x, double %y) {
-entry:
-  %0 = fadd fast double %x, %y
-  ret double %0
-}
-
-define double @test_fma(double %x, double %y, double %z) {
-entry:
-  %0 = fmul fast double %x, %y
-  %1 = fadd fast double %0, %z
-  ret double %1
-}
-
-define double @muldd(double %x, double %y) {
-entry:
-  %mul = fmul fast double %x, %y
-  ret double %mul
-}
-
-define double @test_profile_maxnum_zero(double %x) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_zero, double %x)
-  ret double %0
-}
-
-define double @test_profile_maxnum_zero_reversed(double %x) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_zero_reversed, double %x)
-  ret double %0
-}
-
-define double @test_profile_maxnum(double %x, double %y) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_general, double %x, double %y)
-  ret double %0
-}
-
-define double @test_profile_minnum(double %x, double %y) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_minnum_general, double %x, double %y)
-  ret double %0
-}
-
-define double @test_profile_combined(double %x, double %y, double %z) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_combined, double %x, double %y, double %z)
-  ret double %0
-}
-
-define double @test_profile_fadd(double %x, double %y) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_fadd, double %x, double %y, metadata !"poseidon_tau", double 1.0e-6)
-  ret double %0
-}
-
-define double @test_profile_fma(double %x, double %y, double %z) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_fma, double %x, double %y, double %z)
-  ret double %0
-}
-
-; The marker returns the gradient struct, not the type of muldd: the request
-; returns no primal (adapted from enzyme/test/Enzyme/ReverseMode/gradient-struct-ret.ll).
-define %struct.Gradients @test_profile_muldd(double %x, double %y) {
-entry:
-  %call = call %struct.Gradients (ptr, ...) @__poseidon_fp_optimize(ptr @muldd, double %x, double %y)
-  ret %struct.Gradients %call
-}
-
-declare double @__poseidon_fp_optimize(...)
+; Host profile generation: probes, their gradients and the logged operands
+; (probes.ll); a marker with a fixed parameter list whose poseidon_tau and
+; target the request leaves out, which takes a variadic type (fixed.ll).
 
 ; CHECK: @__poseidon_profile_runtime = external global i32
 ; CHECK: @poseidon.site.preprocess_test_maxnum_zero = private unnamed_addr constant [17 x i8] c"test_maxnum_zero\00", align 1
@@ -128,11 +24,9 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @__poseidon_log_grad(ptr @poseidon.site.preprocess_test_combined, i64 0, double %[[v0]], double %[[d0]])
 ; CHECK-NEXT:   ret double %[[d0]]
-
 ; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_1_rev(double %[[v1:.+]], double %[[d1:.+]])
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @__poseidon_log_grad(ptr @poseidon.site.preprocess_test_combined, i64 1, double %[[v1]], double %[[d1]])
-
 ; CHECK: define internal double @__poseidon_probe_preprocess_test_combined_2_rev(double %[[v2:.+]], double %[[d2:.+]])
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @__poseidon_log_grad(ptr @poseidon.site.preprocess_test_combined, i64 2, double %[[v2]], double %[[d2]])
@@ -151,17 +45,14 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[gep:.+]] = getelementptr {{\[2 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
 ; CHECK-NEXT:   store double 0.000000e+00, ptr %[[gep]], align 8
 ; CHECK-NEXT:   call void @__poseidon_log_value(ptr @poseidon.site.preprocess_test_maxnum_zero, i64 0, double %[[probed]], i64 2, ptr %[[alloca]])
-
 ; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_zero_reversed(
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   alloca [2 x double], align 8
 ; CHECK-NEXT:   call double @llvm.maxnum.f64(double %x, double 0.000000e+00){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.slot ![[idx0]]
-
 ; CHECK: define internal { double, double, double } @diffepreprocess_test_maxnum_general(
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   alloca [2 x double], align 8
 ; CHECK-NEXT:   call double @llvm.maxnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.slot ![[idx0]]
-
 ; CHECK: define internal { double, double, double } @diffepreprocess_test_minnum_general(
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   alloca [2 x double], align 8
@@ -196,7 +87,6 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[g2:.+]] = extractvalue { double } %[[gc2]], 0
 ; CHECK-NEXT:   %[[gc1:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_test_combined_1(double %[[minnum]], double %[[g2]])
 ; CHECK-NEXT:   %[[g1:.+]] = extractvalue { double } %[[gc1]], 0
-
 ; CHECK: define internal { double, double, double } @diffepreprocess_test_fadd(
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   alloca [2 x double], align 8
@@ -225,7 +115,6 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[ins3:.+]] = insertvalue { double, double, double, double } %[[ins2]], double %[[grad]], 3
 ; CHECK-NEXT:   ret { double, double, double, double } %[[ins3]]
 ; CHECK-NEXT: }
-
 ; CHECK: define internal { double, double } @diffepreprocess_muldd(double %x, double %y, double %{{.+}}) #{{[0-9]+}} {
 ; CHECK:        call void @__poseidon_log_value(ptr @poseidon.site.preprocess_muldd, i64 0, double %{{.+}}, i64 2, ptr %{{.+}})
 ; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_muldd_0(
@@ -235,7 +124,150 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double } undef, double %[[grad1]], 0
 ; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double } %[[ins1]], double %[[grad2]], 1
 ; CHECK-NEXT:   ret { double, double } %[[ins2]]
-
 ; CHECK: ![[idx0]] = !{i64 0}
 ; CHECK: ![[idx1]] = !{i64 1}
 ; CHECK: ![[idx2]] = !{i64 2}
+; FIXED-REQ-LABEL: define void @test_void(
+; FIXED-REQ: call void (ptr, ...) @__enzyme_autodiff_poseidon(ptr @preprocess_scale, i32 %dup, ptr %x, ptr %dx, i32 %dup, ptr %y, ptr %dy)
+; FIXED-REQ-LABEL: define void @test_unused(
+; FIXED-REQ: call double (ptr, ...) @__enzyme_autodiff_poseidon.1(ptr @preprocess_sq, double %x, double %y)
+; FIXED-LABEL: define void @test_void(
+; FIXED-NEXT: entry:
+; FIXED-NEXT:   call void @diffepreprocess_scale(ptr %x, ptr %dx, ptr %y, ptr %dy)
+; FIXED-NEXT:   ret void
+; FIXED-LABEL: define void @test_unused(
+; FIXED-NEXT: entry:
+; FIXED-NEXT:   call {{.*}}{ double, double } @diffepreprocess_sq(double %x, double %y, double 1.000000e+00)
+; FIXED-NEXT:   ret void
+
+;--- probes.ll
+%struct.Gradients = type { double, double }
+define double @test_maxnum_zero(double %x) {
+entry:
+  %cmp = fcmp ogt double %x, 0.0
+  %result = select i1 %cmp, double %x, double 0.0
+  ret double %result
+}
+define double @test_maxnum_zero_reversed(double %x) {
+entry:
+  %cmp = fcmp olt double %x, 0.0
+  %result = select i1 %cmp, double 0.0, double %x
+  ret double %result
+}
+define double @test_maxnum_general(double %x, double %y) {
+entry:
+  %cmp = fcmp ogt double %x, %y
+  %result = select i1 %cmp, double %x, double %y
+  ret double %result
+}
+define double @test_minnum_general(double %x, double %y) {
+entry:
+  %cmp = fcmp olt double %x, %y
+  %result = select i1 %cmp, double %x, double %y
+  ret double %result
+}
+define double @test_combined(double %x, double %y, double %z) {
+entry:
+  %cmp1 = fcmp ogt double %x, 0.0
+  %max_x = select i1 %cmp1, double %x, double 0.0
+  %cmp2 = fcmp olt double %max_x, %y
+  %min_xy = select i1 %cmp2, double %max_x, double %y
+  %result = fadd fast double %min_xy, %z
+  ret double %result
+}
+define double @test_fadd(double %x, double %y) {
+entry:
+  %0 = fadd fast double %x, %y
+  ret double %0
+}
+define double @test_fma(double %x, double %y, double %z) {
+entry:
+  %0 = fmul fast double %x, %y
+  %1 = fadd fast double %0, %z
+  ret double %1
+}
+define double @muldd(double %x, double %y) {
+entry:
+  %mul = fmul fast double %x, %y
+  ret double %mul
+}
+define double @test_profile_maxnum_zero(double %x) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_zero, double %x)
+  ret double %0
+}
+define double @test_profile_maxnum_zero_reversed(double %x) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_zero_reversed, double %x)
+  ret double %0
+}
+define double @test_profile_maxnum(double %x, double %y) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_maxnum_general, double %x, double %y)
+  ret double %0
+}
+define double @test_profile_minnum(double %x, double %y) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_minnum_general, double %x, double %y)
+  ret double %0
+}
+define double @test_profile_combined(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_combined, double %x, double %y, double %z)
+  ret double %0
+}
+define double @test_profile_fadd(double %x, double %y) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_fadd, double %x, double %y, metadata !"poseidon_tau", double 1.0e-6)
+  ret double %0
+}
+define double @test_profile_fma(double %x, double %y, double %z) {
+entry:
+  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @test_fma, double %x, double %y, double %z)
+  ret double %0
+}
+
+; The marker returns the gradient struct, not the type of muldd: the request
+; returns no primal (adapted from enzyme/test/Enzyme/ReverseMode/gradient-struct-ret.ll).
+define %struct.Gradients @test_profile_muldd(double %x, double %y) {
+entry:
+  %call = call %struct.Gradients (ptr, ...) @__poseidon_fp_optimize(ptr @muldd, double %x, double %y)
+  ret %struct.Gradients %call
+}
+
+declare double @__poseidon_fp_optimize(...)
+
+;--- fixed.ll
+@enzyme_dup = global i32 0
+@poseidon_tau = global i32 0
+
+define void @scale(ptr %x, ptr %y) {
+entry:
+  %a = load double, ptr %x
+  %m = fmul fast double %a, %a
+  store double %m, ptr %y
+  ret void
+}
+define double @sq(double %x, double %y) {
+entry:
+  %a = fmul fast double %x, %x
+  %b = fmul fast double %y, %y
+  %s = fadd fast double %a, %b
+  ret double %s
+}
+define void @test_void(ptr %x, ptr %dx, ptr %y, ptr %dy) {
+entry:
+  %tau = load i32, ptr @poseidon_tau
+  %dup = load i32, ptr @enzyme_dup
+  call void @__poseidon_fp_optimize(ptr @scale, i32 %tau, double 1.0e-6, i32 %dup, ptr %x, ptr %dx, i32 %dup, ptr %y, ptr %dy)
+  ret void
+}
+define void @test_unused(double %x, double %y) {
+entry:
+  %tau = load i32, ptr @poseidon_tau
+  %0 = call double @__enzyme_fp_optimize(ptr @sq, i32 %tau, double 1.0e-6, double %x, double %y)
+  ret void
+}
+
+declare void @__poseidon_fp_optimize(ptr, i32, double, i32, ptr, ptr, i32, ptr, ptr)
+declare double @__enzyme_fp_optimize(ptr, i32, double, double, double)

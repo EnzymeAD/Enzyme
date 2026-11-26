@@ -18,11 +18,9 @@
 // RUN: %if amdgpu-registered-target && rocm %{ not %{amdgpu} %{gen} -mllvm -poseidon-cache=%t/amdgpu-wrapper -DNOT_A_WRAPPER %s -o /dev/null 2>&1 | FileCheck --check-prefix=WRAPPER %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ not %{amdgpu} %{use} -DNOT_A_WRAPPER %s -o /dev/null 2>&1 | FileCheck --check-prefix=WRAPPER %s %}
 
-// POSEIDON_OPTIMIZE on the lambda a forall body is written as makes every
-// kernel that calls it a site, with the lambda's target. The lambda reaches the
-// kernel as one by-value aggregate of DeviceTensors (each laid out as capacity,
-// data, sizes), so each data pointer is a field of the kernel's parameter:
-// profile generation shadows each of them and seeds the one written.
+// POSEIDON_OPTIMIZE on a forall lambda makes every kernel that calls it a site
+// with the lambda's target; profile generation shadows each data pointer field
+// of the by-value lambda and seeds the one written.
 
 #include "poseidon/poseidon.h"
 
@@ -102,9 +100,8 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GEN-NOT: [poseidon] {{.*}}Scaled
 // GEN: 1 warning generated when compiling for {{.*}}
 
-// The kernel, its two launch arguments, its three pointers (all in argument
-// 1), the eight-byte seed of the one written, and where each sits in the
-// lambda: the layout is the same on both targets.
+// The descriptor: three pointers in argument 1, the seed of the one written,
+// their offsets in the lambda, the same on both targets.
 // DESC: "library calls": [],
 // DESC-NEXT: "profile generation": [
 // DESC-NEXT: "_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 40 64"
@@ -114,11 +111,9 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\n",
 // DESC-NEXT: "profile": "_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14"
 
-// The kernel gains the three shadows, in the order of the pointers they
-// shadow, and passes the body a copy of the lambda with each data pointer
-// replaced by its shadow: the adjoints of Q and G accumulate into the first
-// two, and the one of y is read from the third, cleared, and logged as the
-// seed of both operations.
+// The kernel gains the three shadows and passes the body a copy of the lambda
+// with each data pointer replaced by its shadow: the adjoints of Q and G
+// accumulate, the one of y is read, cleared and logged as both seeds.
 // GENIR-NVPTX: @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [61 x i8] c"_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14\00"
 // GENIR-NVPTX: define ptx_kernel void @_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 [[N:%[0-9]+]], ptr {{.*}}byval(%class.anon){{.*}} [[L:%[0-9]+]], ptr [[DQ:%[0-9]+]], ptr [[DG:%[0-9]+]], ptr [[DY:%[0-9]+]])
 // GENIR-NVPTX-NEXT: [[SL:%[0-9]+]] = alloca %class.anon
@@ -151,10 +146,7 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GENIR-NVPTX-DAG: call void @__poseidon_device_log_grad(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double {{%[0-9]+}}, double [[ADJ]])
 // GENIR-NVPTX: {{^}}}
 
-// On AMDGPU the kernel keeps its calling convention and gains the three shadows, in the
-// order of the pointers they shadow: the adjoints of Q and G accumulate into
-// the first two, and the one of y is read from the third, cleared, and logged
-// as the seed of both operations.
+// The same on AMDGPU, where the kernel keeps its calling convention.
 // GENIR-AMDGPU: @poseidon.site.preprocess__ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [61 x i8] c"_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14\00"
 // GENIR-AMDGPU: define {{.*}}amdgpu_kernel void @_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 {{.*}}, ptr addrspace(4) {{.*}}byref(%class.anon){{.*}}, ptr {{.*}}[[DQ:%[0-9]+]], ptr {{.*}}[[DG:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]])
 // GENIR-AMDGPU-DAG: [[DQG:%[0-9]+]] = addrspacecast ptr [[DQ]] to ptr addrspace(1)
@@ -174,6 +166,6 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) {
 // GENIR-AMDGPU: {{^}}}
 
 // USE: [poseidon] site void Kernel2D<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, reduce(int, int, int, double*, double*, double*)::'lambda'(int)): accuracy target 1e-09
-// USE-NEXT: annotated_lambda.cu:[[@LINE-123]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14.fpprofile:
+// USE-NEXT: annotated_lambda.cu:[[@LINE-117]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL8Kernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~473a3bf0e0637c14.fpprofile:
 // USE: [poseidon] every site of {{.*}}annotated_lambda.cu was left alone; emitting the module as written
 // USE-NEXT: 2 warnings generated when compiling for {{.*}}

@@ -1,4 +1,4 @@
-// Reference routines for expansion_reference_identity.cpp and the
+// Reference routines for expansion_identity.cpp and the
 // expansion_fast_flags harness: MultiFloats.jl's two-limb FP32 routines (at
 // Val{2}), which the materializer's two-component addition, subtraction,
 // multiplication and square root reproduce.

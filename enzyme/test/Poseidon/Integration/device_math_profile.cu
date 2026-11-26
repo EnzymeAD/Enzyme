@@ -1,17 +1,10 @@
-// A device site whose math is libdevice calls, through poseidon-clang++: the
-// profile is generated with Enzyme's plugin and used without it, so the form
-// the profile names must be the form the use compile sees.
-//
+// A device site of libdevice calls: the profile generated with Enzyme names the
+// form the use compile, without Enzyme, sees.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
-// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
-// RUN:   | FileCheck --check-prefix=PRIMAL %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache \
-// RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
-// RUN:     -poseidon-enable-rewrite=0 -poseidon-tau=1e-6 %s -o %t/opt.exe 2> %t/use.log
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe | FileCheck --check-prefix=PRIMAL %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-tau=1e-6 %s -o %t/opt.exe 2> %t/use.log
 // RUN: cat %t/profile/*.fpprofile %t/use.log | FileCheck %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 

@@ -3,9 +3,7 @@
 // RUN: not ls %t/site.o
 // RUN: ls %t/tmp | count 0
 
-// A profile directory no profiling run wrote is a mistake in the compile's
-// input: an error at the site, exit status 1, no object, and none of clang's
-// crash reporting.
+// A missing profile directory: an error at the site, exit status 1, no object, no crash report.
 
 #include "poseidon/poseidon.h"
 

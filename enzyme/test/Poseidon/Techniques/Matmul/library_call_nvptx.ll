@@ -1,37 +1,28 @@
-; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false \
-; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv \
-; DEFINE:   -poseidon-print -S
+; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
+; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../../Inputs/library_call/ozaki_stub_host.ll > %t/host.ll
 ; RUN: %{opt} -poseidon-cache=%t/tau12 -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -o %t/tau12.ll 2>&1 | FileCheck --check-prefix=TAU12 %s
 ; RUN: cat %t/tau12/launches_*.json | FileCheck --check-prefix=DESC12 %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefixes=HOST,HOST12 %s
 ; RUN: sed 's/@cudaLaunchKernel(/@cudaLaunchKernel_ptsz(/g' %t/host.ll > %t/host_ptsz.ll
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host_ptsz.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=PTSZ %s
 ; RUN: %{opt} -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau16 -poseidon-compilation-id=tcec -poseidon-tau=1e-16 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU16 %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
-; RUN: %{opt} -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-matmul-library-calls=false -o /dev/null 2>&1 \
-; RUN:   | FileCheck --check-prefix=OFF %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-compilation-id=tcec -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefixes=HOST,HOST16 %s
+; RUN: %{opt} -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-matmul-library-calls=false -o /dev/null 2>&1 | FileCheck --check-prefix=OFF %s
 
-; A compile prints nothing but warnings and errors. Given a cost model of the
-; module's sm_120 with a row for every candidate of the product (the synthetic
-; one and the in-kernel classes it lacks, each class row also as the row of
-; this shape), it has nothing to warn about: the device half that dispatches
-; the product, the host half that applies the dispatch and a device half that
-; raises the product in-kernel print nothing. opt itself warns that it cannot
-; create the target machine of an nvptx64 module when LLVM has no NVPTX target,
-; so the silence of the device halves is checked only where it has one. The
-; explanation names the cost row class of each in-kernel candidate, which
-; poseidon-calibrate measures.
+; The cheapest candidate clearing tau wins, so the Ozaki-II moduli count rises as
+; tau tightens; the host stub (Inputs/library_call/ozaki_stub_host.ll) calls
+; __poseidon_ozakiii_dgemm with that nm, or __poseidon_native_dgemm.
+
+; With a row for every candidate, the device and host halves of a dispatch and
+; an in-kernel raise compile silently; the explanation names each cost row class.
 ; RUN: cp %cost_models/cm_sm_120_synthetic_tcec.csv %t/rows.csv
 ; RUN: printf 'wmma_mma_m8n8k4,f64_f64,1024\nlibrary_direct_rel,f32_f32,1\n' >> %t/rows.csv
-; RUN: for c in f16_f16 bf16_f32 tf32_f32 f64_f64 tcec_n5_f16_f32 tcec_n2_bf16_f32 tcec_n2_tf32_f32 tcec_n3_tf32_f32 tcec_n5_tf32_f32; do \
-; RUN:   echo "inkernel_rel,$c,1"; done >> %t/rows.csv
+; RUN: for c in f16_f16 bf16_f32 tf32_f32 f64_f64 tcec_n5_f16_f32 tcec_n2_bf16_f32 tcec_n2_tf32_f32 tcec_n3_tf32_f32 tcec_n5_tf32_f32; do echo "inkernel_rel,$c,1"; done >> %t/rows.csv
 ; RUN: sed -n 'p; s/^\(inkernel_rel,[a-z0-9_]*\),/\1_m16n16k16_browmajor,/p' %t/rows.csv > %t/complete.csv
 ; RUN: %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes=poseidon,poseidon-finalize -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cost-model=%t/complete.csv -poseidon-cache=%t/quiet -poseidon-compilation-id=tcec -poseidon-tau=1e-12 -S -o %t/quiet.ll 2> %t/quiet.err
 ; RUN: %if nvptx-registered-target %{ count 0 < %t/quiet.err %}
@@ -70,25 +61,26 @@
 ; DESC12: _Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00
 
 ; HOST12: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozakiii_dgemm (C=arg2 A=arg0 B=arg1){{$}}
-; HOST12-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
-; HOST12: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
-; HOST12: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
-; HOST12: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; HOST12: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
-; HOST12-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
-; HOST12-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
-; HOST12-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
-; HOST12-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
-; HOST12-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
-; HOST12-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; HOST12-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
-; HOST12-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; HOST16: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_native_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; HOST-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
+; HOST: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; HOST: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; HOST: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; HOST: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; HOST-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; HOST-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; HOST-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; HOST-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; HOST-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; HOST-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; HOST-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; HOST-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
 ; HOST12-NEXT: call void @__poseidon_ozakiii_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 12)
-; HOST12-NEXT: br label
-; HOST12-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
+; HOST16-NEXT: call void @__poseidon_native_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]])
+; HOST-NEXT: br label
+; HOST-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
-; A per-thread-stream launch's null stream is its thread's default stream,
-; (cudaStream_t)2 to a library compiled without per-thread streams.
+; A per-thread-stream launch's null stream is (cudaStream_t)2 to the library.
 ; PTSZ: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozakiii_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; PTSZ-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; PTSZ: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
@@ -111,43 +103,7 @@
 ; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
 ; TAU16: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
-; HOST16: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_native_dgemm (C=arg2 A=arg0 B=arg1){{$}}
-; HOST16-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
-; HOST16: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
-; HOST16: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
-; HOST16: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; HOST16: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
-; HOST16-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
-; HOST16-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
-; HOST16-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
-; HOST16-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
-; HOST16-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
-; HOST16-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; HOST16-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
-; HOST16-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; HOST16-NEXT: call void @__poseidon_native_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]])
-; HOST16-NEXT: br label
-; HOST16-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
-
 ; OFF-NOT: ozaki-ii
 ; OFF: tau=1.000000e-12 {{.*}} selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00{{$}}
 ; OFF-NOT: Applying solution for matmul
 ; OFF-NOT: wrote descriptor
-
-; Ozaki-II library call selected by a tolerance: the scalar FP64 product of
-; raise_scalar_tcec_nvptx.ll (Inputs/stale_cache/matmul_device.ll, same
-; profile) priced against the in-kernel raises and the library-call families
-; of cm_sm_120_synthetic_library.csv. The cheapest candidate whose modelled
-; domain error clears tau wins, so the Ozaki-II moduli count rises as tau
-; tightens. The device compile writes the library-call descriptor into the unit's
-; manifest (tenth field 2 = Ozaki-II, sixth field = nm), and the host compile
-; of the kernel's launch stub (Inputs/library_call/ozaki_stub_host.ll, clang
-; -x cuda --cuda-host-only -O0 -S -emit-llvm of
-;   __global__ void matmul_kernel(const double *A, const double *B, double *D,
-;                                 double *dD) {}
-;   void launch(const double *A, const double *B, double *D, double *dD) {
-;     matmul_kernel<<<1, dim3(16, 16)>>>(A, B, D, dD);
-;   }
-; renamed to this module's source and compiled as the same unit) calls
-; __poseidon_ozakiii_dgemm with that nm, or __poseidon_native_dgemm for the
-; native DGEMM.

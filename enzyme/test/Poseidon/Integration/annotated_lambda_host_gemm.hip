@@ -1,35 +1,17 @@
-// annotated_lambda_host_gemm.cu on an AMD GPU (MI300A), end to end through
-// poseidon-clang++ -x hip: profile generation shadows the three data pointers
-// inside the lambda and seeds the one written, and records what the CUDA counterpart
-// records on an RTX 5090 (the same launch geometry, slot execution counts and
-// seeded adjoint counts, and the same canonical form). No gfx942 cost model
-// exists yet, so the optimized build takes its library-call descriptor from
-// Inputs/host_gemm_hip, the one the CUDA counterpart's solve writes, under this
-// kernel's name: the stub dispatches the dense product to the HIP Ozaki-II
-// runtime from the launch's arguments, and a padded tensor still runs the
-// kernel as written. The descriptor is in the manifest of this source under
-// the unit name the host half alone is given, so the manifest the device half
-// writes is another file; the source is compiled from a copy under a fixed
-// name, which the manifest's file name follows.
-//
+// annotated_lambda_host_gemm.cu on an AMD GPU: profile generation records what
+// the CUDA counterpart records; the optimized build takes that counterpart's
+// library-call descriptor (Inputs/host_gemm_hip, in the manifest of a copy of
+// the source under a fixed name) and dispatches to the HIP Ozaki-II runtime.
 // REQUIRES: enzyme, hip-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
-// RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-generate \
-// RUN:     -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe
+// RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -O2 -poseidon-profile-generate -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe
 // RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
-// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
-// RUN:   | FileCheck --check-prefix=PRIMAL %s
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t/profile/*.fpprofile | FileCheck --check-prefix=PROF %s
-//
 // RUN: mkdir %t/cache %t/src
 // RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t/cache/
 // RUN: cp %s %t/src/annotated_lambda_host_gemm.hip
-// RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch -poseidon-print \
-// RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-early-prune \
-// RUN:     -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-compilation-id=seeded \
-// RUN:     -poseidon-enable-rewrite=0 annotated_lambda_host_gemm.hip \
-// RUN:     -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch -poseidon-print --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -Xarch_host -mllvm=-poseidon-compilation-id=seeded -poseidon-enable-rewrite=0 annotated_lambda_host_gemm.hip -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
 #include <cmath>

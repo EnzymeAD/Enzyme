@@ -7,16 +7,10 @@
 ; RUN: rm -rf %t && mkdir %t
 
 ; The launch manifest a device compile writes for the products it dispatches
-; to the host, and what the host compile of the same unit does with it.
-
-; The device compile of tcec_matmul.cu as unit u writes the manifest of the
-; unit, named after the source, with the descriptor of the dispatched product.
-; A later device compile of the unit that dispatches nothing (raising off)
-; removes it, so that the host compile of the unit keeps the launch; and a
-; device compile of a module without a site, under profile use and under
-; profile generation, creates neither a manifest nor the cache. A host compile
-; whose unit has no manifest in the cache, under profile use and under profile
-; generation, says nothing, keeps the launch and creates no cache.
+; to the host, and what the host compile of the same unit does with it. A
+; device compile that dispatches nothing removes the unit's manifest; a module
+; without a site creates no cache; a host compile with no manifest is silent
+; and keeps the launch.
 ; RUN: mkdir %t/write
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/write/host.ll
 ; RUN: %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/write/c -poseidon-compilation-id=u
@@ -57,6 +51,8 @@
 
 ; WRITE-AFTER-NOT: launches_
 
+; OTHER: source_filename = "other_matmul.cu"
+; OTHERUNIT: source_filename = "tcec_matmul.cu"
 ; LAUNCH-LABEL: define dso_local void @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; LAUNCH: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
 ; LAUNCH: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
@@ -64,11 +60,7 @@
 ; LAUNCH-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
 ; LAUNCH: call noundef i32 @cudaLaunchKernel(ptr noundef @_Z28__device_stub__matmul_kernelPKdS0_PdS1_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
 
-; The same for the descriptor a profile-generation compile of the annotated
-; kernel writes: after the annotation is removed, a device compile into the
-; same cache removes the manifest, and the host compile launches the kernel as
-; written instead of with shadow buffers it no longer takes. Profile generation
-; for an NVPTX kernel needs Enzyme and the NVPTX device profiler.
+; The same for the descriptor of a profiled kernel whose annotation is then removed.
 ; RUN: %if enzyme && nvptx-device-profiler %{ grep -v llvm.global.annotations %S/../Inputs/stale_cache/matmul_annotated_device.ll > %t/write/plain.ll %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/write/gen -S -o /dev/null %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ cat %t/write/gen/launches_*.json | FileCheck --check-prefix=WRITE-GEN %s %}
@@ -82,12 +74,9 @@
 ; WRITE-GEN-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 0 4 4 0 1 2 3 0 0 8 0"
 ; WRITE-GEN-NEXT: ],
 
-; Without -poseidon-compilation-id, the two halves of a compile name their unit by the
-; values of every Poseidon flag, so a host compile with the device compile's
-; flags takes its manifest and one with another tolerance does not; and, ahead
-; of that, by HIP's compilation-unit id, which ties halves compiled with
-; different flags and keeps apart halves with different ids. A -poseidon-compilation-id
-; both halves are given takes precedence over the id.
+; Without -poseidon-compilation-id a unit is named by HIP's compilation-unit id,
+; else by the values of every Poseidon flag; a given -poseidon-compilation-id
+; takes precedence over the id.
 ; RUN: mkdir %t/unit
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/unit/host.ll
 ; RUN: sed '/^target triple/a @__hip_cuid_0123abcd = global i8 0' %{dev} > %t/unit/dev_cuid.ll
@@ -103,6 +92,14 @@
 ; RUN: %opt %t/unit/dev_cuid.ll %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/named -poseidon-compilation-id=u -poseidon-print 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/named -mllvm -poseidon-compilation-id=u -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/named -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+
+; A descriptor applies to the host compile of its source and unit only, not
+; to another source whose kernel has the same mangled name or to another unit.
+; RUN: sed 's/ozaki_stub\.cu/other_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/unit/other.ll
+; RUN: %opt %{dev} %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unit/same -poseidon-compilation-id=u
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/same -mllvm -poseidon-compilation-id=u -mllvm -poseidon-print -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-LIBRARY-CALL %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/other.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/same -mllvm -poseidon-compilation-id=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefixes=OTHER,LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/matmul_site_profile -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/unit/same -mllvm -poseidon-compilation-id=v -S -emit-llvm -o - 2>&1 | FileCheck --check-prefixes=OTHERUNIT,LAUNCH --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 
 ; UNIT-WROTE: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
@@ -126,13 +123,9 @@
 ; UNIT-LIBRARY-CALL-NEXT: br label
 ; UNIT-LIBRARY-CALL-NOT: call {{.*}}@cudaLaunchKernel(
 
-; The two kernels of the module below dispatch the product of matmul_body,
-; matmul_kernel first in the module and alpha_kernel, with A and B swapped,
-; second. Their descriptors are in the manifest, and their -poseidon-print
-; messages on stderr, in order of kernel name, whichever site is solved first:
-; in the per-site solve, where alpha_kernel reuses the solve of matmul_kernel,
-; and in the joint solve, which records both after the joint materialization.
-; A repeated compile writes the same manifest and the same messages.
+; Two kernels dispatch the product of matmul_body (alpha_kernel with A and B
+; swapped): descriptors and messages come in kernel-name order, per site and
+; jointly, and a repeated compile writes the same manifest and messages.
 ; RUN: mkdir %t/order
 ; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u 2> %t/order/site1.err -poseidon-print
 ; RUN: cp %t/order/c/launches_tcec_matmul.cu_*.json %t/order/site1.json
@@ -168,12 +161,9 @@
 ; ORDER-MANIFEST-NEXT: ],
 ; ORDER-MANIFEST-NEXT: "profile generation": []
 
-; A device compile whose descriptors cannot be written stops with the path and
-; the system's reason, for a dispatched product and for a profiled kernel: its
-; device code relies on the host half rewriting the launch stubs. The cache
-; path lies under a regular file. A compile that records no descriptor writes
-; nothing and succeeds against the same path. Profile generation for an NVPTX
-; kernel needs Enzyme and the NVPTX device profiler.
+; A manifest that cannot be written (the cache lies under a regular file) is an
+; error for a dispatched product and for a profiled kernel, and nothing for a
+; compile that records no descriptor.
 ; RUN: %if enzyme && nvptx-device-profiler %{ mkdir %t/unwritable && echo > %t/unwritable/file %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/unwritable/file/c -poseidon-print 2>&1 | FileCheck --check-prefix=UNWRITABLE-LIBRARY-CALL -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/unwritable/file/c -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=UNWRITABLE-PROFILE -DCACHE=%t/unwritable/file/c %s %}
@@ -247,9 +237,7 @@ define dso_local ptx_kernel void @_Z12alpha_kernelPKdS0_PdS1_(ptr noundef %0, pt
 }
 
 declare dso_local void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, ptr noundef) local_unnamed_addr #3
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.y() #4
 
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }

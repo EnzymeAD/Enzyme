@@ -1,4 +1,4 @@
-// Reference routines for expansion_reference_identity.cpp: mX_real's
+// Reference routines for expansion_identity.cpp: mX_real's
 // three- and four-component FP32 types at Algorithm::Sloppy (tf_Real_sloppy,
 // qf_Real_sloppy), the routines the materializer's n = 3, 4 arm reproduces,
 // and the division of its two-component type (df_Real_sloppy), which the

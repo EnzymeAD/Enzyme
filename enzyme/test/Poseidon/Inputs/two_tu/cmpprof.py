@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Compare two Poseidon profile directories.
+"""cmpprof.py [--ignore KEY]... [--sum-tol T] [--by-function] <dir> <dir>
 
-Every field except the three atomic sums must match exactly (header lines,
-MinRes, MaxRes, Exec, NumOperands, Operand ranges); the sums are compared by
-relative difference, whose maximum is printed. Exit status 1 on any exact
-mismatch or a missing/extra file, and with --sum-tol T on a sum whose relative
-difference exceeds T. --ignore KEY drops header lines "KEY = ..." from the
-comparison (SiteId numbers sites per translation unit, so it differs between
-a program built as one unit and the same program built as several).
---by-function matches files by the function they are named after: the name
-of a static function's profile ends in a hash of its source file, which
-differs between those two builds.
+Compares two profile directories: every field but the atomic sums exactly, the
+sums by relative difference (with --sum-tol, at most T). --ignore drops header
+lines KEY = ...; --by-function matches files without the source hash a static
+function's profile name ends in. Exit status 1 on any mismatch.
 """
 import os
 import re

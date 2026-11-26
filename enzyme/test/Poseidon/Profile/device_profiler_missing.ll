@@ -1,8 +1,5 @@
-; A build of Poseidon that carries no device profiler for a GPU cannot profile
-; that GPU's code: the compile that would link the profiler into an
-; instrumented device module stops at its first probe, naming what the build
-; lacks, instead of leaving the probes for the program's link to find
-; undefined. A module without a probe compiles.
+; A build without a GPU's device profiler stops at the first probe of a module
+; for that GPU, naming what it lacks; a module without a probe compiles.
 ; UNSUPPORTED: nvptx-device-profiler && amdgpu-device-profiler
 ; RUN: rm -rf %t && split-file %s %t
 ; RUN: %if !nvptx-device-profiler %{ not %opt %t/nvptx.ll %loadPoseidon -passes=poseidon-finalize -poseidon-profile-generate -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=NVPTX --implicit-check-not=PLEASE %s %}

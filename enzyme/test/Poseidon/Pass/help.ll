@@ -1,7 +1,10 @@
 ; -help lists the flags a user passes, under their own heading; every other
-; flag is listed by -help-hidden only.
+; flag is listed by -help-hidden only. The accuracy model runs on one thread
+; unless -poseidon-threads asks for more (0: every hardware thread).
 ; RUN: %opt %loadPoseidon -help | FileCheck %s
 ; RUN: %opt %loadPoseidon -help-hidden | FileCheck --check-prefix=HIDDEN %s
+; RUN: %opt %s %loadPoseidon -passes=verify --print-all-options -disable-output | FileCheck --check-prefix=THREADS %s
+; RUN: %opt %s %loadPoseidon -passes=verify -poseidon-threads=0 --print-all-options -disable-output | FileCheck --check-prefix=THREADS-ALL %s
 
 ; CHECK-LABEL: Poseidon options:
 ; CHECK-NOT: -poseidon-{{[a-z-]+}}
@@ -20,3 +23,6 @@
 ; HIDDEN: --poseidon-herbie-processes=
 ; HIDDEN: --poseidon-print
 ; HIDDEN: --poseidon-tau=<error>
+
+; THREADS: --poseidon-threads {{ *}}= 1 {{ *}}(default: 1)
+; THREADS-ALL: --poseidon-threads {{ *}}= 0 {{ *}}(default: 1)

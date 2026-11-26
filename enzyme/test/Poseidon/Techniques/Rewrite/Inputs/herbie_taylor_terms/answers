@@ -1,4 +1,0 @@
-log
-terms2.json | --num-taylor-terms 2
-terms4.json | --num-taylor-terms 4
-terms6.json | --num-taylor-terms 6

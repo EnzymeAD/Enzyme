@@ -1,8 +1,5 @@
-// A poseidon-calibrate built without cuMpSGEMM has no error-corrected library call
-// to measure: its tcec arm writes no row and says why, and its check does not
-// count the row as missing. The device is the one poseidon-calibrate-ops-cuda --device
-// names, here a stand-in.
-//
+// Without cuMpSGEMM the tcec arm writes no row and says why, and --check does
+// not count the row as missing.
 // UNSUPPORTED: tcec-cumpsgemm
 // RUN: rm -rf %t && mkdir -p %t/bin %t/cm
 // RUN: cp %poseidon_calibrate %t/bin/

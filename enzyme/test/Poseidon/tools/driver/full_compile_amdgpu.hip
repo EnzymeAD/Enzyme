@@ -5,13 +5,11 @@
 // RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -fgpu-rdc -O2 -c -poseidon-profile-generate -poseidon-cache=%t/drv-rdc/c %s -o %t/drv-rdc/k.o
 // RUN: llvm-offload-binary %t/drv-rdc/k.o --image=file=%t/drv-rdc/dev.bc,arch=%amdgpu_arch
 // RUN: llvm-dis %t/drv-rdc/dev.bc -o - | FileCheck --check-prefixes=DEV,DRVDEV --implicit-check-not=__enzyme %s
-//
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-gen -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=ProfileGenerate -DPOSEIDON_FLAGS=-poseidon-cache=%t/pkg-gen/c > /dev/null
 // RUN: %cmake --build %t/pkg-gen -v 2>&1 | FileCheck --check-prefix=PKGGEN -DARCH=%amdgpu_arch %s
 // RUN: cd %t/pkg-gen && cp CMakeFiles/k.dir/k.cpp.o k.o && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*%amdgpu_arch | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
 // RUN: llvm-offload-binary %t/pkg-gen/CMakeFiles/k_rdc.dir/k.cpp.o --image=file=%t/pkg-gen/dev.bc,arch=%amdgpu_arch
 // RUN: llvm-dis %t/pkg-gen/dev.bc -o - | FileCheck --check-prefixes=DEV,PKGDEV --implicit-check-not=__enzyme %s
-//
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-plain -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=Plain -DLOAD_ENZYME=ON -DENZYME_OPTIONS=ON -DDEFINES=DEFERRED > /dev/null
 // RUN: %cmake --build %t/pkg-plain -v 2>&1 | FileCheck --check-prefix=PKGENZYME -DARCH=%amdgpu_arch %s
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=ProfileUse -DLOAD_ENZYME=ON -DENZYME_OPTIONS=ON -DDEFINES=DEFERRED "-DPOSEIDON_FLAGS=-poseidon-profile-use=%S/../../Inputs/unrelated_site_profile -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -poseidon-enable-rewrite=0 -poseidon-cache=%t/pkg-use/c" > /dev/null
@@ -19,21 +17,12 @@
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-noopt -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=Plain -DLOAD_ENZYME=ON -DDEFINES=DEFERRED > /dev/null
 // RUN: env TMPDIR=%t not %cmake --build %t/pkg-noopt 2>&1 | FileCheck --check-prefix=DEFERRED-PKG --implicit-check-not=REPRODUCER --implicit-check-not=ld.lld %s
 
-// Full HIP compiles (-c, neither -S nor --offload-device-only), whose device
-// half is an LTO pre-link compile. The device link loads no plugin, so Enzyme
-// must lower derivative requests in that compile (-enzyme-lto-prelink).
-//
-// Profile generation, through poseidon-clang++ and through the package's
-// Poseidon::ProfileGenerate: the compile succeeds, the code object resolves
-// every symbol, and the device bitcode holds no derivative request and calls
-// the profiling hooks.
-//
-// A site whose body is the user's own derivative request (DEFERRED), in a
-// project that loads Enzyme itself under the package's Plain or ProfileUse:
-// it compiles once the targets that load Enzyme link Poseidon::EnzymeOptions,
-// and without it the build stops in the compile with the reason, not at the
-// device link (deferred_site_lto_amdgpu.hip has the same without ROCm, for
-// clang and poseidon-clang++).
+// Full HIP compiles, whose device half is an LTO pre-link compile that Enzyme
+// must lower in (-enzyme-lto-prelink). Profile generation through the driver
+// and the package: the code object resolves every symbol, the device bitcode
+// calls the profiling hooks. A site whose body is the user's own derivative
+// request (DEFERRED) compiles once Poseidon::EnzymeOptions is linked, and
+// stops in the compile with the reason without it.
 
 #include <hip/hip_runtime.h>
 
@@ -85,10 +74,8 @@ void launch_site(const double *x, double *y, int n) {
 // CO: OBJECT WEAK PROTECTED {{[0-9]+}} __poseidon_profile_table{{$}}
 // CO-NOT: UND {{[_a-zA-Z]}}
 
-// The kernel probes both operations of the site, each with the operands it
-// takes and its gradient read from the output's shadow, and the profiler is
-// linked into the module. With -O2 the derivative is inlined into the kernel;
-// the package's compile, at -O0, calls it with the kernel's shadows.
+// Both operations probed, with operands and gradients; -O2 inlines the
+// derivative, the package's -O0 compile calls it with the kernel's shadows.
 // DEV: @[[SITE:poseidon.site.preprocess__Z4sitePKdPdi_poseidon_body]] = private unnamed_addr addrspace(1) constant [14 x i8] c"_Z4sitePKdPdi\00"
 // DEV: @__poseidon_profile_table = weak_odr protected addrspace(4) externally_initialized constant %struct.DeviceProfileTable zeroinitializer,
 // DEV: define amdgpu_kernel void @_Z4sitePKdPdi(ptr addrspace(1) {{[^%]*}}%[[X:[0-9]+]], ptr addrspace(1) {{[^%]*}}%[[Y:[0-9]+]], i32 %[[N:[0-9]+]], ptr {{[^%]*}}%[[DX:[0-9]+]], ptr {{[^%]*}}%[[DY:[0-9]+]])
@@ -123,16 +110,12 @@ void launch_site(const double *x, double *y, int n) {
 // DEV: define internal void @__poseidon_device_log_value(
 // DEV: define internal void @__poseidon_device_log_grad(
 
-// Each object compiles with Poseidon's plugin, then Enzyme's, generating a
-// profile with Enzyme lowering derivative requests in the pre-link compile.
 // PKGGEN-DAG: {{ }}-x hip --offload-arch=[[ARCH]] --rocm-path={{[^ ]+}} -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin={{[^ ]+}}/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -ffp-contract=on -MD -MT CMakeFiles/k.dir/k.cpp.o {{.*}} -c {{[^ ]+}}/k.cpp{{$}}
 // PKGGEN-DAG: {{ }}-fgpu-rdc -x hip --offload-arch=[[ARCH]] --rocm-path={{[^ ]+}} -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin={{[^ ]+}}/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -ffp-contract=on -MD -MT CMakeFiles/k_rdc.dir/k.cpp.o {{.*}} -c {{[^ ]+}}/k.cpp{{$}}
 
-// The project's own Enzyme plugin comes after Poseidon's, and
-// Poseidon::EnzymeOptions adds the pre-link lowering to the targets that load
-// it.
+// The project's own Enzyme plugin after Poseidon's, with the pre-link lowering.
 // PKGENZYME-DAG: {{ }}-x hip --offload-arch=[[ARCH]] --rocm-path={{[^ ]+}} -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on -fpass-plugin={{[^ ]+}}/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -MD -MT CMakeFiles/k.dir/k.cpp.o {{.*}} -c {{[^ ]+}}/k.cpp{{$}}
 // PKGENZYME-DAG: {{ }}-fgpu-rdc -x hip --offload-arch=[[ARCH]] --rocm-path={{[^ ]+}} -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on -fpass-plugin={{[^ ]+}}/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -MD -MT CMakeFiles/k_rdc.dir/k.cpp.o {{.*}} -c {{[^ ]+}}/k.cpp{{$}}
 
 // DEFERRED-PKG: FAILED: {{(\[code=[0-9]+\] )?}}CMakeFiles/{{k|k_rdc}}.dir/k.cpp.o
-// DEFERRED-PKG: k.cpp:[[@LINE-85]]:28: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered, which Enzyme leaves to the post-link run of an LTO pre-link compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang -mllvm -Xclang -enzyme-lto-prelink=1)
+// DEFERRED-PKG: k.cpp:[[@LINE-79]]:28: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered, which Enzyme leaves to the post-link run of an LTO pre-link compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang -mllvm -Xclang -enzyme-lto-prelink=1)

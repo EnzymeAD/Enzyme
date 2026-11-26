@@ -4,24 +4,12 @@
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc --cuda-device-only -O2 -S -emit-llvm -I%poseidon_profile_inc %s -o - | FileCheck --check-prefix=TYPE %s
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc --cuda-device-only -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o /dev/null 2>&1 | FileCheck --check-prefix=READ --implicit-check-not=error: %s
 
-// A HIP unit with both annotation forms compiles and links its device code
-// without the plugin: both put an entry of one type into
-// llvm.global.annotations, which clang types after its first entry (on AMDGPU
-// an entry without arguments has another type). The plugin reads the target
-// of the one and none of the other. Without ROCm: the runtime declarations a
-// kernel stub needs are written out.
+// A HIP unit with both annotation forms compiles and links without the plugin
+// (both entries of llvm.global.annotations of one type), and the plugin reads
+// the target of the one and none of the other. No ROCm: the stub's runtime
+// declarations are written out.
 
-#include <cstddef>
-
-struct dim3 {
-  unsigned x, y, z;
-};
-typedef struct ihipStream_t *hipStream_t;
-extern "C" int hipLaunchKernel(const void *, dim3, dim3, void **, size_t,
-                               hipStream_t);
-extern "C" int __hipPushCallConfiguration(dim3, dim3, size_t, hipStream_t);
-extern "C" int __hipPopCallConfiguration(dim3 *, dim3 *, size_t *,
-                                         hipStream_t *);
+#include "Inputs/kernel_stub_runtime.h"
 
 #include "poseidon/poseidon.h"
 

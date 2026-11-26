@@ -11,41 +11,15 @@
 ; RUN: %{opt} -poseidon-cache=%t/ds -poseidon-pin=P0_2 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=DS %s
 ; RUN: %{opt} -poseidon-cache=%t/ir -poseidon-pin=P0_2 2>&1 | FileCheck --check-prefix=IR %s
+
 ; One __shared__ array used through views of two shapes, one at a constant
-; offset, by contractions that read each staged value twice. Element GEPs of
-; three strides are no single stride to halve, but the chosen tier narrows
-; every view, and the df64 tier rewires both splits of a value read twice to
-; one pair load.
-; The IR is from
-;   __global__ POSEIDON_OPTIMIZE void multiview(const double *__restrict__ x,
-;                                               const double *__restrict__ b,
-;                                               double *__restrict__ y) {
-;     __shared__ double sm[2][64];
-;     double(*X)[4] = (double(*)[4])(sm + 1);
-;     double(*T)[8] = (double(*)[8])(sm + 0);
-;     const int tx = threadIdx.x, ty = threadIdx.y, e = blockIdx.x;
-;     X[ty][tx] = x[e * 16 + ty * 4 + tx];
-;     __syncthreads();
-;     double u = 0.0, v = 0.0;
-;   #pragma unroll
-;     for (int k = 0; k < 4; ++k) {
-;       u += X[ty][k] * b[k * 4 + tx];
-;       v += X[ty][k] * b[16 + k * 4 + tx];
-;     }
-;     T[ty][tx] = u;
-;     T[ty][4 + tx] = v;
-;     __syncthreads();
-;     double w = 0.0;
-;   #pragma unroll
-;     for (int k = 0; k < 4; ++k)
-;       w += T[k][tx] * b[ty * 4 + k] + T[k][4 + tx] * b[16 + ty * 4 + k];
-;     y[e * 16 + ty * 4 + tx] += w;
-;   }
-; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -S -emit-llvm, two contractions staged in shared memory.
-; The profile: the same source through poseidon-clang++
-; -poseidon-profile-generate, launched as multiview<<<8, dim3(4, 4)>>> on
-; x[i] = 1.0 + 0.01 * i and b[i] = 0.5 + 0.03 * i.
+; offset, by contractions that read each staged value twice: no single stride
+; to halve, but the chosen tier narrows every view, and the df64 tier rewires
+; both splits of a value read twice to one pair load.
+; Module of multiview_kernel.cu (sm[2][64] viewed as double[4] rows at sm + 1
+; and double[8] rows at sm) via clang -x cuda --cuda-device-only
+; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on; profile from one launch
+; <<<8, dim3(4, 4)>>> on an sm_120 GPU.
 
 ; F32: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 ; F32: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to fp32 (12 loads, 3 stores)
@@ -96,11 +70,9 @@
 ; IR-NEXT: call float @llvm.fma.f32(float [[VHI]], float {{%[^,]+}}, float
 ; IR-NEXT: call float @llvm.fma.f32(float [[VLO]], float [[B2]], float
 
-; ModuleID = 'Techniques/Precision/Inputs/staging_multiview/multiview_kernel.cu'
 source_filename = "Techniques/Precision/Inputs/staging_multiview/multiview_kernel.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
-
 @_ZZ9multiviewPKdS0_PdE2sm = internal unnamed_addr addrspace(3) global [2 x [64 x double]] undef, align 8
 @.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
 @.str1 = private unnamed_addr constant [66 x i8] c"Techniques/Precision/Inputs/staging_multiview/multiview_kernel.cu\00", section "llvm.metadata"
@@ -241,22 +213,11 @@ define dso_local ptx_kernel void @_Z9multiviewPKdS0_Pd(ptr noalias nofree nounde
 }
 
 declare void @llvm.nvvm.barrier.cta.sync.aligned.all(i32) #1
-
 declare double @llvm.fmuladd.f64(double, double, double) #2
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #3
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.y() #3
-
 declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #3
-
 attributes #0 = { convergent mustprogress noinline norecurse nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88" "uniform-work-group-size" }
 attributes #1 = { convergent nocallback nounwind }
 attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #3 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}

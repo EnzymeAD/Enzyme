@@ -3,9 +3,7 @@
 // RUN: %t/uniform_real | FileCheck %s
 
 // The first uniform reals of each engine the accuracy models sample with, at
-// the default seed, as the standard library of the first build drew them:
-// Support/UniformReal.cpp writes that library's mapping out, so a build against
-// any other library draws these same numbers.
+// the default seed: the same with every standard library.
 
 #include "Support/UniformReal.h"
 

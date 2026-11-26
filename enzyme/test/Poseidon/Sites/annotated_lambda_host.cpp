@@ -4,12 +4,9 @@
 // RUN: %clang -x c++ -O1 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: sed 's/ "poseidon-not-a-site"//' %t/gen.ll | diff %t/plain.ll -
 
-// A forall body compiled for the host only: the annotation on the lambda
-// marks the GPU kernels that call it, and a host build has none. The lambda's
-// closure is no allocation the profiler could shadow, so the body is left as
-// written rather than made a host site: the module is the one a compile without
-// the plugin emits, but for the attribute that marks the lambda as no site.
-// Outside CUDA an attribute parses only after the lambda's parameter list.
+// An annotated forall lambda compiled for the host only has no kernel to mark:
+// it is left as written, the module being the plugin-less one but for the
+// no-site attribute.
 
 #include "poseidon/poseidon.h"
 

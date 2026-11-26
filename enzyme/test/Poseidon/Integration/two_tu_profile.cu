@@ -13,9 +13,7 @@
 // RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.two | FileCheck --check-prefix=SAME %s
 // RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.lib | FileCheck --check-prefix=SAME %s
 // RUN: cat %t/p.two/_Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile | FileCheck --check-prefix=MERGED %s
-//
-// The same, with relocatable device code, against the one-unit program built
-// the same way.
+// The same with relocatable device code.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -fcuda-rdc -poseidon-profile-generate -poseidon-cache=%t/r -I%S/../Inputs/two_tu -c %S/../Inputs/two_tu/a.cu -o %t/ra.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -fcuda-rdc -poseidon-profile-generate -poseidon-cache=%t/r -I%S/../Inputs/two_tu -c %S/../Inputs/two_tu/b.cu -o %t/rb.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -fcuda-rdc -poseidon-profile-generate -poseidon-cache=%t/r -I%S/../Inputs/two_tu -c %S/../Inputs/two_tu/main.cu -o %t/rmain.o
@@ -24,10 +22,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.rtwo %t/rtwo | FileCheck --check-prefix=OUT %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.rone %t/rone | FileCheck --check-prefix=OUT %s
 // RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.rone %t/p.rtwo | FileCheck --check-prefix=SAME %s
-//
-// Two different static functions under one name in two units of one source
-// file are one function to PGO's naming, and are refused when the profile is
-// written.
+// Two static functions of one name in two units of one source are refused.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -DVARIANT=1 -c %S/../Inputs/two_tu/clash.cu -o %t/k1.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -DVARIANT=2 -c %S/../Inputs/two_tu/clash.cu -o %t/k2.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -c %S/../Inputs/two_tu/clash_main.cu -o %t/kmain.o
@@ -37,9 +32,7 @@
 // RUN: FileCheck --check-prefix=STATUS %s < %t/clash.out
 // RUN: FileCheck --check-prefix=CLASH %s < %t/clash.err
 // RUN: ls %t/p.clash | FileCheck --allow-empty --check-prefix=NOSTEP %s
-//
-// In two source files they are two sites: each gets a profile of its own,
-// which profile use of its unit finds.
+// In two source files they are two sites, each with its own profile.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/s -c %S/../Inputs/two_tu/step_a.cu -o %t/s1.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/s -c %S/../Inputs/two_tu/step_b.cu -o %t/s2.o
 // RUN: %poseidon_clangxx -poseidon-profile-generate %t/s1.o %t/s2.o %t/kmain.o -L%cuda_lib_dir -lcudart -o %t/steps
@@ -48,12 +41,8 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_a.cu -o %t/u1.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/p.steps -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/su -poseidon-print -c %S/../Inputs/two_tu/step_b.cu -o %t/u2.o 2>&1 | FileCheck --check-prefix=STEPUSE --implicit-check-not=error: %s
 
-// A program of two CUDA translation units and a main, compiled one unit at a
-// time without relocatable device code, and linked as objects or with the
-// units in a static library, records the profile the same program records as
-// one unit: an annotated kernel in each unit, an annotated forall-shaped
-// lambda in each, and a device call site in an inline function both units
-// run. Each unit's device module has its own copy of that site; its record is
+// Two CUDA units and a main, linked as objects or a static library, record the
+// profile of the same program as one unit; the inline device site's record is
 // both copies', 2 x 2048 executions from each of two kernels.
 
 // OUT: axpb 2703.7489499999992 lift 367.08090963891368 forall_a 121902.63888375004 forall_b -7593.8872846631084 vol_a -0.549021492 vol_b -0.219608603

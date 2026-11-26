@@ -1,27 +1,14 @@
-// A forall_2D body carrying POSEIDON_OPTIMIZE_TAU, end to end through
-// poseidon-clang++: a per-element dense product reduce over DeviceTensor
-// captures, which reach the kernel as one by-value lambda. Profile
-// generation shadows the three data pointers inside the lambda and seeds the
-// one written; the solve recognizes the product with its extents read from the
-// lambda's fields, and the stub dispatches it from the launch's arguments.
-// The dense reading needs each DeviceTensor's leading extent to equal the loop
-// bound captured next to it, which the stub checks at the launch: a padded
-// tensor runs the kernel as written.
-//
+// A forall_2D body with POSEIDON_OPTIMIZE_TAU through poseidon-clang++: the
+// dense product over DeviceTensor captures is recognized with extents read from
+// the lambda's fields and dispatched by the stub, which checks each tensor's
+// leading extent at the launch; a padded tensor runs the kernel as written.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/pcache -poseidon-launch-dir=%t/pcache %s -o %t/exe
 // RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
-// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
-// RUN:   | FileCheck --check-prefix=PRIMAL %s
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t/profile/*.fpprofile | FileCheck --check-prefix=PROF %s
-//
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache \
-// RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
-// RUN:     -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-enable-matmul \
-// RUN:     %s -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-enable-matmul %s -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
 #include <cmath>
@@ -156,10 +143,8 @@ int main(int argc, char **argv) {
   return failed;
 }
 
-// The lambda (argument 1) holds nd at +0, np at +4, and the DeviceTensors of Q,
-// G and y with their data pointers at +16, +48, +80 and their sizes from +24,
-// +56, +88. The kernel, its two launch arguments, and the three pointers, all
-// fields of the lambda; only the output's is seeded.
+// Lambda fields: nd +0, np +4, data pointers of Q, G, y at +16, +48, +80, sizes
+// from +24, +56, +88; only the output's pointer is seeded.
 // DESC: "profile generation": [
 // DESC-NEXT: "_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 48 80"{{$}}
 // DESC-NEXT: ],
@@ -195,9 +180,8 @@ int main(int argc, char **argv) {
 // PROF-NEXT: NumOperands = 3
 // PROF-NOT: {{^[0-9]+$}}
 
-// M = nd, Ncols = the kernel's N, K = 3 np, every leading dimension the product
-// of a DeviceTensor's sizes, and each DeviceTensor's leading extent assumed to
-// be np, which the stub checks before it dispatches the product at nm = 12.
+// M = nd, Ncols = N, K = 3 np, leading dimensions from the sizes, each leading
+// extent checked to be np before the dispatch at nm = 12.
 // CHECK: [poseidon] site void CuKernel2D<reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)>(int, reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)): accuracy target 1e-12
 // CHECK-NEXT: [poseidon] Optimizing [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body]] with relative error tolerance: 1.000000e-12
 // CHECK: [poseidon]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]

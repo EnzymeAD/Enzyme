@@ -1,29 +1,21 @@
-// poseidon-calibrate's in-kernel arm, with stand-ins for the GPU tools and for
-// poseidon-clang++, which logs its arguments: the class rows are measured on
-// the square harness of --n with B strided along K, and a --product that names
-// a layout at its extents with B in that layout, each harness profiled at
-// extents of at most 128 in the same layout. A row the model has is not
-// measured again, and a product without a layout has no in-kernel rows. A
-// class that does not run leaves its row out and fails the run, whose last
-// line names the row; the same command measures only that row when run again.
-//
+// poseidon-calibrate's in-kernel arm with stand-in tools (poseidon-clang++ logs
+// its arguments): class rows on the --n harness, a --product with a layout at
+// its extents, profiled at most 128; rows the model has are skipped; a class
+// that fails is named and measured alone when the command is run again.
 // RUN: rm -rf %t && mkdir -p %t/bin
 // RUN: cp %poseidon_calibrate %t/bin/ && cp %S/../Inputs/fake-poseidon-clang.sh %t/bin/poseidon-clang++
 // RUN: printf '#!/bin/sh\nprintf "NVIDIA GeForce RTX 5090\\tsm_120\\n"\n' > %t/bin/poseidon-calibrate-ops-cuda
 // RUN: chmod +x %t/bin/poseidon-clang++ %t/bin/poseidon-calibrate-ops-cuda
 // RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/cm.csv
-// RUN: env FAKE_CLANG_LOG=%t/clang.log %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor,64x32x16 \
-// RUN:   | FileCheck --check-prefix=FIRST %s
+// RUN: env FAKE_CLANG_LOG=%t/clang.log %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor,64x32x16 | FileCheck --check-prefix=FIRST %s
 // RUN: FileCheck --check-prefix=ARGS --implicit-check-not=-poseidon-print %s < %t/clang.log
 // RUN: grep '^inkernel_rel,' %t/cm.csv | FileCheck --check-prefix=ROWS %s
 // RUN: not grep 'm64n32k16' %t/cm.csv
-// RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor \
-// RUN:   | FileCheck --check-prefix=AGAIN --implicit-check-not='  + ' %s
+// RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 2048x112x2048:bcolmajor | FileCheck --check-prefix=AGAIN --implicit-check-not='  + ' %s
 // RUN: not env FAKE_CLANG_FAIL=M0_2 %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 64x16x32:browmajor > %t/fail.out 2>&1
 // RUN: FileCheck --check-prefix=FAIL %s < %t/fail.out
 // RUN: grep -c '_m64n16k32_browmajor,' %t/cm.csv | FileCheck --check-prefix=TWO %s
-// RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 64x16x32:browmajor \
-// RUN:   | FileCheck --check-prefix=REPEAT --implicit-check-not='  + ' %s
+// RUN: %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --n 256 --product 64x16x32:browmajor | FileCheck --check-prefix=REPEAT --implicit-check-not='  + ' %s
 // RUN: not %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --product 2048x112:bcolmajor 2>&1 | FileCheck --check-prefix=BAD %s
 // RUN: not %t/bin/poseidon-calibrate --gpu 0 --out %t/cm.csv --only inkernel --product 64x64x64:colmajor 2>&1 | FileCheck --check-prefix=BAD %s
 

@@ -1,13 +1,15 @@
-; RUN: rm -rf %t && split-file %s %t
-; RUN: %opt < %t/kernel.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/approx_sqrt -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nvptx -poseidon-print "-poseidon-pin=P0=Funcs FP64(0%) + FP32(100%)" -S 2>&1 | FileCheck --check-prefix=NVPTX %s
-; RUN: %opt < %t/host.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/approx_sqrt -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false -poseidon-precision-three-tier=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/host -poseidon-print "-poseidon-pin=P0=Funcs FP64(0%) + FP32(100%)" -S 2>&1 | FileCheck --check-prefix=HOST %s
+; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/approx_sqrt \
+; DEFINE:   -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-precision-expansions=false \
+; DEFINE:   -poseidon-precision-three-tier=false -poseidon-print "-poseidon-pin=P0=Funcs FP64(0%) + FP32(100%)" -S
+; RUN: rm -rf %t && mkdir %t
+; RUN: sed -e '/^target triple/d' -e 's/"target-cpu"="sm_120"/"target-cpu"="x86-64"/' %s > %t/host.ll
+; RUN: %{opt} < %s -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nvptx 2>&1 | FileCheck --check-prefix=NVPTX %s
+; RUN: %{opt} < %t/host.ll -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/host 2>&1 | FileCheck --check-prefix=HOST %s
 
-; sqrt(x*x + y*y) over x, y in [1, 2], once for NVPTX and once for the host.
-; Retyped to FP32, the sqrt call is the approximate square root on NVPTX and
-; sqrtf on the host, so the same candidates are modelled with that root's
-; error bound on NVPTX only: about 1.86e-7 of a root near 2.1, weighted by the
-; gradient sum 100, adds 4e-5 to the accuracy cost of every candidate that
-; retypes the sqrt, and nothing to one that keeps it in FP64.
+; sqrt(x*x + y*y) over x, y in [1, 2], for NVPTX and for the host (the module
+; without its triple). Retyped to FP32 the root is the approximate square root
+; on NVPTX and sqrtf on the host, so only on NVPTX does every candidate that
+; retypes it carry that root's error bound (about 4e-5 of accuracy cost).
 
 ; NVPTX: 4.946043e-05 {{.*}} All FP64(0%) + FP32(100%)
 ; NVPTX: 3.922927e-06 {{.*}} All FP64(30%) + FP32(70%)
@@ -21,7 +23,6 @@
 ; HOST-LABEL: define {{.*}} @test_opt(
 ; HOST: call float @sqrtf(
 
-;--- kernel.ll
 target triple = "nvptx64-nvidia-cuda"
 
 define double @tester(double %x, double %y) #0 {
@@ -41,27 +42,4 @@ entry:
 
 declare double @sqrt(double)
 declare double @__poseidon_fp_optimize(ptr, ...)
-
 attributes #0 = { "target-cpu"="sm_120" }
-
-;--- host.ll
-
-define double @tester(double %x, double %y) #0 {
-entry:
-  %xx = fmul double %x, %x
-  %yy = fmul double %y, %y
-  %s = fadd double %xx, %yy
-  %r = call double @sqrt(double %s)
-  ret double %r
-}
-
-define double @test_opt(double %x, double %y) {
-entry:
-  %0 = tail call double (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester, double %x, double %y)
-  ret double %0
-}
-
-declare double @sqrt(double)
-declare double @__poseidon_fp_optimize(ptr, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }

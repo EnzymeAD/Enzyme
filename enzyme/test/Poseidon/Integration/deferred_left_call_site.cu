@@ -1,11 +1,9 @@
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme %s -o %t/plain.ll
-//
 // Every site left alone (no profile): the module is the one as written.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -poseidon-early-prune %s -o %t/none.ll
 // RUN: diff %t/plain.ll %t/none.ll
-//
 // One site rewritten and one refused: the refused one's kernel and tangent are
 // the ones as written.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
@@ -16,13 +14,9 @@
 // RUN: diff %t/plain.fns %t/left.fns
 // RUN: FileCheck --check-prefix=FNS %s < %t/left.fns
 
-// A deferred site the solve leaves alone, in a module where another site is
-// rewritten, emits its body and the code Enzyme generated for it as the
-// pipeline left them: Enzyme's tangent of 1/sqrt(s) calls libdevice's
-// __nv_sqrt once more, nothing inlines after Enzyme without a site, so the two
-// square roots stay two calls; the late run must not inline and merge them.
-// The program asks Enzyme for a derivative of its own, so it loads Enzyme's
-// plugin itself where poseidon-clang++ does not, outside profile generation.
+// A deferred site the solve leaves alone, next to a rewritten one, keeps its
+// body and tangent as the pipeline left them: the two square roots stay two
+// calls. The program loads Enzyme's plugin itself.
 
 #include "poseidon/poseidon.h"
 #include <cuda_runtime.h>

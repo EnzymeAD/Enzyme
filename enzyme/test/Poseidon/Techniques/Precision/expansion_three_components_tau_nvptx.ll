@@ -76,36 +76,18 @@
 ; LOOSE-NEXT: store double [[DS_F64]], ptr %[[OP]], align 8
 ; LOOSE-NEXT: ret void
 
-; -poseidon-precision-expansion-components=3 admits a three-component FP32 expansion
-; (Techniques/Precision/Expansion.cpp). On a 24-step logistic map (72 FP64 operations on
-; one input) at tolerance 1e-16 the two-component expansion misses, so with two
-; components the body is left as written; with three, the three-component
-; expansion clears it, is cheaper than FP64 on this cost model, and models an
-; error below the FP64 body's (a negative accuracy cost). At 1e-15 the
-; two-component point clears and wins with three admitted. The three-component
-; body splits the input into three FP32 components and sums them back to FP64,
-; without the double-single join tag.
-; The IR is from
-;   POSEIDON_OPTIMIZE __global__ void logistic_kernel(const double *x0,
-;                                                     double *out) {
-;     unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
-;     double x = x0[i];
-;   #pragma unroll
-;     for (int k = 0; k < 24; ++k)
-;       x = 3.9 * x * (1.0 - x);
-;     out[i] = x;
-;   }
-; (logistic.cu) via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the LLVM-24-only
-; nocreateundeforpoison intrinsic attribute removed). Profile: the same source
-; through poseidon-clang++ -poseidon-profile-generate, launched as
-; logistic_kernel<<<4, 64>>> on x0[i] = 0.2 + 0.6 * i / 256 on an sm_120 GPU.
+; A 24-step logistic map (72 FP64 operations on one input): at tau 1e-16 the
+; two-component expansion misses and the body is left as written (TWO); with
+; three components admitted, the three-component expansion clears it, cheaper
+; and more accurate than FP64, and sums its three FP32 components back without
+; the double-single join tag (THREE); at 1e-15 the two-component point wins.
+; Module of logistic.cu (x = 3.9 * x * (1.0 - x), unrolled 24 times) via clang
+; -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on;
+; profile from logistic_kernel<<<4, 64>>> on an sm_120 GPU.
 
-; ModuleID = 'logistic.cu'
 source_filename = "logistic.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
-
 @.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
 @.str1 = private unnamed_addr constant [12 x i8] c"logistic.cu\00", section "llvm.metadata"
 @llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @_Z15logistic_kernelPKdPd, ptr @.str, ptr @.str1, i32 5, ptr null }], section "llvm.metadata"
@@ -197,16 +179,7 @@ define dso_local ptx_kernel void @_Z15logistic_kernelPKdPd(ptr nofree noundef re
 }
 
 declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #1
-
 declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #1
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #1
-
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88" "uniform-work-group-size" }
 attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}

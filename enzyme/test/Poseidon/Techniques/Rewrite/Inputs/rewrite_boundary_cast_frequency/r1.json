@@ -1,1 +1,0 @@
-{"tests":[{"bits":32,"name":"1","status":"ex-start","time":1.0,"start":0.5,"end":0.25,"output":"(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1)))","cost-accuracy":[[1.0,0.5],[0.75,0.25],[]]}]}

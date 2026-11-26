@@ -1,26 +1,11 @@
-// A product whose threads return early outside the guard
-// `row >= ROWS || col >= COLS` on their global indices, profiled and raised
-// onto the tensor cores. A block raises only when every one of its threads
-// passes the guard; any other block runs the guard and the loop as written.
-// guard_exact_kernel's grid of 16 x 16 blocks tiles its 32 x 32 extents, so
-// every block raises. guard_partial_kernel's 40 x 32 extents leave its last
-// row of blocks half outside the guard: the full blocks raise, the last one
-// runs the loop, which gives the FP64 product, and no element outside the
-// extents is written.
-//
+// A guarded product raised only in blocks whose threads all pass the guard:
+// guard_exact_kernel raises every block, guard_partial_kernel's last row of
+// blocks runs the loop (the FP64 product) and writes nothing outside.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
-// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg \
-// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
-// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/gen.exe
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/gen.exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/gen.exe | FileCheck --check-prefix=PROFILED %s
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon \
-// RUN:     -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c \
-// RUN:     -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false \
-// RUN:     -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false \
-// RUN:     -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print \
-// RUN:     -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=RAISED %s
 
 #include <cmath>
@@ -77,9 +62,8 @@ static const char *errorClass(double maxRel) {
   return maxRel <= 1e-12 ? "FP64" : maxRel <= 1e-2 ? "TC" : "WRONG";
 }
 
-// Launches `kernel` on a grid of 16 x 16 blocks covering `rows` x COLS and
-// prints, per row of blocks, the error class of its elements against the FP64
-// product, and whether the rows from `rows` on kept their value.
+// Prints each block row's error class and whether rows from `rows` on kept
+// their value.
 static void run(const char *name, void (*kernel)(const double *,
                                                  const double *, double *),
                 int rows) {

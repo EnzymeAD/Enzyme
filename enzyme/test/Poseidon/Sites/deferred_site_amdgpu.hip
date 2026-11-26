@@ -10,12 +10,9 @@
 // RUN: %{clang} --offload-arch=%amdgpu_arch --no-gpu-bundle-output -c -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-compilation-id=object -o %t/gen.co 2>&1 | count 0
 // RUN: llvm-readelf --dyn-syms %t/gen.co | FileCheck --check-prefix=CO %s
 
-// A site whose marked body is a forward-mode derivative request, in AMDGPU
-// device code: the early run defers it, the late run profiles the tangent code
-// Enzyme generated, and a site left alone calls the module's own copy of the
-// body as the pipeline left it. Its profiled code object links: the derivative
-// mallocs its caches, the probes are the module's, and the table is exported.
-// (-mllvm would also reach the device linker, which knows no Poseidon flag.)
+// A marked body that is a forward-mode derivative request in AMDGPU device
+// code: deferred early, its tangent profiled late, a site left alone calls the
+// module's copy; the profiled code object links with its table exported.
 
 #include <hip/hip_runtime.h>
 
@@ -56,9 +53,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy,
 // PLAIN-NEXT: [poseidon] jvp_body: folded 1 Enzyme-generated call(s) into the deferred body
 // PLAIN-NEXT: deferred_site_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
 
-// The kernel passes its locals to the module's copy of the tangent and
-// stores what the copy wrote; the copy sums x[i] * x[i] and 2 * dx[i] * x[i]
-// and writes y = sum + 1 and dy, or 1 and 0 when n <= 0.
+// The copy sums x[i] * x[i] and 2 * dx[i] * x[i] into y = sum + 1 and dy.
 // LEFT: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // LEFT-DAG: call {{.*}}void @fwddiffeqf.left(ptr {{.*}}[[XP:%[0-9]+]], ptr {{.*}}[[DXP:%[0-9]+]], ptr {{.*}}[[YP:%[0-9]+]], ptr {{.*}}[[DYP:%[0-9]+]], i32 [[N]])
 // LEFT-DAG: [[XP]] = addrspacecast ptr addrspace(5) [[XA:%[0-9]+]] to ptr
@@ -102,8 +97,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy,
 // GEN-NEXT: [poseidon] block-geometry probe placed in 1 profiled function(s)
 // GEN-NOT: {{.}}
 
-// The kernel passes each local with its shadow (x's and dx's zeroed, y's and
-// dy's seeded 1.0) to the profiled tangent, which logs into the site's table.
+// Each local goes with its shadow (x, dx zeroed; y, dy seeded 1.0) to the profiled tangent.
 // GENIR: @poseidon.site.preprocess_jvp_body = private unnamed_addr addrspace(1) constant [9 x i8] c"jvp_body\00"
 // GENIR: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // GENIR-DAG: call void @diffepreprocess_jvp_body(ptr [[XP:%[0-9]+]], ptr [[XSP:%[0-9]+]], ptr [[DXP:%[0-9]+]], ptr [[DXSP:%[0-9]+]], ptr [[YP:%[0-9]+]], ptr [[YSP:%[0-9]+]], ptr [[DYP:%[0-9]+]], ptr [[DYSP:%[0-9]+]], i32 [[N]])

@@ -17,11 +17,9 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null
 // RUN: FileCheck --check-prefix=NEVER %s < %t/only/_Z1fPKdPdi.fpprofile
 
-// Two programs share the sites f, g and h and write one profile directory:
-// program a executes f and h, program b g and h. The run of b keeps the
-// profile of f that the run of a wrote, executions and condition number or
-// its lack of one, and measures its own sites only. A site no run executed is
-// written as never executed.
+// Programs a (f, h) and b (g, h) write one profile directory: b's run keeps
+// a's profile of f (with or without a condition number) and measures its own
+// sites; a site no run executed is written as never executed.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -62,12 +60,9 @@ int main() {
 // MEASURED: Kappa =
 // MEASURED-NOT: Executed
 // MEASURED: MinRes =
-
 // MEASURE: [poseidon] measuring the condition numbers of metric "y" at 2 sites: 3 more runs of this program
-
 // NOKAPPA-NOT: Kappa
 // NOKAPPA: MinRes =
-
 // NEVER: SiteId = {{[0-9]+}}
 // NEVER: CanonicalHash = {{[0-9a-f]+}}
 // NEVER-NEXT: Executed = 0

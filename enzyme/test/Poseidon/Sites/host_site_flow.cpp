@@ -3,7 +3,6 @@
 // RUN: %clang -x c++ -O2 -c -DOTHER_TU %s -o %t/other.o
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%t/inc %s -x none %t/other.o -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
-//
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c -poseidon-print %s %t/other.o -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
@@ -13,7 +12,6 @@
 // RUN: %t/use > %t/use.out
 // RUN: FileCheck --check-prefix=OUT %s < %t/use.out
 // RUN: not diff %t/stock.out %t/use.out
-//
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/c0 %s %t/other.o -o %t/gen0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > %t/gen0.out
 // RUN: diff %t/stock.out %t/gen0.out
@@ -24,12 +22,10 @@
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c3 %s %t/other.o -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c3q %s %t/other.o -o %t/use3q 2>&1 | count 0
 
-// POSEIDON_OPTIMIZE on host functions: a free function called directly,
-// through a pointer and from another translation unit, a member function, a
-// template instantiation, a floating-point and an integer return. The
-// profiling run computes what the program as written computes; the solve
-// rewrites every call, at every optimization level, and reports at the source
-// line and column inside the function.
+// POSEIDON_OPTIMIZE on host functions (called directly, through a pointer and
+// from another unit; a member, a template, an integer return): the profiling
+// run computes what the program computes, and at every -O level every call is
+// rewritten and reported at its source location.
 
 #ifdef OTHER_TU
 void wave(const double *x, double *y, int n);
@@ -122,16 +118,10 @@ int main(int argc, char **argv) {
 // REMARK: host_site_flow.cpp:[[@LINE-52]]:12: remark: Poseidon runs all 2 operations in float: (double)((float)x[i] * cosf((float)x[i])); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.416667 (-58%) [P0_0] [-Rpass=poseidon]
 // REMARK: host_site_flow.cpp:[[@LINE-58]]:62: remark: Poseidon runs all 4 operations in float: (double)(expf((float)x) * (float)x + (float)x * -2.0f + 1.0f); modelled error {{[0-9.e+-]+}} -> {{[0-9.e+-]+}}, cost 1 -> 0.35 (-65%) [P0_0] [-Rpass=poseidon]
 // REMARK-NOT: remark:
-// The modelled errors are matched by pattern: they come from the profile, whose
-// values the host computes, and a host with a fused multiply-add rounds them
-// otherwise.
+// The modelled errors come from the profile, which a host with FMA rounds otherwise.
 
-// The call through the pointer and the one from the other translation unit
-// run the same rewritten body.
 // OUT: [[Y:[-0-9.e]+]] [[Y]]{{ }}
 
-// At every level each site is rewritten; which mix of FP32 and FP64 a site
-// gets depends on the profile of that level's program.
 // LEVEL: Applying solution for precision change
 // LEVEL: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
 // LEVEL: Applying solution for precision change

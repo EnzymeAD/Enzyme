@@ -19,24 +19,15 @@
 // RUN: %{host} %loadClangPoseidon -o %t/plain.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s
 // RUN: FileCheck --check-prefix=CALLS --implicit-check-not=__poseidon_fp_optimize --implicit-check-not=__enzyme_fp_optimize %s < %t/plain.ll
 
-// The host half of a CUDA or HIP compilation holds no site, so there a marker
-// call, under either name and with either list, is a call of the function
-// with the primal values of its arguments, silently, in profile generation,
-// profile use and a build without a profile; the shadow dy reaches no call.
-// The launch stub of an annotated kernel is rewritten for profiling as without
-// the marker calls.
+// In the host half a marker call, under either name and list, calls the
+// function with the primal values, silently, in every mode; the launch stub of
+// an annotated kernel is rewritten for profiling as without the marker calls.
 
 #include "poseidon/poseidon.h"
 
 #define __global__ __attribute__((global))
 
-struct dim3 {
-  unsigned x, y, z;
-};
-typedef struct CUstream_st *cudaStream_t;
-extern "C" int cudaLaunchKernel(const void *func, dim3 gridDim, dim3 blockDim,
-                                void **args, unsigned long sharedMem,
-                                cudaStream_t stream);
+#include "Inputs/kernel_stub_runtime.h"
 
 int enzyme_dup, enzyme_const, poseidon_tau;
 template <typename R, typename... T> R __poseidon_fp_optimize(void *, T...);

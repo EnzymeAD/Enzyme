@@ -2,23 +2,20 @@
 ; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)"
 ; DEFINE: %{prof} = -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-early-prune
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
-; RUN: rm -rf %t && split-file %s %t
+; DEFINE: %{mm} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-early-prune \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_library.csv -poseidon-print -S -o /dev/null
+; RUN: rm -rf %t && mkdir %t
+; RUN: sed 's/@tester_a, double %x, double %y)/@tester_a, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %S/Inputs/two_sites.ll > %t/a.ll
 
-; Two annotated sites solved under one shared budget (-poseidon-solve-jointly).
-; Their profiles come from running this module through the host profiler,
-; driven by
-;   for (int i = 0; i < 64; ++i) {
-;     double x = 1.0 + i * 0.125, y = 0.5 + (i % 7) * 0.25;
-;     s += site_a(x, y) + site_b(x, y);
-;   }
-
-; The explanation of each site lists the joint table's breakpoints, a budget
-; of -0.4 rewrites both sites to FP32, a budget of -0.2 is spent on tester_b
-; alone and site_a is restored to its original body.
+; Two annotated sites solved under one shared budget (-poseidon-solve-jointly);
+; profiles from the host profiler on x = 1 + i/8, y = 0.5 + (i % 7)/4, i < 64.
+; Budget -0.4 rewrites both sites, -0.2 only tester_b.
 ; RUN: mkdir %t/sites
-; RUN: %opt %t/testers.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
+; RUN: %opt %S/Inputs/two_sites.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
 ; RUN: %poseidon_explain %t/sites/both/ex --format budgets | FileCheck --check-prefix=SITES-BUDGETS %s
-; RUN: %opt %t/testers.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
+; RUN: %opt %S/Inputs/two_sites.ll %{passfn} %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-solve-jointly %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
 
 ; SITES-BOTH: [poseidon] joint solve: collecting candidates from 2 marked function(s)
 ; SITES-BOTH: Critical computation cost range: [-4.500000e-01, 0.000000e+00]
@@ -64,27 +61,21 @@
 ; SITES-ONE-NEXT: call double @preprocess_tester_b(double %x, double %y)
 ; SITES-ONE-NOT: define double @preprocess_tester_a(
 
-; A cost given where the budget takes a share (-400) asks to save more than the
-; whole profiled cost, which no solution can: a solve that selects by the budget
-; stops with an error at the site rather than selecting nothing, as it does
-; for a share that is not finite. A compile that solves nothing, or solves
-; under an accuracy target, does not read the budget.
-; A number flag given no number, an empty value or nan, is an error at the
-; first site whose solve reads it, not 0 (what LLVM's parser of a double makes
-; of an empty value): the budget is read by a solve that selects by it, the
-; other number flags by every solve.
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-STALE %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONFINITE %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=1.0000000000000001e+300 %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=2e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=2000000000 %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
-; RUN: not %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-rewrite-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-rewrite-max-broken-share %s
-; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
-; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
-; RUN: %opt %t/testers.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; A budget share that cannot be met (-400, inf, above 2^30) and a number flag
+; given an empty value or nan are errors of a solve that reads them; a compile
+; that solves nothing or solves under a target does not read the budget.
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-STALE %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONFINITE %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=1.0000000000000001e+300 %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget=2e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-HUGE -DBUDGET=2000000000 %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-solve-jointly -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-cost-budget %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-tau %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-min-cost-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-min-cost-share %s
+; RUN: not %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false %{cm} -poseidon-cache= -poseidon-rewrite-max-broken-share= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-NONUMBER -DFLAG=poseidon-rewrite-max-broken-share %s
+; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon -poseidon-tau= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
+; RUN: %opt %S/Inputs/two_sites.ll %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-rewrite=false -poseidon-enable-precision=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 
 ; SITES-STALE-NOT: Starting accuracy DP solver
 ; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost; give the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 saves a quarter)
@@ -98,10 +89,9 @@
 ; SITES-NONUMBER: error: {{.*}}Poseidon: -[[FLAG]] was given an empty value or nan; write a number after '=', or leave the flag out for its default
 ; SITES-NONUMBER-NOT: Starting accuracy DP solver
 
-; One shared budget is spent against one accuracy target, so the sites of a
-; -poseidon-solve-jointly solve have to mean the same one: a site's own target, else
-; -poseidon-tau, else none. Different targets are a compile error naming each
-; site; equal ones solve as one site would, wherever they are written.
+; The sites of a joint solve need one accuracy target (site's own, else
+; -poseidon-tau): different ones are an error; equal ones solve alike wherever
+; written.
 ; RUN: mkdir %t/targets
 ; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-03)/' %t/a.ll > %t/targets/ab_diff.ll
 ; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %t/a.ll > %t/targets/ab_same.ll
@@ -127,66 +117,24 @@
 ; TARGETS-SITES-NEXT: "preprocess_tester_b"
 ; TARGETS-SOLVE: [poseidon] preprocess_tester_a,preprocess_tester_b: tau=1.000000e-02 S=4.732407e+03 A0=1.003014e-13 selected cost=-4.500000e-01 accCost=1.154131e-04 rel=2.438782e-08
 
-;--- testers.ll
-define double @tester_a(double %x, double %y) #0 {
-entry:
-  %add = fadd fast double %x, %y
-  %mul = fmul fast double %add, %x
-  ret double %mul
-}
+; Each budget the explanation lists selects its frontier point, per site and
+; jointly. Operand A lies below FP16's subnormals, so the frontier starts at
+; BF16.
+; RUN: %{mm} -poseidon-cache=%t/site -poseidon-explain=%t/site/ex -poseidon-print-dp-table 2>&1 | FileCheck --check-prefix=TABLE %s
+; RUN: %poseidon_explain %t/site/ex --format budgets > %t/site/budgets
+; RUN: FileCheck --check-prefix=BUDGETS %s < %t/site/budgets
+; RUN: for b in $(tr , ' ' < %t/site/budgets); do %{mm} -poseidon-cache=%t/site -poseidon-cost-budget=$b 2>&1 | grep -Fx "[poseidon] Computation cost budget used: $(printf %%e $b)" > /dev/null || { echo "budget $b does not select its point"; exit 1; }; done
+; RUN: %{mm} -poseidon-cache=%t/joint -poseidon-explain=%t/joint/ex -poseidon-solve-jointly
+; RUN: %poseidon_explain %t/joint/ex --format budgets > %t/joint/budgets
+; RUN: diff %t/site/budgets %t/joint/budgets
+; RUN: for b in $(tr , ' ' < %t/joint/budgets); do %{mm} -poseidon-cache=%t/joint -poseidon-solve-jointly -poseidon-cost-budget=$b 2>&1 | grep -Fx "[poseidon] Computation cost budget used: $(printf %%e $b)" > /dev/null || { echo "joint budget $b does not select its point"; exit 1; }; done
 
-define double @tester_b(double %x, double %y) #0 {
-entry:
-  %mul = fmul fast double %x, %y
-  %sub = fsub fast double %mul, %y
-  %div = fdiv fast double %sub, %x
-  ret double %div
-}
+; TABLE: not offered: direct-dispatch cublas f16/f32: f16 flushes the smallest profiled operand magnitude, 1e-09, to zero
+; TABLE-NOT: cublas f16/f32 (#
+; TABLE: computation cost -9.882812e-01, accuracy cost 1.254595e-05, steps:
+; TABLE-NEXT: matmul[0] -> direct-dispatch cublas bf16/f32 (#7)
 
-define double @site_a(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_a, double %x, double %y)
-  ret double %0
-}
+; BUDGETS-NOT: -0.9921875
+; BUDGETS: {{^}}-0.98828125,
+; BUDGETS-NOT: -0.9921875
 
-define double @site_b(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_b, double %x, double %y)
-  ret double %0
-}
-
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }
-
-;--- a.ll
-define double @tester_a(double %x, double %y) #0 {
-entry:
-  %add = fadd fast double %x, %y
-  %mul = fmul fast double %add, %x
-  ret double %mul
-}
-
-define double @tester_b(double %x, double %y) #0 {
-entry:
-  %mul = fmul fast double %x, %y
-  %sub = fsub fast double %mul, %y
-  %div = fdiv fast double %sub, %x
-  ret double %div
-}
-
-define double @site_a(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_a, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)
-  ret double %0
-}
-
-define double @site_b(double %x, double %y) {
-entry:
-  %0 = tail call double (double (double, double)*, ...) @__poseidon_fp_optimize(double (double, double)* nonnull @tester_b, double %x, double %y)
-  ret double %0
-}
-
-declare double @__poseidon_fp_optimize(double (double, double)*, ...)
-
-attributes #0 = { "target-cpu"="x86-64" }

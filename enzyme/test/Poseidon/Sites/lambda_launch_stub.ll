@@ -1,57 +1,40 @@
-; RUN: rm -rf %t && mkdir -p %t && cp %S/Inputs/lambda_stub/launches_*.json %t/
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/lambda_stub -mllvm -poseidon-cache=%t -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@cudaLaunchKernel(' --implicit-check-not='call void @__poseidon_ozakiii_dgemm' %s
-; The launch stub of a kernel that takes a lambda by value, host IR from
-; clang -x cuda --cuda-host-only -O0 -S -emit-llvm of
-;   template <int D> struct DeviceTensor {
-;     int capacity;
-;     double *data;
-;     int sizes[D];
-;   };
-;   template <typename BODY> __global__ static void CuKernel2D(int N, BODY body) {
-;     int k = blockIdx.x * blockDim.z + threadIdx.z;
-;     if (k < N)
-;       body(k);
-;   }
-;   void reduce(int nq, int ne, int nd, double *Q, double *G, double *y) {
-;     DeviceTensor<2> QR{nq * ne, Q, {nq, ne}};
-;     DeviceTensor<2> GR{nq * nd, G, {nq, nd}};
-;     DeviceTensor<2> Y{nd * ne, y, {nd, ne}};
-;     auto body = [=] __host__ __device__(int e) {
-;       for (int i = threadIdx.y; i < nd; i += blockDim.y) {
-;         double sum = 0.0;
-;         for (int p = 0; p < nq; ++p)
-;           sum += QR.data[p + QR.sizes[0] * e] * GR.data[p + GR.sizes[0] * i];
-;         Y.data[i + Y.sizes[0] * e] += sum;
-;       }
-;     };
-;     CuKernel2D<<<ne, dim3(1, nd, 1)>>>(ne, body);
-;   }
-; The descriptors name pointers and sizes as fields of the lambda, which only
-; the launch's own argument array holds in every host ABI. The profiling launch
-; passes the runtime that array and each pointer's offset; the kernel's
-; device-side name carries the -fgpu-rdc postfix of an internal kernel. The
-; dispatch reads its operands and extents from the same array and runs only
-; when the extents the recognition assumed equal are equal and every extent
-; fits the dispatch's int parameters; otherwise it launches the kernel as
-; written.
+; DEFINE: %{clang} = %clang -O0 -x ir --target=x86_64-unknown-linux-gnu %loadClangPoseidon -mllvm -poseidon-cache=%t -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -o -
+; DEFINE: %{cuda} = -DPOP=__cudaPopCallConfiguration -DLAUNCHFN=cudaLaunchKernel -DHANDLE=_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ -DKERNEL=_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd
+; DEFINE: %{hip} = -DPOP=__hipPopCallConfiguration -DLAUNCHFN=hipLaunchKernel -DHANDLE=_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ -DKERNEL=_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd
+; RUN: rm -rf %t && split-file %s %t && cp %S/Inputs/lambda_stub/launches_*.json %S/Inputs/lambda_stub_hip/launches_*.json %t/
+; RUN: sed -e 's/lambda_stub\.cu/lambda_stub.hip/' -e 's/__cudaPop/__hipPop/g' -e 's/cudaLaunchKernel(ptr noundef @_ZL25__device_stub__/hipLaunchKernel(ptr noundef @_ZL10/' -e 's/@cudaLaunchKernel(/@hipLaunchKernel(/' -e '/^%%struct.dim3/a @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ = internal constant ptr @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, align 8' %t/cuda.ll > %t/hip.ll
+; RUN: sed 's/@hipLaunchKernel(/@hipLaunchKernel_spt(/' %t/hip.ll > %t/spt.ll
+; RUN: %{clang} %t/cuda.ll -mllvm -poseidon-profile-generate -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=GEN %{cuda} --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
+; RUN: %{clang} %t/cuda.ll -mllvm -poseidon-profile-use=%S/Inputs/lambda_stub -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=USE %{cuda} --implicit-check-not='call {{.*}}@cudaLaunchKernel(' --implicit-check-not='call void @__poseidon_ozakiii_dgemm' %s
+; RUN: %{clang} %t/hip.ll -mllvm -poseidon-profile-generate -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=GEN %{hip} --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
+; RUN: %{clang} %t/hip.ll -mllvm -poseidon-profile-use=%S/Inputs/lambda_stub_hip -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=USE %{hip} --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozakiii_dgemm' %s
+; RUN: %{clang} %t/spt.ll -mllvm -poseidon-profile-use=%S/Inputs/lambda_stub_hip 2>&1 | FileCheck --check-prefix=SPT %s
+; RUN: not %{clang} %t/refused.ll -mllvm -poseidon-profile-generate 2>&1 | FileCheck --check-prefix=REFUSED %s
 
-; GEN: [poseidon] launch of _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd now allocates and seeds 3 shadow buffer(s)
-; GEN: @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd = private unnamed_addr constant [3 x i32] [i32 1, i32 1, i32 1]
-; GEN-NEXT: @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd = private unnamed_addr constant [3 x i32] [i32 16, i32 40, i32 64]
-; GEN-NEXT: @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd = private unnamed_addr constant [3 x i32] [i32 0, i32 0, i32 8]
+; The CUDA and the HIP launch stub of a kernel that takes a lambda by value:
+; host IR (clang -x cuda --cuda-host-only -O0) of CuKernel2D<<<ne, dim3(1, nd, 1)>>>(ne, body),
+; the lambda capturing three DeviceTensor<2> as in long_kernel_name_nvptx.cu; HIP
+; launches through the kernel's handle. The descriptors name the lambda's
+; fields, which only the launch's argument array holds; the dispatch runs only
+; when the extents it assumed equal are equal and every extent fits an int,
+; else it launches the kernel as written.
+
+; GEN: [poseidon] launch of [[KERNEL]] now allocates and seeds 3 shadow buffer(s)
+; GEN: @poseidon.ptr.[[KERNEL]] = private unnamed_addr constant [3 x i32] [i32 1, i32 1, i32 1]
+; GEN-NEXT: @poseidon.off.[[KERNEL]] = private unnamed_addr constant [3 x i32] [i32 16, i32 40, i32 64]
+; GEN-NEXT: @poseidon.seed.[[KERNEL]] = private unnamed_addr constant [3 x i32] [i32 0, i32 0, i32 8]
 ; GEN-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; GEN: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
-; GEN: call i32 @__cudaPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; GEN: call i32 @[[POP]](ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
 ; GEN-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
 ; GEN-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; GEN: call void @__poseidon_launch_profiled(ptr @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 3, ptr @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd, ptr @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd, ptr @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd)
-; GEN-NOT: call {{.*}}@cudaLaunchKernel(
+; GEN: call void @__poseidon_launch_profiled(ptr @[[HANDLE]], i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 3, ptr @poseidon.ptr.[[KERNEL]], ptr @poseidon.off.[[KERNEL]], ptr @poseidon.seed.[[KERNEL]])
+; GEN-NOT: call {{.*}}@[[LAUNCHFN]](
 
 ; USE: [poseidon] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozakiii_dgemm (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
 ; USE-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; USE: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
-; USE: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; USE: call i32 @[[POP]](ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
 ; USE-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
 ; USE-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
 ; USE: %[[S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
@@ -141,12 +124,25 @@
 ; USE-NEXT: call void @__poseidon_ozakiii_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr %[[STREAM]], i32 13)
 ; USE-NEXT: br label %[[JOIN:[0-9]+]]
 ; USE: [[LAUNCH]]:
-; USE-NEXT: %{{[0-9]+}} = call noundef i32 @cudaLaunchKernel(ptr noundef @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
+; USE-NEXT: %{{[0-9]+}} = call noundef i32 @[[LAUNCHFN]](ptr noundef @[[HANDLE]], {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
 ; USE-NEXT: br label %[[JOIN]]
 ; USE: [[JOIN]]:
 ; USE: ret void
 
-; ModuleID = 'lambda_stub.cu'
+; A per-thread-stream launch's null stream is its thread's default stream,
+; (hipStream_t)2 to a library compiled without per-thread streams.
+; SPT: call i32 @__hipPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; SPT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; SPT: %[[ISNULL:[0-9]+]] = icmp eq ptr %[[STREAM]], null
+; SPT-NEXT: %[[HANDLE:[0-9]+]] = select i1 %[[ISNULL]], ptr inttoptr (i64 2 to ptr), ptr %[[STREAM]]
+; SPT: call void @__poseidon_ozakiii_dgemm({{.*}}, ptr %[[HANDLE]], i32 13)
+; SPT: call noundef i32 @hipLaunchKernel_spt({{.*}}, ptr noundef %[[STREAM]])
+
+; A stub that does not end in the launch API the profiling run rewrites (here
+; the cudaLaunch of a host half compiled without CUDA's headers) is an error.
+; REFUSED: error: {{.*}}Poseidon: the launch stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ does not end in __cuda/__hipPopCallConfiguration and cuda/hipLaunchKernel, through which the profiling run passes its kernel the shadows; compile against the CUDA or ROCm headers
+
+;--- cuda.ll
 source_filename = "lambda_stub.cu"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -194,3 +190,17 @@ declare i32 @__cudaPopCallConfiguration(ptr, ptr, ptr, ptr)
 declare i32 @cudaLaunchKernel(ptr, i64, i32, i64, i32, ptr, i64, ptr)
 
 attributes #4 = { mustprogress noinline norecurse optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }
+
+;--- refused.ll
+source_filename = "lambda_stub.cu"
+target triple = "x86_64-unknown-linux-gnu"
+
+%struct.DeviceTensor = type { i32, ptr, [2 x i32] }
+%class.anon = type { i32, i32, %struct.DeviceTensor, %struct.DeviceTensor, %struct.DeviceTensor }
+
+define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 %0, ptr byval(%class.anon) align 8 %1) {
+  %3 = call i32 @cudaLaunch(ptr @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_)
+  ret void
+}
+
+declare i32 @cudaLaunch(ptr)

@@ -1,33 +1,22 @@
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 \
-// RUN:   | FileCheck --check-prefix=DEFER %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 | FileCheck --check-prefix=DEFER %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=PRIMAL %s
 // RUN: FileCheck --check-prefix=PROFILE %s < %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile
-//
-// The call form records what the explicit form with the shadows written by
-// hand records. The sums are accumulated by atomics and differ between any two
-// runs in their last digits, so they are compared to a relative 1e-12.
+// The call form records what the explicit form records; the atomic sums are
+// compared to a relative 1e-12.
 // RUN: grep -v -e SiteId -e Sum %t/prof/jvp_body.fpprofile > %t/explicit.prof
 // RUN: grep -v -e SiteId -e Sum %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.prof
 // RUN: diff %t/explicit.prof %t/call.prof
 // RUN: grep Sum %t/prof/jvp_body.fpprofile > %t/explicit.sums
 // RUN: grep Sum %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.sums
-// RUN: paste %t/explicit.sums %t/call.sums \
-// RUN:   | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' \
-// RUN:   | FileCheck --check-prefix=SUMS %s
-//
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 \
-// RUN:   | FileCheck --check-prefix=SOLVE %s
+// RUN: paste %t/explicit.sums %t/call.sums | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' | FileCheck --check-prefix=SUMS %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt | FileCheck --check-prefix=OPT %s
 
-// A site whose body is one __enzyme_fwddiff request, written as a call
-// (jvp_call) and as the explicit form with its shadows written by hand
-// (jvp_explicit): each is a deferred site, profiled and solved by the late run
-// on the tangent code Enzyme generated for it. The call's pointers point into
-// local objects of the kernel, whose shadows the pass makes. The
-// optimizing compile loads Enzyme's plugin itself, as poseidon-clang++ loads it
-// only to generate a profile.
+// A site whose body is one __enzyme_fwddiff request, as a call and in the
+// explicit form: each is a deferred site solved on Enzyme's tangent code. The
+// optimizing compile loads Enzyme's plugin itself.
 
 #include "poseidon/poseidon.h"
 #include <cmath>

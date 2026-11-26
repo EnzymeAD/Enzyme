@@ -8,10 +8,8 @@
 ; RUN: %{opt} -poseidon-cache=%t/c -pass-remarks-missed=poseidon 2>&1 | FileCheck --check-prefix=DEFAULT --implicit-check-not=warning: --implicit-check-not=error: %s
 ; RUN: not %{opt} -poseidon-enable-rewrite -poseidon-cache=%t/c 2>&1 | FileCheck --check-prefix=ASKED %s
 
-; A build configured without Herbie: left to its default, algebraic rewriting
-; is off, and a remark says so; asked for, it is an error at the first search
-; whose answer is not cached. Both name the configure options that give the
-; build a Herbie.
+; A build configured without Herbie: rewriting left to its default is off with
+; a remark, asked for it is an error; both name the configure options.
 
 ; DEFAULT: remark: {{.*}}Poseidon proposes no algebraic rewrites: this Poseidon was built without Herbie (configure it with -DPOSEIDON_HERBIE_BINARY=<herbie> or -DPOSEIDON_BUILD_HERBIE=ON){{$}}
 

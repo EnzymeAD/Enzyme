@@ -22,36 +22,18 @@
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -o %t/amdgpu-host.ll 2>&1 | FileCheck --allow-empty --check-prefix=QUIET %s %}
 // RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=HOST --implicit-check-not=__poseidon_site_explicit --implicit-check-not=__poseidon_fp_optimize %s < %t/amdgpu-host.ll %}
 
-// In device code an explicit list through __poseidon_optimize makes the call
-// a site over the function itself, with the shadows the caller gives: here
-// sum reaches no constant range of memory through x, which the pass could not
-// make the shadow of. __poseidon_optimize_tau with the function's own
-// arguments is no explicit list: that call is a per-call site. Without the
-// plugin the call goes through an identity nothing defines. The host half of a
-// host-device function holds no site: there the call runs the function with
-// the primal values, silently.
+// In device code an explicit list makes the call a site over the function
+// itself with the caller's shadows; __poseidon_optimize_tau with the function's
+// own arguments is a per-call site. Without the plugin the call goes through an
+// identity nothing defines; the host half runs the function, silently.
 
 #include "poseidon/poseidon.h"
 
 #define HD __attribute__((host, device))
-// Device functions are internal in AMDGPU device code: twice and third, which
-// the kernel inlines, are kept as on NVPTX.
+// Keeps twice and third, which the kernel inlines, on AMDGPU as on NVPTX.
 #define KEEP __attribute__((used))
 
-// The runtime declarations a kernel stub needs.
-struct dim3 {
-  unsigned x, y, z;
-};
-#ifdef __HIP__
-typedef struct ihipStream_t *hipStream_t;
-extern "C" int hipLaunchKernel(const void *, dim3, dim3, void **,
-                               unsigned long, hipStream_t);
-#else
-typedef struct CUstream_st *cudaStream_t;
-extern "C" int cudaLaunchKernel(const void *func, dim3 gridDim, dim3 blockDim,
-                                void **args, unsigned long sharedMem,
-                                cudaStream_t stream);
-#endif
+#include "Inputs/kernel_stub_runtime.h"
 
 #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
 __attribute__((device)) int enzyme_dup, enzyme_const, poseidon_tau;
@@ -106,9 +88,8 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN-DAG: @poseidon.site.preprocess__Z5norm2PKd = private unnamed_addr addrspace(1) constant [12 x i8] c"_Z5norm2PKd\00"
 // GEN-DAG: @poseidon.site.preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0 = private unnamed_addr addrspace(1) constant [36 x i8] c"_Z6spreadPKd.poseidon._Z5thirdPKd.0\00"
 
-// Each site's adjoint reaches the shadow the call gives it: dx for sum and
-// norm2, dy for scale, and a zeroed local the pass makes for spread's x. The
-// kernel holds norm2's call on both of its paths around the loop of sum.
+// Each adjoint reaches the call's shadow: dx for sum and norm2, dy for scale,
+// a zeroed local for spread's x; norm2's call is on both paths around sum's loop.
 // GEN: define {{.*}} @_Z5twicePKdPd(ptr {{.*}}[[TX:%[0-9]+]], ptr {{.*}}[[TDX:%[0-9]+]])
 // GEN-NEXT: [[TR:%[0-9]+]] = {{.*}}call {{.*}}double @diffepreprocess__Z5norm2PKd(ptr [[TX]], ptr [[TDX]])
 // GEN-NEXT: [[TT:%[0-9]+]] = fmul {{.*}}double [[TR]], 2.000000e+00
@@ -140,8 +121,6 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN-NVPTX-DAG: call {{.*}}double @diffepreprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0(ptr [[X]], ptr [[SHA]])
 // GEN-NVPTX: {{^}}}
 
-// The kernel on AMDGPU, whose pointer parameters are in the global address
-// space.
 // GEN-AMDGPU: define protected amdgpu_kernel void @_Z1kPKdPdS1_S1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // GEN-AMDGPU-DAG: call void @__poseidon_device_publish_static(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__Z3sumPKdi to ptr), ptr addrspacecast (ptr addrspace(1) @poseidon.static.preprocess__Z3sumPKdi to ptr))
 // GEN-AMDGPU-DAG: [[DXI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr addrspace(1) [[DX]], i64 {{%[0-9]+}}
@@ -164,13 +143,13 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN-AMDGPU: {{^}}}
 
 // USE: [poseidon] site spread(double const*) at its call in third(double const*): accuracy target 1e-07
-// USE-DAG: per_call_explicit.cu:[[@LINE-89]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5norm2PKd.fpprofile:
-// USE-DAG: per_call_explicit.cu:[[@LINE-82]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
-// USE-DAG: per_call_explicit.cu:[[@LINE-79]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z3sumPKdi.fpprofile:
-// USE-DAG: per_call_explicit.cu:[[@LINE-80]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z3sumPKdi.fpprofile:
-// USE-DAG: per_call_explicit.cu:[[@LINE-81]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5norm2PKd.fpprofile:
-// USE-DAG: per_call_explicit.cu:[[@LINE-82]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5scalePKdPdi.fpprofile:
-// USE-DAG: per_call_explicit.cu:[[@LINE-83]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-86]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5norm2PKd.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-79]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-76]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z3sumPKdi.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-77]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z3sumPKdi.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-78]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5norm2PKd.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-79]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5scalePKdPdi.fpprofile:
+// USE-DAG: per_call_explicit.cu:[[@LINE-80]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
 // USE: [poseidon] every site of {{.*}}per_call_explicit.cu was left alone; emitting the module as written
 // USE-NEXT: 7 warnings generated when compiling for {{.*}}
 
@@ -199,8 +178,6 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // IR-NVPTX-NEXT: store double [[SP]], ptr [[Y4]]
 // IR-NVPTX-NEXT: ret void
 
-// The kernel on AMDGPU, whose pointer parameters are in the global address
-// space.
 // IR-AMDGPU: define protected amdgpu_kernel void @_Z1kPKdPdS1_S1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}%{{[0-9]+}}, ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}%{{[0-9]+}}, i32 {{.*}}[[N:%[0-9]+]])
 // IR-AMDGPU-NEXT: [[XI:%[0-9]+]] = ptrtoint ptr addrspace(1) [[X]] to i64
 // IR-AMDGPU-NEXT: [[XP:%[0-9]+]] = inttoptr i64 [[XI]] to ptr
@@ -221,8 +198,7 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // IR-AMDGPU-NEXT: store double [[SP]], ptr addrspace(1) [[Y4]]
 // IR-AMDGPU-NEXT: ret void
 
-// Without the plugin each call goes through the identity with the call's
-// arguments as written.
+// Without the plugin each call goes through the identity as written.
 // PLAIN: define {{.*}} @_Z5twicePKdPd(ptr {{.*}}[[TX:%[0-9]+]], ptr {{.*}}[[TDX:%[0-9]+]])
 // PLAIN-NEXT: [[TF:%[0-9]+]] = {{.*}}call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z5norm2PKd)
 // PLAIN-NVPTX-NEXT: [[TDUP:%[0-9]+]] = load i32, ptr addrspacecast (ptr addrspace(1) @enzyme_dup to ptr)
@@ -259,8 +235,6 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // PLAIN-NVPTX-NEXT: store double [[R4]], ptr [[Y4]]
 // PLAIN-NVPTX-NEXT: ret void
 
-// The kernel on AMDGPU, whose pointer parameters are in the global address
-// space.
 // PLAIN-AMDGPU: define protected amdgpu_kernel void @_Z1kPKdPdS1_S1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // PLAIN-AMDGPU-NEXT: [[XI:%[0-9]+]] = ptrtoint ptr addrspace(1) [[X]] to i64
 // PLAIN-AMDGPU-NEXT: [[XP:%[0-9]+]] = inttoptr i64 [[XI]] to ptr

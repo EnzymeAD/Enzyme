@@ -10,19 +10,10 @@
 ; RUN: grep -v '^fma,' %cost_models/cm_cpu_native.csv > %t/nofma.csv
 ; RUN: env FAKE_HERBIE_DIR=%S/Inputs/fmod_operator not %{opt} -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=false -poseidon-cost-model=%t/nofma.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/nofma -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMA %s
 
-; An frem is the operator fmod: Herbie is given (fmod a b), the accuracy model
-; evaluates it as fmod, and the cost model prices it, and an frem that a fmod
-; of a Herbie rewrite becomes, by the fmod row of its type. A cost model
-; without that row stops the compile naming the row, at the site whose rewrite
-; needs it.
-;
-; Profiles: this module through the host profiler, driven by
-;   for (int i = 0; i < 64; ++i) {
-;     double x = 0.5 + i * 0.25, y = 0.5 + (i % 7) * 0.25, o, d = 1.0;
-;     site_frem(x, y, &o, &d);
-;     d = 1.0;
-;     site_fma(x, y, &o, &d);
-;   }
+; An frem is fmod to Herbie, the accuracy model and the cost model (its fmod
+; row, also for the frem a rewrite's fmod becomes); a model without the row is
+; an error at the site that needs it. Profiles: host profiler, x = 0.5 + i/4,
+; y = 0.5 + (i % 7)/4, i < 64.
 
 define void @tester_frem(double %x, double %y, ptr %o) #0 {
 entry:
@@ -54,7 +45,6 @@ entry:
 }
 
 declare void @__poseidon_fp_optimize(ptr, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; fmul 4 + fmod 8 + fadd 4 in double; 1 + 2 + 1 and three casts in float.

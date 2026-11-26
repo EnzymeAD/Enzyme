@@ -31,18 +31,14 @@
 // RUN: %if amdgpu-registered-target && rocm %{ diff %t/amdgpu-plain.body %t/amdgpu-gen.body %}
 // RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/amdgpu-d -mllvm -poseidon-print -o %t/amdgpu-dev.ll 2>&1 | FileCheck --check-prefix=DEV %s %}
 
-// In a CUDA or HIP compilation only the device half holds sites: one
-// compilation has one device and one cost model. The host half of a
-// host-device function that holds the call form, or carries the annotation
-// form, compiles as written, silently, in profile generation and in profile
-// use, and so does a host function: neither becomes a host site, and no
-// record of the host half shares a name with the device half's.
+// In a CUDA or HIP compilation only the device half holds sites: the host half
+// of a host-device function with either form, and a host function, compile as
+// written, silently, in profile generation and use.
 
 #include "poseidon/poseidon.h"
 
 #define HD __attribute__((host, device))
-// Device functions are internal in AMDGPU device code: qpoint, which the
-// kernel inlines, is kept as on NVPTX.
+// Keeps qpoint, which the kernel inlines, on AMDGPU as on NVPTX.
 #define KEEP __attribute__((used))
 
 #ifdef __NVPTX__
@@ -51,20 +47,7 @@
 #define THREAD_X __builtin_amdgcn_workitem_id_x()
 #endif
 
-// The runtime declarations a kernel stub needs.
-struct dim3 {
-  unsigned x, y, z;
-};
-#ifdef __HIP__
-typedef struct ihipStream_t *hipStream_t;
-extern "C" int hipLaunchKernel(const void *, dim3, dim3, void **,
-                               unsigned long, hipStream_t);
-#else
-typedef struct CUstream_st *cudaStream_t;
-extern "C" int cudaLaunchKernel(const void *func, dim3 gridDim, dim3 blockDim,
-                                void **args, unsigned long sharedMem,
-                                cudaStream_t stream);
-#endif
+#include "Inputs/kernel_stub_runtime.h"
 
 HD void vol(const double *a, double *v) {
   double J = a[0] * a[1] - a[2] * a[3];
@@ -103,7 +86,6 @@ int main() {
 
 // HOST-NOT: {{.}}
 
-// Main binds the profiler, as in any unit of a profiled program.
 // GEN-NOT: warning
 // GEN: [poseidon] device profiler registration injected at main
 // GEN-NOT: {{.}}
@@ -114,10 +96,8 @@ int main() {
 // GENIR-NOT: __poseidon_register_static
 // GENIR-NOT: preprocess_
 
-// In profile generation the host half only binds the profiler: main
-// initializes it, and on AMDGPU the module constructor registers the device
-// module's table with HIP and with the profiler. The rest of the host half is
-// the plain compile's IR up to attribute groups.
+// Generating, the host half only binds the profiler (main, and on AMDGPU the
+// module constructor); the rest is the plain compile's IR.
 // BIND-AMDGPU: @__poseidon_profile_table = internal global {{\[}}[[SIZE:[0-9]+]] x i8] zeroinitializer
 // BIND-AMDGPU: [[NAME:@[0-9]+]] = private unnamed_addr constant [25 x i8] c"__poseidon_profile_table\00"
 // BIND-AMDGPU: @llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__hip_module_ctor, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }]
@@ -130,7 +110,7 @@ int main() {
 // BIND: declare void @__poseidon_profile_init_device()
 
 // The call in qpoint is lowered twice: in qpoint and where k inlines it.
-// DEV: per_call_host_half.cu:[[@LINE-53]]:{{[0-9]+}}: warning: Poseidon: area(double) is a device function no kernel of this translation unit calls, so it is left as written; on the device, put POSEIDON_OPTIMIZE on a kernel or on a function a kernel calls
+// DEV: per_call_host_half.cu:[[@LINE-50]]:{{[0-9]+}}: warning: Poseidon: area(double) is a device function no kernel of this translation unit calls, so it is left as written; on the device, put POSEIDON_OPTIMIZE on a kernel or on a function a kernel calls
 // DEV: [poseidon] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
 // DEV-NEXT: [poseidon] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
 // DEV-NEXT: [poseidon] block-geometry probe placed in 1 profiled function(s)

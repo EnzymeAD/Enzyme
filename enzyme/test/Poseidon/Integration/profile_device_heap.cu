@@ -1,13 +1,8 @@
-// A per-element dense product reduce written as a forall_2D body, profiled
-// with one 343-thread block per element and nothing in the application
-// prepared for the profile. The reverse pass caches the products' operands in
-// the device heap, far more than CUDA's default 8 MiB; the profiler sizes the
-// heap before the first kernel runs.
-//
+// A forall_2D product reduce profiled with nothing prepared for it: the reverse
+// pass needs far more device heap than CUDA's 8 MiB, which the profiler sizes.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t/cache %s -o %t/exe
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cache %s -o %t/exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t/profile/*.fpprofile | FileCheck %s
 

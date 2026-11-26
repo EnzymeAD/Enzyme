@@ -1,18 +1,12 @@
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on \
-// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm --poseidon-cache=%t/cache \
-// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
-// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm --poseidon-cache=%t/cache -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t/profiles/*.fpprofile | FileCheck %s
 
-// A kernel annotated with POSEIDON_OPTIMIZE and nothing else: no marker call,
-// no shadow buffers, no profiling mode. The compiler makes the kernel its own
-// reverse pass and rewrites its launch stub so the runtime sizes, allocates and
-// seeds the shadows; the profile must come back with non-zero gradients and the
-// kernel must still compute its primal result.
+// A kernel with POSEIDON_OPTIMIZE alone: its launch stub sizes, allocates and
+// seeds the shadows; the profile has non-zero gradients, the result is right.
 
 #include <cstdio>
 #include <cuda_runtime.h>

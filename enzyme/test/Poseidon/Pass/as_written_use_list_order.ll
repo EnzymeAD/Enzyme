@@ -1,7 +1,5 @@
-; A profile-use compile whose every site is left alone emits the module as a
-; build without the plugin does, the order of each value's uses included: a
-; block's predecessors are listed, and visited by the passes after, in the
-; order the module's reader gave them.
+; A compile whose every site is left alone emits the module as written, the
+; order of each value's uses (a block's predecessors) included.
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s -S -emit-llvm -o %t/plain.ll
 ; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-cache=%t/c -S -emit-llvm -o %t/use.ll

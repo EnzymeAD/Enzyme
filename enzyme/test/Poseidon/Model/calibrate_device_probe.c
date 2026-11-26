@@ -1,10 +1,6 @@
-// How poseidon-calibrate finds the GPU it measures, with stand-ins for the
-// microbenchmarks' --device probe: one that finds no device of its vendor
-// (exit status 2) passes the question to the next vendor's; one that cannot
-// initialize the device (exit status 1) or cannot be started ends the run with
-// its reason, and the next vendor's is never asked; with no device anywhere the
-// run lists what each probe said.
-//
+// poseidon-calibrate's GPU probe, with stand-in microbenchmarks: no device of a
+// vendor (exit 2) asks the next vendor; a device that fails to initialize or a
+// probe that cannot start ends the run with its reason; no device lists all.
 // RUN: rm -rf %t && mkdir -p %t/init %t/start %t/none %t/amd %t/cm
 // RUN: for d in init start none amd; do cp %poseidon_calibrate %t/$d/; done
 // RUN: printf '#!/bin/sh\necho initialization error >&2\nexit 1\n' > %t/init/poseidon-calibrate-ops-cuda

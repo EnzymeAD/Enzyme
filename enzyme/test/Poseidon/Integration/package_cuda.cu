@@ -9,10 +9,8 @@
 // RUN: %cmake --build %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use/app | FileCheck --check-prefix=STATUS %s
 
-// Through the CMake package: a static library of two CUDA units
-// built without relocatable device code against Poseidon::ProfileGenerate,
-// linked into an application, profiles every site of both units; the build
-// against Poseidon::ProfileUse reads that profile back.
+// Through the CMake package: a static library of two CUDA units profiles every
+// site of both; Poseidon::ProfileUse reads the profile back.
 
 // OUT: axpb 2703.7489499999992 lift 367.08090963891368 forall_a 121902.63888375004 forall_b -7593.8872846631084 vol_a -0.549021492 vol_b -0.219608603
 // OUT-NEXT: status no error
@@ -26,9 +24,7 @@
 // MERGED: LaunchCount = 96
 // MERGED: Exec = 8192
 
-// Each site reads its profile back and is solved against it: run_a and lift
-// move to FP32, run_b, under its own 1e-12, to a floating-point expansion;
-// axpb and each unit's copy of the hooke_vol call stay as written.
+// run_a and lift move to FP32, run_b to an expansion; axpb and hooke_vol stay.
 // USE-DAG: [poseidon] no rewrite applied for preprocess__Z4axpbPdPKdS1_i_poseidon_body; calling original body _Z4axpbPdPKdS1_i_poseidon_body (bit-transparent no-op)
 // USE-DAG: [poseidon] pin: _Z4liftPdPKdi:P0=All FP64(0%) + FP32(100%){{$}}
 // USE-DAG: [poseidon] pin: _ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT_:P0=All FP64(0%) + FP32(100%){{$}}

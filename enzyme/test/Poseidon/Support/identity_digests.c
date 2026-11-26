@@ -23,8 +23,7 @@
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/other.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: diff %t/tool.h %t/other.h
 
-// cmake/BuildIdentity.cmake digests every *.cpp and *.h under PASS_DIR, at any
-// depth: an edit to a source of the pass, of a runtime or of a tool, and a
-// source added or removed, change the identity; any other file does not.
+// cmake/BuildIdentity.cmake digests every *.cpp and *.h under PASS_DIR: an
+// edit, an addition or a removal changes the identity; other files do not.
 
 // CHECK: kPassIdentity = "{{[0-9A-F]+}}";

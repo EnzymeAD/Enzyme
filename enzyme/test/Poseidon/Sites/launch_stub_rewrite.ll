@@ -1,22 +1,78 @@
-; RUN: rm -rf %t && mkdir -p %t && cp %S/Inputs/launch_stub_cache/launches_*.json %t/
-; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/launch_stub_cache -mllvm -poseidon-cache=%t -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
-; Host-side launches replaced by library calls, which read their operands from the launch's argument array, from the descriptors in the manifest of hoststub.cu, unit fixture, in Sites/Inputs/launch_stub_cache (a square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one); the pass runs at PipelineStart of the clang pipeline, which is why this drives clang on IR. Host IR from clang -x cuda --cuda-host-only -O0 -S -emit-llvm of
-;   __global__ void gemm_kernel(const double *A, const double *B, double *C) {}
-;   __global__ void gemm_tall_kernel(const double *A, const double *B, double *C,
-;                                    int ncols) {}
-;   void launch(const double *A, const double *B, double *C, int ncols) {
-;     gemm_kernel<<<dim3(32, 32), dim3(16, 16)>>>(A, B, C);
-;     gemm_tall_kernel<<<dim3(8, 32), dim3(16, 16)>>>(A, B, C, ncols);
-;   }
+; DEFINE: %{bad} = %clang -O0 -x ir -mllvm -poseidon-cache=%t/bad -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -o /dev/null %loadClangPoseidon
+; RUN: rm -rf %t && split-file %s %t && mkdir %t/c %t/bad && cp %S/Inputs/launch_stub_cache/launches_*.json %t/c/
+; RUN: %clang -O0 -x ir --target=x86_64-unknown-linux-gnu -fno-discard-value-names %t/hoststub.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/launch_stub_cache -mllvm -poseidon-cache=%t/c -mllvm -poseidon-compilation-id=fixture -S -emit-llvm -mllvm -poseidon-print -o - 2>&1 | FileCheck --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 
-; ModuleID = 'hoststub.cu'
+; Host launches replaced by library calls reading their operands from the
+; launch's argument array, from the descriptors of Inputs/launch_stub_cache (a
+; square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one). Host IR
+; of clang -x cuda --cuda-host-only -O0 for gemm_kernel<<<dim3(32, 32),
+; dim3(16, 16)>>>(A, B, C) and gemm_tall_kernel<<<dim3(8, 32), dim3(16, 16)>>>(A, B, C, ncols).
+; CHECK: [poseidon] replaced the launch in stub _Z26__device_stub__gemm_kernelPKdS0_Pd with __poseidon_direct_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; CHECK: [poseidon] replaced the launch in stub _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi with __poseidon_tcec_dgemm (C=arg2 A=arg0 B=arg1){{$}}
+; CHECK-LABEL: define {{.*}} @_Z26__device_stub__gemm_kernelPKdS0_Pd(
+; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 3
+; CHECK: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; CHECK: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; CHECK-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; CHECK-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; CHECK-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; CHECK-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; CHECK-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; CHECK-NEXT: call void @__poseidon_direct_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 512, i32 512, i32 512, i32 512, i32 512, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 1)
+; CHECK-NEXT: br label
+; CHECK-LABEL: define {{.*}} @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(
+; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; CHECK: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; CHECK: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
+; CHECK-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
+; CHECK-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
+; CHECK-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; CHECK-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; CHECK-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
+; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
+; CHECK-NEXT: call void @__poseidon_tcec_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 128, i32 512, i32 256, i32 256, i32 256, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 3)
+; CHECK-NEXT: br label
+
+; A descriptor of the manifest that does not parse stops the host compile,
+; naming the manifest and the descriptor.
+; RUN: cp %S/Inputs/launch_stub_cache/launches_*.json %S/Inputs/lambda_stub/launches_*.json %t/bad/
+; RUN: sed -i 's/ 0 0 0 0 rd [^"]*"/ 0 0 0"/' %t/bad/launches_hoststub.cu_*.json
+; RUN: not %{bad} %t/empty.ll -mllvm -poseidon-profile-use=%S/Inputs/launch_stub_cache 2>&1 | FileCheck --check-prefix=SHORT -DCACHE=%t/bad %s
+; RUN: cp %S/Inputs/launch_stub_cache/launches_*.json %t/bad/
+; RUN: sed -i 's/2 0 1 1 3 0 0 0 1 rd/2 0 1 1 99 0 0 0 1 rd/' %t/bad/launches_hoststub.cu_*.json
+; RUN: not %{bad} %t/empty.ll -mllvm -poseidon-profile-use=%S/Inputs/launch_stub_cache 2>&1 | FileCheck --check-prefix=MODULI -DCACHE=%t/bad %s
+; RUN: sed 's/hoststub\.cu/lambda_stub.cu/' %t/empty.ll > %t/lambda.ll
+; RUN: sed -i 's/ off 16 40 64"/ off 16 40"/' %t/bad/launches_lambda_stub.cu_*.json
+; RUN: not %{bad} %t/lambda.ll -mllvm -poseidon-profile-generate 2>&1 | FileCheck --check-prefix=OFFSETS -DCACHE=%t/bad %s
+; RUN: sed -i 's/"_Z11gemm_kernelPKdS0_Pd [^"]*"/7/' %t/bad/launches_hoststub.cu_*.json
+; RUN: not %{bad} %t/empty.ll -mllvm -poseidon-profile-use=%S/Inputs/launch_stub_cache 2>&1 | FileCheck --check-prefix=NOTSTRING -DCACHE=%t/bad %s
+
+; SHORT: {{^}}error: Poseidon: the launch manifest [[CACHE]]/launches_hoststub.cu_{{[0-9A-F]+}}.json holds the library calls descriptor '_Z11gemm_kernelPKdS0_Pd 2 0 1 1 1 0 0 0', which does not parse (it ends before its scheme); remove the -poseidon-cache directory and compile the unit again{{$}}
+; MODULI: {{^}}error: Poseidon: the launch manifest [[CACHE]]/launches_hoststub.cu_{{[0-9A-F]+}}.json holds the library calls descriptor '_Z16gemm_tall_kernelPKdS0_Pdi 2 0 1 1 99 0 0 0 1 rd 0 1 128 0 1 512 0 1 256 0 1 256 0 1 256 0 1 512 0.000000e+00', which does not parse (its modulus field 99 is above 14); remove the -poseidon-cache directory and compile the unit again{{$}}
+; OFFSETS: {{^}}error: Poseidon: the launch manifest [[CACHE]]/launches_lambda_stub.cu_{{[0-9A-F]+}}.json holds the profile generation descriptor '_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd 0 2 3 1 1 1 0 0 8 off 16 40', which does not parse (it ends before its pointer offset); remove the -poseidon-cache directory and compile the unit again{{$}}
+; NOTSTRING: {{^}}error: Poseidon: the launch manifest [[CACHE]]/launches_hoststub.cu_{{[0-9A-F]+}}.json holds a library calls entry that is not a string; remove the -poseidon-cache directory and compile the unit again{{$}}
+
+;--- empty.ll
+source_filename = "hoststub.cu"
+target triple = "x86_64-unknown-linux-gnu"
+
+define void @f() {
+  ret void
+}
+
+;--- hoststub.ll
 source_filename = "hoststub.cu"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
 %struct.dim3 = type { i32, i32, i32 }
-
-$_ZN4dim3C2Ejjj = comdat any
 
 define dso_local void @_Z26__device_stub__gemm_kernelPKdS0_Pd(ptr noundef %0, ptr noundef %1, ptr noundef %2) #0 {
   %4 = alloca ptr, align 8
@@ -59,9 +115,7 @@ define dso_local void @_Z26__device_stub__gemm_kernelPKdS0_Pd(ptr noundef %0, pt
 }
 
 declare i32 @__cudaPopCallConfiguration(ptr, ptr, ptr, ptr)
-
 declare i32 @cudaLaunchKernel(ptr, i64, i32, i64, i32, ptr, i64, ptr)
-
 declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none), ptr noalias readonly captures(none), i64, i1 immarg) #1
 
 define dso_local void @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(ptr noundef %0, ptr noundef %1, ptr noundef %2, i32 noundef %3) #0 {
@@ -108,143 +162,14 @@ define dso_local void @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(ptr noundef 
   ret void
 }
 
-define dso_local void @_Z6launchPKdS0_Pdi(ptr noundef %0, ptr noundef %1, ptr noundef %2, i32 noundef %3) #2 {
-  %5 = alloca ptr, align 8
-  %6 = alloca ptr, align 8
-  %7 = alloca ptr, align 8
-  %8 = alloca i32, align 4
-  %9 = alloca %struct.dim3, align 4
-  %10 = alloca %struct.dim3, align 4
-  %11 = alloca { i64, i32 }, align 4
-  %12 = alloca { i64, i32 }, align 4
-  %13 = alloca %struct.dim3, align 4
-  %14 = alloca %struct.dim3, align 4
-  %15 = alloca { i64, i32 }, align 4
-  %16 = alloca { i64, i32 }, align 4
-  store ptr %0, ptr %5, align 8
-  store ptr %1, ptr %6, align 8
-  store ptr %2, ptr %7, align 8
-  store i32 %3, ptr %8, align 4
-  call void @_ZN4dim3C2Ejjj(ptr noundef nonnull align 4 dereferenceable(12) %9, i32 noundef 32, i32 noundef 32, i32 noundef 1) #5
-  call void @_ZN4dim3C2Ejjj(ptr noundef nonnull align 4 dereferenceable(12) %10, i32 noundef 16, i32 noundef 16, i32 noundef 1) #5
-  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %11, ptr align 4 %9, i64 12, i1 false)
-  %17 = getelementptr inbounds nuw { i64, i32 }, ptr %11, i32 0, i32 0
-  %18 = load i64, ptr %17, align 4
-  %19 = getelementptr inbounds nuw { i64, i32 }, ptr %11, i32 0, i32 1
-  %20 = load i32, ptr %19, align 4
-  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %12, ptr align 4 %10, i64 12, i1 false)
-  %21 = getelementptr inbounds nuw { i64, i32 }, ptr %12, i32 0, i32 0
-  %22 = load i64, ptr %21, align 4
-  %23 = getelementptr inbounds nuw { i64, i32 }, ptr %12, i32 0, i32 1
-  %24 = load i32, ptr %23, align 4
-  %25 = call i32 @__cudaPushCallConfiguration(i64 %18, i32 %20, i64 %22, i32 %24, i64 noundef 0, ptr noundef null) #5
-  %26 = icmp ne i32 %25, 0
-  br i1 %26, label %31, label %27
-
-27:                                               ; preds = %4
-  %28 = load ptr, ptr %5, align 8
-  %29 = load ptr, ptr %6, align 8
-  %30 = load ptr, ptr %7, align 8
-  call void @_Z26__device_stub__gemm_kernelPKdS0_Pd(ptr noundef %28, ptr noundef %29, ptr noundef %30) #5
-  br label %31
-
-31:                                               ; preds = %27, %4
-  call void @_ZN4dim3C2Ejjj(ptr noundef nonnull align 4 dereferenceable(12) %13, i32 noundef 8, i32 noundef 32, i32 noundef 1) #5
-  call void @_ZN4dim3C2Ejjj(ptr noundef nonnull align 4 dereferenceable(12) %14, i32 noundef 16, i32 noundef 16, i32 noundef 1) #5
-  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %15, ptr align 4 %13, i64 12, i1 false)
-  %32 = getelementptr inbounds nuw { i64, i32 }, ptr %15, i32 0, i32 0
-  %33 = load i64, ptr %32, align 4
-  %34 = getelementptr inbounds nuw { i64, i32 }, ptr %15, i32 0, i32 1
-  %35 = load i32, ptr %34, align 4
-  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %16, ptr align 4 %14, i64 12, i1 false)
-  %36 = getelementptr inbounds nuw { i64, i32 }, ptr %16, i32 0, i32 0
-  %37 = load i64, ptr %36, align 4
-  %38 = getelementptr inbounds nuw { i64, i32 }, ptr %16, i32 0, i32 1
-  %39 = load i32, ptr %38, align 4
-  %40 = call i32 @__cudaPushCallConfiguration(i64 %33, i32 %35, i64 %37, i32 %39, i64 noundef 0, ptr noundef null) #5
-  %41 = icmp ne i32 %40, 0
-  br i1 %41, label %47, label %42
-
-42:                                               ; preds = %31
-  %43 = load ptr, ptr %5, align 8
-  %44 = load ptr, ptr %6, align 8
-  %45 = load ptr, ptr %7, align 8
-  %46 = load i32, ptr %8, align 4
-  call void @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(ptr noundef %43, ptr noundef %44, ptr noundef %45, i32 noundef %46) #5
-  br label %47
-
-47:                                               ; preds = %42, %31
-  ret void
-}
-
-declare i32 @__cudaPushCallConfiguration(i64, i32, i64, i32, i64 noundef, ptr noundef) #3
-
-define linkonce_odr dso_local void @_ZN4dim3C2Ejjj(ptr noundef nonnull align 4 dereferenceable(12) %0, i32 noundef %1, i32 noundef %2, i32 noundef %3) unnamed_addr #4 comdat align 2 {
-  %5 = alloca ptr, align 8
-  %6 = alloca i32, align 4
-  %7 = alloca i32, align 4
-  %8 = alloca i32, align 4
-  store ptr %0, ptr %5, align 8
-  store i32 %1, ptr %6, align 4
-  store i32 %2, ptr %7, align 4
-  store i32 %3, ptr %8, align 4
-  %9 = load ptr, ptr %5, align 8
-  %10 = getelementptr inbounds nuw %struct.dim3, ptr %9, i32 0, i32 0
-  %11 = load i32, ptr %6, align 4
-  store i32 %11, ptr %10, align 4
-  %12 = getelementptr inbounds nuw %struct.dim3, ptr %9, i32 0, i32 1
-  %13 = load i32, ptr %7, align 4
-  store i32 %13, ptr %12, align 4
-  %14 = getelementptr inbounds nuw %struct.dim3, ptr %9, i32 0, i32 2
-  %15 = load i32, ptr %8, align 4
-  store i32 %15, ptr %14, align 4
+define dso_local void @_Z6launchPKdS0_Pdi(ptr %0, ptr %1, ptr %2, i32 %3) {
+  call void @_Z26__device_stub__gemm_kernelPKdS0_Pd(ptr %0, ptr %1, ptr %2)
+  call void @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(ptr %0, ptr %1, ptr %2, i32 %3)
   ret void
 }
 
 attributes #0 = { mustprogress noinline norecurse optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }
 attributes #1 = { nocallback nofree nounwind willreturn memory(argmem: readwrite) }
-attributes #2 = { mustprogress noinline optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }
-attributes #3 = { "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }
-attributes #4 = { mustprogress noinline nounwind optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" "uniform-work-group-size" }
-attributes #5 = { "uniform-work-group-size" }
 
-!llvm.module.flags = !{!0, !1, !2, !3, !4}
-
+!llvm.module.flags = !{!0}
 !0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 8, !"PIC Level", i32 2}
-!2 = !{i32 7, !"PIE Level", i32 2}
-!3 = !{i32 7, !"uwtable", i32 2}
-!4 = !{i32 7, !"frame-pointer", i32 2}
-
-; CHECK: [poseidon] replaced the launch in stub _Z26__device_stub__gemm_kernelPKdS0_Pd with __poseidon_direct_dgemm (C=arg2 A=arg0 B=arg1){{$}}
-; CHECK: [poseidon] replaced the launch in stub _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi with __poseidon_tcec_dgemm (C=arg2 A=arg0 B=arg1){{$}}
-; CHECK-LABEL: define {{.*}} @_Z26__device_stub__gemm_kernelPKdS0_Pd(
-; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 3
-; CHECK: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
-; CHECK: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
-; CHECK-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
-; CHECK-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
-; CHECK-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
-; CHECK-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
-; CHECK-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
-; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
-; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; CHECK-NEXT: call void @__poseidon_direct_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 512, i32 512, i32 512, i32 512, i32 512, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 1)
-; CHECK-NEXT: br label
-; CHECK-LABEL: define {{.*}} @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(
-; CHECK: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
-; CHECK: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
-; CHECK: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
-; CHECK: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
-; CHECK-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
-; CHECK-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
-; CHECK-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
-; CHECK-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
-; CHECK-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AL]], align 8
-; CHECK-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; CHECK-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
-; CHECK-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; CHECK-NEXT: call void @__poseidon_tcec_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 128, i32 512, i32 256, i32 256, i32 256, i32 512, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 3)
-; CHECK-NEXT: br label

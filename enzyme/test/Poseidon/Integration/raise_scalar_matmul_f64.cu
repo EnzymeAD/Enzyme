@@ -1,30 +1,13 @@
-// A scalar 8x8x8 FP64 reduction loop, profiled with both plugins loaded into
-// clang and solved by opt, is raised onto the tensor cores. The three pointers
-// are passed enzyme_const, so the profile records no gradient and no candidate
-// costs modelled accuracy: with no target the solve takes the cheapest, an f16
-// WMMA tile, and the body stages A and B as f16 tiles in shared memory,
-// multiplies them in one mma and widens the product into D, with no FP
-// arithmetic of its own left.
-//
+// A scalar 8x8x8 FP64 loop with enzyme_const pointers (no gradient), so with no
+// target the solve raises it to the cheapest f16 WMMA tile, staged in shared
+// memory, with no FP arithmetic of its own left.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
-// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg \
-// RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
-// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: FileCheck --check-prefix=PROF %s < %t/profiles/scalar_matmul_body_f64.fpprofile
-//
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH -S -emit-llvm %s -o %t/dev.ll
-// RUN: %opt %t/dev.ll %loadPoseidon \
-// RUN:     -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-// RUN:     -poseidon-profile-use=%t/profiles -poseidon-early-prune \
-// RUN:     -poseidon-enable-rewrite=false -poseidon-enable-precision=false \
-// RUN:     -poseidon-cache= -poseidon-enable-matmul -poseidon-print \
-// RUN:     -poseidon-matmul-library-calls=false \
-// RUN:     -poseidon-cost-model=%gpu_cost_model \
-// RUN:     -S 2>&1 | tee %t/use.out | FileCheck %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH -S -emit-llvm %s -o %t/dev.ll
+// RUN: %opt %t/dev.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/profiles -poseidon-early-prune -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-cache= -poseidon-enable-matmul -poseidon-print -poseidon-matmul-library-calls=false -poseidon-cost-model=%gpu_cost_model -S 2>&1 | tee %t/use.out | FileCheck %s
 // RUN: FileCheck --check-prefix=NOFP %s < %t/use.out
 
 #include <cmath>
@@ -136,10 +119,8 @@ int main(void) {
 // CHECK-NEXT: call void @[[BODY]](ptr [[A]], ptr [[B]], ptr [[D]])
 // CHECK-NEXT: ret void
 
-// The raised body runs the raise in the profiled 8x8 block and the loop as
-// written in any other. In the raise one warp loads the A and B tiles,
-// multiplies them, and stores the product tile; every thread widens its element
-// of it into D. A and B reach their tiles narrowed to f16.
+// The raise in the profiled 8x8 block, the loop elsewhere; one warp does the
+// tiles, every thread widens its element into D.
 // CHECK-LABEL: define dso_local void @preprocess_scalar_matmul_body_f64(
 // CHECK-SAME: ptr {{[^,]*}}[[PA:%[0-9]+]], ptr {{[^,]*}}[[PB:%[0-9]+]], ptr {{[^,]*}}[[PD:%[0-9]+]])
 // CHECK: [[NX:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()

@@ -1,20 +1,10 @@
-// A rewrite calls a libdevice function the module already calls elsewhere.
-// GlobalOpt has moved that function to fastcc by then, since the site is named
-// with -poseidon-kernels and poseidon.h, which keeps it addressed, is not
-// included; a call in the C convention would be undefined, and InstCombine
-// would delete it and the rewritten site with it.
-//
+// A rewrite calls a libdevice function GlobalOpt already moved to fastcc; a call
+// in the C convention would be deleted with the site.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
-// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
-// RUN:   | FileCheck --check-prefix=PRIMAL %s
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t/profile -poseidon-early-prune \
-// RUN:     -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model \
-// RUN:     -poseidon-print -poseidon-enable-rewrite=0 -poseidon-tau=1e-3 \
-// RUN:     %s -o %t/opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe | FileCheck --check-prefix=PRIMAL %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-kernels=waved -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-tau=1e-3 %s -o %t/opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 
 #include <cmath>

@@ -1,25 +1,11 @@
 // The TCEC runtime's power-of-two operand scaling on the device:
-//   grid:     single-entry 16 x 16 products 1.5 * 2^eA times 1.25 * 2^eB
-//             through __poseidon_tcec_dgemm, over operand maxima inside and
-//             outside FP32's range. Every step of the product is exact, so the
-//             result is 1.875 * 2^(eA + eB) bit for bit wherever that is
-//             representable in FP64.
-//   tiny:     2^-66 A times 2^-100 B (entries around 1e-20 and 1e-30) gives
-//             2^-166 times the product of A and B bit for bit, and so the
-//             accuracy against the FP64 product that ordinary operands get.
-//   ordinary: random operands, square and row-major (beta 0, and alpha
-//             0.75 with beta -1.25, which takes the epilogue's fused
-//             multiply-add) and a general call (A row-major, B and C
-//             column-major, beta 1), each within 2^-21 of the FP64 result
-//             relative to |alpha||A||B| + |beta C|, about four times the
-//             error FP16TCEC has there. cuMpSGEMM's products differ call to
-//             call for some shapes, so their bits are not compared.
-//
+//   grid:     1.5 * 2^eA times 1.25 * 2^eB is 1.875 * 2^(eA + eB) bit for bit
+//             wherever representable, inside and outside FP32's range;
+//   tiny:     2^-66 A times 2^-100 B is 2^-166 AB bit for bit;
+//   ordinary: square row-major (with the fused epilogue) and general calls
+//             within 2^-21 of FP64 relative to |alpha||A||B| + |beta C|.
 // REQUIRES: cuda-device, tcec-cumpsgemm
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
-// RUN:     %s -x none \
-// RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart \
-// RUN:     -lstdc++ -lm -o %t.exe
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc %s -x none %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
 #include <algorithm>

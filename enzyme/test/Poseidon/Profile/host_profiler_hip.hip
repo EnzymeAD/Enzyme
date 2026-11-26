@@ -11,12 +11,10 @@
 // RUN: %{clang} -x c++ -O0 -DMAIN_ONLY -DNO_HIP %s -o %t/cxx.ll
 // RUN: FileCheck --check-prefix=CXX %s < %t/cxx.ll
 
-// The host half of a HIP profile generation: main binds the profiler before
-// anything else runs, in a unit with kernels or without, and the launch of a
-// profiled kernel goes through the runtime helper that supplies its shadows,
-// handed the kernel's handle, the configuration HIP popped, the launch's
-// argument array and its one pointer argument (index 0, offset 0), an output
-// seeded as double. A C++ unit links no GPU profiler and gets no call.
+// The host half of HIP profile generation: main binds the profiler first,
+// with kernels or without; a profiled launch goes through the runtime helper
+// with the popped configuration, the argument array and its pointer argument
+// (index 0, offset 0, seeded as double). A C++ unit gets no call.
 
 #ifndef NO_HIP
 #include <hip/hip_runtime.h>
@@ -47,8 +45,6 @@ int main() { return 0; }
 // HOST-NOT: call {{.*}}@hipLaunchKernel(
 // HOST-LABEL: define {{.*}}i32 @main(
 // HOST-NEXT: call void @__poseidon_profile_init_device()
-
 // INIT-LABEL: define {{.*}}i32 @main(
 // INIT-NEXT: call void @__poseidon_profile_init_device()
-
 // CXX-NOT: __poseidon_profile_init_device

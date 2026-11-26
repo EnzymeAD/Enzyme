@@ -1,10 +1,6 @@
-# A HIP project that uses Poseidon through find_package(Poseidon), for
-# full_compile_amdgpu.hip: SOURCE compiled as HIP into the object libraries k
-# and k_rdc (relocatable device code) under the action target ACTION names, the
-# GPU language from an interface target linked before it. With LOAD_ENZYME the
-# project loads Enzyme's plugin itself, after the action target, and with
-# ENZYME_OPTIONS links Poseidon::EnzymeOptions to the targets that load it.
-# Objects only; nothing links.
+# A HIP project on find_package(Poseidon): SOURCE into the object libraries k
+# and k_rdc under Poseidon::${ACTION}; LOAD_ENZYME loads Enzyme's plugin after
+# it, ENZYME_OPTIONS links Poseidon::EnzymeOptions there. Nothing links.
 cmake_minimum_required(VERSION 3.18)
 project(PoseidonPackageHIP LANGUAGES CXX)
 

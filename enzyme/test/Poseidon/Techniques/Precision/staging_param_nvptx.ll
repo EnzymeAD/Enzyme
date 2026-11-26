@@ -1,17 +1,33 @@
-; DEFINE: %{opt} = %opt %s %loadPoseidon \
+; DEFINE: %{opt} = %opt %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/Inputs/staging_param -poseidon-early-prune -poseidon-enable-rewrite=false \
 ; DEFINE:   -poseidon-enable-precision=true -poseidon-precision-tier-step=100 \
 ; DEFINE:   -poseidon-precision-three-tier=false -poseidon-matmul-library-calls=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cache=%t/off -poseidon-pin=P0_1 -poseidon-print 2>&1 | FileCheck --check-prefix=OFF %s
-; RUN: %{opt} -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-cache=%t/ds -poseidon-pin=P0_2 -poseidon-print 2>&1 \
+; RUN: %{opt} %s -poseidon-cache=%t/off -poseidon-pin=P0_1 -poseidon-print 2>&1 | FileCheck --check-prefix=OFF %s
+; RUN: %{opt} %s -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-cache=%t/ds -poseidon-pin=P0_2 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=DS %s
-; RUN: %{opt} -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-precision-frequency-weighted -poseidon-cache=%t/ir -poseidon-pin=P0_2 2>&1 \
+; RUN: %{opt} %s -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-precision-frequency-weighted -poseidon-cache=%t/ir -poseidon-pin=P0_2 2>&1 \
 ; RUN:   | FileCheck --check-prefix=IR %s
-; RUN: %{opt} -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-precision-frequency-weighted -poseidon-cache=%t/f32 -poseidon-pin=P0_0 -poseidon-print 2>&1 \
+; RUN: %{opt} %s -poseidon-subgraph-reductions -poseidon-subgraph-merge-staging -poseidon-precision-frequency-weighted -poseidon-cache=%t/f32 -poseidon-pin=P0_0 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=F32 %s
+; RUN: sed -e '/^  tail call void @_Z22__poseidon_fp_optimize/i\  call void @ext_reader(ptr addrspacecast (ptr addrspace(3) @_ZZ13staged_kernelPKdS0_PdS1_E1s to ptr))' \
+; RUN:   -e '$a declare void @ext_reader(ptr)' %s > %t/ext.ll
+; RUN: %{opt} %t/ext.ll -poseidon-print -poseidon-cache=%t/ext-f32 -poseidon-pin=P0_0 -o %t/ext-f32.ll 2> %t/ext-f32.log
+; RUN: FileCheck --check-prefix=EXT-LOG %s < %t/ext-f32.log
+; RUN: FileCheck --check-prefix=EXT-IR %s < %t/ext-f32.ll
+; RUN: %{opt} %t/ext.ll -poseidon-print -poseidon-cache=%t/ext-ds -poseidon-pin=P0_2 -o %t/ext-ds.ll 2> %t/ext-ds.log
+; RUN: FileCheck --check-prefix=EXT-LOG %s < %t/ext-ds.log
+; RUN: FileCheck --check-prefix=EXT-IR %s < %t/ext-ds.ll
+
+; Two contractions staged through a __shared__ buffer that reaches the body as a
+; pointer parameter: the chosen tier narrows the buffer through the parameter;
+; with the subgraph flags the contractions join one unit priced per loop depth.
+; A kernel that also hands the buffer to an external reader keeps it FP64.
+; Module of staged_body.cu (staged_body, staged_kernel) via clang -x cuda
+; --cuda-device-only --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on; profile from
+; two launches <<<1, dim3(16, 16)>>> on an sm_120 GPU.
 
 ; OFF: Skipping trivial subgraph
 ; OFF: [poseidon] Found 1 initial subgraphs in preprocess_staged_body
@@ -41,55 +57,20 @@
 ; F32: Applying solution for precision change All FP64(0%) + FP32(100%)
 ; F32: [poseidon] narrowed param-staged shared buffer @_ZZ13staged_kernelPKdS0_PdS1_E1s to fp32 (1 loads, 1 stores)
 
-; Two contractions staged through one __shared__ buffer that reaches the body
-; as a pointer parameter, then a once-per-thread epilogue. The chosen tier
-; narrows the buffer through the parameter. Without the subgraph flags the first
-; contraction is a trivial 1-op subgraph; with them the contractions join one
-; optimization unit priced per loop depth, which the merge implies.
-; The IR is from
-;   template <typename R, typename... T>
-;   __device__ R __poseidon_fp_optimize(void *, T...);
-;   __device__ int enzyme_const;
-;   __device__ int enzyme_dup;
-;   extern "C" __device__ __attribute__((noinline)) void
-;   staged_body(double *__restrict__ S, const double *__restrict__ A,
-;               const double *__restrict__ B, double *__restrict__ D) {
-;     unsigned tx = threadIdx.x;
-;     unsigned ty = threadIdx.y;
-;     double acc = 0.0;
-;   #pragma unroll 1
-;     for (int k = 0; k < 16; ++k)
-;       acc += A[ty * 16 + k] * B[k * 16 + tx];
-;     S[ty * 16 + tx] = acc;
-;     __syncthreads();
-;     double acc2 = 0.0;
-;   #pragma unroll 1
-;     for (int k = 0; k < 16; ++k)
-;       acc2 += A[ty * 16 + k] * S[k * 16 + tx];
-;     D[ty * 16 + tx] += acc2;
-;   }
-;   __global__ void staged_kernel(const double *A, const double *B, double *D,
-;                                 double *dD) {
-;     __shared__ double s[256];
-;     __shared__ double ds[256];
-;     ds[threadIdx.y * 16 + threadIdx.x] = 0.0;
-;     __syncthreads();
-;     __poseidon_fp_optimize<void>((void *)staged_body, enzyme_dup, s, ds,
-;                                  enzyme_const, A, enzyme_const, B, enzyme_dup,
-;                                  D, dD);
-;   }
-; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -S -emit-llvm, the shape of a partial-assembly
-; diffusion apply. The profile: the same source compiled with
-; -poseidon-profile-generate and launched twice as
-; staged_kernel<<<1, dim3(16, 16)>>> on A[i] = 1.0 + 0.001 * i and
-; B[i] = 0.5 + 0.003 * (i % 97), with dD[i] = 1.0 + 0.01 * (i % 7).
 
-; ModuleID = 'Techniques/Precision/Inputs/staging_param/staged_body.cu'
+; EXT-LOG: Applying solution for precision change
+; EXT-LOG-NOT: narrowed param-staged shared buffer
+
+; EXT-IR-LABEL: define {{.*}} @_Z13staged_kernelPKdS0_PdS1_(
+; EXT-IR: call void @ext_reader(ptr addrspacecast (ptr addrspace(3) @_ZZ13staged_kernelPKdS0_PdS1_E1s to ptr))
+; EXT-IR-LABEL: define {{.*}} @preprocess_staged_body(
+; EXT-IR: store double %{{.+}}, ptr %{{.+}}, align 8
+; EXT-IR-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
+; EXT-IR: load double, ptr %{{.+}}, align 8
+
 source_filename = "Techniques/Precision/Inputs/staging_param/staged_body.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
-
 @enzyme_const = dso_local addrspace(1) externally_initialized global i32 0, align 4
 @enzyme_dup = dso_local addrspace(1) externally_initialized global i32 0, align 4
 @_ZZ13staged_kernelPKdS0_PdS1_E1s = internal addrspace(3) global [256 x double] undef, align 8
@@ -153,7 +134,6 @@ define dso_local void @staged_body(ptr noalias nofree noundef captures(none) %0,
 }
 
 declare double @llvm.fmuladd.f64(double, double, double) #1
-
 declare void @llvm.nvvm.barrier.cta.sync.aligned.all(i32) #2
 
 define dso_local ptx_kernel void @_Z13staged_kernelPKdS0_PdS1_(ptr noundef %0, ptr noundef %1, ptr noundef %2, ptr noundef %3) local_unnamed_addr #0 {
@@ -172,20 +152,11 @@ define dso_local ptx_kernel void @_Z13staged_kernelPKdS0_PdS1_(ptr noundef %0, p
 }
 
 declare dso_local void @_Z22__poseidon_fp_optimizeIvJiPdS0_iPKdiS2_iS0_S0_EET_PvDpT0_(ptr noundef, i32 noundef, ptr noundef, ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, ptr noundef) local_unnamed_addr #3
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.y() #4
-
 attributes #0 = { convergent mustprogress noinline norecurse nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88" "uniform-work-group-size" }
 attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #2 = { convergent nocallback nounwind }
 attributes #3 = { convergent nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88" "uniform-work-group-size" }
 attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #5 = { convergent nounwind "uniform-work-group-size" }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}

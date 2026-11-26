@@ -10,30 +10,14 @@
 // RUN: llvm-offload-binary %t/rdc/k.o --image=file=%t/rdc/dev.bc,arch=gfx942
 // RUN: llvm-dis %t/rdc/dev.bc -o - | FileCheck --check-prefix=DEV --implicit-check-not=__enzyme %s
 
-// A HIP compile with -c and no ROCm (no device library; the runtime
-// declarations a kernel stub needs are written out). Its device half is an LTO
-// pre-link compile, where Enzyme defers derivative requests to a post-link run
-// unless -enzyme-lto-prelink is given, and the device link of the same -c loads
-// no plugin. A site whose body is the user's own derivative request is handled
-// after Enzyme lowers that request: with both plugins and without the option,
-// the compile stops in the device compiler with the reason (no crash, no
-// undefined __enzyme_* symbol at the device link); through poseidon-clang++,
-// which loads Enzyme only to generate a profile, it stops asking for Enzyme's
-// plugin. With the option, given to clang or to poseidon-clang++ with Enzyme's
-// plugin, the code object and the relocatable device code hold no request. The
-// device code is that of deferred_left_copy_nvptx.cu.
+// A HIP -c compile without ROCm, whose device half is an LTO pre-link compile:
+// a site whose body is a derivative request stops the compile with the reason
+// unless -enzyme-lto-prelink is given (poseidon-clang++ asks for Enzyme's
+// plugin); with it no request is left. The device code is lto_prelink_deferred_site_nvptx.cu's.
 
 #include <cstddef>
 
-struct dim3 {
-  unsigned x, y, z;
-};
-typedef struct ihipStream_t *hipStream_t;
-extern "C" int hipLaunchKernel(const void *, dim3, dim3, void **, size_t,
-                               hipStream_t);
-extern "C" int __hipPushCallConfiguration(dim3, dim3, size_t, hipStream_t);
-extern "C" int __hipPopCallConfiguration(dim3 *, dim3 *, size_t *,
-                                         hipStream_t *);
+#include "Inputs/kernel_stub_runtime.h"
 
 #define __device__ __attribute__((device))
 #define __global__ __attribute__((global))
@@ -76,8 +60,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 // CO: FUNC GLOBAL PROTECTED {{[0-9]+}} _Z3jvpPKdS0_PdS1_{{$}}
 // CO-NOT: UND {{[_a-zA-Z]}}
 
-// The kernel passes its locals to the module's copy of the lowered tangent,
-// which computes y = x * x + 1 and dy = 2 * dx * x.
+// The lowered copy computes y = x * x + 1 and dy = 2 * dx * x.
 // DEV: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]])
 // DEV-DAG: call {{.*}}void @fwddiffeqf.left(ptr {{.*}}[[XP:%[0-9]+]], ptr {{.*}}[[DXP:%[0-9]+]], ptr {{.*}}[[YP:%[0-9]+]], ptr {{.*}}[[DYP:%[0-9]+]])
 // DEV-DAG: [[XP]] = addrspacecast ptr addrspace(5) [[XA:%[0-9]+]] to ptr

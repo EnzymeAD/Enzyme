@@ -2,7 +2,6 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc %s -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
-//
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
@@ -13,7 +12,6 @@
 // RUN: %poseidon_explain %t/x --format report | FileCheck --check-prefix=REPORT %s
 // RUN: %t/use > %t/use.out
 // RUN: paste -d' ' %t/stock.out %t/use.out | awk '{ print ($1 == $4), ($2 == $5), ($3 == $6) }' | FileCheck --check-prefix=SAME %s
-//
 // The profile of each call is keyed by the call, the same at every -O level.
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c0 %s -poseidon-print -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c3 %s -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
@@ -22,14 +20,11 @@
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof0 -poseidon-early-prune -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c20 %s -poseidon-print -o %t/use20 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %t/use0 > %t/use0.out
 // RUN: diff %t/use.out %t/use0.out
-//
 // RUN: not %clang -x c++ -O1 -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-early-prune -DNONCONST %s -o /dev/null 2>&1 | FileCheck --check-prefix=NONCONST %s
 // RUN: not %clang -x c++ -O1 -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -mllvm -poseidon-early-prune -DMARKED %s -o /dev/null 2>&1 | FileCheck --check-prefix=MARKED %s
 
-// __poseidon_optimize makes one call the site: it has its own profile, its own
-// target and its own rewritten copy, and other calls of the function run it as
-// written. The two calls of sq see different ranges, and only the one FP32 can
-// hold is rewritten; the two calls of wave carry different targets.
+// __poseidon_optimize makes one call the site, with its own profile, target and
+// rewritten copy; only the call of sq whose range FP32 holds is rewritten.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -94,8 +89,6 @@ int main(int argc, char **argv) {
 // USE: preprocess__Z4wavePKdPdi.poseidon.main.3: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
 // USE: no rewrite applied for preprocess__Z4wavePKdPdi.poseidon.main.3
 
-// The rewritten calls differ from plain clang's program, the refused ones and
-// the plain calls do not.
 // SAME: 0 1 1
 // SAME-NEXT: 0 1 1
 

@@ -2,34 +2,16 @@
 """Rewrite the CanonicalHash of the checked-in profile fixtures after a change
 to the canonical form (an LLVM update, a change to Sites/Canonicalize.cpp).
 
-A fixture, a .fpprofile in any Inputs directory of test/Poseidon, is a profile
-recorded once against the canonical form of its site; its CanonicalHash names
-that form, and profile use refuses a profile whose hash differs from the one
-the compile computes. When the form changes, every test that reads the fixture
-stops with
-
-  the profile of <site> was recorded against a different canonical form
-  (profile CanonicalHash <old>, this compile <new>)
-
-This script runs the suite of a build, reads those pairs from the failures,
-and replaces <old> by <new> wherever the tree records it as a fixture's hash:
-in each fixture that carries it, and in the tests that copy a fixture under a
-hash of their own (sed "s/^CanonicalHash = .*/.../") or check it. A hash that
-no fixture carries, such as one a test writes to provoke the error, is left
-alone. It repeats until a run reports no new pair, then lists the tests that
-still fail. Inputs/unrelated_site_profile/other.fpprofile holds no record of a
-site the tests compile, so no compile reads its hash, which stays 0.
-
-Only the hash is rewritten: the records keep their numbers, which the tests
-check. A record is kept for the slot index it was recorded under, so a form
-change that also renumbers slots (an instruction added or removed before the
-recorded ones) shows up as a test that still fails, and that fixture has to be
-recorded again from its program.
+Runs the suite of a build, reads the (old, new) pairs of the "recorded against
+a different canonical form" failures, and replaces old by new in each fixture
+that carries it and in the tests that copy or check it, until a run reports no
+new pair; then lists the tests that still fail. Only the hash is rewritten: a
+form change that renumbers slots leaves a failing test, whose fixture has to
+be recorded again from its program.
 
   update_profile_hashes.py --build <build dir> [test path ...]
 
-Test paths are relative to test/Poseidon (default: the whole suite except
-Integration, which needs a GPU).
+Test paths are relative to test/Poseidon (default: all but Integration).
 """
 import argparse
 import os

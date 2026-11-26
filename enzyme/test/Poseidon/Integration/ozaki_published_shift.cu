@@ -1,19 +1,10 @@
-// The Ozaki-II runtime scales operands by the fast mode of GEMMul8 v3.1.1
-// (arXiv:2504.08009, arXiv:2606.29129; OzakiII.cu): a row a of A
-// is multiplied by 2^floor(log2P - log2||a||_2) and truncated toward zero.
-// With B = I every column of B has norm 1, so C = trunc(2^sft a) / 2^sft
-// shows each quantized row. nm = 10, log2P = 39.1204758:
-//   row 0 = (1 + 2^-38 + 2^-40, 0, ...): shift 39, truncated, so C = 1 + 2^-38
-//     (round to nearest would give 1 + 2^-38 + 2^-39);
-//   row 1 = 16 x (1 + 2^-36): the 2-norm 4(1 + 2^-36) gives shift 37, so every
-//     C entry is 1 + 2^-36 exactly (a max-based shift of 35 drops that bit);
+// The Ozaki-II runtime's shift is GEMMul8 v3.1.1's fast mode: row a of A times
+// 2^floor(log2P - log2||a||_2), truncated. With B = I, nm = 10:
+//   row 0 = 1 + 2^-38 + 2^-40: C = 1 + 2^-38 (truncated, not rounded);
+//   row 1 = 16 x (1 + 2^-36): C = 1 + 2^-36 (a max-based shift drops the bit);
 //   row 2 = 0: C = 0.
-//
 // REQUIRES: cuda-device
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc \
-// RUN:     %s -x none \
-// RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart \
-// RUN:     -lstdc++ -lm -o %t.exe
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -I%poseidon_runtime_inc %s -x none %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
 #include "gemm/LibraryCalls.h"

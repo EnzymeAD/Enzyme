@@ -1,26 +1,11 @@
-// Every modulus count the Ozaki-II runtime accepts (3..14), each of which runs
-// its own instantiation of the residue and CRT kernels, against the accuracy
-// model's simulation of the scheme (simulateOzakiIIDgemm), bit for
-// bit: __poseidon_ozakiii_dgemm in every A/B/C storage order, with beta = 0.5
-// on one, at 37 x 50 x 61, at 20 x 24 x 1100, whose strided operands take the
-// chunked sum of squares, and at the square 48 x 48 x 48. Rows and columns of
-// the operands span 2^-30..2^30, with every 17th element of a row of A 10^6
-// times larger. The same on the operands the accuracy model samples, on the
-// tile it simulates (16 x 16 with K = 2048), both row-major, elements
-// log-uniform over the 40 binades below the largest (the tolerance path) or
-// uniform (the budget path), at every modulus count the compiler proposes.
-//
+// Every modulus count (3..14) of the Ozaki-II runtime against the accuracy
+// model's simulation, bit for bit: every storage order, three shapes (one
+// taking the chunked sum of squares), wide operands; and the model's sampled
+// tile at every modulus count the compiler proposes.
 // REQUIRES: cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
-// RUN:     -I%S/../../../Poseidon -c \
-// RUN:     %S/../../../Poseidon/Techniques/Matmul/Simulation.cpp \
-// RUN:     -o %t/sim.o
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=off \
-// RUN:     -I%S/../../../Poseidon/Techniques/Matmul -I%poseidon_runtime_inc \
-// RUN:     %s -x none %t/sim.o \
-// RUN:     %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm \
-// RUN:     -o %t/exe
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math -I%S/../../../Poseidon -c %S/../../../Poseidon/Techniques/Matmul/Simulation.cpp -o %t/sim.o
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=off -I%S/../../../Poseidon/Techniques/Matmul -I%poseidon_runtime_inc %s -x none %t/sim.o %poseidon_gemm_cuda_lib -L%cuda_lib_dir -lcublas -lcudart -lstdc++ -lm -o %t/exe
 // RUN: %t/exe | FileCheck --match-full-lines %s
 
 // CHECK: ozaki 37x50x61: 8 layouts, 177600 products, 0 differ

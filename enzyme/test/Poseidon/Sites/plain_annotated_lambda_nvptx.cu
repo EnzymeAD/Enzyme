@@ -6,10 +6,8 @@
 // RUN: diff %t/unannotated.ll %t/plain.ll
 // RUN: FileCheck %s < %t/plain.ll
 
-// Without a profile action an annotated lambda compiles as if it were not
-// annotated: its kernels are not made to inline it, and the annotation does
-// not count as a second use of it, which would cost a static lambda the
-// inliner's last-call bonus.
+// Without a profile action an annotated lambda compiles as if not annotated:
+// not forced inline, and not a second use costing the last-call bonus.
 
 #include "poseidon/poseidon.h"
 

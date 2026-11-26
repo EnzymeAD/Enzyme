@@ -1,22 +1,10 @@
-// The 8x8x8 product of raise_scalar_matmul_f64.cu, profiled in an 8x8 block and
-// raised onto the tensor cores, then launched in the profiled block and in an
-// 8x4 one. The raise is laid out for the profiled block, so the 8x4 launch
-// runs the loop as written: its four rows are the FP64 product, and the rows
-// it does not reach are left as they were. The 8x8 launch runs the f16 tile.
-//
+// The raised 8x8x8 product launched in the profiled 8x8 block (the f16 tile)
+// and in an 8x4 one (the loop as written: FP64 rows, other rows untouched).
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
-// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg \
-// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
-// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/gen.exe
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/gen.exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/gen.exe 8 | FileCheck --check-prefix=PROFILED %s
-// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon \
-// RUN:     -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c \
-// RUN:     -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false \
-// RUN:     -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false \
-// RUN:     -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print \
-// RUN:     -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangPoseidon -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-early-prune -mllvm -poseidon-cache=%t/c -mllvm -poseidon-enable-matmul -mllvm -poseidon-matmul-library-calls=false -mllvm -poseidon-enable-rewrite=false -mllvm -poseidon-enable-precision=false -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
 // RUN: %t/opt.exe 8 | FileCheck --check-prefix=PROFILED %s
 // RUN: %t/opt.exe 4 | FileCheck --check-prefix=OTHER %s
 
@@ -57,9 +45,8 @@ __global__ void block_matmul_kernel(const double *A, const double *B,
     }                                                                          \
   } while (0)
 
-// Launches the kernel in an 8 x `rows` block and prints the largest relative
-// error of the rows it reaches against the FP64 product, and whether the rows
-// it does not reach kept their value.
+// Prints the largest relative error of the rows reached and whether the others
+// kept their value.
 int main(int argc, char **argv) {
   constexpr int M = 8, N = 8, K = 8;
   const int rows = argc > 1 ? std::atoi(argv[1]) : M;

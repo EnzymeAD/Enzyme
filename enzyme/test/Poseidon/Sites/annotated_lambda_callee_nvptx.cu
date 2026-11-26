@@ -6,14 +6,10 @@
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O3 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/empty -DEMPTY_ONLY %s -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY %s
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O3 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s
 
-// A site is everything its kernel runs on the device. The annotated lambda
-// only calls `element`, which stays a call at -O3 (here because of noinline;
-// in an application because of its size), and the arithmetic in it is the
-// site's: it is folded into the kernel and profiled there, and profile use
-// looks the site up under the kernel's name. A recursive callee cannot be
-// folded in, which is reported, and a site with no floating-point operation
-// says so instead of being dropped silently, also when it is the module's
-// only one.
+// A site is everything its kernel runs: the callee `element` of the annotated
+// lambda is folded into the kernel and profiled there. A recursive callee
+// cannot be folded (reported), and a site without floating-point work says so,
+// also as the module's only one.
 
 #include "poseidon/poseidon.h"
 
@@ -61,9 +57,8 @@ POSEIDON_OPTIMIZE __attribute__((global)) void copy(double *y,
 // GEN-NEXT: [poseidon] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_: site 1, 2 shadow buffer(s), output(s) 1[+8]
 // GEN-NEXT: 2 warnings generated when compiling for {{.*}}
 
-// The four operations of `element` (two of them fused multiply-adds, which
-// log three operands), each logged by the profiled kernel's body, which calls
-// `element` no more.
+// The four operations of `element` (two FMAs log three operands), logged in
+// the profiled body, which calls `element` no more.
 // PROBES: define internal fastcc void @diffepreprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body(
 // PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
 // PROBES: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 0, double %{{[0-9]+}}, i64 3,
@@ -78,11 +73,11 @@ POSEIDON_OPTIMIZE __attribute__((global)) void copy(double *y,
 // PROBES: {{^}}}
 // PROBES-NOT: @poseidon.site.preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
 
-// EMPTY: annotated_lambda_callee_nvptx.cu:[[@LINE-29]]:{{[0-9]+}}: warning: Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
+// EMPTY: annotated_lambda_callee_nvptx.cu:[[@LINE-28]]:{{[0-9]+}}: warning: Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
 // EMPTY: 1 warning generated when compiling for {{.*}}
 
-// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-37]]:{{[0-9]+}}: warning: Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
-// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-38]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z4deepPdi.fpprofile:
-// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-34]]:{{[0-9]+}}: warning: Poseidon: _Z4copyPdPKd_poseidon_body holds no floating-point operation the pass rewrites; leaving the site unchanged
-// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-63]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_~0735ed719e65441e.fpprofile:
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-36]]:{{[0-9]+}}: warning: Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-37]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z4deepPdi.fpprofile:
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-33]]:{{[0-9]+}}: warning: Poseidon: _Z4copyPdPKd_poseidon_body holds no floating-point operation the pass rewrites; leaving the site unchanged
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-62]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_~0735ed719e65441e.fpprofile:
 // USE: 4 warnings generated when compiling for {{.*}}

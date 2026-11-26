@@ -4,14 +4,10 @@
 // RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -DA=1e-6 -DB=1e-9 -DCA=4517329193108106637 -DCB=4472406533629990549 %s -o /dev/null 2>&1 | FileCheck %s
 // RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/unrelated_site_profile -DA=1e-12 -DB=1e-3 -DCA=4427486594234968593 -DCB=4562254508917369340 %s -o /dev/null 2>&1 | FileCheck %s
 
-// The profile of a call site does not depend on its accuracy target, also when
-// the caller takes the target as a template argument, as a value or inside a
-// type, or as the bits of a double in a 64-bit unsigned integer template
-// argument, the form a C++17 program uses: the call's copy is named after the
-// caller without it, so both compiles look for the same profiles. A and B are
-// 1e-6 and 1e-9, then 1e-12 and 1e-3, and CA and CB their bits. Callers that
-// differ in anything else, or only in their targets, keep sites of their own.
-// An integer argument whose digits contain those of a target is no target.
+// The profile of a call does not depend on a target its caller takes as a
+// template argument (a value, inside a type, or a double's bits CA/CB in an
+// integer): both compiles, with other targets A and B, look for the same
+// profiles. An integer argument whose digits contain a target's is no target.
 
 #include "poseidon/poseidon.h"
 

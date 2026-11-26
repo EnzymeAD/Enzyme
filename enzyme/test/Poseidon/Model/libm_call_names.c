@@ -5,11 +5,8 @@
 // RUN: env FAKE_HERBIE_DIR=%S/Inputs/fmod_operator %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=1 -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-precision=1 -poseidon-cost-budget=-0.5 -poseidon-print -poseidon-cache=%t/c %s -S -emit-llvm -o %t/use.ll 2>&1 | FileCheck %s
 // RUN: FileCheck --check-prefix=IR %s < %t/use.ll
 
-// A host call to erf is the math function erf, though its name ends in f as
-// the float form of a function would: Herbie is given (erf ...), the cost model
-// prices the call by the erf row (8 in double), beside the fadd (4), and the
-// precision change that runs the site in float calls erff, priced at 2, with
-// the fadd (1) and the two casts (1 each).
+// A host call to erf is erf, not the float form of "er": Herbie gets (erf ...),
+// the erf row prices it (8, fadd 4) and the float site calls erff (2 + 1 + 2).
 
 #include "poseidon/poseidon.h"
 #include <math.h>

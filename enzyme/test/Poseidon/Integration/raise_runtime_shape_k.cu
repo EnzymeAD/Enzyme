@@ -1,33 +1,15 @@
-// A dense GEMM written the way a finite-element partial-assembly reduce writes
-// it: runtime M / Ncols / K, the row index behind a loop strided by a
-// thread axis, the column index a thread axis fused with the CTA
-// index, the contraction split across an unrolled outer level, and an
-// accumulating epilogue. findConstantShapeMatmuls rejects it (no constant trip);
-// findRuntimeShapeMatmuls must recognize it and report every dimension
-// symbolically, and the library call must evaluate those dimensions from the
-// launch arguments. With no target the solve takes the most accurate candidate
-// that costs no more than the loop nest, cuBLAS's DGEMM, which replaces the
-// launch.
-//
-// Both phases go through poseidon-clang++ so the body is canonicalized the same
-// way in each; a device-only -emit-llvm + opt use phase canonicalizes this loop
-// nest differently from the profile-generate build and the slot indices then do
-// not name the same instructions.
-//
+// A GEMM with runtime extents, a strided row loop, a fused column index, a split
+// contraction and an accumulating epilogue: only the runtime-shape recognizer
+// takes it, with symbolic dimensions the library call evaluates from the launch;
+// with no target cuBLAS's DGEMM replaces the launch. Both phases go through
+// poseidon-clang++ so the body is canonicalized the same way.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/exe
-// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
-// RUN:   | FileCheck --check-prefix=PRIMAL %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe | FileCheck --check-prefix=PRIMAL %s
 // A GPU program has no host site, so its profiling run records no allocation.
 // RUN: llvm-nm --defined-only %t/exe | not grep __poseidon_host_sites_present
-//
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache \
-// RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
-// RUN:     -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-enable-matmul \
-// RUN:     %s -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cache -poseidon-launch-dir=%t/cache -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-enable-precision=0 -poseidon-enable-matmul %s -o %t/opt.exe 2>&1 | FileCheck %s
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 
@@ -144,9 +126,7 @@ int main(void) {
 
 // PRIMAL: RTGEMM-PASS
 
-// The dimensions are expressions over the body's parameters, not integers, as
-// the descriptor records them: M = nDofs (arg2), Ncols = 3*numEls (arg1),
-// K = 3*numPoints (arg0).
+// M = nDofs (arg2), Ncols = 3*numEls (arg1), K = 3*numPoints (arg0).
 // CHECK: [poseidon] Optimizing [[BODY:preprocess_rt_gemm_body]] with relative error tolerance: 0.000000e+00
 // CHECK: [poseidon] Found 1 matrix product(s) in [[BODY]]
 // CHECK-NEXT: Matmul[0]: 3x3x12 type=f64 origin=RuntimeShape
@@ -157,10 +137,8 @@ int main(void) {
 // CHECK-NEXT: [poseidon] {{.*}}raise_runtime_shape_k.cu: 1 function(s) a rewrite reached; every other function as written
 // CHECK: [poseidon] replaced the launch in stub _Z29__device_stub__rt_gemm_kerneliiiPdS_S_S_S_S_ with __poseidon_native_dgemm (C=arg7 A=arg5 B=arg3){{$}}
 
-// The descriptor the stub is built from: C, A, B are launch arguments 7, 5 and
-// 3, and the rd block gives M, Ncols, K, lda, ldb and ldc each as (factor
-// count, argument and offset of each factor, multiplier, addend): nDofs,
-// 3 numEls, 3 numPoints for K, lda and ldb, and nDofs; beta is 1.
+// C, A, B are launch arguments 7, 5, 3; the rd block gives M, Ncols, K, lda,
+// ldb, ldc as factor lists; beta is 1.
 // DESC: "library calls": [
 // DESC-NEXT: "_Z14rt_gemm_kerneliiiPdS_S_S_S_S_ 7 5 3 1 0 0 1 1 3 rd 1 2 -1 1 0 1 1 -1 3 0 1 0 -1 3 0 1 0 -1 3 0 1 0 -1 3 0 1 2 -1 1 0 1.000000e+00"{{$}}
 // DESC-NEXT: ],

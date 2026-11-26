@@ -1,41 +1,21 @@
-; DEFINE: %{opt} = %opt %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-enable-rewrite=false \
-; DEFINE:   -poseidon-enable-precision=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-matmul-library-calls=false \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
+; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune \
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
+; DEFINE:   -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} %s -poseidon-cache=%t/c -poseidon-cost-budget=-1e-9 > %t/out 2>&1
 ; RUN: FileCheck %s < %t/out
 ; RUN: FileCheck --check-prefix=GUARD %s < %t/out
 
 ; A scalar FMA reduction loop is raised in-kernel: the direct and TCEC classes
-; are priced from the fixture's inkernel_rel rows, and the most accurate
-; cost-reducing one, TCEC n=3, is materialized. The IR is from
-;   template <typename R, typename... T>
-;   __device__ R __poseidon_fp_optimize(void *, T...);
-;   __device__ int enzyme_const;
-;   __device__ int enzyme_dup;
-;   extern "C" __device__ __attribute__((noinline)) void
-;   matmul_body(const double *A, const double *B, double *D) {
-;     unsigned tx = threadIdx.x;
-;     unsigned ty = threadIdx.y;
-;     double acc = 0.0;
-;   #pragma unroll 1
-;     for (int k = 0; k < 16; ++k)
-;       acc += A[ty * 16 + k] * B[k * 16 + tx];
-;     D[ty * 16 + tx] = acc;
-;   }
-;   __global__ void matmul_kernel(const double *A, const double *B, double *D,
-;                                 double *dD) {
-;     __poseidon_fp_optimize<void>((void *)matmul_body, enzyme_const, A,
-;                                  enzyme_const, B, enzyme_dup, D, dD);
-;   }
-; (tcec_matmul.cu) via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120
-; -O2 -ffp-contract=on -S -emit-llvm. Inputs/matmul_site_profile is its profile: the
-; source compiled with -poseidon-profile-generate and launched twice as
-; matmul_kernel<<<1, dim3(16, 16)>>> on A[i] = 1.0 + 0.001 * i and
-; B[i] = 0.5 + 0.003 * (i % 97), with dD set to 1.0.
+; are priced from the fixture's inkernel_rel rows and the most accurate
+; cost-reducing one, TCEC n=3, is materialized. The IR (and, with its metadata,
+; Inputs/stale_cache/matmul_device.ll) is clang -x cuda --cuda-device-only
+; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on of an extern "C" noinline device
+; matmul_body(A, B, D) storing D[ty * 16 + tx] = sum over k < 16 (#pragma unroll
+; 1) of A[ty * 16 + k] * B[k * 16 + tx], called from matmul_kernel(A, B, D, dD)
+; through __poseidon_fp_optimize with A, B const and D, dD dup. Its profile,
+; Inputs/matmul_site_profile, is from two <<<1, dim3(16, 16)>>> launches on
+; A[i] = 1.0 + 0.001 * i, B[i] = 0.5 + 0.003 * (i % 97), dD = 1.0.
 
 ; CHECK: [poseidon] Found 1 matrix product(s) in preprocess_matmul_body
 ; CHECK-NEXT: Matmul[0]: 16x16x16 type=f64 origin=ConstantShape
@@ -123,8 +103,7 @@
 ; CHECK-NEXT: [[R:%[0-9]+]] = fpext float [[S2]] to double
 ; CHECK-NEXT: br label %[[EXIT:.+]]{{$}}
 
-; The raise runs in a block of the profiled 16 x 16 x 1 shape; one of another
-; shape runs the loop as written, and both paths store the product.
+; Blocks of another shape than the profiled 16 x 16 x 1 run the loop as written.
 ; GUARD-LABEL: define {{.*}} @preprocess_matmul_body(
 ; GUARD: [[NX:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
 ; GUARD-NEXT: [[X:%[0-9]+]] = icmp eq i32 [[NX]], 16
@@ -143,7 +122,6 @@
 ; GUARD: store double [[RES]], ptr %{{[0-9]+}}, align 8
 ; GUARD-NEXT: ret void
 
-; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
@@ -193,9 +171,7 @@ define dso_local ptx_kernel void @_Z13matmul_kernelPKdS0_PdS1_(ptr noundef %0, p
 }
 
 declare dso_local void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, ptr noundef) local_unnamed_addr #3
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.y() #4
 
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
@@ -204,9 +180,3 @@ attributes #2 = { convergent mustprogress noinline norecurse nounwind "frame-poi
 attributes #3 = { convergent nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
 attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #5 = { convergent nounwind "uniform-work-group-size" }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}

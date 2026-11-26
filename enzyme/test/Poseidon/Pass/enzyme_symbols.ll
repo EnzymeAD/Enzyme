@@ -1,7 +1,5 @@
-; The plugin calls only those of Enzyme's helpers that touch no Enzyme state:
-; a profile-use compile loads it without Enzyme's plugin, and a symbol only
-; Enzyme defines stops the load. No symbol the plugin leaves undefined is one
-; that Enzyme's plugin defines and opt does not.
+; A profile-use compile loads the plugin without Enzyme's: no symbol it leaves
+; undefined is one only Enzyme's plugin defines.
 ; REQUIRES: enzyme
 ; RUN: llvm-nm -D --undefined-only --format=just-symbols %poseidon_plugin | env LC_ALL=C sort -u > %t.poseidon
 ; RUN: llvm-nm -D --defined-only --format=just-symbols %opt | env LC_ALL=C sort -u > %t.host

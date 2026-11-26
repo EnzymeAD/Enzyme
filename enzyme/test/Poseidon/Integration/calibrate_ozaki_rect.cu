@@ -1,10 +1,6 @@
-// poseidon-calibrate's ozaki-rect arm: one library_ozaki_rect_rel row per
-// modulus count and --ozaki-rect (M, K) shape, and per modulus count plus the
-// native DGEMM row of a --product MxNxK, measured into an existing model. A
-// shape the model already has is not measured again, --force measures it
-// again, and the rows of the shapes a run does not name are kept, as is every
-// other row.
-//
+// poseidon-calibrate's ozaki-rect arm: rows per modulus count and shape (and
+// the native row of a --product), a shape it has skipped unless --force, other
+// rows kept.
 // REQUIRES: cuda-device
 // RUN: rm -rf %t && mkdir %t
 // RUN: cp %gpu_cost_model %t/cm.csv

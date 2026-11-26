@@ -14,23 +14,15 @@
 // RUN: env ROCM_PATH=%t/rocm %cmake %cmake_generator -S %S/../Inputs/package -B %t/iuse -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_PREFIX_PATH=%t/inst -DPOSEIDON_GPU_RUNTIME=HIP -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof > /dev/null
 // RUN: %cmake --build %t/iuse -- -t commands host | FileCheck --check-prefix=IUSE -DLIBDIR=%install_libdir -DPREFIX=%t %s
 
-// find.cpp with the HIP runtimes chosen (POSEIDON_GPU_RUNTIME=HIP):
-// every Poseidon flag reaches the compiler through -Xclang, since HIP's driver
-// hands -mllvm to the device linker as well, profile generation tells Enzyme
-// that a HIP compile is an LTO pre-link compile, and the actions link the HIP
-// builds of the profiler and of the library call (the optimized build's
-// commands only: it links the ROCm installation's hipBLAS).
+// find.cpp with POSEIDON_GPU_RUNTIME=HIP: flags go through -Xclang (HIP hands
+// -mllvm to the device linker too), profile generation passes
+// -enzyme-lto-prelink, and the actions link the HIP runtimes (hipBLAS of the
+// project's ROCm, ROCM_PATH else /opt/rocm, once installed).
 
 // GEN: -Xclang -mllvm -Xclang -poseidon-profile-generate
 // GEN-SAME: -Xclang -mllvm -Xclang -enzyme-lto-prelink=1
 // GEN: libposeidon_profile_shadows.a {{.*}}libposeidon_profile_hip.a
-
 // OUT: wave 348.384
-
 // USE: -Xclang -mllvm -Xclang -poseidon-profile-use={{[^ ]+}}/prof -Xclang -mllvm -Xclang -poseidon-tau=1e-6
 // USE: libposeidon_gemm_hip.a {{.*}}libhipblas.so {{.*}}libamdhip64.so
-
-// Installed, the package names no file of the ROCm it was built against: a
-// project links hipBLAS and the HIP runtime of the ROCm installation of its
-// own machine (ROCM_PATH, else /opt/rocm).
 // IUSE: [[PREFIX]]/inst/[[LIBDIR]]/libposeidon_gemm_hip.a [[PREFIX]]/rocm/lib/libhipblas.so [[PREFIX]]/rocm/lib/libamdhip64.so

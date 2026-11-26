@@ -1,36 +1,16 @@
-// The library call runtimes against a reference DGEMM of the same library, on
-// random operands whose rows and columns span 2^-8..2^8, compiled as CUDA
-// (cuBLAS) or as HIP (hipBLAS). Driven by Integration/gemm_runtime_{cuda,hip}.
-//
-//   ozaki:  every Ozaki-II case is also reduced to a digest of its result
-//           bits. The products are exact INT32 sums, the shifts come from the
-//           same round-up sums of squares and directed roundings, and every
-//           other step is a correctly rounded FP64 operation, so a correct
-//           runtime on any device returns the bits the CUDA runtime returns on
-//           an RTX 5090, whose digests are below, unless the device's log2 in
-//           a shift lands on the other side of an integer. The error against
-//           the reference is held to twice what that run measured.
-//   direct: each reduced-precision mode is held to the a priori bound of a
-//           product of operands rounded once (unit roundoff u) accumulated in
-//           FP32: (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|. The
-//           native DGEMM (mode 0 here) is held to gamma_K in FP64. On cuBLAS,
-//           the FP32 mode (mode 4) is also held to bit exactness against
-//           cublasSgemm of the operands narrowed to FP32 with the FP64 alpha
-//           and beta applied after, for a general call and square row-major
-//           ones, and differs from TF32 (mode 3). The TF32 mode is held to bit
-//           exactness against cublasGemmEx with CUBLAS_COMPUTE_32F_FAST_TF32 of
-//           the operands rounded to TF32 as the in-kernel raise rounds them
-//           (cvt.rna.tf32.f32), and the run reports which rounding the
-//           library itself gives FP32 operands and whether its TF32 product
-//           differs from its FP32 one on the same operands. The square
-//           1100^3 product has every extent above 1024: a cuMpSGEMM linked
-//           ahead of cuBLAS takes over cublasSgemm and cublasGemmEx and,
-//           with CUMPSGEMM_COMPUTE_MODE unset, stops the program there.
-//   empty:  every entry with K == 0 gives C = beta * C (beta = 0 writes zeros
-//           over NaN), touching nothing outside the M x Ncols view, and with
-//           M == 0 touches nothing.
-//   streams: Ozaki-II and direct calls interleaved on two non-blocking
-//           streams return the bits each returns alone.
+// The library call runtimes (cuBLAS or hipBLAS build) against the library's
+// DGEMM, on random operands spanning 2^-8..2^8, for Integration/gemm_runtime_*.
+//   ozaki:    each Ozaki-II case's result bits digest to what an RTX 5090
+//             returns (every step is exact or correctly rounded), and its
+//             error is held to twice what that run measured.
+//   direct:   each reduced-precision mode is held to the a priori bound
+//             (2u + u^2) + gamma_K (1 + u)^2 relative to |A||B|, the native
+//             mode to gamma_K; on cuBLAS, FP32 (mode 4) and TF32 (mode 3) are
+//             bit exact against cublasSgemm and FAST_TF32 cublasGemmEx of the
+//             rounded operands, and differ from each other.
+//   empty:    K == 0 gives C = beta * C, touching nothing outside the view;
+//             M == 0 touches nothing.
+//   streams:  calls interleaved on two streams return the bits each returns alone.
 //   negative: a negative extent stops the program with a message.
 #include <cmath>
 #include <cstdint>
@@ -66,9 +46,8 @@ struct Shape {
   double beta;
 };
 
-// Square N = 256, row-major; the elasticity reduce's layout (A row-major, B
-// and C column-major, accumulating into C) at a skinny shape; a nearly square
-// shape with the opposite layouts.
+// Square row-major; A row-major with B and C column-major accumulating into C;
+// a nearly square shape with the opposite layouts.
 const Shape kShapes[] = {
     {"square256", 256, 256, 256, 0, 0, 0, 0.0},
     {"rect343x192x1536", 343, 192, 1536, 0, 1, 1, 1.0},

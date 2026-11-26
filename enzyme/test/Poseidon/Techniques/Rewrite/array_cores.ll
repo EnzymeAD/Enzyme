@@ -12,14 +12,11 @@
 ; RUN: env FAKE_HERBIE_DIR=%S/../../Inputs/array_cores not %{opt} -poseidon-cache=%t/grouping -poseidon-herbie-arrays -poseidon-herbie-array-grouping=Inputs 2>&1 \
 ; RUN:   | FileCheck --check-prefix=GROUPING %s
 
-; Both outputs read sqrt(x*x + y*y) - x. With -poseidon-herbie-arrays the
+; Both outputs read sqrt(x*x + y*y) - x: with -poseidon-herbie-arrays the
 ; subgraph goes to Herbie as one array core per precision, the shared subterm
-; let*-bound and each element weighted by its output's sensitivity. The array
-; rewrite covers both outputs and is lowered with the shared subterm computed
-; once. %z reads x alone, so it is no element of that array; its per-output
-; cores go to Herbie in the same invocation as the array cores. An array core
-; that returns nothing is replaced by the per-output cores sent with
-; -poseidon-herbie-arrays=false.
+; let*-bound and computed once when lowered; %z, reading x alone, goes as
+; per-output cores in the same invocation. An array core that returns nothing
+; falls back to the per-output cores of -poseidon-herbie-arrays=false.
 
 define void @tester(double %x, double %y, ptr %o1, ptr %o2, ptr %o3) #0 {
 entry:
@@ -44,7 +41,6 @@ entry:
 
 declare double @llvm.sqrt.f64(double)
 declare void @__poseidon_fp_optimize(ptr, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; ARRAY: fake-herbie: {{.*}} --num-enodes 8000
@@ -76,5 +72,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; OFF-NEXT: (FPCore (v0 v1) {{.*}} :name "0" (- (sqrt (+ (* v0 v0) (* v1 v1))) v0))
 ; OFF-NOT: (array
 
-; The grouping is spelled exactly; any other spelling is refused.
 ; GROUPING: Poseidon: -poseidon-herbie-array-grouping=Inputs is not 'inputs' or 'executions'

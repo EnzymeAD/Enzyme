@@ -6,11 +6,8 @@
 // RUN: diff %t/plain.ll %t/left.ll
 // RUN: FileCheck %s < %t/left.ll
 
-// A module whose call sites the solve all leaves alone is the code as written:
-// the sites' copies were kept out of line until the sites were lowered, so the
-// module is compiled once more from its state before that, as a build without
-// a profile compiles it, and that result is emitted. Without it the
-// determinant the caller and the callee both compute is computed twice.
+// A module whose call sites are all left alone is emitted as a build without a
+// profile compiles it: the determinant caller and callee share is computed once.
 
 #include "poseidon/poseidon.h"
 

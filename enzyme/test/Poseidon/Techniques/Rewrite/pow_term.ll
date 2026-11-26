@@ -10,40 +10,16 @@
 ; RUN: not %{opt} -poseidon-enable-rewrite=false -poseidon-enable-precision=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/../../Inputs/pow_term/out0,%t/none -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=PO-MISSING %s
 
-; A rate term pow(T, fma(-log T, a, b)), scaled to about 1e-25, with log T also
-; used by the second output.
-;
-; -poseidon-subgraph-split-calls=pow gives the pow call its own FP subgraph with the
-; operations only it uses (the fma and the fneg; log T stays with its other
-; user), whatever -poseidon-subgraph-split-uses/-poseidon-subgraph-split-ops say (unset
-; here, which splits at no shared operation).
-;
-; The accuracy model draws T and y and evaluates log T from them, so every draw
-; lands inside the profiled input box.
-;
-; The Herbie core of the pow subgraph spells l = log T as (log v0), and a
-; (log v0) in a returned rewrite maps back to %l: the exact rewrite
-; exp(fma(-log T, a, b) log T) is priced without a second log (Delta CompCost
-; 256, not 768), and the rewrite pow(T, -1.62) is applied as llvm.pow.
-;
-; The accuracy weight of an instruction is floored at 1e-6 of the site's largest
-; sensitivity |gradient x value|: the r1 chain, about 1e-29 of r2, is lifted (5
-; of 8 instructions).
-;
-; -poseidon-output-profiles reads one profile per output, recorded with that
-; output seeded alone, and weights each instruction by its largest gradient
-; over that output's total sensitivity: no instruction is lifted.
-;
-; profiles: this module through the host profiler (opt
-; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
-; libposeidon_profile_shadows.a and libposeidon_profile.a), driven by
-;   for (int i = 0; i < 64; ++i) {
-;     double T = 250.0 + i * 150.0, y = 0.5 + (i % 7) * 0.25, o1, o2;
-;     double d1 = only != 1, d2 = only != 0;
-;     site(T, y, &o1, &d1, &o2, &d2);
-;   }
-; with only = -1; out0, out1: the same with only = 0 and only = 1, which seed
-; one output's shadow.
+; A rate term pow(T, fma(-log T, a, b)), about 1e-25, with log T also used by
+; the second output. -poseidon-subgraph-split-calls=pow gives the pow call its
+; own FP subgraph with the operations only it uses (SPLIT), and joint sampling
+; keeps every draw inside the profiled box. Herbie's core spells log T as
+; (log v0), which maps back to %l: the exp rewrite is priced without a second
+; log (256, not 768) and pow(T, -1.62) is applied as llvm.pow (HERBIE). The
+; accuracy weight is floored at 1e-6 of the largest sensitivity, lifting the
+; r1 chain (BASE); per-output profiles (out0, out1) weight by each output's
+; sensitivity and lift nothing (PO). Profiles: this module through the host
+; profiler, 64 calls with T = 250 + 150 i; out0/out1 seed one output each.
 
 define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
 entry:
@@ -70,7 +46,6 @@ declare double @llvm.log.f64(double)
 declare double @llvm.fma.f64(double, double, double)
 declare double @llvm.pow.f64(double, double)
 declare void @__poseidon_fp_optimize(ptr, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; BASE: [poseidon] sensitivity floor raised the accuracy weight of 5 of 8 profiled instruction(s) in preprocess_tester to 1.000000e-06 x the site maximum sensitivity

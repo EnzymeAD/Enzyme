@@ -5,20 +5,14 @@
 ; RUN: %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto -x ir %s %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/prelink -mllvm -enzyme-lto-prelink=1 -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_autodiff %s
 ; RUN: %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O0 -flto=thin -x ir %s %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/thin0 -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_autodiff %s
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-generate -poseidon-cache=%t/byname -S -o /dev/null 2>&1 | FileCheck --check-prefix=BYNAME %s
-; Profile generation of a device module in an LTO pre-link compile, the phase
-; of every HIP device compile. Enzyme defers derivative requests to the
-; post-link run there (full LTO at any level, ThinLTO above O0) unless
-; -enzyme-lto-prelink is given, and a HIP device link loads no plugin, so the
-; probes' requests must be lowered in this compile: with the flag they are;
-; without it the compile stops with a configuration error that says why (exit
-; status 1, not a crash; no reproducer). Run by pipeline name, the pass is not
-; told its phase and names the deferral only as a possibility. The kernel is
-; the one of annotated_kernel_nvptx.ll.
-
+; Profile generation in an LTO pre-link compile (every HIP device compile):
+; Enzyme defers the probes' requests to the post-link run (full LTO, ThinLTO
+; above O0), which loads no plugin, unless -enzyme-lto-prelink; without it the
+; compile stops with a configuration error (exit status 1, no crash). Run by
+; pipeline name, the pass names the deferral only as a possibility.
 ; DEFERRED: {{^}}error: Poseidon: profile generation emitted a derivative request that nothing lowered, which Enzyme leaves to the post-link run of an LTO pre-link compile; pass -mllvm -enzyme-lto-prelink=1 (for HIP, -Xclang -mllvm -Xclang -enzyme-lto-prelink=1){{$}}
 ; DEFERRED-NEXT: {{^}}1 error generated.{{$}}
 ; DEFERRED-NEXT: exit status 1
-
 ; The kernel calls the derivative with each pointer's shadow next to it, and the
 ; derivative carries the probes.
 ; LOWERED-LABEL: define ptx_kernel void @fms_kernel(
@@ -28,7 +22,6 @@
 ; LOWERED: define {{.*}}@diffepreprocess_fms_kernel_poseidon_body(
 ; LOWERED: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess_fms_kernel_poseidon_body to ptr), i64 0,
 ; LOWERED: call void @__poseidon_device_log_value(ptr addrspacecast (ptr addrspace(1) @poseidon.site.preprocess_fms_kernel_poseidon_body to ptr), i64 6,
-
 ; BYNAME: {{^}}error: Poseidon: profile generation emitted a derivative request that nothing lowered; add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin, and in an LTO pre-link compile -mllvm -enzyme-lto-prelink=1{{$}}
 
 source_filename = "lto_prelink_profgen.cu"
@@ -74,9 +67,3 @@ declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #1
 
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
 attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}

@@ -32,56 +32,38 @@
 // RUN: not %t/noenzyme/bin/poseidon-clang++ -poseidon-profile-generate -c %S/../Inputs/package/host.cpp -o %t/noenzyme.o 2>&1 | FileCheck --check-prefix=NOENZYME -DLIBDIR=%install_libdir -DPREFIX=%t/noenzyme %s
 // RUN: %t/noenzyme/bin/poseidon-clang++ -c %S/../Inputs/package/host.cpp -o %t/noenzyme.o
 
-// find_package(Poseidon) from the build tree and from an installation, and
-// one interface target per action: Poseidon's plugin, and Enzyme's after it to
-// generate a profile, the public header and POSEIDON_DEVICE_MATH,
-// statement-only contraction and the runtimes each action links, for a project
-// that names nothing else of Poseidon's. The package leaves the project's
-// MPFR_FOUND alone (Inputs/package/CMakeLists.txt stops otherwise). A host
-// compile gets no -enzyme-lto-prelink when the default runtime is CUDA or
-// NONE; a build with HIP alone defaults to the HIP runtime, under which every
-// profile-generate compile gets it (find_hip.cpp).
+// find_package(Poseidon) from the build tree and an installation: one target
+// per action carries the plugins (Enzyme's to generate), the header and
+// POSEIDON_DEVICE_MATH, statement-only contraction and the runtimes; the
+// project's MPFR_FOUND is left alone. -enzyme-lto-prelink only where the
+// default runtime is HIP (find_hip.cpp).
 
 // TREE: -- Poseidon 0.1 from [[DIR]]
 // TREE-NEXT: -- Poseidon plugins [[DIR]]/lib/Poseidon-{{[0-9]+}}.so {{.*}}/Enzyme/ClangEnzyme-{{[0-9]+}}.so
 // TREE-NEXT: -- Poseidon include {{.*}}/include
-
 // PLAINCMD: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on
 // PLAINCMD-NOT: ClangEnzyme
-
 // OUT: wave 348.384
-
 // PROF: {{^}}_Z4wavePKdPdi.fpprofile{{$}}
-
 // USE: clang++ {{.*}}-Xclang -mllvm -Xclang -poseidon-profile-use={{[^ ]+}}/prof -Xclang -mllvm -Xclang -poseidon-tau=1e-6 -Xclang -mllvm -Xclang -poseidon-cost-model={{[^ ]+}}/cm_cpu_host.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-print -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on {{.*}}-c {{[^ ]+}}/host.cpp{{$}}
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06 S=
 // USE: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
 // USE: [poseidon] pin: _Z4wavePKdPdi:P0=All FP64(0%) + FP32(100%)
 // USE: clang++ {{.*}}CMakeFiles/host.dir/host.cpp.o -o host {{.*}}libposeidon_profile.a && :{{$}}
-
 // NEWER: Could not find a configuration file for package "Poseidon" that is
 // NEWER: compatible with requested version "99"
-
 // INST: -- Poseidon 0.1 from [[PREFIX]]/[[LIBDIR]]/cmake/Poseidon
 // INST-NEXT: -- Poseidon plugins [[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
 // INST-NEXT: -- Poseidon include [[PREFIX]]/include
-
-// Where the default GPU runtime is HIP, the instrument compile also asks
-// Enzyme for the LTO pre-link run, at this place; elsewhere it does not.
 // INSTCMD-NOLTO: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin=[[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -ffp-contract=on
 // INSTCMD-LTO: clang++ -DPOSEIDON_DEVICE_MATH {{.*}}-fpass-plugin=[[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -ffp-contract=on
 // INSTCMD: libposeidon_profile_shadows.a
-
-// The installed driver takes the plugins, the header and the runtimes from its
-// installation, and stops when one it needs is missing there: Enzyme's only
-// to generate a profile.
-
+// The installed driver takes all from its installation and stops when one it
+// needs is missing: Enzyme's only to generate a profile.
 // INSTDRV: clang{{.*}} -fpass-plugin=[[PREFIX]]/[[LIBDIR]]/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
 // INSTDRV-SAME: -isystem [[PREFIX]]/include
 // INSTDRV-SAME: -L[[PREFIX]]/[[LIBDIR]] -lposeidon_profile_shadows
-
 // NOENZYME: poseidon-clang++: error: Poseidon: Enzyme plugin not found at [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so; install Enzyme to the same prefix or set POSEIDON_ENZYME_PLUGIN{{$}}
-
 // A project of host code alone links no GPU runtime of a GPU build.
 // NONE: libposeidon_profile.a
 // BADRT: POSEIDON_GPU_RUNTIME is OpenCL; it takes CUDA, HIP or NONE

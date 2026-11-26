@@ -1,34 +1,15 @@
-// Three-component FP32 expansion on the device: a 24-step logistic map is
-// profiled once and solved three ways; each binary's result is compared with
-// a binary128 evaluation of the same map on the host. With two components a
-// 1e-16 site tolerance keeps the FP64 body; admitting three components
-// selects the Expansion3 rewrite, which lands orders of magnitude closer to
-// the binary128 result than FP64 does; at 1e-15 the two-component rewrite
-// is selected and is the least accurate of the three.
-//
+// A 24-step logistic map solved three ways against a binary128 host result: at
+// 1e-16 two components keep FP64 and three select Expansion3, far closer than
+// FP64; at 1e-15 the two-component rewrite is selected, the least accurate.
 // REQUIRES: enzyme, cuda-device
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
-// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe 1e-11 1e-8 \
-// RUN:   | FileCheck --check-prefix=EXEC %s
-//
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c2 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
-// RUN:     -poseidon-precision-expansion-components=2 -poseidon-tau=1e-16 \
-// RUN:     %s -o %t/two.exe 2>&1 | FileCheck --check-prefix=TWO %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe 1e-11 1e-8 | FileCheck --check-prefix=EXEC %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c2 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-precision-expansion-components=2 -poseidon-tau=1e-16 %s -o %t/two.exe 2>&1 | FileCheck --check-prefix=TWO %s
 // RUN: %t/two.exe 1e-11 1e-8 | FileCheck --check-prefix=EXEC %s
-//
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
-// RUN:     -poseidon-precision-expansion-components=3 -poseidon-tau=1e-16 \
-// RUN:     %s -o %t/three.exe 2>&1 | FileCheck --check-prefix=THREE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-precision-expansion-components=3 -poseidon-tau=1e-16 %s -o %t/three.exe 2>&1 | FileCheck --check-prefix=THREE %s
 // RUN: %t/three.exe 0 1e-13 | FileCheck --check-prefix=EXEC %s
-//
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false \
-// RUN:     -poseidon-precision-expansion-components=3 -poseidon-tau=1e-15 \
-// RUN:     %s -o %t/loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/profile -poseidon-early-prune -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-rewrite=0 -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-precision-expansion-components=3 -poseidon-tau=1e-15 %s -o %t/loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
 // RUN: %t/loose.exe 1e-9 1e-6 | FileCheck --check-prefix=EXEC %s
 
 #include <cmath>

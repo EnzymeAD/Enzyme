@@ -7,33 +7,20 @@
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -DNO_SITE %s -o %t/fpc.thin/k.o
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-early-prune -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.thin -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use.thin/k.o 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DSITE_TAU=1e-18 -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-early-prune -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.refused -Xclang -mllvm -Xclang -poseidon-print %s -o %t/refused/k.o 2>&1 | FileCheck --check-prefix=REFUSED %s
-// RUN: cd %t/fpc && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/fpc.isa
-// RUN: cd %t/use && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/use.isa
-// RUN: cd %t/refused && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/refused.isa
+// RUN: for d in fpc use refused fpc.thin use.thin; do (cd %t/$d && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/$d.isa) || exit 1; done
 // RUN: diff %t/fpc.isa %t/refused.isa
-// RUN: cd %t/fpc.thin && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/fpc.thin.isa
-// RUN: cd %t/use.thin && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/use.thin.isa
-// RUN: awk '/^<.*>:$/{print "NAME " $0; p = $0 ~ /^<_Z(5other|10unprofiled)PKdPdi>:$/} p' %t/fpc.isa > %t/fpc.fns
-// RUN: awk '/^<.*>:$/{print "NAME " $0; p = $0 ~ /^<_Z(5other|10unprofiled)PKdPdi>:$/} p' %t/use.isa > %t/use.fns
+// RUN: for d in fpc use fpc.thin use.thin; do awk '/^<.*>:$/{print "NAME " $0; p = $0 ~ /^<_Z(5other|10unprofiled)PKdPdi>:$/} p' %t/$d.isa > %t/$d.fns || exit 1; done
 // RUN: diff %t/fpc.fns %t/use.fns
 // RUN: FileCheck --check-prefix=FNS %s < %t/use.fns
-// RUN: awk '/^<.*>:$/{print "NAME " $0; p = $0 ~ /^<_Z(5other|10unprofiled)PKdPdi>:$/} p' %t/fpc.thin.isa > %t/fpc.thin.fns
-// RUN: awk '/^<.*>:$/{print "NAME " $0; p = $0 ~ /^<_Z(5other|10unprofiled)PKdPdi>:$/} p' %t/use.thin.isa > %t/use.thin.fns
 // RUN: diff %t/fpc.thin.fns %t/use.thin.fns
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/fpc.isa | FileCheck --check-prefix=FPC-SITE %s
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/use.isa | FileCheck --check-prefix=USE-SITE --implicit-check-not=v_fma_f64 %s
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/use.thin.isa | FileCheck --check-prefix=USE-SITE --implicit-check-not=v_fma_f64 %s
 
-// Under full and thin offload LTO, every function no rewrite reaches (a kernel
-// that is no site, a site the profile does not cover) is in the code object as
-// the unannotated source compiled without the plugin has it, in the same order;
-// only the rewritten site differs. Under a tolerance no rewrite meets, the whole
-// code object is the one as written. The profile of `site` is the one its CUDA
-// counterpart Integration/rewritten_module_as_written.cu records; no gfx942 cost model
-// is measured, so the compile prices from a synthetic one.
-// Without the unprofiled site the compile has nothing to warn about, and
-// both halves print nothing, whether the site is rewritten or no rewrite
-// meets its tolerance.
+// Under full and thin offload LTO every function no rewrite reaches is in the
+// code object as compiled without the plugin, in order; under a tolerance no
+// rewrite meets, the whole object is. Without the unprofiled site both halves
+// print nothing. Profile of `site`: Integration/rewritten_module_as_written.cu.
 
 #include <hip/hip_runtime.h>
 
@@ -91,8 +78,7 @@ POSEIDON_OPTIMIZE __global__ void unprofiled(const double *x, double *y,
 // FNS: v_rsq_f64
 // FNS-NOT: s_swappc
 
-// As written, y = (3 x + 0.5) x + 1 in two FP64 fmas; rewritten, the same two
-// fmas in FP32 between a narrowing of x and a widening of the result.
+// y = (3 x + 0.5) x + 1: two FP64 fmas as written, two FP32 ones rewritten.
 // FPC-SITE: global_load_dwordx2 [[X:v\[[0-9]+:[0-9]+\]]], v{{\[[0-9]+:[0-9]+\]}}, off
 // FPC-SITE: v_fma_f64 [[T:v\[[0-9]+:[0-9]+\]]], [[X]], s{{\[[0-9]+:[0-9]+\]}}, 0.5
 // FPC-SITE-NEXT: v_fma_f64 [[R:v\[[0-9]+:[0-9]+\]]], [[T]], [[X]], 1.0

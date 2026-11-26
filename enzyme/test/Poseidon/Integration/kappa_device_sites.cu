@@ -7,10 +7,9 @@
 // RUN: cat %t/prof/*_Z5gaussPKdPdi*.fpprofile | FileCheck --check-prefix=MEASURED %s
 // RUN: cat %t/prof/*_Z4wavePKdPdi*.fpprofile | FileCheck --check-prefix=MEASURED %s
 
-// poseidon-kappa on two device sites: each run of the measurement perturbs one
-// kernel's values on the device (POSEIDON_KAPPA_SITE, POSEIDON_KAPPA_EPS) and
-// reports the metric alone, and each kernel's profile gets a condition number.
-// The program counts its own runs: the profiling run and 1 + 2 x 1 more.
+// poseidon-kappa on two device sites: each run perturbs one kernel on the
+// device, and each profile gets a condition number; 1 + 2 x 1 runs after the
+// profiling run.
 
 #include <cmath>
 #include <cstdio>

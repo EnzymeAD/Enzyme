@@ -3,14 +3,21 @@
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache -mllvm -poseidon-print %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: ls %t/cache | FileCheck --check-prefix=FILE %s
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
+// RUN: not %clang -x cuda -nocudainc -nocudalib --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache= -DSCALE %s -o /dev/null 2>&1 | FileCheck --check-prefix=NODIR %s
+// RUN: %clang -x cuda -nocudainc -nocudalib --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache= -mllvm -poseidon-launch-dir=%t/l -DSCALE %s -o /dev/null
+// RUN: ls %t/l | FileCheck --check-prefix=FILE %s
 
-// The launch descriptor the device compile leaves for the host compile is a
-// line of the manifest of the unit, a file named after the source. The mangled
-// name of a kernel instantiated with a lambda (a forall body) can be
-// longer than a file name may be; the manifest keeps the full name, where the
-// host compile reads it.
+// A kernel name longer than a file name may be is kept whole in the unit's
+// launch manifest, a file named after the source; with the cache disabled the
+// manifest of an annotated kernel needs -poseidon-launch-dir (NODIR).
 
 #include "poseidon/poseidon.h"
+
+#ifdef SCALE
+POSEIDON_OPTIMIZE __attribute__((global)) void scale(double *x, int n) {
+  x[n] = x[n] * x[n] + 1.0;
+}
+#else
 
 #define HD __attribute__((host, device))
 
@@ -45,6 +52,7 @@ void reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_
   void *k = (void *)CuKernel2D<decltype(body)>;
   (void)k;
 }
+#endif
 
 // GEN-NOT: cannot write
 // GEN: [poseidon] _ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
@@ -53,3 +61,5 @@ void reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_
 // FILE: {{^}}launches_long_kernel_name_nvptx.cu_{{[0-9A-F]+}}.json{{$}}
 
 // DESC: {{^ *}}"_ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 40 64"{{$}}
+
+// NODIR: error: Poseidon: this device compile hands the launches of its sites to its host half, and -poseidon-cache= names no directory to keep them in; pass -poseidon-launch-dir=<dir> to both halves

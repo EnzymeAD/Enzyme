@@ -6,11 +6,9 @@
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{flags} -poseidon-herbie-binary=%t/no-herbie -poseidon-cache=%t/c -poseidon-strict-mode -disable-output 2>&1 | FileCheck --check-prefix=STRICT %s
 ; RUN: env FAKE_HERBIE_DIR=%t %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{flags} -poseidon-herbie-binary=%S/../../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/fake -pass-remarks-missed=poseidon -disable-output 2>&1 | FileCheck --check-prefix=HERBIE --implicit-check-not="no algebraic rewrites" %s
 
-; Algebraic rewriting left to its default is on when a Herbie can run. With
-; none, the compile proposes no rewrites and says so once, in a
-; missed-optimization remark at the first site it solves, not in a warning or
-; an error. Under -poseidon-strict-mode the missing Herbie is an error, as is
-; asking for rewrites with -poseidon-enable-rewrite (herbie_cannot_run.ll).
+; Algebraic rewriting left to its default is on when a Herbie can run; with
+; none, one missed-optimization remark at the first site says so, under opt and
+; clang alike, no warning or error; under -poseidon-strict-mode it is an error.
 
 ; DEFAULT: remark: {{.*}}Poseidon proposes no algebraic rewrites: there is no Herbie at {{.*}}/no-herbie{{( \[-Rpass-missed=poseidon\])?$}}
 
@@ -48,5 +46,4 @@ entry:
 }
 
 declare double @__poseidon_fp_optimize(ptr, ...)
-
 attributes #0 = { "target-cpu"="x86-64" }

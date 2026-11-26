@@ -1,26 +1,11 @@
-// An opt pass plugin for expansion_reference_identity.cpp,
-// expansion_model_identity.cpp and expansion_fast_flags.cpp, loaded after the
-// Poseidon plugin, whose expansion emitters, materializer and accuracy model it
-// calls.
-//
-// expansion-match-raw writes, for n = 2, 3, 4 components, raw-component
-// functions p<n>_<op>(ptr a, [ptr b, [ptr c,]] ptr out) through the emitters,
-// for op in add sub mul sqr div sqrt neg fma fmasq (fmasq: fma(a, a, c)), and
-// p<n>_from_f64 / p<n>_to_f64 / p<n>_to_f32 through the boundary converters.
-//
-// expansion-match-model does the same, and also writes FP64 and FP32
-// functions of operations (single operations and fixed random chains of three
-// to six), evaluates the accuracy model on them as the pass does
-// (getFPValues with a precision candidate whose changes are the function's
-// operations) and then materializes them with applyExpansion, one call per
-// change, as PrecisionCandidate::apply does. Into $EXPANSION_MATCH_OUT it writes
-// raw.bin (the raw-component cases and the model's results for them),
-// app.bin (the points and the model's results for each function) and
-// fns.inc (the functions, for the harness).
-//
-// apply-expansion materializes every FP64 instruction of each function named
-// ex<n>_* as an n-component FP32 expansion, with no candidate selection in
-// between.
+// An opt pass plugin for Techniques/Precision/expansion_identity.cpp and
+// expansion_fast_flags.cpp, calling the Poseidon plugin it is loaded after.
+// expansion-match-raw writes raw-component functions p<n>_<op> for n = 2, 3, 4
+// through the emitters and boundary converters; expansion-match-model also
+// writes FP64/FP32 functions of single operations and random chains, evaluates
+// the accuracy model on them and materializes them as PrecisionCandidate::apply
+// does, writing raw.bin, app.bin and fns.inc into $EXPANSION_MATCH_OUT;
+// apply-expansion materializes every FP64 instruction of each ex<n>_* function.
 #include "Model/ExpansionModel.h"
 #include "Support/Utils.h"
 #include "Model/Evaluators.h"

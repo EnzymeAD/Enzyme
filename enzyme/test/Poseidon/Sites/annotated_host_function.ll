@@ -7,8 +7,10 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF-ERR --implicit-check-not=warning: %s
 ; RUN: FileCheck --check-prefix=OFF --implicit-check-not=_poseidon_body %s < %t/off.ll
 
-; Each site's tables give the parameter number, the seed width and the name of
-; each pointer argument; the globals table holds @table and its size.
+; POSEIDON_OPTIMIZE on a host function makes it a wrapper around its outlined
+; body. Generating, each call is a reverse-mode request whose shadows the
+; runtime finds from each pointer's allocation (stack objects registered per
+; call, globals before main); an FP return is seeded, an FP scalar active.
 ; GEN: @table = internal global [4 x double] zeroinitializer
 ; GEN: [[XN:@[^ ]+]] = private unnamed_addr constant [2 x i8] c"x\00"
 ; GEN-NEXT: [[OUTN:@[^ ]+]] = private unnamed_addr constant [4 x i8] c"out\00"
@@ -70,7 +72,6 @@
 ; GEN-ERR: [poseidon] scale: site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
 ; GEN-ERR: [poseidon] dot: site 1, 1 shadow buffer(s), output(s) return, 1 call(s)
 
-; Without a profile the site keeps the body it was written with, folded back.
 ; USE-LABEL: define void @scale(ptr %x, ptr %out)
 ; USE-NEXT: entry:
 ; USE-NEXT: [[V:%.+]] = load double, ptr %x
@@ -94,7 +95,6 @@
 ; USE-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: no profile at {{.*}}/scale.fpprofile:
 ; USE-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: no profile at {{.*}}/dot.fpprofile:
 
-; Without a profile action the module is the one written.
 ; OFF: define void @scale(ptr %x, ptr %out)
 ; OFF-NEXT: %v = load double, ptr %x
 ; OFF-NEXT: %m = fmul double %v, 3.000000e+00
@@ -115,14 +115,6 @@
 ; OFF-NOT: _poseidon_body
 ; OFF-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
 ; OFF-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>, so it is left as written; compile with one of the two to profile or optimize it
-
-; POSEIDON_OPTIMIZE on a host function makes the function a wrapper around its
-; outlined body, so every call of it is the site. Under profile generation
-; each call of the body is a reverse-mode request whose shadows the runtime
-; finds from the allocation each pointer argument points into; a stack object
-; passed to a call is registered for that call, and the module's globals before
-; main. A floating-point return is seeded by the request, a floating-point
-; scalar parameter is active and an integer one constant.
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"

@@ -1,9 +1,7 @@
 // RUN: %poseidon_test_programs/poseidon-test-matmul-scheme | FileCheck %s
 
-// What a matrix-product candidate's scheme alone decides: the scheme and
-// num_moduli field the launch descriptor stores for each library call
-// candidate generation proposes, the significand bits the accuracy model is
-// given for a split in either realization, and the label fragments.
+// What a matrix-product scheme alone decides: each library call's descriptor
+// scheme and num_moduli fields, a split's modelled bits, and the labels.
 
 #include "Techniques/Matmul/Scheme.h"
 #include "runtime/gemm/SchemeConstants.h"
@@ -68,8 +66,7 @@ int main() {
 // CHECK-NEXT: library direct [] tf32/f32: descriptor Direct 3
 // CHECK-NEXT: library direct [] f32/f32: descriptor Direct 4
 
-// The library split is the in-kernel n=2 FP16 split, so both are modelled
-// with the same 22 bits.
+// The library split is the in-kernel n=2 FP16 split: the same 22 bits.
 // CHECK-NEXT: split n=2 f16_f32: 22 bits
 // CHECK-NEXT: split n=3 f16_f32: 24 bits
 // CHECK-NEXT: split n=5 f16_f32: 24 bits

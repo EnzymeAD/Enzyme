@@ -6,18 +6,45 @@
 // RUN: FileCheck --check-prefix=PROF %s < %t/prof/_Z5scalePKdPdi.fpprofile
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c2 -DUNKNOWN %s -o %t/unknown
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof2 not --crash %t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c3 -DMARKER_ONLY %s -o %t/marker
+// RUN: llvm-nm %t/marker | FileCheck --check-prefix=MARKER %s
+// RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/marker
+// RUN: ls %t/prof3/_Z5scalePKdPdi.fpprofile
 
-// The shadows of a POSEIDON_OPTIMIZE function on the host are sized from the
-// allocation each pointer argument points into: every heap allocator, a
-// file-scope and a function-local static array, stack arrays passed directly
-// and through a function that is not inlined, and interior pointers. Each call
-// writes its own buffer, so the gradient on the site's last operation counts
-// every element written once. A pointer into memory the profiler did not see
-// allocated stops the run, naming the function and the argument.
+// Host site shadows are sized from the allocation each pointer points into:
+// every heap allocator, static arrays, stack arrays (also through a call that
+// is not inlined), interior pointers; each element written counts once. A
+// pointer into memory the profiler did not see allocated stops the run. A
+// build with marker sites only (MARKER_ONLY) links the allocator, which then
+// only passes allocations through.
 
+#include <cstdlib>
+
+#ifdef MARKER_ONLY
+template <typename R, typename... T> R __poseidon_fp_optimize(void *, T...);
+extern int enzyme_dup;
+
+__attribute__((noinline)) void scale(const double *x, double *y, int n) {
+  for (int i = 0; i < n; ++i)
+    y[i] = x[i] * x[i] + x[i];
+}
+
+int main() {
+  const int n = 64;
+  double *x = (double *)malloc(n * sizeof(double));
+  double *y = (double *)malloc(n * sizeof(double));
+  double *dx = (double *)calloc(n, sizeof(double));
+  double *dy = (double *)malloc(n * sizeof(double));
+  for (int i = 0; i < n; ++i) {
+    x[i] = 0.01 * i;
+    dy[i] = 1.0;
+  }
+  __poseidon_fp_optimize<void>((void *)scale, enzyme_dup, x, dx, enzyme_dup, y, dy, n);
+  return y[3] > 1.0;
+}
+#else
 #include "poseidon/poseidon.h"
 #include <cstdio>
-#include <cstdlib>
 #include <new>
 #include <sys/mman.h>
 #include <vector>
@@ -72,16 +99,13 @@ int main() {
 #endif
   printf("%g %g %g %g %g %g\n", my[3], vy[3], fileY[3], localY[3], stackY[3] + stackZ[3], iy[9]);
 }
+#endif
 
 // GEN: [poseidon] scale(double const*, double*, int): site 0, 2 shadow buffer(s), output(s) 1
-
 // SYM: {{[VvDdRr]}} __poseidon_host_sites_present
-
 // OUT: 0.0416 0.0416 0.0416 0.0416 0.0832 0.11
-
-// One record, y = x * x + x over x in [0.01, 0.64], with the range of each of
-// its three operands, aggregated over 12 calls of 64 elements, one of 1 and one
-// of 56; each element's gradient is 1.
+// One record (y = x * x + x, x in [0.01, 0.64]) over 12 calls of 64 elements,
+// one of 1 and one of 56; each element's gradient is 1.
 // PROF: MinRes = 1.00999999999999996e-02
 // PROF-NEXT: MaxRes = 1.04960000000000009e+00
 // PROF-NEXT: SumSens = 3.86301{{[0-9]+}}e+02
@@ -92,6 +116,7 @@ int main() {
 // PROF-NEXT: Operand[0] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
 // PROF-NEXT: Operand[1] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
 // PROF-NEXT: Operand[2] = [1.00000000000000002e-02, 6.40000000000000013e-01, 1.00000000000000002e-02]
-
 // UNKNOWN: [poseidon] argument 2 ('y') of scale(double const*, double*, int) points to 0x{{[0-9a-f]+}}, which the profiler did not see allocated.
 // UNKNOWN-SAME: Allocate this array on the heap, or give its shadow in an explicit list of __poseidon_optimize: enzyme_dup before the pointer and the shadow after it.
+// MARKER: {{^ +}}w __poseidon_host_sites_present
+// MARKER: T malloc

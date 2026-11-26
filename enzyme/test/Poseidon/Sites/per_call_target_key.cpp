@@ -5,11 +5,8 @@
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
 // RUN: %poseidon_clangxx -std=c++20 -O2 -DA=1e-9 -DB=1e-6 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-tau=1e-3 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/use 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='did not contain' %s
 
-// A target that __poseidon_optimize_tau or a marker's poseidon_tau gives,
-// taken by the caller as a template argument, is left out of the name of the
-// call's copy: the
-// profile of a call is named after its position, and a compile with other
-// targets finds it.
+// A target the caller takes as a template argument is left out of the name of
+// the call's copy, so a compile with other targets finds its profile.
 
 #include "poseidon/poseidon.h"
 #include <cstdio>

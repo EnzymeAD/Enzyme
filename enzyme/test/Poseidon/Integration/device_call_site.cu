@@ -3,30 +3,21 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2> %t/gen.err
 // RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=PRIMAL %s
-//
-// The call form and the explicit form with the shadows written by hand record
-// the same profile: the same ranges, execution counts and gradients. The sums
-// are accumulated by atomics and differ between any two runs in their last
-// digits, so they are compared to a relative 1e-12.
+// The call form and the explicit form record the same profile; the atomic
+// sums are compared to a relative 1e-12.
 // RUN: grep -v -e SiteId -e Sum %t/prof/_Z9hooke_volRK4mat3fPf.fpprofile > %t/explicit.prof
 // RUN: grep -v -e SiteId -e Sum %t/prof/_Z9hooke_volRK4mat3fPf.poseidon._Z8vol_callPKffPfi.0.fpprofile > %t/call.prof
 // RUN: diff %t/explicit.prof %t/call.prof
 // RUN: FileCheck --check-prefix=PROF %s < %t/call.prof
 // RUN: grep Sum %t/prof/_Z9hooke_volRK4mat3fPf.fpprofile > %t/explicit.sums
 // RUN: grep Sum %t/prof/_Z9hooke_volRK4mat3fPf.poseidon._Z8vol_callPKffPfi.0.fpprofile > %t/call.sums
-// RUN: paste %t/explicit.sums %t/call.sums \
-// RUN:   | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' \
-// RUN:   | FileCheck --check-prefix=SUMS %s
-//
+// RUN: paste %t/explicit.sums %t/call.sums | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' | FileCheck --check-prefix=SUMS %s
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/prof -poseidon-early-prune -poseidon-cost-model=%gpu_cost_model -poseidon-enable-rewrite=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
 
-// __poseidon_optimize_tau in device code: the call is a site, profiled with
-// shadows the pass makes for the local objects it passes, against the same
-// call written with __poseidon_fp_optimize and shadows of the caller's own.
-// The body is the volumetric response of a Neo-Hookean material near the
-// reference configuration, where J - 1 cancels.
+// __poseidon_optimize_tau in device code, shadows made by the pass, against
+// __poseidon_fp_optimize with the caller's shadows. J - 1 cancels near J = 1.
 
 #include "poseidon/poseidon.h"
 #include <cmath>

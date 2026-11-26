@@ -1,18 +1,19 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-matmul \
-; DEFINE:   -poseidon-matmul-library-calls=false \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
-; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print -S
-; RUN: rm -rf %t && mkdir %t
-; RUN: mkdir -p %t/nokappa %t/diverged %t/noise && cp %S/Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/Inputs/site_kappa/*.fpprofile %t/diverged/ && cp %S/Inputs/site_kappa/*.fpprofile %t/noise/
+; DEFINE:   -poseidon-enable-rewrite=false -poseidon-enable-matmul -poseidon-matmul-library-calls=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-print -S
+; Two sites whose profiles carry a condition number (Kappa 1000 on the product,
+; 0.001 on the scalar subgraph): each candidate's accuracy cost is scaled by
+; Kappa over the site's profiled sensitivity.
+; RUN: rm -rf %t && mkdir -p %t/kappa %t/nokappa %t/diverged %t/noise
+; RUN: (head -n 3 %S/../Inputs/matmul_site_profile/matmul_body.fpprofile && printf 'SiteId = 0\nKappa = 1000\nKappaMark = ok\n' && tail -n +4 %S/../Inputs/matmul_site_profile/matmul_body.fpprofile) > %t/kappa/matmul_body.fpprofile
+; RUN: (head -n 3 %S/../Inputs/expansion_two_components/fms_body.fpprofile && printf 'SiteId = 1\nKappa = 0.001\nKappaMark = ok\n' && tail -n +4 %S/../Inputs/expansion_two_components/fms_body.fpprofile) > %t/kappa/fms_body.fpprofile
+; RUN: cp %t/kappa/*.fpprofile %t/nokappa/ && cp %t/kappa/*.fpprofile %t/diverged/ && cp %t/kappa/*.fpprofile %t/noise/
 ; RUN: sed -i -e "s/^Kappa = .*/Kappa = 0/" -e "s/^KappaMark = ok/KappaMark = below-noise/" %t/noise/matmul_body.fpprofile %t/noise/fms_body.fpprofile
 ; RUN: sed -i "/^Kappa/d" %t/nokappa/matmul_body.fpprofile %t/nokappa/fms_body.fpprofile
 ; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/matmul_body.fpprofile
-; RUN: %{opt} -poseidon-profile-use=%S/Inputs/site_kappa -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c1 2>&1 \
-; RUN:   | FileCheck --check-prefix=KAPPA %s
-; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c2 2>&1 \
-; RUN:   | FileCheck --check-prefix=PLAIN %s
+; RUN: %{opt} -poseidon-profile-use=%t/kappa -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c1 2>&1 | FileCheck --check-prefix=KAPPA %s
+; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-early-prune -poseidon-enable-precision=true -poseidon-precision-expansions=true -poseidon-precision-tier-step=100 -poseidon-precision-three-tier=false -poseidon-cache=%t/c2 2>&1 | FileCheck --check-prefix=PLAIN %s
 ; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-early-prune -poseidon-enable-precision=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
 ; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-early-prune -poseidon-enable-precision=false -poseidon-tau=1e-3 -poseidon-cache=%t/c5 2>&1 | FileCheck --check-prefix=DIVERGED %s
 ; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-early-prune -poseidon-enable-precision=false -poseidon-solve-jointly -poseidon-cache=%t/c6 2>&1 | FileCheck --check-prefix=DIVERGED %s
@@ -33,8 +34,8 @@
 ; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=2.978463e-02
 ; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=2.540700e-02
 
-; The same solve with the two header lines gone: every accuracy cost is the
-; unscaled one, and the computation costs are untouched in both runs.
+; Without the Kappa lines every accuracy cost is unscaled; computation costs
+; are the same.
 ; PLAIN-NOT: measured condition number
 ; PLAIN: Initial AccuracyCost: 2.571104e-13
 ; PLAIN-NEXT: Initial ComputationCost: 2.564000e+03
@@ -47,31 +48,17 @@
 ; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=1.460363e+00
 ; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=1.245725e+00
 
-; A condition number the kappa runs could not tell from the noise of the runs
-; would scale every error to zero; the site is solved as one without a
-; condition number instead, with a warning.
+; A condition number below the runs' noise is ignored, with a warning.
 ; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise), so the site is solved against its own target; measure it with larger perturbation steps in POSEIDON_KAPPA_LADDER{{$}}
 ; NOISE: warning: {{.*}}condition number of preprocess_matmul_body
 
-; A site whose kappa run diverged has no finite condition number: no candidate
-; of it is offered, under a budget, under a target and in a joint solve, and
-; the site is left as written. Its errors are not scaled.
+; A site whose kappa run diverged is left as written under a budget, a target
+; and a joint solve.
 ; DIVERGED: warning: {{.*}}Poseidon: the profiling runs of preprocess_matmul_body diverged under the smallest perturbation, so no candidate can be traded against its accuracy and the site is left as written{{$}}
 ; DIVERGED: [poseidon] preprocess_matmul_body: measured condition number 1.000000e+03 (diverged), profiled sensitivity 4.903078e+04, error scale 1.000000e+00
 ; DIVERGED-NOT: Applying solution for matmul
 ; DIVERGED: no rewrite applied for preprocess_matmul_body
 
-; Two annotated sites in one module, each carrying its condition number in its
-; profile header: the accuracy cost of every candidate of a site, the matrix
-; product's and the scalar subgraph's alike, is multiplied by the site's Kappa
-; divided by the total sensitivity its profile records; a site whose kappa run
-; diverged is scaled by a large finite factor instead. The bodies and profiles
-; are the Inputs/matmul_site_profile and Inputs/expansion_two_components fixtures; the Kappa values,
-; 1000 on the product and 0.001 on the scalar subgraph, make the scaling
-; legible in the printed costs. The second run solves against the same
-; profiles with the two header lines deleted.
-
-; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
@@ -149,24 +136,13 @@ define dso_local ptx_kernel void @_Z13matmul_kernelPKdS0_PdS1_(ptr noundef %0, p
 }
 
 declare dso_local void @_Z22__poseidon_fp_optimizeIvJiPKdiS1_iPdS2_EET_PvDpT0_(ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, i32 noundef, ptr noundef, ptr noundef) local_unnamed_addr #3
-
 declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #4
-
 declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #4
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
-
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.y() #4
-
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
 attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #2 = { convergent mustprogress noinline norecurse nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
 attributes #3 = { convergent nounwind "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
 attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #5 = { convergent nounwind "uniform-work-group-size" }
-
-!llvm.module.flags = !{!0, !1, !2}
-
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
-!1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
-!2 = !{i32 7, !"frame-pointer", i32 2}

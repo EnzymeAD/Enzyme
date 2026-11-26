@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 """make_cost_models.py <out dir> [<gpu arch> <host cpu>]
 
-Writes the cost models the Poseidon tests price from. Every price is made up:
-none is a measurement of any device, and none predicts one. The prices are
-chosen only so that the orderings the tests exercise hold.
-
-  cm_cpu_native.csv       x86-64: 1 per float operation, 2 per float math
-                          library call, 4 times that in double, 1 per cast
-  cm_cpu_host.csv         the same, filed under <host cpu>, the CPU a host
-                          compile names by default
-  cm_cpu_foreign.csv      the same, filed under sm_120
-  cm_cpu_noarch.csv       the same, with no native_arch header
-  cm_cpu_missing.csv      the same, without the fmul,double row
-  cm_gfx942_synthetic.csv 1 per float and 64 per double operation
-  cm_sm_120_synthetic.csv the GPU prices of gpu_rows(), with three in-kernel
-                          tensor-core classes
-  cm_sm_120_synthetic_library.csv  and the library-call GEMMs but the
-                                    error-corrected one, which a build
-                                    without cuMpSGEMM does not offer
-  cm_sm_120_synthetic_tcec.csv      and that one too
-  cm_sm_120_synthetic_half.csv      and half at half the float price
-  cm_sm_90_synthetic.csv  cm_sm_120_synthetic.csv filed under sm_90
-  cm_gpu_synthetic.csv    with <gpu arch>: every family a calibrated NVIDIA
-                          model has, filed under that architecture
+Writes the made-up cost models the tests price from (no price is a
+measurement; each only makes the orderings the tests exercise hold):
+  cm_cpu_native.csv        x86-64; also cm_cpu_host (filed under <host cpu>),
+                           cm_cpu_foreign (sm_120), cm_cpu_noarch (no
+                           native_arch), cm_cpu_missing (no fmul,double row)
+  cm_gfx942_synthetic.csv  1 per float and 64 per double operation
+  cm_sm_120_synthetic.csv  gpu_rows() with three in-kernel classes; _library
+                           adds the library calls but TCEC, _tcec that too,
+                           _half half at half the float price; cm_sm_90 the
+                           same under sm_90
+  cm_gpu_synthetic.csv     every family of a calibrated model, for <gpu arch>
 """
 import os
 import sys
