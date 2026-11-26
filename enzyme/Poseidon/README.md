@@ -157,6 +157,24 @@ The host has no matrix-product technique. Profiling records host sites with
 the host profiler and device sites with the device profiler, whose probes the
 plugin links into each device module it compiles for profile generation.
 
+### Source layout
+
+| Folder | What it holds |
+|---|---|
+| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), the optimization unit the solver chooses among (`Unit.h`), and what a technique provides the pass (`Technique.h`) |
+| `Model/` | The models every technique shares: the measured cost table and the cost of code over it, the sampling of a subgraph's inputs, and the evaluation of an expression graph at a point, in floating point and exactly |
+| `Techniques/` | One folder per technique, each with its own pricing and accuracy model: `Algebraic/` (Herbie), `Precision/` (narrowing and floating-point expansions), `Matmul/` (matrix products on tensor cores or as library calls); `Techniques.cpp` lists them |
+| `Solve/` | A site's collection and pricing of units, the DP over them, pins, and the explanation of the result |
+| `Sites/`, `Profile/` | Finding and outlining sites, their canonical form and launch manifest; profile generation and the reading of profiles |
+| `Pass/`, `Targets/`, `Support/` | The pass pipeline and its options; what the pass knows of each target; shared helpers |
+| `runtime/`, `tools/` | The libraries a compiled program links (profilers, GEMM runtimes); `poseidon-clang`, `poseidon-calibrate`, `poseidon-explain`, `poseidon-kappa` |
+
+The units are an algebraic unit, a precision unit or a matmul unit, one kind
+per technique; the solver sees each as an optimization unit whose candidates
+carry a cost change and an error change. A technique joins the pass as one
+entry of the list in `Techniques/Techniques.cpp`: the names of its units, the
+option that turns it on, and the steps of a site's collection it takes part in.
+
 ### Passes
 
 The plugin adds its passes at five extension points of the new pass manager.

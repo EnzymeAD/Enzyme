@@ -136,6 +136,11 @@ public:
   /// in cost-model units: its cost less the erased operations', times the
   /// executions. The unit must be priced.
   double getCompCostDelta(size_t candidateIndex);
+  std::optional<double> pricedCostDelta(size_t i) override {
+    if (candidates[i].CompCost == std::numeric_limits<double>::max())
+      return std::nullopt;
+    return getCompCostDelta(i);
+  }
   /// How often a candidate's boundary conversions run, given the loops `LI`
   /// of the site's function.
   BoundaryCastFreq boundaryCastFreq(const llvm::LoopInfo &LI) const;

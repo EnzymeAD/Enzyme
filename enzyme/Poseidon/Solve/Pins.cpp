@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Pins.h"
+#include "Core/Technique.h"
 #include "Optimize.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Session.h"
@@ -27,14 +28,13 @@ namespace poseidon {
 
 static std::optional<PinItem> parseUnitRef(StringRef s) {
   PinItem item;
-  const UnitKindInfo *kind =
-      llvm::find_if(unitKinds(), [&](const UnitKindInfo &k) {
-        return s.starts_with(k.letter);
-      });
-  if (kind == unitKinds().end())
+  const Technique *T = llvm::find_if(techniques(), [&](const Technique &T) {
+    return s.starts_with(T.Unit.letter);
+  });
+  if (T == techniques().end())
     return std::nullopt;
-  s = s.drop_front(kind->letter.size());
-  item.kind = kind->kind;
+  s = s.drop_front(T->Unit.letter.size());
+  item.kind = T->Unit.kind;
   size_t digits = s.find_first_not_of("0123456789");
   if (digits == 0 || digits == StringRef::npos ||
       s.take_front(digits).getAsInteger(10, item.unit))

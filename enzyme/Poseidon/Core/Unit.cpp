@@ -21,20 +21,6 @@ namespace poseidon {
 
 OptimizationUnit::~OptimizationUnit() = default;
 
-static constexpr UnitKindInfo kUnitKinds[] = {
-    {UnitKind::Algebraic, "algebraic", "A", "an algebraic rewrite", true},
-    {UnitKind::Precision, "precision change", "P", "a precision change", true},
-    {UnitKind::Matmul, "matrix product", "M", "a candidate", false},
-};
-
-ArrayRef<UnitKindInfo> unitKinds() { return kUnitKinds; }
-
-const UnitKindInfo &infoOf(UnitKind kind) {
-  const UnitKindInfo &info = kUnitKinds[unsigned(kind)];
-  assert(info.kind == kind && "unit kinds listed out of order");
-  return info;
-}
-
 void SiteUnit::bind(Session &S, SiteState &site, FPGraph &graph,
                     size_t indexInKind) {
   assert(!boundSite && "a unit is bound to its site once");

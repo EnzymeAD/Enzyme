@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/Technique.h"
 #include "Internal.h"
 
 #include "Model/CostModel.h"
@@ -599,7 +600,9 @@ static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
 Error finalizeModule(Session &S, Module &M) {
   if (Error E = checkPinnedSites(S, M))
     return E;
-  reportHerbieAnswers(S);
+  for (const Technique &T : techniques())
+    if (T.Report)
+      T.Report(S);
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases
   // leaving a canonicalized clone nothing calls.

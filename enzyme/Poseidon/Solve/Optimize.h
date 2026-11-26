@@ -195,6 +195,14 @@ struct SiteState : FPGraph {
   /// The site's units in site order (algebraicUnits, precisionUnits,
   /// matmulUnits), each bound to this site.
   llvm::SmallVector<SiteUnit *, 8> units;
+  /// Whether the site's floating-point operations are rounded as written,
+  /// so that floating-point expansions can be proposed for them.
+  bool expansionSafe = true;
+  /// How many names of graph inputs Herbie's queries of the site's
+  /// subgraphs have used.
+  int herbieSymbols = 0;
+  /// The operand sampling of the matrix accuracy model, 0 for none.
+  unsigned matmulSampleLogBits = 0;
   /// Whether sealUnits has run.
   bool unitsSealed = false;
   /// Set when the site is solved against the DP table cache.
@@ -212,9 +220,9 @@ struct SiteState : FPGraph {
   std::optional<llvm::TargetLibraryInfo> raiseTLI;
   std::optional<llvm::ScalarEvolution> raiseSE;
 
-  /// Binds every unit to this site and lists it in `units`. Once per site,
-  /// after its last proposal: no unit is added to algebraicUnits,
-  /// precisionUnits or matmulUnits after it.
+  /// Binds every unit to this site and lists it in `units`, technique by
+  /// technique. Once per site, after its last proposal: no unit is added
+  /// to algebraicUnits, precisionUnits or matmulUnits after it.
   void sealUnits(Session &S);
 };
 

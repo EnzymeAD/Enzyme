@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Optimize.h"
+#include "Core/Technique.h"
 #include "Explain.h"
 #include "Model/CostModel.h"
 #include "Profile/ProfileReader.h"
@@ -18,7 +19,6 @@
 #include "Targets/Target.h"
 #include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision/Expansion.h"
 #include "Techniques/Precision/Narrowing.h"
 #include "Techniques/Precision/Precision.h"
 
@@ -104,79 +104,6 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
                  << ": MaxBlockDims=(" << P.header.maxBlockDim[0] << ','
                  << P.header.maxBlockDim[1] << ',' << P.header.maxBlockDim[2]
                  << ") LaunchCount=" << P.header.launchCount << '\n';
-  }
-  return Error::success();
-}
-
-// The site's matrix products, with the analyses their raise keeps in `st`.
-static void recognizeMatrixProducts(Session &S, Function &F,
-                                    const SiteProfileData &P, SiteState &st) {
-  const Options &O = S.Opts;
-  const Target &T = Target::of(F);
-  if (T.isDevice() && O.Candidates.EnableMatmul) {
-    st.raiseDT.emplace(F);
-    st.raiseLI.emplace(*st.raiseDT);
-    st.raiseAC.emplace(F);
-    st.raiseTLII.emplace(Triple(F.getParent()->getTargetTriple()));
-    st.raiseTLI.emplace(*st.raiseTLII, &F);
-    st.raiseSE.emplace(F, *st.raiseTLI, *st.raiseAC, *st.raiseDT, *st.raiseLI);
-    // The constant-trip products are the in-kernel raise's.
-    if (T.hasInKernelMatrixRaise())
-      findConstantShapeMatmuls(O, F, *st.raiseSE, *st.raiseLI, P.header,
-                               st.abstractMatmuls);
-    // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
-    // skips whatever that one claimed, so a product both recognize keeps the
-    // constant-trip candidate set.
-    findRuntimeShapeMatmuls(O, F, *st.raiseSE, *st.raiseLI, P.header, P.map,
-                            st.abstractMatmuls);
-  }
-
-  if (O.Diagnostics.Print && !st.abstractMatmuls.empty()) {
-    llvm::errs() << "[poseidon] Found " << st.abstractMatmuls.size()
-                 << " matrix product(s) in " << F.getName() << '\n';
-    auto dimStr = [](unsigned d) -> std::string {
-      return d == ~0u ? std::string("?") : std::to_string(d);
-    };
-    for (const auto &m : st.abstractMatmuls) {
-      llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
-                   << dimStr(m.N) << 'x' << dimStr(m.K)
-                   << " type=" << dtypeName(m.elemType) << " origin="
-                   << (m.origin == RecognizedMatmul::Origin::RuntimeShape
-                           ? "RuntimeShape"
-                           : "ConstantShape")
-                   << '\n';
-    }
-  }
-}
-
-// Each technique's candidates for every FP subgraph, one subgraph at a time:
-// Herbie's rewrites into st.algebraicUnits, precision assignments into
-// st.precisionUnits.
-static Error proposeSubgraphCandidates(Session &S, Function &F,
-                                       const SiteProfileHeader &profileHeader,
-                                       bool expansionSafe, SiteState &st) {
-  const Options &O = S.Opts;
-  auto &subgraphs = st.subgraphs;
-  int symbolCounter = 0;
-  int subgraphCounter = 0;
-
-  if (O.Candidates.AlgebraicLacksHerbie && !subgraphs.empty())
-    remarkNoHerbie(S, F);
-  for (auto &subgraph : subgraphs) {
-    assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
-
-    if (O.Candidates.EnableAlgebraic)
-      if (Error E =
-              proposeHerbieCandidates(S, F, subgraph, subgraphCounter,
-                                      symbolCounter, st, st.algebraicUnits))
-        return E;
-
-    if (O.Candidates.EnablePrecision)
-      if (Error E =
-              proposePrecisionCandidates(S, F, subgraph, st, profileHeader,
-                                         expansionSafe, st.precisionUnits))
-        return E;
-    ++subgraphCounter;
   }
   return Error::success();
 }
@@ -298,18 +225,8 @@ static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
 void SiteState::sealUnits(Session &S) {
   assert(!unitsSealed && "a site's units are sealed once");
   unitsSealed = true;
-  for (size_t i = 0; i < algebraicUnits.size(); ++i) {
-    algebraicUnits[i].bind(S, *this, *this, i);
-    units.push_back(&algebraicUnits[i]);
-  }
-  for (size_t i = 0; i < precisionUnits.size(); ++i) {
-    precisionUnits[i].bind(S, *this, *this, i);
-    units.push_back(&precisionUnits[i]);
-  }
-  for (size_t i = 0; i < matmulUnits.size(); ++i) {
-    matmulUnits[i].bind(S, *this, *this, i);
-    units.push_back(&matmulUnits[i]);
-  }
+  for (const Technique &T : techniques())
+    T.BindUnits(S, *this);
 }
 
 // The cost change of each candidate of `units` that pricing priced, against
@@ -321,18 +238,10 @@ static Error requireCostsOnAxis(SiteState &st, ArrayRef<SiteUnit *> units) {
   const CostScale scale(st.profiledCost);
   for (SiteUnit *unit : units)
     for (size_t i = 0; i < unit->numCandidates(); ++i) {
-      double delta;
-      if (auto *RU = dyn_cast<AlgebraicUnit>(unit)) {
-        if (RU->candidates[i].CompCost == std::numeric_limits<double>::max())
-          continue;
-        delta = RU->getCompCostDelta(i);
-      } else if (auto *PU = dyn_cast<PrecisionUnit>(unit)) {
-        if (PU->candidates[i].CompCost == std::numeric_limits<double>::max())
-          continue;
-        delta = PU->getCompCostDelta(i);
-      } else {
-        delta = cast<MatmulUnit>(unit)->getCompCostDelta(i);
-      }
+      std::optional<double> priced = unit->pricedCostDelta(i);
+      if (!priced)
+        continue;
+      const double delta = *priced;
       if (scale.toDPCost(delta))
         continue;
       std::string Text;
@@ -389,7 +298,10 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
     return std::move(E);
   st.profilePath = profile.path;
   st.canonicalHash = profile.canonicalHash;
-  recognizeMatrixProducts(S, F, profile, st);
+  st.matmulSampleLogBits = sampleLogBits;
+  for (const Technique &T : techniques())
+    if (T.Recognize && T.Enabled(O))
+      T.Recognize(S, F, profile, st);
 
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
@@ -409,17 +321,26 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   if (st.subgraphs.empty() && st.abstractMatmuls.empty())
     return false;
 
-  Expected<bool> expansionSafe =
-      expansionsRoundedAsWritten(O, F, !st.subgraphs.empty());
-  if (!expansionSafe)
-    return expansionSafe.takeError();
-  if (Error E =
-          proposeSubgraphCandidates(S, F, profile.header, *expansionSafe, st))
-    return std::move(E);
-
-  if (Error E = generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
-                                         sampleLogBits, st.matmulUnits))
-    return std::move(E);
+  for (const Technique &T : techniques())
+    if (T.BeginSite && T.Enabled(O))
+      if (Error E = T.BeginSite(S, F, st))
+        return std::move(E);
+  if (!st.subgraphs.empty())
+    for (const Technique &T : techniques())
+      if (T.RemarkUnavailable && !T.Enabled(O))
+        T.RemarkUnavailable(S, F);
+  // One subgraph at a time, every technique's units for it.
+  for (auto [index, subgraph] : enumerate(st.subgraphs)) {
+    assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
+    for (const Technique &T : techniques())
+      if (T.ProposeForSubgraph && T.Enabled(O))
+        if (Error E = T.ProposeForSubgraph(S, F, st, subgraph, index, profile))
+          return std::move(E);
+  }
+  for (const Technique &T : techniques())
+    if (T.ProposeForSite && T.Enabled(O))
+      if (Error E = T.ProposeForSite(S, st, profile))
+        return std::move(E);
   st.sealUnits(S);
 
   if (Error E = priceUnlessCached(S, st, profile.path))

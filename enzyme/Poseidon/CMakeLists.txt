@@ -282,6 +282,7 @@ set(POSEIDON_SRC
     Techniques/Precision/Narrowing.cpp
     Core/Unit.cpp
     Techniques/SubgraphUnit.cpp
+    Techniques/Techniques.cpp
     Core/FPNode.cpp
     Support/Utils.cpp
     Support/Diagnostics.cpp

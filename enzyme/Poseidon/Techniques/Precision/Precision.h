@@ -130,6 +130,11 @@ public:
   /// The change candidate `candidateIndex` makes to the profiled run's cost
   /// over the whole subgraph, in cost-model units. The unit must be priced.
   double getCompCostDelta(size_t candidateIndex);
+  std::optional<double> pricedCostDelta(size_t i) override {
+    if (candidates[i].CompCost == std::numeric_limits<double>::max())
+      return std::nullopt;
+    return getCompCostDelta(i);
+  }
   /// Memoizes the cost delta of each (candidate, steps) request.
   void priceRequests(
       Session &S,

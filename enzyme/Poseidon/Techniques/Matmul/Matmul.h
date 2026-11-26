@@ -465,6 +465,9 @@ public:
   double getCompCostDelta(size_t idx) const {
     return (candidates[idx].compCost - initialCompCost) * (double)executions;
   }
+  std::optional<double> pricedCostDelta(size_t i) override {
+    return getCompCostDelta(i);
+  }
   /// The error candidate `idx` adds on the DP's accuracy axis; the loop as
   /// written has none. Under an accuracy target it is domainError times
   /// targetScale, so that divided by the site's accuracy scale it is the

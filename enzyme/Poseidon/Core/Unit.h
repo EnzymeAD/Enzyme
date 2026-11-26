@@ -141,9 +141,7 @@ struct UnitKindInfo {
   bool pricingDrops;
 };
 
-/// The kinds, in the order the fixed formats list them.
-llvm::ArrayRef<UnitKindInfo> unitKinds();
-/// The row of `kind`.
+/// The row of `kind`: the names of its technique (Core/Technique.h).
 const UnitKindInfo &infoOf(UnitKind kind);
 
 class SiteUnit;
@@ -227,6 +225,10 @@ public:
   /// The first error the solve met pricing the unit's candidates, which ends
   /// the compile once the solve returns.
   virtual llvm::Error takePricingError() { return llvm::Error::success(); }
+  /// Candidate i's cost change against the code as written, in cost-model
+  /// units over the profiled run, as priced on its own; none for a
+  /// candidate pricing left without a cost.
+  virtual std::optional<double> pricedCostDelta(size_t i) = 0;
   /// Multiplies every error the unit carries by `factor`.
   virtual void scaleErrors(double factor) = 0;
   /// The -poseidon-print block of the priced candidates.
