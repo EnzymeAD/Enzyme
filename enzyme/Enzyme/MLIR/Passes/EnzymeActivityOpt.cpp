@@ -430,15 +430,15 @@ public:
       Value out = op.getOutputs()[out_idx];
       if (act == nact) {
         switch (act) {
-        case Activity::enzyme_active:
+        case Activity::enzyme_dupnoneed:
         case Activity::enzyme_activenoneed:
         case Activity::enzyme_const:
           out_args.push_back(out);
           out_idx++;
           break;
 
+        case Activity::enzyme_active:
         case Activity::enzyme_dup:
-        case Activity::enzyme_dupnoneed:
           out_args.push_back(out);
           out_idx++;
 
@@ -508,7 +508,8 @@ public:
         // replace use
         op.getOutputs()[oldIdx++].replaceAllUsesWith(
             newOp.getOutputs()[newIdx++]);
-        if (old_val == Activity::enzyme_dup) {
+        if (old_val == Activity::enzyme_dup ||
+            old_val == Activity::enzyme_active) {
           // 2nd replacement for derivative
           op.getOutputs()[oldIdx++].replaceAllUsesWith(
               newOp.getOutputs()[newIdx++]);
@@ -516,13 +517,25 @@ public:
       } else {
         // handle all substitutions
         if (new_val == Activity::enzyme_constnoneed &&
-            old_val == Activity::enzyme_dupnoneed) {
-          ++oldIdx; // skip gradient too
+            (old_val == Activity::enzyme_dupnoneed ||
+             old_val == Activity::enzyme_activenoneed)) {
+          Value dOut = op.getOutputs()[oldIdx++];
+          if (!dOut.use_empty()) {
+            Value zero = cast<AutoDiffTypeInterface>(dOut.getType())
+                             .createNullValue(rewriter, op.getLoc());
+            dOut.replaceAllUsesWith(zero);
+          }
         } else if (new_val == Activity::enzyme_const &&
-                   old_val == Activity::enzyme_dup) {
+                   (old_val == Activity::enzyme_dup ||
+                    old_val == Activity::enzyme_active)) {
           op.getOutputs()[oldIdx++].replaceAllUsesWith(
               newOp.getOutputs()[newIdx++]);
-          ++oldIdx; // skip derivative
+          Value dOut = op.getOutputs()[oldIdx++];
+          if (!dOut.use_empty()) {
+            Value zero = cast<AutoDiffTypeInterface>(dOut.getType())
+                             .createNullValue(rewriter, op.getLoc());
+            dOut.replaceAllUsesWith(zero);
+          }
         } else {
           llvm_unreachable("unexpected demotion for return activity");
         }
@@ -810,7 +823,12 @@ public:
       } else {
         if (old_val == Activity::enzyme_active &&
             new_val == Activity::enzyme_const) {
-          ++oldIdx; // skip diffret
+          Value dOut = op.getOutputs()[oldIdx++];
+          if (!dOut.use_empty()) {
+            Value zero = cast<AutoDiffTypeInterface>(dOut.getType())
+                             .createNullValue(rewriter, op.getLoc());
+            dOut.replaceAllUsesWith(zero);
+          }
         }
       }
     }
