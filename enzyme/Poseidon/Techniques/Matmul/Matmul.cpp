@@ -1017,6 +1017,12 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
 
     // The candidate index is the position in this sequence.
     if (m.origin == RecognizedMatmul::Origin::ConstantShape &&
+        !m.scalarLoop.otherWork.empty())
+      cm.dropped.push_back(
+          {"in-kernel raise", m.scalarLoop.otherWork +
+                                  ", and the raise takes the place of the "
+                                  "whole loop"});
+    if (m.origin == RecognizedMatmul::Origin::ConstantShape &&
         m.scalarLoop.inKernelRaisable && siteReachedByWholeBlock(S, m)) {
       if (Error E = proposeInKernelRaises(P, inKernelSite(S, m), cm))
         return E;

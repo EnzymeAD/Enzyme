@@ -1017,6 +1017,24 @@ guardsBefore(Function &F, BasicBlock *preheader, const DominatorTree &DT,
   return bound;
 }
 
+// What the loop `L` does besides accumulating the product `fma`: an effect, or
+// a value other than the product that is used after the loop. None when it
+// does nothing else.
+static std::optional<StringRef> workBesidesProduct(const Loop &L,
+                                                   const Instruction &fma) {
+  for (const BasicBlock *BB : L.blocks())
+    for (const Instruction &I : *BB) {
+      if (hasEffect(I))
+        return "the reduction loop has an effect besides the product";
+      if (&I != &fma && llvm::any_of(I.users(), [&](const User *U) {
+            return !L.contains(cast<Instruction>(U));
+          }))
+        return "the reduction loop computes a value besides the product that "
+               "is used after it";
+    }
+  return std::nullopt;
+}
+
 void findConstantShapeMatmuls(const Options &O, Function &F,
                               ScalarEvolution &SE, LoopInfo &LI,
                               const SiteProfileHeader &profileHeader,
@@ -1076,18 +1094,22 @@ void findConstantShapeMatmuls(const Options &O, Function &F,
                        << ": not every thread of the block reaches the "
                           "reduction loop once, so it has no in-kernel raise\n";
         // A launch of another block shape than the profiled one runs the
-        // loop, so the raise joins the loop's exit, which has to take nothing
-        // from the loop but the product.
-        const bool exitTakesProduct =
-            h.exitBB->getSinglePredecessor() == L->getLoopLatch() &&
-            llvm::all_of(h.exitBB->phis(), [&](PHINode &phi) {
-              return phi.getIncomingValue(0) == h.fma;
-            });
-        if (wholeBlock && !exitTakesProduct && O.Diagnostics.Print)
-          llvm::errs() << "[poseidon] " << F.getName()
-                       << ": the reduction loop's exit takes more from it than "
-                          "the product, so it has no in-kernel raise\n";
-        h.inKernelRaisable = wholeBlock && exitTakesProduct;
+        // loop, so the raise joins the loop's exit, and a block that raises
+        // runs nothing of the loop.
+        const bool exitFromLatch =
+            h.exitBB->getSinglePredecessor() == L->getLoopLatch();
+        if (std::optional<StringRef> work = workBesidesProduct(*L, *h.fma))
+          h.otherWork = work->str();
+        if (wholeBlock && O.Diagnostics.Print) {
+          if (!exitFromLatch)
+            llvm::errs() << "[poseidon] " << F.getName()
+                         << ": the reduction loop's exit is entered from "
+                            "outside the loop, so it has no in-kernel raise\n";
+          else if (!h.otherWork.empty())
+            llvm::errs() << "[poseidon] " << F.getName() << ": " << h.otherWork
+                         << ", so it has no in-kernel raise\n";
+        }
+        h.inKernelRaisable = wholeBlock && exitFromLatch && h.otherWork.empty();
 
         RecognizedMatmul am;
         am.id = nextId++;

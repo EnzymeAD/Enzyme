@@ -137,8 +137,12 @@ struct ScalarLoopHandle {
 
   /// Whether the in-kernel raise can take the place of the loop: every thread
   /// of the block runs the preheader, where it synchronizes the block, exactly
-  /// once, and the loop's exit takes only the product from it.
+  /// once, the loop's exit is entered only from its latch, and the loop does
+  /// nothing but compute the product.
   bool inKernelRaisable = false;
+  /// What the loop does besides computing the product, which a raise in its
+  /// place would drop; empty when it does nothing else.
+  std::string otherWork;
   /// The block shape the profile recorded, which the raise is laid out for.
   uint32_t profiledBlock[3] = {0, 0, 0};
   /// The guards a thread passes on its way to the loop: a block raises only
@@ -446,7 +450,8 @@ public:
   /// The candidates, indexed as the solver indexes them.
   llvm::SmallVector<Option, 8> candidates;
   /// Candidates not offered, by name, each with why: this build cannot realize
-  /// them, or their formats cannot hold the profiled operands.
+  /// them, their formats cannot hold the profiled operands, or the in-kernel
+  /// raise would drop what else the product's loop does.
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
   /// Under an accuracy target, the site's accuracy scale
   /// (SiteState::accScale), which a candidate's domainError is multiplied by

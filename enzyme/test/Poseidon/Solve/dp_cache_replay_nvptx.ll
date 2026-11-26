@@ -74,7 +74,7 @@
 ; KINDS-TABLE-M-NEXT: "unit": "M"
 
 ; KINDS-TWO: Cache entry for preprocess_matmul_body found. Loaded DP tables from cache.
-; KINDS-TWO: Applying solution for matmul[1] -> direct-dispatch cublas f16/f32 (#10)
+; KINDS-TWO: Applying solution for matmul[1] -> direct-dispatch cublas f16/f32 (#7)
 
 ; The replay emits the module the solve emitted, byte for byte: pricing, which
 ; the replay skips, leaves no declaration of its own in the module (here an
