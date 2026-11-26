@@ -44,6 +44,7 @@
 #include "Interfaces/EnzymeLogic.h"
 #include "Target/EnzymeToLLVMIRTranslation.h"
 
+#include "flang/Common/ISO_Fortran_binding_wrapper.h"
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
@@ -63,6 +64,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <cstddef>
 #include <map>
 #include <optional>
 
@@ -72,19 +74,10 @@ using namespace mlir;
 // Type trees
 //===----------------------------------------------------------------------===//
 
+using enzyme::everywhere;
 using enzyme::MConcreteType;
 using enzyme::MTypeTree;
-
-/// The type tree of a pointer to data of type tree `pointee`.
-static MTypeTree pointerTo(MTypeTree pointee) {
-  pointee.insert({}, BaseType::Pointer);
-  return pointee.Only(-1, nullptr);
-}
-
-/// The type tree of `type` at every offset.
-static MTypeTree everywhere(MConcreteType type) {
-  return MTypeTree(type).Only(-1, nullptr);
-}
+using enzyme::pointerTo;
 
 //===----------------------------------------------------------------------===//
 // Local variables
@@ -315,22 +308,24 @@ static std::optional<MConcreteType> dataType(Type ty, const DataLayout &dl) {
   return std::nullopt;
 }
 
-// The byte offsets of the fields of a descriptor (CFI_cdesc_t of
-// ISO_Fortran_binding.h, as flang lays it out for a 64-bit target):
-//   { ptr base_addr, i64 elem_len, i32 version, i8 rank, i8 type,
-//     i8 attribute, i8 extra, [rank x [3 x i64]] dim }
-// where each dim is { lower_bound, extent, sm (the stride in bytes) }. A
-// derived type's addendum after the dims is not typed.
-static constexpr int kDescBaseAddr = 0;
-static constexpr int kDescElemLen = 8;
-static constexpr int kDescVersion = 16;
-static constexpr int kDescRank = 20;
-static constexpr int kDescType = 21;
-static constexpr int kDescAttribute = 22;
-static constexpr int kDescExtra = 23;
-static constexpr int kDescDims = 24;
-static constexpr int kDescDimFieldSize = 8;
-static constexpr int kDescDimFields = 3;
+// The byte offsets of the fields of a descriptor: CFI_cdesc_t of
+// ISO_Fortran_binding.h, which flang's codegen lays out the same way
+// (flang/Optimizer/CodeGen/DescriptorModel.h). Each dim is a CFI_dim_t
+// { lower_bound, extent, sm (the stride in bytes) }. A derived type's
+// addendum after the dims is not typed.
+using Fortran::ISO::CFI_cdesc_t;
+using Fortran::ISO::CFI_dim_t;
+using Fortran::ISO::CFI_index_t;
+static constexpr int kDescBaseAddr = offsetof(CFI_cdesc_t, base_addr);
+static constexpr int kDescElemLen = offsetof(CFI_cdesc_t, elem_len);
+static constexpr int kDescVersion = offsetof(CFI_cdesc_t, version);
+static constexpr int kDescRank = offsetof(CFI_cdesc_t, rank);
+static constexpr int kDescType = offsetof(CFI_cdesc_t, type);
+static constexpr int kDescAttribute = offsetof(CFI_cdesc_t, attribute);
+static constexpr int kDescExtra = offsetof(CFI_cdesc_t, extra);
+static constexpr int kDescDims = offsetof(CFI_cdesc_t, dim);
+static constexpr int kDescDimFieldSize = sizeof(CFI_index_t);
+static constexpr int kDescDimFields = sizeof(CFI_dim_t) / sizeof(CFI_index_t);
 
 /// The type tree of a pointer argument whose FIR type (before the conversions
 /// for the call) is `ty`, or null if there is nothing to add to the LLVM type.

@@ -92,6 +92,12 @@ using MConcreteType = GenericConcreteType<mlir::Type>;
 
 using MTypeTree = GenericTypeTree<mlir::Type>;
 
+/// The type tree of a pointer to data of type tree `pointee`.
+MTypeTree pointerTo(MTypeTree pointee);
+
+/// The type tree of `type` at every offset.
+MTypeTree everywhere(MConcreteType type);
+
 class TypeTreeAttr;
 
 /// The #enzyme.type_tree attribute holding `tree`, or null if `tree` is empty.
