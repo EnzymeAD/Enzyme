@@ -52,11 +52,11 @@
 ; CARRIED-IR-NEXT: %[[LO:.+]] = fpext float %pair.phi.lo to double
 ; CARRIED-IR-NEXT: %[[ACC:.+]] = fadd double %[[HI]], %[[LO]]
 ; CARRIED-IR-NOT: phi double
-; CARRIED-IR: %herbie.mul = fmul double %[[ACC]], %[[ACC]]
-; CARRIED-IR-NEXT: %herbie.sub = fsub double %herbie.mul, %[[V2SQ]]
+; CARRIED-IR: %fpcore.mul = fmul double %[[ACC]], %[[ACC]]
+; CARRIED-IR-NEXT: %fpcore.sub = fsub double %fpcore.mul, %[[V2SQ]]
 ; CARRIED-IR-NEXT: %[[IDX:[0-9]+]] = add {{.*}}i64
 ; CARRIED-IR-NEXT: %[[P:[0-9]+]] = getelementptr {{.*}}ptr %[[OUT]], i64 %[[IDX]]
-; CARRIED-IR-NEXT: store double %herbie.sub, ptr %[[P]], align 8
+; CARRIED-IR-NEXT: store double %fpcore.sub, ptr %[[P]], align 8
 ; CARRIED-IR: %[[PH:[^ ]+]] = fmul float %pair.phi.hi, 5.000000e-01
 ; CARRIED-IR: call float @llvm.fma.f32(float %pair.phi.lo, float 5.000000e-01, float
 ; CARRIED-IR: %[[NHI]] = fadd float %[[TS:[^ ]+]], %[[T1:[^ ]+]]

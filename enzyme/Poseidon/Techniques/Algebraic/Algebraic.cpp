@@ -1769,7 +1769,7 @@ Error AlgebraicUnit::materialize(size_t candidateIndex) {
 
     if (newOutput->getType() != root->getType())
       newOutput =
-          builder.CreateFPCast(newOutput, root->getType(), "herbie.fpcast");
+          builder.CreateFPCast(newOutput, root->getType(), "fpcore.fpcast");
 
     root->replaceAllUsesWith(newOutput);
     G.symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;

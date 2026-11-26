@@ -288,8 +288,8 @@ header, with the project's license text.
 
 | Code | Location | Source | License | Relation |
 | --- | --- | --- | --- | --- |
-| Two-component expansion routines | `Support/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
-| Three- and four-component expansion routines, two-component division | `Support/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
+| Two-component expansion routines | `Techniques/Precision/ExpansionRoutines.h` | [MultiFloats.jl](https://github.com/dzhang314/MultiFloats.jl), commit 28041a3 | MIT | Translated from Julia, operation for operation |
+| Three- and four-component expansion routines, two-component division | `Techniques/Precision/ExpansionRoutines.h` | [mX_real](https://github.com/RIKEN-RCCS/mX_real) (its QxW routines), commit 72a35d6 | BSD 2-Clause | Translated, operation for operation |
 | Herbie platform declarations | `tools/calibrate/herbie_platform.py` | [Herbie](https://github.com/herbie-fp/herbie) `src/platforms/c.rkt`, commit 73ba1fe | MIT | The declarations' form, with the cost model's costs and operations |
 | Reference routines of a test | `test/Poseidon/Inputs/expansion_match/multifloats_subset.h` | MultiFloats.jl, commit 28041a3 | MIT | Translated from Julia, statement for statement |
 | Reference routines of a test | `test/Poseidon/Inputs/expansion_match/mx_real_subset.h` | mX_real, commit 72a35d6 | BSD 2-Clause | QxW routines verbatim; mX_real's operator dispatch condensed |

@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Internal.h"
+#include "PassInternal.h"
 
 #include "Support/Utils.h"
 #include "Targets/Target.h"

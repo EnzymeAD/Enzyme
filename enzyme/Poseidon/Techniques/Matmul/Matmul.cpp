@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Internal.h"
+#include "MatmulInternal.h"
 #include "Model/CostModel.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Session.h"

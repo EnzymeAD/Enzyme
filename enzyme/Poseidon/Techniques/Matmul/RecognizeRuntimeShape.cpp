@@ -21,7 +21,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Internal.h"
+#include "MatmulInternal.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
 #include "Support/Options.h"

@@ -1,4 +1,4 @@
-//===- DeviceProfiler.h - state the CUDA profiler's halves share ----------===//
+//===- DeviceProfiler.h - state the GPU profiler's halves share -----------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The state the two halves of the CUDA profiler share: the device half
+// The state the two halves of the GPU profiler share: the device half
 // (DeviceProfilerDevice.cu) updates it, the host half (DeviceProfilerHost.cu)
 // allocates it and writes the profile from it.
 //

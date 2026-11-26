@@ -1,4 +1,4 @@
-//===- Internal.h - declarations shared by the matmul sources -------------===//
+//===- MatmulInternal.h - declarations shared by the matmul sources -------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TECHNIQUES_MATMUL_INTERNAL_H
-#define POSEIDON_TECHNIQUES_MATMUL_INTERNAL_H
+#ifndef POSEIDON_TECHNIQUES_MATMUL_MATMUL_INTERNAL_H
+#define POSEIDON_TECHNIQUES_MATMUL_MATMUL_INTERNAL_H
 
 #include "Core/NumberFormat.h"
 #include "Matmul.h"
@@ -280,4 +280,4 @@ evaluateMatmulAccuracy(Session &S, const RecognizedMatmul &m,
                        llvm::MutableArrayRef<MatmulAccuracy> results);
 
 } // namespace poseidon
-#endif // POSEIDON_TECHNIQUES_MATMUL_INTERNAL_H
+#endif // POSEIDON_TECHNIQUES_MATMUL_MATMUL_INTERNAL_H

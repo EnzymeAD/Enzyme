@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "HerbieRun.h"
-#include "../../Support/CacheKey.h"
-#include "../../Support/Options.h"
+#include "Support/CacheKey.h"
+#include "Support/Options.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"

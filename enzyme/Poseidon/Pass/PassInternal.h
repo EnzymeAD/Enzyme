@@ -1,4 +1,4 @@
-//===- Internal.h - declarations shared by the pass sources ---------------===//
+//===- PassInternal.h - declarations shared by the pass sources -----------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_PASS_INTERNAL_H
-#define POSEIDON_PASS_INTERNAL_H
+#ifndef POSEIDON_PASS_PASS_INTERNAL_H
+#define POSEIDON_PASS_PASS_INTERNAL_H
 
 #include "Solve/Session.h"
 
@@ -74,4 +74,4 @@ void replaceWithAsWritten(llvm::Module &M,
 
 } // namespace poseidon
 
-#endif // POSEIDON_PASS_INTERNAL_H
+#endif // POSEIDON_PASS_PASS_INTERNAL_H

@@ -17,7 +17,7 @@
 #include "ExpansionModel.h"
 #include "Core/FPCore.h"
 #include "Core/FPNode.h"
-#include "Support/ExpansionRoutines.h"
+#include "Techniques/Precision/ExpansionRoutines.h"
 
 #include "llvm/ADT/DenseMap.h"
 

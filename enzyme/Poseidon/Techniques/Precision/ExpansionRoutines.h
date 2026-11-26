@@ -93,8 +93,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_SUPPORT_EXPANSION_ROUTINES_H
-#define POSEIDON_SUPPORT_EXPANSION_ROUTINES_H
+#ifndef POSEIDON_TECHNIQUES_PRECISION_EXPANSION_ROUTINES_H
+#define POSEIDON_TECHNIQUES_PRECISION_EXPANSION_ROUTINES_H
 
 #include <limits>
 
@@ -883,4 +883,4 @@ private:
 
 } // namespace poseidon
 
-#endif // POSEIDON_SUPPORT_EXPANSION_ROUTINES_H
+#endif // POSEIDON_TECHNIQUES_PRECISION_EXPANSION_ROUTINES_H

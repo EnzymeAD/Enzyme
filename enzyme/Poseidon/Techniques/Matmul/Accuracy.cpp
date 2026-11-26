@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "BuildIdentity.h"
-#include "Internal.h"
+#include "MatmulInternal.h"
 #include "Simulation.h"
 #include "Sites/Canonicalize.h"
 #include "Solve/Session.h"

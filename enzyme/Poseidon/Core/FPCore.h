@@ -72,7 +72,7 @@ struct FPCoreOperator {
   int (*MPFRBinary)(mpfr_ptr, mpfr_srcptr, mpfr_srcptr, mpfr_rnd_t) = nullptr;
   /// A comparison's fcmp predicate.
   llvm::CmpInst::Predicate Predicate = llvm::CmpInst::BAD_FCMP_PREDICATE;
-  /// A comparison's lowered fcmp is named "herbie." followed by this.
+  /// A comparison's lowered fcmp is named "fpcore." followed by this.
   llvm::StringLiteral LoweredName = "";
   /// A constant's value in binary64.
   double Constant = 0;

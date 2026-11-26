@@ -12,14 +12,14 @@
 // each thread's element back where the reduction loop's result was used. The
 // direct scheme fills one rounded copy of each operand and carries one
 // accumulator per output tile. The split scheme fills N slices of each
-// operand (Internal.h), accumulates a[i] * b[j] into group i + j for
+// operand (MatmulInternal.h), accumulates a[i] * b[j] into group i + j for
 // i + j < N, and reads back sum_k d[k] / SCALE^k.
 //
 //===----------------------------------------------------------------------===//
 
 #include "Core/NumberFormat.h"
 #include "Enzyme/Utils.h"
-#include "Internal.h"
+#include "MatmulInternal.h"
 #include "Support/Utils.h"
 #include "Targets/NVPTX.h"
 #include "Targets/Target.h"

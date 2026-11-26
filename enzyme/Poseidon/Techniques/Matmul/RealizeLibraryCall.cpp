@@ -14,7 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Enzyme/Utils.h"
-#include "Internal.h"
+#include "MatmulInternal.h"
 #include "Sites/Annotations.h"
 #include "Sites/LaunchManifest.h"
 #include "Sites/SiteIdentity.h"

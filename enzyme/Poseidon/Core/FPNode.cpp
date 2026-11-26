@@ -52,7 +52,7 @@ static std::string libmFuncName(Module *M, Type *Ty, StringRef base) {
 }
 
 // A call to the math library's `name` on `ops`, all of the type of `ops[0]`,
-// named "herbie.<name>".
+// named "fpcore.<name>".
 static Value *mathLibraryCall(IRBuilder<> &b, Module *M, StringRef name,
                               ArrayRef<Value *> ops) {
   Type *Ty = ops[0]->getType();
@@ -60,7 +60,7 @@ static Value *mathLibraryCall(IRBuilder<> &b, Module *M, StringRef name,
   SmallVector<Type *, 2> argTys(ops.size(), Ty);
   FunctionCallee f =
       M->getOrInsertFunction(funcName, FunctionType::get(Ty, argTys, false));
-  return createMathCall(b, f, ops, "herbie." + name);
+  return createMathCall(b, f, ops, "fpcore." + name);
 }
 
 FPNode::NodeType FPNode::getType() const { return ntype; }
@@ -89,7 +89,7 @@ static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
                                                              overloadedTypes);
       Value *exponent =
           ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
-      return createMathCall(b, powiFunc, {ops[0], exponent}, "herbie.powi");
+      return createMathCall(b, powiFunc, {ops[0], exponent}, "fpcore.powi");
     }
   }
 
@@ -98,7 +98,7 @@ static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
   // errno-writing exp2 call.
   if (!Target::of(*M).isDevice())
     return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1], nullptr,
-                                   "herbie.pow");
+                                   "fpcore.pow");
   return mathLibraryCall(b, M, "pow", ops);
 }
 
@@ -106,35 +106,35 @@ static Value *lowerPow(IRBuilder<> &b, Module *M, ArrayRef<Value *> ops) {
 static Value *lowerByName(IRBuilder<> &b, Module *M, const FPCoreOperator &O,
                           ArrayRef<Value *> ops) {
   if (&O == &fpcore::Neg)
-    return b.CreateFNeg(ops[0], "herbie.neg");
+    return b.CreateFNeg(ops[0], "fpcore.neg");
   if (&O == &fpcore::Add)
-    return b.CreateFAdd(ops[0], ops[1], "herbie.add");
+    return b.CreateFAdd(ops[0], ops[1], "fpcore.add");
   if (&O == &fpcore::Sub)
-    return b.CreateFSub(ops[0], ops[1], "herbie.sub");
+    return b.CreateFSub(ops[0], ops[1], "fpcore.sub");
   if (&O == &fpcore::Mul)
-    return b.CreateFMul(ops[0], ops[1], "herbie.mul");
+    return b.CreateFMul(ops[0], ops[1], "fpcore.mul");
   if (&O == &fpcore::Div)
-    return b.CreateFDiv(ops[0], ops[1], "herbie.div");
+    return b.CreateFDiv(ops[0], ops[1], "fpcore.div");
   if (&O == &fpcore::Pow)
     return lowerPow(b, M, ops);
   if (&O == &fpcore::Fma)
     return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()}, ops, nullptr,
-                             "herbie.fma");
+                             "fpcore.fma");
   if (&O == &fpcore::And)
-    return b.CreateAnd(ops[0], ops[1], "herbie.and");
+    return b.CreateAnd(ops[0], ops[1], "fpcore.and");
   if (&O == &fpcore::Or)
-    return b.CreateOr(ops[0], ops[1], "herbie.or");
+    return b.CreateOr(ops[0], ops[1], "fpcore.or");
   if (&O == &fpcore::Not)
-    return b.CreateNot(ops[0], "herbie.not");
+    return b.CreateNot(ops[0], "fpcore.not");
   if (&O == &fpcore::True || &O == &fpcore::False)
     return ConstantInt::getBool(b.getContext(), &O == &fpcore::True);
   // CreateFPCast rather than FPTrunc/FPExt: the operand may already carry the
   // destination type, coerced to the node's format, and FPCast is then the
   // identity.
   if (&O == &fpcore::ToBinary32)
-    return b.CreateFPCast(ops[0], b.getFloatTy(), "herbie.f64tof32");
+    return b.CreateFPCast(ops[0], b.getFloatTy(), "fpcore.f64tof32");
   assert(&O == &fpcore::ToBinary64 && "the parser admits no other operator");
-  return b.CreateFPCast(ops[0], b.getDoubleTy(), "herbie.f32tof64");
+  return b.CreateFPCast(ops[0], b.getDoubleTy(), "fpcore.f32tof64");
 }
 
 Value *FPNode::lowerChoice(IRBuilder<> &builder,
@@ -152,7 +152,7 @@ Value *FPNode::lowerChoice(IRBuilder<> &builder,
   if (falseValue->getType() != armTy)
     falseValue = builder.CreateFPCast(falseValue, armTy);
   return builder.CreateSelect(condValue, trueValue, falseValue,
-                              "herbie.select");
+                              "fpcore.select");
 }
 
 Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
@@ -183,16 +183,16 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
 
   if (O->Intrinsic != Intrinsic::not_intrinsic && O->Arity == 1)
     return builder.CreateUnaryIntrinsic(O->Intrinsic, operandValues[0], nullptr,
-                                        "herbie." + O->Name);
+                                        "fpcore." + O->Name);
   if (O->Intrinsic != Intrinsic::not_intrinsic)
     return builder.CreateBinaryIntrinsic(O->Intrinsic, operandValues[0],
                                          operandValues[1], nullptr,
-                                         "herbie." + O->Name);
+                                         "fpcore." + O->Name);
   if (O->LibraryCall)
     return mathLibraryCall(builder, M, O->Name, operandValues);
   if (O->Predicate != CmpInst::BAD_FCMP_PREDICATE)
     return builder.CreateFCmp(O->Predicate, operandValues[0], operandValues[1],
-                              "herbie." + O->LoweredName);
+                              "fpcore." + O->LoweredName);
   if (O->MPFRConstant)
     return ConstantFP::get(builder.getDoubleTy(), O->Constant);
   return lowerByName(builder, M, *O, operandValues);

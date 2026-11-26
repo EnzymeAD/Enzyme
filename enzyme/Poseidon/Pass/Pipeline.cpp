@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Internal.h"
+#include "PassInternal.h"
 #include "Profile/Instrument.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"

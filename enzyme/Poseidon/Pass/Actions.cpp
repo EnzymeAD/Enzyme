@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Core/Technique.h"
-#include "Internal.h"
+#include "PassInternal.h"
 
 #include "Model/CostModel.h"
 #include "Profile/Instrument.h"
@@ -22,7 +22,6 @@
 #include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
-#include "Techniques/Algebraic/Algebraic.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "runtime/profile/ProfileFormat.h"
 

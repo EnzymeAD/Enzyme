@@ -9,7 +9,7 @@
 #include "Expansion.h"
 #include "Enzyme/Utils.h"
 #include "Support/Diagnostics.h"
-#include "Support/ExpansionRoutines.h"
+#include "Techniques/Precision/ExpansionRoutines.h"
 #include "Support/Options.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -44,7 +44,7 @@ struct PairValue {
   Value *lo;
 };
 
-// The arithmetic the routines of Support/ExpansionRoutines.h are
+// The arithmetic the routines of ExpansionRoutines.h are
 // emitted with.
 struct IRArith {
   using F32 = Value *;

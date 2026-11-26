@@ -12,7 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Precision.h"
-#include "../Algebraic/Algebraic.h"
+#include "Techniques/Algebraic/Algebraic.h"
 #include "Core/FPCore.h"
 #include "Expansion.h"
 #include "ExpansionModel.h"

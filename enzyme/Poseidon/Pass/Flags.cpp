@@ -6,7 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Sites/Annotations.h"
 #include "Support/Diagnostics.h"
 #include "Support/Options.h"
 #include "Support/Utils.h"

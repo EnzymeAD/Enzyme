@@ -1,4 +1,4 @@
-//===- DeviceProfilerHost.cu - host half of the CUDA profiler -------------===//
+//===- DeviceProfilerHost.cu - host half of the GPU profiler --------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The host half of the CUDA profiler, a library a profile-generate build links
+// The host half of the GPU profiler, a library a profile-generate build links
 // (libposeidon_profile_cuda, and compiled as HIP libposeidon_profile_hip): it
 // allocates the tables the probes of every profiled device module record into
 // (DeviceProfilerDevice.cu), writes each module's handles to them, and writes

@@ -8,8 +8,8 @@
 //
 // Runs the Herbie binary on a set of FPCore cores and returns its
 // results.json, through the result cache: one file per question, holding the
-// answer and the digest of the Herbie that gave it. Nothing here reads LLVM IR
-// or Poseidon's command-line flags; the caller says how to run Herbie.
+// answer and the digest of the Herbie that gave it. Nothing here reads LLVM
+// IR; the caller passes the options that say how to run Herbie.
 //
 //===----------------------------------------------------------------------===//
 
