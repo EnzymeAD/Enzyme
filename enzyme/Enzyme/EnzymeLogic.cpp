@@ -598,6 +598,7 @@ struct CacheAnalysis {
     }
 
     if (startsWith(funcName, "MPI_") ||
+        !canonicalizeMPIName(funcName).empty() ||
         startsWith(funcName, "enzyme_wrapmpi$$"))
       return {};
 
