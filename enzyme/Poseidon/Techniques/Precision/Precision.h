@@ -17,7 +17,6 @@
 #include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
 #include "Core/Technique.h"
-#include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Model/SubgraphUnit.h"
 #include "Support/Diagnostics.h"
@@ -41,6 +40,7 @@
 
 namespace poseidon {
 
+struct CostModelState;
 class Session;
 
 /// A precision candidate: an assignment of the subgraph's operations to

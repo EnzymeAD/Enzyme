@@ -14,7 +14,7 @@
 #include "Core/Unit.h"
 #include "Profile/ProfileReader.h"
 #include "Scheme.h"
-#include "Sites/LaunchManifest.h"
+#include "Sites/CallSites.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"

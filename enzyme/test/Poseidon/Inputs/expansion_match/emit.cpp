@@ -8,6 +8,7 @@
 // apply-expansion materializes every FP64 instruction of each ex<n>_* function.
 #include "Core/FPCore.h"
 #include "Core/FPNode.h"
+#include "Enzyme/PassUtils.h"
 #include "Model/Evaluators.h"
 #include "Support/Utils.h"
 #include "Techniques/Precision/Expansion.h"

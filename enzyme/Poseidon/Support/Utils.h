@@ -16,22 +16,15 @@
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/PassManager.h"
-#include "llvm/IR/Type.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/OptimizationLevel.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
-
-#include "Enzyme/PassUtils.h"
 
 #include <string>
 

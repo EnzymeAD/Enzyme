@@ -8,9 +8,10 @@
 //
 // Each site's body instrumented with the profiling probes, and the call that
 // reaches it made a reverse-mode request over the instrumented clone with the
-// shadows it needs (SiteProfile.cpp); what else a profile-generate compile adds
-// to a module; and the host half of profile generation for a CUDA or HIP unit,
-// its launch stubs rewritten from the descriptors its device half recorded.
+// shadows it needs (InstrumentSite.cpp); what else a profile-generate compile
+// adds to a module; and the host half of profile generation for a CUDA or HIP
+// unit, its launch stubs rewritten from the descriptors its device half
+// recorded.
 //
 // The probes the pass places
 // in device code call the device half of the profiler, which the plugin

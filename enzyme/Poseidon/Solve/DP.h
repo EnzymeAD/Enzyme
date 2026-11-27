@@ -16,7 +16,6 @@
 #define POSEIDON_SOLVE_DP_H
 
 #include "Core/Unit.h"
-#include "Support/Diagnostics.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"

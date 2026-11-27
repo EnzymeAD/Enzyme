@@ -8,7 +8,6 @@
 
 #include "Markers.h"
 
-#include "Annotations.h"
 #include "Enzyme/EnzymeCallMarkers.h"
 #include "Enzyme/Utils.h"
 #include "Support/Diagnostics.h"

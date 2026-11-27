@@ -14,7 +14,6 @@
 #include "Support/Options.h"
 #include "Support/Parallel.h"
 #include "Support/UniformReal.h"
-#include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"

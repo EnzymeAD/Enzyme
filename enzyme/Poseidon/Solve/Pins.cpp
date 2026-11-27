@@ -12,7 +12,6 @@
 #include "Sites/SiteIdentity.h"
 #include "Solve.h"
 #include "Support/Diagnostics.h"
-#include "Support/Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"

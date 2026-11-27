@@ -8,13 +8,16 @@
 //
 // __poseidon_optimize on a call, in host and device code: the call made a call
 // of a copy of the function made for it alone, which is a site, and in device
-// code a marker over that copy.
+// code a marker over that copy. Also what a site's body reaches through its
+// parameters: the extent of a pointer argument, and the parameter or by-value
+// field a value is derived from.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_SITES_CALL_SITES_H
 #define POSEIDON_SITES_CALL_SITES_H
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
@@ -70,6 +73,48 @@ struct PointerExtent {
 /// The extent of `A`; otherwise an error saying what the function does with
 /// the pointer that defeats it, phrased to follow "a pointer the call".
 llvm::Expected<PointerExtent> accessedExtent(llvm::Argument &A);
+
+/// A value the host knows at the launch: a parameter of the optimized body, or
+/// a field of an aggregate a parameter passes by value (the captures of a
+/// lambda a kernel takes by value).
+struct LaunchRef {
+  /// The parameter index; -1 for no value.
+  int param = -1;
+  /// Byte offset of the field in the aggregate; -1 for the parameter itself.
+  int64_t offset = -1;
+  /// Whether the value is a field of an aggregate parameter.
+  bool isField() const { return offset >= 0; }
+  /// Whether both name the same parameter and field.
+  bool operator==(const LaunchRef &o) const {
+    return param == o.param && offset == o.offset;
+  }
+  /// Orders by parameter, then by offset, the parameter itself first.
+  bool operator<(const LaunchRef &o) const {
+    return param != o.param ? param < o.param : offset < o.offset;
+  }
+};
+
+/// `r` as a diagnostic names it: `prefix` and the parameter index, then
+/// "[+<offset>]" for a field.
+std::string launchRefString(const LaunchRef &r, llvm::StringRef prefix);
+
+/// Marks a parameter of an outlined kernel body that carries the kernel's
+/// by-value aggregate argument: the body reads the kernel's own copy, so the
+/// parameter is no longer byval, and only this says its fields are launch
+/// values.
+constexpr llvm::StringLiteral kByValueParam = "poseidon-by-value";
+
+/// The field of a by-value aggregate parameter `v` reads (a load at a constant
+/// offset from a parameter the body only reads, or an extractvalue of an
+/// aggregate parameter); an invalid ref otherwise.
+LaunchRef launchFieldOf(const llvm::Value *v);
+
+/// The launch value a pointer is derived from (its underlying object): a
+/// parameter, or a pointer field of a by-value aggregate parameter.
+LaunchRef tracePointerRoot(const llvm::Value *v);
+
+/// The parameter a pointer is derived from (its underlying object), -1 if none.
+int traceToArgIndex(const llvm::Value *v);
 
 } // namespace poseidon
 

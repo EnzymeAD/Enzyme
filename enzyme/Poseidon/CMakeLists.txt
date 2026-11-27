@@ -251,7 +251,7 @@ set(POSEIDON_SRC
     Sites/Markers.cpp
     Sites/Annotations.cpp
     Sites/CallSites.cpp
-    Profile/SiteProfile.cpp
+    Profile/InstrumentSite.cpp
     Pass/AsWritten.cpp
     Pass/Pipeline.cpp
     Model/Evaluators.cpp
@@ -289,6 +289,7 @@ set(POSEIDON_SRC
     Techniques/Matmul/Accuracy.cpp
     Techniques/Matmul/Matmul.cpp
     Techniques/Matmul/Simulation.cpp
+    Techniques/Matmul/Recognize.cpp
     Techniques/Matmul/RecognizeRuntimeShape.cpp
     Techniques/Matmul/RecognizeConstantShape.cpp)
 

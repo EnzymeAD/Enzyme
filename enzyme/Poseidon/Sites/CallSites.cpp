@@ -717,4 +717,87 @@ Expected<bool> lowerDeviceCallSites(const Options &O, Module &M) {
   return true;
 }
 
+int traceToArgIndex(const Value *v) {
+  const auto *A = dyn_cast<Argument>(getUnderlyingObject(v, /*MaxLookup=*/0));
+  return A ? (int)A->getArgNo() : -1;
+}
+
+static bool isByValueParam(const Argument &A) {
+  return A.hasByValAttr() || A.getParent()->getAttributes().hasParamAttr(
+                                 A.getArgNo(), kByValueParam);
+}
+
+/// Whether nothing the body does writes the memory `A` points to. The readonly
+/// attribute is not enough: under -fgpu-rdc, which profile generation adds, a
+/// kernel is weak_odr and nothing infers it.
+static bool onlyRead(const Argument &A) {
+  if (isReadOnly(A.getParent(), A.getArgNo()))
+    return true;
+  SmallVector<const Value *, 8> work{&A};
+  SmallPtrSet<const Value *, 8> seen{&A};
+  while (!work.empty()) {
+    const Value *v = work.pop_back_val();
+    for (const Use &U : v->uses()) {
+      const User *user = U.getUser();
+      if (isa<GetElementPtrInst>(user) || isa<BitCastInst>(user) ||
+          isa<AddrSpaceCastInst>(user)) {
+        if (seen.insert(user).second)
+          work.push_back(user);
+        continue;
+      }
+      if (auto *L = dyn_cast<LoadInst>(user)) {
+        if (!L->isVolatile())
+          continue;
+        return false;
+      }
+      if (auto *CB = dyn_cast<CallBase>(user))
+        if (CB->isArgOperand(&U) && isReadOnly(CB, CB->getArgOperandNo(&U)) &&
+            isNoCapture(CB, CB->getArgOperandNo(&U)))
+          continue;
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string launchRefString(const LaunchRef &r, StringRef prefix) {
+  std::string s = (prefix + Twine(r.param)).str();
+  if (r.isField())
+    s += "[+" + std::to_string(r.offset) + "]";
+  return s;
+}
+
+LaunchRef launchFieldOf(const Value *v) {
+  if (auto *L = dyn_cast<LoadInst>(v)) {
+    if (!L->isSimple())
+      return {};
+    const DataLayout &DL = L->getModule()->getDataLayout();
+    APInt off(DL.getIndexTypeSizeInBits(L->getPointerOperandType()), 0);
+    const Value *base =
+        L->getPointerOperand()->stripAndAccumulateConstantOffsets(
+            DL, off, /*AllowNonInbounds=*/true);
+    // A field the body may overwrite is not the value the launch passed.
+    auto *A = dyn_cast<Argument>(base);
+    if (!A || !isByValueParam(*A) || !onlyRead(*A) || off.isNegative())
+      return {};
+    return {(int)A->getArgNo(), off.getSExtValue()};
+  }
+  if (auto *EV = dyn_cast<ExtractValueInst>(v)) {
+    auto *A = dyn_cast<Argument>(EV->getAggregateOperand());
+    if (!A)
+      return {};
+    uint64_t off = getAggregateElementOffset(EV->getModule()->getDataLayout(),
+                                             A->getType(), EV->getIndices());
+    return {(int)A->getArgNo(), (int64_t)off};
+  }
+  return {};
+}
+
+LaunchRef tracePointerRoot(const Value *v) {
+  const Value *root = getUnderlyingObject(v, /*MaxLookup=*/0);
+  if (const auto *A = dyn_cast<Argument>(root))
+    return isByValueParam(*A) ? LaunchRef{} : LaunchRef{(int)A->getArgNo(), -1};
+  return root->getType()->isPointerTy() ? launchFieldOf(root) : LaunchRef{};
+}
+
 } // namespace poseidon

@@ -8,7 +8,6 @@
 
 #include "ProfileReader.h"
 #include "Support/Diagnostics.h"
-#include "Support/Utils.h"
 #include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/SmallString.h"

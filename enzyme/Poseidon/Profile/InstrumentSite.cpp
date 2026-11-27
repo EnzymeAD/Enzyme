@@ -1,4 +1,4 @@
-//===- SiteProfile.cpp - profile generation for a site --------------------===//
+//===- InstrumentSite.cpp - profile generation for a site -----------------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -11,7 +11,6 @@
 #include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Enzyme/Utils.h"
-#include "ProfileReader.h"
 #include "Sites/Annotations.h"
 #include "Sites/CallSites.h"
 #include "Sites/Canonicalize.h"

@@ -19,7 +19,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
 
-#include <array>
 #include <cassert>
 #include <cstdint>
 #include <optional>
@@ -68,9 +67,6 @@ bool isPositiveZeroSeed(const llvm::Value *V);
 /// when it can: the product is the loop's value after its latch, and the
 /// in-kernel raise runs in the preheader and reads back in the exit block.
 std::optional<llvm::StringRef> reductionLoopShapeRefusal(const llvm::Loop &L);
-
-/// The coefficients of threadIdx.x, .y and .z in `S`.
-std::array<int64_t, 3> threadIndexCoefficients(const llvm::SCEV *S);
 
 /// Calls `fn` on each innermost loop of `LI`.
 void forEachInnermostLoop(llvm::LoopInfo &LI,
@@ -175,14 +171,6 @@ inline InKernelLayout inKernelLayout(const RecognizedMatmul &m,
   L.slices = opt.variant.scheme == Scheme::Tcec ? sliceCount(opt.variant) : 1;
   return L;
 }
-
-/// Folds `cond` into `bound` as the fact that it holds (`holds`) or fails: an
-/// `and` that holds or an `or` that fails of compares of a global thread index
-/// against a constant, a compare `(a | b) u< 2^n` of two of them included.
-/// False when a leaf is not such a bound, so that a condition of any other form
-/// is never taken for one.
-bool collectThreadIndexBounds(const llvm::Value *cond, bool holds,
-                              ThreadIndexBounds &bound);
 
 /// Emit the tensor-core code of the in-kernel direct or split scheme in place
 /// of a scalar-loop matmul; aborts on any precondition violation. The split

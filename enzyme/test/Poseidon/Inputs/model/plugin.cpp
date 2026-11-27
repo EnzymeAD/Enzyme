@@ -10,6 +10,7 @@
 // @fpcore.<n>(double %x, double %y) of the module that returns it, its
 // symbols x and y the two arguments.
 #include "Core/FPNode.h"
+#include "Enzyme/PassUtils.h"
 #include "Model/Evaluators.h"
 #include "Support/Utils.h"
 #include "Techniques/Algebraic/HerbieRun.h"

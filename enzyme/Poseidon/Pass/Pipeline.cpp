@@ -8,6 +8,7 @@
 
 #include "Core/Session.h"
 #include "Core/Technique.h"
+#include "Enzyme/PassUtils.h"
 #include "PassInternal.h"
 #include "Profile/Instrument.h"
 #include "Sites/Annotations.h"

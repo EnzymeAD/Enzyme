@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DP.h"
+#include "Support/Diagnostics.h"
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"

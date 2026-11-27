@@ -10,7 +10,6 @@
 
 #include "Core/FPNode.h"
 #include "Enzyme/Utils.h"
-#include "Sites/Annotations.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/LaunchManifest.h"
 #include "Support/Diagnostics.h"
