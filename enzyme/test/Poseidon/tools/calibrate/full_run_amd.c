@@ -5,7 +5,7 @@
 // RUN: cp %poseidon_calibrate %t/bin/
 // RUN: sed 's/^# native_arch=sm_120$/# native_arch=gfx942/' %cost_models/cm_sm_120_synthetic.csv > %t/ops.csv
 // RUN: printf '#!/bin/sh\nif [ "$1" = --device ]; then printf "AMD Instinct MI300A\\tgfx942\\n"; else cat %t/ops.csv; fi\n' > %t/bin/poseidon-calibrate-ops-hip
-// RUN: printf '#!/bin/sh\ncase "$1:$4" in ozaki:) echo library_ozaki_rel,dgemm,1.0;; ozaki:*) echo library_ozaki_rect_rel,nm8_m125k648,2.0;; direct:) echo library_direct_rel,f16_f32,0.5;; esac\n' > %t/bin/poseidon-calibrate-library-hip
+// RUN: printf '#!/bin/sh\ncase "$1:$4" in ozaki:) echo library_ozaki_rel,dgemm,1.0;; ozaki:*) echo library_ozaki_rect_rel,nm8_m125k648,2.0;; direct:) echo library_direct_rel,f16_f32,0.5;; operand-min:f16_f32) echo library_direct_operand_min,f16_f32,6.103515625e-05;; esac\n' > %t/bin/poseidon-calibrate-library-hip
 // RUN: chmod +x %t/bin/poseidon-calibrate-ops-hip %t/bin/poseidon-calibrate-library-hip
 // RUN: %t/bin/poseidon-calibrate --gpu 0 --ozaki-rect 125x648 --out %t/cm/cm.csv | FileCheck %s
 // RUN: cp %poseidon_calibrate %t/name/bin/
@@ -21,6 +21,8 @@
 // CHECK: poseidon-calibrate: tcec: the error-corrected library call has no HIP runtime; its row stays absent
 // CHECK: library_direct_rel,f16_f32,0.5
 // CHECK: poseidon-calibrate: inkernel: tensor-core raises inside a kernel are NVPTX-only; their rows stay absent
+// CHECK: poseidon-calibrate: operand-min: tensor-core raises inside a kernel are NVPTX-only; their rows stay absent
+// CHECK: library_direct_operand_min,f16_f32,6.103515625e-05
 // CHECK: poseidon-calibrate: cost model: {{.*}}cm.csv
 
 // NAME: cost model  {{.*}}/cm/cm_gfx90a_MI250X.csv

@@ -73,8 +73,8 @@ the Python 3 the build was configured with (`Python3_EXECUTABLE`) or the one
 function, and no row of the arms that measure a GPU: `--cpu` refuses those
 arms and `--gpu`.
 
-Six arms write disjoint row families into the same file; `--only` runs a
-subset, `--force` re-measures a family that is already there. A seventh,
+Seven arms write disjoint row families into the same file; `--only` runs a
+subset, `--force` re-measures a family that is already there. An eighth,
 `herbie-platform`, measures nothing: it translates the CSV into
 `<csv>.herbie.rkt` beside it. It runs after `ops` and in a full run, and
 because it needs no device, `--only herbie-platform --out <csv>` also runs on a
@@ -88,6 +88,7 @@ machine that does not have the GPU the CSV was measured on.
 | tcec | `library_tcec_rel,fp16tcec` | library-call error-corrected GEMM, on the cuMpSGEMM the compiler is built with. A compiler built without cuMpSGEMM has no such dispatch, and the arm says so and writes no row. |
 | direct | `library_direct_rel,<in>_<acc>` | library-call reduced-precision cuBLAS GEMM. |
 | inkernel | `inkernel_rel,<class>`, `inkernel_rel,<class>_m<M>n<N>k<K>_<layout>` | Tensor-core raises inside a kernel, one class at a time: the harness `inkernel.cu` is compiled through `poseidon-clang++` with `-poseidon-pin`, so what is timed is the code a real solve emits. The class row is measured on a square product of `--n` (2048) with B strided along K; a product `MxNxK:<layout>` measures the rows of exactly those extents with B strided (`browmajor`) or contiguous (`bcolmajor`) along K. A product with few output columns or B contiguous along K does not run at the class row's rate: the raise of a product whose extents are constants of its compile is priced from the rows of its extents and layout, and a compile without them warns with the `--product` argument that measures them and prices it meanwhile from the class row. A product whose output extents are run-time values is priced from the class row. |
+| operand-min | `inkernel_operand_min,<class>`, `library_direct_operand_min,<in>_<acc>`, `library_tcec_operand_min,fp16tcec` | Per product class whose operands are FP16, BF16 or TF32, the smallest operand magnitude its product keeps on this device, by the code the class's own arm times and at the same shape (`operand_min.h`): the in-kernel classes the pass proposes on the square harness of `--n`, and the library calls the model prices (its `library_direct_rel` classes, and `library_tcec_rel,fp16tcec`) by their calibrator. Each binade from the format's smallest subnormal to ten above its smallest normal is put through the product in one operand, the other a sparse matrix of plus and minus 2^s, and compared bit for bit with the exact result. 2^s keeps every partial sum at the accumulator's smallest normal or above, so what is measured is the operand and not an accumulator that flushes its own subnormals. The row is the lowest binade from which every binade up is kept in both operands. A library or matrix unit that flushes subnormal inputs, on the kernels it picks for products of a realistic size, measures the format's smallest normal. A class whose floor is not established (its top binade is lost) gets no row and fails the run. |
 | herbie-platform | none (writes `<csv>.herbie.rkt`) | Nothing. The per-op rows are translated into the Herbie platform the algebraic search ranks candidates by, so Herbie and the DP price the same device. A compile against a GPU CSV with no platform beside it aborts rather than search under another architecture's costs, and Herbie result caches are keyed by the platform name so one device's rewrites are never replayed for another. |
 
 An AMD GPU is measured by the HIP builds of the same tools
@@ -101,7 +102,8 @@ and a compile for that processor finds it by its triple. Rows the device has no
 runtime or instruction for are absent, so the solver does not propose those
 classes: the WMMA tile rows and the in-kernel raises (NVPTX-only), the
 error-corrected library call (no HIP runtime) and `library_direct_rel,tf32_f32`
-(hipBLAS has no TF32 compute type). Its Herbie platform is `hip-gfx<NNN>`.
+(hipBLAS has no TF32 compute type), with their `*_operand_min` rows. Its Herbie
+platform is `hip-gfx<NNN>`.
 
 Every `*_rel` row is one number in one unit: the candidate's wall clock over the
 scalar-FP64 GEMM's, at the same shape on the same device, so the DP compares an

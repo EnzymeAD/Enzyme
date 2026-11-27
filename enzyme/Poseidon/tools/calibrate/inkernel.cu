@@ -21,6 +21,11 @@
 //
 // Run:  ./bin [reps=5]        ("time_ms = <ms>" on stdout)
 //       ./bin --profiling     (a launch of the site, for a profile run)
+//       ./bin --operand-min <format> <accumulator format>
+//                             (the smallest operand magnitude in <format> the
+//                             kernel keeps, operand_min.h, on a square
+//                             product with B strided along K: "operand_min =
+//                             <magnitude>" on stdout)
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,6 +35,7 @@
 #include <cstring>
 #include <cuda_runtime.h>
 
+#include "operand_min.h"
 #include "poseidon/poseidon.h"
 
 #ifndef CAL_M
@@ -78,6 +84,43 @@ POSEIDON_OPTIMIZE __global__ void matmul_opt(double *C, const double *A,
 
 static dim3 GG((CAL_M + 15) / 16, (CAL_N + 15) / 16), GB(16, 16);
 
+static int operandMin(const char *format, const char *accumulator) {
+  const operand_min::Format *f = operand_min::formatNamed(format);
+  const operand_min::Format *acc = operand_min::formatNamed(accumulator);
+  if (!f || !acc) {
+    fprintf(stderr, "unknown format '%s' or '%s'\n", format, accumulator);
+    return 1;
+  }
+  if (CAL_M != CAL_N || CAL_N != CAL_K || CAL_B_COL_MAJOR) {
+    fprintf(stderr,
+            "the operand floor is measured on a square product with B strided "
+            "along K, not %dx%dx%d with B %s\n",
+            CAL_M, CAL_N, CAL_K, CAL_B_COL_MAJOR ? "contiguous" : "strided");
+    return 1;
+  }
+  const size_t elts = (size_t)CAL_M * CAL_M;
+  double *A, *B, *C;
+  CK(cudaMalloc(&A, elts * 8));
+  CK(cudaMalloc(&B, elts * 8));
+  CK(cudaMalloc(&C, elts * 8));
+  auto product = [&](const double *hA, const double *hB, double *hC) {
+    CK(cudaMemcpy(A, hA, elts * 8, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(B, hB, elts * 8, cudaMemcpyHostToDevice));
+    matmul_opt<<<GG, GB>>>(C, A, B);
+    CK(cudaDeviceSynchronize());
+    CK(cudaGetLastError());
+    CK(cudaMemcpy(hC, C, elts * 8, cudaMemcpyDeviceToHost));
+  };
+  double floor = operand_min::measure(*f, *acc, CAL_M, product, stderr);
+  if (floor == 0.0) {
+    fprintf(stderr, "the top %s binade walked is not kept exactly at N=%d\n",
+            f->name, CAL_M);
+    return 1;
+  }
+  printf("operand_min = %.17g\n", floor);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   bool profiling = false;
   int reps = 5;
@@ -86,10 +129,15 @@ int main(int argc, char **argv) {
     long v = strtol(argv[i], &end, 10);
     if (!strcmp(argv[i], "--profiling")) {
       profiling = true;
+    } else if (!strcmp(argv[i], "--operand-min") && i + 2 < argc) {
+      return operandMin(argv[i + 1], argv[i + 2]);
     } else if (*argv[i] && !*end && v > 0 && v <= INT_MAX) {
       reps = (int)v;
     } else {
-      fprintf(stderr, "usage: %s [reps] | --profiling\n", argv[0]);
+      fprintf(stderr,
+              "usage: %s [reps] | --profiling | --operand-min <format> "
+              "<accumulator format>\n",
+              argv[0]);
       return 1;
     }
   }

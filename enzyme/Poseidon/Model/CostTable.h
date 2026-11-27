@@ -85,7 +85,8 @@ const std::string &costModelPath(const CostModelState &CM);
 std::string costModelRows(CostModelState &CM);
 
 /// The (opcode,type) row, if the model has it; a row of a ratio family
-/// (library_*_rel, inkernel_rel) is positive.
+/// (library_*_rel, inkernel_rel) or of an operand-floor family (*_operand_min)
+/// is positive.
 std::optional<double> lookupCost(CostModelState &CM, llvm::StringRef OpcodeName,
                                  llvm::StringRef TypeName);
 

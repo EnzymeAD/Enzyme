@@ -64,7 +64,7 @@ static cl::opt<bool>
 static cl::opt<std::string>
     Only("only", cl::init(""), cl::value_desc("arms"),
          cl::desc("Comma-separated subset of "
-                  "ops,ozaki,ozaki-rect,tcec,direct,inkernel,"
+                  "ops,ozaki,ozaki-rect,tcec,direct,inkernel,operand-min,"
                   "herbie-platform"));
 static cl::opt<std::string>
     Python("python", cl::init(POSEIDON_CALIBRATE_PYTHON),
@@ -445,8 +445,8 @@ static std::string resolveCsv(const Device &D) {
 
 /// The arms --only takes.
 static constexpr StringLiteral Arms[] = {
-    "ops",  "herbie-platform", "ozaki",   "ozaki-rect",
-    "tcec", "direct",          "inkernel"};
+    "ops",  "herbie-platform", "ozaki",    "ozaki-rect",
+    "tcec", "direct",          "inkernel", "operand-min"};
 
 /// Whether `Arm` measures a host as well as a GPU.
 static bool isHostArm(StringRef Arm) {
@@ -870,6 +870,106 @@ static std::map<std::string, std::string> inKernelClasses(StringRef Dir) {
 /// decides only which candidates exist, never what they measure.
 constexpr unsigned kProfileExtent = 128;
 
+namespace {
+/// The in-kernel harness inkernel.cu at one shape, compiled in its own
+/// directory by poseidon-clang++ against the model being measured.
+class InKernelHarness {
+public:
+  /// The harness at `M` x `N` x `K`, B column-major when `BColMajor`, in
+  /// `Dir`.
+  InKernelHarness(const std::string &Csv, const Device &D, std::string Dir,
+                  unsigned M, unsigned N, unsigned K, bool BColMajor)
+      : Dir(std::move(Dir)), Csv(Csv), Arch(D.Arch), M(M), N(N), K(K),
+        BColMajor(BColMajor) {
+    Src = shipped("tools/calibrate/inkernel.cu");
+    if (!sys::fs::exists(Src))
+      fail("the in-kernel harness source is missing: " + Src);
+    if (std::error_code EC = sys::fs::create_directories(this->Dir))
+      fail("cannot create " + this->Dir + ": " + EC.message());
+    Clang = sibling("poseidon-clang++");
+  }
+
+  /// Records the profile the pass proposes the classes from, at extents of
+  /// at most kProfileExtent with B in the same layout.
+  void profile() const {
+    std::string Exe = Dir + "/profile.exe", Log = Dir + "/profile.log";
+    SmallVector<std::string, 16> Flags =
+        defines(std::min(M, kProfileExtent), std::min(N, kProfileExtent),
+                std::min(K, kProfileExtent));
+    Flags.push_back("-poseidon-profile-generate=" + profileDir());
+    if (build(Flags, Exe, Log))
+      fail("the profiling build of the in-kernel harness failed; see " + Log);
+    if (run({Exe, "--profiling"}, Log, Log))
+      fail("the profiling run of the in-kernel harness failed; see " + Log);
+  }
+
+  /// Compiles the harness at its shape with no action asked of the pass.
+  int buildAsWritten(StringRef Exe, StringRef Log) const {
+    return build(defines(M, N, K), Exe, Log);
+  }
+
+  /// The in-kernel classes the pass proposes from the profile, each with the
+  /// id of the candidate that applies it; none is a failed run.
+  std::map<std::string, std::string> classes() const {
+    std::string Log = Dir + "/enumerate.log", Explained = Dir + "/explain";
+    sys::fs::remove_directories(Explained);
+    // One compile explains the candidates.
+    compile({"-poseidon-pin=M0_0", "-poseidon-explain=" + Explained},
+            "/dev/null", Log);
+    std::map<std::string, std::string> Classes = inKernelClasses(Explained);
+    if (Classes.empty())
+      fail("no in-kernel class was proposed on this device; see " + Log);
+    outs() << "poseidon-calibrate: " << Classes.size()
+           << " in-kernel class(es) proposed\n";
+    return Classes;
+  }
+
+  /// Compiles the harness with the candidate `Id` applied into `Exe`;
+  /// nonzero on failure, whose output is in `Log`.
+  int compileClass(StringRef Id, StringRef Exe, StringRef Log) const {
+    return compile({("-poseidon-pin=" + Id).str()}, Exe, Log);
+  }
+
+  const std::string Dir;
+
+private:
+  std::string profileDir() const { return Dir + "/profile"; }
+
+  SmallVector<std::string, 16> defines(unsigned EM, unsigned EN,
+                                       unsigned EK) const {
+    return {"-DCAL_M=" + utostr(EM), "-DCAL_N=" + utostr(EN),
+            "-DCAL_K=" + utostr(EK), "-DCAL_B_COL_MAJOR=" + utostr(BColMajor)};
+  }
+
+  int build(ArrayRef<std::string> Flags, StringRef Exe, StringRef Log) const {
+    SmallVector<std::string, 32> Argv = {Clang,  "-x",
+                                         "cuda", "--cuda-gpu-arch=" + Arch,
+                                         "-O3",  "-Wno-unknown-cuda-version"};
+    Argv.append(Flags.begin(), Flags.end());
+    Argv.append({Src, "-o", Exe.str()});
+    SmallVector<StringRef, 32> Args(Argv.begin(), Argv.end());
+    return run(Args, Log, Log);
+  }
+
+  // -poseidon-pin is mandatory under -poseidon-matmul-calibration, so a
+  // placeholder price can never reach a DP solve.
+  int compile(ArrayRef<std::string> Apply, StringRef Exe, StringRef Log) const {
+    SmallVector<std::string, 16> Flags = defines(M, N, K);
+    Flags.append({"-poseidon-profile-use=" + profileDir(),
+                  "-poseidon-cache=" + Dir + "/cache",
+                  "-poseidon-cost-model=" + Csv, "-poseidon-enable-algebraic=0",
+                  "-poseidon-enable-precision=0", "-poseidon-enable-matmul",
+                  "-poseidon-matmul-calibration"});
+    Flags.append(Apply.begin(), Apply.end());
+    return build(Flags, Exe, Log);
+  }
+
+  std::string Csv, Arch, Src, Clang;
+  unsigned M, N, K;
+  bool BColMajor;
+};
+} // namespace
+
 /// Measures the in-kernel rows of the harness at `M` x `N` x `K`, B
 /// column-major when `BColMajor`, each row keyed by its class and `Suffix`,
 /// into `Csv`, and returns how many it wrote: the harness is profiled at small
@@ -880,51 +980,21 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
                                 StringRef Work, unsigned M, unsigned N,
                                 unsigned K, bool BColMajor, StringRef Suffix) {
   std::string Content = readFile(Csv);
-  std::string Src = shipped("tools/calibrate/inkernel.cu");
-  if (!sys::fs::exists(Src))
-    fail("the in-kernel harness source is missing: " + Src);
-  const std::string Shape = formatv("{0}x{1}x{2}", M, N, K);
-  const std::string Dir =
-      (Work + "/" + (Suffix.empty() ? "class" : Suffix.drop_front())).str();
-  if (std::error_code EC = sys::fs::create_directories(Dir))
-    fail("cannot create " + Dir + ": " + EC.message());
-  outs() << "poseidon-calibrate: in-kernel raises at " << Shape << ", B "
+  const InKernelHarness H(
+      Csv, D,
+      (Work + "/" + (Suffix.empty() ? "class" : Suffix.drop_front())).str(), M,
+      N, K, BColMajor);
+  outs() << "poseidon-calibrate: in-kernel raises at "
+         << formatv("{0}x{1}x{2}", M, N, K) << ", B "
          << (BColMajor ? "contiguous" : "strided") << " along K\n";
-
-  std::string Clang = sibling("poseidon-clang++");
-  auto defines = [&](unsigned EM, unsigned EN, unsigned EK) {
-    return SmallVector<std::string, 16>{
-        "-DCAL_M=" + utostr(EM), "-DCAL_N=" + utostr(EN),
-        "-DCAL_K=" + utostr(EK), "-DCAL_B_COL_MAJOR=" + utostr(BColMajor)};
-  };
-  SmallVector<std::string, 16> Timed = defines(M, N, K);
-  auto build = [&](ArrayRef<std::string> Flags, StringRef Exe, StringRef Log) {
-    SmallVector<std::string, 32> Argv = {Clang,  "-x",
-                                         "cuda", "--cuda-gpu-arch=" + D.Arch,
-                                         "-O3",  "-Wno-unknown-cuda-version"};
-    Argv.append(Flags.begin(), Flags.end());
-    Argv.append({Src, "-o", Exe.str()});
-    SmallVector<StringRef, 32> Args(Argv.begin(), Argv.end());
-    return run(Args, Log, Log);
-  };
-
-  // The profile, at small extents with B in the same layout.
-  std::string ProfDir = Dir + "/profile", ProfExe = Dir + "/profile.exe",
-              ProfLog = Dir + "/profile.log";
-  SmallVector<std::string, 16> ProfFlags =
-      defines(std::min(M, kProfileExtent), std::min(N, kProfileExtent),
-              std::min(K, kProfileExtent));
-  ProfFlags.push_back("-poseidon-profile-generate=" + ProfDir);
-  if (build(ProfFlags, ProfExe, ProfLog))
-    fail("the profiling build of the in-kernel harness failed; see " + ProfLog);
-  if (run({ProfExe, "--profiling"}, ProfLog, ProfLog))
-    fail("the profiling run of the in-kernel harness failed; see " + ProfLog);
+  H.profile();
 
   // The scalar-FP64 baseline: the denominator every rel row shares. Compiled
   // by the same driver, with no action asked of the pass, so the only
   // difference from a candidate is the rewrite.
-  std::string BaseExe = Dir + "/base.exe", BaseLog = Dir + "/build_base.log";
-  if (build(Timed, BaseExe, BaseLog))
+  std::string BaseExe = H.Dir + "/base.exe",
+              BaseLog = H.Dir + "/build_base.log";
+  if (H.buildAsWritten(BaseExe, BaseLog))
     fail("the scalar-FP64 baseline did not build; see " + BaseLog);
   std::optional<double> BaseMs = timeOf(BaseExe);
   if (!BaseMs)
@@ -932,41 +1002,16 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
   outs() << "poseidon-calibrate: scalar-FP64 baseline "
          << formatv("{0:F4}", *BaseMs) << " ms\n";
 
-  // One compile explains the candidates; -poseidon-pin is mandatory under
-  // -poseidon-matmul-calibration, so a placeholder price can never reach a DP
-  // solve.
-  SmallVector<std::string, 16> Common = Timed;
-  Common.append({"-poseidon-profile-use=" + ProfDir,
-                 "-poseidon-cache=" + Dir + "/cache",
-                 "-poseidon-cost-model=" + Csv, "-poseidon-enable-algebraic=0",
-                 "-poseidon-enable-precision=0", "-poseidon-enable-matmul",
-                 "-poseidon-matmul-calibration"});
-  auto compile = [&](ArrayRef<std::string> Apply, StringRef Exe,
-                     StringRef Log) {
-    SmallVector<std::string, 16> Flags = Common;
-    Flags.append(Apply.begin(), Apply.end());
-    return build(Flags, Exe, Log);
-  };
-  std::string EnumLog = Dir + "/enumerate.log", Explained = Dir + "/explain";
-  sys::fs::remove_directories(Explained);
-  compile({"-poseidon-pin=M0_0", "-poseidon-explain=" + Explained}, "/dev/null",
-          EnumLog);
-  std::map<std::string, std::string> Classes = inKernelClasses(Explained);
-  if (Classes.empty())
-    fail("no in-kernel class was proposed on this device; see " + EnumLog);
-  outs() << "poseidon-calibrate: " << Classes.size()
-         << " in-kernel class(es) proposed\n";
-
   std::string Rows;
-  for (const auto &[Class, Id] : Classes) {
+  for (const auto &[Class, Id] : H.classes()) {
     const std::string Row = "inkernel_rel," + Class + Suffix.str();
     if (!Force && StringRef(Content).contains(Row + ",")) {
       outs() << "  = " << Class << Suffix << " already calibrated\n";
       continue;
     }
-    std::string Exe = Dir + "/cand_" + Class + ".exe";
-    std::string Log = Dir + "/build_" + Class + ".log";
-    if (compile({"-poseidon-pin=" + Id}, Exe, Log)) {
+    std::string Exe = H.Dir + "/cand_" + Class + ".exe";
+    std::string Log = H.Dir + "/build_" + Class + ".log";
+    if (H.compileClass(Id, Exe, Log)) {
       outs() << "  ! " << Class << Suffix << " did not build (" << Log << ")\n";
       Unmeasured.push_back(Row);
       continue;
@@ -1018,6 +1063,141 @@ static void armInKernel(const std::string &Csv, const Device &D) {
     outs() << "poseidon-calibrate: in-kernel: nothing new to write\n";
 }
 
+/// The operand format of a product class, an in-kernel class or the key of a
+/// library_direct_rel row, when it is narrower than FP32: a class of a wider
+/// format reads no operand below FP32's own range.
+static StringRef narrowOperandFormat(StringRef Class) {
+  if (Class.consume_front("tcec_n")) {
+    Class = Class.drop_while(isDigit);
+    Class.consume_front("_");
+  }
+  StringRef Format = Class.split('_').first;
+  return llvm::is_contained({"f16", "bf16", "tf32"}, Format) ? Format
+                                                             : StringRef();
+}
+
+/// Measures the floors of the in-kernel classes of a narrow operand format
+/// the pass proposes, on the harness the inkernel arm times its class rows
+/// on.
+static void measureInKernelFloors(const std::string &Csv, const Device &D) {
+  std::string Content = readFile(Csv);
+  SmallString<256> WorkBuf;
+  if (std::error_code EC =
+          sys::fs::createUniqueDirectory("poseidon-operand-min", WorkBuf))
+    fail("cannot create " + WorkBuf + ": " + EC.message());
+  outs() << "poseidon-calibrate: operand-min workdir " << WorkBuf << '\n';
+  const InKernelHarness H(Csv, D, (WorkBuf + "/class").str(), RefN, RefN, RefN,
+                          /*BColMajor=*/false);
+  outs() << "poseidon-calibrate: operand floors of the in-kernel raises at "
+         << formatv("{0}x{0}x{0}", RefN) << ", B strided along K\n";
+  H.profile();
+  std::string Rows;
+  for (const auto &[Class, Id] : H.classes()) {
+    StringRef Format = narrowOperandFormat(Class);
+    if (Format.empty())
+      continue;
+    const std::string Row = "inkernel_operand_min," + Class;
+    if (!Force && StringRef(Content).contains(Row + ",")) {
+      outs() << "  = " << Row << " already measured\n";
+      continue;
+    }
+    std::string Exe = H.Dir + "/cand_" + Class + ".exe";
+    std::string Log = H.Dir + "/build_" + Class + ".log";
+    if (H.compileClass(Id, Exe, Log)) {
+      outs() << "  ! " << Row << ": the class did not build (" << Log << ")\n";
+      Unmeasured.push_back(Row);
+      continue;
+    }
+    std::optional<std::string> Out = capture(
+        {Exe, "--operand-min", Format, StringRef(Class).rsplit('_').second});
+    SmallVector<StringRef, 2> Match;
+    if (!Out || !Regex("operand_min = ([0-9.e+-]+)").match(*Out, &Match)) {
+      outs() << "  ! " << Row << ": no floor established\n";
+      Unmeasured.push_back(Row);
+      continue;
+    }
+    Rows += Row + "," + Match[1].str() + "\n";
+    outs() << "  + " << Row << "," << Match[1] << '\n';
+  }
+  if (Rows.empty())
+    return;
+  mergeRows(Content, Rows);
+  writeFile(Csv, Content);
+}
+
+/// Measures the floors of the library calls of a narrow operand format the
+/// model prices: the classes of its library_direct_rel rows, and the
+/// error-corrected call when it has that row and this build has the call.
+static void measureLibraryFloors(const std::string &Csv, const Device &D) {
+  CostModelState CM;
+  if (Error E = loadCostModel(CM, Csv))
+    fail(toString(std::move(E)));
+  // The class the library calibrator takes, and the family of its row.
+  SmallVector<std::pair<std::string, StringRef>, 4> Classes;
+  for (const auto &Row : getCostModel(CM)) {
+    const auto &[Family, Key] = Row.first;
+    if (Family == "library_direct_rel" && !narrowOperandFormat(Key).empty())
+      Classes.push_back({Key, "library_direct_operand_min"});
+    else if (Family == "library_tcec_rel" && Key == "fp16tcec" && !D.Hip &&
+             POSEIDON_CALIBRATE_TCEC)
+      Classes.push_back({Key, "library_tcec_operand_min"});
+  }
+  SmallVector<std::string, 8> Argv = {
+      tool(D, Calibrator::Library), "operand-min", utostr(RefN), utostr(Reps)};
+  SmallVector<std::string, 4> Asked;
+  for (const auto &[Class, Family] : Classes) {
+    const std::string Row = (Family + "," + Class).str();
+    if (!Force && lookupCost(CM, Family, Class)) {
+      outs() << "  = " << Row << " already measured\n";
+      continue;
+    }
+    Argv.push_back(Class);
+    Asked.push_back(Row);
+  }
+  if (Asked.empty())
+    return;
+  outs() << "poseidon-calibrate: measuring the operand floors of the library "
+            "calls\n";
+  SmallVector<StringRef, 8> Args(Argv.begin(), Argv.end());
+  std::optional<std::string> Out = capture(Args);
+  if (!Out)
+    fail("the operand-min calibration of the library calls failed");
+  std::string Rows;
+  for (const std::string &Row : Asked) {
+    StringRef Line;
+    for (StringRef L : llvm::split(*Out, '\n'))
+      if (L.trim().starts_with(Row + ","))
+        Line = L.trim();
+    if (Line.empty()) {
+      outs() << "  ! " << Row << ": no floor established\n";
+      Unmeasured.push_back(Row);
+      continue;
+    }
+    (Rows += Line) += '\n';
+    outs() << "  + " << Line << '\n';
+  }
+  if (Rows.empty())
+    return;
+  std::string Content = readFile(Csv);
+  mergeRows(Content, Rows);
+  writeFile(Csv, Content);
+}
+
+/// Measures, per product class of a narrow operand format, the smallest
+/// operand magnitude it keeps on this device, below which the accuracy model
+/// reads an operand as zero: the in-kernel classes on the harness the inkernel
+/// arm times, the library calls by their calibrator at the square reference
+/// shape. A class whose floor is not established has no row and is added to
+/// Unmeasured.
+static void armOperandMin(const std::string &Csv, const Device &D) {
+  if (D.Hip)
+    outs() << "poseidon-calibrate: operand-min: tensor-core raises inside a "
+              "kernel are NVPTX-only; their rows stay absent\n";
+  else
+    measureInKernelFloors(Csv, D);
+  measureLibraryFloors(Csv, D);
+}
+
 /// Resolves the model as a compile for `D` does, with --out in the place of
 /// -poseidon-cost-model, and reports which row families it lacks.
 static int checkModel(const Device &D) {
@@ -1054,19 +1234,27 @@ static int checkModel(const Device &D) {
     const char *Family;
     const char *What;
     Where On;
-  } Families[] = {{"fmul", "per-op throughputs", Everywhere},
-                  {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
-                  {"library_ozaki_rel", "Ozaki-II library call", Gpu},
-                  {"library_tcec_rel", "error-corrected library call", Nvidia},
-                  {"library_direct_rel", "reduced-precision library call", Gpu},
-                  {"inkernel_rel", "in-kernel tensor-core raises", Nvidia}};
+  } Families[] = {
+      {"fmul", "per-op throughputs", Everywhere},
+      {"wmma_mma_m16n16k16", "tensor-core tile prices", Nvidia},
+      {"library_ozaki_rel", "Ozaki-II library call", Gpu},
+      {"library_tcec_rel", "error-corrected library call", Nvidia},
+      {"library_direct_rel", "reduced-precision library call", Gpu},
+      {"inkernel_rel", "in-kernel tensor-core raises", Nvidia},
+      {"library_direct_operand_min",
+       "smallest operand of the reduced-precision library call", Gpu},
+      {"library_tcec_operand_min",
+       "smallest operand of the error-corrected library call", Nvidia},
+      {"inkernel_operand_min",
+       "smallest operand of the in-kernel tensor-core raises", Nvidia}};
   for (const auto &F : Families) {
     if ((D.Host && F.On != Everywhere) || (D.Hip && F.On == Nvidia)) {
       outs() << "n/a         " << F.Family << "  (" << F.What << ": none on "
              << (D.Host ? "a host" : D.Arch) << ")\n";
       continue;
     }
-    if (!POSEIDON_CALIBRATE_TCEC && StringRef(F.Family) == "library_tcec_rel") {
+    if (!POSEIDON_CALIBRATE_TCEC &&
+        StringRef(F.Family).starts_with("library_tcec_")) {
       outs() << "n/a         " << F.Family << "  (" << F.What
              << ": none in a build without cuMpSGEMM)\n";
       continue;
@@ -1103,6 +1291,9 @@ int main(int argc, char **argv) {
       "  direct           library_direct_rel,<in>_<acc>\n"
       "  inkernel         inkernel_rel,<class> and\n"
       "                   ,<class>_m<M>n<N>k<K>_<layout> (--product)\n"
+      "  operand-min      inkernel_operand_min,<class>,\n"
+      "                   library_direct_operand_min,<in>_<acc> and\n"
+      "                   library_tcec_operand_min,fp16tcec\n"
       "A host has the first two arms only.\n");
   ToolDir = std::string(sys::path::parent_path(
       sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main)));
@@ -1161,6 +1352,8 @@ int main(int argc, char **argv) {
       armLibrary(Csv, D, "direct", "library_direct_rel");
     if (wants("inkernel"))
       armInKernel(Csv, D);
+    if (wants("operand-min"))
+      armOperandMin(Csv, D);
   }
   outs() << "poseidon-calibrate: cost model: " << Csv << '\n';
   if (!Unmeasured.empty()) {

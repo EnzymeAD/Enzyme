@@ -137,10 +137,17 @@ static constexpr StringLiteral kRatioFamilies[] = {
     "library_ozaki_rel", "library_ozaki_rect_rel", "library_tcec_rel",
     "library_direct_rel", "inkernel_rel"};
 
+// The row families whose value is the smallest operand magnitude a product
+// class keeps on the device.
+static constexpr StringLiteral kOperandMinFamilies[] = {
+    "library_tcec_operand_min", "library_direct_operand_min",
+    "inkernel_operand_min"};
+
 // Whether `Opcode,Type` is a row family poseidon-calibrate writes, read by a
 // compile or not; must agree with the calibrator.
 static bool isCostModelRow(StringRef Opcode, StringRef Type) {
-  if (is_contained(kRatioFamilies, Opcode))
+  if (is_contained(kRatioFamilies, Opcode) ||
+      is_contained(kOperandMinFamilies, Opcode))
     return !Type.empty();
   if (Opcode.consume_front("wmma_mma_")) {
     unsigned M, N, K;
@@ -223,6 +230,13 @@ Error loadCostModel(CostModelState &CM, StringRef Requested) {
                                 " prices the row '" + Fields[0] + "," +
                                 Fields[1] + "' at " + Fields[2].trim() +
                                 ", which is not a positive ratio");
+    if (Cost == 0 && is_contained(kOperandMinFamilies, Fields[0]))
+      return modelError(CM, "line " + Twine(It.line_number()) +
+                                " has the row '" + Fields[0] + "," + Fields[1] +
+                                "' at " + Fields[2].trim() +
+                                ", which is no operand magnitude; "
+                                "poseidon-calibrate --gpu <id> --only "
+                                "operand-min measures it");
     if (!CM.Model.try_emplace({Fields[0].str(), Fields[1].str()}, Cost).second)
       return modelError(CM, "has the row '" + Fields[0] + "," + Fields[1] +
                                 "' twice");

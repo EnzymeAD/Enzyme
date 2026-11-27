@@ -19,6 +19,15 @@
 //                                              dgemm_m<M>n<N>k<K>
 //   poseidon-calibrate-library-cuda direct N reps library_direct_rel,<in>_<acc>
 //   poseidon-calibrate-library-cuda tcec N reps    library_tcec_rel,fp16tcec
+//   poseidon-calibrate-library-cuda operand-min N reps <class>...
+//                                              library_direct_operand_min,
+//                                              <in>_<acc> and
+//                                              library_tcec_operand_min,fp16tcec
+//
+// The operand-min family measures, for each class named (a direct class of a
+// narrow operand format, or fp16tcec), the smallest operand magnitude the call
+// keeps at the square shape N (operand_min.h), and prints the row of each
+// class whose floor it establishes; the time is not measured.
 //
 // The rows go to stdout. Built as HIP it measures hipBLAS, which has no TF32
 // compute type, so tf32_f32 has no row there; tcec exists only in a build with
@@ -26,6 +35,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "operand_min.h"
 #include "runtime/gemm/GemmRuntime.h"
 #include "runtime/gemm/SchemeConstants.h"
 
@@ -34,10 +44,12 @@
 #define POSEIDON_TCEC 0
 #endif
 
+#include <algorithm>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 
 /// The naive scalar-FP64 GEMM whose time is the denominator of every row.
 __global__ void referenceGemm(double *C, const double *A, const double *B,
@@ -240,22 +252,87 @@ int ozaki(int argc, char **argv, float tRef) {
   return 0;
 }
 
+/// The modes of __poseidon_direct_dgemm, in the class spelling of the rows,
+/// with the narrow format each rounds its operands to (none for FP32).
+const struct {
+  int Mode;
+  const char *Class;
+  const char *Format;
+} DirectClasses[] = {{kDirectFp16, "f16_f32", "f16"},
+                     {kDirectBf16, "bf16_f32", "bf16"},
+#ifndef __HIP__
+                     {kDirectTf32, "tf32_f32", "tf32"},
+#endif
+                     {kDirectFp32, "f32_f32", nullptr}};
+
 /// The direct family: one row per reduced-precision mode.
 int direct(float tRef) {
-  // The modes of __poseidon_direct_dgemm, in the class spelling of the rows.
-  static const struct {
-    int Mode;
-    const char *Class;
-  } Classes[] = {{kDirectFp16, "f16_f32"},
-                 {kDirectBf16, "bf16_f32"},
-#ifndef __HIP__
-                 {kDirectTf32, "tf32_f32"},
-#endif
-                 {kDirectFp32, "f32_f32"}};
-  for (const auto &C : Classes)
+  for (const auto &C : DirectClasses)
     row(
         "library_direct_rel", C.Class, [&](const Gemm &g) { g.direct(C.Mode); },
         tRef);
+  return 0;
+}
+
+/// Prints the row `family`,`key` at the floor of `f` in `call` on the square
+/// product, accumulated in FP32, when the floor is established; reports on
+/// stderr when it is not.
+template <class Call>
+void floorRow(const char *family, const char *key, const operand_min::Format &f,
+              Call call, double anchor = 0.0, int offset = 0) {
+  const size_t bytes = (size_t)N * N * 8;
+  auto product = [&](const double *A, const double *B, double *C) {
+    POSEIDON_GPU_CHECK(gpuMemcpy(dA, A, bytes, gpuMemcpyHostToDevice));
+    POSEIDON_GPU_CHECK(gpuMemcpy(dB, B, bytes, gpuMemcpyHostToDevice));
+    POSEIDON_GPU_CHECK(gpuMemset(dC, 0, bytes));
+    call(Gemm::square(dC, dA, dB, N));
+    POSEIDON_GPU_CHECK(gpuDeviceSynchronize());
+    POSEIDON_GPU_CHECK(gpuMemcpy(C, dC, bytes, gpuMemcpyDeviceToHost));
+  };
+  double floor = operand_min::measure(f, *operand_min::formatNamed("f32"), N,
+                                      product, stderr, anchor, offset);
+  if (floor == 0.0) {
+    fprintf(stderr,
+            "poseidon-calibrate-library: %s,%s: the top binade walked is not "
+            "kept exactly at N=%d; no operand floor, and no row\n",
+            family, key, N);
+    return;
+  }
+  printf("%s,%s,%.17g\n", family, key, floor);
+  fflush(stdout);
+}
+
+/// The operand-min family: the floor of each class in argv[4...]. The
+/// error-corrected call scales each operand to a largest magnitude of 2^10
+/// (tcecScaleExponent) before it splits it, so the binade's operand holds one
+/// element of 1 that sets that scale, and its slices are its values times
+/// 2^10.
+int operandMin(int argc, char **argv) {
+  for (int i = 4; i < argc; ++i) {
+    const char *cls = argv[i];
+#if POSEIDON_TCEC
+    if (!strcmp(cls, "fp16tcec")) {
+      floorRow(
+          "library_tcec_operand_min", cls, *operand_min::formatNamed("f16"),
+          [](const Gemm &g) { g.tcec(kTcecFp16Tcec); }, /*anchor=*/1.0,
+          /*offset=*/10);
+      continue;
+    }
+#endif
+    const auto *C = std::find_if(
+        std::begin(DirectClasses), std::end(DirectClasses),
+        [&](const auto &D) { return D.Format && !strcmp(D.Class, cls); });
+    if (C == std::end(DirectClasses)) {
+      fprintf(stderr,
+              "poseidon-calibrate-library: '%s' is no class whose operand "
+              "floor this build measures\n",
+              cls);
+      return 1;
+    }
+    floorRow("library_direct_operand_min", C->Class,
+             *operand_min::formatNamed(C->Format),
+             [&](const Gemm &g) { g.direct(C->Mode); });
+  }
   return 0;
 }
 
@@ -270,15 +347,17 @@ int positive(const char *s) {
 
 int main(int argc, char **argv) {
 #if POSEIDON_TCEC
-  const char *families = "ozaki|direct|tcec";
+  const char *families = "ozaki|direct|tcec|operand-min";
 #else
-  const char *families = "ozaki|direct";
+  const char *families = "ozaki|direct|operand-min";
 #endif
   const char *family = argc > 1 ? argv[1] : "";
   bool known = !strcmp(family, "ozaki") || !strcmp(family, "direct") ||
-               (POSEIDON_TCEC && !strcmp(family, "tcec"));
+               (POSEIDON_TCEC && !strcmp(family, "tcec")) ||
+               !strcmp(family, "operand-min");
   if (!known || argc < 4) {
-    fprintf(stderr, "usage: %s %s N reps [MxK|MxNxK...]\n", argv[0], families);
+    fprintf(stderr, "usage: %s %s N reps [MxK|MxNxK|class...]\n", argv[0],
+            families);
     return 1;
   }
   N = positive(argv[2]);
@@ -292,6 +371,8 @@ int main(int argc, char **argv) {
   dA = randomDevice(sz);
   dB = randomDevice(sz);
   POSEIDON_GPU_CHECK(gpuMalloc(&dC, sz * 8));
+  if (!strcmp(family, "operand-min"))
+    return operandMin(argc, argv);
 
   float tRef = timeit(
       [] {

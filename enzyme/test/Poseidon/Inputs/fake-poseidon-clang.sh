@@ -3,9 +3,11 @@
 # its arguments to $FAKE_CLANG_LOG when that is set. A compile with
 # -poseidon-explain=<dir> explains a product with three in-kernel classes. The
 # program it writes records a profile under -poseidon-profile-generate=<dir>,
-# else prints a time: 0.5 ms with a rewrite applied, 2 ms without. With the
-# rewrite $FAKE_CLANG_FAIL (an -poseidon-pin value) applied, the
-# program fails as a CUDA program that cannot initialize the device does.
+# else prints a time: 0.5 ms with a rewrite applied, 2 ms without; asked for
+# --operand-min <format> <accumulator>, it prints the format's smallest
+# subnormal as the floor. With the rewrite $FAKE_CLANG_FAIL (an -poseidon-pin
+# value) applied, the program fails as a CUDA program that cannot initialize
+# the device does.
 [ -z "$FAKE_CLANG_LOG" ] || echo "$*" >> "$FAKE_CLANG_LOG"
 out='' prev='' dir='' explain='' time=2.000000 fails=''
 for arg; do
@@ -36,6 +38,14 @@ if [ -n "$dir" ]; then
 elif [ -n "$fails" ]; then
   printf '#!/bin/sh\necho "CUDA error inkernel.cu:100: initialization error" >&2\nexit 1\n' > "$out"
 else
-  printf '#!/bin/sh\necho "time_ms = %s"\n' "$time" > "$out"
+  cat > "$out" <<PROGRAM
+#!/bin/sh
+case "\$1:\$2" in
+--operand-min:f16) echo "operand_min = 5.9604644775390625e-08" ;;
+--operand-min:bf16) echo "operand_min = 9.183549615799121e-41" ;;
+--operand-min:tf32) echo "operand_min = 1.1479437019748901e-41" ;;
+*) echo "time_ms = $time" ;;
+esac
+PROGRAM
 fi
 chmod +x "$out"
