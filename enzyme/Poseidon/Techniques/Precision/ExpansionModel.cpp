@@ -17,7 +17,7 @@
 #include "ExpansionModel.h"
 #include "Core/FPCore.h"
 #include "Core/FPNode.h"
-#include "Techniques/Precision/ExpansionRoutines.h"
+#include "Techniques/Precision/ExpansionOps.h"
 
 #include "llvm/ADT/DenseMap.h"
 
@@ -77,25 +77,24 @@ struct HostArith {
   double extend(float v, const char *) { return (double)v; }
 };
 
-using Routines = ExpansionRoutines<HostArith>;
+// The model's expansions, for ExpansionOps.
+struct HostExpansions {
+  using Expansion = FloatExpansion;
+  static unsigned size(const FloatExpansion &v) { return v.n; }
+  static const float *components(const FloatExpansion &v) { return v.x; }
+  static float *components(FloatExpansion &v) { return v.x; }
+  static FloatExpansion sized(unsigned n) {
+    FloatExpansion c;
+    c.n = n;
+    return c;
+  }
+};
+
+using Ops = ExpansionOps<HostArith, HostExpansions>;
 
 } // namespace
 
-static Routines routines() { return Routines(HostArith()); }
-
-static F2 pair(const FloatExpansion &a) { return {a.x[0], a.x[1]}; }
-static FloatExpansion components2(F2 r) {
-  FloatExpansion c;
-  c.n = 2;
-  c.x[0] = r.hi;
-  c.x[1] = r.lo;
-  return c;
-}
-static FloatExpansion sized(unsigned n) {
-  FloatExpansion c;
-  c.n = n;
-  return c;
-}
+static Ops ops() { return Ops(HostArith()); }
 
 FloatExpansion FloatExpansion::of(const float *components, unsigned n) {
   FloatExpansion r;
@@ -106,101 +105,35 @@ FloatExpansion FloatExpansion::of(const float *components, unsigned n) {
 }
 
 FloatExpansion expansionFromF64(double v, unsigned n) {
-  if (n == 2)
-    return components2(routines().dsFromF64(v));
-  FloatExpansion r = sized(n);
-  routines().expansionFromF64(n, v, r.x);
-  return r;
+  return ops().fromF64(v, n);
 }
-
 FloatExpansion expansionFromF32(float v, unsigned n) {
-  if (n == 2)
-    return components2(routines().dsFromF32(v));
-  FloatExpansion r = sized(n);
-  routines().expansionFromF32(n, v, r.x);
-  return r;
+  return ops().fromF32(v, n);
 }
-
-double expansionToF64(const FloatExpansion &a) {
-  if (a.n == 2)
-    return routines().dsToF64(pair(a));
-  return routines().expansionToF64(a.n, a.x);
-}
-
-float expansionToF32(const FloatExpansion &a) {
-  if (a.n == 2)
-    return routines().dsToF32(pair(a));
-  return routines().expansionToF32(a.n, a.x);
-}
-
-FloatExpansion expansionNeg(const FloatExpansion &a) {
-  if (a.n == 2)
-    return components2(routines().dsNeg(pair(a)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionNeg(a.n, a.x, c.x);
-  return c;
-}
-
+double expansionToF64(const FloatExpansion &a) { return ops().toF64(a); }
+float expansionToF32(const FloatExpansion &a) { return ops().toF32(a); }
+FloatExpansion expansionNeg(const FloatExpansion &a) { return ops().neg(a); }
 FloatExpansion expansionAdd(const FloatExpansion &a, const FloatExpansion &b) {
-  if (a.n == 2)
-    return components2(routines().dsAdd(pair(a), pair(b)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionAdd(a.n, a.x, b.x, c.x);
-  return c;
+  return ops().add(a, b);
 }
-
 FloatExpansion expansionSub(const FloatExpansion &a, const FloatExpansion &b) {
-  if (a.n == 2)
-    return components2(routines().dsSub(pair(a), pair(b)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionSub(a.n, a.x, b.x, c.x);
-  return c;
+  return ops().sub(a, b);
 }
-
 FloatExpansion expansionMul(const FloatExpansion &a, const FloatExpansion &b) {
-  if (a.n == 2)
-    return components2(routines().dsMul(pair(a), pair(b)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionMul(a.n, a.x, b.x, c.x);
-  return c;
+  return ops().mul(a, b);
 }
-
-FloatExpansion expansionSqr(const FloatExpansion &a) {
-  if (a.n == 2)
-    return components2(routines().dsMul(pair(a), pair(a)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionSqr(a.n, a.x, c.x);
-  return c;
-}
-
+FloatExpansion expansionSqr(const FloatExpansion &a) { return ops().sqr(a); }
 FloatExpansion expansionDiv(const FloatExpansion &a, const FloatExpansion &b) {
-  if (a.n == 2)
-    return components2(routines().dsDiv(pair(a), pair(b)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionDiv(a.n, a.x, b.x, c.x);
-  return c;
+  return ops().div(a, b);
 }
-
-FloatExpansion expansionSqrt(const FloatExpansion &a) {
-  if (a.n == 2)
-    return components2(routines().dsSqrt(pair(a)));
-  FloatExpansion c = sized(a.n);
-  routines().expansionSqrt(a.n, a.x, c.x);
-  return c;
-}
-
+FloatExpansion expansionSqrt(const FloatExpansion &a) { return ops().sqrt(a); }
 FloatExpansion expansionFma(const FloatExpansion &a, const FloatExpansion &b,
                             const FloatExpansion &c) {
-  if (a.n == 2)
-    return components2(routines().dsFma(pair(a), pair(b), pair(c)));
-  return expansionAdd(expansionMul(a, b), c);
+  return ops().fma(a, b, c);
 }
-
 FloatExpansion expansionFmaSqr(const FloatExpansion &a,
                                const FloatExpansion &c) {
-  if (a.n == 2)
-    return components2(routines().dsFma(pair(a), pair(a), pair(c)));
-  return expansionAdd(expansionSqr(a), c);
+  return ops().fmaSqr(a, c);
 }
 
 namespace {

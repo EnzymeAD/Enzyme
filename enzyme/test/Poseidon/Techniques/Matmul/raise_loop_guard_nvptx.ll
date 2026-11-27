@@ -38,7 +38,7 @@
 ; IR-NEXT: [[XY:%[0-9]+]] = and i1 %raise.inside1, [[X]]
 ; IR-NEXT: br i1 [[XY]], label %raise.entry, label %loop.preheader
 ; IR: {{^}}exit:
-; IR-NEXT: %raise.result = phi double [ %{{[0-9]+}}, %ozaki_store_gate.merge ], [ %fma.15, %loop.preheader ]
+; IR-NEXT: %raise.result = phi double [ %{{[0-9]+}}, %tcec_store_gate.merge ], [ %fma.15, %loop.preheader ]
 ; IR: store double %raise.result, ptr %caddr, align 8
 
 ; IR-LABEL: define {{.*}} @preprocess_one_body(

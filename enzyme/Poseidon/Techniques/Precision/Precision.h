@@ -25,19 +25,15 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/Type.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/JSON.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <cstdint>
 #include <limits>
 #include <map>
-#include <memory>
 #include <set>
 #include <string>
 #include <tuple>
-#include <unordered_map>
 
 namespace poseidon {
 
@@ -53,8 +49,8 @@ struct PrecisionCandidate {
   /// of the unit's initialAccCost; NaN until priced.
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
   /// The cost of the outputs with the changes applied per execution, in
-  /// cost-model units.
-  double CompCost = std::numeric_limits<double>::max();
+  /// cost-model units, once priced.
+  std::optional<double> compCost;
   /// The name reports and pins use: the operations each tier holds as shares
   /// ("All FP64(0%) + FP32(100%)").
   std::string desc;
@@ -108,7 +104,7 @@ struct MeasuredFrequencies {
 
 /// The precision candidates of one subgraph. A candidate is repriced against
 /// the outputs the selected rewrites of the same subgraph leave.
-class PrecisionUnit : public SubgraphUnit<PrecisionCandidate> {
+class PrecisionUnit : public SubgraphUnit<PrecisionUnit, PrecisionCandidate> {
 public:
   /// The kind of the precision units.
   static constexpr UnitKindInfo Info = {"precision change", "P",
@@ -145,13 +141,9 @@ public:
   llvm::Error priceAsWritten(CostModelState &CM);
 
   /// The change candidate `candidateIndex` makes to the profiled run's cost
-  /// over the whole subgraph, in cost-model units. The unit must be priced.
-  double getCompCostDelta(size_t candidateIndex);
-  std::optional<double> pricedCostDelta(size_t i) override {
-    if (candidates[i].CompCost == std::numeric_limits<double>::max())
-      return std::nullopt;
-    return getCompCostDelta(i);
-  }
+  /// over the whole subgraph, in cost-model units. The candidate must be
+  /// priced.
+  double getCompCostDelta(size_t candidateIndex) const;
   /// Memoizes the cost delta of each (candidate, steps) request.
   void priceRequests(
       Session &S,
@@ -160,9 +152,6 @@ public:
   RepriceKey repriceKey(size_t candidateIndex,
                         llvm::ArrayRef<SolutionStep> steps) const;
 
-  static bool classof(const OptimizationUnit *U) {
-    return &llvm::cast<SiteUnit>(U)->info() == &Info;
-  }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   /// Priced over what the rewrites of its subgraph's outputs leave of it.
@@ -172,6 +161,9 @@ public:
   bool consumesFootprint() const override { return false; }
   bool pricedAgainst(const OptimizationUnit &earlier) const override;
   std::string candidateName(size_t i) const override {
+    return candidates[i].desc;
+  }
+  std::string selectionText(size_t i) const override {
     return candidates[i].desc;
   }
   std::string choiceText(size_t i) const override;
@@ -188,9 +180,6 @@ public:
                      llvm::StringRef CostChange) const override;
   std::string rivalReason(const Alternative &A,
                           const Alternative &Rival) const override;
-  std::string selectionText(size_t i) const override {
-    return candidates[i].desc;
-  }
 
 private:
   /// What a repricing by the solve could not price, whose cost it took as 0.

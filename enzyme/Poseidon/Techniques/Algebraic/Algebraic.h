@@ -24,14 +24,10 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/JSON.h"
 
-#include <cmath>
 #include <cstdint>
 #include <limits>
-#include <memory>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace llvm {
@@ -45,9 +41,9 @@ struct Options;
 
 /// An expression Herbie returned for a core.
 struct AlgebraicCandidate {
-  /// Per execution, in cost-model units; the solver puts the change over the
-  /// profiled run on its axis.
-  double CompCost = std::numeric_limits<double>::max();
+  /// Per execution, in cost-model units, once priced; the solver puts the
+  /// change over the profiled run on its axis.
+  std::optional<double> compCost;
   /// Herbie's cost of the expression over its cost of the core as written.
   double herbieCost = std::numeric_limits<double>::quiet_NaN();
   /// Herbie's accuracy estimate: 1 less its average error bits over the
@@ -90,7 +86,7 @@ struct BoundaryCastFreq {
 
 /// The rewrites Herbie returned for one core: one output of a subgraph, or a
 /// group of its outputs as an array, at one FPCore precision.
-class AlgebraicUnit : public SubgraphUnit<AlgebraicCandidate> {
+class AlgebraicUnit : public SubgraphUnit<AlgebraicUnit, AlgebraicCandidate> {
 public:
   /// The kind of the algebraic units.
   static constexpr UnitKindInfo Info = {"algebraic", "A",
@@ -137,20 +133,12 @@ public:
 
   /// The change candidate `candidateIndex` makes to the profiled run's cost,
   /// in cost-model units: its cost less the erased operations', times the
-  /// executions. The unit must be priced.
-  double getCompCostDelta(size_t candidateIndex);
-  std::optional<double> pricedCostDelta(size_t i) override {
-    if (candidates[i].CompCost == std::numeric_limits<double>::max())
-      return std::nullopt;
-    return getCompCostDelta(i);
-  }
+  /// executions. The candidate must be priced.
+  double getCompCostDelta(size_t candidateIndex) const;
   /// How often a candidate's boundary conversions run, given the loops `LI`
   /// of the site's function.
   BoundaryCastFreq boundaryCastFreq(const llvm::LoopInfo &LI) const;
 
-  static bool classof(const OptimizationUnit *U) {
-    return &llvm::cast<SiteUnit>(U)->info() == &Info;
-  }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   bool consumesFootprint() const override { return false; }
@@ -164,10 +152,16 @@ public:
   std::string candidateName(size_t i) const override {
     return candidates[i].expr;
   }
+  std::string selectionText(size_t i) const override {
+    return expr + " -> " + candidates[i].expr;
+  }
   std::string choiceText(size_t i) const override;
   llvm::Error materialize(size_t i) override;
   llvm::Error price() override;
   void printPriced(llvm::raw_ostream &OS) override;
+  std::string keyHeader() const override {
+    return std::string(Info.letter) + " " + herbiePrecision + " " + expr;
+  }
   llvm::Error explain(Explanation &E, UnitExplanation &U) override;
   void remarkApplied(llvm::OptimizationRemarkEmitter &ORE, Explanation &E,
                      const UnitExplanation &U, const Alternative &A,
@@ -175,12 +169,6 @@ public:
                      llvm::StringRef CostChange) const override;
   std::string rivalReason(const Alternative &A,
                           const Alternative &Rival) const override;
-  std::string keyHeader() const override {
-    return "R " + herbiePrecision + " " + expr;
-  }
-  std::string selectionText(size_t i) const override {
-    return expr + " -> " + candidates[i].expr;
-  }
 
 private:
   void findErasableInstructions();

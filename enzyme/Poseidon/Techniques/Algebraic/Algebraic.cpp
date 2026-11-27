@@ -45,6 +45,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <optional>
 #include <set>
@@ -980,13 +981,6 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
                 O.Model.NumSamples > 0;
 }
 
-// Uniform marginal sampling weights each regime by its share of the profiled
-// box, which need not be its share of the workload: correlated inputs can put
-// most of the run in an arm the box almost never reaches. Every arm is priced
-// on its own samples, drawn round by round until it has enough or the budget
-// is spent. An element takes the rounds in order and at each point reads only
-// its own counts, so the elements advance through the rounds together, each
-// round's evaluations running concurrently.
 namespace {
 
 // An element's share of a round of the arm search: the arms each point takes,
@@ -1692,9 +1686,10 @@ Error AlgebraicUnit::priceAsWritten(CostModelState &CM) {
   return Error::success();
 }
 
-double AlgebraicUnit::getCompCostDelta(size_t candidateIndex) {
-  return (candidates[candidateIndex].CompCost - erasableCost) *
-         (double)executions;
+double AlgebraicUnit::getCompCostDelta(size_t candidateIndex) const {
+  const std::optional<double> &cost = candidates[candidateIndex].compCost;
+  assert(cost && "an unpriced candidate has no cost change");
+  return (*cost - erasableCost) * (double)executions;
 }
 
 void AlgebraicUnit::findErasableInstructions() {
@@ -1771,7 +1766,7 @@ Error AlgebraicUnit::price() {
                      *output, st, FMF, subgraph->inputs, Boundary);
     if (!cost)
       return cost.takeError();
-    c.CompCost = *cost;
+    c.compCost = *cost;
   }
   RewriteAccuracy(session().Opts, *this, st).price();
   return Error::success();
@@ -1779,14 +1774,12 @@ Error AlgebraicUnit::price() {
 
 // Whether the FPCore expression `expr` is arithmetic only: a series rather
 // than a call of another function. Parsing adds to `G`.
-static bool isPolynomial(StringRef expr, FPGraph &G) {
+static Expected<bool> isPolynomial(StringRef expr, FPGraph &G) {
   static constexpr StringLiteral kArithmetic[] = {"+",   "-",   "*",  "/",
                                                   "neg", "fma", "pow"};
   Expected<FPNode *> root = parseHerbieExpr(expr, G);
-  if (!root) {
-    consumeError(root.takeError());
-    return false;
-  }
+  if (!root)
+    return root.takeError();
   SmallVector<const FPNode *, 8> work = {*root};
   while (!work.empty()) {
     const FPNode *N = work.pop_back_val();
@@ -1814,24 +1807,37 @@ struct RewriteNotes {
 } // namespace
 
 // The notes of the rewrite `text` of a unit over `sg`, whose outputs have the
-// dtype `rdt`. Parsing adds to the explanation's scratch graph.
-static RewriteNotes notesOf(StringRef text, Explanation &E, const Subgraph &sg,
-                            StringRef rdt) {
+// dtype `rdt`; the parse error of a part that does not parse. Parsing adds to
+// the explanation's scratch graph.
+static Expected<RewriteNotes> notesOf(StringRef text, Explanation &E,
+                                      const Subgraph &sg, StringRef rdt) {
   CRendering how = E.rendering(sg);
   RewriteNotes N;
   SmallVector<std::pair<std::string, std::string>, 2> specs;
-  N.c = fpcoreToC(text, E.scratch(), how, rdt, &specs);
+  Expected<SmallVector<std::string, 1>> c =
+      fpcoreToC(text, E.scratch(), how, rdt, &specs);
+  if (!c)
+    return c.takeError();
+  N.c = std::move(*c);
   SmallVector<std::string, 2> notes;
   std::set<std::string> seen;
   for (const auto &[spec, impl] : specs) {
     if (!seen.insert(spec).second)
       continue;
-    SmallVector<std::string, 1> specC = fpcoreToC(spec, E.scratch(), how, "");
-    std::string specText = clip(specC.empty() ? spec : specC[0], 120);
-    if (!isPolynomial(impl, E.scratch())) {
-      SmallVector<std::string, 1> implC = fpcoreToC(impl, E.scratch(), how, "");
-      notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
-                      " in place of " + specText);
+    Expected<SmallVector<std::string, 1>> specC =
+        fpcoreToC(spec, E.scratch(), how, "");
+    if (!specC)
+      return specC.takeError();
+    std::string specText = clip(specC->front(), 120);
+    Expected<bool> polynomial = isPolynomial(impl, E.scratch());
+    if (!polynomial)
+      return polynomial.takeError();
+    if (!*polynomial) {
+      Expected<SmallVector<std::string, 1>> implC =
+          fpcoreToC(impl, E.scratch(), how, "");
+      if (!implC)
+        return implC.takeError();
+      notes.push_back(clip(implC->front(), 120) + " in place of " + specText);
       continue;
     }
     N.series = true;
@@ -1878,7 +1884,7 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     base = *c;
   }
 
-  auto fill = [&](Alternative &A, const std::string &text) {
+  auto fill = [&](Alternative &A, const std::string &text) -> Error {
     A.kind = "algebraic";
     A.kindWords = "the algebraic rewrite";
     A.expr = text;
@@ -1886,7 +1892,10 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     A.at = cast<Instruction>(roots.front());
     A.baseAcc = initialAccCost;
     A.baseCost = base;
-    RewriteNotes N = notesOf(text, E, sg, rdt);
+    Expected<RewriteNotes> notes = notesOf(text, E, sg, rdt);
+    if (!notes)
+      return notes.takeError();
+    RewriteNotes &N = *notes;
     A.c = std::move(N.c);
     if (!herbiePrecision.empty())
       A.keys["precision"] = herbiePrecision;
@@ -1905,22 +1914,18 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     if (StringRef(text).contains("(if"))
       what += ", regime split";
     A.summary = what;
+    return Error::success();
   };
 
   for (size_t j = 0; j < candidates.size(); ++j) {
     const AlgebraicCandidate &cand = candidates[j];
-    Alternative A;
-    A.id = candidateId(j);
-    A.unit = this;
-    A.index = j;
-    fill(A, cand.expr);
-    if (cand.CompCost != std::numeric_limits<double>::max()) {
-      Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
-      if (!c)
-        return c.takeError();
-      A.costDelta = *c;
-    }
-    E.setAccuracy(A, getAccCostDelta(j));
+    Expected<Alternative> priced =
+        pricedAlternative(E, *this, j, pricedCostDelta(j), getAccCostDelta(j));
+    if (!priced)
+      return priced.takeError();
+    Alternative &A = *priced;
+    if (Error Err = fill(A, cand.expr))
+      return Err;
     if (std::isfinite(herbieBits)) {
       json::Object bits;
       if (std::isfinite(initialHerbieAccuracy))
@@ -1933,10 +1938,9 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     U.alts.push_back(std::move(A));
   }
   for (const auto &[text, why] : dropped) {
-    Alternative A;
-    fill(A, text);
-    A.standing = Standing::Dropped;
-    A.reason = "the accuracy model dropped it: " + why;
+    Alternative A = droppedAlternative("the accuracy model dropped it: ", why);
+    if (Error Err = fill(A, text))
+      return Err;
     U.alts.push_back(std::move(A));
   }
   if (!unpricedReason.empty())
@@ -1952,8 +1956,9 @@ void AlgebraicUnit::remarkApplied(OptimizationRemarkEmitter &ORE,
                                   const Alternative &A, StringRef ErrorChange,
                                   StringRef CostChange) const {
   const std::string &text = candidates[A.index].expr;
-  RewriteNotes N =
-      notesOf(text, E, *subgraph, dtypeOfType(roots.front()->getType()));
+  // explain() read the same rewrite, so it parses.
+  RewriteNotes N = cantFail(
+      notesOf(text, E, *subgraph, dtypeOfType(roots.front()->getType())));
   for (size_t k = 0; k < A.outputs.size(); ++k) {
     unsigned o = A.outputs[k];
     const Instruction *at = A.at;
@@ -2009,7 +2014,7 @@ void AlgebraicUnit::printPriced(raw_ostream &OS) {
     AlgebraicCandidate &candidate = candidates[i];
     OS << getAccCostDelta(i) << "\t\t";
     // A compile that reads its DP table from the cache prices no candidate.
-    if (candidate.CompCost == std::numeric_limits<double>::max())
+    if (!candidate.compCost)
       OS << "unpriced";
     else
       OS << getCompCostDelta(i);
@@ -2076,9 +2081,9 @@ public:
 
   /// The outputs as written that the algebraic units price, on the subgraphs
   /// no unit edits in place: such a unit's baseline covers every output of its
-  /// subgraph. `unpriced` counts the units left out for want of a price.
+  /// subgraph.
   double baseline(SiteState &st, unsigned &unpriced) const override {
-    SmallPtrSet<const Value *, 8> arrayPriced;
+    SmallPtrSet<const Value *, 8> arrayPriced, priced, leftOut;
     double baseline = 0.0;
     for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units) {
       if (llvm::any_of(st.units, [&](const SiteUnit *unit) {
@@ -2089,9 +2094,10 @@ public:
       // An algebraic unit with no candidates was never priced, so its share of
       // the baseline is unknown; it cannot appear in a solution either.
       if (RU.candidates.empty()) {
-        ++unpriced;
+        leftOut.insert(RU.roots.begin(), RU.roots.end());
         continue;
       }
+      priced.insert(RU.roots.begin(), RU.roots.end());
       // An array core prices all of its outputs at once; each output's
       // baseline is counted once however many cores cover it.
       if (llvm::any_of(RU.roots,
@@ -2101,6 +2107,8 @@ public:
         arrayPriced.insert(RU.roots.begin(), RU.roots.end());
       baseline += RU.initialAccCost;
     }
+    unpriced += llvm::count_if(
+        leftOut, [&](const Value *V) { return !priced.contains(V); });
     return baseline;
   }
 

@@ -22,6 +22,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
+#include <cassert>
 #include <string>
 
 namespace poseidon {
@@ -84,17 +85,15 @@ struct SchemeVariant {
   }
 };
 
-/// The slice count of a split variant; a fatal error for any other.
+/// The slice count of `v`, which must be a split variant.
 inline unsigned sliceCount(const SchemeVariant &v) {
-  if (v.scheme != Scheme::Tcec)
-    llvm::report_fatal_error("sliceCount: not a split scheme");
+  assert(v.scheme == Scheme::Tcec && "only a split scheme has slices");
   return v.slices;
 }
 
-/// The modulus count of an Ozaki-II variant; a fatal error for any other.
+/// The modulus count of `v`, which must be an Ozaki-II variant.
 inline unsigned modulusCount(const SchemeVariant &v) {
-  if (v.scheme != Scheme::OzakiII)
-    llvm::report_fatal_error("modulusCount: not a modular scheme");
+  assert(v.scheme == Scheme::OzakiII && "only a modular scheme has moduli");
   return v.moduli;
 }
 
@@ -120,12 +119,12 @@ inline constexpr SliceFormat kSliceFormats[] = {
     {NumberFormat::TF32, 11, 11},
 };
 
-/// The slice format of `k`; a fatal error when `k` is none.
+/// The slice format of `k`, which must be one of kSliceFormats.
 inline const SliceFormat &sliceFormat(NumberFormat k) {
   for (const SliceFormat &f : kSliceFormats)
     if (f.kind == k)
       return f;
-  llvm::report_fatal_error("sliceFormat: not a slice format");
+  llvm_unreachable("a split scheme slices only into a slice format");
 }
 
 /// Captured significand bits of the N-slice split: N times the bits of one

@@ -199,6 +199,17 @@ protected:
   ~Explanation() = default;
 };
 
+/// Candidate `i` of `unit` as an alternative of the explanation `E`: its id
+/// and position, `costDelta` on the solve's axis, none for a candidate pricing
+/// left without a cost, and `accDelta` as setAccuracy sets it.
+llvm::Expected<Alternative> pricedAlternative(const Explanation &E,
+                                              const SiteUnit &unit, size_t i,
+                                              std::optional<double> costDelta,
+                                              double accDelta);
+
+/// A candidate pricing dropped, for `why`, which `prefix` introduces.
+Alternative droppedAlternative(llvm::StringRef prefix, llvm::StringRef why);
+
 /// `items` as a list in words: "a", "a and b", "a, b and c".
 std::string joinWords(llvm::ArrayRef<std::string> items);
 

@@ -55,7 +55,7 @@ FloatExpansion expansionMul(const FloatExpansion &a, const FloatExpansion &b);
 FloatExpansion expansionSqr(const FloatExpansion &a);
 FloatExpansion expansionDiv(const FloatExpansion &a, const FloatExpansion &b);
 FloatExpansion expansionSqrt(const FloatExpansion &a);
-/// fma/fmuladd(a, b, c), and fma/fmuladd(a, a, c).
+/// fma/fmuladd(a, b, c).
 FloatExpansion expansionFma(const FloatExpansion &a, const FloatExpansion &b,
                             const FloatExpansion &c);
 /// fma/fmuladd(a, a, c).

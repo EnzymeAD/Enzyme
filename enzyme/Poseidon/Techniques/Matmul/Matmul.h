@@ -29,18 +29,17 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/JSON.h"
 
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <map>
-#include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace llvm {
@@ -126,15 +125,16 @@ struct ScalarLoopHandle {
   /// The contractable multiply under `fma`; null when `fma` is llvm.fma or
   /// llvm.fmuladd.
   llvm::Instruction *fmul = nullptr;
-  /// The pointer operands of the A and B loads.
+  /// The pointer operand of the A load.
   llvm::Value *aPtr = nullptr;
   /// The pointer operand of the B load.
   llvm::Value *bPtr = nullptr;
 
-  /// Per-thread addresses of A and B at the first iteration, including the
+  /// A's per-thread address at the first iteration, including the
   /// blockIdx * blockDim term.
   const llvm::SCEV *aStartSCEV = nullptr;
-  /// B's per-thread address at the first iteration.
+  /// B's per-thread address at the first iteration, including the
+  /// blockIdx * blockDim term.
   const llvm::SCEV *bStartSCEV = nullptr;
   /// The analysis the two start addresses belong to, alive while the site's
   /// function is optimized.
@@ -304,27 +304,39 @@ struct RecognizedMatmul {
   /// at one scale. 0 = unavailable, and the compile-time trip count K is used.
   unsigned globalK = 0;
 
+  /// The M x N x K of the whole product at profile scale; an extent the
+  /// profile does not give is the tile's or the compile's.
+  std::array<unsigned, 3> profileShape() const {
+    return {globalM ? globalM : M, globalN ? globalN : N,
+            globalK ? globalK : K};
+  }
+
   /// The type of A, B, the accumulator and the result.
   NumberFormat elemType = NumberFormat::Invalid;
 
-  /// Which recognizer found the product.
-  enum class Origin {
-    /// A constant-trip reduction loop whose output rows and columns are thread
-    /// indices (see ScalarLoopHandle); either realization.
-    ConstantShape,
-    /// A dense GEMM whose M / Ncols / K and leading dimensions are runtime
-    /// expressions over the kernel's arguments, contracted across one or more
-    /// reduction loops (see RuntimeGemmHandle). Library call only: an
-    /// in-kernel raise needs compile-time tile extents.
-    RuntimeShape,
-  };
-  /// Which of `scalarLoop` and `runtimeGemm` describes the product.
-  Origin origin = Origin::ConstantShape;
+  /// What the recognizer that found the product describes it by. A
+  /// constant-shape product is a constant-trip reduction loop whose output rows
+  /// and columns are thread indices, of either realization. A runtime-shape
+  /// product is a dense GEMM whose M / Ncols / K and leading dimensions are
+  /// runtime expressions over the kernel's arguments, contracted across one or
+  /// more reduction loops; it is a library call only, as an in-kernel raise
+  /// needs compile-time tile extents.
+  std::variant<ScalarLoopHandle, RuntimeGemmHandle> handle;
 
-  /// The loop of a ConstantShape product; empty for the other origin.
-  ScalarLoopHandle scalarLoop;
-  /// The nest of a RuntimeShape product; null for the other origin.
-  std::shared_ptr<RuntimeGemmHandle> runtimeGemm;
+  /// Whether the constant-trip recognizer found the product.
+  bool isConstantShape() const {
+    return std::holds_alternative<ScalarLoopHandle>(handle);
+  }
+  /// The loop of a constant-shape product.
+  const ScalarLoopHandle &scalarLoop() const {
+    assert(isConstantShape() && "a runtime-shape product has no scalar loop");
+    return *std::get_if<ScalarLoopHandle>(&handle);
+  }
+  /// The nest of a runtime-shape product.
+  const RuntimeGemmHandle &runtimeGemm() const {
+    assert(!isConstantShape() && "a constant-shape product has no GEMM nest");
+    return *std::get_if<RuntimeGemmHandle>(&handle);
+  }
 
   /// The instructions a realization replaces: the blocks of the reduction loops
   /// and, for a runtime-shape product, its epilogue fadd.
@@ -334,7 +346,7 @@ struct RecognizedMatmul {
 };
 
 /// Recognize dense GEMMs written as thread-parallel reduction nests with
-/// runtime dimensions (Origin::RuntimeShape) among the loops no matmul in
+/// runtime dimensions (runtime-shape products) among the loops no matmul in
 /// `out` already claims. Appends only matmuls whose whole descriptor (extents,
 /// leading dimensions, layouts, beta and the profile-scale shape) could be
 /// reconstructed; every other nest is skipped with a printed reason.
@@ -345,7 +357,7 @@ void findRuntimeShapeMatmuls(const Options &O, llvm::Function &F,
                              llvm::SmallVectorImpl<RecognizedMatmul> &out);
 
 /// Recognize the constant-trip reduction loops of F that compute a matrix
-/// product (Origin::ConstantShape), with the per-CTA extents and the
+/// product (constant-shape products), with the per-CTA extents and the
 /// launch geometry from `profileHeader`.
 void findConstantShapeMatmuls(const Options &O, llvm::Function &F,
                               llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
@@ -407,59 +419,47 @@ struct MatmulState {
   bool ReportedNoTcecRuntime = false;
 };
 
+/// A candidate for a matrix product: a scheme variant, its realization, its
+/// tile, its price and its accuracy.
+struct MatmulCandidate {
+  /// The tensor-core tile in elements of an in-kernel raise; for a library
+  /// call, the tile its runtime accumulates in, whose K the accuracy model may
+  /// take as the order of the sum. ~0u when unset.
+  unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
+  /// The scheme, its formats and its parameter.
+  SchemeVariant variant;
+  /// Where the scheme runs.
+  Realization realization = Realization::InKernel;
+
+  /// The candidate's cost per MAC of the product in cost-model units
+  /// (reciprocal throughput), comparable with the unit's initialCompCost.
+  std::optional<double> compCost;
+  /// The mean over the sampled operands of the absolute error of the simulated
+  /// output tile, weighted by the profiled gradient; unnormalized, it only
+  /// ranks candidates.
+  double accuracyCost = 0.0;
+  /// Relative domain error (sensitivity-weighted, normalized) at the
+  /// confidence percentile, comparable to a domain tolerance; accuracyCost is
+  /// an unnormalized sum that only ranks candidates.
+  double domainError = 0.0;
+};
+
 /// The optimization unit of one matrix product: its candidates, each a scheme
-/// realized in the kernel or as a library call, priced per MAC of the product.
-class MatmulUnit : public SiteUnit {
+/// realized in the kernel or as a library call, priced per MAC of the product,
+/// which is what an execution of the unit is.
+class MatmulUnit : public CandidateUnit<MatmulUnit, MatmulCandidate> {
 public:
-  /// One candidate: a scheme variant, its realization, its tile, its price and
-  /// its accuracy.
-  struct Option {
-    /// The tensor-core tile in elements of an in-kernel raise; for a library
-    /// call, the tile its runtime accumulates in, whose K the accuracy model
-    /// may take as the order of the sum. ~0u when unset.
-    unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
-    /// The scheme, its formats and its parameter.
-    SchemeVariant variant;
-    /// Where the scheme runs.
-    Realization realization = Realization::InKernel;
-
-    /// The candidate's cost per MAC of the product in cost-model units
-    /// (reciprocal throughput), comparable with initialCompCost; -1 unpriced.
-    double compCost = -1.0;
-    /// The mean over the sampled operands of the absolute error of the
-    /// simulated output tile, weighted by the profiled gradient; unnormalized,
-    /// it only ranks candidates.
-    double accuracyCost = 0.0;
-    /// Relative domain error (sensitivity-weighted, normalized) at the
-    /// confidence percentile, comparable to a domain tolerance; accuracyCost
-    /// is an unnormalized sum that only ranks candidates.
-    double domainError = 0.0;
-  };
-
   /// The kind of the matrix-product units.
-  static constexpr UnitKindInfo Info = {"matrix product", "M", "a candidate",
+  static constexpr UnitKindInfo Info = {"matrix product", "M", "a realization",
                                         false};
   /// An empty unit; `matmul` is set before it is solved.
-  MatmulUnit() : SiteUnit(Info) {}
+  MatmulUnit() : CandidateUnit(Info) {}
 
   /// The product; it belongs to its function's recognition results, which
   /// outlive the unit.
   RecognizedMatmul *matmul = nullptr;
   /// The descriptor of the product's library call, when it has one.
   std::optional<GemmBodyNote> library;
-  /// The cost per MAC of the loop as written in cost-model units: one
-  /// iteration's reciprocal throughputs (for a runtime-shape product, one
-  /// member's iteration and the epilogue spread over K).
-  double initialCompCost = -1.0;
-  /// The product's MACs over the profiling run, at profile scale; a profile at
-  /// deploy size exceeds 2^32.
-  uint64_t executions = 0;
-  /// The candidates, indexed as the solver indexes them.
-  llvm::SmallVector<Option, 8> candidates;
-  /// Candidates not offered, by name, each with why: this build cannot realize
-  /// them, their formats cannot hold the profiled operands, or the in-kernel
-  /// raise would drop what else the product's loop does.
-  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
   /// Under an accuracy target, the site's accuracy scale
   /// (SiteState::accScale), which a candidate's domainError is multiplied by
   /// on the DP's accuracy axis; none in a budget solve. The unit must be bound.
@@ -469,10 +469,7 @@ public:
   /// written: the change of its per-MAC cost times `executions`, in cost-model
   /// units.
   double getCompCostDelta(size_t idx) const {
-    return (candidates[idx].compCost - initialCompCost) * (double)executions;
-  }
-  std::optional<double> pricedCostDelta(size_t i) override {
-    return getCompCostDelta(i);
+    return (*candidates[idx].compCost - initialCompCost) * (double)executions;
   }
   /// The error candidate `idx` adds on the DP's accuracy axis; the loop as
   /// written has none. Under an accuracy target it is domainError times
@@ -484,16 +481,6 @@ public:
                  : candidates[idx].accuracyCost;
   }
 
-  /// Realizes candidate `candidateIndex` in place of the product. An error is a
-  /// user error the realization finds, such as a second library call for one
-  /// body.
-  llvm::Error apply(Session &S, size_t candidateIndex);
-
-  /// Whether `U` is a MatmulUnit, for isa and dyn_cast.
-  static bool classof(const OptimizationUnit *U) {
-    return &llvm::cast<SiteUnit>(U)->info() == &Info;
-  }
-  size_t numCandidates() const override { return candidates.size(); }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
     return getCompCostDelta(i);
   }
@@ -503,7 +490,7 @@ public:
   /// The raise and dispatch prices are measured wall-clock ratios that repeat
   /// to about 0.6% run to run.
   double costTieBand(size_t i) const override {
-    return 0.006 * std::fabs(candidates[i].compCost) * (double)executions;
+    return 0.006 * std::fabs(*candidates[i].compCost) * (double)executions;
   }
   /// A raise replaces the loop that computes the product.
   bool consumesFootprint() const override { return true; }
@@ -511,12 +498,11 @@ public:
     return matmul ? &matmul->footprint : nullptr;
   }
   std::string candidateName(size_t i) const override;
-  llvm::ArrayRef<std::pair<std::string, std::string>>
-  droppedCandidates() const override {
-    return dropped;
-  }
+  std::string selectionText(size_t i) const override;
   std::string choiceText(size_t i) const override;
-  llvm::Error materialize(size_t i) override { return apply(session(), i); }
+  /// Realizes candidate `i` in place of the product. An error is a user error
+  /// the realization finds, such as a second library call for one body.
+  llvm::Error materialize(size_t i) override;
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {
@@ -527,15 +513,14 @@ public:
                      const UnitExplanation &U, const Alternative &A,
                      llvm::StringRef ErrorChange,
                      llvm::StringRef CostChange) const override;
-  std::string rivalReason(const Alternative &A,
-                          const Alternative &Rival) const override;
   void remarkProfile(llvm::DiagnosticInfoOptimizationBase &R,
                      const UnitExplanation &U) const override;
-  std::string selectionText(size_t i) const override;
+  std::string rivalReason(const Alternative &A,
+                          const Alternative &Rival) const override;
 };
 
 /// The label of `opt` in candidate names and diagnostics.
-std::string matmulOptionLabel(const MatmulUnit::Option &opt);
+std::string matmulOptionLabel(const MatmulCandidate &opt);
 
 /// The class whose inkernel_rel cost-model row prices an in-kernel raise of
 /// `v`, such as "f16_f32" or "tcec_n2_f16_f32".

@@ -35,10 +35,10 @@ constexpr double kDefaultConfidence = 0.95;
 
 /// An instruction of the product, where an error about it is reported.
 inline const llvm::Instruction &anchorOf(const RecognizedMatmul &m) {
-  if (m.scalarLoop.fma)
-    return *m.scalarLoop.fma;
-  if (m.runtimeGemm && m.runtimeGemm->cStore)
-    return *m.runtimeGemm->cStore;
+  if (m.isConstantShape())
+    return *m.scalarLoop().fma;
+  if (const llvm::StoreInst *cStore = m.runtimeGemm().cStore)
+    return *cStore;
   return *m.footprint.front();
 }
 
@@ -158,7 +158,7 @@ struct InKernelLayout {
 /// The layout of the in-kernel candidate `opt` of `m`; `opt`'s tile must be
 /// nonzero.
 inline InKernelLayout inKernelLayout(const RecognizedMatmul &m,
-                                     const MatmulUnit::Option &opt) {
+                                     const MatmulCandidate &opt) {
   assert(opt.tileM && opt.tileN && opt.tileK && "an in-kernel tile is nonzero");
   InKernelLayout L;
   L.mTiles = llvm::divideCeil(m.M, opt.tileM);
@@ -180,8 +180,7 @@ inline InKernelLayout inKernelLayout(const RecognizedMatmul &m,
 /// residual scaled as H. Ootomo and R. Yokota (IJHPCA 36(4), 2022) scale it;
 /// the N-slice generalization is Poseidon's own, and no code is taken from
 /// cuMpSGEMM.
-void materializeInKernel(const RecognizedMatmul &m,
-                         const MatmulUnit::Option &opt);
+void materializeInKernel(const RecognizedMatmul &m, const MatmulCandidate &opt);
 
 /// The arithmetic of one candidate, as the matrix accuracy model simulates it.
 struct MatmulAccuracyQuery {

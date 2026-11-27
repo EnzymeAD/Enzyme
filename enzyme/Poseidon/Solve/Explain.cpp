@@ -91,6 +91,31 @@ static std::string typeName(Type *T) {
   return s;
 }
 
+Expected<Alternative> pricedAlternative(const Explanation &E,
+                                        const SiteUnit &unit, size_t i,
+                                        std::optional<double> costDelta,
+                                        double accDelta) {
+  Alternative A;
+  A.id = unit.candidateId(i);
+  A.unit = &unit;
+  A.index = i;
+  if (costDelta) {
+    Expected<int64_t> c = E.onAxis(*costDelta);
+    if (!c)
+      return c.takeError();
+    A.costDelta = *c;
+  }
+  E.setAccuracy(A, accDelta);
+  return A;
+}
+
+Alternative droppedAlternative(StringRef prefix, StringRef why) {
+  Alternative A;
+  A.standing = Standing::Dropped;
+  A.reason = (prefix + why).str();
+  return A;
+}
+
 std::string joinWords(ArrayRef<std::string> items) {
   std::string out;
   for (size_t k = 0; k < items.size(); ++k) {

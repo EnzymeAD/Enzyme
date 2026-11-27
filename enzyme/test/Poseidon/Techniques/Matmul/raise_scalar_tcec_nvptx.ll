@@ -33,12 +33,12 @@
 ; CHECK: {{^}}raise.entry:
 ; CHECK: br i1 %{{[0-9]+}}, label %[[FILL:[^,]+]], label
 ; CHECK: {{^}}[[FILL]]:
-; CHECK-DAG: [[B2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_b2_f16_16x16 to ptr), i64 [[OFF:%[0-9]+]]
-; CHECK-DAG: [[B1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_b1_f16_16x16 to ptr), i64 [[OFF]]
-; CHECK-DAG: [[B0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_b0_f16_16x16 to ptr), i64 [[OFF]]
-; CHECK-DAG: [[A2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_a2_f16_16x16 to ptr), i64 [[OFF]]
-; CHECK-DAG: [[A1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_a1_f16_16x16 to ptr), i64 [[OFF]]
-; CHECK-DAG: [[A0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_a0_f16_16x16 to ptr), i64 [[OFF]]
+; CHECK-DAG: [[B2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_b2_f16_16x16 to ptr), i64 [[OFF:%[0-9]+]]
+; CHECK-DAG: [[B1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_b1_f16_16x16 to ptr), i64 [[OFF]]
+; CHECK-DAG: [[B0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_b0_f16_16x16 to ptr), i64 [[OFF]]
+; CHECK-DAG: [[A2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_a2_f16_16x16 to ptr), i64 [[OFF]]
+; CHECK-DAG: [[A1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_a1_f16_16x16 to ptr), i64 [[OFF]]
+; CHECK-DAG: [[A0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_a0_f16_16x16 to ptr), i64 [[OFF]]
 ; CHECK-DAG: [[BSRC:%[0-9]+]] = getelementptr {{.*}}ptr [[BARG]], i64 [[OFF8:%[0-9]+]]
 ; CHECK-DAG: [[ASRC:%[0-9]+]] = getelementptr {{.*}}ptr [[AARG]], i64 [[OFF8]]
 ; CHECK: [[A:%[0-9]+]] = load double, ptr [[ASRC]], align 8
@@ -59,44 +59,44 @@
 ; CHECK: store half %{{[0-9]+}}, ptr [[B0P]], align 2
 ; CHECK-NEXT: store half %{{[0-9]+}}, ptr [[B1P]], align 2
 ; CHECK-NEXT: store half %{{[0-9]+}}, ptr [[B2P]], align 2
-; CHECK: [[LA0:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_a0_f16_16x16 to ptr), i32 16)
-; CHECK: [[LB0:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_b0_f16_16x16 to ptr), i32 16)
+; CHECK: [[LA0:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_a0_f16_16x16 to ptr), i32 16)
+; CHECK: [[LB0:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_b0_f16_16x16 to ptr), i32 16)
 ; CHECK: [[A0E:%[0-9]+]] = extractvalue {{.*}} [[LA0]], 0
 ; CHECK: [[B0E:%[0-9]+]] = extractvalue {{.*}} [[LB0]], 0
 ; CHECK: [[M00:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], {{.*}}, <2 x half> [[B0E]], {{.*}}, float 0.000000e+00, float {{.*}})
 ; CHECK: [[M00E:%[0-9]+]] = extractvalue {{.*}} [[M00]], 0
 ; CHECK-NEXT: [[D00:%[0-9]+]] = fadd float [[M00E]], 0.000000e+00
-; CHECK: [[LB1:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_b1_f16_16x16 to ptr), i32 16)
+; CHECK: [[LB1:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_b1_f16_16x16 to ptr), i32 16)
 ; CHECK: [[B1E:%[0-9]+]] = extractvalue {{.*}} [[LB1]], 0
 ; CHECK: [[M01:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], {{.*}}, <2 x half> [[B1E]], {{.*}}, float 0.000000e+00, float {{.*}})
 ; CHECK: [[M01E:%[0-9]+]] = extractvalue {{.*}} [[M01]], 0
-; CHECK: [[LB2:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_b2_f16_16x16 to ptr), i32 16)
+; CHECK: [[LB2:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_b2_f16_16x16 to ptr), i32 16)
 ; CHECK: [[B2E:%[0-9]+]] = extractvalue {{.*}} [[LB2]], 0
 ; CHECK: [[M02:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A0E]], {{.*}}, <2 x half> [[B2E]], {{.*}}, float 0.000000e+00, float {{.*}})
 ; CHECK: [[M02E:%[0-9]+]] = extractvalue {{.*}} [[M02]], 0
-; CHECK: [[LA1:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_a1_f16_16x16 to ptr), i32 16)
+; CHECK: [[LA1:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_a1_f16_16x16 to ptr), i32 16)
 ; CHECK: [[A1E:%[0-9]+]] = extractvalue {{.*}} [[LA1]], 0
 ; CHECK: [[M10:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A1E]], {{.*}}, <2 x half> [[B0E]], {{.*}}, float [[M01E]], float {{.*}})
 ; CHECK: [[C1:%[0-9]+]] = extractvalue {{.*}} [[M10]], 0
 ; CHECK: [[M11:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A1E]], {{.*}}, <2 x half> [[B1E]], {{.*}}, float [[M02E]], float {{.*}})
 ; CHECK: [[M11E:%[0-9]+]] = extractvalue {{.*}} [[M11]], 0
-; CHECK: [[LA2:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_a2_f16_16x16 to ptr), i32 16)
+; CHECK: [[LA2:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_a2_f16_16x16 to ptr), i32 16)
 ; CHECK: [[A2E:%[0-9]+]] = extractvalue {{.*}} [[LA2]], 0
 ; CHECK: [[M20:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(<2 x half> [[A2E]], {{.*}}, <2 x half> [[B0E]], {{.*}}, float [[M11E]], float {{.*}})
 ; CHECK: [[C2:%[0-9]+]] = extractvalue {{.*}} [[M20]], 0
 ; CHECK: [[PH0:%[^ ]+]] = phi float [ [[D00]], %{{[^ ]+}} ], [ 0.000000e+00, %{{[^ ]+}} ]
 ; CHECK: [[PH1:%[^ ]+]] = phi float [ [[C1]], %{{[^ ]+}} ], [ 0.000000e+00, %{{[^ ]+}} ]
 ; CHECK: [[PH2:%[^ ]+]] = phi float [ [[C2]], %{{[^ ]+}} ], [ 0.000000e+00, %{{[^ ]+}} ]
-; CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_d0_f32_16x16 to ptr), float [[PH0]], float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, i32 16)
-; CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_d1_f32_16x16 to ptr), float [[PH1]], float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, i32 16)
-; CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_ozaki_preprocess_matmul_body_d2_f32_16x16 to ptr), float [[PH2]], float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, i32 16)
-; CHECK: [[E0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_d0_f32_16x16 to ptr), i64 [[EI:%[0-9]+]]
+; CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_d0_f32_16x16 to ptr), float [[PH0]], float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, i32 16)
+; CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_d1_f32_16x16 to ptr), float [[PH1]], float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, i32 16)
+; CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(ptr addrspacecast (ptr addrspace(3) @__poseidon_tcec_preprocess_matmul_body_d2_f32_16x16 to ptr), float [[PH2]], float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, float %{{[^,]+}}, i32 16)
+; CHECK: [[E0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_d0_f32_16x16 to ptr), i64 [[EI:%[0-9]+]]
 ; CHECK-NEXT: [[E0:%[0-9]+]] = load float, ptr [[E0P]], align 4
-; CHECK-NEXT: [[E1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_d1_f32_16x16 to ptr), i64 [[EI]]
+; CHECK-NEXT: [[E1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_d1_f32_16x16 to ptr), i64 [[EI]]
 ; CHECK-NEXT: [[E1:%[0-9]+]] = load float, ptr [[E1P]], align 4
 ; CHECK-NEXT: [[E1S:%[0-9]+]] = fmul float [[E1]], {{f0x3A000000|0x3F40000000000000}}
 ; CHECK-NEXT: [[S1:%[0-9]+]] = fadd float [[E0]], [[E1S]]
-; CHECK-NEXT: [[E2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_d2_f32_16x16 to ptr), i64 [[EI]]
+; CHECK-NEXT: [[E2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_tcec_preprocess_matmul_body_d2_f32_16x16 to ptr), i64 [[EI]]
 ; CHECK-NEXT: [[E2:%[0-9]+]] = load float, ptr [[E2P]], align 4
 ; CHECK-NEXT: [[E2S:%[0-9]+]] = fmul float [[E2]], {{f0x34800000|0x3E90000000000000}}
 ; CHECK-NEXT: [[S2:%[0-9]+]] = fadd float [[S1]], [[E2S]]
@@ -118,7 +118,7 @@
 ; GUARD: tail call double @llvm.fmuladd.f64(
 ; GUARD: br label %[[EXIT:.+]]{{$}}
 ; GUARD: {{^}}[[EXIT]]:
-; GUARD: [[RES:%.+]] = phi double [ %{{[0-9]+}}, %[[LOOP]] ], [ %{{[0-9]+}}, %ozaki_store_gate.merge ]
+; GUARD: [[RES:%.+]] = phi double [ %{{[0-9]+}}, %[[LOOP]] ], [ %{{[0-9]+}}, %tcec_store_gate.merge ]
 ; GUARD: store double [[RES]], ptr %{{[0-9]+}}, align 8
 ; GUARD-NEXT: ret void
 

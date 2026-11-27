@@ -77,7 +77,7 @@
 ; KINDS-ORDINAL-M: error: {{.*}}Poseidon: -poseidon-pin item 'M0_999': M0 has no candidate 999; it has 3
 ; KINDS-DUP-R: error: {{.*}}Poseidon: -poseidon-pin item 'A0_1': A0 already has an algebraic rewrite applied; give one item per unit
 ; KINDS-DUP-PT: error: {{.*}}Poseidon: -poseidon-pin item 'P0_1': P0 already has a precision change applied; give one item per unit
-; KINDS-DUP-M: error: {{.*}}Poseidon: -poseidon-pin item 'M0_1': M0 already has a candidate applied; give one item per unit
+; KINDS-DUP-M: error: {{.*}}Poseidon: -poseidon-pin item 'M0_1': M0 already has a realization applied; give one item per unit
 ; KINDS-OVERLAP: error: {{.*}}Poseidon: -poseidon-pin item 'M0_2': M0 and P1 change the same instructions, and one of them replaces them; give one of the two
 ; KINDS-NAME-M: error: {{.*}}Poseidon: -poseidon-pin: matmul_body: M0 has no candidate named 'nothing'; its candidates are:
 ; KINDS-NAME-M-NEXT: {{^}}  wmma m16n16k16 f16/f32{{$}}

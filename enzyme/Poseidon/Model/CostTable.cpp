@@ -131,12 +131,16 @@ static bool isScalarTypeName(StringRef T) {
   return !T.empty() && is_contained(kCostTypes, T);
 }
 
+// The row families whose value is a candidate's wall clock over the scalar FP64
+// loop's.
+static constexpr StringLiteral kRatioFamilies[] = {
+    "library_ozaki_rel", "library_ozaki_rect_rel", "library_tcec_rel",
+    "library_direct_rel", "inkernel_rel"};
+
 // Whether `Opcode,Type` is a row family poseidon-calibrate writes, read by a
 // compile or not; must agree with the calibrator.
 static bool isCostModelRow(StringRef Opcode, StringRef Type) {
-  if (is_contained({"library_ozaki_rel", "library_ozaki_rect_rel",
-                    "library_tcec_rel", "library_direct_rel", "inkernel_rel"},
-                   Opcode))
+  if (is_contained(kRatioFamilies, Opcode))
     return !Type.empty();
   if (Opcode.consume_front("wmma_mma_")) {
     unsigned M, N, K;
@@ -214,6 +218,11 @@ Error loadCostModel(CostModelState &CM, StringRef Requested) {
                                 "(poseidon-calibrate --help lists them); "
                                 "remove the line, or compile with the "
                                 "Poseidon whose poseidon-calibrate wrote it");
+    if (Cost == 0 && is_contained(kRatioFamilies, Fields[0]))
+      return modelError(CM, "line " + Twine(It.line_number()) +
+                                " prices the row '" + Fields[0] + "," +
+                                Fields[1] + "' at " + Fields[2].trim() +
+                                ", which is not a positive ratio");
     if (!CM.Model.try_emplace({Fields[0].str(), Fields[1].str()}, Cost).second)
       return modelError(CM, "has the row '" + Fields[0] + "," + Fields[1] +
                                 "' twice");

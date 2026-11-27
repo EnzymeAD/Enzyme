@@ -84,7 +84,8 @@ const std::string &costModelPath(const CostModelState &CM);
 /// from its prices depends on. Empty when no model is configured.
 std::string costModelRows(CostModelState &CM);
 
-/// The (opcode,type) row, if the model has it.
+/// The (opcode,type) row, if the model has it; a row of a ratio family
+/// (library_*_rel, inkernel_rel) is positive.
 std::optional<double> lookupCost(CostModelState &CM, llvm::StringRef OpcodeName,
                                  llvm::StringRef TypeName);
 

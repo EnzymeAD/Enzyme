@@ -60,7 +60,7 @@ static std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K) {
 // Labels name candidates in logs, reports and DP cache keys, so their irregular
 // forms are kept: the library split drops its slice count, and the
 // cuBLAS-backed library calls drop their tile.
-std::string matmulOptionLabel(const MatmulUnit::Option &opt) {
+std::string matmulOptionLabel(const MatmulCandidate &opt) {
   const SchemeVariant &v = opt.variant;
   const std::string formats = schemeFormats(v, '/');
   const std::string wmma =
@@ -171,8 +171,8 @@ static Error reportEstimatedRow(Session &S, const RecognizedMatmul &m,
 //       A library call of constant extents (LibrarySite::runShape), measured
 //       at them.
 //   library_ozaki_rect_rel,nm<k>_m<M>k<K>
-//       (M, K) of LibrarySite::profileShape, for a library call whose extents
-//       are run-time values; measured at many columns.
+//       (M, K) of RecognizedMatmul::profileShape, for a library call whose
+//       extents are run-time values; measured at many columns.
 //   library_ozaki_rel,nm<k> and ,dgemm
 //       A square, read as they are, and for a square runShape. The estimate of
 //       a missing rectangular Ozaki-II row multiplies the square row by the
@@ -210,7 +210,7 @@ struct InKernelShape {
 // compile, its output extents as constantOutputExtents gives them from the
 // guards before the loop; none when they are run-time values.
 static std::optional<InKernelShape> inKernelShape(const RecognizedMatmul &m) {
-  const ScalarLoopHandle &h = m.scalarLoop;
+  const ScalarLoopHandle &h = m.scalarLoop();
   std::optional<unsigned> axM = tidAxisIndex(h.aRow.fast),
                           axN = tidAxisIndex(h.bCol.fast);
   if (!axM || !axN || *axM == *axN)
@@ -235,19 +235,15 @@ static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
     const std::optional<InKernelShape> &shape, double baselinePerMac,
     StringRef what, SmallVectorImpl<std::string> &estimated) {
   const Options &O = S.Opts;
-  if (shape) {
-    double rel = lookupCost(S.get<CostModelState>(), "inkernel_rel",
-                            cls + "_" + shape->key())
-                     .value_or(-1.0);
-    if (rel > 0.0)
-      return std::optional<double>(baselinePerMac * rel);
-  }
-  double rel =
-      lookupCost(S.get<CostModelState>(), "inkernel_rel", cls).value_or(-1.0);
-  if (rel > 0.0) {
+  CostModelState &CM = S.get<CostModelState>();
+  if (shape)
+    if (std::optional<double> rel =
+            lookupCost(CM, "inkernel_rel", cls + "_" + shape->key()))
+      return std::optional<double>(baselinePerMac * *rel);
+  if (std::optional<double> rel = lookupCost(CM, "inkernel_rel", cls)) {
     if (shape)
       estimated.push_back(cls);
-    return std::optional<double>(baselinePerMac * rel);
+    return std::optional<double>(baselinePerMac * *rel);
   }
 
   if (O.Matmul.Calibration) {
@@ -390,7 +386,7 @@ static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
 // (0 for a library call), per inKernelLayout. `breakdown` receives the term
 // list for the refusal.
 static uint64_t inKernelRaiseSharedBytes(Module &M, const RecognizedMatmul &m,
-                                         const MatmulUnit::Option &opt,
+                                         const MatmulCandidate &opt,
                                          std::string *breakdown) {
   if (opt.realization == Realization::LibraryCall)
     return 0;
@@ -424,7 +420,7 @@ static uint64_t inKernelRaiseSharedBytes(Module &M, const RecognizedMatmul &m,
 // Shared refusal for every in-kernel class. Returns true when the raise fits.
 static bool inKernelRaiseFits(const Options &O, Function &F,
                               const RecognizedMatmul &m,
-                              const MatmulUnit::Option &opt,
+                              const MatmulCandidate &opt,
                               uint64_t existingBytes, StringRef className) {
   std::string breakdown;
   uint64_t raiseBytes =
@@ -460,7 +456,7 @@ struct Product {
 // library call, which scales its operands before it splits them, has its own
 // simulation.
 static MatmulAccuracyQuery accuracyQuery(const RecognizedMatmul &m,
-                                         const MatmulUnit::Option &opt) {
+                                         const MatmulCandidate &opt) {
   const SchemeVariant &v = opt.variant;
   MatmulAccuracyQuery q;
   switch (v.scheme) {
@@ -533,7 +529,7 @@ struct InKernelSite {
 // post-dominates its kernel's entry and lies in no loop.
 static bool siteReachedByWholeBlock(const Session &S,
                                     const RecognizedMatmul &m) {
-  const Function &F = *m.scalarLoop.fma->getFunction();
+  const Function &F = *m.scalarLoop().fma->getFunction();
   const CallBase *site = siteCallOf(S, F);
   if (site) {
     Function &kernel = *const_cast<Function *>(site->getFunction());
@@ -554,7 +550,7 @@ static bool siteReachedByWholeBlock(const Session &S,
 
 static InKernelSite inKernelSite(const Session &S, const RecognizedMatmul &m) {
   InKernelSite K;
-  K.raiseF = m.scalarLoop.fma->getFunction();
+  K.raiseF = m.scalarLoop().fma->getFunction();
   K.existingShmem = enclosingKernelSharedBytes(S, *K.raiseF);
   K.shape = inKernelShape(m);
   return K;
@@ -581,7 +577,7 @@ static Error proposeInKernel(const Product &P, const InKernelSite &K,
                              unsigned tileN, unsigned tileK, MatmulUnit &cm,
                              SmallVectorImpl<std::string> &estimated) {
   const RecognizedMatmul &m = P.m;
-  MatmulUnit::Option opt;
+  MatmulCandidate opt;
   opt.tileM = tileM;
   opt.tileN = tileN;
   opt.tileK = tileK;
@@ -605,31 +601,18 @@ static Error proposeInKernel(const Product &P, const InKernelSite &K,
   return Error::success();
 }
 
-static Error proposeInKernelDirect(const Product &P, const InKernelSite &K,
-                                   MatmulUnit &cm,
-                                   SmallVectorImpl<std::string> &estimated) {
-  Expected<const SmallVector<InKernelTile, 16> *> targets =
-      getAvailableWmmaTargets(P.S, P.m);
-  if (!targets)
-    return targets.takeError();
-  for (const InKernelTile &t : **targets)
-    if (Error E = proposeInKernel(
-            P, K, SchemeVariant::direct(t.operand, t.accumulator), t.M, t.N,
-            t.K, cm, estimated))
-      return E;
-  return Error::success();
-}
-
-// The split scheme in the kernel: operands are split into N narrow Veltkamp
-// slices, an N(N+1)/2-mma chain accumulates the cross products into F32 groups
-// d[i+j], and the readback combines them as sum_w d[w]/SCALE^w. The F32
-// accumulator rounds the K-sum, so the family is capped at F32-class accuracy
-// regardless of N.
-struct InKernelSplitVariant {
+// A scheme variant an in-kernel raise realizes, at a tensor-core tile.
+struct InKernelVariant {
   unsigned tileM, tileN, tileK;
   SchemeVariant variant;
 };
-static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
+
+// The split scheme in the kernel: operands are split into N narrow slices,
+// an N(N+1)/2-mma chain accumulates the cross products into F32 groups
+// d[i+j], and the readback combines them as sum_w d[w]/SCALE^w. The F32
+// accumulator rounds the K-sum, so the family is capped at F32-class accuracy
+// regardless of N.
+static constexpr InKernelVariant kInKernelSplitVariants[] = {
     {16, 16, 16,
      SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2)},
     {16, 16, 16,
@@ -646,10 +629,22 @@ static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
     // modular library calls cover their range.
 };
 
-static Error proposeInKernelSplit(const Product &P, const InKernelSite &K,
-                                  MatmulUnit &cm,
-                                  SmallVectorImpl<std::string> &estimated) {
-  for (const InKernelSplitVariant &s : kInKernelSplitVariants) {
+// Every in-kernel class whose tile the cost model has an MMA row for: the
+// direct raise of each tile, then the split variants, with one warning for the
+// classes whose row at the product's shape is estimated by the class row. The
+// split needs no size gate: the padded fill zero-fills boundary tiles and every
+// slice outside the valid extent, so padding is numerically inert. Its one
+// precondition is the static shared cap (N slice buffers per side plus N F32
+// tiles live at once), a capability limit rather than a price.
+static Error proposeInKernelRaises(const Product &P, const InKernelSite &K,
+                                   MatmulUnit &cm) {
+  SmallVector<InKernelVariant> variants;
+  for (const InKernelTile &t : kInKernelTiles)
+    variants.push_back(
+        {t.M, t.N, t.K, SchemeVariant::direct(t.operand, t.accumulator)});
+  append_range(variants, kInKernelSplitVariants);
+  SmallVector<std::string, 16> estimated;
+  for (const InKernelVariant &s : variants) {
     Expected<bool> available =
         wmmaTileAvailable(P.S, P.m, s.tileM, s.tileN, s.tileK,
                           s.variant.operand, s.variant.accumulator);
@@ -657,26 +652,10 @@ static Error proposeInKernelSplit(const Product &P, const InKernelSite &K,
       return available.takeError();
     if (!*available)
       continue;
-    // No size gate: the padded fill zero-fills boundary tiles and every slice
-    // outside the valid extent, so padding is numerically inert. The one
-    // precondition is the static shared cap (N slice buffers per side plus N
-    // F32 tiles live at once), a capability limit rather than a price.
     if (Error E = proposeInKernel(P, K, s.variant, s.tileM, s.tileN, s.tileK,
                                   cm, estimated))
       return E;
   }
-  return Error::success();
-}
-
-// Every in-kernel class, with one warning for the classes whose row at the
-// product's shape is estimated by the class row.
-static Error proposeInKernelRaises(const Product &P, const InKernelSite &K,
-                                   MatmulUnit &cm) {
-  SmallVector<std::string, 16> estimated;
-  if (Error E = proposeInKernelDirect(P, K, cm, estimated))
-    return E;
-  if (Error E = proposeInKernelSplit(P, K, cm, estimated))
-    return E;
   if (estimated.empty())
     return Error::success();
   return reportEstimatedRow(
@@ -699,13 +678,10 @@ struct LibrarySite {
   // The library call's descriptor; none when no library call can take the
   // place of the product.
   std::optional<GemmBodyNote> note;
-  bool hasLibraryCall = false;
   // The M x Ncols x K the call runs at, when all three are constants of this
   // compile (a scalar-loop product's descriptor). The rows each shape reads
   // are listed above kCalibrate.
   std::optional<std::array<unsigned, 3>> runShape;
-  // The extents at profile scale: the profiled global extents of the product.
-  std::array<unsigned, 3> profileShape = {0, 0, 0};
 };
 } // namespace
 
@@ -717,30 +693,65 @@ static Expected<LibrarySite> librarySite(Session &S,
     return found.takeError();
   L.note = std::move(*found);
   const std::optional<GemmBodyNote> &note = L.note;
-  L.hasLibraryCall = note.has_value();
-  if (S.Opts.Diagnostics.Print && !L.hasLibraryCall)
+  if (S.Opts.Diagnostics.Print && !note)
     llvm::errs() << "[poseidon] matmul[" << m.id << "] " << m.M << 'x' << m.N
                  << 'x' << m.K
                  << ": library-call Ozaki-II not proposed: the body "
                     "is not a library-call GEMM\n";
-  if (note && m.origin == RecognizedMatmul::Origin::ConstantShape)
+  if (note && m.isConstantShape())
     L.runShape = {(unsigned)note->dims[DimM].add,
                   (unsigned)note->dims[DimNcols].add,
                   (unsigned)note->dims[DimK].add};
-  L.profileShape = {m.globalM ? m.globalM : m.M, m.globalN ? m.globalN : m.N,
-                    m.globalK ? m.globalK : m.K};
   return L;
 }
 
-static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
-                                        unsigned tileN, unsigned tileK) {
-  MatmulUnit::Option opt;
+static MatmulCandidate libraryOption(const SchemeVariant &v, unsigned tileM,
+                                     unsigned tileN, unsigned tileK) {
+  MatmulCandidate opt;
   opt.tileM = tileM;
   opt.tileN = tileN;
   opt.tileK = tileK;
   opt.variant = v;
   opt.realization = Realization::LibraryCall;
   return opt;
+}
+
+namespace {
+// The rows a library call is priced from: its own, and, for a call at a shape
+// that row was not measured at, the square row whose ratio times `padding`
+// estimates it.
+struct LibraryRows {
+  std::string family, key;
+  std::optional<std::pair<std::string, std::string>> square;
+  double padding = 1.0;
+};
+// How proposeLibraryCall priced a call.
+enum class LibraryPrice { Measured, Estimated, Missing };
+} // namespace
+
+// Proposes the library call of `v`, whose runtime accumulates in the tile
+// `tileM` x `tileN` x `tileK`, priced from `rows`; Missing, and not proposed,
+// when the cost model carries none of them.
+static LibraryPrice proposeLibraryCall(const Product &P, MatmulUnit &cm,
+                                       const SchemeVariant &v, unsigned tileM,
+                                       unsigned tileN, unsigned tileK,
+                                       const LibraryRows &rows) {
+  CostModelState &CM = P.S.get<CostModelState>();
+  LibraryPrice how = LibraryPrice::Measured;
+  std::optional<double> rel = lookupCost(CM, rows.family, rows.key);
+  if (!rel && rows.square) {
+    rel = lookupCost(CM, rows.square->first, rows.square->second);
+    if (rel) {
+      *rel *= rows.padding;
+      how = LibraryPrice::Estimated;
+    }
+  }
+  if (!rel)
+    return LibraryPrice::Missing;
+  MatmulCandidate opt = libraryOption(v, tileM, tileN, tileK);
+  opt.compCost = P.baselinePerMac * *rel;
+  cm.candidates.push_back(opt);
+  return how;
 }
 
 // S^3 / (M*N*K) for S = max(M, N, K), at the profiled extents (1 when the
@@ -764,13 +775,11 @@ static double squarePaddingRatio(const RecognizedMatmul &m) {
 // modulus count with neither row is not proposed.
 static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
                                    MatmulUnit &cm) {
-  if (!L.hasLibraryCall)
-    return Error::success();
   const RecognizedMatmul &m = P.m;
   // The runtime's INT32 residue sums hold a reduction shorter than
   // kOzakiIIMaxK, at the scale the call runs at and at the one simulated.
   const unsigned reduction =
-      std::max({L.runShape ? (*L.runShape)[2] : 0u, L.profileShape[2], m.K});
+      std::max({L.runShape ? (*L.runShape)[2] : 0u, m.profileShape()[2], m.K});
   if (reduction >= (unsigned)kOzakiIIMaxK) {
     if (P.S.Opts.Diagnostics.Print)
       llvm::errs() << "[poseidon] matmul[" << m.id
@@ -780,8 +789,8 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
                    << '\n';
     return Error::success();
   }
-  const std::array<unsigned, 3> &shape =
-      L.runShape ? *L.runShape : L.profileShape;
+  const std::array<unsigned, 3> shape =
+      L.runShape ? *L.runShape : m.profileShape();
   const bool square = shape[0] == shape[1] && shape[1] == shape[2];
   // A call of constant extents is keyed by all three, as it is measured at
   // them; one whose column count is a run-time extent by (M, K), whose rows
@@ -797,28 +806,18 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
   const double padding = squarePaddingRatio(m);
   std::string missing, estimated;
   for (unsigned nm : kOzakiIIModuliCounts) {
-    const SchemeVariant v = SchemeVariant::ozakiII(nm);
     const std::string squareKey = "nm" + std::to_string(nm);
-    const std::string key =
-        squareKey + (square ? std::string() : "_" + shapeKey);
-    double rel =
-        lookupCost(P.S.get<CostModelState>(), family, key).value_or(-1.0);
-    if (rel <= 0.0 && !square) {
-      rel =
-          lookupCost(P.S.get<CostModelState>(), "library_ozaki_rel", squareKey)
-              .value_or(-1.0) *
-          padding;
-      if (rel > 0.0)
-        estimated += (estimated.empty() ? "" : ", ") + std::to_string(nm);
-    }
-    if (rel <= 0.0) {
-      missing += (missing.empty() ? "" : ", ") + std::to_string(nm);
+    LibraryRows rows{family, squareKey};
+    if (!square)
+      rows = {family, squareKey + "_" + shapeKey,
+              std::make_pair("library_ozaki_rel", squareKey), padding};
+    const LibraryPrice how =
+        proposeLibraryCall(P, cm, SchemeVariant::ozakiII(nm), kOzakiIIPadTile,
+                           kOzakiIIPadTile, kOzakiIIPadTile, rows);
+    if (how == LibraryPrice::Measured)
       continue;
-    }
-    MatmulUnit::Option opt =
-        libraryOption(v, kOzakiIIPadTile, kOzakiIIPadTile, kOzakiIIPadTile);
-    opt.compCost = P.baselinePerMac * rel;
-    cm.candidates.push_back(opt);
+    std::string &list = how == LibraryPrice::Estimated ? estimated : missing;
+    list += (list.empty() ? "" : ", ") + std::to_string(nm);
   }
   // One row name for all the moduli of the shape.
   const std::string rows =
@@ -846,13 +845,9 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
 // which has no such runtime, a pin that names it is told why. The runtime
 // repacks operands rather than padding to a square, so no shape ratio is
 // charged.
-static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
-                                 MatmulUnit &cm) {
-  if (!L.hasLibraryCall)
-    return Error::success();
-  MatmulUnit::Option opt = libraryOption(
-      SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2), 16, 16,
-      16);
+static Error proposeLibrarySplit(const Product &P, MatmulUnit &cm) {
+  const SchemeVariant v =
+      SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2);
   if (!kHaveTcecRuntime) {
     if (P.S.Opts.Diagnostics.Print &&
         !std::exchange(P.S.get<MatmulState>().ReportedNoTcecRuntime, true))
@@ -863,20 +858,17 @@ static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
              "runtime; configure it with "
              "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>\n";
     cm.dropped.push_back(
-        {matmulOptionLabel(opt),
+        {matmulOptionLabel(libraryOption(v, 16, 16, 16)),
          "this compiler was built without cuMpSGEMM, on which the "
          "error-corrected library call runs; configure it with "
          "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>"});
     return Error::success();
   }
-  double rel =
-      lookupCost(P.S.get<CostModelState>(), "library_tcec_rel", "fp16tcec")
-          .value_or(-1.0);
-  if (rel <= 0.0)
+  if (proposeLibraryCall(P, cm, v, 16, 16, 16,
+                         {"library_tcec_rel", "fp16tcec"}) ==
+      LibraryPrice::Missing)
     return reportMissingRow(P.S, P.m, "tcec library call",
                             "library_tcec_rel,fp16tcec", kCalibrate);
-  opt.compCost = P.baselinePerMac * rel;
-  cm.candidates.push_back(opt);
   return Error::success();
 }
 
@@ -901,27 +893,17 @@ static constexpr LibraryDirectVariant kLibraryDirectVariants[] = {
     {SchemeVariant::direct(NumberFormat::FP32, NumberFormat::FP32), 0, 0, 0},
 };
 
-static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
-                                  MatmulUnit &cm) {
-  if (!L.hasLibraryCall)
-    return Error::success();
-  const RecognizedMatmul &m = P.m;
+static Error proposeLibraryDirect(const Product &P, MatmulUnit &cm) {
   for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
     const std::string cls = schemeFormats(d.variant, '_');
-    double rel =
-        lookupCost(P.S.get<CostModelState>(), "library_direct_rel", cls)
-            .value_or(-1.0);
-    if (rel <= 0.0) {
-      if (Error E = reportMissingRow(
-              P.S, m, Twine(schemeTag(d.variant)) + " " + cls + " library call",
-              "library_direct_rel," + cls, kCalibrate))
-        return E;
+    if (proposeLibraryCall(P, cm, d.variant, d.tileM, d.tileN, d.tileK,
+                           {"library_direct_rel", cls}) !=
+        LibraryPrice::Missing)
       continue;
-    }
-    MatmulUnit::Option opt =
-        libraryOption(d.variant, d.tileM, d.tileN, d.tileK);
-    opt.compCost = P.baselinePerMac * rel;
-    cm.candidates.push_back(opt);
+    if (Error E = reportMissingRow(
+            P.S, P.m, Twine(schemeTag(d.variant)) + " " + cls + " library call",
+            "library_direct_rel," + cls, kCalibrate))
+      return E;
   }
   return Error::success();
 }
@@ -935,8 +917,6 @@ static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // the row that replaces the estimate.
 static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
-  if (!L.hasLibraryCall)
-    return Error::success();
   const RecognizedMatmul &m = P.m;
   // Extents of this compile are priced from the row measured at them, a
   // square one also from the square row.
@@ -947,29 +927,78 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
       std::to_string(M) + "x" + std::to_string(N) + "x" + std::to_string(K);
   const std::string rectKey = "dgemm_m" + std::to_string(M) + "n" +
                               std::to_string(N) + "k" + std::to_string(K);
-  double rel = L.runShape ? lookupCost(P.S.get<CostModelState>(),
-                                       "library_ozaki_rect_rel", rectKey)
-                                .value_or(-1.0)
-                          : -1.0;
+  LibraryRows rows{"library_ozaki_rel", "dgemm"};
+  if (L.runShape)
+    rows = {"library_ozaki_rect_rel", rectKey,
+            std::make_pair("library_ozaki_rel", "dgemm")};
   const bool rectangular = L.runShape && !(M == N && N == K);
-  const bool fromSquare = rel <= 0.0;
-  if (fromSquare)
-    rel = lookupCost(P.S.get<CostModelState>(), "library_ozaki_rel", "dgemm")
-              .value_or(-1.0);
-  if (rel <= 0.0)
+  switch (
+      proposeLibraryCall(P, cm, SchemeVariant::native(), 16, 16, 16, rows)) {
+  case LibraryPrice::Measured:
+    return Error::success();
+  case LibraryPrice::Estimated:
+    if (!rectangular)
+      return Error::success();
+    return reportEstimatedRow(P.S, m, "native-dgemm library call at " + shape,
+                              "library_ozaki_rect_rel," + rectKey,
+                              std::string(kCalibrate) + " --product " + shape,
+                              "from the square 'library_ozaki_rel,dgemm' row");
+  case LibraryPrice::Missing:
     return reportMissingRow(P.S, m, "native-dgemm library call",
                             "library_ozaki_rel,dgemm", kCalibrate);
-  if (fromSquare && rectangular)
-    if (Error E =
-            reportEstimatedRow(P.S, m, "native-dgemm library call at " + shape,
-                               "library_ozaki_rect_rel," + rectKey,
-                               std::string(kCalibrate) + " --product " + shape,
-                               "from the square 'library_ozaki_rel,dgemm' row"))
-      return E;
-  MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
-  opt.compCost = P.baselinePerMac * rel;
-  cm.candidates.push_back(opt);
-  return Error::success();
+  }
+  llvm_unreachable("a library call is measured, estimated or missing");
+}
+
+// The cost per MAC of the product `m` as written, in cost-model units: what
+// its library_*_rel and inkernel_rel rows are ratios to.
+static Expected<double> baselinePerMac(Session &S, const RecognizedMatmul &m) {
+  double baselinePerMac = 0.0;
+  if (m.isConstantShape()) {
+    // The loop body is one MAC's worth of work and the cost-model rows are
+    // reciprocal throughput per op, so this sum is the baseline's cost per
+    // MAC (executions = profiled total MACs).
+    for (Instruction *I : m.footprint) {
+      Expected<double> c = instructionCost(S.get<CostModelState>(), I);
+      if (!c)
+        return c.takeError();
+      baselinePerMac += *c;
+    }
+    return baselinePerMac;
+  }
+  const RuntimeGemmHandle &g = m.runtimeGemm();
+  const unsigned R = g.fmas.size();
+  // Composed in the unit every "library_*_rel" row is measured in: one MAC of
+  // this loop nest is one fma at the element type, plus the epilogue's fadd
+  // amortized over the K-long reduction it closes.
+  double bodySum = 0.0, epi = 0.0;
+  for (Instruction *I : m.footprint) {
+    Expected<double> c = instructionCost(S.get<CostModelState>(), I);
+    if (!c)
+      return c.takeError();
+    if (I == g.epilogue)
+      epi += *c;
+    else
+      bodySum += *c;
+  }
+  return bodySum / (double)R + (m.K ? epi / (double)m.K : 0.0);
+}
+
+// Gives each candidate of `cm` its `accuracy`, in order, and drops a candidate
+// whose formats cannot hold the profiled operands: its modelled error does not
+// see what it loses.
+static void offerInRange(const Options &O, MatmulUnit &cm,
+                         ArrayRef<MatmulAccuracy> accuracy) {
+  SmallVector<MatmulCandidate, 8> offered;
+  for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
+    opt.accuracyCost = a.accuracyCost;
+    opt.domainError = a.domainError;
+    if (a.outOfRange.empty() || !O.Matmul.ExcludeOutOfRange)
+      offered.push_back(opt);
+    else
+      cm.dropped.push_back({matmulOptionLabel(opt), a.outOfRange});
+  }
+  cm.candidates = std::move(offered);
 }
 
 // Appends to `out` a unit with priced candidates for each product of
@@ -1001,51 +1030,20 @@ static Error generateMatmulCandidates(Session &S,
     cm.matmul = const_cast<RecognizedMatmul *>(&m);
     cm.executions = prof->macs;
 
-    double baselinePerMac = 0.0;
-    switch (m.origin) {
-    case RecognizedMatmul::Origin::ConstantShape:
-      // The loop body is one MAC's worth of work and the cost-model rows are
-      // reciprocal throughput per op, so this sum is the baseline's cost per
-      // MAC (executions = profiled total MACs).
-      for (Instruction *I : m.footprint) {
-        Expected<double> c = instructionCost(S.get<CostModelState>(), I);
-        if (!c)
-          return c.takeError();
-        baselinePerMac += *c;
-      }
-      break;
-    case RecognizedMatmul::Origin::RuntimeShape: {
-      const RuntimeGemmHandle &g = *m.runtimeGemm;
-      const unsigned R = g.fmas.size();
-      // Composed in the unit every "library_*_rel" row is measured in: one
-      // MAC of this loop nest is one fma at the element type, plus the
-      // epilogue's fadd amortized over the K-long reduction it closes.
-      double bodySum = 0.0, epi = 0.0;
-      for (Instruction *I : m.footprint) {
-        Expected<double> c = instructionCost(S.get<CostModelState>(), I);
-        if (!c)
-          return c.takeError();
-        if (I == g.epilogue)
-          epi += *c;
-        else
-          bodySum += *c;
-      }
-      baselinePerMac = bodySum / (double)R + (m.K ? epi / (double)m.K : 0.0);
-      break;
-    }
-    }
-    cm.initialCompCost = baselinePerMac;
-    const Product P{S, m, baselinePerMac};
+    Expected<double> perMac = baselinePerMac(S, m);
+    if (!perMac)
+      return perMac.takeError();
+    cm.initialCompCost = *perMac;
+    const Product P{S, m, *perMac};
 
     // The candidate index is the position in this sequence.
-    if (m.origin == RecognizedMatmul::Origin::ConstantShape &&
-        !m.scalarLoop.otherWork.empty())
+    if (m.isConstantShape() && !m.scalarLoop().otherWork.empty())
       cm.dropped.push_back(
-          {"in-kernel raise", m.scalarLoop.otherWork +
+          {"in-kernel raise", m.scalarLoop().otherWork +
                                   ", and the raise takes the place of the "
                                   "whole loop"});
-    if (m.origin == RecognizedMatmul::Origin::ConstantShape &&
-        m.scalarLoop.inKernelRaisable && siteReachedByWholeBlock(S, m)) {
+    if (m.isConstantShape() && m.scalarLoop().inKernelRaisable &&
+        siteReachedByWholeBlock(S, m)) {
       if (Error E = proposeInKernelRaises(P, inKernelSite(S, m), cm))
         return E;
     }
@@ -1055,39 +1053,29 @@ static Error generateMatmulCandidates(Session &S,
         return site.takeError();
       const LibrarySite &L = *site;
       cm.library = L.note;
-      if (Error E = proposeLibraryModular(P, L, cm))
-        return E;
-      if (Error E = proposeLibrarySplit(P, L, cm))
-        return E;
-      if (Error E = proposeLibraryDirect(P, L, cm))
-        return E;
-      if (Error E = proposeLibraryNative(P, L, cm))
-        return E;
+      if (L.note) {
+        if (Error E = proposeLibraryModular(P, L, cm))
+          return E;
+        if (Error E = proposeLibrarySplit(P, cm))
+          return E;
+        if (Error E = proposeLibraryDirect(P, cm))
+          return E;
+        if (Error E = proposeLibraryNative(P, L, cm))
+          return E;
+      }
     }
     SmallVector<MatmulAccuracyQuery> queries;
-    for (const MatmulUnit::Option &opt : cm.candidates)
+    for (const MatmulCandidate &opt : cm.candidates)
       queries.push_back(accuracyQuery(m, opt));
     SmallVector<MatmulAccuracy> accuracy(queries.size());
     if (Error E = evaluateMatmulAccuracy(S, m, *prof, sampleLogBits, queries,
                                          accuracy))
       return E;
-    // A candidate whose formats cannot hold the profiled operands is not
-    // offered: its modelled error does not see what it loses.
-    SmallVector<MatmulUnit::Option, 8> offered;
-    for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
-      opt.accuracyCost = a.accuracyCost;
-      opt.domainError = a.domainError;
-      if (a.outOfRange.empty() || !S.Opts.Matmul.ExcludeOutOfRange)
-        offered.push_back(opt);
-      else
-        cm.dropped.push_back({matmulOptionLabel(opt), a.outOfRange});
-    }
-    cm.candidates = std::move(offered);
+    offerInRange(S.Opts, cm, accuracy);
 
-    if (m.origin == RecognizedMatmul::Origin::RuntimeShape &&
-        S.Opts.Diagnostics.Print)
+    if (!m.isConstantShape() && S.Opts.Diagnostics.Print)
       llvm::errs() << "[poseidon] matmul[" << m.id
-                   << "] baseline: composed/MAC=" << baselinePerMac << '\n';
+                   << "] baseline: composed/MAC=" << *perMac << '\n';
 
     // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
     // per-MAC baseline, the unit the measured library_*_rel rows use.
@@ -1098,9 +1086,9 @@ static Error generateMatmulCandidates(Session &S,
       for (size_t ci = 0; ci < cm.candidates.size(); ++ci) {
         const auto &o = cm.candidates[ci];
         llvm::errs() << "[poseidon]   #" << ci << ' ' << matmulOptionLabel(o)
-                     << "  compCost/MAC=" << o.compCost << "  rel="
+                     << "  compCost/MAC=" << *o.compCost << "  rel="
                      << (cm.initialCompCost > 0
-                             ? o.compCost / cm.initialCompCost
+                             ? *o.compCost / cm.initialCompCost
                              : -1.0)
                      << "  domainError=" << o.domainError << '\n';
       }
@@ -1114,16 +1102,16 @@ static Error generateMatmulCandidates(Session &S,
   return Error::success();
 }
 
-Error MatmulUnit::apply(Session &S, size_t candidateIndex) {
-  assert(candidateIndex < candidates.size() &&
-         "the solver names one of the candidates");
-  const Option &opt = candidates[candidateIndex];
+Error MatmulUnit::materialize(size_t i) {
+  assert(i < candidates.size() && "the solver names one of the candidates");
+  Session &S = session();
+  const MatmulCandidate &opt = candidates[i];
 
   if (opt.realization == Realization::LibraryCall) {
     assert(library && "a library call is proposed only with its descriptor");
     return applyLibraryCall(S, *matmul, *library, opt.variant);
   }
-  assert(matmul->origin == RecognizedMatmul::Origin::ConstantShape &&
+  assert(matmul->isConstantShape() &&
          "a runtime-shape product is proposed only as a library call");
   switch (opt.variant.scheme) {
   case Scheme::Direct:
@@ -1132,7 +1120,7 @@ Error MatmulUnit::apply(Session &S, size_t candidateIndex) {
     // Each raise was proposed against the shared memory its kernel used
     // before any raise; raises of one kernel that do not share their scratch
     // add up.
-    Function &F = *matmul->scalarLoop.preheader->getParent();
+    Function &F = *matmul->scalarLoop().preheader->getParent();
     const uint64_t bytes = enclosingKernelSharedBytes(S, F);
     const uint64_t cap = Target::of(F).maxStaticSharedBytes();
     if (bytes > cap)
@@ -1203,10 +1191,8 @@ static std::string shapeOf(const RecognizedMatmul &m) {
   auto dim = [](unsigned d) {
     return d == ~0u || d == 0 ? std::string("?") : std::to_string(d);
   };
-  unsigned M = m.globalM ? m.globalM : m.M;
-  unsigned N = m.globalN ? m.globalN : m.N;
-  unsigned K = m.globalK ? m.globalK : m.K;
-  return dim(M) + "x" + dim(N) + "x" + dim(K);
+  const std::array<unsigned, 3> shape = m.profileShape();
+  return dim(shape[0]) + "x" + dim(shape[1]) + "x" + dim(shape[2]);
 }
 
 Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
@@ -1221,42 +1207,36 @@ Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
   }
   U.name = "the " + shape + " matrix product";
   U.executions = executions;
-  if (initialCompCost >= 0.0) {
+  if (std::isfinite(initialCompCost)) {
     Expected<int64_t> c = E.onAxis(initialCompCost * (double)executions);
     if (!c)
       return c.takeError();
     U.baseCost = *c;
   }
   for (size_t j = 0; j < candidates.size(); ++j) {
-    const Option &o = candidates[j];
-    Alternative A;
-    A.id = candidateId(j);
+    const MatmulCandidate &o = candidates[j];
+    Expected<Alternative> priced =
+        pricedAlternative(E, *this, j, getCompCostDelta(j), getAccCostDelta(j));
+    if (!priced)
+      return priced.takeError();
+    Alternative &A = *priced;
     A.kind = "matmul";
     A.kindWords = "the product candidate";
     A.summary = matmulOptionLabel(o);
     if (o.realization == Realization::InKernel)
       A.keys["inkernel_class"] = inKernelCostClass(o.variant);
-    A.unit = this;
-    A.index = j;
     A.at = U.root;
-    Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
-    if (!c)
-      return c.takeError();
-    A.costDelta = *c;
-    E.setAccuracy(A, getAccCostDelta(j));
     if (std::isfinite(o.domainError))
       A.keys["modelled_domain_error"] = o.domainError;
     A.baseCost = U.baseCost;
     U.alts.push_back(std::move(A));
   }
   for (const auto &[label, why] : dropped) {
-    Alternative A;
+    Alternative A = droppedAlternative("not offered: ", why);
     A.kind = "matmul";
     A.kindWords = "the product candidate";
     A.summary = label;
     A.at = U.root;
-    A.standing = Standing::Dropped;
-    A.reason = "not offered: " + why;
     U.alts.push_back(std::move(A));
   }
   return Error::success();
@@ -1355,9 +1335,8 @@ public:
       findRuntimeShapeMatmuls(O, F, *M.SE, *M.LI, P.header, P.map, M.matmuls);
     }
     for (const RecognizedMatmul &m : M.matmuls)
-      if (m.origin == RecognizedMatmul::Origin::ConstantShape &&
-          m.scalarLoop.fma)
-        st.reductionOps.insert(m.scalarLoop.fma);
+      if (m.isConstantShape())
+        st.reductionOps.insert(m.scalarLoop().fma);
 
     if (O.Diagnostics.Print && !M.matmuls.empty()) {
       llvm::errs() << "[poseidon] Found " << M.matmuls.size()
@@ -1369,9 +1348,7 @@ public:
         llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
                      << dimStr(m.N) << 'x' << dimStr(m.K)
                      << " type=" << dtypeName(m.elemType) << " origin="
-                     << (m.origin == RecognizedMatmul::Origin::RuntimeShape
-                             ? "RuntimeShape"
-                             : "ConstantShape")
+                     << (m.isConstantShape() ? "ConstantShape" : "RuntimeShape")
                      << '\n';
       }
     }

@@ -20,7 +20,6 @@
 
 #include "Core/FPCore.h"
 #include "Core/FPNode.h"
-#include "Core/Technique.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -192,9 +191,9 @@ llvm::Expected<FPNode *> parseHerbieExpr(
     const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
 
 /// The FPCore expression `expr` as C, one string per element of an array and
-/// one otherwise; empty when `expr` names a symbol `G` does not know or does
-/// not parse. The parse adds to `G`, as parseHerbieExpr does.
-llvm::SmallVector<std::string, 1> fpcoreToC(
+/// one otherwise; the error of parseHerbieExpr when it does not parse. The
+/// parse adds to `G`, as parseHerbieExpr does.
+llvm::Expected<llvm::SmallVector<std::string, 1>> fpcoreToC(
     llvm::StringRef expr, FPGraph &G, const CRendering &how,
     llvm::StringRef resultDtype = "",
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =

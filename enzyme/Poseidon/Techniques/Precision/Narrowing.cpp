@@ -882,14 +882,12 @@ static const Value *stagingObjectOf(const Value *Ptr) {
   return nullptr;
 }
 
-// The objects `objectOf` gives for the pointers a subgraph reads through the
-// loads feeding it and writes through the stores of its outputs.
-static SmallPtrSet<const Value *, 4>
-touchedObjects(const Subgraph &subgraph,
-               function_ref<const Value *(const Value *)> objectOf) {
+// The staging buffers a subgraph reads through the loads feeding it and writes
+// through the stores of its outputs.
+static SmallPtrSet<const Value *, 4> touchedObjects(const Subgraph &subgraph) {
   SmallPtrSet<const Value *, 4> touched;
   auto add = [&](const Value *Ptr) {
-    if (const Value *O = objectOf(Ptr))
+    if (const Value *O = stagingObjectOf(Ptr))
       touched.insert(O);
   };
   for (Value *In : subgraph.inputs)
@@ -914,7 +912,7 @@ void mergeSharedStagingSubgraphs(const Options &O, Function &F,
 
   SmallVector<SmallPtrSet<const Value *, 4>, 8> touched;
   for (const Subgraph &subgraph : subgraphs)
-    touched.push_back(touchedObjects(subgraph, stagingObjectOf));
+    touched.push_back(touchedObjects(subgraph));
 
   IntEqClasses classes(subgraphs.size());
   for (size_t i = 0; i < subgraphs.size(); ++i)

@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // Recognition of dense GEMMs with runtime dimensions
-// (Origin::RuntimeShape): thread-parallel reduction nests whose extents
+// (runtime-shape products): thread-parallel reduction nests whose extents
 // and leading dimensions are expressions over the kernel's launch values,
 // whose contraction may be split across several reduction loops (an unrolled
 // constant-trip outer level), and whose row and column indices may run in
@@ -51,7 +51,6 @@
 
 #include <algorithm>
 #include <map>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -1397,6 +1396,118 @@ static Expected<ChainMember> matchChainMember(Loop *L, PHINode &phi,
   return out;
 }
 
+namespace {
+// How the members of a function's reduction loops link into chains, by index:
+// each member's successor and predecessor, -1 for none, and whether a link of
+// it is ambiguous.
+struct ChainLinks {
+  SmallVector<int, 8> next, prevOf;
+  SmallVector<bool, 8> ambiguous;
+};
+} // namespace
+
+// The chains of `members`. Member j's initial accumulator reaches the fma of
+// every earlier member (the guard phis the unroller leaves make the whole
+// prefix reachable), so the immediate predecessor is the reachable member with
+// the longest prefix of its own; requiring that prefix to be exactly one
+// shorter is what makes the order a total chain rather than a guess.
+static ChainLinks linkChains(ArrayRef<ChainMember> members) {
+  const unsigned n = members.size();
+  SmallVector<SmallVector<unsigned, 4>, 8> reach(n);
+  for (unsigned j = 0; j < n; ++j)
+    for (unsigned i = 0; i < n; ++i)
+      if (i != j && reachesThroughPhis(members[j].init, members[i].fma))
+        reach[j].push_back(i);
+  ChainLinks links;
+  links.next.assign(n, -1);
+  links.prevOf.assign(n, -1);
+  links.ambiguous.assign(n, false);
+  for (unsigned j = 0; j < n; ++j) {
+    if (reach[j].empty())
+      continue;
+    int best = -1;
+    size_t bestSz = 0;
+    unsigned ties = 0;
+    for (unsigned i : reach[j]) {
+      size_t sz = reach[i].size();
+      if (best < 0 || sz > bestSz) {
+        best = (int)i;
+        bestSz = sz;
+        ties = 1;
+      } else if (sz == bestSz)
+        ++ties;
+    }
+    if (ties != 1 || bestSz + 1 != reach[j].size() || links.next[best] >= 0) {
+      links.ambiguous[j] = true;
+      if (best >= 0)
+        links.ambiguous[best] = true;
+      continue;
+    }
+    links.next[best] = (int)j;
+    links.prevOf[j] = best;
+  }
+  return links;
+}
+
+// The product `R` recognized in F from the reduction loops `chain`, as matmul
+// `id`.
+static RecognizedMatmul recognizedFromChain(const Options &O, const Function &F,
+                                            ArrayRef<ChainMember> chain,
+                                            RecognizedChain &&R, unsigned id) {
+  const ProfileShape &P = R.profile;
+  RecognizedMatmul am;
+  am.id = id;
+  // M/N are the per-CTA tile the accuracy model simulates; the full product
+  // is globalM/globalN/globalK.
+  am.M = P.tileM;
+  am.N = P.tileN;
+  am.K = P.K;
+  am.globalM = P.M;
+  am.globalN = P.N;
+  am.globalK = P.K;
+  am.gridCTAs = P.ctaPerLaunch;
+  am.elemType = matrixFormatOf(chain[0].aLoad->getType());
+  am.handle = std::move(R.H);
+  am.outputValue = chain.back().fma;
+  for (const ChainMember &m : chain)
+    for (BasicBlock *BB : m.L->blocks())
+      for (Instruction &I : *BB)
+        am.footprint.insert(&I);
+  if (Instruction *epilogue = am.runtimeGemm().epilogue)
+    am.footprint.insert(epilogue);
+
+  if (O.Diagnostics.Print) {
+    const GemmBodyNote &g = am.runtimeGemm().library;
+    llvm::errs() << "[poseidon] " << F.getName() << ": recognized GEMM from "
+                 << chain.size() << " reduction loop(s)\n"
+                 << "[poseidon]   C = A^T*B + beta*C  beta=" << g.beta << '\n'
+                 << "[poseidon]   M=" << runtimeDimString(g.dims[DimM])
+                 << "  Ncols=" << runtimeDimString(g.dims[DimNcols])
+                 << "  K=" << runtimeDimString(g.dims[DimK]) << '\n'
+                 << "[poseidon]   lda=" << runtimeDimString(g.dims[DimLda])
+                 << "  ldb=" << runtimeDimString(g.dims[DimLdb])
+                 << "  ldc=" << runtimeDimString(g.dims[DimLdc]) << '\n'
+                 << "[poseidon]   aColMajor=" << (g.aColMajor ? 1 : 0)
+                 << " bColMajor=" << (g.bColMajor ? 1 : 0)
+                 << " cColMajor=" << (g.cColMajor ? 1 : 0)
+                 << "  C=" << launchRefString({g.cParam, g.cOffset}, "param")
+                 << " A=" << launchRefString({g.aParam, g.aOffset}, "param")
+                 << " B=" << launchRefString({g.bParam, g.bOffset}, "param")
+                 << '\n';
+    for (const auto &[x, y] : g.assumedEqual)
+      llvm::errs() << "[poseidon]   dense only if "
+                   << launchRefString(x, "param")
+                   << " == " << launchRefString(y, "param")
+                   << " (checked at the launch)\n";
+    llvm::errs() << "[poseidon]   profile shape M=" << P.M << " Ncols=" << P.N
+                 << " K=" << P.K << " (per-CTA tile " << P.tileM << 'x'
+                 << P.tileN << ", launches=" << P.launches
+                 << " CTAs/launch=" << P.ctaPerLaunch << " MACs=" << P.macs
+                 << ")\n";
+  }
+  return am;
+}
+
 void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                              LoopInfo &LI,
                              const SiteProfileHeader &profileHeader,
@@ -1415,9 +1526,8 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
   // Loops a scalar-loop matmul in `out` already claims are left to it.
   SmallPtrSet<const Instruction *, 8> claimed;
   for (const RecognizedMatmul &am : out)
-    if (am.origin == RecognizedMatmul::Origin::ConstantShape &&
-        am.scalarLoop.fma)
-      claimed.insert(am.scalarLoop.fma);
+    if (am.isConstantShape())
+      claimed.insert(am.scalarLoop().fma);
 
   DominatorTree DT(F);
 
@@ -1446,48 +1556,12 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
   if (members.empty())
     return;
 
-  // Chain the members. Member j's initial accumulator reaches the fma of every
-  // earlier member (the guard phis the unroller leaves make the whole prefix
-  // reachable), so the immediate predecessor is the reachable member with the
-  // longest prefix of its own; requiring that prefix to be exactly one shorter
-  // is what makes the order a total chain rather than a guess.
-  const unsigned n = members.size();
-  SmallVector<SmallVector<unsigned, 4>, 8> reach(n);
-  for (unsigned j = 0; j < n; ++j)
-    for (unsigned i = 0; i < n; ++i)
-      if (i != j && reachesThroughPhis(members[j].init, members[i].fma))
-        reach[j].push_back(i);
-  SmallVector<int, 8> next(n, -1), prevOf(n, -1);
-  SmallVector<bool, 8> ambiguous(n, false);
-  for (unsigned j = 0; j < n; ++j) {
-    if (reach[j].empty())
-      continue;
-    int best = -1;
-    size_t bestSz = 0;
-    unsigned ties = 0;
-    for (unsigned i : reach[j]) {
-      size_t sz = reach[i].size();
-      if (best < 0 || sz > bestSz) {
-        best = (int)i;
-        bestSz = sz;
-        ties = 1;
-      } else if (sz == bestSz)
-        ++ties;
-    }
-    if (ties != 1 || bestSz + 1 != reach[j].size() || next[best] >= 0) {
-      ambiguous[j] = true;
-      if (best >= 0)
-        ambiguous[best] = true;
-      continue;
-    }
-    next[best] = (int)j;
-    prevOf[j] = best;
-  }
+  const ChainLinks links = linkChains(members);
 
   unsigned nextId = static_cast<unsigned>(out.size());
-  for (unsigned h = 0; h < n; ++h) {
-    if (prevOf[h] >= 0 || ambiguous[h]) {
-      if (O.Diagnostics.Print && prevOf[h] < 0)
+  for (unsigned h = 0; h < members.size(); ++h) {
+    if (links.prevOf[h] >= 0 || links.ambiguous[h]) {
+      if (O.Diagnostics.Print && links.prevOf[h] < 0)
         llvm::errs() << "[poseidon]   loop " << h
                      << " is not a chain head: ambiguous accumulator "
                         "dataflow\n";
@@ -1502,8 +1576,8 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
     }
     SmallVector<ChainMember, 8> chain;
     bool bad = false;
-    for (int c = (int)h; c >= 0; c = next[c]) {
-      if (ambiguous[c]) {
+    for (int c = (int)h; c >= 0; c = links.next[c]) {
+      if (links.ambiguous[c]) {
         bad = true;
         break;
       }
@@ -1537,60 +1611,7 @@ void findRuntimeShapeMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                      << why << '\n';
       continue;
     }
-    const ProfileShape &P = R->profile;
-
-    RecognizedMatmul am;
-    am.id = nextId++;
-    // M/N are the per-CTA tile the accuracy model simulates; the full product
-    // is globalM/globalN/globalK.
-    am.M = P.tileM;
-    am.N = P.tileN;
-    am.K = P.K;
-    am.globalM = P.M;
-    am.globalN = P.N;
-    am.globalK = P.K;
-    am.gridCTAs = P.ctaPerLaunch;
-    am.elemType = matrixFormatOf(chain[0].aLoad->getType());
-    am.origin = RecognizedMatmul::Origin::RuntimeShape;
-    am.runtimeGemm = std::make_shared<RuntimeGemmHandle>(std::move(R->H));
-    am.outputValue = chain.back().fma;
-    for (const ChainMember &m : chain)
-      for (BasicBlock *BB : m.L->blocks())
-        for (Instruction &I : *BB)
-          am.footprint.insert(&I);
-    if (am.runtimeGemm->epilogue)
-      am.footprint.insert(am.runtimeGemm->epilogue);
-
-    if (O.Diagnostics.Print) {
-      const GemmBodyNote &g = am.runtimeGemm->library;
-      llvm::errs() << "[poseidon] " << F.getName() << ": recognized GEMM from "
-                   << chain.size() << " reduction loop(s)\n"
-                   << "[poseidon]   C = A^T*B + beta*C  beta=" << g.beta << '\n'
-                   << "[poseidon]   M=" << runtimeDimString(g.dims[DimM])
-                   << "  Ncols=" << runtimeDimString(g.dims[DimNcols])
-                   << "  K=" << runtimeDimString(g.dims[DimK]) << '\n'
-                   << "[poseidon]   lda=" << runtimeDimString(g.dims[DimLda])
-                   << "  ldb=" << runtimeDimString(g.dims[DimLdb])
-                   << "  ldc=" << runtimeDimString(g.dims[DimLdc]) << '\n'
-                   << "[poseidon]   aColMajor=" << (g.aColMajor ? 1 : 0)
-                   << " bColMajor=" << (g.bColMajor ? 1 : 0)
-                   << " cColMajor=" << (g.cColMajor ? 1 : 0)
-                   << "  C=" << launchRefString({g.cParam, g.cOffset}, "param")
-                   << " A=" << launchRefString({g.aParam, g.aOffset}, "param")
-                   << " B=" << launchRefString({g.bParam, g.bOffset}, "param")
-                   << '\n';
-      for (const auto &[x, y] : g.assumedEqual)
-        llvm::errs() << "[poseidon]   dense only if "
-                     << launchRefString(x, "param")
-                     << " == " << launchRefString(y, "param")
-                     << " (checked at the launch)\n";
-      llvm::errs() << "[poseidon]   profile shape M=" << P.M << " Ncols=" << P.N
-                   << " K=" << P.K << " (per-CTA tile " << P.tileM << 'x'
-                   << P.tileN << ", launches=" << P.launches
-                   << " CTAs/launch=" << P.ctaPerLaunch << " MACs=" << P.macs
-                   << ")\n";
-    }
-    out.push_back(std::move(am));
+    out.push_back(recognizedFromChain(O, F, chain, std::move(*R), nextId++));
   }
 }
 

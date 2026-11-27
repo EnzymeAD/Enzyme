@@ -73,9 +73,6 @@ static void fissionGemmForLibraryCall(const Options &O, Function &F,
   assert(cStore &&
          "a body with a fused note stores the product to an argument");
 
-  // Replace the GEMM result where the epilogue consumes it with a load from the
-  // output buffer (filled by the prepended library call); the reduction loop
-  // becomes dead. In-loop (recurrence) uses stay.
   Value *resultVal = cStore->getValueOperand();
   Value *outAddr = cStore->getPointerOperand();
   IRBuilder<> B(cStore);
@@ -146,11 +143,7 @@ Expected<std::optional<GemmBodyNote>>
 libraryCallNote(const Session &S, const RecognizedMatmul &m) {
   Function *F = const_cast<Function *>(anchorOf(m).getFunction());
   GemmBodyNote note;
-  switch (m.origin) {
-  case RecognizedMatmul::Origin::RuntimeShape:
-    note = m.runtimeGemm->library;
-    break;
-  case RecognizedMatmul::Origin::ConstantShape: {
+  if (m.isConstantShape()) {
     Expected<std::optional<GemmBodyNote>> n =
         constantShapeLibraryNote(S.Opts, *F, m);
     if (!n)
@@ -158,8 +151,8 @@ libraryCallNote(const Session &S, const RecognizedMatmul &m) {
     if (!*n)
       return std::nullopt;
     note = **n;
-    break;
-  }
+  } else {
+    note = m.runtimeGemm().library;
   }
   auto refuse = [&](const Twine &why) -> std::optional<GemmBodyNote> {
     if (S.Opts.Diagnostics.Print)

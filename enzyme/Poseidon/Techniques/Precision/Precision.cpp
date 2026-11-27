@@ -691,9 +691,8 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
         }
   if (ptHasExpansion && expansionMaterialized && liveExpansionRoots == 0)
     report_fatal_error(
-        "getCompCost: expansion candidate materialized df64 values but left "
-        "no live root for the cost walk, which would price it as free. "
-        "Refusing to fabricate a cost.");
+        "Poseidon: the clone of an expansion candidate keeps no live output "
+        "to price, which would price it as free");
   if (O.Diagnostics.Print && ptHasExpansion && !expansionMaterialized)
     llvm::errs() << "[poseidon] the expansion change converted no "
                     "instruction; pricing the unchanged cone\n";
@@ -833,8 +832,7 @@ CandidateClone::cone(ArrayRef<size_t> roots) const {
   // price() kept only clones with a root; a subset of outputs left none.
   if (clonedOutputs.empty())
     report_fatal_error("Poseidon: none of the outputs a precision candidate is "
-                       "priced over is left in its simplified clone. Refusing "
-                       "to fabricate a cost.");
+                       "priced over is left in its simplified clone");
 
   return backwardCone(clonedOutputs.getArrayRef(),
                       [&](Value *V) { return clonedInputs.contains(V); });
@@ -1292,9 +1290,10 @@ Error PrecisionUnit::priceAsWritten(CostModelState &CM) {
   return Error::success();
 }
 
-double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
-  return (candidates[candidateIndex].CompCost - initialCompCost) *
-         (double)executions;
+double PrecisionUnit::getCompCostDelta(size_t candidateIndex) const {
+  const std::optional<double> &cost = candidates[candidateIndex].compCost;
+  assert(cost && "an unpriced candidate has no cost change");
+  return (*cost - initialCompCost) * (double)executions;
 }
 
 // The units among `steps` that rewrite outputs of `subgraph`, in step order.
@@ -1398,8 +1397,7 @@ void PrecisionUnit::priceRequests(
                          Twine(candidates[G.candidateIndex].desc) +
                          "' is priced over its whole subgraph but not over "
                          "what a rewrite leaves of it: " +
-                         clone.unpriceable() +
-                         ". Refusing to fabricate a cost.");
+                         clone.unpriceable());
     for (Request &R : G.requests) {
       // The solve cannot unwind: a cost it cannot compute is taken as 0 and
       // its error kept for the caller of the solve.
@@ -1629,21 +1627,7 @@ Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
     A.baseCost = U.baseCost;
   };
   for (size_t j = 0; j < candidates.size(); ++j) {
-    PrecisionCandidate &cand = candidates[j];
-    Alternative A;
-    A.id = candidateId(j);
-    A.unit = this;
-    A.index = j;
-    describe(A, cand);
-    for (unsigned o = 0; o < sg.outputs.size(); ++o)
-      A.outputs.push_back(o);
-    std::optional<int64_t> cost;
-    if (cand.CompCost != std::numeric_limits<double>::max()) {
-      Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
-      if (!c)
-        return c.takeError();
-      cost = *c;
-    }
+    std::optional<double> cost = pricedCostDelta(j);
     double acc = getAccCostDelta(j);
     // Applied after rewrites of its subgraph's outputs, the candidate is
     // priced over what they leave.
@@ -1653,30 +1637,28 @@ Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
           return step.unit == this && step.candidateIndex == j;
         })) {
       auto c = compCostDeltaCache.find(key);
-      cost = std::nullopt;
-      if (c != compCostDeltaCache.end()) {
-        Expected<int64_t> repriced = E.onAxis(c->second);
-        if (!repriced)
-          return repriced.takeError();
-        cost = *repriced;
-      }
+      cost = c == compCostDeltaCache.end() ? std::nullopt
+                                           : std::optional<double>(c->second);
       auto a = accCostDeltaCache.find(key);
       acc = a == accCostDeltaCache.end()
                 ? std::numeric_limits<double>::quiet_NaN()
                 : a->second;
     }
-    A.costDelta = cost;
-    E.setAccuracy(A, acc);
+    Expected<Alternative> priced = pricedAlternative(E, *this, j, cost, acc);
+    if (!priced)
+      return priced.takeError();
+    Alternative &A = *priced;
+    describe(A, candidates[j]);
+    for (unsigned o = 0; o < sg.outputs.size(); ++o)
+      A.outputs.push_back(o);
     U.alts.push_back(std::move(A));
   }
   for (const auto &[desc, why] : dropped) {
-    Alternative A;
+    Alternative A = droppedAlternative("pricing dropped it: ", why);
     A.kind = "precision";
     A.kindWords = "the precision change";
     A.summary = desc;
     A.at = sg.outputs[0];
-    A.standing = Standing::Dropped;
-    A.reason = "pricing dropped it: " + why;
     U.alts.push_back(std::move(A));
   }
   if (!unpricedReason.empty())
@@ -1734,7 +1716,7 @@ Error PrecisionUnit::price() {
     Expected<double> cost =
         priceCandidate(session(), *subgraph, frequencies, c);
     if (cost) {
-      c.CompCost = *cost;
+      c.compCost = *cost;
       priced.push_back(std::move(c));
       continue;
     }
@@ -1777,7 +1759,7 @@ void PrecisionUnit::printPriced(raw_ostream &OS) {
   for (size_t i = 0; i < candidates.size(); ++i) {
     PrecisionCandidate &candidate = candidates[i];
     OS << getAccCostDelta(i) << "\t\t";
-    if (candidate.CompCost == std::numeric_limits<double>::max())
+    if (!candidate.compCost)
       OS << "unpriced";
     else
       OS << getCompCostDelta(i);

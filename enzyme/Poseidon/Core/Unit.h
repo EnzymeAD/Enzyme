@@ -25,12 +25,16 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -266,6 +270,45 @@ private:
   Session *boundSession = nullptr;
   SiteState *boundSite = nullptr;
   size_t boundIndex = 0;
+};
+
+/// A site unit that keeps its candidates as `Candidate`s, in the order the
+/// solver indexes them. A candidate's `compCost` is its cost per execution in
+/// cost-model units, none while unpriced. `UnitT` is the unit class itself:
+/// its `Info` is the kind, and its getCompCostDelta(i) the cost change of a
+/// priced candidate.
+template <typename UnitT, typename Candidate>
+class CandidateUnit : public SiteUnit {
+public:
+  /// The cost per execution of the code as written, in cost-model units; NaN
+  /// until priced.
+  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
+  /// How often the profiling run executed the code the unit rewrites: a cost
+  /// per execution times this is the profiled run's.
+  uint64_t executions = 0;
+  /// The candidates kept so far.
+  llvm::SmallVector<Candidate> candidates;
+  /// The candidates pricing dropped or did not offer: each one's name and why.
+  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
+
+  /// Whether `U` is of the kind UnitT::Info, for isa and dyn_cast.
+  static bool classof(const OptimizationUnit *U) {
+    return &llvm::cast<SiteUnit>(U)->info() == &UnitT::Info;
+  }
+  size_t numCandidates() const override { return candidates.size(); }
+  llvm::ArrayRef<std::pair<std::string, std::string>>
+  droppedCandidates() const override {
+    return dropped;
+  }
+  std::optional<double> pricedCostDelta(size_t i) override {
+    if (!candidates[i].compCost)
+      return std::nullopt;
+    return static_cast<UnitT &>(*this).getCompCostDelta(i);
+  }
+
+protected:
+  /// A unit of kind `kind`, unbound.
+  explicit CandidateUnit(const UnitKindInfo &kind) : SiteUnit(kind) {}
 };
 
 } // namespace poseidon

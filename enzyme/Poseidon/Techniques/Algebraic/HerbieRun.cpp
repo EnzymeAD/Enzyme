@@ -929,16 +929,14 @@ Expected<FPNode *> parseHerbieExpr(
   return N;
 }
 
-SmallVector<std::string, 1>
+Expected<SmallVector<std::string, 1>>
 fpcoreToC(StringRef expr, FPGraph &G, const CRendering &how,
           StringRef resultDtype,
           SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
-  SmallVector<std::string, 1> out;
   Expected<FPNode *> parsed = parseHerbieExpr(expr, G, approxSpecs, how.inputs);
-  if (!parsed) {
-    consumeError(parsed.takeError());
-    return out;
-  }
+  if (!parsed)
+    return parsed.takeError();
+  SmallVector<std::string, 1> out;
   FPNode *node = *parsed;
   if (node->is(fpcore::Array))
     for (const auto &element : node->operands)

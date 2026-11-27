@@ -13,7 +13,7 @@
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
-#include "Techniques/Precision/ExpansionRoutines.h"
+#include "Techniques/Precision/ExpansionOps.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -103,16 +103,26 @@ struct IRArith {
   }
 };
 
-using Routines = ExpansionRoutines<IRArith>;
-using PairOp1 = PairValue (Routines::*)(PairValue);
-using PairOp2 = PairValue (Routines::*)(PairValue, PairValue);
-using WideOp1 = void (Routines::*)(unsigned, Value *const *, Value **);
-using WideOp2 = void (Routines::*)(unsigned, Value *const *, Value *const *,
-                                   Value **);
+// The emitter's expansions, for ExpansionOps.
+struct IRExpansions {
+  using Expansion = ExpansionValue;
+  static unsigned size(const ExpansionValue &v) { return v.n(); }
+  static Value *const *components(const ExpansionValue &v) {
+    return v.x.data();
+  }
+  static Value **components(ExpansionValue &v) { return v.x.data(); }
+  static ExpansionValue sized(unsigned n) {
+    ExpansionValue r;
+    r.x.resize(n);
+    return r;
+  }
+};
+
+using Ops = ExpansionOps<IRArith, IRExpansions>;
 
 } // namespace
 
-static Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
+static Ops ops(IRBuilder<> &B) { return Ops(IRArith{B}); }
 
 // The metadata on the FP64 restore of a pair, which a Dekker split recovers
 // exactly.
@@ -120,99 +130,50 @@ static constexpr StringLiteral kPairJoin = "poseidon.pair.join";
 
 // Only the component counts whose routines are transcribed exist.
 static void checkComponents(unsigned n) {
-  if (n < 2 || n > 4)
-    report_fatal_error("Poseidon expansion emitter: only 2-, 3- and "
-                       "4-component FP32 expansions are implemented. Refusing "
-                       "to fabricate an unimplemented component count.");
-}
-
-static PairValue pairOf(const ExpansionValue &v) {
-  assert(v.n() == 2 && "a pair is a two-component expansion");
-  return {v.x[0], v.x[1]};
-}
-
-static ExpansionValue expansionOf(PairValue p) {
-  ExpansionValue r;
-  r.x.assign({p.hi, p.lo});
-  return r;
-}
-
-static ExpansionValue emitUnary(IRBuilder<> &B, const ExpansionValue &a,
-                                PairOp1 pairOp, WideOp1 wideOp) {
-  Routines R = routines(B);
-  if (a.n() == 2)
-    return expansionOf((R.*pairOp)(pairOf(a)));
-  ExpansionValue r;
-  r.x.resize(a.n());
-  (R.*wideOp)(a.n(), a.x.data(), r.x.data());
-  return r;
-}
-
-static ExpansionValue emitBinary(IRBuilder<> &B, const ExpansionValue &a,
-                                 const ExpansionValue &b, PairOp2 pairOp,
-                                 WideOp2 wideOp) {
-  assert(a.n() == b.n() && "expansion operands must agree on component count");
-  Routines R = routines(B);
-  if (a.n() == 2)
-    return expansionOf((R.*pairOp)(pairOf(a), pairOf(b)));
-  ExpansionValue r;
-  r.x.resize(a.n());
-  (R.*wideOp)(a.n(), a.x.data(), b.x.data(), r.x.data());
-  return r;
+  assert(n >= 2 && n <= 4 && "an FP32 expansion has 2, 3 or 4 components");
 }
 
 ExpansionValue emitExpansionAdd(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
-  return emitBinary(B, a, b, &Routines::dsAdd, &Routines::expansionAdd);
+  return ops(B).add(a, b);
 }
 
 ExpansionValue emitExpansionSub(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
-  return emitBinary(B, a, b, &Routines::dsSub, &Routines::expansionSub);
+  return ops(B).sub(a, b);
 }
 
 ExpansionValue emitExpansionMul(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
-  return emitBinary(B, a, b, &Routines::dsMul, &Routines::expansionMul);
+  return ops(B).mul(a, b);
 }
 
 ExpansionValue emitExpansionSqr(IRBuilder<> &B, const ExpansionValue &a) {
-  if (a.n() == 2)
-    return emitExpansionMul(B, a, a);
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionSqr(a.n(), a.x.data(), r.x.data());
-  return r;
+  return ops(B).sqr(a);
 }
 
 ExpansionValue emitExpansionDiv(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
-  return emitBinary(B, a, b, &Routines::dsDiv, &Routines::expansionDiv);
+  return ops(B).div(a, b);
 }
 
 ExpansionValue emitExpansionSqrt(IRBuilder<> &B, const ExpansionValue &a) {
-  return emitUnary(B, a, &Routines::dsSqrt, &Routines::expansionSqrt);
+  return ops(B).sqrt(a);
 }
 
 ExpansionValue emitExpansionNeg(IRBuilder<> &B, const ExpansionValue &a) {
-  return emitUnary(B, a, &Routines::dsNeg, &Routines::expansionNeg);
+  return ops(B).neg(a);
 }
 
 ExpansionValue emitExpansionFMA(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b,
                                 const ExpansionValue &c) {
-  if (a.n() == 2)
-    return expansionOf(routines(B).dsFma(pairOf(a), pairOf(b), pairOf(c)));
-  ExpansionValue product = emitExpansionMul(B, a, b);
-  return emitExpansionAdd(B, product, c);
+  return ops(B).fma(a, b, c);
 }
 
 ExpansionValue emitExpansionFMASqr(IRBuilder<> &B, const ExpansionValue &a,
                                    const ExpansionValue &c) {
-  if (a.n() == 2)
-    return emitExpansionFMA(B, a, a, c);
-  ExpansionValue square = emitExpansionSqr(B, a);
-  return emitExpansionAdd(B, square, c);
+  return ops(B).fmaSqr(a, c);
 }
 
 ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
@@ -220,28 +181,17 @@ ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
   const bool f32 = fpval->getType()->isFloatTy();
   assert((f32 || fpval->getType()->isDoubleTy()) &&
          "emitToExpansion: only f32/f64 sources");
-  Routines R = routines(B);
-  if (n == 2)
-    return expansionOf(f32 ? R.dsFromF32(fpval) : R.dsFromF64(fpval));
-  ExpansionValue r;
-  r.x.resize(n);
-  if (f32)
-    R.expansionFromF32(n, fpval, r.x.data());
-  else
-    R.expansionFromF64(n, fpval, r.x.data());
-  return r;
+  return f32 ? ops(B).fromF32(fpval, n) : ops(B).fromF64(fpval, n);
 }
 
 Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
                          Type *targetTy) {
-  Routines R = routines(B);
   if (targetTy->isFloatTy())
-    return v.n() == 2 ? R.dsToF32(pairOf(v))
-                      : R.expansionToF32(v.n(), v.x.data());
+    return ops(B).toF32(v);
   assert(targetTy->isDoubleTy() && "emitExpansionToFP: only f32/f64 targets");
+  Value *joined = ops(B).toF64(v);
   if (v.n() != 2)
-    return R.expansionToF64(v.n(), v.x.data());
-  Value *joined = R.dsToF64(pairOf(v));
+    return joined;
   // Every pair here is normalized, so a Dekker split of this restore returns
   // the same two components; only tagged restores are folded.
   if (auto *I = dyn_cast<Instruction>(joined))
@@ -395,8 +345,7 @@ static bool hasExpansion(Value *op) {
   return T->isFloatTy() || T->isDoubleTy();
 }
 
-// The name of component c of a carried phi, after the routines' instructions:
-// ds.* for a pair, expansion.* for a wider expansion.
+// The name of component c of a carried phi of n components.
 static const char *componentPhiName(unsigned n, unsigned c) {
   if (n == 2)
     return c == 0 ? "pair.phi.hi" : "pair.phi.lo";

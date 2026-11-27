@@ -95,8 +95,8 @@ static Value *emitRoundToTF32(IRBuilderBase &B, Module *M, Value *x) {
 }
 
 namespace {
-// The fragment operations of one m x n x k shape, through generic pointers: A
-// and D row-major, B row-major or column-major. `operand` and `accumulator`
+// The fragment operations of one m x n x k shape, through generic pointers, of
+// row-major A, B and D. `operand` and `accumulator`
 // name the element types as the instructions spell them (f16, bf16, tf32,
 // f64; f16, f32, f64).
 struct Wmma {
@@ -109,28 +109,26 @@ struct Wmma {
 static Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
   Intrinsic::ID id = Intrinsic::lookupIntrinsicID(name.str());
   if (id == Intrinsic::not_intrinsic)
-    report_fatal_error("resolveWmmaIntrinsic: intrinsic not found: " + name);
+    report_fatal_error("Poseidon: NVPTX has no intrinsic " + name);
   return id;
 }
 
 // The fragment operations of the `m` x `n` x `k` shape, declared in `M`. A
 // shape and type combination NVPTX has no intrinsic for is a fatal error.
 static Wmma declareWmma(Module *M, unsigned m, unsigned n, unsigned k,
-                        StringRef operand, StringRef accumulator,
-                        bool bRowMajor) {
+                        StringRef operand, StringRef accumulator) {
   const std::string shape =
       ("m" + Twine(m) + "n" + Twine(n) + "k" + Twine(k)).str();
   const std::string a = operand.str(), d = accumulator.str();
-  const std::string layoutB = bRowMajor ? "row" : "col";
   // An F16 product names its C/D precision pair; the other operand types
   // imply theirs and name only themselves.
   const std::string mmaSuffix = a == "f16" ? d + "." + d : a;
   Intrinsic::ID loadA = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
                                              ".load.a.row.stride." + a);
-  Intrinsic::ID loadB = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".load.b." + layoutB + ".stride." + a);
-  Intrinsic::ID mma = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".mma.row." + layoutB + "." + mmaSuffix);
+  Intrinsic::ID loadB = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
+                                             ".load.b.row.stride." + a);
+  Intrinsic::ID mma = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
+                                           ".mma.row.row." + mmaSuffix);
   Intrinsic::ID storeD = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
                                               ".store.d.row.stride." + d);
   PointerType *genPtrTy = getInt8PtrTy(M->getContext());
@@ -170,11 +168,10 @@ static GlobalVariable *getOrCreateSharedScratch(Module *M, const Twine &name,
   return gv;
 }
 
-// The tid intrinsic for the given axis; aborts on Unknown / Other.
+// The thread index along `axis`, which must be x, y or z.
 static Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
   std::optional<unsigned> a = tidAxisIndex(axis);
-  if (!a)
-    report_fatal_error("emitTidIntrinsic: axis not resolved (Unknown/Other)");
+  assert(a && "a raised product's indices run along thread axes");
   return emitLaunchValue(B, M, LaunchValue::ThreadIndex, *a);
 }
 
@@ -213,7 +210,7 @@ emitThreadLinAndBlockSize(IRBuilder<> &B, Module *M, const uint32_t (&block)[3],
   return {B.CreateAdd(B.CreateMul(planeRow, nx), tx), bsz};
 }
 
-static double veltkampScale(NumberFormat slice) {
+static double sliceScale(NumberFormat slice) {
   return std::ldexp(1.0, sliceFormat(slice).scaleExponent);
 }
 
@@ -239,12 +236,11 @@ static Value *emitSliceToF32(IRBuilder<> &B, Value *slice, NumberFormat kind) {
 //   r[k]  = (r[k-1] - s[k-1]_f32) * SCALE ; s[k] = quantize(r[k])
 // Reconstruction: v ~ sum_k s[k] / SCALE^k, each slice capturing the
 // significand bits of its format (sliceFormat).
-static SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B,
-                                                     Module *mod, Value *vs_f32,
-                                                     unsigned N,
-                                                     NumberFormat slice) {
+static SmallVector<Value *, 8> emitSliceSplit(IRBuilder<> &B, Module *mod,
+                                              Value *vs_f32, unsigned N,
+                                              NumberFormat slice) {
   Type *f32Ty = Type::getFloatTy(B.getContext());
-  Value *scale = ConstantFP::get(f32Ty, veltkampScale(slice));
+  Value *scale = ConstantFP::get(f32Ty, sliceScale(slice));
   SmallVector<Value *, 8> slices;
   slices.reserve(N);
   Value *cur = vs_f32;
@@ -443,7 +439,7 @@ namespace {
 // What every step of one in-kernel raise reads.
 struct RaiseContext {
   const RecognizedMatmul &m;
-  const MatmulUnit::Option &t;
+  const MatmulCandidate &t;
   const ScalarLoopHandle &h;
   InKernelLayout L;
   Function *F;
@@ -471,7 +467,7 @@ struct RaiseContext {
   // warp is partially populated, and warp-collective wmma ops in a partial
   // warp are undefined (the ungated chain corrupts the shared output tile).
   bool useWarpGate;
-  // Value names: the split scheme's start with "ozaki", the direct scheme's
+  // Value names: the split scheme's start with "tcec", the direct scheme's
   // with "wmma".
   StringRef tag;
   // The generic pointers to each slice's A, B and D scratch.
@@ -505,12 +501,12 @@ static unsigned fragSize(Type *T) {
 }
 
 static RaiseContext makeRaiseContext(const RecognizedMatmul &m,
-                                     const MatmulUnit::Option &t, Function *F) {
+                                     const MatmulCandidate &t, Function *F) {
   const SchemeVariant &v = t.variant;
   Module *mod = F->getParent();
   LLVMContext &ctx = mod->getContext();
   const DataLayout &DL = mod->getDataLayout();
-  RaiseContext C{m, t, m.scalarLoop, inKernelLayout(m, t), F, ctx};
+  RaiseContext C{m, t, m.scalarLoop(), inKernelLayout(m, t), F, ctx};
   C.split = v.scheme == Scheme::Tcec;
   C.N = C.split ? sliceCount(v) : 1;
   C.mod = mod;
@@ -522,20 +518,17 @@ static RaiseContext makeRaiseContext(const RecognizedMatmul &m,
   C.srcTy = storageTypeOf(ctx, m.elemType);
   C.opTy = storageTypeOf(ctx, v.operand);
   C.accTy = storageTypeOf(ctx, v.accumulator);
-  C.tag = C.split ? "ozaki" : "wmma";
+  C.tag = C.split ? "tcec" : "wmma";
   C.srcByte = (int64_t)DL.getTypeAllocSize(C.srcTy).getFixedValue();
   C.opByte = (int64_t)DL.getTypeAllocSize(C.opTy).getFixedValue();
   C.accByte = (int64_t)DL.getTypeAllocSize(C.accTy).getFixedValue();
   const ScalarLoopHandle &h = C.h;
-  if (h.bStrideByte % C.srcByte != 0)
-    report_fatal_error(
-        "materializeInKernel: B reduction-axis stride " + Twine(h.bStrideByte) +
-        " is not a multiple of the element size " + Twine(C.srcByte));
+  assert(h.bStrideByte % C.srcByte == 0 &&
+         "B steps along the reduction by whole elements");
   C.bRowMajor = h.bStrideByte != C.srcByte;
 
   C.wmma = declareWmma(mod, t.tileM, t.tileN, t.tileK, dtypeName(v.operand),
-                       dtypeName(v.accumulator),
-                       /*bRowMajor=*/true);
+                       dtypeName(v.accumulator));
   FunctionType *mmaFTy = C.wmma.Mma->getFunctionType();
   C.aFragSize = fragSize(C.wmma.LoadA->getFunctionType()->getReturnType());
   C.bFragSize = fragSize(C.wmma.LoadB->getFunctionType()->getReturnType());
@@ -566,7 +559,7 @@ static void createScratch(const RaiseContext &C,
   auto scratchName = [&](StringRef op, unsigned k, StringRef prec,
                          uint64_t rows, uint64_t cols) -> std::string {
     std::string slice = C.split ? std::to_string(k) : std::string();
-    return ("__poseidon_" + Twine(C.split ? "ozaki" : "raise") + "_" +
+    return ("__poseidon_" + Twine(C.split ? "tcec" : "raise") + "_" +
             C.F->getName() + "_" + op + slice + "_" + prec + "_" + Twine(rows) +
             "x" + Twine(cols))
         .str();
@@ -694,7 +687,7 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
   auto payload = [&](IRBuilder<> &PB, Value *x) -> SmallVector<Value *, 8> {
     if (C.split) {
       Value *xF32 = emitFPCast(PB, x, C.f32Ty);
-      return emitNwayVeltkampSplit(PB, C.mod, xF32, C.N, operand);
+      return emitSliceSplit(PB, C.mod, xF32, C.N, operand);
     }
     Value *cvt = emitFPCast(PB, x, C.opTy);
     // wmma.load.a/b.tf32 reads the float bit pattern as it is and the MMA
@@ -949,7 +942,7 @@ emitStoreAndReadback(const RaiseContext &C, const KStreamLoop &K,
       sum = RB.CreateFAdd(sum, term);
     }
     if (k + 1 < C.N)
-      scalePowK *= veltkampScale(C.t.variant.operand);
+      scalePowK *= sliceScale(C.t.variant.operand);
   }
   Value *readback = emitFPCast(RB, sum, C.srcTy);
   return {readback, RB.GetInsertBlock()};
@@ -994,8 +987,7 @@ static void replaceLoopResult(const ScalarLoopHandle &h, BasicBlock *loopLatch,
   // The reduction loop is left to dead-code elimination.
 }
 
-void materializeInKernel(const RecognizedMatmul &m,
-                         const MatmulUnit::Option &t) {
+void materializeInKernel(const RecognizedMatmul &m, const MatmulCandidate &t) {
   const SchemeVariant &v = t.variant;
   assert(t.realization == Realization::InKernel &&
          (v.scheme == Scheme::Direct || v.scheme == Scheme::Tcec) &&
@@ -1004,7 +996,7 @@ void materializeInKernel(const RecognizedMatmul &m,
                                        v.operand != NumberFormat::FP64)) &&
          "a split scheme slices into a 16- or 19-bit format and accumulates "
          "in F32");
-  const ScalarLoopHandle &h = m.scalarLoop;
+  const ScalarLoopHandle &h = m.scalarLoop();
   BasicBlock *preheader = h.preheader;
   BasicBlock *exitBB = h.exitBB;
   assert(preheader && exitBB &&

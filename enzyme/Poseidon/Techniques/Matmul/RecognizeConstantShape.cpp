@@ -153,15 +153,23 @@ static bool boundGlobalThreadIndex(const Value *idx, uint64_t ub,
   return true;
 }
 
-static bool collectIndexBounds(const Value *cond, bool holds,
-                               ThreadIndexBounds &bound, unsigned depth) {
+/// Folds `cond` into `bound` as the fact that it holds (`holds`) or fails: an
+/// `and` that holds or an `or` that fails of compares of a global thread index
+/// against a constant, a compare `(a | b) u< 2^n` of two of them included.
+/// False when a leaf is not such a bound, so that a condition of any other form
+/// is never taken for one.
+static bool collectThreadIndexBounds(const Value *cond, bool holds,
+                                     ThreadIndexBounds &bound,
+                                     unsigned depth = 0) {
   if (depth > 8)
     return false;
   if (const auto *BO = dyn_cast<BinaryOperator>(cond)) {
     if ((BO->getOpcode() == Instruction::Or && !holds) ||
         (BO->getOpcode() == Instruction::And && holds))
-      return collectIndexBounds(BO->getOperand(0), holds, bound, depth + 1) &&
-             collectIndexBounds(BO->getOperand(1), holds, bound, depth + 1);
+      return collectThreadIndexBounds(BO->getOperand(0), holds, bound,
+                                      depth + 1) &&
+             collectThreadIndexBounds(BO->getOperand(1), holds, bound,
+                                      depth + 1);
     return false;
   }
   const auto *IC = dyn_cast<ICmpInst>(cond);
@@ -201,16 +209,6 @@ static bool collectIndexBounds(const Value *cond, bool holds,
     return boundGlobalThreadIndex(Or->getOperand(0), ub, bound) &&
            boundGlobalThreadIndex(Or->getOperand(1), ub, bound);
   return boundGlobalThreadIndex(idx, ub, bound);
-}
-
-/// Folds `cond` into `bound` as the fact that it holds (`holds`) or fails: an
-/// `and` that holds or an `or` that fails of compares of a global thread index
-/// against a constant, a compare `(a | b) u< 2^n` of two of them included.
-/// False when a leaf is not such a bound, so that a condition of any other form
-/// is never taken for one.
-static bool collectThreadIndexBounds(const Value *cond, bool holds,
-                                     ThreadIndexBounds &bound) {
-  return collectIndexBounds(cond, holds, bound, 0);
 }
 
 // The matrix index whose threads' byte offsets are `S`: one thread axis, or
@@ -585,7 +583,7 @@ storeGuardBounds(Function &F, const RecognizedMatmul &m,
   const BasicBlock *SB = cStore->getParent();
   ThreadIndexBounds bound;
   for (BasicBlock &BB : F) {
-    if (m.scalarLoop.blocks.count(&BB))
+    if (m.scalarLoop().blocks.count(&BB))
       continue;
     Instruction *T = BB.getTerminator();
     if (T->getNumSuccessors() < 2)
@@ -657,8 +655,7 @@ constantOutputExtents(const RecognizedMatmul &m, const ThreadIndexBounds &guard,
 Expected<std::optional<GemmBodyNote>>
 constantShapeLibraryNote(const Options &O, Function &F,
                          const RecognizedMatmul &m) {
-  assert(m.origin == RecognizedMatmul::Origin::ConstantShape &&
-         "a constant-shape product");
+  assert(m.isConstantShape() && "a constant-shape product");
   auto refuse = [&](const Twine &why) -> std::optional<GemmBodyNote> {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << F.getName() << ": " << why << '\n';
@@ -670,7 +667,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
   // trip, which for a full-reduction square GEMM is the global dim, so the
   // dispatch dimension is m.K. Require FP64, A contiguous along K, and B either
   // row-major K-strided by N or col-major (K-contiguous).
-  const ScalarLoopHandle &h = m.scalarLoop;
+  const ScalarLoopHandle &h = m.scalarLoop();
   if (std::optional<std::string> why = libraryElementRefusal(m.elemType))
     return refuse(*why);
   int64_t K = (int64_t)m.K;
@@ -694,8 +691,8 @@ constantShapeLibraryNote(const Options &O, Function &F,
     return refuse("the product's rows and columns do not run along two thread "
                   "axes");
 
-  LaunchRef aRoot = tracePointerRoot(m.scalarLoop.aPtr);
-  LaunchRef bRoot = tracePointerRoot(m.scalarLoop.bPtr);
+  LaunchRef aRoot = tracePointerRoot(h.aPtr);
+  LaunchRef bRoot = tracePointerRoot(h.bPtr);
   note.aParam = aRoot.param;
   note.aOffset = aRoot.offset;
   note.bParam = bRoot.param;
@@ -736,7 +733,7 @@ constantShapeLibraryNote(const Options &O, Function &F,
       sv = phi->getIncomingValue(0);
     }
     const auto *svI = dyn_cast<Instruction>(sv);
-    if (!svI || !m.scalarLoop.blocks.count(svI->getParent()))
+    if (!svI || !h.blocks.count(svI->getParent()))
       return refuse("the value stored to C is not the product alone but an "
                     "expression of it computed after the loop");
   }
@@ -1007,8 +1004,7 @@ void findConstantShapeMatmuls(const Options &O, Function &F,
           am.gridCTAs = gx ? gx * (gy ? gy : 1u) * (gz ? gz : 1u) : 0u;
         }
         am.elemType = eltKind;
-        am.origin = RecognizedMatmul::Origin::ConstantShape;
-        am.scalarLoop = h;
+        am.handle = h;
         am.outputValue = h.fma;
         // Profile-scale reduction length; 0 when the header has none.
         {

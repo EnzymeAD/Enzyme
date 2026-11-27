@@ -26,7 +26,6 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <optional>
 #include <string>
@@ -64,9 +63,10 @@ baselineAccuracy(SubgraphSamples &samples, llvm::ArrayRef<const FPNode *> nodes,
                  llvm::ArrayRef<double> grads, bool print);
 
 /// A unit whose candidates rewrite the operations of one FP subgraph, each
-/// priced against the subgraph as written. `Candidate` has an accuracyCost and
-/// an ordinal.
-template <typename Candidate> class SubgraphUnit : public SiteUnit {
+/// priced against the subgraph as written. `Candidate` has a compCost, an
+/// accuracyCost and an ordinal.
+template <typename UnitT, typename Candidate>
+class SubgraphUnit : public CandidateUnit<UnitT, Candidate> {
 public:
   /// The subgraph, of the site the unit is bound to.
   Subgraph *subgraph;
@@ -75,37 +75,25 @@ public:
   /// site's error scale once scaleErrors has run. NaN until priced; 0 when the
   /// subgraph cannot be priced.
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  /// The cost of the outputs as written per execution, in cost-model units.
-  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
-  /// How often the profiling run executed the unit's outputs: a cost per
-  /// execution times this is the profiled run's.
-  uint64_t executions = 0;
-  /// The candidates kept so far; pricing drops those it cannot price.
-  llvm::SmallVector<Candidate> candidates;
   /// Why the subgraph could not be priced; empty when it was.
   std::string unpricedReason;
-  /// The candidates pricing dropped: each one's name and why.
-  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
   /// Candidate i's accuracy cost less the subgraph's as written, on the scale
   /// of initialAccCost.
   double getAccCostDelta(size_t i) const {
-    return candidates[i].accuracyCost - initialAccCost;
+    return this->candidates[i].accuracyCost - initialAccCost;
   }
 
-  size_t numCandidates() const override { return candidates.size(); }
-  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
-  llvm::ArrayRef<std::pair<std::string, std::string>>
-  droppedCandidates() const override {
-    return dropped;
-  }
   const Subgraph *subgraphOf() const override { return subgraph; }
   const llvm::SetVector<llvm::Instruction *> *footprint() const override {
     return subgraph ? &subgraph->operations : nullptr;
   }
+  size_t ordinalOf(size_t i) const override {
+    return this->candidates[i].ordinal;
+  }
   void scaleErrors(double factor) override {
     initialAccCost *= factor;
-    for (Candidate &c : candidates)
+    for (Candidate &c : this->candidates)
       c.accuracyCost *= factor;
   }
 
@@ -124,10 +112,10 @@ public:
     unpricedReason = llvm::toString(B.takeError());
     if (print)
       llvm::errs() << "[poseidon] subgraph cannot be priced (" << unpricedReason
-                   << "); discarding its " << candidates.size() << ' '
-                   << info().noun
+                   << "); discarding its " << this->candidates.size() << ' '
+                   << this->info().noun
                    << " candidate(s) and keeping the original body\n";
-    candidates.clear();
+    this->candidates.clear();
     initialAccCost = 0.0;
     return std::nullopt;
   }
@@ -135,7 +123,7 @@ public:
 protected:
   /// An unbound unit of kind `kind` over `subgraph`, which must outlive it.
   SubgraphUnit(const UnitKindInfo &kind, Subgraph &subgraph)
-      : SiteUnit(kind), subgraph(&subgraph) {}
+      : CandidateUnit<UnitT, Candidate>(kind), subgraph(&subgraph) {}
 };
 
 } // namespace poseidon

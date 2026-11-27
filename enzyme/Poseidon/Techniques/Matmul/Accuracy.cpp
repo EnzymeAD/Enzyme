@@ -51,8 +51,8 @@ using namespace llvm;
 namespace poseidon {
 
 static Expected<std::optional<MatmulProfile>>
-loadProfileRaise(const RecognizedMatmul &m, const ProfileMap &profile) {
-  const ScalarLoopHandle *h = &m.scalarLoop;
+loadConstantShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
+  const ScalarLoopHandle *h = &m.scalarLoop();
   size_t fmaIdx = requireSlot(h->fma);
   auto fmaIt = profile.find(fmaIdx);
   if (fmaIt == profile.end() || fmaIt->second.exec == 0)
@@ -97,12 +97,12 @@ loadProfileRaise(const RecognizedMatmul &m, const ProfileMap &profile) {
   return out;
 }
 
-// Origin::RuntimeShape: the contraction is spread over R fma sites (the
+// A runtime-shape product: the contraction is spread over R fma sites (the
 // unrolled outer contraction level), so the operand ranges are the union over
 // the members and the execution counts their sum.
 static Expected<std::optional<MatmulProfile>>
 loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
-  const RuntimeGemmHandle &h = *m.runtimeGemm;
+  const RuntimeGemmHandle &h = m.runtimeGemm();
   for (Instruction *fma : h.fmas) {
     auto it = profile.find(requireSlot(fma));
     if (it == profile.end() || it->second.exec == 0)
@@ -158,13 +158,9 @@ loadRuntimeShapeProfile(const RecognizedMatmul &m, const ProfileMap &profile) {
 
 Expected<std::optional<MatmulProfile>>
 loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile) {
-  switch (m.origin) {
-  case RecognizedMatmul::Origin::ConstantShape:
-    return loadProfileRaise(m, scalarProfile);
-  case RecognizedMatmul::Origin::RuntimeShape:
-    return loadRuntimeShapeProfile(m, scalarProfile);
-  }
-  llvm_unreachable("unknown RecognizedMatmul origin");
+  if (m.isConstantShape())
+    return loadConstantShapeProfile(m, scalarProfile);
+  return loadRuntimeShapeProfile(m, scalarProfile);
 }
 
 namespace {
