@@ -183,6 +183,7 @@ struct ReverseCacheKey {
   const FnTypeInfo typeInfo;
   bool runtimeActivity;
   bool strongZero;
+  llvm::SmallBitVector ThreadLocalShadows;
 
   ReverseCacheKey replaceTypeInfo(const FnTypeInfo &newTypeInfo) const {
     return {todiff,
@@ -200,7 +201,8 @@ struct ReverseCacheKey {
             forceAnonymousTape,
             newTypeInfo,
             runtimeActivity,
-            strongZero};
+            strongZero,
+            ThreadLocalShadows};
   }
   /*
   inline bool operator==(const ReverseCacheKey& rhs) const {
@@ -306,6 +308,19 @@ struct ReverseCacheKey {
       return true;
     if (rhs.strongZero < strongZero)
       return false;
+
+    size_t MaxLocalSize =
+        std::max(ThreadLocalShadows.size(), rhs.ThreadLocalShadows.size());
+    for (size_t Index = 0; Index < MaxLocalSize; ++Index) {
+      bool LhsLocal =
+          Index < ThreadLocalShadows.size() && ThreadLocalShadows[Index];
+      bool RhsLocal = Index < rhs.ThreadLocalShadows.size() &&
+                      rhs.ThreadLocalShadows[Index];
+      if (LhsLocal < RhsLocal)
+        return true;
+      if (RhsLocal < LhsLocal)
+        return false;
+    }
 
     // equal
     return false;
