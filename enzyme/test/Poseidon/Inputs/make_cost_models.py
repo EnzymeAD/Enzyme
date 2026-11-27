@@ -11,6 +11,12 @@ measurement; each only makes the orderings the tests exercise hold):
                            adds the library calls but TCEC, _tcec that too,
                            _half half at half the float price; cm_sm_90 the
                            same under sm_90
+  cm_sm_120_synthetic_floor_subnormal.csv  _library with every class's
+                           operand floor at its format's smallest subnormal;
+                           _floor_normal at its smallest normal
+  cm_gfx90a_synthetic_floor_subnormal.csv  gfx942's prices under gfx90a, the
+                           library calls a HIP build has and the two floors;
+                           _floor_normal likewise
   cm_gpu_synthetic.csv     every family of a calibrated model, for <gpu arch>
 """
 import os
@@ -67,6 +73,20 @@ LIBRARY_ROWS = [("library_direct_rel,f16_f32", 2),
            [("library_ozaki_rel,nm%d" % k, k) for k in range(8, 15)] + \
            [("library_ozaki_rel,dgemm", 128)]
 TCEC_LIBRARY_ROWS = [("library_tcec_rel,fp16tcec", 7)]
+
+# The smallest normal and subnormal exponents of each narrow operand format,
+# and the classes whose operands are in it.
+FORMATS = {"f16": (-14, -24), "bf16": (-126, -133), "tf32": (-126, -136)}
+FLOOR_CLASSES = [("library_direct_operand_min", c, c.split("_")[0])
+                 for c in ("f16_f32", "bf16_f32", "tf32_f32")] + \
+                [("inkernel_operand_min", c, "f16")
+                 for c in sorted(INKERNEL_LIT)] + \
+                [("library_tcec_operand_min", "fp16tcec", "f16")]
+
+
+def floor_rows(level, families=None):
+    return ["%s,%s,%r" % (f, c, 2.0 ** FORMATS[fmt][level])
+            for f, c, fmt in FLOOR_CLASSES if families is None or f in families]
 
 
 def num(v):
@@ -156,6 +176,17 @@ def main():
     write(out, "cm_sm_120_synthetic_half.csv",
           [gpu, "# native_arch=sm_120", "# scalar_types=double,float,half"],
           gpu_rows(half=True))
+    for name, level in (("subnormal", 1), ("normal", 0)):
+        write(out, "cm_sm_120_synthetic_floor_%s.csv" % name,
+              [gpu, "# native_arch=sm_120", types],
+              gpu_rows(library=True) + floor_rows(level))
+        write(out, "cm_gfx90a_synthetic_floor_%s.csv" % name,
+              [gpu, "# native_arch=gfx90a", types],
+              gfx_rows() +
+              ["%s,%s" % (r, num(k / 256)) for r, k in LIBRARY_ROWS
+               if "tf32" not in r] +
+              [r for r in floor_rows(level, {"library_direct_operand_min"})
+               if "tf32" not in r])
     write(out, "cm_sm_90_synthetic.csv",
           [gpu, "# native_arch=sm_90", types], gpu_rows())
     if len(sys.argv) > 3:

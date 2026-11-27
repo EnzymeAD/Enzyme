@@ -261,17 +261,22 @@ static unsigned sampleCount(const Options &O) {
   return std::clamp(O.Model.NumSamples, kMinMatmulSamples, kMaxMatmulSamples);
 }
 
-// The query as diagnostics name it, e.g. "matmul in=f16 acc=f32".
+// The query as diagnostics name it, e.g. "matmul in=f16 acc=f32", or
+// "matmul in=f16 min=6.103516e-05 acc=f32" with a floor above the format's
+// subnormals.
 static std::string describe(const MatmulAccuracyQuery &q) {
+  std::string floor;
+  if (q.operandMin > 0.0)
+    raw_string_ostream(floor) << " min=" << q.operandMin;
   switch (q.model) {
   case MatmulAccuracyQuery::Model::Rounded: {
     std::string s = "matmul in=" + std::string(dtypeName(q.inputPrec));
     if (q.inputMantBits)
       s += "(" + std::to_string(q.inputMantBits) + "b)";
-    return s + " acc=" + dtypeName(q.accPrec);
+    return s + floor + " acc=" + dtypeName(q.accPrec);
   }
   case MatmulAccuracyQuery::Model::TcecLibrary:
-    return "tcec library";
+    return "tcec library" + floor;
   case MatmulAccuracyQuery::Model::OzakiII:
     return "ozakiII nm=" + std::to_string(q.moduli);
   }
@@ -292,7 +297,8 @@ static bool operator==(const MatmulAccuracyQuery &a,
                        const MatmulAccuracyQuery &b) {
   auto fields = [](const MatmulAccuracyQuery &q) {
     return std::make_tuple(q.model, q.inputPrec, q.accPrec, q.exponentPrec,
-                           q.orderTileK, q.inputMantBits, q.moduli);
+                           q.orderTileK, q.inputMantBits, q.moduli,
+                           q.operandMin);
   };
   return fields(a) == fields(b);
 }
@@ -313,8 +319,9 @@ static double roundToMantBits(double x, unsigned bits) {
   return std::nearbyint(x * scale) / scale;
 }
 
-// A Rounded query's product: operands rounded once, then every
-// multiply-accumulate rounded to the accumulator format. orderTileK (0 = off)
+// A Rounded query's product: operands rounded once, those below operandMin
+// read as zero, then every multiply-accumulate rounded to the accumulator
+// format. orderTileK (0 = off)
 // simulates the raised loop's accumulation order (per k-tile partial dots
 // folded into the accumulator). A same-precision DMMA raise is otherwise
 // bit-transparent to the rounding model while the hardware's tile order is
@@ -325,12 +332,15 @@ static void roundedProduct(const RecognizedMatmul &m,
                            const double *B, double *Ar, double *Br, double *C) {
   const size_t mk = (size_t)m.M * m.K, kn = (size_t)m.K * m.N;
   const Rounding toInput(q.inputPrec), toAcc(q.accPrec);
+  auto narrow = [&](double x) {
+    double r =
+        q.inputMantBits ? roundToMantBits(x, q.inputMantBits) : toInput(x);
+    return std::fabs(r) < q.operandMin ? std::copysign(0.0, r) : r;
+  };
   for (size_t i = 0; i < mk; ++i)
-    Ar[i] = q.inputMantBits ? roundToMantBits(A[i], q.inputMantBits)
-                            : toInput(A[i]);
+    Ar[i] = narrow(A[i]);
   for (size_t i = 0; i < kn; ++i)
-    Br[i] = q.inputMantBits ? roundToMantBits(B[i], q.inputMantBits)
-                            : toInput(B[i]);
+    Br[i] = narrow(B[i]);
   const unsigned tileK = q.orderTileK;
   for (unsigned mi = 0; mi < m.M; ++mi) {
     const double *row = Ar + (size_t)mi * m.K;
@@ -459,7 +469,8 @@ private:
                        cand.data());
         break;
       case MatmulAccuracyQuery::Model::TcecLibrary:
-        simulateTcecDgemm(A.data(), B.data(), m.M, m.N, m.K, cand.data());
+        simulateTcecDgemm(A.data(), B.data(), m.M, m.N, m.K, q.operandMin,
+                          cand.data());
         break;
       case MatmulAccuracyQuery::Model::OzakiII:
         // As runtime/gemm/OzakiII.cu computes it on row-major operands: the
@@ -518,6 +529,13 @@ template <typename T> static void appendBytes(std::string &bytes, T v) {
   bytes.append(reinterpret_cast<const char *>(&v), sizeof(v));
 }
 
+// A part only when the device's product reads as zero operands its format
+// keeps: otherwise the model computes what it computes without the part.
+static void addOperandMin(CacheKey &key, double operandMin) {
+  if (operandMin > 0.0)
+    key.add("operand min", exactDouble(operandMin));
+}
+
 Memo::Memo(const Options &O, const RecognizedMatmul &m,
            const MatmulProfile &prof, unsigned sampleLogBits,
            unsigned numSamples, const MatmulAccuracyQuery &q) {
@@ -529,11 +547,13 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
     key.add("exponent format", dtypeName(q.exponentPrec));
     key.add("order tile K", std::to_string(q.orderTileK));
     key.add("input mantissa bits", std::to_string(q.inputMantBits));
+    addOperandMin(key, q.operandMin);
     break;
   case MatmulAccuracyQuery::Model::TcecLibrary:
     key.add("model", "TCEC library");
     // The library whose product the model simulates.
     key.add("TCEC backend", "cuMpSGEMM");
+    addOperandMin(key, q.operandMin);
     break;
   case MatmulAccuracyQuery::Model::OzakiII:
     key.add("model", "Ozaki-II");
@@ -620,8 +640,8 @@ bool Memo::lookup(const Options &O, MatmulAccuracy &result) const {
 // domain error (call-site budget) the kDefaultConfidence percentile of its
 // ratio to the weighted result, which cancels the size/exec scaling of the bare
 // sum. A format that overflowed on a sample, or flushes the smallest operand
-// magnitude the profile recorded, is out of range: the absolute error is blind
-// to a flushed operand.
+// magnitude the profile recorded, is out of range, as is a device whose product
+// reads it as zero: the absolute error is blind to a flushed operand.
 static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
                              const MatmulAccuracyQuery &q,
                              const SampledError &e) {
@@ -641,13 +661,24 @@ static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
                             : q.exponentPrec;
     double minSub = minSubnormalOf(expK);
     if (minSub > 0.0)
-      for (const CellStat *c : {&prof.a, &prof.b})
-        if (c->minMag > 0.0 && c->minMag < minSub)
+      for (const CellStat *c : {&prof.a, &prof.b}) {
+        if (c->minMag <= 0.0)
+          continue;
+        if (c->minMag < minSub)
           r.outOfRange = (Twine(dtypeName(expK)) +
                           " flushes the smallest profiled operand "
                           "magnitude, " +
                           shortDouble(c->minMag) + ", to zero")
                              .str();
+        else if (c->minMag < q.operandMin)
+          r.outOfRange =
+              ("this device's product keeps " + Twine(dtypeName(expK)) +
+               " operands down to " + shortDouble(q.operandMin) +
+               " and reads the smallest profiled operand "
+               "magnitude, " +
+               shortDouble(c->minMag) + ", as zero")
+                  .str();
+      }
   }
   return r;
 }

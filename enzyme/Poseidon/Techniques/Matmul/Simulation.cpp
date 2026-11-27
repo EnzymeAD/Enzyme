@@ -66,13 +66,17 @@ namespace {
 // An operand as the runtime hands it to cuMpSGEMM, scaled by 2^scale
 // (maxMagnitudeKernel, scaleExponentsKernel) and narrowed to FP32 (pack), and
 // as cuMpSGEMM's load_matrix_sync splits it: an FP16 high slice and the FP16
-// residual times 2^11. Rows of A, columns of B, each K long.
+// residual times 2^11, each zero below `operandMin`. Rows of A, columns of B,
+// each K long.
 struct SplitOperand {
   int scale = 0;
   std::vector<float> hi, lo;
 
   SplitOperand(const double *X, unsigned vectors, unsigned K, bool columns,
-               unsigned ld) {
+               unsigned ld, double operandMin) {
+    auto kept = [&](float h) {
+      return std::fabs(h) < operandMin ? std::copysign(0.f, h) : h;
+    };
     double maxAbs = 0.0;
     for (unsigned i = 0; i < vectors * K; ++i)
       maxAbs = std::max(maxAbs, std::fabs(X[i]));
@@ -84,17 +88,17 @@ struct SplitOperand {
         double x = columns ? X[(size_t)k * ld + r] : X[(size_t)r * ld + k];
         float v = (float)tcecScale(x, scale);
         float h = toHalf(v);
-        hi[(size_t)r * K + k] = h;
-        lo[(size_t)r * K + k] = toHalf((v - h) * 2048.f);
+        hi[(size_t)r * K + k] = kept(h);
+        lo[(size_t)r * K + k] = kept(toHalf((v - h) * 2048.f));
       }
   }
 };
 } // namespace
 
 void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
-                       unsigned K, double *C) {
-  const SplitOperand a(A, M, K, /*columns=*/false, K);
-  const SplitOperand b(B, N, K, /*columns=*/true, N);
+                       unsigned K, double operandMin, double *C) {
+  const SplitOperand a(A, M, K, /*columns=*/false, K, operandMin);
+  const SplitOperand b(B, N, K, /*columns=*/true, N, operandMin);
   for (unsigned i = 0; i < M; ++i)
     for (unsigned j = 0; j < N; ++j) {
       const float *ah = &a.hi[(size_t)i * K], *al = &a.lo[(size_t)i * K];

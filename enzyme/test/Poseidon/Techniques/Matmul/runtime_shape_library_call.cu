@@ -47,6 +47,9 @@
 #ifndef DT
 #define DT int
 #endif
+#ifndef TAU
+#define TAU 1e-12
+#endif
 
 template <int D> struct DeviceTensor {
   int capacity;
@@ -82,7 +85,7 @@ void reduce(int np, int ldq, int ne, DT nd, double *Q, double *Gp, double *y,
   const auto QRead = Reshape(Q, ldq, d, qSize, ne);
   const auto G = Reshape(Gp, np, d, nd);
   auto yDev = Reshape(y, nd, qSize, ne);
-  auto body = [=] HD POSEIDON_OPTIMIZE_TAU(1e-12)(int e) {
+  auto body = [=] HD POSEIDON_OPTIMIZE_TAU(TAU)(int e) {
     for (int i = TID(y); i < nd; i += NTID(y)) {
       double sum = 0.;
       for (int m = 0; m < d; m++)

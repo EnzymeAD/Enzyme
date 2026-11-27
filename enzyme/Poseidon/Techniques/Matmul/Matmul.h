@@ -416,6 +416,8 @@ struct MatmulState {
   std::optional<llvm::SmallVector<InKernelTile, 16>> AvailableWmmaTargets;
   /// The cost-model rows a missing-row warning has named.
   llvm::StringSet<> ReportedRows;
+  /// The *_operand_min rows -poseidon-print has said the model lacks.
+  llvm::StringSet<> ReportedOperandMinRows;
   /// Whether -poseidon-print has said that this build has no TCEC runtime.
   bool ReportedNoTcecRuntime = false;
 };

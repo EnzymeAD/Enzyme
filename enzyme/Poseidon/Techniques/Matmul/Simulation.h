@@ -24,9 +24,10 @@ namespace poseidon {
 /// mode kTcecFp16Tcec, cuMpSGEMM's FP16TCEC, for A (M x K), B (K x N) and C (M
 /// x N) row-major. No source specifies how a tensor-core MMA adds its products;
 /// it is taken to round the exact sum of its 16 products and the accumulator
-/// toward zero to FP32.
+/// toward zero to FP32. An FP16 slice below `operandMin`, the smallest the
+/// device's MMA keeps (0: FP16's own subnormals), is zero.
 void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
-                       unsigned K, double *C);
+                       unsigned K, double operandMin, double *C);
 
 /// One operand of __poseidon_ozakiii_dgemm as runtime/gemm/OzakiII.cu
 /// scales it: R vectors of K elements, element k of vector r at src[r * ld + k]

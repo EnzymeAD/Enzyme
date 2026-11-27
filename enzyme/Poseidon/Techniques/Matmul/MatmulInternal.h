@@ -190,7 +190,7 @@ struct MatmulAccuracyQuery {
     /// that is nonzero, every multiply-accumulate rounded to accPrec, k-tiles
     /// of orderTileK folded into the accumulator when that is nonzero; the
     /// operands' smallest magnitude has to lie in the range of exponentPrec
-    /// (Invalid = inputPrec).
+    /// (Invalid = inputPrec) and at or above operandMin.
     Rounded,
     /// __poseidon_tcec_dgemm in compute mode kTcecFp16Tcec, on cuMpSGEMM.
     TcecLibrary,
@@ -214,6 +214,10 @@ struct MatmulAccuracyQuery {
   unsigned inputMantBits = 0;
   /// The modulus count of an OzakiII query.
   unsigned moduli = 0;
+  /// Rounded and TcecLibrary: the smallest magnitude of an operand in its
+  /// narrow format that the device's product keeps; a smaller one is zero. 0
+  /// when the format's own gradual underflow is the limit.
+  double operandMin = 0.0;
 };
 
 /// The accuracy model's estimate for one candidate.

@@ -950,6 +950,92 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
   llvm_unreachable("a library call is measured, estimated or missing");
 }
 
+//===----------------------------------------------------------------------===//
+// The smallest operand a product keeps. A library or matrix unit may read an
+// operand of a narrow format below some magnitude as zero, which the format's
+// gradual underflow does not say; the *_operand_min row of a class measures it
+// on the device.
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// The *_operand_min row that measures a candidate's class.
+struct OperandMinRow {
+  StringRef family;
+  std::string cls;
+  std::string row() const { return (family + "," + cls).str(); }
+};
+} // namespace
+
+/// None for a class whose operands are FP32 or wider.
+static std::optional<OperandMinRow> operandMinRow(const MatmulCandidate &opt) {
+  const SchemeVariant &v = opt.variant;
+  if (v.operand != NumberFormat::FP16 && v.operand != NumberFormat::BF16 &&
+      v.operand != NumberFormat::TF32)
+    return std::nullopt;
+  if (opt.realization == Realization::InKernel)
+    return OperandMinRow{"inkernel_operand_min", inKernelCostClass(v)};
+  if (v.scheme == Scheme::Tcec)
+    return OperandMinRow{"library_tcec_operand_min", "fp16tcec"};
+  return OperandMinRow{"library_direct_operand_min", schemeFormats(v, '_')};
+}
+
+static bool hasOperandMinRows(CostModelState &CM) {
+  return any_of(getCostModel(CM), [](const auto &Row) {
+    return StringRef(Row.first.first).ends_with("_operand_min");
+  });
+}
+
+/// A model that measured the smallest operand of some classes but not of a
+/// candidate's has no ground for the format's subnormals, which a device that
+/// flushes them makes wrong: the candidate is not proposed, as one without its
+/// cost row is not.
+static Error dropUnmeasuredOperandMins(Session &S, const RecognizedMatmul &m,
+                                       MatmulUnit &cm) {
+  SmallVector<MatmulCandidate, 8> kept;
+  for (const MatmulCandidate &opt : cm.candidates) {
+    std::optional<OperandMinRow> r = operandMinRow(opt);
+    if (!r || lookupCost(S.get<CostModelState>(), r->family, r->cls)) {
+      kept.push_back(opt);
+      continue;
+    }
+    if (Error E =
+            reportMissingRow(S, m, matmulOptionLabel(opt), r->row(),
+                             std::string(kCalibrate) + " --only operand-min"))
+      return E;
+  }
+  cm.candidates = std::move(kept);
+  return Error::success();
+}
+
+/// The smallest operand magnitude the device's product of the candidate's
+/// class keeps, from the class's *_operand_min row: 0 when that is the operand
+/// format's smallest subnormal, or when the format is FP32 or wider. A model
+/// without any such row is read as gradual underflow, which -poseidon-print
+/// says.
+static double operandMin(Session &S, const RecognizedMatmul &m,
+                         const MatmulCandidate &opt) {
+  std::optional<OperandMinRow> r = operandMinRow(opt);
+  if (!r)
+    return 0.0;
+  const NumberFormat operand = opt.variant.operand;
+  const double subnormal = minSubnormalOf(operand);
+  std::optional<double> floor =
+      lookupCost(S.get<CostModelState>(), r->family, r->cls);
+  if (!floor) {
+    if (S.Opts.Diagnostics.Print &&
+        S.get<MatmulState>().ReportedOperandMinRows.insert(r->row()).second)
+      llvm::errs() << "[poseidon] matmul[" << m.id << "] "
+                   << matmulOptionLabel(opt) << ": the cost model "
+                   << costModelPath(S.get<CostModelState>()) << " has no '"
+                   << r->row() << "' row, so its " << dtypeName(operand)
+                   << " operands are taken to be kept down to " << subnormal
+                   << ", the format's smallest subnormal; " << kCalibrate
+                   << " --only operand-min measures what this device keeps\n";
+    return 0.0;
+  }
+  return *floor > subnormal ? *floor : 0.0;
+}
+
 // The cost per MAC of the product `m` as written, in cost-model units: what
 // its library_*_rel and inkernel_rel rows are ratios to.
 static Expected<double> baselinePerMac(Session &S, const RecognizedMatmul &m) {
@@ -1064,9 +1150,17 @@ static Error generateMatmulCandidates(Session &S,
           return E;
       }
     }
+    // The calibration of the in-kernel classes enumerates them before their
+    // floors are measured.
+    if (!S.Opts.Matmul.Calibration &&
+        hasOperandMinRows(S.get<CostModelState>()))
+      if (Error E = dropUnmeasuredOperandMins(S, m, cm))
+        return E;
     SmallVector<MatmulAccuracyQuery> queries;
-    for (const MatmulCandidate &opt : cm.candidates)
+    for (const MatmulCandidate &opt : cm.candidates) {
       queries.push_back(accuracyQuery(m, opt));
+      queries.back().operandMin = operandMin(S, m, opt);
+    }
     SmallVector<MatmulAccuracy> accuracy(queries.size());
     if (Error E = evaluateMatmulAccuracy(S, m, *prof, sampleLogBits, queries,
                                          accuracy))
