@@ -175,9 +175,14 @@ adds `POSEIDON_ENZYME_OPTIONS`: the options a HIP compile passes Enzyme.
 | Matrix product as a library call: native, Ozaki-II, direct | no | yes | yes, without TF32 |
 | Matrix product as a library call: TCEC (cuMpSGEMM) | no | when built with it | no |
 
-The host has no matrix-product technique. Profiling records host sites with
-the host profiler and device sites with the device profiler, whose probes the
-plugin links into each device module it compiles for profile generation.
+The host has no matrix-product technique. A kernel's launch takes one library
+call: when the solve selects library calls for two matrix products of one
+kernel on separate loops, the compile stops with an error that names the
+kernel.
+
+Profiling records host sites with the host profiler and device sites with the
+device profiler, whose probes the plugin links into each device module it
+compiles for profile generation.
 
 ### Source layout
 
