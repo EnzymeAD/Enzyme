@@ -18,7 +18,13 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %"x'", double %y, double %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %0, double %"x'", double %"y'"
-; CHECK-NEXT:   ret double %1
+; CHECK-NEXT:   %[[lt:.+]] = fcmp fast olt double %x, %y
+; CHECK-NEXT:   %[[eq:.+]] = fcmp fast oeq double %x, %y
+; CHECK-NEXT:   %[[sx:.+]] = call fast double @llvm.copysign.f64(double 1.000000e+00, double %x)
+; CHECK-NEXT:   %[[sy:.+]] = call fast double @llvm.copysign.f64(double 1.000000e+00, double %y)
+; CHECK-NEXT:   %[[slt:.+]] = fcmp fast olt double %[[sx]], %[[sy]]
+; CHECK-NEXT:   %[[tie:.+]] = and i1 %[[eq]], %[[slt]]
+; CHECK-NEXT:   %[[cmp:.+]] = or i1 %[[lt]], %[[tie]]
+; CHECK-NEXT:   %[[res:.+]] = select {{(fast )?}}i1 %[[cmp]], double %"x'", double %"y'"
+; CHECK-NEXT:   ret double %[[res]]
 ; CHECK-NEXT: }

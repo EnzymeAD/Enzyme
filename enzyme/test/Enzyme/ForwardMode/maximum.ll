@@ -24,8 +24,14 @@ declare float @__enzyme_fwddiff(float (float, float)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}float @fwddiffetester(float %x, float %"x'", float %y, float %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast ogt float %x, %y
-; CHECK-NEXT:   %1 = select {{(fast )?}}i1 %0, float %"x'", float %"y'"
-; CHECK-NEXT:   ret float %1
+; CHECK-NEXT:   %[[lt:.+]] = fcmp fast olt float %x, %y
+; CHECK-NEXT:   %[[eq:.+]] = fcmp fast oeq float %x, %y
+; CHECK-NEXT:   %[[sx:.+]] = call fast float @llvm.copysign.f32(float 1.000000e+00, float %x)
+; CHECK-NEXT:   %[[sy:.+]] = call fast float @llvm.copysign.f32(float 1.000000e+00, float %y)
+; CHECK-NEXT:   %[[slt:.+]] = fcmp fast olt float %[[sx]], %[[sy]]
+; CHECK-NEXT:   %[[tie:.+]] = and i1 %[[eq]], %[[slt]]
+; CHECK-NEXT:   %[[cmp:.+]] = or i1 %[[lt]], %[[tie]]
+; CHECK-NEXT:   %[[res:.+]] = select {{(fast )?}}i1 %[[cmp]], float %"y'", float %"x'"
+; CHECK-NEXT:   ret float %[[res]]
 ; CHECK-NEXT: }
 

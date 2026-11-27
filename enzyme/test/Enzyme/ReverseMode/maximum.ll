@@ -22,7 +22,13 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}{ double, double } @diffetester(double %x, double %y, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, %y
+; CHECK-NEXT:   %[[lt:.+]] = fcmp fast olt double %x, %y
+; CHECK-NEXT:   %[[eq:.+]] = fcmp fast oeq double %x, %y
+; CHECK-NEXT:   %[[sx:.+]] = call fast double @llvm.copysign.f64(double 1.000000e+00, double %x)
+; CHECK-NEXT:   %[[sy:.+]] = call fast double @llvm.copysign.f64(double 1.000000e+00, double %y)
+; CHECK-NEXT:   %[[slt:.+]] = fcmp fast olt double %[[sx]], %[[sy]]
+; CHECK-NEXT:   %[[tie:.+]] = and i1 %[[eq]], %[[slt]]
+; CHECK-NEXT:   %[[cmp:.+]] = or i1 %[[lt]], %[[tie]]
 ; CHECK-NEXT:   %[[diffex:.+]] = select {{(fast )?}}i1 %[[cmp]], double 0.000000e+00, double %[[differet]]
 ; CHECK-NEXT:   %[[diffey:.+]] = select {{(fast )?}}i1 %[[cmp]], double %[[differet]], double 0.000000e+00
 ; CHECK-NEXT:   %[[iv0:.+]] = insertvalue { double, double } undef, double %[[diffex]], 0
