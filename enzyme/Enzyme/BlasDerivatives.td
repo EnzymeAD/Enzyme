@@ -636,12 +636,12 @@ def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $ap, $x, $incx, $beta
                   ["y"],
                   [cblas_layout, uplo, len, fp, ap<["n"]>, vinc<["n"]>, fp, vinc<["n"]>],
                   [
-                  /* alpha */ (Seq<["y0", "triangular", "n"], [], 1>
+                  /* alpha */ (Seq<["y0", "vector", "n"], [], 1>
                     (BlasCall<"spmv"> $layout, $uplo, $n, Constant<"1.0">, $ap, $x, Constant<"0.0">, use<"y0">, ConstantInt<1>),
                     (BlasCall<"dot"> $n, (Shadow $y), use<"y0">, ConstantInt<1>)),
                   /* ap    */ (Seq<[], [], 1>
                     (BlasCall<"spr2"> $layout, $uplo, $n, $alpha, $x, (Shadow $y), (Shadow $ap)),
-                    (DiagUpdateSPMV<""> $uplo, $n, $alpha, $x, (Shadow $y), (Shadow $ap))),
+                    (DiagUpdateSPMV<""> $layout, $uplo, $n, $alpha, $x, (Shadow $y), (Shadow $ap))),
                   /* x     */ (BlasCall<"spmv"> $layout, $uplo, $n, $alpha, $ap, (Shadow $y), Constant<"1.0">, (Shadow $x)),
                   /* beta  */ (BlasCall<"dot"> $n, (Shadow $y), input<"y">),
                   /* y     */ (BlasCall<"scal"> $n, $beta, (Shadow $y))

@@ -959,7 +959,8 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                         llvm::Type *BlasIT, llvm::Type *fpTy,
                         llvm::ArrayRef<llvm::Value *> args,
                         const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
-                        bool byRef, bool julia_decl);
+                        bool byRef, bool julia_decl,
+                        llvm::Type *BlasLayoutT = nullptr);
 
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
