@@ -108,6 +108,10 @@ private:
   /// activity.
   llvm::SmallPtrSet<llvm::Value *, 1> DeducingPointers;
 
+  /// Whether this analyzer is a speculative hypothesis checking a cyclic
+  /// global initializer.
+  bool SpeculatingGlobalInit = false;
+
 public:
   /// Construct the analyzer from the a previous set of constant and active
   /// values and whether returns are active. The all arguments of the functions
@@ -123,7 +127,8 @@ public:
       : PPC(PPC), AA(AA_), notForAnalysis(notForAnalysis_), TLI(TLI_),
         ActiveReturns(ActiveReturns), directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),
-        ActiveValues(ActiveValues.begin(), ActiveValues.end()) {
+        ActiveValues(ActiveValues.begin(), ActiveValues.end()),
+        SpeculatingGlobalInit(false) {
     InsertConstValueRecursionHandler = nullptr;
   }
 
@@ -158,7 +163,8 @@ private:
         ConstantInstructions(Other.ConstantInstructions),
         ActiveInstructions(Other.ActiveInstructions),
         ConstantValues(Other.ConstantValues), ActiveValues(Other.ActiveValues),
-        DeducingPointers(Other.DeducingPointers) {
+        DeducingPointers(Other.DeducingPointers),
+        SpeculatingGlobalInit(Other.SpeculatingGlobalInit) {
     assert(directions != 0);
     assert((directions & Other.directions) == directions);
     assert((directions & Other.directions) != 0);
@@ -198,8 +204,8 @@ private:
     }
 
     for (auto &pair : Hypothesis.ReEvaluateValueIfInactiveInst) {
-      ReEvaluateValueIfInactiveValue[pair.first].insert(pair.second.begin(),
-                                                        pair.second.end());
+      ReEvaluateValueIfInactiveInst[pair.first].insert(pair.second.begin(),
+                                                       pair.second.end());
       if (ConstantInstructions.count(pair.first)) {
         InsertConstantInstruction(TR, pair.first);
       }
