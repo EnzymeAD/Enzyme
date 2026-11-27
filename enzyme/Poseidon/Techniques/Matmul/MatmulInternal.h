@@ -1,0 +1,283 @@
+//===- MatmulInternal.h - declarations shared by the matmul sources -------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef POSEIDON_TECHNIQUES_MATMUL_MATMUL_INTERNAL_H
+#define POSEIDON_TECHNIQUES_MATMUL_MATMUL_INTERNAL_H
+
+#include "Core/NumberFormat.h"
+#include "Matmul.h"
+
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Function.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <cassert>
+#include <cstdint>
+#include <optional>
+#include <string>
+
+namespace poseidon {
+
+struct Options;
+class Session;
+
+/// The fraction of the sampled inputs each candidate's domain error bounds: the
+/// percentile of the sampled relative errors a matrix product is scored at.
+constexpr double kDefaultConfidence = 0.95;
+
+/// An instruction of the product, where an error about it is reported.
+inline const llvm::Instruction &anchorOf(const RecognizedMatmul &m) {
+  if (m.isConstantShape())
+    return *m.scalarLoop().fma;
+  if (const llvm::StoreInst *cStore = m.runtimeGemm().cStore)
+    return *cStore;
+  return *m.footprint.front();
+}
+
+/// The multiply-add and the loads of a reduction phi.
+struct ReductionCycle {
+  /// The accumulating multiply-add: llvm.fma, llvm.fmuladd or a contractable
+  /// fadd.
+  llvm::Instruction *fma;
+  /// The contractable fmul under a fadd `fma`; null for an intrinsic.
+  llvm::Instruction *fmul;
+  /// The loads of the two multiplicands, in operand order.
+  llvm::LoadInst *aLoad, *bLoad;
+};
+/// A header phi of `L` whose `latch` value is a multiply-add of two loads of
+/// the phi's type into the phi, the two each other's only users inside `L`; an
+/// error saying why `phi` is not one.
+llvm::Expected<ReductionCycle> matchReductionCycle(const llvm::Loop *L,
+                                                   llvm::PHINode &phi,
+                                                   llvm::BasicBlock *latch);
+
+/// Whether `V`, through phis, is +0.0 on every path: a product's accumulator
+/// has to start there, since both realizations compute the product alone.
+bool isPositiveZeroSeed(const llvm::Value *V);
+
+/// Why a realization cannot take the place of the reduction loop `L`, none
+/// when it can: the product is the loop's value after its latch, and the
+/// in-kernel raise runs in the preheader and reads back in the exit block.
+std::optional<llvm::StringRef> reductionLoopShapeRefusal(const llvm::Loop &L);
+
+/// Calls `fn` on each innermost loop of `LI`.
+void forEachInnermostLoop(llvm::LoopInfo &LI,
+                          llvm::function_ref<void(llvm::Loop *)> fn);
+
+/// The call the site clone `F` is reached through, in the kernel that holds the
+/// caller values recorded for it; null when they name no kernel.
+const llvm::CallBase *siteCallOf(const Session &S, const llvm::Function &F);
+
+/// The store a library call takes the place of: the first in F into an
+/// argument whose value is the product `m` computes. The call writes the
+/// product where it stores, and a fused body reads it back there for the stores
+/// and other uses that follow. Null if F has none.
+llvm::StoreInst *productStore(llvm::Function &F, const RecognizedMatmul &m);
+
+/// Whether `I` has an effect that removing its kernel's launch would lose: a
+/// store, an atomic, a volatile load, a call that may write memory, throw or
+/// not return. Debug, lifetime and other assume-like intrinsics have none.
+bool hasEffect(const llvm::Instruction &I);
+
+/// Why no library call computes a product whose elements are `elem`: every
+/// entry of the runtime is a GEMM of doubles. None for doubles.
+std::optional<std::string> libraryElementRefusal(NumberFormat elem);
+
+/// The extents of the output of a constant-trip product at the reduction length
+/// of the compile, in elements.
+struct OutputExtents {
+  unsigned M, Ncols;
+  /// Whether they were read from the thread-index guard rather than the
+  /// profile.
+  bool fromGuard;
+};
+/// The output extents of the constant-trip product `m` at its reduction length
+/// m.K: the profiled ones, scaled by m.K / globalK when the profile ran at
+/// another reduction length and both equalled it there; else the bounds `guard`
+/// puts on the thread axes `axM` of its rows and `axN` of its columns. None
+/// when neither gives them.
+std::optional<OutputExtents>
+constantOutputExtents(const RecognizedMatmul &m, const ThreadIndexBounds &guard,
+                      unsigned axM, unsigned axN);
+
+/// The library-call descriptor of the constant-shape product `m` of F, its
+/// extents those of the profile at the reduction length of the compile; none,
+/// with the reason printed, when the body's guards, operands or scale leave a
+/// dimension unknown. Under -poseidon-strict-mode, a non-square product at a
+/// changed deploy scale whose geometry cannot be recovered is an error.
+llvm::Expected<std::optional<GemmBodyNote>>
+constantShapeLibraryNote(const Options &O, llvm::Function &F,
+                         const RecognizedMatmul &m);
+
+/// The library-call descriptor of `m`, its operands and dimensions naming
+/// parameters of the site's body; none, with the reason printed, when no
+/// library call can take the place of the product.
+llvm::Expected<std::optional<GemmBodyNote>>
+libraryCallNote(const Session &S, const RecognizedMatmul &m);
+
+/// Records the launch descriptor of the library call `v` that the host compile
+/// rewrites the launch from, fissioning a fused constant-trip body. A second
+/// library call selected for one body is an error: a launch takes one.
+llvm::Error applyLibraryCall(Session &S, const RecognizedMatmul &m,
+                             const GemmBodyNote &note, const SchemeVariant &v);
+
+/// The shared-memory layout of an in-kernel raise: each extent of the product
+/// padded to whole tiles, and per slice (one for the direct scheme) an A tile
+/// of mPad x tileK and a B tile of tileK x nPad in the operand format and a D
+/// tile of mPad x nPad in the accumulator format, all live at once.
+struct InKernelLayout {
+  /// The tiles along M, N and K: each extent over the tile's, rounded up.
+  unsigned mTiles, nTiles, kTiles;
+  /// Each extent padded to whole tiles, in elements.
+  unsigned mPad, nPad, kPad;
+  /// The K extent of one tile, in elements.
+  unsigned tileK;
+  /// The slices each operand is split into: the split scheme's count, 1 for the
+  /// direct scheme.
+  unsigned slices;
+  /// Elements of one slice of A's tile, mPad x tileK.
+  uint64_t aElts() const { return (uint64_t)mPad * tileK; }
+  /// Elements of one slice of B's tile, tileK x nPad.
+  uint64_t bElts() const { return (uint64_t)tileK * nPad; }
+  /// Elements of one slice of the accumulator tile, mPad x nPad.
+  uint64_t dElts() const { return (uint64_t)mPad * nPad; }
+  /// Whether an extent of `m` is not a whole number of tiles, so the raise
+  /// pads.
+  bool padded(const RecognizedMatmul &m) const {
+    return mPad != m.M || nPad != m.N || kPad != m.K;
+  }
+};
+/// The layout of the in-kernel candidate `opt` of `m`; `opt`'s tile must be
+/// nonzero.
+inline InKernelLayout inKernelLayout(const RecognizedMatmul &m,
+                                     const MatmulCandidate &opt) {
+  assert(opt.tileM && opt.tileN && opt.tileK && "an in-kernel tile is nonzero");
+  InKernelLayout L;
+  L.mTiles = llvm::divideCeil(m.M, opt.tileM);
+  L.nTiles = llvm::divideCeil(m.N, opt.tileN);
+  L.kTiles = llvm::divideCeil(m.K, opt.tileK);
+  L.mPad = L.mTiles * opt.tileM;
+  L.nPad = L.nTiles * opt.tileN;
+  L.kPad = L.kTiles * opt.tileK;
+  L.tileK = opt.tileK;
+  L.slices = opt.variant.scheme == Scheme::Tcec ? sliceCount(opt.variant) : 1;
+  return L;
+}
+
+/// Emit the tensor-core code of the in-kernel direct or split scheme in place
+/// of a scalar-loop matmul; aborts on any precondition violation. The split
+/// scheme's two-slice case is the split of an FP32 operand into a rounded high
+/// part and a scaled, rounded residual of S. Markidis et al., NVIDIA Tensor
+/// Core Programmability, Performance & Precision (IPDPSW 2018), with the
+/// residual scaled as H. Ootomo and R. Yokota (IJHPCA 36(4), 2022) scale it;
+/// the N-slice generalization is Poseidon's own, and no code is taken from
+/// cuMpSGEMM.
+void materializeInKernel(const RecognizedMatmul &m, const MatmulCandidate &opt);
+
+/// The arithmetic of one candidate, as the matrix accuracy model simulates it.
+struct MatmulAccuracyQuery {
+  /// How the candidate's arithmetic is simulated.
+  enum class Model {
+    /// Operands rounded to inputPrec, or to inputMantBits significand bits when
+    /// that is nonzero, every multiply-accumulate rounded to accPrec, k-tiles
+    /// of orderTileK folded into the accumulator when that is nonzero; the
+    /// operands' smallest magnitude has to lie in the range of exponentPrec
+    /// (Invalid = inputPrec) and at or above operandMin.
+    Rounded,
+    /// __poseidon_tcec_dgemm in compute mode kTcecFp16Tcec, on cuMpSGEMM.
+    TcecLibrary,
+    /// __poseidon_ozakiii_dgemm with `moduli` moduli.
+    OzakiII,
+  };
+  /// The simulation the query runs.
+  Model model = Model::Rounded;
+  /// The format operands are rounded to (Rounded).
+  NumberFormat inputPrec = NumberFormat::Invalid;
+  /// The format each multiply-accumulate is rounded to (Rounded).
+  NumberFormat accPrec = NumberFormat::Invalid;
+  /// The format whose range the operands' smallest magnitude must lie in;
+  /// Invalid means inputPrec.
+  NumberFormat exponentPrec = NumberFormat::Invalid;
+  /// The K extent in elements of the tiles folded into the accumulator one at a
+  /// time; 0 accumulates element by element.
+  unsigned orderTileK = 0;
+  /// The significand bits operands are rounded to in place of inputPrec; 0 for
+  /// none.
+  unsigned inputMantBits = 0;
+  /// The modulus count of an OzakiII query.
+  unsigned moduli = 0;
+  /// Rounded and TcecLibrary: the smallest magnitude of an operand in its
+  /// narrow format that the device's product keeps; a smaller one is zero. 0
+  /// when the format's own gradual underflow is the limit.
+  double operandMin = 0.0;
+};
+
+/// The accuracy model's estimate for one candidate.
+struct MatmulAccuracy {
+  /// The mean over the sampled operands of the error of the simulated output
+  /// tile in the profile's moment, weighted by the moment's profiled weight;
+  /// unnormalized.
+  double accuracyCost = 0.0;
+  /// The relative domain error at kDefaultConfidence: the weighted error over
+  /// the same weighting of the FP64 output, the root of that quotient in the
+  /// second moment.
+  double domainError = 0.0;
+  /// Why the candidate's formats cannot hold the profiled operands or their
+  /// product; empty when they can.
+  std::string outOfRange;
+};
+
+/// The profiled range of the elements of one operand.
+struct CellStat {
+  /// The smallest value the profile saw.
+  double min = 0.0;
+  /// The largest value the profile saw.
+  double max = 0.0;
+  double minMag = 0.0; // smallest nonzero |value| observed (0 = unknown)
+};
+
+/// What the profile says about a product: every element of an operand is drawn
+/// from that operand's range, and every output is weighted by `gradSum`.
+struct MatmulProfile {
+  /// The ranges of A's and of B's elements.
+  CellStat a, b;
+  /// The first-moment accuracy weight summed over the product's executions
+  /// (ProfileInfo::weight), the weight of each output element's error.
+  double gradSum = 0.0;
+  /// The profiled gradient^2 summed over the same executions, the weight of
+  /// each output element's squared error in the second moment.
+  double sqGradSum = 0.0;
+  /// The moment the accuracy cost is summed in, the site's.
+  ErrorMoment moment = ErrorMoment::First;
+  /// The product's MACs over the profiling run, at profile scale: the
+  /// executions of its multiply-adds, summed over the members of a
+  /// runtime-shape product.
+  uint64_t macs = 0;
+};
+
+/// The product's statistics for an accuracy cost that sums errors as
+/// `errorSum`; none when the profiling run never executed the product. A
+/// multiply of an executed product without its two operand ranges is an error:
+/// the profile is not of this program.
+llvm::Expected<std::optional<MatmulProfile>>
+loadProfile(const RecognizedMatmul &m, const ProfileMap &scalarProfile,
+            ErrorSum errorSum);
+
+/// The accuracy of each query on the product `m`, all on the same sampled
+/// operands, with the domain error read off at kDefaultConfidence.
+llvm::Error
+evaluateMatmulAccuracy(Session &S, const RecognizedMatmul &m,
+                       const MatmulProfile &prof, unsigned sampleLogBits,
+                       llvm::ArrayRef<MatmulAccuracyQuery> queries,
+                       llvm::MutableArrayRef<MatmulAccuracy> results);
+
+} // namespace poseidon
+#endif // POSEIDON_TECHNIQUES_MATMUL_MATMUL_INTERNAL_H

@@ -1,0 +1,121 @@
+//===- OffloadRuntime.h - the host half of a CUDA or HIP compilation ------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// What clang's offload lowering leaves in the host module of a CUDA or HIP
+// translation unit and Poseidon reads or extends: kernel launches through
+// stubs, device variable registration, and the names kernels are given. HIP
+// names CUDA's runtime functions with hip for cuda.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef POSEIDON_TARGETS_OFFLOAD_RUNTIME_H
+#define POSEIDON_TARGETS_OFFLOAD_RUNTIME_H
+
+#include "llvm/ADT/StringRef.h"
+#include "llvm/IR/DerivedTypes.h"
+
+#include <cstdint>
+#include <optional>
+
+namespace llvm {
+class CallBase;
+class CallInst;
+class Function;
+class GlobalVariable;
+class IRBuilderBase;
+class Module;
+class Value;
+} // namespace llvm
+
+namespace poseidon {
+
+/// The offload runtime a host module registers its device code with.
+enum class OffloadRuntime { None, CUDA, HIP };
+
+/// The runtime whose host half `M` is, from what clang records on every such
+/// module, kernels or not: the CUDA SDK version or __cudaRegisterFatBinary for
+/// CUDA, the compilation-unit id for HIP. The host half of a .cu and a plain
+/// .cpp share the triple.
+OffloadRuntime offloadRuntimeOf(const llvm::Module &M);
+
+/// Whether `M` is the host half of a CUDA or HIP compilation.
+bool isOffloadHostHalf(const llvm::Module &M);
+
+/// The id clang gives both halves of a HIP compilation.
+std::optional<llvm::StringRef> compilationUnitId(const llvm::Module &M);
+
+/// The launch stub of a kernel: `_Z<L+15>__device_stub__<id><params>` for the
+/// kernel `_Z<L><id><params>`.
+llvm::StringRef launchStubPrefix();
+
+/// Whether F is the kernel named `kernelName` or that kernel's launch stub.
+bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
+
+/// `name` without the postfix clang appends under -fgpu-rdc to the device-side
+/// name of a kernel with internal linkage ("__intern__<hash>", in HIP
+/// ".intern.<hash>"). The host stub's name has none, and the hash follows the
+/// compile's macros, so neither the stub nor a later compile without -fgpu-rdc
+/// can be matched on it.
+llvm::StringRef withoutExternalizedPostfix(llvm::StringRef name);
+
+/// A stub pops the configuration its <<<grid, block, shared, stream>>> site
+/// pushed into four out-parameters, in that order, and ends in a launch
+/// (cudaLaunchKernel, hipLaunchKernel or their per-thread-stream forms) whose
+/// first operand is the kernel's handle and, whatever the host ABI made of the
+/// two dim3 operands, whose last three are the argument array, the dynamic
+/// shared memory size and the stream.
+bool isPopCallConfiguration(llvm::StringRef name);
+/// Whether `name` is a launch of either runtime.
+bool isLaunchKernel(llvm::StringRef name);
+/// The configuration pop of a CUDA or HIP stub, or null.
+llvm::CallInst *findPopConfig(llvm::Function &F);
+/// The launch a CUDA or HIP stub ends in, or null.
+llvm::CallInst *findLaunchCall(llvm::Function &F);
+/// The grid dimensions the configuration pop `pop` writes.
+llvm::Value *poppedGrid(llvm::CallBase &pop);
+/// The block dimensions the configuration pop `pop` writes.
+llvm::Value *poppedBlock(llvm::CallBase &pop);
+/// The kernel handle the launch `launch` launches.
+llvm::Value *launchedKernel(llvm::CallBase &launch);
+/// The argument array of the launch `launch`.
+llvm::Value *launchArguments(llvm::CallBase &launch);
+/// The dynamic shared memory size, in bytes, of the launch `launch`.
+llvm::Value *launchSharedBytes(llvm::CallBase &launch);
+/// The stream operand of the launch `launch`, as written.
+llvm::Value *launchStream(llvm::CallBase &launch);
+/// The stream the launch's work is ordered on, as a handle a library takes in
+/// any compilation: a per-thread-stream launch's null stream is its thread's
+/// default stream, which both runtimes name (cudaStream_t)2.
+llvm::Value *launchStreamHandle(llvm::IRBuilderBase &B, llvm::CallBase &launch);
+
+/// How the host half registers a device variable with its runtime: without
+/// relocatable device code the unit registers its kernels and device variables
+/// itself (`RegisterGlobals`); with it, the linker wrapper registers the
+/// offloading entries the unit leaves against the linked image, and the runtime
+/// is the one of the unit's own entries. None if `M` does neither.
+struct VariableRegistration {
+  /// The runtime the variable is registered with.
+  OffloadRuntime Runtime;
+  /// The unit's registration function; null with relocatable device code.
+  llvm::Function *RegisterGlobals;
+};
+/// How host module `M` registers a device variable; none if it offloads
+/// nothing.
+std::optional<VariableRegistration> variableRegistration(llvm::Module &M);
+/// What clang emits for a __constant__ variable `V` of the unit.
+void registerDeviceVariable(llvm::Module &M, const VariableRegistration &R,
+                            llvm::GlobalVariable *V, llvm::StringRef name,
+                            uint64_t size);
+
+/// The device profiler's host library initialization a profile-generation build
+/// calls from the top of main.
+llvm::StringRef deviceProfilerInit();
+
+} // namespace poseidon
+
+#endif // POSEIDON_TARGETS_OFFLOAD_RUNTIME_H

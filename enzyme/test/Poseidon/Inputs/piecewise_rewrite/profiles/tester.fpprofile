@@ -1,0 +1,50 @@
+CanonicalHash = 1fa032681b79bf6d
+0
+	MinRes = 1.0
+	MaxRes = 4.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	SumAbsGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 2.0, 0.00000000000000000e+00]
+	Operand[1] = [1.0, 2.0, 0.00000000000000000e+00]
+1
+	MinRes = 0.0
+	MaxRes = 1.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	SumAbsGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [-1.0, 1.0, 0.00000000000000000e+00]
+	Operand[1] = [-1.0, 1.0, 0.00000000000000000e+00]
+2
+	MinRes = 1.0
+	MaxRes = 5.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	SumAbsGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 4.0, 0.00000000000000000e+00]
+	Operand[1] = [0.0, 1.0, 0.00000000000000000e+00]
+3
+	MinRes = 1.0
+	MaxRes = 2.24
+	SumSens = 100.0
+	SumGrad = 100.0
+	SumAbsGrad = 100.0
+	Exec = 100
+	NumOperands = 1
+	Operand[0] = [1.0, 5.0, 0.00000000000000000e+00]
+4
+	MinRes = 0.0
+	MaxRes = 0.42
+	SumSens = 100.0
+	SumGrad = 100.0
+	SumAbsGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 2.24, 0.00000000000000000e+00]
+	Operand[1] = [1.0, 2.0, 0.00000000000000000e+00]

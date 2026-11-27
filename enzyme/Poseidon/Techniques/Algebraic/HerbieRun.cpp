@@ -1,0 +1,949 @@
+//===- HerbieRun.cpp - Running Herbie and reading its answers -------------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "HerbieRun.h"
+#include "Core/NumberFormat.h"
+#include "Support/CacheKey.h"
+#include "Support/Options.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+#include <chrono>
+#include <optional>
+#include <regex>
+
+using namespace llvm;
+
+namespace poseidon {
+
+// `Name` in the directory `Dir`.
+static std::string inDirectory(StringRef Dir, const Twine &Name) {
+  SmallString<256> Path(Dir);
+  sys::path::append(Path, Name);
+  return std::string(Path);
+}
+
+std::string readFileDigest(StringRef Path) {
+  auto Buf = MemoryBuffer::getFile(Path);
+  if (!Buf)
+    return std::string();
+  return contentDigest((*Buf)->getBuffer());
+}
+
+// The digest of the Herbie binary at `Program`, read once per compile.
+//
+// A Herbie cache entry is stamped with the digest of the binary that produced
+// it: version strings do not change between upstream commits, and one
+// binary's rewrites must not be replayed as another's.
+static std::string herbieBinaryDigest(StringRef Program,
+                                      HerbieBinaryDigests &Digests) {
+  auto It = Digests.find(Program.str());
+  if (It == Digests.end())
+    It = Digests.emplace(Program.str(), readFileDigest(Program)).first;
+  return It->second;
+}
+
+// The arguments that decide what Herbie returns for a core. Its timeouts and
+// worker count are left out: they decide only how soon it returns and whether
+// a core times out, and an answer in which one did is not cached.
+static SmallVector<std::string>
+herbieSearchArgs(const Options &O, std::optional<unsigned> TaylorTerms) {
+  // Herbie prunes alternatives by tree cost unless told otherwise, paying a
+  // shared subterm once per occurrence; the emitted code computes it once.
+  SmallVector<std::string> Args = {
+      "--seed",       std::to_string(O.Model.RandomSeed),
+      "--num-points", std::to_string(O.Herbie.NumPoints),
+      "--num-iters",  std::to_string(O.Herbie.NumIters),
+      "--num-enodes", std::to_string(O.Herbie.NumEnodes),
+      "--disable",    "generate:proofs",
+      "--enable",     "reduce:dag-cost"};
+  if (TaylorTerms)
+    Args.append({"--num-taylor-terms", std::to_string(*TaylorTerms)});
+  return Args;
+}
+
+// Whether `herbie report --help` of the Herbie at `Program` lists
+// --num-taylor-terms.
+static bool takesTaylorTerms(StringRef Program) {
+  SmallString<128> Help;
+  if (sys::fs::createTemporaryFile("herbie_help", "txt", Help))
+    return false;
+  FileRemover RemoveHelp(Help);
+  std::optional<StringRef> Redirects[] = {std::nullopt, StringRef(Help),
+                                          StringRef(Help)};
+  sys::ExecuteAndWait(Program, {Program, "report", "--help"},
+                      /*Env=*/std::nullopt, Redirects, /*SecondsToWait=*/60);
+  auto Buf = MemoryBuffer::getFile(Help);
+  return Buf && (*Buf)->getBuffer().contains("--num-taylor-terms");
+}
+
+// Writes the entry `value`, answered by the Herbie `answeredBy` names, to the
+// cache file `path`, creating the cache directory.
+static Error writeAnswer(StringRef cacheDir, StringRef path,
+                         const CacheKey &answeredBy, json::Value value) {
+  static constexpr StringLiteral kWritable =
+      ". Herbie's answers are kept in the -poseidon-cache directory, which has "
+      "to be writable.";
+  if (std::error_code EC = sys::fs::create_directories(cacheDir, true))
+    return createStringError(EC, "cannot create the Herbie cache directory " +
+                                     cacheDir + ": " + EC.message() +
+                                     kWritable);
+  if (Error E = writeCacheEntry(path, answeredBy, std::move(value)))
+    return createStringError(inconvertibleErrorCode(),
+                             "cannot write the Herbie cache file " + path +
+                                 ": " + toString(std::move(E)) + kWritable);
+  return Error::success();
+}
+
+namespace {
+// How the cores are split across processes and what the run may spend. Herbie
+// runs a process's cores across its workers, so ceil(cores/threads) rounds of
+// the per-core timeout is what it can legitimately spend; the hard kill sits
+// one margin above that. A wall budget of 0 waits for as long as Herbie takes.
+struct ShardPlan {
+  unsigned shards, threadsPerShard, coreTimeout, wallBudget;
+};
+
+// Where a question's answer is kept, and which Herbie an answer has to come
+// from to be served.
+struct AnswerCache {
+  std::string answerPath;
+  CacheKey answeredBy;
+  // Without a Herbie to run, an answer any Herbie gave is the answer.
+  bool haveHerbie;
+  SmallVector<StringRef, 1> unchecked;
+};
+
+// One input file and one output directory per shard, in the temporary
+// directory, removed with it.
+class ShardFiles {
+public:
+  explicit ShardFiles(unsigned shards)
+      : inputs(shards), outputs(shards), removeInputs(shards) {}
+  ~ShardFiles();
+  // Creates the files and directories and writes `cores` into the input
+  // files, round-robin; an error names what could not be created or written.
+  Error create(ArrayRef<std::string> cores);
+  SmallVector<SmallString<64>> inputs, outputs;
+
+private:
+  std::vector<FileRemover> removeInputs;
+};
+
+// How the processes of a run ended.
+struct ProcessOutcome {
+  bool executionFailed = false;
+  std::string executionError;
+  bool killed = false;
+  // The signal that ended a process the runner did not kill.
+  std::string crash;
+  // The first nonzero exit status.
+  int status = 0;
+  double seconds = 0;
+};
+} // namespace
+
+// Herbie's --timeout has no unbounded value; this one stands for no limit of
+// Poseidon's.
+static constexpr unsigned kUnboundedCoreTimeout = 9999;
+
+// Herbie's per-core --timeout: -poseidon-herbie-timeout, else the subgraph's
+// wall-clock budget, which bounds it anyway.
+static unsigned herbieCoreTimeout(const HerbieOptions &H) {
+  if (H.Timeout)
+    return H.Timeout;
+  if (H.SubgraphTimeout)
+    return H.SubgraphTimeout;
+  return kUnboundedCoreTimeout;
+}
+
+static ShardPlan planShards(size_t numCores, const Options &O) {
+  const HerbieOptions &H = O.Herbie;
+  const unsigned coreTimeout = herbieCoreTimeout(H);
+  ShardPlan plan;
+  const unsigned numThreads = std::max(1, H.Threads);
+  plan.shards = (unsigned)std::max<size_t>(
+      1, std::min<size_t>(H.Processes ? H.Processes : numThreads, numCores));
+  plan.threadsPerShard = std::max<unsigned>(
+      1, std::min<size_t>((numThreads + plan.shards - 1) / plan.shards,
+                          (numCores + plan.shards - 1) / plan.shards));
+  plan.coreTimeout = coreTimeout;
+  plan.wallBudget = 0;
+  if (H.SubgraphTimeout == 0)
+    return plan;
+  plan.coreTimeout = std::min(coreTimeout, H.SubgraphTimeout);
+  unsigned perShard = (unsigned)((numCores + plan.shards - 1) / plan.shards);
+  unsigned rounds = std::max<unsigned>(
+      1, (perShard + plan.threadsPerShard - 1) / plan.threadsPerShard);
+  plan.wallBudget = plan.coreTimeout * rounds + plan.coreTimeout / 10 + 60;
+  if (O.Diagnostics.Print && plan.coreTimeout < coreTimeout)
+    llvm::errs() << "[poseidon] Herbie per-core --timeout clamped from "
+                 << coreTimeout << " s to " << plan.coreTimeout
+                 << " s by -poseidon-herbie-subgraph-timeout\n";
+  return plan;
+}
+
+// The command line of one shard, without its input file and output directory.
+static SmallVector<std::string>
+herbieCommand(const Options &O, StringRef Program,
+              const HerbiePlatform &Platform,
+              std::optional<unsigned> TaylorTerms, const ShardPlan &plan) {
+  SmallVector<std::string> args = {
+      Program.str(), "report",
+      "--timeout",   std::to_string(plan.coreTimeout),
+      "--threads",   std::to_string(plan.threadsPerShard)};
+  args.append(herbieSearchArgs(O, TaylorTerms));
+  // "default" is Herbie's own choice of platform, which it makes when it is
+  // not told one; a host cost model leaves it there.
+  if (Platform.Name == "default" && Platform.Path.empty())
+    return args;
+  args.push_back("--platform");
+  args.push_back(Platform.Path.empty() ? Platform.Name : Platform.Path);
+  if (O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] using Herbie platform '" << Platform.Name
+                 << '\''
+                 << (Platform.Path.empty()
+                         ? std::string()
+                         : " from " + Platform.Path + " (digest " +
+                               Platform.Digest + ")")
+                 << '\n';
+  return args;
+}
+
+// The digest of the question: the cores, the search arguments and the
+// platform Herbie ranks candidates by.
+static std::string questionDigest(ArrayRef<std::string> Cores, const Options &O,
+                                  const HerbiePlatform &Platform,
+                                  std::optional<unsigned> TaylorTerms) {
+  std::string joinedCores;
+  for (const std::string &expr : Cores) {
+    joinedCores += expr;
+    joinedCores += '\n';
+  }
+  CacheKey question;
+  question.add("Herbie platform", Platform.Name + " " + Platform.Digest);
+  question.add("Herbie arguments", join(herbieSearchArgs(O, TaylorTerms), " "));
+  question.addContent("cores", joinedCores);
+  return question.digest();
+}
+
+// The answer the cache holds for the question, a run's result; none when
+// Herbie has to run. Without a Herbie, a question the cache does not answer is
+// an error naming its cache file.
+static Expected<std::optional<HerbieRunResult>>
+readCachedAnswer(const AnswerCache &cache, StringRef Program, bool Print,
+                 StringRef Label) {
+  HerbieRunResult Run;
+  CacheEntryRead cached =
+      readCacheEntry(cache.answerPath, cache.answeredBy, cache.unchecked);
+  if (cached.value) {
+    raw_string_ostream(Run.ResultsJson) << *cached.value;
+    if (Print)
+      llvm::errs() << "[poseidon] Using cached Herbie output from "
+                   << cache.answerPath
+                   << "\n[poseidon] Herbie output: " << Run.ResultsJson << '\n';
+    Run.Result = HerbieRunResult::Outcome::Ok;
+    Run.From = HerbieRunResult::Origin::Cache;
+    Run.CacheFile = cache.answerPath;
+    return Run;
+  }
+  if (!cached.unreadable.empty() && !cache.haveHerbie)
+    return createStringError(inconvertibleErrorCode(),
+                             "the Herbie cache file " + cache.answerPath +
+                                 " for " + Label + " is not a cache entry (" +
+                                 cached.unreadable + ")");
+  if (Print && (!cached.unreadable.empty() || !cached.differs.empty()))
+    llvm::errs() << "[poseidon] Herbie " << Label << ": the cache file "
+                 << cache.answerPath << " holds "
+                 << (cached.unreadable.empty()
+                         ? "the answer of another Herbie"
+                         : "no cache entry (" + cached.unreadable + ")")
+                 << "; running Herbie to replace it\n";
+  if (!cache.haveHerbie)
+    return createStringError(
+        inconvertibleErrorCode(),
+        "no Herbie answer for " + Label + " is cached in " + cache.answerPath +
+            ", and " +
+            (Program.empty()
+                 ? kBuiltWithoutHerbie.str()
+                 : "there is no Herbie at " + Program + " to compute it") +
+            "; copy here the -poseidon-cache directory of a compile that ran "
+            "Herbie, or turn algebraic rewriting off with "
+            "-poseidon-enable-algebraic=0");
+  return std::nullopt;
+}
+
+// An error that `what`, in the temporary directory, could not be created.
+static Error notCreated(const Twine &what, std::error_code EC) {
+  SmallString<128> tmp;
+  sys::path::system_temp_directory(/*ErasedOnReboot=*/true, tmp);
+  return createStringError(EC, "cannot create " + what +
+                                   " in the temporary directory " + tmp + ": " +
+                                   EC.message());
+}
+
+Error ShardFiles::create(ArrayRef<std::string> cores) {
+  const size_t shards = inputs.size();
+  for (size_t s = 0; s < shards; ++s) {
+    int fd;
+    if (std::error_code EC = sys::fs::createTemporaryFile(
+            "herbie_input", "fpcore", fd, inputs[s])) {
+      inputs[s].clear();
+      return notCreated("a Herbie input file", EC);
+    }
+    removeInputs[s].setFile(inputs[s]);
+    raw_fd_ostream input(fd, /*shouldClose=*/true);
+    for (size_t k = s; k < cores.size(); k += shards)
+      input << cores[k] << "\n";
+    input.close();
+    if (std::error_code EC = input.error()) {
+      input.clear_error();
+      return createStringError(EC, "cannot write the Herbie input file " +
+                                       inputs[s] + ": " + EC.message());
+    }
+    if (std::error_code EC = sys::fs::createUniqueDirectory(
+            "herbie_output_%%%%%%%%%%%%%%%%", outputs[s])) {
+      outputs[s].clear();
+      return notCreated("a Herbie output directory", EC);
+    }
+  }
+  return Error::success();
+}
+
+ShardFiles::~ShardFiles() {
+  // A temporary directory left behind is harmless; llvm::FileRemover ignores
+  // the same failure.
+  for (const SmallString<64> &output : outputs)
+    if (!output.empty())
+      sys::fs::remove_directories(output);
+}
+
+// Starts one process per shard and waits for them within the wall budget,
+// killing what outlives it.
+static ProcessOutcome runShards(const ShardFiles &files,
+                                ArrayRef<std::string> command,
+                                StringRef Program, unsigned wallBudget) {
+  ProcessOutcome out;
+  auto start = std::chrono::steady_clock::now();
+  auto elapsed = [&] {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                         start)
+        .count();
+  };
+  SmallVector<sys::ProcessInfo> procs;
+  for (unsigned s = 0; s < files.inputs.size() && !out.executionFailed; ++s) {
+    SmallVector<StringRef> args(command.begin(), command.end());
+    args.push_back(files.inputs[s]);
+    args.push_back(files.outputs[s]);
+    sys::ProcessInfo PI = sys::ExecuteNoWait(
+        Program, args, /*Env=*/std::nullopt, /*Redirects=*/{},
+        /*MemoryLimit=*/0, &out.executionError, &out.executionFailed);
+    if (!out.executionFailed)
+      procs.push_back(PI);
+  }
+  for (sys::ProcessInfo &PI : procs) {
+    std::optional<unsigned> waitFor;
+    if (out.executionFailed || out.killed || !out.crash.empty()) {
+      waitFor = 1;
+    } else if (wallBudget) {
+      double spent = elapsed();
+      waitFor = spent + 1 >= wallBudget ? 1u : (unsigned)(wallBudget - spent);
+    }
+    std::string waitError;
+    sys::ProcessInfo R = sys::Wait(PI, waitFor, &waitError);
+    // Wait returns -2 both when its own alarm killed the process and when a
+    // signal from elsewhere (the OOM killer's SIGKILL) ended it; only its
+    // message tells the two apart.
+    if (R.ReturnCode == -2) {
+      if (StringRef(waitError).starts_with("Child timed out"))
+        out.killed = true;
+      else if (out.crash.empty())
+        out.crash = "signal: " + waitError;
+    } else if (R.ReturnCode != 0 && out.status == 0) {
+      out.status = R.ReturnCode;
+    }
+  }
+  out.seconds = elapsed();
+  return out;
+}
+
+// The results.json of the shards, merged: one process's verbatim into
+// `content`, several processes' tests appended to the first one's report.
+// Returns none when a shard wrote no usable results.json.
+static std::optional<json::Value> readShardResults(const ShardFiles &files,
+                                                   std::string &content) {
+  std::optional<json::Value> answer;
+  for (const SmallString<64> &output : files.outputs) {
+    auto Buf = MemoryBuffer::getFile(inDirectory(output, "results.json"));
+    if (!Buf)
+      return std::nullopt;
+    Expected<json::Value> parsed = json::parse((*Buf)->getBuffer());
+    if (!parsed) {
+      consumeError(parsed.takeError());
+      return std::nullopt;
+    }
+    if (!parsed->getAsObject() || !parsed->getAsObject()->getArray("tests"))
+      return std::nullopt;
+    if (!answer) {
+      if (files.outputs.size() == 1)
+        content = (*Buf)->getBuffer().str();
+      answer = std::move(*parsed);
+      continue;
+    }
+    json::Array *dst = answer->getAsObject()->getArray("tests");
+    for (json::Value &t : *parsed->getAsObject()->getArray("tests"))
+      dst->push_back(std::move(t));
+  }
+  if (files.outputs.size() > 1) {
+    content.clear();
+    raw_string_ostream(content) << *answer;
+  }
+  return answer;
+}
+
+// The cores of `answer`, a usable results.json, that Herbie's per-core
+// --timeout stopped. That timeout is wall-clock time, so another run of the
+// same question can answer them.
+static size_t timedOutCores(const json::Value &answer) {
+  return count_if(*answer.getAsObject()->getArray("tests"),
+                  [](const json::Value &test) {
+                    const json::Object *O = test.getAsObject();
+                    return O && O->getString("status") == "timeout";
+                  });
+}
+
+// `v` as raw_ostream prints a double.
+static std::string printed(double v) {
+  std::string text;
+  raw_string_ostream(text) << v;
+  return text;
+}
+
+// Why a run that wrote no usable results.json failed.
+static std::string noResultsReason(StringRef Program,
+                                   const HerbiePlatform &Platform,
+                                   std::optional<unsigned> TaylorTerms,
+                                   int status) {
+  if (TaylorTerms && !takesTaylorTerms(Program))
+    return "-poseidon-herbie-num-taylor-terms passes it --num-taylor-terms, "
+           "which it does not take ('report --help' does not list it); use a "
+           "Herbie built with the option, or leave the flag out";
+  std::string where = Platform.Name;
+  if (!Platform.Path.empty())
+    where += ", " + Platform.Path;
+  return (Twine("it exited with status ") + Twine(status) +
+          " and wrote no usable results.json (platform " + where +
+          "); its own diagnostics are on stderr above")
+      .str();
+}
+
+// Where the answer to the question `keyDigest` is filed, the platform name
+// leading the file name so that one device's answers are told apart from
+// another's at a glance; the entry records the Herbie that gave it.
+static AnswerCache answerCache(StringRef CacheDir,
+                               const HerbiePlatform &Platform,
+                               StringRef keyDigest, StringRef binaryDigest) {
+  AnswerCache cache;
+  cache.answeredBy.add("Herbie binary", binaryDigest);
+  cache.haveHerbie = !binaryDigest.empty();
+  if (!cache.haveHerbie)
+    cache.unchecked.push_back("Herbie binary");
+  if (CacheDir.empty())
+    return cache;
+  std::string keyStem = Platform.Name + "_" + keyDigest.str();
+  cache.answerPath = inDirectory(CacheDir, "herbie_" + keyStem + ".json");
+  return cache;
+}
+
+static void announceRun(StringRef Label, size_t numCores, const ShardPlan &plan,
+                        ArrayRef<std::string> command, StringRef keyDigest) {
+  llvm::errs() << "[poseidon] Executing Herbie (" << plan.shards
+               << " process(es), one input file and output directory "
+                  "each) with arguments: ";
+  for (const std::string &arg : command)
+    llvm::errs() << arg << ' ';
+  llvm::errs() << '\n';
+  llvm::errs() << "[poseidon] Herbie " << Label << ": " << numCores
+               << " FPCore(s) in " << plan.shards << " process(es) of "
+               << plan.threadsPerShard << " worker(s), per-core timeout "
+               << plan.coreTimeout << " s, wall budget "
+               << (plan.wallBudget ? std::to_string(plan.wallBudget) + " s"
+                                   : std::string("unbounded"))
+               << ", key " << keyDigest << '\n';
+}
+
+// The result of a run whose processes were killed at the wall budget or ended
+// by a signal; none for a run that ran to its end. Neither is cached, so the
+// next compile runs Herbie again.
+static std::optional<HerbieRunResult>
+stoppedRun(const ProcessOutcome &ran, StringRef Label, unsigned wallBudget) {
+  HerbieRunResult Run;
+  if (!ran.crash.empty()) {
+    Run.Result = HerbieRunResult::Outcome::Crashed;
+    Run.Crash = ran.crash;
+    Run.Warning = ("Herbie " + Label + " crashed (" + ran.crash + ") after " +
+                   printed(ran.seconds) +
+                   " s, so the subgraph has no algebraic candidates in this "
+                   "compile; nothing is cached, so the next compile runs "
+                   "Herbie again")
+                      .str();
+    return Run;
+  }
+  if (!ran.killed)
+    return std::nullopt;
+  Run.Result = HerbieRunResult::Outcome::Timeout;
+  Run.Warning =
+      ("Herbie " + Label + " was stopped after " + printed(ran.seconds) +
+       " s, its wall budget of " + Twine(wallBudget) +
+       " s, so the subgraph has no algebraic candidates in this compile and "
+       "nothing is cached; raise -poseidon-herbie-subgraph-timeout, or set "
+       "it to 0 to wait for as long as Herbie takes")
+          .str();
+  return Run;
+}
+
+Expected<HerbieRunResult>
+runHerbie(const std::vector<std::string> &Cores, const Options &O,
+          const HerbiePlatform &Platform, std::optional<unsigned> TaylorTerms,
+          StringRef Label, HerbieBinaryDigests &Digests) {
+  const std::string Program = herbieProgram(O.Herbie);
+  const bool Print = O.Diagnostics.Print;
+  const StringRef CacheDir = O.Cache.Dir;
+  const ShardPlan plan = planShards(Cores.size(), O);
+  const SmallVector<std::string> command =
+      herbieCommand(O, Program, Platform, TaylorTerms, plan);
+  const std::string keyDigest = questionDigest(Cores, O, Platform, TaylorTerms);
+  const std::string binaryDigest = sys::fs::exists(Program)
+                                       ? herbieBinaryDigest(Program, Digests)
+                                       : std::string();
+  const AnswerCache cache =
+      answerCache(CacheDir, Platform, keyDigest, binaryDigest);
+  if (!CacheDir.empty()) {
+    Expected<std::optional<HerbieRunResult>> cached =
+        readCachedAnswer(cache, Program, Print, Label);
+    if (!cached)
+      return cached.takeError();
+    if (*cached)
+      return std::move(**cached);
+  }
+
+  ShardFiles files(plan.shards);
+  if (Error E = files.create(Cores))
+    return std::move(E);
+  HerbieRunResult Run;
+  if (Print)
+    announceRun(Label, Cores.size(), plan, command, keyDigest);
+  ProcessOutcome ran = runShards(files, command, Program, plan.wallBudget);
+  if (ran.executionFailed) {
+    Run.Failure = ran.executionError;
+    return Run;
+  }
+  if (std::optional<HerbieRunResult> stopped =
+          stoppedRun(ran, Label, plan.wallBudget))
+    return std::move(*stopped);
+
+  std::optional<json::Value> answer = readShardResults(files, Run.ResultsJson);
+  if (!answer) {
+    Run.Failure = noResultsReason(Program, Platform, TaylorTerms, ran.status);
+    return Run;
+  }
+  if (ran.status != 0)
+    Run.Warning =
+        ("Herbie " + Label + " exited with status " + Twine(ran.status) +
+         " but wrote a usable results.json, which is used")
+            .str();
+  if (Print)
+    llvm::errs() << "[poseidon] Herbie output: " << Run.ResultsJson << '\n';
+  if (size_t timedOut = timedOutCores(*answer)) {
+    if (!Run.Warning.empty())
+      Run.Warning += "; ";
+    Run.Warning +=
+        ("Herbie " + Label + " timed out on " + Twine(timedOut) + " of " +
+         Twine(Cores.size()) + " FPCore(s) at its per-core --timeout of " +
+         Twine(plan.coreTimeout) +
+         " s, so they have no algebraic candidates in this compile; the "
+         "answer is not cached, so the next compile runs Herbie again")
+            .str();
+  } else if (!cache.answerPath.empty()) {
+    if (Error E = writeAnswer(CacheDir, cache.answerPath, cache.answeredBy,
+                              std::move(*answer)))
+      return std::move(E);
+    if (Print)
+      llvm::errs() << "[poseidon] Saved Herbie output to cache file "
+                   << cache.answerPath << '\n';
+    Run.CacheFile = cache.answerPath;
+  }
+  if (Print)
+    llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
+                 << ran.seconds
+                 << " s, a fresh answer of the Herbie with digest "
+                 << binaryDigest << '\n';
+  Run.Result = HerbieRunResult::Outcome::Ok;
+  return Run;
+}
+
+static bool fromJSON(const json::Value &V, HerbiePoint &Point, json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 2) {
+    P.report("expected [cost, error]");
+    return false;
+  }
+  return fromJSON((*A)[0], Point.Cost, P.index(0)) &&
+         fromJSON((*A)[1], Point.ErrorBits, P.index(1));
+}
+
+static bool fromJSON(const json::Value &V, HerbieAlternative &Alt,
+                     json::Path P) {
+  if (!fromJSON(V, Alt.Point, P))
+    return false;
+  const json::Array &A = *V.getAsArray();
+  if (A.size() < 3)
+    return true;
+  return fromJSON(A[2], Alt.Expr.emplace(), P.index(2));
+}
+
+static bool fromJSON(const json::Value &V, HerbieCostAccuracy &CA,
+                     json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 3) {
+    P.report("expected [initial, best, alternatives]");
+    return false;
+  }
+  return fromJSON((*A)[0], CA.Initial, P.index(0)) &&
+         fromJSON((*A)[1], CA.Best, P.index(1)) &&
+         fromJSON((*A)[2], CA.Alternatives, P.index(2));
+}
+
+static bool fromJSON(const json::Value &V, HerbieCoreAnswer &Answer,
+                     json::Path P) {
+  json::ObjectMapper O(V, P);
+  std::string Output;
+  if (!O || !O.map("name", Answer.Name) || !O.map("output", Output))
+    return false;
+  const json::Object &Test = *V.getAsObject();
+  if (std::optional<StringRef> Status = Test.getString("status"))
+    Answer.Status = Status->str();
+  Answer.Time = Test.getNumber("time");
+  Answer.Start = Test.getNumber("start");
+  Answer.End = Test.getNumber("end");
+  if (Output == "#f")
+    return true;
+  HerbieRewrites &R = Answer.Rewrites.emplace();
+  R.BestExpr = std::move(Output);
+  return O.map("bits", R.Bits) && O.map("cost-accuracy", R.CostAccuracy);
+}
+
+Expected<std::vector<HerbieCoreAnswer>> readHerbieResults(StringRef Contents,
+                                                          size_t NumCores) {
+  Expected<json::Value> Results = json::parse(Contents);
+  if (!Results)
+    return Results.takeError();
+  const json::Object *Top = Results->getAsObject();
+  const json::Array *Tests = Top ? Top->getArray("tests") : nullptr;
+  if (!Tests)
+    return createStringError(
+        inconvertibleErrorCode(),
+        "expected an object with a \"tests\" array at the top level");
+  std::vector<HerbieCoreAnswer> Answers(Tests->size());
+  for (auto [I, Test] : enumerate(*Tests)) {
+    HerbieCoreAnswer &Answer = Answers[I];
+    std::string Where = formatv("tests[{0}]", I);
+    json::Path::Root Root(Where);
+    if (!fromJSON(Test, Answer, Root)) {
+      std::string Why = toString(Root.getError());
+      if (!Answer.Name.empty())
+        Why += ", core \"" + Answer.Name + "\"";
+      return createStringError(inconvertibleErrorCode(), Why);
+    }
+    if (StringRef(Answer.Name).getAsInteger(10, Answer.Core) ||
+        Answer.Core >= NumCores)
+      return createStringError(
+          inconvertibleErrorCode(),
+          formatv("{0} names core \"{1}\", and the cores asked about are 0 "
+                  "to {2}",
+                  Where, Answer.Name, NumCores - 1));
+  }
+  return Answers;
+}
+
+// The items of `S` separated by spaces outside parentheses, from its first
+// non-space character on; each further space separates another item.
+static SmallVector<StringRef, 4> splitTopLevel(StringRef S) {
+  SmallVector<StringRef, 4> Items;
+  S = S.ltrim(' ');
+  int Depth = 0;
+  size_t Start = 0;
+  for (size_t I = 0; I < S.size(); ++I) {
+    if (S[I] == '(') {
+      ++Depth;
+    } else if (S[I] == ')') {
+      --Depth;
+    } else if (S[I] == ' ' && Depth == 0) {
+      Items.push_back(S.slice(Start, I));
+      Start = I + 1;
+    }
+  }
+  if (Start < S.size())
+    Items.push_back(S.drop_front(Start));
+  return Items;
+}
+
+// Whether `N` is a truth value: a comparison, a logical operation, or a choice
+// between truth values.
+static bool isBoolean(const FPNode &N) {
+  if (N.getType() != FPNode::NodeType::Node)
+    return false;
+  if (N.is(fpcore::If))
+    return isBoolean(*N.operands[1]);
+  return N.op->Boolean;
+}
+
+static Error malformed(const Twine &Why, StringRef Expr) {
+  return createStringError(inconvertibleErrorCode(),
+                           Why + " in '" + Expr + "'");
+}
+
+// How an approx form and an element projection begin.
+static constexpr StringLiteral kApproxHead = "#s(approx";
+static constexpr StringLiteral kProjectionHead = "ref.";
+
+namespace {
+struct FPCoreParser {
+  FPGraph &G;
+  SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs;
+  const SetVector<Value *> *subgraphInputs;
+
+  // `expr`, an array only when it is the whole expression (`top`).
+  Expected<FPNode *> parse(StringRef expr, bool top);
+  // `expr` parsed as a number, not a truth value or an array.
+  Expected<FPNode *> parseNumber(StringRef expr) {
+    Expected<FPNode *> N = parse(expr, /*top=*/false);
+    if (N && isBoolean(**N))
+      return malformed("a truth value where a number is expected", expr);
+    return N;
+  }
+
+private:
+  // A literal, `#s(literal v format)` or a bare number; null for any other
+  // text.
+  Expected<FPNode *> parseLiteral(const std::string &expr);
+  // `#s(approx spec result)`: the result, the pair kept in approxSpecs.
+  Expected<FPNode *> parseApprox(StringRef expr, bool top);
+  // `(ref.N.array<...> e)`: element N of the array or sincos e.
+  Expected<FPNode *> parseProjection(StringRef expr, StringRef head,
+                                     StringRef args);
+  // `(op.dtype operands...)`.
+  Expected<FPNode *> parseOperation(StringRef expr, StringRef head,
+                                    StringRef args, bool top);
+};
+} // namespace
+
+Expected<FPNode *> FPCoreParser::parse(StringRef expr, bool top) {
+  const std::string trimmedExpr = expr.trim(' ').str();
+  if (trimmedExpr.empty())
+    return malformed("an empty expression", expr);
+  if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#')
+    if (FPNode *node = G.valueToNodeMap[G.symbolToValueMap[trimmedExpr]])
+      return node;
+  Expected<FPNode *> literal = parseLiteral(trimmedExpr);
+  if (!literal || *literal)
+    return literal;
+  if (StringRef(trimmedExpr).starts_with(kApproxHead))
+    return parseApprox(trimmedExpr, top);
+  if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')')
+    return malformed("an unknown symbol or an unparenthesized operation",
+                     trimmedExpr);
+  StringRef body = StringRef(trimmedExpr).drop_front().drop_back();
+  StringRef head = body.take_until([](char c) { return c == ' '; });
+  StringRef args = body.drop_front(head.size());
+  if (head.starts_with(kProjectionHead))
+    return parseProjection(trimmedExpr, head, args);
+  return parseOperation(trimmedExpr, head, args, top);
+}
+
+Expected<FPNode *> FPCoreParser::parseLiteral(const std::string &expr) {
+  static const std::regex constantPattern(
+      "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+(\\w+)\\)$");
+  static const std::regex plainConstantPattern(
+      R"(^([-+]?(\d+(\.\d+)?)(/\d+)?|[-+]?inf\.0))");
+  // Herbie writes a literal as an exact rational of a representable value and
+  // an infinity as inf.0, so a zero denominator is no value it can mean.
+  auto zeroDenominator = [](StringRef Literal) {
+    StringRef Denominator = Literal.split('/').second;
+    return !Denominator.empty() &&
+           Denominator.find_first_not_of('0') == StringRef::npos;
+  };
+  std::smatch matches;
+  const NumberFormatInfo *format;
+  if (std::regex_match(expr, matches, constantPattern)) {
+    format = StringSwitch<const NumberFormatInfo *>(matches[3].str())
+                 .Case("binary64", &formatOf(NumberFormat::FP64))
+                 .Case("binary32", &formatOf(NumberFormat::FP32))
+                 .Default(nullptr);
+    if (!format)
+      return malformed("a literal of the unmodelled format " + matches[3].str(),
+                       expr);
+  } else if (std::regex_match(expr, matches, plainConstantPattern)) {
+    format = &formatOf(NumberFormat::FP64);
+  } else {
+    return nullptr;
+  }
+  std::string value = matches[1].str();
+  if (zeroDenominator(value))
+    return malformed("a rational literal with denominator 0", expr);
+  return G.create<FPConst>(value, format);
+}
+
+Expected<FPNode *> FPCoreParser::parseApprox(StringRef expr, bool top) {
+  StringRef inner = expr.drop_front(kApproxHead.size()).drop_back().trim(' ');
+  SmallVector<StringRef, 4> parts = splitTopLevel(inner);
+  if (expr.back() != ')' || parts.size() < 2)
+    return malformed("an approx form without its specification and result",
+                     expr);
+  StringRef resultPart = inner.drop_front(parts[0].size() + 1).trim(' ');
+  if (approxSpecs)
+    approxSpecs->push_back({parts[0].str(), resultPart.str()});
+  return parse(resultPart, top);
+}
+
+Expected<FPNode *> FPCoreParser::parseProjection(StringRef expr, StringRef head,
+                                                 StringRef args) {
+  unsigned idx;
+  StringRef inner = args.trim(' ');
+  if (!head.drop_front(kProjectionHead.size())
+           .take_until([](char c) { return c == '.'; })
+           .getAsInteger(10, idx) &&
+      !inner.empty() && inner.front() == '(' && inner.back() == ')') {
+    StringRef projected = inner.drop_front().drop_back();
+    StringRef of = projected.take_until([](char c) { return c == ' '; });
+    SmallVector<StringRef, 4> elems =
+        splitTopLevel(projected.drop_front(of.size()));
+    if (of == "array" && idx < elems.size())
+      return parseNumber(elems[idx]);
+    if ((of == "sincos.f64" || of == "sincos.f32") && elems.size() == 1 &&
+        idx < 2) {
+      auto *node = G.create<FPNode>(*fpcoreOperator(idx == 0 ? "sin" : "cos"),
+                                    formatOfDtype(of.split('.').second));
+      Expected<FPNode *> operand = parseNumber(elems[0]);
+      if (!operand)
+        return operand.takeError();
+      node->addOperand(*operand);
+      return node;
+    }
+  }
+  return malformed("an array projection of no array element", expr);
+}
+
+Expected<FPNode *> FPCoreParser::parseOperation(StringRef expr, StringRef head,
+                                                StringRef args, bool top) {
+  StringRef op = head;
+  const NumberFormatInfo *format = nullptr;
+  if (head.starts_with("array<")) {
+    op = fpcore::Array.Name;
+  } else if (size_t pos = head.find('.'); pos != StringRef::npos) {
+    op = head.substr(0, pos);
+    format = formatOfDtype(head.substr(pos + 1));
+    if (!format || (format->Kind != NumberFormat::FP64 &&
+                    format->Kind != NumberFormat::FP32))
+      return malformed("the operator " + head + " of an unmodelled format",
+                       expr);
+  }
+
+  const FPCoreOperator *O = fpcoreOperator(op);
+  if (!O)
+    return malformed("the operator " + op + ", which Poseidon does not model",
+                     expr);
+  SmallVector<StringRef, 4> operandTexts = splitTopLevel(args);
+  if (O == &fpcore::Array ? !top || operandTexts.empty()
+                          : operandTexts.size() != O->Arity)
+    return malformed(O == &fpcore::Array
+                         ? Twine("an array that is not a whole expression")
+                         : "the operator " + op + " with " +
+                               Twine(operandTexts.size()) +
+                               " operand(s), not " + Twine(O->Arity),
+                     expr);
+
+  // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
+  // destination precision, which makes it an identity at that precision.
+  if (!format) {
+    if (O == &fpcore::ToBinary32)
+      format = &formatOf(NumberFormat::FP32);
+    else if (O == &fpcore::ToBinary64)
+      format = &formatOf(NumberFormat::FP64);
+  }
+
+  auto *node = G.create<FPNode>(*O, format);
+  // A logical operation, and the condition of a choice, take truth values;
+  // every other operand is a number.
+  const bool logical =
+      O == &fpcore::And || O == &fpcore::Or || O == &fpcore::Not;
+  const bool choice = O == &fpcore::If;
+  for (auto [k, text] : enumerate(operandTexts)) {
+    const bool truth = logical || (choice && k == 0);
+    Expected<FPNode *> operand =
+        truth || choice ? parse(text, /*top=*/false) : parseNumber(text);
+    if (!operand)
+      return operand.takeError();
+    if (truth && !isBoolean(**operand))
+      return malformed("a number where a truth value is expected", text);
+    node->addOperand(*operand);
+  }
+  if (choice && isBoolean(*node->operands[1]) != isBoolean(*node->operands[2]))
+    return malformed("a choice between a number and a truth value", expr);
+
+  if (subgraphInputs)
+    if (FPNode *existing = existingDefinition(*node, *subgraphInputs, G))
+      return existing;
+  return node;
+}
+
+Expected<FPNode *> parseHerbieExpr(
+    StringRef expr, FPGraph &G,
+    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
+    const SetVector<Value *> *subgraphInputs) {
+  FPCoreParser P{G, approxSpecs, subgraphInputs};
+  Expected<FPNode *> N = P.parse(expr, /*top=*/true);
+  if (N && isBoolean(**N))
+    return malformed("a truth value where a number is expected", expr);
+  return N;
+}
+
+Expected<SmallVector<std::string, 1>>
+fpcoreToC(StringRef expr, FPGraph &G, const CRendering &how,
+          StringRef resultDtype,
+          SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
+  Expected<FPNode *> parsed = parseHerbieExpr(expr, G, approxSpecs, how.inputs);
+  if (!parsed)
+    return parsed.takeError();
+  SmallVector<std::string, 1> out;
+  FPNode *node = *parsed;
+  if (node->is(fpcore::Array))
+    for (const auto &element : node->operands)
+      out.push_back(renderC(*element, how, resultDtype));
+  else
+    out.push_back(renderC(*node, how, resultDtype));
+  return out;
+}
+
+} // namespace poseidon

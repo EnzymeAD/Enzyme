@@ -1,0 +1,60 @@
+// REQUIRES: enzyme
+// REQUIRES: nvptx-device-profiler || (amdgpu-registered-target && rocm)
+// DEFINE: %{nvptx} = %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate
+// DEFINE: %{amdgpu} = %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate
+// RUN: rm -rf %t && mkdir %t
+// RUN: %if nvptx-device-profiler %{ %{nvptx} -mllvm -poseidon-cache=%t/nvptx -mllvm -poseidon-print -DFIT=3072 %s -o %t/nvptx.ll 2>&1 | FileCheck --check-prefix=GEN -DFIT=3072 %s %}
+// RUN: %if nvptx-device-profiler %{ FileCheck --check-prefixes=IR,IR-NVPTX -DFIT=3072 -DBYTES=24576 %s < %t/nvptx.ll %}
+// RUN: %if nvptx-device-profiler %{ cat %t/nvptx/launches_*.json | FileCheck --check-prefix=DESC -DFIT=3072 %s %}
+// RUN: %if nvptx-device-profiler %{ %{nvptx} -mllvm -poseidon-cache=%t/nvptx-over -DFIT=6144 %s -o %t/nvptx-over.ll 2>&1 | FileCheck --check-prefix=OVER --implicit-check-not=error: -DLIMIT=49152 %s %}
+// RUN: %if nvptx-device-profiler %{ FileCheck --check-prefix=WRITTEN --implicit-check-not=buf_shadow --implicit-check-not=diffe %s < %t/nvptx-over.ll %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} -mllvm -poseidon-cache=%t/amdgpu -mllvm -poseidon-print -DFIT=4096 %s -o %t/amdgpu.ll 2>&1 | FileCheck --check-prefix=GEN -DFIT=4096 %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefixes=IR,IR-AMDGPU -DFIT=4096 -DBYTES=32768 %s < %t/amdgpu.ll %}
+// RUN: %if amdgpu-registered-target && rocm %{ cat %t/amdgpu/launches_*.json | FileCheck --check-prefix=DESC -DFIT=4096 %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ %{amdgpu} -mllvm -poseidon-cache=%t/amdgpu-over -DFIT=6144 %s -o %t/amdgpu-over.ll 2>&1 | FileCheck --check-prefix=OVER --implicit-check-not=error: -DLIMIT=65536 %s %}
+// RUN: %if amdgpu-registered-target && rocm %{ FileCheck --check-prefix=WRITTEN --implicit-check-not=buf_shadow --implicit-check-not=diffe %s < %t/amdgpu-over.ll %}
+
+// A profiled kernel's shared buffers and their shadows must fit the static
+// shared memory a kernel can declare (48 KiB on NVPTX, 64 KiB on gfx942): FIT
+// doubles reach it exactly and are profiled; with more the kernel is left as
+// written, with a warning (OVER).
+
+#include "poseidon/poseidon.h"
+
+#ifdef __NVPTX__
+#define THREAD_X __nvvm_read_ptx_sreg_tid_x()
+#define BLOCK_X __nvvm_read_ptx_sreg_ntid_x()
+#else
+#define THREAD_X __builtin_amdgcn_workitem_id_x()
+#define BLOCK_X __builtin_amdgcn_workgroup_size_x()
+#endif
+
+template <int N>
+__attribute__((global)) POSEIDON_OPTIMIZE void stage(const double *x,
+                                                     double *y) {
+  __attribute__((shared)) double buf[N];
+  for (int i = THREAD_X; i < N; i += BLOCK_X)
+    buf[i] = x[i] * x[i];
+  for (int i = THREAD_X; i < N; i += BLOCK_X)
+    y[i] = buf[N - 1 - i] * 3.0;
+}
+
+template __attribute__((global)) void stage<FIT>(const double *, double *);
+
+// GEN: {{^}}[poseidon] _Z5stageILi[[FIT]]EEvPKdPd: site 0, 2 shadow buffer(s), output(s) 1{{$}}
+// OVER: shared_limit.cu:[[@LINE-12]]:48: warning: Poseidon: void stage<6144>(double const*, double*) would declare 98304 bytes of static shared memory once profiled, with a shadow next to each floating-point shared buffer, above the [[LIMIT]] a kernel can declare; the kernel is not profiled and stays as written
+// WRITTEN: define {{.*}}void @_Z5stageILi6144EEvPKdPd(
+// IR: @[[SHADOW:_ZZ5stageILi[0-9]+EEvPKdPdE3buf_shadow]] = {{.*}}addrspace(3) global {{\[}}[[FIT]] x double] undef,
+// IR: @_ZZ5stageILi[[FIT]]EEvPKdPdE3buf = {{.*}}addrspace(3) global {{\[}}[[FIT]] x double] undef, {{.*}}!enzyme_shadow ![[SHMD:[0-9]+]]{{$}}
+// The NVPTX kernel calls the derivative; the AMDGPU inliner folds it into the
+// kernel.
+// IR-NVPTX: define {{.*}}ptx_kernel void @_Z5stageILi[[FIT]]EEvPKdPd(
+// IR-NVPTX-NEXT: call {{.*}}void @diffepreprocess__Z5stageILi[[FIT]]EEvPKdPd_poseidon_body(
+// IR-NVPTX: define internal {{.*}}void @diffepreprocess__Z5stageILi[[FIT]]EEvPKdPd_poseidon_body(
+// IR-AMDGPU: define {{.*}}amdgpu_kernel void @_Z5stageILi[[FIT]]EEvPKdPd(
+// IR: call void @llvm.memset.p3.i64(ptr addrspace(3) {{.*}}@[[SHADOW]], i8 0, i64 [[BYTES]], i1 false)
+// IR: call void @__poseidon_device_log_value(
+// IR: ![[SHMD]] = !{ptr addrspace(3) @[[SHADOW]]}
+// DESC: "profile generation": [
+// DESC-NEXT: "_Z5stageILi[[FIT]]EEvPKdPd 0 2 2 0 1 0 8"
+// DESC-NEXT: ],

@@ -1,0 +1,38 @@
+// REQUIRES: enzyme, cuda-device
+// RUN: rm -rf %t && mkdir %t
+// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/gen -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_CUDA_COMPILER=%clang++ -DCMAKE_CUDA_ARCHITECTURES=OFF "-DCMAKE_CUDA_FLAGS=--cuda-gpu-arch=%gpu_arch -O3" -DCUDAToolkit_ROOT=/usr/local/cuda -DWITH_CUDA=ON -DTWO_TU=%S/../Inputs/two_tu -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=instrument > /dev/null
+// RUN: %cmake --build %t/gen
+// RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen/app | FileCheck --check-prefix=OUT %s
+// RUN: ls %t/prof | FileCheck --check-prefix=PROF %s
+// RUN: cat %t/prof/_Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile | FileCheck --check-prefix=MERGED %s
+// RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_CUDA_COMPILER=%clang++ -DCMAKE_CUDA_ARCHITECTURES=OFF "-DCMAKE_CUDA_FLAGS=--cuda-gpu-arch=%gpu_arch -O3" -DCUDAToolkit_ROOT=/usr/local/cuda -DWITH_CUDA=ON -DTWO_TU=%S/../Inputs/two_tu -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%gpu_cost_model -poseidon-enable-algebraic=0 -poseidon-print" > /dev/null
+// RUN: %cmake --build %t/use 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %t/use/app | FileCheck --check-prefix=STATUS %s
+
+// Through the CMake package: a static library of two CUDA units profiles every
+// site of both; Poseidon::ProfileUse reads the profile back.
+
+// OUT: axpb 2703.7489499999992 lift 367.08090963891368 forall_a 121902.63888375004 forall_b -7593.8872846631084 vol_a -0.549021492 vol_b -0.219608603
+// OUT-NEXT: status no error
+
+// PROF-DAG: _Z4axpbPdPKdS1_i.fpprofile
+// PROF-DAG: _Z4liftPdPKdi.fpprofile
+// PROF-DAG: _Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile
+// PROF-DAG: _ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT_~{{[0-9a-f]+}}.fpprofile
+// PROF-DAG: _ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT_~{{[0-9a-f]+}}.fpprofile
+
+// MERGED: LaunchCount = 96
+// MERGED: Exec = 8192
+
+// run_a and lift move to FP32, run_b to an expansion; axpb and hooke_vol stay.
+// USE-DAG: [poseidon] no rewrite applied for preprocess__Z4axpbPdPKdS1_i_poseidon_body; calling original body _Z4axpbPdPKdS1_i_poseidon_body (bit-transparent no-op)
+// USE-DAG: [poseidon] pin: _Z4liftPdPKdi:P0=All FP64(0%) + FP32(100%){{$}}
+// USE-DAG: [poseidon] pin: _ZL10CuKernel1DIZ5run_aPdS0_PKdS2_PKfPfiiEUliE_EviT_:P0=All FP64(0%) + FP32(100%){{$}}
+// USE-DAG: [poseidon] preprocess__ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT__poseidon_body: tau=1.000000e-12 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
+// USE-DAG: [poseidon] pin: _ZL10CuKernel1DIZ5run_bPdS0_PKdPKfPfiiEUliE_EviT_:P0=All FP64(0%) + Expansion2(100%){{$}}
+// USE-DAG: [poseidon] no rewrite applied for preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0; calling original body _Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0 (bit-transparent no-op)
+// USE-DAG: [poseidon] no rewrite applied for preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0; calling original body _Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0 (bit-transparent no-op)
+// USE-DAG: [poseidon] {{.*}}two_tu/a.cu: 1 function(s) a rewrite reached; every other function as written
+// USE-DAG: [poseidon] {{.*}}two_tu/b.cu: 2 function(s) a rewrite reached; every other function as written
+
+// STATUS: status no error

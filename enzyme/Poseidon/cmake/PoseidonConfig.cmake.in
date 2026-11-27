@@ -1,0 +1,159 @@
+@PACKAGE_INIT@
+
+# find_package(Poseidon) configuration: the plugin, runtimes and tools as
+# Poseidon:: targets; per-action interface targets Poseidon::Plain,
+# ::ProfileGenerate, ::ProfileUse and Poseidon::EnzymeOptions; and the
+# POSEIDON_* variables below. Usage: the CMake section of README.md.
+
+include(CMakeFindDependencyMacro)
+set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)
+set(POSEIDON_HAS_HIP @POSEIDON_HAS_HIP@)
+if(POSEIDON_HAS_HIP)
+  set(POSEIDON_AMDGPU_ARCH @POSEIDON_AMDGPU_ARCH@)
+endif()
+# The GPU runtime a project links: CUDA, HIP, or NONE for a project of host
+# code alone; by default the GPU this Poseidon was built for.
+if(NOT DEFINED POSEIDON_GPU_RUNTIME)
+  if(POSEIDON_HAS_CUDA)
+    set(POSEIDON_GPU_RUNTIME CUDA)
+  elseif(POSEIDON_HAS_HIP)
+    set(POSEIDON_GPU_RUNTIME HIP)
+  else()
+    set(POSEIDON_GPU_RUNTIME NONE)
+  endif()
+endif()
+if(NOT POSEIDON_GPU_RUNTIME MATCHES "^(CUDA|HIP|NONE)$")
+  message(
+    FATAL_ERROR
+      "POSEIDON_GPU_RUNTIME is ${POSEIDON_GPU_RUNTIME}; it takes CUDA, HIP or NONE")
+endif()
+if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
+  if(NOT POSEIDON_HAS_HIP)
+    message(
+      FATAL_ERROR
+        "POSEIDON_GPU_RUNTIME is HIP, but this Poseidon was "
+        "built without POSEIDON_ROCM_PATH")
+  endif()
+  set(POSEIDON_ENZYME_OPTIONS
+      "SHELL:-Xclang -mllvm -Xclang @POSEIDON_ENZYME_HIP_OPTION@")
+else()
+  set(POSEIDON_ENZYME_OPTIONS "")
+endif()
+set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
+# The CUDA runtimes link the toolkit's libraries, the HIP runtimes hipBLAS and
+# the HIP runtime of this machine's ROCm installation (ROCM_PATH, else
+# /opt/rocm); a project links only those of its runtime.
+if(POSEIDON_HAS_CUDA AND POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
+  find_dependency(CUDAToolkit)
+elseif(POSEIDON_HAS_CUDA AND NOT TARGET CUDA::cublas)
+  # The exported CUDA runtimes name the toolkit's targets; a project of
+  # another runtime links neither, and needs no toolkit to import them.
+  add_library(CUDA::cublas INTERFACE IMPORTED)
+  add_library(CUDA::cudart INTERFACE IMPORTED)
+endif()
+if(POSEIDON_GPU_RUNTIME STREQUAL "HIP" AND @POSEIDON_CONFIG_FINDS_ROCM@)
+  # An installation names them by these targets; a build tree links the
+  # libraries of the ROCm it was built against.
+  foreach(_lib hipblas amdhip64)
+    find_library(
+      POSEIDON_ROCM_${_lib} ${_lib}
+      HINTS $ENV{ROCM_PATH}/lib /opt/rocm/lib)
+    if(NOT POSEIDON_ROCM_${_lib})
+      set(Poseidon_FOUND FALSE)
+      set(Poseidon_NOT_FOUND_MESSAGE
+          "the HIP runtimes link lib${_lib}, and no ROCm installation has it "
+          "(ROCM_PATH, /opt/rocm or the CMake search path)")
+      return()
+    endif()
+    if(NOT TARGET Poseidon::rocm_${_lib})
+      add_library(Poseidon::rocm_${_lib} SHARED IMPORTED)
+      set_target_properties(
+        Poseidon::rocm_${_lib}
+        PROPERTIES IMPORTED_LOCATION "${POSEIDON_ROCM_${_lib}}")
+    endif()
+  endforeach()
+  unset(_lib)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/PoseidonTargets.cmake")
+
+set(POSEIDON_LLVM_VERSION_MAJOR @LLVM_VERSION_MAJOR@)
+set(POSEIDON_CLANG "@LLVM_TOOLS_BINARY_DIR@/clang")
+set(POSEIDON_CLANGXX "@LLVM_TOOLS_BINARY_DIR@/clang++")
+set(POSEIDON_PLUGIN "$<TARGET_FILE:Poseidon::Poseidon-@LLVM_VERSION_MAJOR@>")
+set_and_check(POSEIDON_ENZYME_PLUGIN "@PACKAGE_POSEIDON_CONFIG_ENZYME_PLUGIN@")
+set_and_check(POSEIDON_INCLUDE_DIR "@PACKAGE_POSEIDON_CONFIG_INCLUDE_DIR@")
+
+if(NOT TARGET Poseidon::Plain)
+  # Poseidon's plugin in every action, and Enzyme's after it to generate a
+  # profile, where it differentiates the probes. A project whose own code asks
+  # for derivatives (the body of a deferred site among them) loads Enzyme in
+  # every action itself, as it would without Poseidon. Before LLVM 22 clang
+  # parses -mllvm before it loads -fpass-plugin, so a plugin's options exist
+  # only if it is also loaded with -load.
+  set(_poseidon_load "-fpass-plugin=${POSEIDON_PLUGIN}")
+  set(_enzyme_load "-fpass-plugin=${POSEIDON_ENZYME_PLUGIN}")
+  if(POSEIDON_LLVM_VERSION_MAJOR LESS 22)
+    list(APPEND _poseidon_load "SHELL:-Xclang -load -Xclang ${POSEIDON_PLUGIN}")
+    list(APPEND _enzyme_load
+         "SHELL:-Xclang -load -Xclang ${POSEIDON_ENZYME_PLUGIN}")
+  endif()
+
+  foreach(_action Plain ProfileGenerate ProfileUse)
+    add_library(Poseidon::${_action} INTERFACE IMPORTED)
+    target_compile_options(Poseidon::${_action} INTERFACE ${_poseidon_load})
+    target_include_directories(
+      Poseidon::${_action}
+      INTERFACE "${POSEIDON_INCLUDE_DIR}")
+    # poseidon.h then links the device math a rewrite or a derivative may call.
+    target_compile_definitions(
+      Poseidon::${_action}
+      INTERFACE POSEIDON_DEVICE_MATH)
+  endforeach()
+
+  add_library(Poseidon::EnzymeOptions INTERFACE IMPORTED)
+  if(POSEIDON_ENZYME_OPTIONS)
+    target_compile_options(
+      Poseidon::EnzymeOptions
+      INTERFACE ${POSEIDON_ENZYME_OPTIONS})
+  endif()
+
+  target_compile_options(
+    Poseidon::ProfileGenerate
+    INTERFACE
+      ${_enzyme_load} "SHELL:${POSEIDON_MLLVM} -poseidon-profile-generate"
+      ${POSEIDON_ENZYME_OPTIONS})
+  target_link_libraries(
+    Poseidon::ProfileGenerate
+    INTERFACE Poseidon::poseidon_profile_shadows)
+  if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
+    target_link_libraries(
+      Poseidon::ProfileGenerate
+      INTERFACE Poseidon::poseidon_profile_hip)
+    # Ozaki-II and the direct products; TCEC has no HIP build.
+    target_link_libraries(
+      Poseidon::ProfileUse
+      INTERFACE Poseidon::poseidon_gemm_hip)
+  elseif(POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
+    target_link_libraries(
+      Poseidon::ProfileGenerate
+      INTERFACE Poseidon::poseidon_profile_cuda)
+    # A rewrite may dispatch a matrix product to any of the GEMM runtimes.
+    target_link_libraries(
+      Poseidon::ProfileUse
+      INTERFACE Poseidon::poseidon_gemm_cuda)
+  endif()
+
+  # Error-free transformations survive only if the compiler contracts within a
+  # statement and never across one.
+  foreach(_action Plain ProfileGenerate ProfileUse)
+    target_compile_options(Poseidon::${_action} INTERFACE -ffp-contract=on)
+    target_link_libraries(
+      Poseidon::${_action}
+      INTERFACE Poseidon::poseidon_profile)
+  endforeach()
+  unset(_poseidon_load)
+  unset(_enzyme_load)
+  unset(_action)
+endif()
+
+check_required_components(Poseidon)

@@ -1,0 +1,43 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+# What the build configured; lit.cfg.py turns it into the suite's
+# substitutions and features.
+
+config.llvm_ver = "@LLVM_VERSION_MAJOR@"
+config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.llvm_libs_dir = "@LLVM_LIBRARY_DIR@"
+config.llvm_shlib_ext = "@CMAKE_SHARED_MODULE_SUFFIX@"
+config.llvm_targets_to_build = "@LLVM_TARGETS_TO_BUILD@"
+
+config.enzyme_src_root = "@ENZYME_SOURCE_DIR@"
+config.enzyme_obj_root = "@ENZYME_BINARY_DIR@"
+config.enzyme_clang_plugin = "@POSEIDON_ENZYME_PLUGIN@"
+config.enzyme_opt_plugin = "@POSEIDON_ENZYME_OPT_PLUGIN@"
+
+config.poseidon_src_root = "@POSEIDON_SOURCE_DIR@"
+config.poseidon_build_root = "@POSEIDON_BINARY_DIR@"
+config.poseidon_obj_root = "@CMAKE_CURRENT_BINARY_DIR@"
+config.poseidon_test_programs = "@POSEIDON_TEST_PROGRAM_DIR@"
+config.poseidon_cost_models = "@POSEIDON_TEST_COST_MODELS@"
+config.poseidon_herbie_binary = "@POSEIDON_HERBIE_BINARY_PATH@"
+# The Python poseidon-calibrate runs its CPU microbenchmark under.
+config.poseidon_calibrate_python = "@Python3_EXECUTABLE@"
+
+config.cmake = "@CMAKE_COMMAND@"
+# The directory under an installation's prefix its libraries go to.
+config.install_libdir = "@CMAKE_INSTALL_LIBDIR@"
+config.cmake_generator = "@CMAKE_GENERATOR@"
+config.cmake_make_program = "@CMAKE_MAKE_PROGRAM@"
+
+# The GPU runtimes of the build.
+config.poseidon_has_cuda = @POSEIDON_TEST_HAS_CUDA@
+config.poseidon_has_hip = @POSEIDON_TEST_HAS_HIP@
+config.poseidon_has_tcec = @POSEIDON_TEST_HAS_TCEC@
+config.gpu_arch = "@POSEIDON_TEST_GPU_ARCH@"
+config.cuda_lib_dir = "@CUDAToolkit_LIBRARY_DIR@"
+# What a program that links poseidon_gemm_cuda links besides it.
+config.poseidon_rt_link = "@POSEIDON_TEST_GEMM_LINK@"
+config.rocm_path = "@POSEIDON_ROCM_PATH@"
+config.amdgpu_arch = "@POSEIDON_AMDGPU_ARCH@"
+
+lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")

@@ -1,0 +1,1459 @@
+//===- Matmul.cpp - matmul candidate proposal -----------------------------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// Matmul candidate proposal: one proposer per (scheme, realization), run in a
+// fixed order by generateMatmulCandidates, with the labels, prices and
+// shared-memory preconditions of the candidates and the MatmulUnit methods.
+//
+//===----------------------------------------------------------------------===//
+
+#include "Core/Session.h"
+#include "MatmulInternal.h"
+#include "Model/CostModel.h"
+#include "Sites/SiteIdentity.h"
+#include "Solve/Explain.h"
+#include "Solve/Solve.h"
+#include "Support/Diagnostics.h"
+#include "Support/Utils.h"
+#include "Targets/Target.h"
+#include "runtime/gemm/SchemeConstants.h"
+
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <optional>
+#include <set>
+#include <string>
+#include <utility>
+
+using namespace llvm;
+
+namespace poseidon {
+
+static std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K) {
+  return ("m" + Twine(M) + "n" + Twine(N) + "k" + Twine(K)).str();
+}
+
+// Labels name candidates in logs, reports and DP cache keys, so their irregular
+// forms are kept: the library split drops its slice count, and the
+// cuBLAS-backed library calls drop their tile.
+std::string matmulOptionLabel(const MatmulCandidate &opt) {
+  const SchemeVariant &v = opt.variant;
+  const std::string formats = schemeFormats(v, '/');
+  const std::string wmma =
+      "wmma " + mmaShapeSuffix(opt.tileM, opt.tileN, opt.tileK);
+  switch (opt.realization) {
+  case Realization::InKernel:
+    switch (v.scheme) {
+    case Scheme::Direct:
+      return wmma + " " + formats;
+    case Scheme::Tcec:
+      return std::string(schemeTag(v)) + " " + schemeParameter(v) + " " + wmma +
+             " " + formats;
+    case Scheme::OzakiII:
+    case Scheme::Native:
+      break;
+    }
+    break;
+  case Realization::LibraryCall:
+    switch (v.scheme) {
+    case Scheme::OzakiII:
+      return std::string(schemeTag(v)) + " " + schemeParameter(v) + " " + wmma +
+             " " + formats;
+    case Scheme::Tcec:
+      return std::string(schemeTag(v)) + "-dispatch " + wmma + " " + formats;
+    case Scheme::Direct:
+      return std::string(schemeTag(v)) + "-dispatch cublas " + formats;
+    case Scheme::Native:
+      return std::string(schemeTag(v)) + " cublas " + formats;
+    }
+    break;
+  }
+  llvm_unreachable("a matrix-product candidate whose scheme has no such "
+                   "realization");
+}
+
+// The row is in the same unit as library_ozaki_rel (candidate wall clock /
+// scalar FP64 baseline wall clock):
+//     inkernel_rel,<class>,<rel>
+std::string inKernelCostClass(const SchemeVariant &v) {
+  switch (v.scheme) {
+  case Scheme::Direct:
+    return schemeFormats(v, '_');
+  case Scheme::Tcec:
+    return std::string(schemeTag(v)) + "_n" + std::to_string(sliceCount(v)) +
+           "_" + schemeFormats(v, '_');
+  case Scheme::OzakiII:
+  case Scheme::Native:
+    break;
+  }
+  llvm_unreachable("no in-kernel realization of this scheme");
+}
+
+// The first miss of `row` in a compilation warns that `what` `consequence`,
+// naming the row and the command that measures it. Strict mode makes the miss
+// an error.
+static Error reportRow(Session &S, const RecognizedMatmul &m, const Twine &what,
+                       StringRef row, StringRef measure,
+                       const Twine &consequence) {
+  if (S.Opts.Model.StrictMode)
+    return userError(anchorOf(m), "strict mode: " + what +
+                                      " has no measured '" + row + "' row in " +
+                                      costModelPath(S.get<CostModelState>()) +
+                                      "; " + measure + " measures it");
+  if (!S.get<MatmulState>().ReportedRows.insert(row).second)
+    return Error::success();
+  const Instruction &at = anchorOf(m);
+  diagnose(at,
+           "matrix product " + Twine(m.id) + ", " + Twine(m.M) + "x" +
+               Twine(m.N) + "x" + Twine(m.K) + ": " + what + " " + consequence +
+               ": this device's cost model carries no measured '" + row +
+               "' row; " + measure + " measures it",
+           DS_Warning);
+  return Error::success();
+}
+
+// The policy for a cost-model row a candidate's price needs and the model does
+// not carry: the candidate is not proposed, unless its pricing names an
+// estimate (see reportEstimatedRow).
+static Error reportMissingRow(Session &S, const RecognizedMatmul &m,
+                              const Twine &what, StringRef row,
+                              StringRef measure) {
+  return reportRow(S, m, what, row, measure, "is not proposed");
+}
+
+// A candidate priced from another row than its own, as the estimate `how`
+// says, until its row is measured.
+static Error reportEstimatedRow(Session &S, const RecognizedMatmul &m,
+                                const Twine &what, StringRef row,
+                                StringRef measure, const Twine &how) {
+  return reportRow(S, m, what, row, measure, "is priced " + how);
+}
+
+// The measured rows a matrix-product candidate is priced from, each the
+// candidate's wall clock over the scalar FP64 loop's, and the shape each is
+// read at:
+//   inkernel_rel,<class>_m<M>n<N>k<K>_<layout>
+//       An in-kernel raise of a product whose extents are constants of the
+//       compile (inKernelShape), measured at them with B's layout along K:
+//       bcolmajor contiguous, browmajor strided.
+//   inkernel_rel,<class>
+//       An in-kernel raise of a product whose output extents are run-time
+//       values, and the estimate of a missing row of the form above. Measured
+//       on a square product at the calibration's --n (2048 by default), B
+//       strided along K, whose launch saturates the device; a product with
+//       few output columns or with B contiguous along K does not run at the
+//       rate it gives.
+//   library_ozaki_rect_rel,nm<k>_m<M>n<N>k<K> and ,dgemm_m<M>n<N>k<K>
+//       A library call of constant extents (LibrarySite::runShape), measured
+//       at them.
+//   library_ozaki_rect_rel,nm<k>_m<M>k<K>
+//       (M, K) of RecognizedMatmul::profileShape, for a library call whose
+//       extents are run-time values; measured at many columns.
+//   library_ozaki_rel,nm<k> and ,dgemm
+//       A square, read as they are, and for a square runShape. The estimate of
+//       a missing rectangular Ozaki-II row multiplies the square row by the
+//       padding of profileShape (squarePaddingRatio), that of a missing
+//       native DGEMM row is the square row.
+//   library_tcec_rel,fp16tcec and library_direct_rel,<class>
+//       Every shape.
+// The command that measures a device's cost model; the rows of the extents of
+// one product also take --product MxNxK[:layout], and the (M, K) rows
+// --ozaki-rect MxK.
+constexpr StringLiteral kCalibrate = "poseidon-calibrate --gpu <id>";
+
+// Layouts of B along the reduction, as the exact in-kernel rows name them.
+constexpr StringLiteral kBColMajor = "bcolmajor", kBRowMajor = "browmajor";
+
+namespace {
+// The extents an in-kernel raise runs at and the layout of its B, which key
+// its exact rows.
+struct InKernelShape {
+  unsigned M, N, K;
+  StringRef layout;
+  // "m<M>n<N>k<K>_<layout>".
+  std::string key() const {
+    return ("m" + Twine(M) + "n" + Twine(N) + "k" + Twine(K) + "_" + layout)
+        .str();
+  }
+  // The --product argument that measures its rows.
+  std::string product() const {
+    return (Twine(M) + "x" + Twine(N) + "x" + Twine(K) + ":" + layout).str();
+  }
+};
+} // namespace
+
+// The shape of the scalar-loop product `m` at the reduction length of the
+// compile, its output extents as constantOutputExtents gives them from the
+// guards before the loop; none when they are run-time values.
+static std::optional<InKernelShape> inKernelShape(const RecognizedMatmul &m) {
+  const ScalarLoopHandle &h = m.scalarLoop();
+  std::optional<unsigned> axM = tidAxisIndex(h.aRow.fast),
+                          axN = tidAxisIndex(h.bCol.fast);
+  if (!axM || !axN || *axM == *axN)
+    return std::nullopt;
+  std::optional<OutputExtents> out =
+      constantOutputExtents(m, h.loopGuard, *axM, *axN);
+  if (!out)
+    return std::nullopt;
+  // A steps by one element along the reduction.
+  const StringRef layout =
+      h.bStrideByte == h.aStrideByte ? kBColMajor : kBRowMajor;
+  return InKernelShape{out->M, out->Ncols, m.K, layout};
+}
+
+// Price one in-kernel raise of class `cls` from its measured row: the row of
+// `shape` when the product has one, the class row otherwise. A missing row of
+// `shape` is estimated by the class row, and `cls` added to `estimated`. A
+// price composed from per-MMA rows would omit the cooperative fill, the
+// shared-memory staging and the accumulator traffic.
+static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
+    Session &S, const RecognizedMatmul &m, const std::string &cls,
+    const std::optional<InKernelShape> &shape, double baselinePerMac,
+    StringRef what, SmallVectorImpl<std::string> &estimated) {
+  const Options &O = S.Opts;
+  CostModelState &CM = S.get<CostModelState>();
+  if (shape)
+    if (std::optional<double> rel =
+            lookupCost(CM, "inkernel_rel", cls + "_" + shape->key()))
+      return std::optional<double>(baselinePerMac * *rel);
+  if (std::optional<double> rel = lookupCost(CM, "inkernel_rel", cls)) {
+    if (shape)
+      estimated.push_back(cls);
+    return std::optional<double>(baselinePerMac * *rel);
+  }
+
+  if (O.Matmul.Calibration) {
+    if (O.Solver.Pin.empty())
+      return userError(anchorOf(m),
+                       "-poseidon-matmul-calibration requires -poseidon-pin, "
+                       "since it proposes uncalibrated in-kernel classes at a "
+                       "placeholder price no solve may see");
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] calibration mode: " << what
+                   << " has no measured inkernel_rel," << cls
+                   << " row; proposing it at rel=1 to be timed\n";
+    return std::optional<double>(baselinePerMac);
+  }
+  if (Error E = reportMissingRow(S, m, what, "inkernel_rel," + cls, kCalibrate))
+    return std::move(E);
+  return std::optional<double>();
+}
+
+// The tiles poseidon-calibrate measures, so that a missing row is always one
+// it can produce.
+static constexpr InKernelTile kInKernelTiles[] = {
+    {16, 16, 16, NumberFormat::FP16, NumberFormat::FP16},
+    {16, 16, 16, NumberFormat::FP16, NumberFormat::FP32},
+    {16, 16, 16, NumberFormat::BF16, NumberFormat::FP32},
+    {16, 16, 8, NumberFormat::TF32, NumberFormat::FP32},
+    {8, 8, 4, NumberFormat::FP64, NumberFormat::FP64},
+};
+
+// The tensor-core tiles the cost model has an MMA row for; a tile without one
+// is not proposed.
+static Expected<const SmallVector<InKernelTile, 16> *>
+getAvailableWmmaTargets(Session &S, const RecognizedMatmul &m) {
+  std::optional<SmallVector<InKernelTile, 16>> &available =
+      S.get<MatmulState>().AvailableWmmaTargets;
+  if (!available) {
+    SmallVector<InKernelTile, 16> result;
+    const auto &model = getCostModel(S.get<CostModelState>());
+    for (const InKernelTile &t : kInKernelTiles) {
+      std::string opcode = "wmma_mma_" + mmaShapeSuffix(t.M, t.N, t.K);
+      std::string prec =
+          std::string(dtypeName(t.operand)) + "_" + dtypeName(t.accumulator);
+      if (model.find({opcode, prec}) != model.end())
+        result.push_back(t);
+      else if (Error E = reportMissingRow(S, m,
+                                          "the wmma " +
+                                              mmaShapeSuffix(t.M, t.N, t.K) +
+                                              " " + prec + " tile",
+                                          opcode + "," + prec, kCalibrate))
+        return std::move(E);
+    }
+    available = std::move(result);
+  }
+  return &*available;
+}
+
+// Static shared-memory preconditions at proposal time: a module whose kernel
+// exceeds Target::maxStaticSharedBytes is rejected whole, so a candidate whose
+// scratch does not fit is not proposed.
+//
+// Bytes of shared globals already live alongside a raise placed in `F`: the
+// max over the kernels that call F, or the module-wide sum when no enclosing
+// kernel is found.
+static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
+  Module *mod = F.getParent();
+  const Target &T = Target::of(*mod);
+  const DataLayout &DL = mod->getDataLayout();
+  // Only the shared globals co-resident with this raise count, so take the max
+  // over the enclosing kernels rather than a module-wide sum: another kernel
+  // of the module does not share this one's shared memory.
+  auto sizeOfSet = [&](const SetVector<const GlobalVariable *> &s) {
+    uint64_t b = 0;
+    for (const GlobalVariable *GV : s)
+      b += DL.getTypeAllocSize(GV->getValueType()).getFixedValue();
+    return b;
+  };
+  uint64_t bytes = 0;
+  const SetVector<const GlobalVariable *> own = T.staticSharedOf(F);
+  // The kernels call the body the site clone was cut from.
+  const Function *origFn = siteOriginOf(S.get<SiteRecords>(), F);
+  if (!origFn)
+    origFn = &F;
+  bool sawKernel = false;
+  for (const User *U : origFn->users())
+    if (auto *CB = dyn_cast<CallBase>(U))
+      if (const Function *K = CB->getFunction())
+        if (T.isKernel(*K)) {
+          SetVector<const GlobalVariable *> s = T.staticSharedOf(*K);
+          s.insert(own.begin(), own.end());
+          bytes = std::max(bytes, sizeOfSet(s));
+          sawKernel = true;
+        }
+  if (!sawKernel) {
+    // Module-wide sum, the conservative direction, even though a tighter answer
+    // is available when F is itself the kernel.
+    for (GlobalVariable &G : mod->globals())
+      if (T.isShared(G) && G.getValueType()->isSized())
+        bytes += DL.getTypeAllocSize(G.getValueType()).getFixedValue();
+  }
+  return bytes;
+}
+
+// Bytes of new static shared scratch an in-kernel raise of `opt` allocates
+// (0 for a library call), per inKernelLayout. `breakdown` receives the term
+// list for the refusal.
+static uint64_t inKernelRaiseSharedBytes(Module &M, const RecognizedMatmul &m,
+                                         const MatmulCandidate &opt,
+                                         std::string *breakdown) {
+  if (opt.realization == Realization::LibraryCall)
+    return 0;
+  const DataLayout &DL = M.getDataLayout();
+  LLVMContext &ctx = M.getContext();
+  auto bytesOf = [&](NumberFormat k) -> uint64_t {
+    return DL.getTypeAllocSize(storageTypeOf(ctx, k)).getFixedValue();
+  };
+  const InKernelLayout L = inKernelLayout(m, opt);
+  const SchemeVariant &v = opt.variant;
+  const uint64_t a = L.aElts() * bytesOf(v.operand),
+                 b = L.bElts() * bytesOf(v.operand),
+                 d = L.dElts() * bytesOf(v.accumulator);
+  if (breakdown) {
+    const std::string tile = (Twine(L.mPad) + "x" + Twine(L.nPad)).str();
+    if (v.scheme == Scheme::Tcec)
+      *breakdown =
+          (Twine(L.slices) + " slices x " + Twine(a + b + d) + " B (A " +
+           Twine(a) + " + B " + Twine(b) + " + D " + dtypeName(v.accumulator) +
+           " " + Twine(d) + ", " + tile + " output tile)")
+              .str();
+    else
+      *breakdown =
+          (Twine(d) + " B D tile (" + tile + " " + dtypeName(v.accumulator) +
+           ") + " + Twine(a) + " B A tile + " + Twine(b) + " B B tile")
+              .str();
+  }
+  return L.slices * (a + b + d);
+}
+
+// Shared refusal for every in-kernel class. Returns true when the raise fits.
+static bool inKernelRaiseFits(const Options &O, Function &F,
+                              const RecognizedMatmul &m,
+                              const MatmulCandidate &opt,
+                              uint64_t existingBytes, StringRef className) {
+  std::string breakdown;
+  uint64_t raiseBytes =
+      inKernelRaiseSharedBytes(*F.getParent(), m, opt, &breakdown);
+  if (raiseBytes == 0)
+    return true;
+  uint64_t total = existingBytes + raiseBytes;
+  const uint64_t cap = Target::of(F).maxStaticSharedBytes();
+  if (total <= cap)
+    return true;
+  if (O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] matmul[" << m.id << "] " << m.M << 'x' << m.N
+                 << 'x' << m.K << ": " << className
+                 << " not proposed: it needs " << total
+                 << " B of static shared memory against a " << cap << " B cap ("
+                 << existingBytes
+                 << " B already live in the enclosing kernel + " << raiseBytes
+                 << " B for the raise: " << breakdown << ")\n";
+  return false;
+}
+
+namespace {
+struct Product {
+  Session &S;
+  const RecognizedMatmul &m;
+  // The product's own per-MAC cost: the cost-model rows are ratios to it.
+  double baselinePerMac;
+};
+} // namespace
+
+// The accuracy model is asked what the scheme computes, whichever code
+// realizes it; only the reorder charge reads the realized tile, and the split
+// library call, which scales its operands before it splits them, has its own
+// simulation.
+static MatmulAccuracyQuery accuracyQuery(const RecognizedMatmul &m,
+                                         const MatmulCandidate &opt) {
+  const SchemeVariant &v = opt.variant;
+  MatmulAccuracyQuery q;
+  switch (v.scheme) {
+  case Scheme::Direct:
+    // A product in the source formats is exact to the rounding model, so its
+    // tile's accumulation order is charged through orderTileK; otherwise it
+    // prices as zero error and enters the budget-0 solution.
+    q.inputPrec = v.operand;
+    q.accPrec = v.accumulator;
+    if (v.operand == m.elemType && v.accumulator == m.elemType)
+      q.orderTileK = opt.tileK;
+    return q;
+  case Scheme::Tcec:
+    if (opt.realization == Realization::LibraryCall) {
+      q.model = MatmulAccuracyQuery::Model::TcecLibrary;
+      return q;
+    }
+    q.inputPrec = NumberFormat::FP32;
+    q.accPrec = NumberFormat::FP32;
+    q.exponentPrec = v.operand;
+    q.inputMantBits = splitCapturedBits(v);
+    return q;
+  case Scheme::OzakiII:
+    q.model = MatmulAccuracyQuery::Model::OzakiII;
+    q.moduli = modulusCount(v);
+    return q;
+  case Scheme::Native:
+    // Full FP64 but not the scalar chain's accumulation order, so the reorder
+    // is priced through orderTileK instead of claiming exact zero.
+    q.inputPrec = v.operand;
+    q.accPrec = v.accumulator;
+    q.orderTileK = opt.tileK;
+    return q;
+  }
+  llvm_unreachable("unknown Scheme");
+}
+
+static Expected<bool> wmmaTileAvailable(Session &S, const RecognizedMatmul &m,
+                                        unsigned M, unsigned N, unsigned K,
+                                        NumberFormat operand,
+                                        NumberFormat accumulator) {
+  Expected<const SmallVector<InKernelTile, 16> *> targets =
+      getAvailableWmmaTargets(S, m);
+  if (!targets)
+    return targets.takeError();
+  return llvm::any_of(**targets, [&](const InKernelTile &wt) {
+    return wt.M == M && wt.N == N && wt.K == K && wt.operand == operand &&
+           wt.accumulator == accumulator;
+  });
+}
+
+//===----------------------------------------------------------------------===//
+// In-kernel realization. Only a constant-trip product has one: the raise needs
+// compile-time tile extents. It allocates addrspace(3) scratch in the body, so
+// the enclosing kernel's static shared budget is a precondition, and it is
+// priced from the measured inkernel_rel row of its class at its shape,
+// with no shape ratio on top.
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct InKernelSite {
+  Function *raiseF = nullptr;
+  uint64_t existingShmem = 0;
+  std::optional<InKernelShape> shape;
+};
+} // namespace
+
+// Whether every thread of the block reaches the call of the site exactly once,
+// as the block barriers the raise puts inside the site need: the call
+// post-dominates its kernel's entry and lies in no loop.
+static bool siteReachedByWholeBlock(const Session &S,
+                                    const RecognizedMatmul &m) {
+  const Function &F = *m.scalarLoop().fma->getFunction();
+  const CallBase *site = siteCallOf(S, F);
+  if (site) {
+    Function &kernel = *const_cast<Function *>(site->getFunction());
+    DominatorTree DT(kernel);
+    LoopInfo LI(DT);
+    PostDominatorTree PDT(kernel);
+    const BasicBlock *BB = site->getParent();
+    if (!LI.getLoopFor(BB) && PDT.dominates(BB, &kernel.getEntryBlock()))
+      return true;
+  }
+  if (S.Opts.Diagnostics.Print)
+    llvm::errs() << "[poseidon] " << F.getName()
+                 << ": not every thread of the block reaches the site in "
+                 << (site ? site->getFunction()->getName() : "its kernel")
+                 << " once, so it has no in-kernel raise\n";
+  return false;
+}
+
+static InKernelSite inKernelSite(const Session &S, const RecognizedMatmul &m) {
+  InKernelSite K;
+  K.raiseF = m.scalarLoop().fma->getFunction();
+  K.existingShmem = enclosingKernelSharedBytes(S, *K.raiseF);
+  K.shape = inKernelShape(m);
+  return K;
+}
+
+static std::string inKernelDescription(const SchemeVariant &v, unsigned tileM,
+                                       unsigned tileN, unsigned tileK) {
+  const std::string tile =
+      mmaShapeSuffix(tileM, tileN, tileK) + " " + schemeFormats(v, '/');
+  switch (v.scheme) {
+  case Scheme::Direct:
+    return "in-kernel direct raise " + tile;
+  case Scheme::Tcec:
+    return "in-kernel TCEC " + schemeParameter(v) + " " + tile;
+  case Scheme::OzakiII:
+  case Scheme::Native:
+    break;
+  }
+  llvm_unreachable("no in-kernel realization of this scheme");
+}
+
+static Error proposeInKernel(const Product &P, const InKernelSite &K,
+                             const SchemeVariant &v, unsigned tileM,
+                             unsigned tileN, unsigned tileK, MatmulUnit &cm,
+                             SmallVectorImpl<std::string> &estimated) {
+  const RecognizedMatmul &m = P.m;
+  MatmulCandidate opt;
+  opt.tileM = tileM;
+  opt.tileN = tileN;
+  opt.tileK = tileK;
+  opt.variant = v;
+  opt.realization = Realization::InKernel;
+  const std::string what = inKernelDescription(v, tileM, tileN, tileK);
+
+  // Buildability before price: a shape whose tiles do not fit the static
+  // shared cap is rejected by ptxas for the whole module.
+  if (!inKernelRaiseFits(P.S.Opts, *K.raiseF, m, opt, K.existingShmem, what))
+    return Error::success();
+  // A class without a row is refused, not estimated.
+  Expected<std::optional<double>> cost = priceInKernelRaiseFromMeasuredRow(
+      P.S, m, inKernelCostClass(v), K.shape, P.baselinePerMac, what, estimated);
+  if (!cost)
+    return cost.takeError();
+  if (!*cost)
+    return Error::success();
+  opt.compCost = **cost;
+  cm.candidates.push_back(opt);
+  return Error::success();
+}
+
+// A scheme variant an in-kernel raise realizes, at a tensor-core tile.
+struct InKernelVariant {
+  unsigned tileM, tileN, tileK;
+  SchemeVariant variant;
+};
+
+// The split scheme in the kernel: operands are split into N narrow slices,
+// an N(N+1)/2-mma chain accumulates the cross products into F32 groups
+// d[i+j], and the readback combines them as sum_w d[w]/SCALE^w. The F32
+// accumulator rounds the K-sum, so the family is capped at F32-class accuracy
+// regardless of N.
+static constexpr InKernelVariant kInKernelSplitVariants[] = {
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 3)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 5)},
+    {16, 16, 16,
+     SchemeVariant::tcec(NumberFormat::BF16, NumberFormat::FP32, 2)},
+    {16, 16, 8, SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, 2)},
+    {16, 16, 8, SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, 3)},
+    {16, 16, 8, SchemeVariant::tcec(NumberFormat::TF32, NumberFormat::FP32, 5)},
+    // Integer slices (s8) are intentionally not proposed: in-kernel they have
+    // the same structural slowdown as an in-kernel modular product, and the
+    // modular library calls cover their range.
+};
+
+// Every in-kernel class whose tile the cost model has an MMA row for: the
+// direct raise of each tile, then the split variants, with one warning for the
+// classes whose row at the product's shape is estimated by the class row. The
+// split needs no size gate: the padded fill zero-fills boundary tiles and every
+// slice outside the valid extent, so padding is numerically inert. Its one
+// precondition is the static shared cap (N slice buffers per side plus N F32
+// tiles live at once), a capability limit rather than a price.
+static Error proposeInKernelRaises(const Product &P, const InKernelSite &K,
+                                   MatmulUnit &cm) {
+  SmallVector<InKernelVariant> variants;
+  for (const InKernelTile &t : kInKernelTiles)
+    variants.push_back(
+        {t.M, t.N, t.K, SchemeVariant::direct(t.operand, t.accumulator)});
+  append_range(variants, kInKernelSplitVariants);
+  SmallVector<std::string, 16> estimated;
+  for (const InKernelVariant &s : variants) {
+    Expected<bool> available =
+        wmmaTileAvailable(P.S, P.m, s.tileM, s.tileN, s.tileK,
+                          s.variant.operand, s.variant.accumulator);
+    if (!available)
+      return available.takeError();
+    if (!*available)
+      continue;
+    if (Error E = proposeInKernel(P, K, s.variant, s.tileM, s.tileN, s.tileK,
+                                  cm, estimated))
+      return E;
+  }
+  if (estimated.empty())
+    return Error::success();
+  return reportEstimatedRow(
+      P.S, P.m, "in-kernel raise as " + join(estimated, ", "),
+      "inkernel_rel,<class>_" + K.shape->key(),
+      std::string(kCalibrate) + " --product " + K.shape->product(),
+      "from the row of its class");
+}
+
+//===----------------------------------------------------------------------===//
+// Library-call realization, proposed under -poseidon-matmul-library-calls. The
+// body must be a GEMM the runtime can take over (recognition already
+// established it for a runtime-shape product). Each scheme is priced from
+// `baselinePerMac` times its measured library_*_rel row, times the shape rule
+// the scheme's runtime needs to extrapolate that row to this shape.
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct LibrarySite {
+  // The library call's descriptor; none when no library call can take the
+  // place of the product.
+  std::optional<GemmBodyNote> note;
+  // The M x Ncols x K the call runs at, when all three are constants of this
+  // compile (a scalar-loop product's descriptor). The rows each shape reads
+  // are listed above kCalibrate.
+  std::optional<std::array<unsigned, 3>> runShape;
+};
+} // namespace
+
+static Expected<LibrarySite> librarySite(Session &S,
+                                         const RecognizedMatmul &m) {
+  LibrarySite L;
+  Expected<std::optional<GemmBodyNote>> found = libraryCallNote(S, m);
+  if (!found)
+    return found.takeError();
+  L.note = std::move(*found);
+  const std::optional<GemmBodyNote> &note = L.note;
+  if (S.Opts.Diagnostics.Print && !note)
+    llvm::errs() << "[poseidon] matmul[" << m.id << "] " << m.M << 'x' << m.N
+                 << 'x' << m.K
+                 << ": library-call Ozaki-II not proposed: the body "
+                    "is not a library-call GEMM\n";
+  if (note && m.isConstantShape())
+    L.runShape = {(unsigned)note->dims[DimM].add,
+                  (unsigned)note->dims[DimNcols].add,
+                  (unsigned)note->dims[DimK].add};
+  return L;
+}
+
+static MatmulCandidate libraryOption(const SchemeVariant &v, unsigned tileM,
+                                     unsigned tileN, unsigned tileK) {
+  MatmulCandidate opt;
+  opt.tileM = tileM;
+  opt.tileN = tileN;
+  opt.tileK = tileK;
+  opt.variant = v;
+  opt.realization = Realization::LibraryCall;
+  return opt;
+}
+
+namespace {
+// The rows a library call is priced from: its own, and, for a call at a shape
+// that row was not measured at, the square row whose ratio times `padding`
+// estimates it.
+struct LibraryRows {
+  std::string family, key;
+  std::optional<std::pair<std::string, std::string>> square;
+  double padding = 1.0;
+};
+// How proposeLibraryCall priced a call.
+enum class LibraryPrice { Measured, Estimated, Missing };
+} // namespace
+
+// Proposes the library call of `v`, whose runtime accumulates in the tile
+// `tileM` x `tileN` x `tileK`, priced from `rows`; Missing, and not proposed,
+// when the cost model carries none of them.
+static LibraryPrice proposeLibraryCall(const Product &P, MatmulUnit &cm,
+                                       const SchemeVariant &v, unsigned tileM,
+                                       unsigned tileN, unsigned tileK,
+                                       const LibraryRows &rows) {
+  CostModelState &CM = P.S.get<CostModelState>();
+  LibraryPrice how = LibraryPrice::Measured;
+  std::optional<double> rel = lookupCost(CM, rows.family, rows.key);
+  if (!rel && rows.square) {
+    rel = lookupCost(CM, rows.square->first, rows.square->second);
+    if (rel) {
+      *rel *= rows.padding;
+      how = LibraryPrice::Estimated;
+    }
+  }
+  if (!rel)
+    return LibraryPrice::Missing;
+  MatmulCandidate opt = libraryOption(v, tileM, tileN, tileK);
+  opt.compCost = P.baselinePerMac * *rel;
+  cm.candidates.push_back(opt);
+  return how;
+}
+
+// S^3 / (M*N*K) for S = max(M, N, K), at the profiled extents (1 when the
+// profile has none): the MACs of the smallest square a product embeds in, per
+// MAC of the product.
+static double squarePaddingRatio(const RecognizedMatmul &m) {
+  const double M = m.globalM, N = m.globalN, K = m.globalK;
+  if (!M || !N || !K)
+    return 1.0;
+  const double S = std::max({M, N, K});
+  return (S * S * S) / (M * N * K);
+}
+
+// A rectangular product is priced from the rows measured at its shape: all
+// three extents for a call of constant extents, (M, K) for one whose column
+// count is a run-time extent; a square one from the square rows. The shape is
+// the one LibrarySite gives Ozaki-II. A rectangular product whose row is
+// missing is priced as the square product it embeds in: the square row times
+// the padding ratio, an estimate meant to err dear, so that the missing row
+// costs picks rather than admitting one the measured row would refuse. A
+// modulus count with neither row is not proposed.
+static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
+                                   MatmulUnit &cm) {
+  const RecognizedMatmul &m = P.m;
+  // The runtime's INT32 residue sums hold a reduction shorter than
+  // kOzakiIIMaxK, at the scale the call runs at and at the one simulated.
+  const unsigned reduction =
+      std::max({L.runShape ? (*L.runShape)[2] : 0u, m.profileShape()[2], m.K});
+  if (reduction >= (unsigned)kOzakiIIMaxK) {
+    if (P.S.Opts.Diagnostics.Print)
+      llvm::errs() << "[poseidon] matmul[" << m.id
+                   << "] ozaki-ii not proposed: its "
+                   << "reduction of " << reduction
+                   << " is not below the runtime's limit " << kOzakiIIMaxK
+                   << '\n';
+    return Error::success();
+  }
+  const std::array<unsigned, 3> shape =
+      L.runShape ? *L.runShape : m.profileShape();
+  const bool square = shape[0] == shape[1] && shape[1] == shape[2];
+  // A call of constant extents is keyed by all three, as it is measured at
+  // them; one whose column count is a run-time extent by (M, K), whose rows
+  // are measured at many columns.
+  const std::string shapeM = std::to_string(shape[0]),
+                    shapeN = std::to_string(shape[1]),
+                    shapeK = std::to_string(shape[2]);
+  const std::string shapeKey = L.runShape
+                                   ? "m" + shapeM + "n" + shapeN + "k" + shapeK
+                                   : "m" + shapeM + "k" + shapeK;
+  const std::string family =
+      square ? "library_ozaki_rel" : "library_ozaki_rect_rel";
+  const double padding = squarePaddingRatio(m);
+  std::string missing, estimated;
+  for (unsigned nm : kOzakiIIModuliCounts) {
+    const std::string squareKey = "nm" + std::to_string(nm);
+    LibraryRows rows{family, squareKey};
+    if (!square)
+      rows = {family, squareKey + "_" + shapeKey,
+              std::make_pair("library_ozaki_rel", squareKey), padding};
+    const LibraryPrice how =
+        proposeLibraryCall(P, cm, SchemeVariant::ozakiII(nm), kOzakiIIPadTile,
+                           kOzakiIIPadTile, kOzakiIIPadTile, rows);
+    if (how == LibraryPrice::Measured)
+      continue;
+    std::string &list = how == LibraryPrice::Estimated ? estimated : missing;
+    list += (list.empty() ? "" : ", ") + std::to_string(nm);
+  }
+  // One row name for all the moduli of the shape.
+  const std::string rows =
+      family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey);
+  std::string measure(kCalibrate);
+  if (L.runShape && !square)
+    measure += " --product " + shapeM + "x" + shapeN + "x" + shapeK;
+  else if (!square)
+    measure += " --ozaki-rect " + shapeM + "x" + shapeK;
+  if (!estimated.empty())
+    if (Error E = reportEstimatedRow(
+            P.S, m, "ozaki-ii library call at nm=" + estimated, rows, measure,
+            "as the square product it embeds in (the square row times " +
+                formatv("{0:F2}", padding) + ")"))
+      return E;
+  if (!missing.empty())
+    return reportMissingRow(P.S, m, "ozaki-ii library call at nm=" + missing,
+                            rows, measure);
+  return Error::success();
+}
+
+// The split scheme as __poseidon_tcec_dgemm, which realizes a different rate
+// than the in-kernel raise and so is a distinct candidate. Absent its measured
+// library_tcec_rel row it is not proposed, and in a build without cuMpSGEMM,
+// which has no such runtime, a pin that names it is told why. The runtime
+// repacks operands rather than padding to a square, so no shape ratio is
+// charged.
+static Error proposeLibrarySplit(const Product &P, MatmulUnit &cm) {
+  const SchemeVariant v =
+      SchemeVariant::tcec(NumberFormat::FP16, NumberFormat::FP32, 2);
+  if (!kHaveTcecRuntime) {
+    if (P.S.Opts.Diagnostics.Print &&
+        !std::exchange(P.S.get<MatmulState>().ReportedNoTcecRuntime, true))
+      llvm::errs()
+          << "[poseidon] matmul[" << P.m.id << "] " << P.m.M << 'x' << P.m.N
+          << 'x' << P.m.K
+          << ": TCEC library call not proposed: this build has no TCEC "
+             "runtime; configure it with "
+             "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>\n";
+    cm.dropped.push_back(
+        {matmulOptionLabel(libraryOption(v, 16, 16, 16)),
+         "this compiler was built without cuMpSGEMM, on which the "
+         "error-corrected library call runs; configure it with "
+         "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>"});
+    return Error::success();
+  }
+  if (proposeLibraryCall(P, cm, v, 16, 16, 16,
+                         {"library_tcec_rel", "fp16tcec"}) ==
+      LibraryPrice::Missing)
+    return reportMissingRow(P.S, P.m, "tcec library call",
+                            "library_tcec_rel,fp16tcec", kCalibrate);
+  return Error::success();
+}
+
+// The direct scheme as __poseidon_direct_dgemm: each FP64 operand is rounded
+// once to the library's input format and one library GEMM accumulates in FP32
+// (runtime/gemm/Direct.cu). Same numerics as the in-kernel raise up to
+// accumulation order, but a distinct realized rate. Priced only from this
+// device's measured library_direct_rel,<class> row; absent the row it is not
+// proposed. The runtime repacks operands rather than padding to a square, so
+// no shape ratio is charged.
+//
+// f32/f32 is cuBLAS's SGEMM, reached by changing the compute type alone; it
+// does not run on tensor cores and has no MMA tile, so its tile triple is 0.
+struct LibraryDirectVariant {
+  SchemeVariant variant;
+  unsigned tileM, tileN, tileK;
+};
+static constexpr LibraryDirectVariant kLibraryDirectVariants[] = {
+    {SchemeVariant::direct(NumberFormat::FP16, NumberFormat::FP32), 16, 16, 16},
+    {SchemeVariant::direct(NumberFormat::BF16, NumberFormat::FP32), 16, 16, 16},
+    {SchemeVariant::direct(NumberFormat::TF32, NumberFormat::FP32), 16, 16, 8},
+    {SchemeVariant::direct(NumberFormat::FP32, NumberFormat::FP32), 0, 0, 0},
+};
+
+static Error proposeLibraryDirect(const Product &P, MatmulUnit &cm) {
+  for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
+    const std::string cls = schemeFormats(d.variant, '_');
+    if (proposeLibraryCall(P, cm, d.variant, d.tileM, d.tileN, d.tileK,
+                           {"library_direct_rel", cls}) !=
+        LibraryPrice::Missing)
+      continue;
+    if (Error E = reportMissingRow(
+            P.S, P.m, Twine(schemeTag(d.variant)) + " " + cls + " library call",
+            "library_direct_rel," + cls, kCalibrate))
+      return E;
+  }
+  return Error::success();
+}
+
+// The native product (__poseidon_native_dgemm), one cublasDgemm on the real
+// M x Ncols x K for every layout combination. Its per-MAC rate depends on the
+// shape, so a call whose extents are constants of this compile is priced from
+// the row measured at those extents when the model has one; any other from
+// the square row (see LibrarySite). The square row is not an upper bound for a
+// rectangular call, whose per-MAC rate is usually worse, so the warning names
+// the row that replaces the estimate.
+static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
+                                  MatmulUnit &cm) {
+  const RecognizedMatmul &m = P.m;
+  // Extents of this compile are priced from the row measured at them, a
+  // square one also from the square row.
+  const unsigned M = L.runShape ? (*L.runShape)[0] : 0,
+                 N = L.runShape ? (*L.runShape)[1] : 0,
+                 K = L.runShape ? (*L.runShape)[2] : 0;
+  const std::string shape =
+      std::to_string(M) + "x" + std::to_string(N) + "x" + std::to_string(K);
+  const std::string rectKey = "dgemm_m" + std::to_string(M) + "n" +
+                              std::to_string(N) + "k" + std::to_string(K);
+  LibraryRows rows{"library_ozaki_rel", "dgemm"};
+  if (L.runShape)
+    rows = {"library_ozaki_rect_rel", rectKey,
+            std::make_pair("library_ozaki_rel", "dgemm")};
+  const bool rectangular = L.runShape && !(M == N && N == K);
+  switch (
+      proposeLibraryCall(P, cm, SchemeVariant::native(), 16, 16, 16, rows)) {
+  case LibraryPrice::Measured:
+    return Error::success();
+  case LibraryPrice::Estimated:
+    if (!rectangular)
+      return Error::success();
+    return reportEstimatedRow(P.S, m, "native-dgemm library call at " + shape,
+                              "library_ozaki_rect_rel," + rectKey,
+                              std::string(kCalibrate) + " --product " + shape,
+                              "from the square 'library_ozaki_rel,dgemm' row");
+  case LibraryPrice::Missing:
+    return reportMissingRow(P.S, m, "native-dgemm library call",
+                            "library_ozaki_rel,dgemm", kCalibrate);
+  }
+  llvm_unreachable("a library call is measured, estimated or missing");
+}
+
+//===----------------------------------------------------------------------===//
+// The smallest operand a product keeps. A library or matrix unit may read an
+// operand of a narrow format below some magnitude as zero, which the format's
+// gradual underflow does not say; the *_operand_min row of a class measures it
+// on the device.
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// The *_operand_min row that measures a candidate's class.
+struct OperandMinRow {
+  StringRef family;
+  std::string cls;
+  std::string row() const { return (family + "," + cls).str(); }
+};
+} // namespace
+
+/// None for a class whose operands are FP32 or wider.
+static std::optional<OperandMinRow> operandMinRow(const MatmulCandidate &opt) {
+  const SchemeVariant &v = opt.variant;
+  if (v.operand != NumberFormat::FP16 && v.operand != NumberFormat::BF16 &&
+      v.operand != NumberFormat::TF32)
+    return std::nullopt;
+  if (opt.realization == Realization::InKernel)
+    return OperandMinRow{"inkernel_operand_min", inKernelCostClass(v)};
+  if (v.scheme == Scheme::Tcec)
+    return OperandMinRow{"library_tcec_operand_min", "fp16tcec"};
+  return OperandMinRow{"library_direct_operand_min", schemeFormats(v, '_')};
+}
+
+static bool hasOperandMinRows(CostModelState &CM) {
+  return any_of(getCostModel(CM), [](const auto &Row) {
+    return isOperandMinFamily(Row.first.first);
+  });
+}
+
+/// The smallest operand magnitude the device's product of the candidate's
+/// class keeps, from the class's *_operand_min row: 0 when that is the operand
+/// format's smallest subnormal, or when the format is FP32 or wider. When
+/// `someMeasured`, the model measured the floors of some classes; without the
+/// candidate's it has no ground for the format's subnormals, which a device
+/// that flushes them makes wrong, so the result is none and the candidate is
+/// not proposed, as one without its cost row is not. Otherwise a missing row
+/// is read as gradual underflow, which -poseidon-print says.
+static Expected<std::optional<double>> operandMin(Session &S,
+                                                  const RecognizedMatmul &m,
+                                                  const MatmulCandidate &opt,
+                                                  bool someMeasured) {
+  std::optional<OperandMinRow> r = operandMinRow(opt);
+  if (!r)
+    return std::optional<double>(0.0);
+  const NumberFormat operand = opt.variant.operand;
+  const double subnormal = minSubnormalOf(operand);
+  std::optional<double> floor =
+      lookupCost(S.get<CostModelState>(), r->family, r->cls);
+  if (floor)
+    return std::optional<double>(*floor > subnormal ? *floor : 0.0);
+  if (someMeasured) {
+    if (Error E =
+            reportMissingRow(S, m, matmulOptionLabel(opt), r->row(),
+                             std::string(kCalibrate) + " --only operand-min"))
+      return std::move(E);
+    return std::optional<double>();
+  }
+  if (S.Opts.Diagnostics.Print &&
+      S.get<MatmulState>().ReportedRows.insert(r->row()).second)
+    llvm::errs() << "[poseidon] matmul[" << m.id << "] "
+                 << matmulOptionLabel(opt) << ": the cost model "
+                 << costModelPath(S.get<CostModelState>()) << " has no '"
+                 << r->row() << "' row, so its " << dtypeName(operand)
+                 << " operands are taken to be kept down to " << subnormal
+                 << ", the format's smallest subnormal; " << kCalibrate
+                 << " --only operand-min measures what this device keeps\n";
+  return std::optional<double>(0.0);
+}
+
+// The cost per MAC of the product `m` as written, in cost-model units: what
+// its library_*_rel and inkernel_rel rows are ratios to.
+static Expected<double> baselinePerMac(Session &S, const RecognizedMatmul &m) {
+  double baselinePerMac = 0.0;
+  if (m.isConstantShape()) {
+    // The loop body is one MAC's worth of work and the cost-model rows are
+    // reciprocal throughput per op, so this sum is the baseline's cost per
+    // MAC (executions = profiled total MACs).
+    for (Instruction *I : m.footprint) {
+      Expected<double> c = instructionCost(S.get<CostModelState>(), I);
+      if (!c)
+        return c.takeError();
+      baselinePerMac += *c;
+    }
+    return baselinePerMac;
+  }
+  const RuntimeGemmHandle &g = m.runtimeGemm();
+  const unsigned R = g.fmas.size();
+  // Composed in the unit every "library_*_rel" row is measured in: one MAC of
+  // this loop nest is one fma at the element type, plus the epilogue's fadd
+  // amortized over the K-long reduction it closes.
+  double bodySum = 0.0, epi = 0.0;
+  for (Instruction *I : m.footprint) {
+    Expected<double> c = instructionCost(S.get<CostModelState>(), I);
+    if (!c)
+      return c.takeError();
+    if (I == g.epilogue)
+      epi += *c;
+    else
+      bodySum += *c;
+  }
+  return bodySum / (double)R + (m.K ? epi / (double)m.K : 0.0);
+}
+
+// Gives each candidate of `cm` its `accuracy`, in order, and drops a candidate
+// whose formats cannot hold the profiled operands: its modelled error does not
+// see what it loses.
+static void offerInRange(const Options &O, MatmulUnit &cm,
+                         ArrayRef<MatmulAccuracy> accuracy) {
+  SmallVector<MatmulCandidate, 8> offered;
+  for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
+    opt.accuracyCost = a.accuracyCost;
+    opt.domainError = a.domainError;
+    if (a.outOfRange.empty() || !O.Matmul.ExcludeOutOfRange)
+      offered.push_back(opt);
+    else
+      cm.dropped.push_back({matmulOptionLabel(opt), a.outOfRange});
+  }
+  cm.candidates = std::move(offered);
+}
+
+// Appends to `out` a unit with priced candidates for each product of
+// `matmuls` the profiling run executed, its accuracy costs summing errors as
+// `errorSum`. `sampleLogBits`: 0 samples operands uniformly over the profiled
+// [min, max]; B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
+// An error is a user error about the profile or the cost model.
+static Error generateMatmulCandidates(Session &S,
+                                      ArrayRef<RecognizedMatmul> matmuls,
+                                      const ProfileMap &scalarProfile,
+                                      ErrorSum errorSum, unsigned sampleLogBits,
+                                      SmallVectorImpl<MatmulUnit> &out) {
+  for (const RecognizedMatmul &m : matmuls) {
+    Expected<std::optional<MatmulProfile>> loaded =
+        loadProfile(m, scalarProfile, errorSum);
+    if (!loaded)
+      return loaded.takeError();
+    std::optional<MatmulProfile> &prof = *loaded;
+    if (!prof) {
+      if (S.Opts.Diagnostics.Print)
+        llvm::errs() << "[poseidon] matmul[" << m.id << "] in "
+                     << anchorOf(m).getFunction()->getName()
+                     << ": the profiling run never executed it, so it is left "
+                        "as written\n";
+      continue;
+    }
+
+    MatmulUnit cm;
+    cm.matmul = const_cast<RecognizedMatmul *>(&m);
+    cm.executions = prof->macs;
+
+    Expected<double> perMac = baselinePerMac(S, m);
+    if (!perMac)
+      return perMac.takeError();
+    cm.initialCompCost = *perMac;
+    const Product P{S, m, *perMac};
+
+    // The candidate index is the position in this sequence.
+    if (m.isConstantShape() && !m.scalarLoop().otherWork.empty())
+      cm.dropped.push_back(
+          {"in-kernel raise", m.scalarLoop().otherWork +
+                                  ", and the raise takes the place of the "
+                                  "whole loop"});
+    if (m.isConstantShape() && m.scalarLoop().inKernelRaisable &&
+        siteReachedByWholeBlock(S, m)) {
+      if (Error E = proposeInKernelRaises(P, inKernelSite(S, m), cm))
+        return E;
+    }
+    if (S.Opts.Matmul.LibraryCalls) {
+      Expected<LibrarySite> site = librarySite(S, m);
+      if (!site)
+        return site.takeError();
+      const LibrarySite &L = *site;
+      cm.library = L.note;
+      if (L.note) {
+        if (Error E = proposeLibraryModular(P, L, cm))
+          return E;
+        if (Error E = proposeLibrarySplit(P, cm))
+          return E;
+        if (Error E = proposeLibraryDirect(P, cm))
+          return E;
+        if (Error E = proposeLibraryNative(P, L, cm))
+          return E;
+      }
+    }
+    // The calibration of the in-kernel classes enumerates them before their
+    // floors are measured.
+    const bool someMeasured = !S.Opts.Matmul.Calibration &&
+                              hasOperandMinRows(S.get<CostModelState>());
+    SmallVector<MatmulCandidate, 8> kept;
+    SmallVector<MatmulAccuracyQuery> queries;
+    for (const MatmulCandidate &opt : cm.candidates) {
+      Expected<std::optional<double>> floor =
+          operandMin(S, m, opt, someMeasured);
+      if (!floor)
+        return floor.takeError();
+      if (!*floor)
+        continue;
+      kept.push_back(opt);
+      queries.push_back(accuracyQuery(m, opt));
+      queries.back().operandMin = **floor;
+    }
+    cm.candidates = std::move(kept);
+    SmallVector<MatmulAccuracy> accuracy(queries.size());
+    if (Error E = evaluateMatmulAccuracy(S, m, *prof, sampleLogBits, queries,
+                                         accuracy))
+      return E;
+    offerInRange(S.Opts, cm, accuracy);
+
+    if (!m.isConstantShape() && S.Opts.Diagnostics.Print)
+      llvm::errs() << "[poseidon] matmul[" << m.id
+                   << "] baseline: composed/MAC=" << *perMac << '\n';
+
+    // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
+    // per-MAC baseline, the unit the measured library_*_rel rows use.
+    if (S.Opts.Diagnostics.Print) {
+      llvm::errs() << "[poseidon] matmul[" << cm.matmul->id
+                   << "] pricing: baseline/MAC=" << cm.initialCompCost
+                   << " executions=" << cm.executions << '\n';
+      for (size_t ci = 0; ci < cm.candidates.size(); ++ci) {
+        const auto &o = cm.candidates[ci];
+        llvm::errs() << "[poseidon]   #" << ci << ' ' << matmulOptionLabel(o)
+                     << "  compCost/MAC=" << *o.compCost << "  rel="
+                     << (cm.initialCompCost > 0
+                             ? *o.compCost / cm.initialCompCost
+                             : -1.0)
+                     << "  domainError=" << o.domainError << '\n';
+      }
+      for (const auto &[label, why] : cm.dropped)
+        llvm::errs() << "[poseidon]   not offered: " << label << ": " << why
+                     << '\n';
+    }
+
+    out.push_back(std::move(cm));
+  }
+  return Error::success();
+}
+
+Error MatmulUnit::materialize(size_t i) {
+  assert(i < candidates.size() && "the solver names one of the candidates");
+  Session &S = session();
+  const MatmulCandidate &opt = candidates[i];
+
+  if (opt.realization == Realization::LibraryCall) {
+    assert(library && "a library call is proposed only with its descriptor");
+    return applyLibraryCall(S, *matmul, *library, opt.variant);
+  }
+  assert(matmul->isConstantShape() &&
+         "a runtime-shape product is proposed only as a library call");
+  switch (opt.variant.scheme) {
+  case Scheme::Direct:
+  case Scheme::Tcec: {
+    materializeInKernel(*matmul, opt);
+    // Each raise was proposed against the shared memory its kernel used
+    // before any raise; raises of one kernel that do not share their scratch
+    // add up.
+    Function &F = *matmul->scalarLoop().preheader->getParent();
+    const uint64_t bytes = enclosingKernelSharedBytes(S, F);
+    const uint64_t cap = Target::of(F).maxStaticSharedBytes();
+    if (bytes > cap)
+      return userError(F,
+                       "the in-kernel raises selected for the matrix products "
+                       "of " +
+                           F.getName() + " need " + Twine(bytes) +
+                           " B of static shared memory with what their kernel "
+                           "uses, above the " +
+                           Twine(cap) +
+                           " B a kernel may hold; select fewer of them with "
+                           "-poseidon-pin");
+    return Error::success();
+  }
+  case Scheme::OzakiII:
+  case Scheme::Native:
+    break;
+  }
+  llvm_unreachable("no in-kernel realization of this scheme");
+}
+
+std::string MatmulUnit::candidateName(size_t i) const {
+  return matmulOptionLabel(candidates[i]);
+}
+
+std::string MatmulUnit::selectionText(size_t i) const {
+  return "matmul[" + std::to_string(matmul->id) + "] -> " +
+         matmulOptionLabel(candidates[i]);
+}
+
+std::string MatmulUnit::choiceText(size_t i) const {
+  return "matmul[" + std::to_string(matmul->id) + "] -> " +
+         matmulOptionLabel(candidates[i]) + " (#" + std::to_string(i) + ")";
+}
+
+std::optional<double> MatmulUnit::targetScale() const {
+  // Under a target a product's relative error is a term of the site's
+  // relative error, which the DP reads as an accuracy cost over accScale.
+  if (site().target > 0.0)
+    return site().accScale;
+  return std::nullopt;
+}
+
+void MatmulUnit::scaleErrors(double factor) {
+  for (auto &cand : candidates)
+    cand.accuracyCost *= factor;
+}
+
+void MatmulUnit::printPriced(raw_ostream &OS) {
+  OS << "[poseidon] matmul[" << matmul->id
+     << "] candidates (initial cost=" << initialCompCost
+     << ", executions=" << executions << ", globalM=" << matmul->globalM
+     << ", globalN=" << matmul->globalN << ", globalK=" << matmul->globalK
+     << ", K=" << matmul->K << ", gridCTAs=" << matmul->gridCTAs << "):\n";
+  if (candidates.empty()) {
+    OS << "[poseidon]   (no candidates emitted)\n";
+    return;
+  }
+  for (size_t i = 0; i < candidates.size(); ++i)
+    OS << "[poseidon]   " << matmulOptionLabel(candidates[i])
+       << ": dcost=" << getCompCostDelta(i) << " dacc=" << getAccCostDelta(i)
+       << '\n';
+}
+
+// The product's M x N x K over the whole launch, as the explanation writes it:
+// "?" for a dimension not known.
+static std::string shapeOf(const RecognizedMatmul &m) {
+  auto dim = [](unsigned d) {
+    return d == ~0u || d == 0 ? std::string("?") : std::to_string(d);
+  };
+  const std::array<unsigned, 3> shape = m.profileShape();
+  return dim(shape[0]) + "x" + dim(shape[1]) + "x" + dim(shape[2]);
+}
+
+Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
+  U.kind = "matmul";
+  std::string shape;
+  if (matmul) {
+    U.root = dyn_cast_or_null<Instruction>(matmul->outputValue);
+    if (!U.root && !matmul->footprint.empty())
+      U.root = matmul->footprint[0];
+    shape = shapeOf(*matmul);
+    U.keys["shape"] = shape;
+  }
+  U.name = "the " + shape + " matrix product";
+  U.executions = executions;
+  if (std::isfinite(initialCompCost)) {
+    Expected<int64_t> c = E.onAxis(initialCompCost * (double)executions);
+    if (!c)
+      return c.takeError();
+    U.baseCost = *c;
+  }
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    const MatmulCandidate &o = candidates[j];
+    Expected<Alternative> priced =
+        pricedAlternative(E, *this, j, getCompCostDelta(j), getAccCostDelta(j));
+    if (!priced)
+      return priced.takeError();
+    Alternative &A = *priced;
+    A.kind = "matmul";
+    A.kindWords = "the product candidate";
+    A.summary = matmulOptionLabel(o);
+    if (o.realization == Realization::InKernel)
+      A.keys["inkernel_class"] = inKernelCostClass(o.variant);
+    A.at = U.root;
+    if (std::isfinite(o.domainError))
+      A.keys["modelled_domain_error"] = o.domainError;
+    A.baseCost = U.baseCost;
+    U.alts.push_back(std::move(A));
+  }
+  for (const auto &[label, why] : dropped) {
+    Alternative A = droppedAlternative("not offered: ", why);
+    A.kind = "matmul";
+    A.kindWords = "the product candidate";
+    A.summary = label;
+    A.at = U.root;
+    U.alts.push_back(std::move(A));
+  }
+  return Error::success();
+}
+
+void MatmulUnit::remarkApplied(OptimizationRemarkEmitter &ORE, Explanation &E,
+                               const UnitExplanation &U, const Alternative &A,
+                               StringRef ErrorChange,
+                               StringRef CostChange) const {
+  const double domainError = candidates[A.index].domainError;
+  ORE.emit([&]() {
+    OptimizationRemark R(kRemarkPass, "MatmulRaised", A.at);
+    R << "Poseidon raised the "
+      << ore::NV("Shape", matmul ? shapeOf(*matmul) : "")
+      << " matrix product to " << ore::NV("Technique", A.summary);
+    if (std::isfinite(domainError))
+      R << "; modelled domain error "
+        << ore::NV("Error", remarkNumber(domainError));
+    if (!CostChange.empty())
+      R << ", cost " << ore::NV("Cost", CostChange);
+    R << " [" << ore::NV("Id", A.id) << "]";
+    return R;
+  });
+}
+
+void MatmulUnit::remarkProfile(DiagnosticInfoOptimizationBase &R,
+                               const UnitExplanation &U) const {
+  R << "Poseidon profile of the "
+    << ore::NV("Shape", matmul ? shapeOf(*matmul) : "")
+    << " matrix product: " << ore::NV("Executions", U.executions)
+    << " multiply-adds";
+}
+
+std::string MatmulUnit::rivalReason(const Alternative &A,
+                                    const Alternative &Rival) const {
+  if (!isa<MatmulUnit>(Rival.unit))
+    return "";
+  return "the product takes one realization, and " + Rival.id + " was selected";
+}
+
+namespace {
+
+/// What the matrix-product technique keeps for a site.
+struct MatmulSiteState {
+  static inline char ID;
+  /// The site's matrix products; MatmulUnit::matmul points into this, so it
+  /// must outlive materialization.
+  SmallVector<RecognizedMatmul, 4> matmuls;
+  /// The matrix-product units proposed for the site.
+  SmallVector<MatmulUnit, 4> units;
+  /// The dominator, loop, assumption, library and scalar-evolution analyses of
+  /// the site, for the loop raises. The matmuls found hold SE and SCEVs it
+  /// owns, so these outlive materialization. SE is declared last so that it is
+  /// destroyed first: it references the others.
+  std::optional<DominatorTree> DT;
+  std::optional<LoopInfo> LI;
+  std::optional<AssumptionCache> AC;
+  std::optional<TargetLibraryInfoImpl> TLII;
+  std::optional<TargetLibraryInfo> TLI;
+  std::optional<ScalarEvolution> SE;
+};
+
+/// Matrix products on tensor cores or as library calls.
+class MatmulTechnique final : public Technique {
+public:
+  const UnitKindInfo &unitKind() const override { return MatmulUnit::Info; }
+
+  bool enabled(const Options &O) const override {
+    return O.Candidates.EnableMatmul;
+  }
+
+  void writeProfileHeader(const Options &O, Function &Clone,
+                          raw_ostream &OS) const override {
+    writeReductionTrips(O, Clone, OS);
+  }
+
+  /// The site's matrix products, with the analyses their raise keeps.
+  Expected<bool> recognize(Session &S, Function &F, const SiteProfileData &P,
+                           SiteState &st) const override {
+    const Options &O = S.Opts;
+    const Target &T = Target::of(F);
+    MatmulSiteState &M = st.get<MatmulSiteState>();
+    if (T.isDevice()) {
+      M.DT.emplace(F);
+      M.LI.emplace(*M.DT);
+      M.AC.emplace(F);
+      M.TLII.emplace(Triple(F.getParent()->getTargetTriple()));
+      M.TLI.emplace(*M.TLII, &F);
+      M.SE.emplace(F, *M.TLI, *M.AC, *M.DT, *M.LI);
+      // The constant-trip products are the in-kernel raise's.
+      if (T.hasInKernelMatrixRaise())
+        if (Error E = findConstantShapeMatmuls(O, F, *M.SE, *M.LI, P.header,
+                                               M.matmuls))
+          return std::move(E);
+      // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
+      // skips whatever that one claimed, so a product both recognize keeps the
+      // constant-trip candidate set.
+      findRuntimeShapeMatmuls(O, F, *M.SE, *M.LI, P.header, P.map, M.matmuls);
+    }
+    for (const RecognizedMatmul &m : M.matmuls)
+      if (m.isConstantShape())
+        st.reductionOps.insert(m.scalarLoop().fma);
+
+    if (O.Diagnostics.Print && !M.matmuls.empty()) {
+      llvm::errs() << "[poseidon] Found " << M.matmuls.size()
+                   << " matrix product(s) in " << F.getName() << '\n';
+      auto dimStr = [](unsigned d) -> std::string {
+        return d == ~0u ? std::string("?") : std::to_string(d);
+      };
+      for (const auto &m : M.matmuls) {
+        llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
+                     << dimStr(m.N) << 'x' << dimStr(m.K)
+                     << " type=" << dtypeName(m.elemType) << " origin="
+                     << (m.isConstantShape() ? "ConstantShape" : "RuntimeShape")
+                     << '\n';
+      }
+    }
+    return !M.matmuls.empty();
+  }
+
+  Error proposeForSite(Session &S, SiteState &st,
+                       const SiteProfileData &P) const override {
+    const Options &O = S.Opts;
+    MatmulSiteState &M = st.get<MatmulSiteState>();
+    // The operand sampling of the matrix accuracy model, 0 for none. Uniform
+    // sampling over [min, max] under-prices fixed-point Ozaki on matrices of
+    // wide dynamic range, so a site solved under a target defaults to a wide
+    // log-uniform range.
+    const unsigned sampleLogBits =
+        O.Matmul.SampleLogBits.value_or(st.target > 0.0 ? 40 : 0);
+    return generateMatmulCandidates(S, M.matmuls, P.map, st.errorSum,
+                                    sampleLogBits, M.units);
+  }
+
+  void bindUnits(Session &S, SiteState &st) const override {
+    bindAll(S, st, st.get<MatmulSiteState>().units);
+  }
+
+  /// Two builds of one source differ in whether the error-corrected library
+  /// call is a candidate.
+  void addToTableKey(CacheKey &key) const override {
+    key.add("TCEC backend", kHaveTcecRuntime ? "cuMpSGEMM" : "none");
+  }
+
+  void siteApplied(Session &S, Function &F) const override {
+    writePendingLibraryCall(S, F);
+  }
+
+  void siteLaunched(Session &S, const Function &Body, Function &Kernel,
+                    ArrayRef<Value *> Args) const override {
+    noteLibraryCallLaunch(S, Body, Kernel, Args);
+  }
+
+  Expected<bool> rewriteHost(const Options &O, Module &M) const override {
+    return rewriteGemmStubBodies(O, M);
+  }
+};
+
+} // namespace
+
+const Technique &matmulTechnique() {
+  static const MatmulTechnique Instance;
+  return Instance;
+}
+
+} // namespace poseidon

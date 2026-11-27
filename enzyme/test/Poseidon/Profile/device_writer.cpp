@@ -1,0 +1,86 @@
+// RUN: rm -rf %t && mkdir %t
+// RUN: %clang++ -O1 %s %poseidon_profile_lib -o %t/meet
+// RUN: env POSEIDON_PROFILE_DIR=%t/first MEET=device-first %t/meet | FileCheck --check-prefix=DEVICE-FIRST %s
+// RUN: diff %t/first.expected %t/first/k_ran.fpprofile
+// RUN: FileCheck --check-prefix=NEVER %s < %t/first/k_never.fpprofile
+// RUN: env POSEIDON_PROFILE_DIR=%t/last MEET=device-last %t/meet | FileCheck --check-prefix=DEVICE-LAST %s
+// RUN: diff %t/last.expected %t/last/k_ran.fpprofile
+// RUN: FileCheck --check-prefix=NEVER %s < %t/last/k_never.fpprofile
+
+// The host and device exit writers of a CUDA or HIP profiling run, the device
+// one played by deviceWriter: whichever runs first, a kernel that ran keeps
+// the device profile exactly and one that never ran gets `Executed = 0`.
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <sys/stat.h>
+
+extern "C" void __poseidon_register_static(const char *funcName,
+                                              const char *text);
+extern "C" void __poseidon_profile_written(const char *funcName);
+
+static const char kRan[] = "MaxBlockDims = 256 1 1\n"
+                           "MaxGridDims = 4 1 1\n"
+                           "LaunchCount = 1\n"
+                           "SiteId = 0\n"
+                           "CanonicalHash = 00000000000000aa\n"
+                           "0\n"
+                           "\tMinRes = 1.0\n"
+                           "\tMaxRes = 2.0\n"
+                           "\tSumSens = 3.0\n"
+                           "\tSumGrad = 2.0\n"
+                           "\tSumAbsGrad = 2.0\n"
+                           "\tExec = 2\n"
+                           "\tNumOperands = 0\n";
+
+static void write(const std::string &path, const char *text) {
+  FILE *f = fopen(path.c_str(), "w");
+  if (!f)
+    abort();
+  fputs(text, f);
+  fclose(f);
+}
+
+static void deviceWriter() {
+  std::string dir = getenv("POSEIDON_PROFILE_DIR");
+  struct stat st;
+  printf("k_ran %s\n", stat((dir + "/k_ran.fpprofile").c_str(), &st) == 0
+                           ? "written by the host profiler first"
+                           : "not written yet");
+  fflush(stdout);
+  mkdir(dir.c_str(), 0755);
+  write(dir + "/k_ran.fpprofile", kRan);
+  write(dir + ".expected", kRan);
+  __poseidon_profile_written("k_ran");
+}
+
+static bool deviceLast() {
+  const char *m = getenv("MEET");
+  return m && !strcmp(m, "device-last");
+}
+
+// Ahead of the host profiler's initializer, as the host half's registration
+// constructors are: an exit handler registered here runs after its own.
+__attribute__((constructor(101))) static void early() {
+  __poseidon_register_static("k_ran",
+                                "SiteId = 0\nCanonicalHash = 00000000000000aa\n");
+  __poseidon_register_static("k_never",
+                                "SiteId = 1\nCanonicalHash = 00000000000000bb\n");
+  if (deviceLast())
+    atexit(deviceWriter);
+}
+
+int main() {
+  // As the device profiler registers its exit handler, from main.
+  if (!deviceLast())
+    atexit(deviceWriter);
+}
+
+// DEVICE-FIRST: k_ran not written yet
+// DEVICE-LAST: k_ran written by the host profiler first
+// NEVER: SiteId = 1
+// NEVER-NEXT: CanonicalHash = 00000000000000bb
+// NEVER-NEXT: Executed = 0
+// NEVER-NOT: {{.}}

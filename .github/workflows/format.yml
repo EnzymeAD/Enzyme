@@ -27,3 +27,10 @@ jobs:
         exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'
         style: 'llvm'
         clangFormatVersion: 16
+    # Poseidon's GPU runtimes and calibrators are CUDA and HIP sources.
+    - uses: DoozyX/clang-format-lint-action@bcb4eb2cb0d707ee4f3e5cc3b456eb075f12cf73 # v0.20
+      with:
+        source: 'enzyme/Poseidon enzyme/include/poseidon'
+        extensions: 'h,c,cpp,cu,hip,def'
+        style: 'llvm'
+        clangFormatVersion: 16

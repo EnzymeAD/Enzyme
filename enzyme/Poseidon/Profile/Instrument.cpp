@@ -1,0 +1,985 @@
+//===- Instrument.cpp - profiling probes on a site clone ------------------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "Instrument.h"
+
+#include "Core/FPNode.h"
+#include "Enzyme/Utils.h"
+#include "Sites/CallSites.h"
+#include "Sites/Canonicalize.h"
+#include "Sites/LaunchManifest.h"
+#include "Support/Diagnostics.h"
+#include "Support/Options.h"
+#include "Support/Utils.h"
+#include "Targets/OffloadRuntime.h"
+#include "Targets/Target.h"
+#include "poseidon/poseidon.h"
+#include "runtime/profile/DeviceProfiler.h"
+#include "runtime/profile/ProfileFormat.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Linker/Linker.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MemoryBufferRef.h"
+#include "llvm/Support/ModRef.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
+
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+
+using namespace llvm;
+
+namespace poseidon {
+
+GlobalVariable *privateConstant(Module &M, Constant *Init, const Twine &Name) {
+  auto *gv = new GlobalVariable(M, Init->getType(), /*isConstant=*/true,
+                                GlobalValue::PrivateLinkage, Init, Name,
+                                nullptr, GlobalVariable::NotThreadLocal,
+                                Target::of(M).globalAddressSpace());
+  gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+  return gv;
+}
+
+Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
+  LLVMContext &Ctx = M.getContext();
+  Type *PtrTy = getInt8PtrTy(Ctx);
+  GlobalVariable *gv = gvName.empty() ? nullptr : M.getNamedGlobal(gvName);
+  if (!gv) {
+    gv = privateConstant(M, ConstantDataArray::getString(Ctx, contents, true),
+                         gvName.empty() ? "poseidon.str" : gvName);
+    gv->setAlignment(Align(1));
+  }
+  Constant *ptr = gv;
+  if (ptr->getType() != PtrTy)
+    ptr = ConstantExpr::getAddrSpaceCast(ptr, PtrTy);
+  return ptr;
+}
+
+/// The profile record of the function `key` is keyed by this string, which
+/// both FP profiler runtimes use as the registry key and as the .fpprofile
+/// stem.
+static Constant *getProfileNamePointer(Module &M, StringRef key,
+                                       StringRef profileName) {
+  return getStringPointer(M, ("poseidon.site." + key).str(), profileName);
+}
+
+FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
+  FunctionCallee fc = M.getOrInsertFunction(name, FT);
+  if (auto *fn = dyn_cast<Function>(fc.getCallee())) {
+    fn->addFnAttr("enzyme_inactive");
+    fn->addFnAttr(Attribute::NoFree);
+  }
+  return fc;
+}
+
+/// The type of the value probe: (site name, slot, value, operand count,
+/// operands).
+static FunctionType *logValueType(LLVMContext &C) {
+  Type *Ptr = getInt8PtrTy(C), *I64 = Type::getInt64Ty(C),
+       *Double = Type::getDoubleTy(C);
+  return FunctionType::get(Type::getVoidTy(C), {Ptr, I64, Double, I64, Ptr},
+                           false);
+}
+
+/// The type of the gradient probe: (site name, slot, value, adjoint).
+static FunctionType *logGradientType(LLVMContext &C) {
+  Type *Double = Type::getDoubleTy(C);
+  return FunctionType::get(
+      Type::getVoidTy(C),
+      {getInt8PtrTy(C), Type::getInt64Ty(C), Double, Double}, false);
+}
+
+/// The type of the perturbation of a value of type `FpTy`: (site id, value).
+static FunctionType *perturbType(Type *FpTy) {
+  return FunctionType::get(FpTy, {Type::getInt32Ty(FpTy->getContext()), FpTy},
+                           false);
+}
+
+namespace {
+
+struct ProbeBuilder {
+  Module &M;
+  LLVMContext &Ctx;
+  const ProbeABI &P;
+  unsigned siteId;
+  const Function &clone;
+  Constant *namePtr;
+
+  /// Compiles `F` for the processor and features `clone` is compiled for: a
+  /// function without them inlines into it only where the target's default
+  /// subtarget is compatible with the clone's, which on AMDGPU depends on the
+  /// processor.
+  void likeClone(Function &F) const {
+    for (StringRef kind : {"target-cpu", "target-features"})
+      if (clone.hasFnAttribute(kind))
+        F.addFnAttr(kind, clone.getFnAttribute(kind).getValueAsString());
+  }
+
+  Type *doubleTy() const { return Type::getDoubleTy(Ctx); }
+  Type *i64Ty() const { return Type::getInt64Ty(Ctx); }
+  Type *i32Ty() const { return Type::getInt32Ty(Ctx); }
+
+  /// The identity probe for one profiled value. Its Enzyme custom derivative is
+  /// what carries the gradient record out of the reverse pass, and its
+  /// augmented forward is where the condition-number perturbation is applied,
+  /// so that the value flowing downstream and the value logged in the primal
+  /// are both the perturbed one while the adjoint chain stays untouched.
+  Function *probeFor(Type *FpTy, size_t idx) {
+    bool isFloat = FpTy->isFloatTy();
+    std::string base =
+        ("__poseidon_probe_" + clone.getName() + "_" + Twine(idx)).str();
+    FunctionType *unaryFT = FunctionType::get(FpTy, {FpTy}, false);
+
+    Function *aug = Function::Create(unaryFT, GlobalValue::InternalLinkage,
+                                     base + "_aug", &M);
+    aug->addFnAttr(Attribute::NoUnwind);
+    likeClone(*aug);
+    {
+      IRBuilder<> B(BasicBlock::Create(Ctx, "entry", aug));
+      Value *v = aug->getArg(0);
+      if (!P.PerturbF64.empty()) {
+        FunctionCallee pert = getProfilerHook(
+            M, isFloat ? P.PerturbF32 : P.PerturbF64, perturbType(FpTy));
+        v = B.CreateCall(pert, {ConstantInt::get(i32Ty(), siteId), v});
+        cast<CallInst>(v)->setDoesNotThrow();
+      }
+      B.CreateRet(v);
+    }
+
+    FunctionType *revFT = FunctionType::get(FpTy, {FpTy, FpTy}, false);
+    Function *rev = Function::Create(revFT, GlobalValue::InternalLinkage,
+                                     base + "_rev", &M);
+    rev->addFnAttr(Attribute::NoUnwind);
+    likeClone(*rev);
+    {
+      IRBuilder<> B(BasicBlock::Create(Ctx, "entry", rev));
+      Value *v = B.CreateFPExt(rev->getArg(0), doubleTy());
+      Value *d = B.CreateFPExt(rev->getArg(1), doubleTy());
+      FunctionCallee logGrad =
+          getProfilerHook(M, P.LogGradient, logGradientType(Ctx));
+      B.CreateCall(logGrad, {namePtr, ConstantInt::get(i64Ty(), idx), v, d})
+          ->setDoesNotThrow();
+      B.CreateRet(rev->getArg(1));
+    }
+
+    Function *probe =
+        Function::Create(unaryFT, GlobalValue::InternalLinkage, base, &M);
+    probe->addFnAttr(Attribute::NoInline);
+    probe->addFnAttr(Attribute::NoUnwind);
+    probe->addFnAttr(Attribute::WillReturn);
+    likeClone(*probe);
+    // Not readnone: an identity the optimizer may fold away takes the profile
+    // with it. Not argmem either, so the probe does not alias the kernel's own
+    // memory traffic.
+    probe->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+    // The reverse pass must be free to re-evaluate the probe rather than cache
+    // its result. Without this every profiled value inside a loop becomes a
+    // cache, and on a GPU those caches are device mallocs that exhaust the
+    // device heap.
+    probe->addFnAttr("enzyme_shouldrecompute");
+    {
+      IRBuilder<> B(BasicBlock::Create(Ctx, "entry", probe));
+      B.CreateRet(probe->getArg(0));
+    }
+    probe->setMetadata("enzyme_augment",
+                       MDTuple::get(Ctx, {ValueAsMetadata::get(aug)}));
+    probe->setMetadata("enzyme_gradient",
+                       MDTuple::get(Ctx, {ValueAsMetadata::get(rev)}));
+    return probe;
+  }
+};
+
+} // namespace
+
+size_t instrumentForProfiling(Function &clone, unsigned siteId,
+                              StringRef profileName) {
+  Module &M = *clone.getParent();
+  LLVMContext &Ctx = M.getContext();
+  const ProbeABI &P = Target::of(M).probes();
+  Type *DoubleTy = Type::getDoubleTy(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
+  Type *SizeTy = Type::getInt64Ty(Ctx);
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
+
+  SmallVector<std::pair<Instruction *, size_t>, 32> targets;
+  for (Instruction &I : instructions(clone)) {
+    if (!isOptimizable(I))
+      continue;
+    if (std::optional<size_t> slot = slotOf(&I))
+      targets.emplace_back(&I, *slot);
+  }
+  if (targets.empty())
+    return 0;
+
+  if (!P.RuntimeAnchor.empty()) {
+    // Referenced so that the build links the archive member that writes the
+    // dumps out at exit.
+    M.getOrInsertGlobal(P.RuntimeAnchor, Int32Ty);
+  }
+
+  ProbeBuilder PB{
+      M,      Ctx,   P,
+      siteId, clone, getProfileNamePointer(M, clone.getName(), profileName)};
+
+  FunctionCallee logValue = getProfilerHook(M, P.LogValue, logValueType(Ctx));
+
+  IRBuilder<> allocaB(&*clone.getEntryBlock().getFirstInsertionPt());
+  for (auto &[I, idx] : targets) {
+    auto operands = fpOperands(*I);
+    unsigned numOperands = size(operands);
+    ArrayType *operandArrayType = ArrayType::get(DoubleTy, numOperands);
+    Value *operandArray = allocaB.CreateAlloca(operandArrayType);
+
+    IRBuilder<> B(I->getNextNode());
+    CallInst *probed = B.CreateCall(PB.probeFor(I->getType(), idx), {I});
+    probed->setDebugLoc(I->getDebugLoc());
+    I->replaceUsesWithIf(probed, [&](Use &U) { return U.getUser() != probed; });
+    Value *loggedValue = B.CreateFPExt(probed, DoubleTy);
+
+    for (auto operand : enumerate(operands)) {
+      Value *origOp = operand.value();
+      Value *operandValue = nullptr;
+      if (origOp->getType()->isFloatingPointTy())
+        operandValue = B.CreateFPExt(origOp, DoubleTy);
+      else if (origOp->getType()->isIntegerTy())
+        operandValue = B.CreateSIToFP(origOp, DoubleTy);
+      else
+        llvm_unreachable("isOptimizable admits only FP and integer operands");
+      Value *ptr = B.CreateGEP(operandArrayType, operandArray,
+                               {ConstantInt::get(Int32Ty, 0),
+                                ConstantInt::get(Int32Ty, operand.index())});
+      B.CreateStore(operandValue, ptr);
+    }
+    Value *operandPtr = B.CreateGEP(
+        operandArrayType, operandArray,
+        {ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 0)});
+    // AMDGPU's stack is its own address space.
+    if (operandPtr->getType() != PtrTy)
+      operandPtr = B.CreateAddrSpaceCast(operandPtr, PtrTy);
+
+    Value *nops = ConstantInt::get(SizeTy, numOperands);
+    CallInst *logCall =
+        B.CreateCall(logValue, {PB.namePtr, ConstantInt::get(SizeTy, idx),
+                                loggedValue, nops, operandPtr});
+    logCall->setDebugLoc(I->getDebugLoc());
+  }
+
+  return targets.size();
+}
+
+/// (site name, record, address, bytes, kind).
+static FunctionType *logAccessType(LLVMContext &C) {
+  Type *I32 = Type::getInt32Ty(C);
+  return FunctionType::get(
+      Type::getVoidTy(C), {getInt8PtrTy(C), I32, Type::getInt64Ty(C), I32, I32},
+      false);
+}
+
+namespace {
+
+/// An array an access may reach: a launch value, or another object.
+struct TrafficRoot {
+  LaunchRef Ref;
+  const Value *Object = nullptr;
+
+  bool operator<(const TrafficRoot &O) const {
+    return std::tie(Ref, Object) < std::tie(O.Ref, O.Object);
+  }
+  bool operator==(const TrafficRoot &O) const {
+    return Ref == O.Ref && Object == O.Object;
+  }
+};
+
+} // namespace
+
+/// The arrays of global memory `Ptr` may point into; none for kernel parameter
+/// space, a local object, shared or constant memory.
+static SmallVector<TrafficRoot, 2> trafficRoots(const Value *Ptr,
+                                                const Target &T) {
+  SmallVector<TrafficRoot, 2> Roots;
+  auto global = [&](unsigned AS) {
+    return AS == 0 || AS == T.globalAddressSpace();
+  };
+  if (!global(Ptr->getType()->getPointerAddressSpace()))
+    return Roots;
+  SmallVector<const Value *, 4> Objects;
+  getUnderlyingObjects(Ptr, Objects, /*LI=*/nullptr, /*MaxLookup=*/0);
+  for (const Value *Obj : Objects) {
+    if (isa<ConstantPointerNull, UndefValue, AllocaInst>(Obj))
+      continue;
+    if (const auto *A = dyn_cast<Argument>(Obj)) {
+      if (!isByValueParam(*A))
+        Roots.push_back({LaunchRef{(int)A->getArgNo(), -1}, nullptr});
+      continue;
+    }
+    if (const auto *GV = dyn_cast<GlobalVariable>(Obj)) {
+      if (global(GV->getAddressSpace()))
+        Roots.push_back({LaunchRef{}, GV});
+      continue;
+    }
+    LaunchRef Field = launchFieldOf(Obj);
+    Roots.push_back(Field.param >= 0 ? TrafficRoot{Field, nullptr}
+                                     : TrafficRoot{LaunchRef{}, Obj});
+  }
+  llvm::sort(Roots);
+  Roots.erase(llvm::unique(Roots), Roots.end());
+  return Roots;
+}
+
+std::string instrumentTraffic(Function &clone, StringRef profileName) {
+  Module &M = *clone.getParent();
+  const Target &T = Target::of(M);
+  StringRef Hook = T.probes().LogAccess;
+  if (Hook.empty())
+    return "";
+  const DataLayout &DL = M.getDataLayout();
+
+  /// A load (kind 0), a store (1) or an atomic (2) of `Bytes` through `Ptr`,
+  /// counted against traffic record `Record`.
+  struct Access {
+    Instruction *I;
+    Value *Ptr;
+    uint64_t Bytes;
+    unsigned Kind;
+    unsigned Record;
+  };
+  SmallVector<Access, 32> Accesses;
+  std::map<SmallVector<TrafficRoot, 2>, unsigned> Records;
+  for (Instruction &I : instructions(clone)) {
+    Value *Ptr = getLoadStorePointerOperand(&I);
+    Type *Ty = Ptr ? getLoadStoreType(&I) : nullptr;
+    unsigned Kind = isa<StoreInst>(I);
+    if (auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
+      Ptr = RMW->getPointerOperand();
+      Ty = RMW->getValOperand()->getType();
+      Kind = 2;
+    } else if (auto *CX = dyn_cast<AtomicCmpXchgInst>(&I)) {
+      Ptr = CX->getPointerOperand();
+      Ty = CX->getNewValOperand()->getType();
+      Kind = 2;
+    }
+    if (!Ptr)
+      continue;
+    SmallVector<TrafficRoot, 2> Roots = trafficRoots(Ptr, T);
+    if (Roots.empty())
+      continue;
+    unsigned Record =
+        Records.try_emplace(std::move(Roots), Records.size()).first->second;
+    Accesses.push_back(
+        {&I, Ptr, DL.getTypeStoreSize(Ty).getFixedValue(), Kind, Record});
+  }
+  if (Accesses.empty())
+    return "";
+  if (Records.size() > POSEIDON_MAX_TRAFFIC_RECORDS) {
+    diagnose(clone, clone.getSubprogram(),
+             displayName(clone) + " reaches " + Twine(Records.size()) +
+                 " arrays, more than the " +
+                 Twine(POSEIDON_MAX_TRAFFIC_RECORDS) +
+                 " whose memory traffic a site records; its traffic is not "
+                 "profiled and it is priced on its arithmetic alone",
+             DS_Warning);
+    return "";
+  }
+
+  LLVMContext &Ctx = M.getContext();
+  FunctionCallee Probe = getProfilerHook(M, Hook, logAccessType(Ctx));
+  Constant *Name = getProfileNamePointer(M, clone.getName(), profileName);
+  for (const Access &A : Accesses) {
+    IRBuilder<> B(A.I);
+    CallInst *Call = B.CreateCall(
+        Probe,
+        {Name, B.getInt32(A.Record), B.CreatePtrToInt(A.Ptr, B.getInt64Ty()),
+         B.getInt32((uint32_t)A.Bytes), B.getInt32(A.Kind)});
+    // The probe touches only the profiler's tables, so the kernel's own loads
+    // and stores stay as analyzable as before it.
+    Call->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+    Call->setDoesNotThrow();
+    Call->setDebugLoc(A.I->getDebugLoc());
+  }
+
+  SmallVector<const TrafficRoot *, 8> ByRecord(Records.size(), nullptr);
+  for (const auto &[Roots, Record] : Records)
+    if (Roots.size() == 1 && Roots.front().Ref.param >= 0)
+      ByRecord[Record] = &Roots.front();
+  std::string Lines;
+  raw_string_ostream OS(Lines);
+  for (auto [Record, Root] : enumerate(ByRecord))
+    if (Root)
+      OS << kProfileKeyTrafficArray << " = " << Record << ' ' << Root->Ref.param
+         << ' ' << Root->Ref.offset << '\n';
+  return Lines;
+}
+
+void emitProfileStaticData(Function &clone, StringRef profileName,
+                           StringRef text) {
+  if (text.empty())
+    return;
+  Module &M = *clone.getParent();
+  const ProbeABI &P = Target::of(M).probes();
+  if (P.PublishStatic.empty()) {
+    registerProfileStatic(M, clone.getName(), profileName, text);
+    return;
+  }
+  LLVMContext &Ctx = M.getContext();
+  Type *PtrTy = getInt8PtrTy(Ctx);
+
+  Constant *namePtr = getProfileNamePointer(M, clone.getName(), profileName);
+  Constant *textPtr =
+      getStringPointer(M, ("poseidon.static." + clone.getName()).str(), text);
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(Ctx), {PtrTy, PtrTy}, false);
+
+  // Device: published by the site's own kernel through the pointer-keyed
+  // registry, the only path from a device constant to the host writer.
+  FunctionCallee probe = getProfilerHook(M, P.PublishStatic, FT);
+  if (callsFunctionNamed(clone, P.PublishStatic))
+    return;
+  IRBuilder<> B(&*clone.getEntryBlock().getFirstInsertionPt());
+  B.CreateCall(probe, {namePtr, textPtr})->setDoesNotThrow();
+}
+
+/// Registered before main, so a site whose body never runs still carries its
+/// static data into the dump.
+bool registerProfileStatic(Module &M, StringRef key, StringRef profileName,
+                           StringRef text) {
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *PtrTy = getInt8PtrTy(Ctx);
+
+  Constant *namePtr = getProfileNamePointer(M, key, profileName);
+  Constant *textPtr =
+      getStringPointer(M, ("poseidon.static." + key).str(), text);
+  FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
+
+  FunctionCallee reg =
+      getProfilerHook(M, Target::of(M).probes().RegisterStatic, FT);
+  std::string ctorName = ("poseidon.register_static." + key).str();
+  if (M.getFunction(ctorName))
+    return false;
+  Function *ctor = Function::Create(FunctionType::get(VoidTy, {}, false),
+                                    GlobalValue::InternalLinkage, ctorName, &M);
+  ctor->addFnAttr(Attribute::NoUnwind);
+  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", ctor));
+  B.CreateCall(reg, {namePtr, textPtr})->setDoesNotThrow();
+  B.CreateRetVoid();
+  appendToGlobalCtors(M, ctor, 0);
+  return true;
+}
+
+Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
+  if (!O.Profiling.generatesProfile() || Target::of(M).isDevice() ||
+      M.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE))
+    return false;
+  std::optional<VariableRegistration> registration = variableRegistration(M);
+  if (!registration)
+    return false;
+  Expected<std::pair<unsigned, unsigned>> sizes = readProfileTable(O, M);
+  if (!sizes)
+    return sizes.takeError();
+  auto [functions, slots] = *sizes;
+
+  LLVMContext &C = M.getContext();
+  Type *VoidTy = Type::getVoidTy(C);
+  Type *PtrTy = getInt8PtrTy(C);
+  const uint64_t size = sizeof(DeviceProfileTable);
+  auto *shadowTy = ArrayType::get(Type::getInt8Ty(C), size);
+  auto *shadow = new GlobalVariable(
+      M, shadowTy, /*isConstant=*/false, GlobalValue::InternalLinkage,
+      Constant::getNullValue(shadowTy), POSEIDON_DEVICE_PROFILE_TABLE);
+  shadow->setAlignment(Align(8));
+  registerDeviceVariable(M, *registration, shadow,
+                         POSEIDON_DEVICE_PROFILE_TABLE, size);
+
+  Function *ctor = Function::Create(
+      FunctionType::get(VoidTy, false), GlobalValue::InternalLinkage,
+      "__poseidon_profile_register_module_table", &M);
+  ctor->addFnAttr(Attribute::NoUnwind);
+  IRBuilder<> B(BasicBlock::Create(C, "entry", ctor));
+  B.CreateCall(M.getOrInsertFunction(
+                   POSEIDON_ENTRY_NAME(POSEIDON_PROFILE_REGISTER_MODULE),
+                   FunctionType::get(
+                       VoidTy, {PtrTy, B.getInt32Ty(), B.getInt32Ty()}, false)),
+               {shadow, B.getInt32(functions), B.getInt32(slots)});
+  B.CreateRetVoid();
+  // After the CUDA module constructor, so that a unit loaded once the profiler
+  // runs is registered with the CUDA runtime before it is bound.
+  appendToGlobalCtors(M, ctor, 65535);
+  return true;
+}
+
+void recordProfileTableSize(LaunchManifest &L, Module &M) {
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
+    return;
+  const ProbeABI &P = T.probes();
+  SmallPtrSet<const GlobalVariable *, 8> functions;
+  uint64_t slots = 0;
+  for (Function &F : M)
+    for (Instruction &I : instructions(F)) {
+      auto *CI = dyn_cast<CallInst>(&I);
+      const Function *callee = CI ? CI->getCalledFunction() : nullptr;
+      if (!callee || !is_contained({P.LogValue, P.LogGradient, P.BlockDims,
+                                    P.PublishStatic},
+                                   callee->getName()))
+        continue;
+      auto *name =
+          dyn_cast<GlobalVariable>(CI->getArgOperand(0)->stripPointerCasts());
+      if (!name)
+        report_fatal_error("Poseidon: a device profiler probe names its "
+                           "function through a value that is not a global");
+      functions.insert(name);
+      if (callee->getName() != P.LogValue && callee->getName() != P.LogGradient)
+        continue;
+      auto *idx = dyn_cast<ConstantInt>(CI->getArgOperand(1));
+      if (!idx)
+        report_fatal_error("Poseidon: a device profiler probe has a slot "
+                           "index that is not a constant");
+      slots = std::max(slots, idx->getZExtValue() + 1);
+    }
+  if (!functions.empty())
+    recordProfileTable(L, functions.size(), slots);
+}
+
+/// The user's function a probe call serves. Profile generation calls the
+/// probes from functions it and Enzyme synthesize, all of local linkage; the
+/// nearest caller of other linkage is the kernel or device function the user
+/// wrote.
+static const Function &userFunctionOf(const Function &F) {
+  SmallVector<const Function *, 8> work{&F};
+  SmallPtrSet<const Function *, 8> seen{&F};
+  for (size_t i = 0; i < work.size(); ++i) {
+    const Function *G = work[i];
+    if (!G->hasLocalLinkage())
+      return *G;
+    for (const User *U : G->users())
+      if (const auto *call = dyn_cast<CallBase>(U))
+        if (seen.insert(call->getFunction()).second)
+          work.push_back(call->getFunction());
+  }
+  return F;
+}
+
+/// A probe compiled for a processor the device profiler cannot serve: an error
+/// at the user's function.
+static Error refuseProbe(const Target &target, const Function &caller) {
+  const Function &F = userFunctionOf(caller);
+  return userError(F, *target.profilerMismatch(F));
+}
+
+/// An error at the first probe call of `M`, whose target this build carries
+/// no device profiler for.
+static Error refuseUnservedProbes(const Target &target, Module &M) {
+  const ProbeABI &P = target.probes();
+  const StringRef probes[] = {
+      P.LogValue,  P.LogGradient,   P.PerturbF64,           P.PerturbF32,
+      P.BlockDims, P.PublishStatic, P.OverlappingArguments, P.LogAccess};
+  for (Function &F : M)
+    for (Instruction &I : instructions(F))
+      if (const auto *call = dyn_cast<CallBase>(&I))
+        if (const Function *callee = call->getCalledFunction();
+            callee && is_contained(probes, callee->getName()))
+          return refuseProbe(target, F);
+  return Error::success();
+}
+
+/// The device profiler `bitcode`, checked to define the table the host
+/// runtime writes and to serve every probe `M` calls.
+static Expected<std::unique_ptr<Module>>
+loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
+  Expected<std::unique_ptr<Module>> parsed = parseBitcodeFile(
+      MemoryBufferRef(bitcode, "DeviceProfilerDevice.bc"), M.getContext());
+  if (!parsed)
+    report_fatal_error(Twine("Poseidon: the device profiler bitcode does not "
+                             "load: ") +
+                       toString(parsed.takeError()));
+  Module &L = **parsed;
+  GlobalVariable *libTable = L.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE);
+  if (!libTable || L.getDataLayout().getTypeAllocSize(
+                       libTable->getValueType()) != sizeof(DeviceProfileTable))
+    report_fatal_error("Poseidon: the device profiler bitcode does not define "
+                       "the table the host runtime writes");
+  // A library built for one processor serves only the probes compiled for it.
+  for (const Function &F : L) {
+    const Function *probe = F.isDeclaration() || F.hasLocalLinkage()
+                                ? nullptr
+                                : M.getFunction(F.getName());
+    if (!probe || !probe->isDeclaration())
+      continue;
+    for (const User *U : probe->users())
+      if (const auto *call = dyn_cast<CallBase>(U))
+        if (target.profilerMismatch(*call->getFunction()))
+          return refuseProbe(target, *call->getFunction());
+  }
+  return parsed;
+}
+
+/// Gives the profiler library `L` the target and layout of `M`, and drops what
+/// describes its own compile: its named metadata (module flags, producer, NVVM
+/// IR version, the TBAA of its headers' errno), keep-alive lists, and the
+/// processor its functions were compiled for. The linker appends every named
+/// metadata node it is given to the module, so a module without a site would
+/// otherwise not come out as written. Debug-info units stay, as the debug info
+/// of its functions refers to them.
+static void adaptDeviceProfiler(Module &L, const Module &M) {
+  L.setTargetTriple(M.getTargetTriple());
+  L.setDataLayout(M.getDataLayout());
+  SmallVector<NamedMDNode *, 4> named;
+  for (NamedMDNode &N : L.named_metadata())
+    if (N.getName() != "llvm.dbg.cu")
+      named.push_back(&N);
+  for (NamedMDNode *N : named)
+    L.eraseNamedMetadata(N);
+  for (StringRef used : {"llvm.used", "llvm.compiler.used"})
+    if (GlobalVariable *G = L.getNamedGlobal(used))
+      G->eraseFromParent();
+  for (Function &F : L) {
+    F.removeFnAttr("target-cpu");
+    F.removeFnAttr("target-features");
+  }
+}
+
+/// The names of what `L` defines for others that `M` does not define itself.
+static SmallVector<std::string, 16> definedOnlyBy(Module &L, Module &M) {
+  StringSet<> own;
+  for (const GlobalValue &G : M.global_values())
+    if (!G.isDeclaration())
+      own.insert(G.getName());
+  SmallVector<std::string, 16> linked;
+  for (const GlobalValue &G : L.global_values())
+    if (!G.isDeclaration() && !G.hasLocalLinkage() &&
+        !own.contains(G.getName()))
+      linked.push_back(G.getName().str());
+  return linked;
+}
+
+Expected<bool> linkDeviceProfiler(Module &M, bool profileGenerate) {
+  const Target &target = Target::of(M);
+  if (!profileGenerate || !target.isDevice())
+    return false;
+  if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE))
+    if (!T->isDeclaration())
+      return false;
+  // Without the target's device profiler the probes would stay external and
+  // the program would fail only at its link.
+  StringRef bitcode = target.profilerBitcode();
+  if (bitcode.empty()) {
+    if (Error E = refuseUnservedProbes(target, M))
+      return std::move(E);
+    return false;
+  }
+  Expected<std::unique_ptr<Module>> loaded =
+      loadDeviceProfiler(target, bitcode, M);
+  if (!loaded)
+    return loaded.takeError();
+  std::unique_ptr<Module> L = std::move(*loaded);
+  GlobalVariable *libTable = L->getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE);
+  // Code generation follows the GPU the module is compiled for, and the
+  // module keeps its own flags, taking only what its probes reach.
+  adaptDeviceProfiler(*L, M);
+  SmallVector<std::string, 16> linked = definedOnlyBy(*L, M);
+
+  // The host half registers the table whether or not a probe reads it.
+  GlobalVariable *table = M.getNamedGlobal(POSEIDON_DEVICE_PROFILE_TABLE);
+  if (!table)
+    table = new GlobalVariable(
+        M, libTable->getValueType(), /*isConstant=*/false,
+        GlobalValue::ExternalLinkage, nullptr, POSEIDON_DEVICE_PROFILE_TABLE,
+        nullptr, GlobalValue::NotThreadLocal, libTable->getAddressSpace());
+  appendToCompilerUsed(M, {table});
+
+  if (Linker::linkModules(M, std::move(L), Linker::Flags::LinkOnlyNeeded))
+    report_fatal_error("Poseidon: linking the device profiler failed");
+
+  // Local to the module, so relocatable device code links one copy per unit;
+  // the table is merged across units instead, because the linker wrapper
+  // registers it by name in the linked image.
+  for (const std::string &name : linked)
+    if (GlobalValue *G = M.getNamedValue(name); G && !G->isDeclaration())
+      G->setLinkage(name == POSEIDON_DEVICE_PROFILE_TABLE
+                        ? GlobalValue::WeakODRLinkage
+                        : GlobalValue::InternalLinkage);
+  return true;
+}
+
+/// The generated logging code declares the probes on first use without
+/// enzyme_inactive, and with only a declaration in the TU Enzyme demands a
+/// derivative ("No augmented forward pass found"); so they are declared first,
+/// with the signatures the generated ones take. The runtime's own
+/// definitions cannot carry the attribute: __has_attribute(enzyme_inactive) is
+/// false unless the clang plugin is loaded, so under -fpass-plugin it is lost.
+void predeclareInactiveProfilerProbes(Module &M) {
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
+    return;
+  const ProbeABI &P = T.probes();
+  LLVMContext &Ctx = M.getContext();
+  getProfilerHook(M, P.LogValue, logValueType(Ctx));
+  getProfilerHook(M, P.LogGradient, logGradientType(Ctx));
+  // The perturbation hooks are inactive too: nothing reads a derivative of the
+  // perturbation, and a second run of the pass would otherwise differentiate
+  // the calls the first run injected.
+  getProfilerHook(M, P.PerturbF64, perturbType(Type::getDoubleTy(Ctx)));
+  getProfilerHook(M, P.PerturbF32, perturbType(Type::getFloatTy(Ctx)));
+  if (!P.LogAccess.empty())
+    getProfilerHook(M, P.LogAccess, logAccessType(Ctx));
+}
+
+/// A static constructor cannot make the call: the runtime publishes its device
+/// tables with cudaMemcpyToSymbol, and a dynamic initializer can run before
+/// __cudaRegisterFatBinary has registered the device module in a multi-TU
+/// binary ("invalid device symbol"). main runs after every static constructor.
+///
+/// Only the host half of an offload unit, kernels or not, links the device
+/// profiler. Erring towards injection is deliberate: a wrongly skipped
+/// injection loses the profile silently, a wrongly kept one fails at link.
+bool injectHostProfilerInit(Module &M, bool print) {
+  if (Target::of(M).isDevice())
+    return false;
+  // A host-only build links no CUDA profiler runtime, so the call injected
+  // below would be an undefined reference to __poseidon_profile_init_device.
+  OffloadRuntime R = offloadRuntimeOf(M);
+  if (R == OffloadRuntime::None)
+    return false;
+  Function *mainF = M.getFunction("main");
+  if (!mainF || mainF->isDeclaration())
+    return false;
+  LLVMContext &Ctx = M.getContext();
+  FunctionCallee initFn =
+      getProfilerHook(M, deviceProfilerInit(),
+                      FunctionType::get(Type::getVoidTy(Ctx), {}, false));
+  if (callsFunctionNamed(*mainF, deviceProfilerInit()))
+    return false;
+  IRBuilder<> B(&*mainF->getEntryBlock().getFirstInsertionPt());
+  B.CreateCall(initFn, {})->setDoesNotThrow();
+  if (print)
+    llvm::errs()
+        << "[poseidon] device profiler registration injected at main\n";
+  return true;
+}
+
+bool defineProfileDirectory(const Options &O, Module &M) {
+  constexpr StringLiteral kName = "__poseidon_profile_dir";
+  const std::string &dir = O.Profiling.ProfileGenerate;
+  if (dir.empty() || dir == POSEIDON_DEFAULT_PROFILE_DIR ||
+      Target::of(M).isDevice() || M.getNamedGlobal(kName))
+    return false;
+  Constant *text = ConstantDataArray::getString(M.getContext(), dir);
+  new GlobalVariable(M, text->getType(), /*isConstant=*/true,
+                     GlobalValue::WeakAnyLinkage, text, kName);
+  return true;
+}
+
+/// The probe is keyed by the poseidon.site.<name> global the value probes use,
+/// which exists only after AD.
+void injectBlockDimProbes(Module &M, bool print) {
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
+    return;
+  const ProbeABI &P = T.probes();
+  Function *logFn = M.getFunction(P.LogValue);
+  if (!logFn)
+    return;
+  LLVMContext &Ctx = M.getContext();
+  Type *PtrTy = getInt8PtrTy(Ctx);
+  FunctionCallee probeFn = getProfilerHook(
+      M, P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
+
+  unsigned placed = 0;
+  for (Function &F : M) {
+    if (F.isDeclaration() || callsFunctionNamed(F, P.BlockDims))
+      continue;
+    Value *nameArg = nullptr;
+    for (Instruction &I : instructions(F))
+      if (auto *CI = dyn_cast<CallInst>(&I);
+          CI && getFunctionFromCall(CI) == logFn) {
+        nameArg = CI->getArgOperand(0);
+        break;
+      }
+    if (!nameArg)
+      continue;
+    // Rebuilt at the entry block from the global, as the log call's operand
+    // may not dominate it; the runtime keys the record by that global.
+    auto *gv = dyn_cast<GlobalVariable>(nameArg->stripPointerCasts());
+    if (!gv)
+      report_fatal_error("Poseidon: a value probe in " + F.getName() +
+                         " has no poseidon.site. global as its name operand");
+    IRBuilder<> B(&*F.getEntryBlock().getFirstInsertionPt());
+    Value *nameAtEntry = B.CreateInBoundsGEP(gv->getValueType(), gv,
+                                             {B.getInt32(0), B.getInt32(0)});
+    if (nameAtEntry->getType() != PtrTy)
+      nameAtEntry = B.CreateAddrSpaceCast(nameAtEntry, PtrTy);
+    B.CreateCall(probeFn, {nameAtEntry})->setDoesNotThrow();
+    ++placed;
+  }
+  if (print && placed)
+    llvm::errs() << "[poseidon] block-geometry probe placed in " << placed
+                 << " profiled function(s)\n";
+}
+
+namespace {
+struct ProfDesc {
+  std::string kernel;
+  int siteId = 0;
+  unsigned nargs = 0;
+  SmallVector<int, 8> ptrIdx;
+  SmallVector<int, 8> seedWidth;
+  /// Byte offset of each pointer inside its argument (0 for a pointer
+  /// argument).
+  SmallVector<int, 8> ptrOff;
+};
+} // namespace
+
+static Error readProfDescriptors(const Options &O, Module &M,
+                                 std::map<std::string, ProfDesc> &out) {
+  return readDescriptors(
+      O, M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) -> Error {
+        DescriptorCursor Cursor(toks);
+        ProfDesc d;
+        d.kernel = toks[0].str();
+        d.siteId = Cursor.integer<int>("site id");
+        d.nargs = Cursor.integer<unsigned>("argument count");
+        unsigned np = Cursor.integer<unsigned>("pointer count");
+        for (unsigned i = 0; i < np && Cursor.ok(); ++i)
+          d.ptrIdx.push_back(Cursor.integer<int>("pointer argument"));
+        for (unsigned i = 0; i < np && Cursor.ok(); ++i)
+          d.seedWidth.push_back(Cursor.integer<int>("seed width"));
+        d.ptrOff.assign(d.ptrIdx.size(), 0);
+        if (Cursor.consume("off"))
+          for (int &off : d.ptrOff) {
+            off = Cursor.integer<int>("pointer offset");
+            if (off < 0)
+              Cursor.fail("its pointer offset " + Twine(off) + " is negative");
+          }
+        if (Error E = Cursor.takeError())
+          return E;
+        out[d.kernel] = d;
+        return Error::success();
+      });
+}
+
+/// The private constant array `name` holding `vals`: the one already of that
+/// name and contents, or a new one.
+static Constant *profIntArray(Module &M, const Twine &nameT,
+                              ArrayRef<int> vals) {
+  std::string name = nameT.str();
+  Constant *init = ConstantDataArray::get(M.getContext(), vals);
+  if (auto *old = M.getNamedGlobal(name))
+    if (old->hasInitializer() && old->getInitializer() == init)
+      return old;
+  return privateConstant(M, init, name);
+}
+
+Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
+  std::map<std::string, ProfDesc> descs;
+  if (Error E = readProfDescriptors(O, M, descs))
+    return std::move(E);
+  if (descs.empty())
+    return false;
+
+  LLVMContext &C = M.getContext();
+  Type *ptr = getInt8PtrTy(C);
+  Type *i32 = Type::getInt32Ty(C);
+  Type *i64 = Type::getInt64Ty(C);
+  FunctionCallee helper = M.getOrInsertFunction(
+      POSEIDON_ENTRY_NAME(POSEIDON_LAUNCH_PROFILED),
+      FunctionType::get(
+          Type::getVoidTy(C),
+          {ptr, i32, ptr, ptr, i64, ptr, i32, ptr, i32, ptr, ptr, ptr}, false));
+
+  bool changed = false;
+  Error errors = Error::success();
+  for (Function &F : M) {
+    if (F.isDeclaration() || !F.getReturnType()->isVoidTy())
+      continue;
+    auto dIt = llvm::find_if(
+        descs, [&](const auto &kv) { return isLaunchStubFor(F, kv.first); });
+    if (dIt == descs.end())
+      continue;
+    const ProfDesc &d = dIt->second;
+    // The pass reaches the host module through more than one extension point;
+    // a stub that already calls the helper must not be rewritten again.
+    if (callsFunctionNamed(F, POSEIDON_ENTRY_NAME(POSEIDON_LAUNCH_PROFILED)))
+      continue;
+    // The launch's own argument array and configuration: what the stub's
+    // parameters look like depends on the host ABI (an aggregate argument
+    // arrives by value, by reference or split into registers), what the
+    // launch is handed does not.
+    CallInst *launch = findLaunchCall(F);
+    CallInst *pop = findPopConfig(F);
+    // Launched as written, the profiled kernel would read shadows nobody
+    // passed it.
+    if (!launch || !pop) {
+      errors = joinErrors(
+          std::move(errors),
+          userError(F,
+                    "the launch stub " + F.getName() +
+                        " does not end in __cuda/__hipPopCallConfiguration "
+                        "and cuda/hipLaunchKernel, through which the "
+                        "profiling run passes its kernel the shadows; compile "
+                        "against the CUDA or ROCm headers"));
+      continue;
+    }
+
+    Constant *idxGV = profIntArray(M, "poseidon.ptr." + d.kernel, d.ptrIdx);
+    Constant *offGV = profIntArray(M, "poseidon.off." + d.kernel, d.ptrOff);
+    Constant *seedGV =
+        profIntArray(M, "poseidon.seed." + d.kernel, d.seedWidth);
+
+    IRBuilder<> B(launch);
+    B.CreateCall(
+        helper,
+        {launchedKernel(*launch), ConstantInt::get(i32, (unsigned)d.siteId),
+         poppedGrid(*pop), poppedBlock(*pop), launchSharedBytes(*launch),
+         launchStream(*launch), ConstantInt::get(i32, d.nargs),
+         launchArguments(*launch), ConstantInt::get(i32, d.ptrIdx.size()),
+         idxGV, offGV, seedGV});
+    launch->replaceAllUsesWith(Constant::getNullValue(launch->getType()));
+    launch->eraseFromParent();
+    if (O.Diagnostics.Print)
+      errs() << "[poseidon] launch of " << d.kernel
+             << " now allocates and seeds " << d.ptrIdx.size()
+             << " shadow buffer(s)\n";
+    changed = true;
+  }
+  if (errors)
+    return std::move(errors);
+  return changed;
+}
+
+Expected<bool> registerProfiledKernels(const Options &O, Module &M) {
+  bool changed = false;
+  if (Error E = readProfileHeaders(
+          O, M, [&](StringRef profileName, StringRef header) {
+            changed |=
+                registerProfileStatic(M, profileName, profileName, header);
+          }))
+    return std::move(E);
+  return changed;
+}
+
+} // namespace poseidon

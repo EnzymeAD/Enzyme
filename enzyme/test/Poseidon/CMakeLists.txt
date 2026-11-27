@@ -1,0 +1,207 @@
+# The CUDA architecture the tests compile for: the CUDA runtimes' first, else
+# sm_120.
+set(POSEIDON_TEST_GPU_ARCH sm_120)
+if(POSEIDON_HAS_CUDA AND POSEIDON_CUDA_ARCH)
+  set(POSEIDON_TEST_GPU_ARCH ${POSEIDON_CUDA_ARCH})
+endif()
+message(STATUS "Poseidon: integration tests target ${POSEIDON_TEST_GPU_ARCH}")
+
+# The tests price from made-up cost models written into the build tree. A GPU
+# model a test runs Herbie under carries the Herbie platform generated from it,
+# as a calibrated model does. No test prices from a measurement.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(POSEIDON_TEST_COST_MODELS ${CMAKE_CURRENT_BINARY_DIR}/cost_models)
+set(_generator ${CMAKE_CURRENT_SOURCE_DIR}/Inputs/make_cost_models.py)
+set(_platform ${POSEIDON_SOURCE_DIR}/tools/calibrate/herbie_platform.py)
+# The CPU a host compile names when it names none, as clang passes it to cc1:
+# the tests that compile for the host price from a model filed under it.
+execute_process(
+  COMMAND
+    ${LLVM_TOOLS_BINARY_DIR}/clang
+    "-###"
+    -c
+    -x
+    c
+    /dev/null
+    -o
+    /dev/null
+  ERROR_VARIABLE _host_jobs OUTPUT_QUIET)
+if(NOT _host_jobs MATCHES "\"-target-cpu\" \"([^\"]+)\"")
+  message(
+    FATAL_ERROR
+      "Poseidon tests: ${LLVM_TOOLS_BINARY_DIR}/clang names no -target-cpu "
+      "for a host compile, so no host cost model can be filed under it")
+endif()
+set(POSEIDON_TEST_HOST_CPU ${CMAKE_MATCH_1})
+set(_outputs "")
+foreach(
+  _model
+  cpu_native
+  cpu_host
+  cpu_foreign
+  cpu_noarch
+  cpu_missing
+  gfx942_synthetic
+  sm_120_synthetic_library
+  sm_120_synthetic_tcec
+  sm_120_synthetic_half
+  sm_120_synthetic_floor_subnormal
+  sm_120_synthetic_floor_normal
+  gfx90a_synthetic_floor_subnormal
+  gfx90a_synthetic_floor_normal
+  sm_120_synthetic_stream
+  sm_120_synthetic_stream_partial)
+  list(APPEND _outputs ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
+endforeach()
+set(_platforms "")
+foreach(_model sm_120_synthetic sm_90_synthetic gpu_synthetic)
+  set(_csv ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
+  set(_rkt ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.herbie.rkt)
+  list(APPEND _outputs ${_csv} ${_rkt})
+  list(
+    APPEND
+    _platforms
+    COMMAND
+    ${Python3_EXECUTABLE}
+    ${_platform}
+    --csv
+    ${_csv}
+    --output
+    ${_rkt})
+endforeach()
+add_custom_command(
+  OUTPUT ${_outputs}
+  COMMAND
+    ${Python3_EXECUTABLE} ${_generator} ${POSEIDON_TEST_COST_MODELS}
+    ${POSEIDON_TEST_GPU_ARCH} ${POSEIDON_TEST_HOST_CPU} ${_platforms}
+  DEPENDS ${_generator} ${_platform}
+  COMMENT "Writing the cost models of the Poseidon tests")
+add_custom_target(poseidon-test-cost-models DEPENDS ${_outputs})
+
+# Programs tests run: drivers of pass sources, and opt plugins that call the
+# Poseidon plugin's functions, which they find in the opt process that loaded
+# both. What they print is checked against what clang computes from them by
+# default, so assertions stay on in every build type and floating-point
+# contraction is clang's default with any compiler. They are built for the
+# tests only (poseidon-test-programs), not with the compiler.
+set(POSEIDON_TEST_PROGRAM_OPTIONS -UNDEBUG)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  list(APPEND POSEIDON_TEST_PROGRAM_OPTIONS -ffp-contract=on)
+endif()
+set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
+
+function(poseidon_configure_test_program name)
+  target_include_directories(
+    ${name}
+    PRIVATE
+      ${POSEIDON_SOURCE_DIR} ${ENZYME_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
+  target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
+  set_target_properties(
+    ${name}
+    PROPERTIES
+      EXCLUDE_FROM_ALL ON RUNTIME_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR}
+      LIBRARY_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR})
+endfunction()
+
+function(poseidon_add_test_program name)
+  set(LLVM_LINK_COMPONENTS Core Support)
+  add_llvm_executable(${name} ${ARGN})
+  poseidon_configure_test_program(${name})
+endfunction()
+
+function(poseidon_add_test_plugin name source)
+  add_llvm_library(${name} MODULE BUILDTREE_ONLY ${source} PLUGIN_TOOL opt)
+  poseidon_configure_test_program(${name})
+endfunction()
+
+poseidon_add_test_program(
+  poseidon-test-round-to-prec Core/round_to_prec_apfloat.cpp
+  ${POSEIDON_SOURCE_DIR}/Core/NumberFormat.cpp)
+poseidon_add_test_program(
+  poseidon-test-matmul-scheme Techniques/Matmul/scheme.cpp
+  ${POSEIDON_SOURCE_DIR}/Core/NumberFormat.cpp)
+poseidon_add_test_plugin(poseidon-test-expansion-match
+                         Inputs/expansion_match/emit.cpp)
+poseidon_add_test_plugin(poseidon-test-model Inputs/model/plugin.cpp)
+# Their sources include Model/Evaluators.h, which includes mpfr.h.
+foreach(_plugin poseidon-test-expansion-match poseidon-test-model)
+  target_include_directories(
+    ${_plugin}
+    SYSTEM
+    PRIVATE ${POSEIDON_MPFR_INCLUDE_DIR} ${POSEIDON_GMP_INCLUDE_DIR})
+endforeach()
+set(POSEIDON_TEST_PROGRAMS
+    poseidon-test-round-to-prec poseidon-test-matmul-scheme
+    poseidon-test-expansion-match poseidon-test-model)
+add_custom_target(poseidon-test-programs DEPENDS ${POSEIDON_TEST_PROGRAMS})
+
+# The Enzyme plugin comes in two builds: ClangEnzyme for -fpass-plugin and
+# LLVMEnzyme for opt's -load-pass-plugin.
+set(POSEIDON_ENZYME_OPT_PLUGIN
+    "${ENZYME_BINARY_DIR}/Enzyme/LLVMEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}")
+
+# The CUDA libraries the integration tests link, from the toolkit the build
+# found.
+find_package(CUDAToolkit QUIET)
+# A test that links poseidon_gemm_cuda links what the runtime links, in its
+# order.
+set(POSEIDON_TEST_GEMM_LINK "")
+poseidon_gemm_cuda_link_files(_rt_libs TOOLKIT)
+foreach(_lib ${_rt_libs})
+  get_filename_component(_dir ${_lib} DIRECTORY)
+  string(APPEND POSEIDON_TEST_GEMM_LINK " ${_lib} -Wl,-rpath,${_dir}")
+endforeach()
+# What the build has, for the features of the lit configuration.
+set(POSEIDON_TEST_HAS_CUDA ${POSEIDON_HAS_CUDA})
+set(POSEIDON_TEST_HAS_HIP ${POSEIDON_HAS_HIP})
+set(POSEIDON_TEST_HAS_TCEC ${POSEIDON_HAS_TCEC})
+llvm_canonicalize_cmake_booleans(POSEIDON_TEST_HAS_CUDA POSEIDON_TEST_HAS_HIP
+                                 POSEIDON_TEST_HAS_TCEC)
+
+configure_lit_site_cfg(
+  ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
+  ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py MAIN_CONFIG
+  ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py)
+
+set(POSEIDON_TEST_DEPS
+    Poseidon-${LLVM_VERSION_MAJOR}
+    poseidon_profile
+    poseidon_profile_shadows
+    poseidon-clang
+    poseidon-calibrate
+    poseidon-kappa
+    poseidon-test-cost-models
+    poseidon-test-programs
+    LLVMEnzyme-${LLVM_VERSION_MAJOR})
+if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
+  list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})
+endif()
+if(TARGET poseidon_gemm_cuda)
+  list(APPEND POSEIDON_TEST_DEPS poseidon_gemm_cuda poseidon_profile_cuda)
+endif()
+if(TARGET poseidon_gemm_hip)
+  list(APPEND POSEIDON_TEST_DEPS poseidon_gemm_hip poseidon_profile_hip)
+endif()
+if(TARGET herbie)
+  list(APPEND POSEIDON_TEST_DEPS herbie)
+endif()
+
+# What the tests read besides the compiler, for a tool that runs part of the
+# suite (utils/update_profile_hashes.py).
+add_custom_target(poseidon-test-deps DEPENDS ${POSEIDON_TEST_DEPS})
+
+# check-poseidon needs no device; the tests under Integration/ compile and
+# launch CUDA kernels and have their own target.
+add_lit_testsuite(
+  check-poseidon
+  "Running Poseidon regression tests"
+  ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS
+  ${POSEIDON_TEST_DEPS}
+  ARGS
+  -v
+  --filter-out
+  "Integration/")
+set_target_properties(check-poseidon PROPERTIES FOLDER "Tests")
+
+add_subdirectory(Integration)
