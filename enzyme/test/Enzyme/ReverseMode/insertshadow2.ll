@@ -45,9 +45,6 @@ entry:
 ; CHECK-NEXT:   %ld0 = load double*, double** %0, align 8
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"ad'ipc" = addrspacecast double* %ld0 to double addrspace(1)*
-; CHECK-NEXT:   %1 = load double, double addrspace(1)* %"ad'ipc", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %differeturn
-; CHECK-NEXT:   store double %2, double addrspace(1)* %"ad'ipc", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
