@@ -69,6 +69,7 @@ add_mlir_library(
   MathAutoDiffOpInterfaceImpl.cpp
   GPUAutoDiffOpInterfaceImpl.cpp
   EnzymeAutoDiffOpInterfaceImpl.cpp
+  StablehloAutoDiffOpInterfaceImpl.cpp
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
   AffineDerivativesIncGen

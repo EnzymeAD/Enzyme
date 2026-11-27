@@ -1096,7 +1096,9 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",
+        "@stablehlo//:stablehlo_ops",
     ],
+    copts = ["-DENZYME_ENABLE_STABLEHLO"],
 )
 
 cc_library(
