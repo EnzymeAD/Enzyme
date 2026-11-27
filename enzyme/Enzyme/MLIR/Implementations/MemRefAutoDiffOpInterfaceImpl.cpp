@@ -319,6 +319,10 @@ class MemRefClonableTypeInterface
                                                   MemRefType> {
 
 public:
+  bool canCloneValue(mlir::Type self, Value value) const {
+    return cast<MemRefType>(self).getLayout().isIdentity();
+  }
+
   mlir::Value cloneValue(mlir::Type self, OpBuilder &builder,
                          Value value) const {
     MemRefType MT = cast<MemRefType>(self);

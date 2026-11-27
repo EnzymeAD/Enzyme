@@ -135,6 +135,21 @@ def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
   let methods = [
     InterfaceMethod<
       /*desc=*/[{
+        Returns true if `value` can be cloned by `cloneValue`. Types whose
+        allocation extent cannot always be recovered (such as `!llvm.ptr`
+        without a size hint or alloca) or non-identity strided memrefs return
+        false so callers can reject cleanly without emitting partial IR.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"canCloneValue",
+      /*args=*/(ins "::mlir::Value":$value),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return true;
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Clone a value.
 
         The clone does not have to have the type of what it clones: an
