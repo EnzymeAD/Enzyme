@@ -291,8 +291,12 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
   from.canonicalHash = profile.canonicalHash;
   bool recognized = false;
   for (const Technique *T : techniques())
-    if (T->enabled(O))
-      recognized |= T->recognize(S, F, profile, st);
+    if (T->enabled(O)) {
+      Expected<bool> Found = T->recognize(S, F, profile, st);
+      if (!Found)
+        return Found.takeError();
+      recognized |= *Found;
+    }
 
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.

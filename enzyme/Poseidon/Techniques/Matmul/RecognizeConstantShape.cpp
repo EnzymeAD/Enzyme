@@ -638,8 +638,6 @@ constantOutputExtents(const RecognizedMatmul &m, const ThreadIndexBounds &guard,
   if (!m.globalM || !m.globalN)
     return std::nullopt;
   const uint64_t K = m.K, profileK = m.globalK;
-  if (!profileK)
-    return OutputExtents{m.globalM, m.globalN, false};
   // Rescaling by K / globalK is sound only for an extent that tracks matrix
   // order (equal to globalK at profile scale): rescaling any other fabricates
   // an extent, and a library call would read past its operand.
@@ -901,10 +899,10 @@ static std::optional<StringRef> workBesidesProduct(const Loop &L,
   return std::nullopt;
 }
 
-void findConstantShapeMatmuls(const Options &O, Function &F,
-                              ScalarEvolution &SE, LoopInfo &LI,
-                              const SiteProfileHeader &profileHeader,
-                              SmallVectorImpl<RecognizedMatmul> &out) {
+Error findConstantShapeMatmuls(const Options &O, Function &F,
+                               ScalarEvolution &SE, LoopInfo &LI,
+                               const SiteProfileHeader &profileHeader,
+                               SmallVectorImpl<RecognizedMatmul> &out) {
   assert(O.Candidates.EnableMatmul &&
          "-poseidon-enable-matmul must be enabled");
   assert(Target::of(F).hasInKernelMatrixRaise() &&
@@ -918,7 +916,7 @@ void findConstantShapeMatmuls(const Options &O, Function &F,
       llvm::errs() << "[poseidon] " << F.getName()
                    << ": no profile header (launchCount=0); skipping all "
                       "scalar-loop matmul candidates\n";
-    return;
+    return Error::success();
   }
 
   unsigned nextId = static_cast<unsigned>(out.size());
@@ -926,6 +924,7 @@ void findConstantShapeMatmuls(const Options &O, Function &F,
   // Profile-scale reduction lengths recorded at profile generation, keyed by
   // the fma's probe index.
   const std::map<size_t, unsigned> &redTrip = profileHeader.redTrip;
+  Error MissingTrip = Error::success();
   DominatorTree DT(F);
   PostDominatorTree PDT(F);
 
@@ -1006,19 +1005,25 @@ void findConstantShapeMatmuls(const Options &O, Function &F,
         am.elemType = eltKind;
         am.handle = h;
         am.outputValue = h.fma;
-        // Profile-scale reduction length; 0 when the header has none.
-        {
-          if (std::optional<size_t> slot = slotOf(h.fma)) {
-            auto it = redTrip.find(*slot);
-            am.globalK = it == redTrip.end() ? 0u : it->second;
-          }
+        auto tripIt = redTrip.find(requireSlot(h.fma));
+        if (tripIt == redTrip.end()) {
+          MissingTrip = joinErrors(
+              std::move(MissingTrip),
+              userError(*h.fma,
+                        "the profile of " + F.getName() +
+                            " records no reduction length for this matrix "
+                            "product; re-run profile generation with "
+                            "-poseidon-enable-matmul"));
+          return;
         }
+        am.globalK = tripIt->second;
         for (BasicBlock *BB : L->blocks())
           for (Instruction &I : *BB)
             am.footprint.insert(&I);
 
         out.push_back(std::move(am));
       });
+  return MissingTrip;
 }
 
 } // namespace poseidon

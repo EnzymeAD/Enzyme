@@ -1,8 +1,8 @@
 ; DEFINE: %{opt} = %opt %S/../../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-enable-algebraic=false -poseidon-enable-precision=false \
 ; DEFINE:   -poseidon-enable-matmul -poseidon-tau=1e-14 -S -o /dev/null
 ; DEFINE: %{raise} = %{opt} -poseidon-matmul-library-calls=false -poseidon-print
-; RUN: rm -rf %t && mkdir -p %t/scaled %t/rect
-; RUN: sed -e 's/^MaxGridDims = 1 1 1$/MaxGridDims = 1 8 1/' -e 's/^LaunchCount = 2$/LaunchCount = 2\nReductionTrip = 0 8/' %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile > %t/scaled/matmul_body.fpprofile
+; RUN: rm -rf %t && mkdir -p %t/scaled %t/rect %t/notrip
+; RUN: sed -e 's/^MaxGridDims = 1 1 1$/MaxGridDims = 1 8 1/' -e 's/^ReductionTrip = 0 16$/ReductionTrip = 0 8/' %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile > %t/scaled/matmul_body.fpprofile
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/one.csv && echo 'inkernel_rel,f16_f32_m16n16k16_browmajor,0.5' >> %t/one.csv
 ; RUN: cp %t/one.csv %t/all.csv && echo 'inkernel_rel,tcec_n2_f16_f32_m16n16k16_browmajor,0.5' >> %t/all.csv && echo 'inkernel_rel,tcec_n3_f16_f32_m16n16k16_browmajor,0.5' >> %t/all.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/col.csv && echo 'inkernel_rel,f16_f32_m16n16k16_bcolmajor,0.5' >> %t/col.csv
@@ -24,6 +24,8 @@
 ; RUN: not %{raise} -poseidon-profile-use=%S/../../Inputs/matmul_site_profile -poseidon-early-prune -poseidon-cost-model=%t/strict.csv -poseidon-cache=%t/c_strict -poseidon-strict-mode 2>&1 | \
 ; RUN:   FileCheck --check-prefix=STRICT-RAISE %s
 ; RUN: sed 's/^MaxGridDims = 1 1 1$/MaxGridDims = 1 8 1/' %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile > %t/rect/matmul_body.fpprofile
+; RUN: sed '/^ReductionTrip = /d' %S/../../Inputs/matmul_site_profile/matmul_body.fpprofile > %t/notrip/matmul_body.fpprofile
+; RUN: not %{raise} -poseidon-profile-use=%t/notrip -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c_notrip 2>&1 | FileCheck --check-prefix=NOTRIP %s
 ; RUN: cp %cost_models/cm_sm_120_synthetic_library.csv %t/oz.csv && echo 'library_ozaki_rect_rel,nm14_m128n16k16,0.1' >> %t/oz.csv
 ; RUN: cp %t/oz.csv %t/low.csv && echo 'library_ozaki_rect_rel,dgemm_m128n16k16,0.05' >> %t/low.csv
 ; RUN: cp %t/oz.csv %t/high.csv && echo 'library_ozaki_rect_rel,dgemm_m128n16k16,0.2' >> %t/high.csv
@@ -86,3 +88,5 @@
 ; NONE: Poseidon: matrix product 0, 16x16x16: native-dgemm library call is not proposed: this device's cost model carries no measured 'library_ozaki_rel,dgemm' row; poseidon-calibrate --gpu <id> measures it
 
 ; STRICT-LIB: error: {{.*}}strict mode: {{.*}} has no measured '{{[a-z0-9_]+,[a-z0-9_]+}}' row in {{.*}}oz.csv; poseidon-calibrate --gpu <id>{{.*}} measures it
+
+; NOTRIP: error: <unknown>:0:0: in function preprocess_matmul_body {{.*}}: Poseidon: the profile of preprocess_matmul_body records no reduction length for this matrix product; re-run profile generation with -poseidon-enable-matmul

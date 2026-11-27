@@ -98,8 +98,9 @@ public:
                                   llvm::raw_ostream &OS) const {}
   /// Finds, before the site's FP subgraphs are built, the code the technique
   /// takes as a whole; the subgraphs leave it out. Whether it found any.
-  virtual bool recognize(Session &S, llvm::Function &F,
-                         const SiteProfileData &P, SiteState &Site) const {
+  virtual llvm::Expected<bool> recognize(Session &S, llvm::Function &F,
+                                         const SiteProfileData &P,
+                                         SiteState &Site) const {
     return false;
   }
   /// Reshapes the FP subgraphs of the site `F`, once they are split, into the

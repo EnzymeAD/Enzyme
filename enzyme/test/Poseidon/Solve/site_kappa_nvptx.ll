@@ -29,7 +29,7 @@
 ; KAPPA-NEXT: {{^}}1.428768e-11 -1.816320e+06 All FP64(0%) + FP32(100%){{$}}
 ; KAPPA: {{^}}6.795448e-19 -3.333120e+05 All FP64(0%) + Expansion2(100%){{$}}
 ; KAPPA: [poseidon] preprocess_matmul_body: measured condition number 1.000000e+03 (ok), profiled sensitivity 4.903078e+04, error scale 2.039535e-02
-; KAPPA-NEXT: [poseidon] matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
+; KAPPA-NEXT: [poseidon] matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=16, K=16, gridCTAs=1):
 ; KAPPA-NEXT: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=3.332236e+01
 ; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=2.978463e-02
 ; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=2.540700e-02
@@ -43,7 +43,7 @@
 ; PLAIN-NEXT: ---
 ; PLAIN-NEXT: {{^}}1.697296e-04 -1.816320e+06 All FP64(0%) + FP32(100%){{$}}
 ; PLAIN: {{^}}8.072609e-12 -3.333120e+05 All FP64(0%) + Expansion2(100%){{$}}
-; PLAIN: [poseidon] matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
+; PLAIN: [poseidon] matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=16, K=16, gridCTAs=1):
 ; PLAIN-NEXT: wmma m16n16k16 f16/f32: dcost=-3.932160e+06 dacc=1.633821e+03
 ; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: dcost=-3.866624e+06 dacc=1.460363e+00
 ; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: dcost=-3.801088e+06 dacc=1.245725e+00

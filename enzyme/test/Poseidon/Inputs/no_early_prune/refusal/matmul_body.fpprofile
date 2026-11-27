@@ -2,6 +2,7 @@ CanonicalHash = 150c4887c95fc3a3
 MaxBlockDims = 16 16 1
 MaxGridDims = 1 1 1
 LaunchCount = 2
+ReductionTrip = 3 16
 0
 	MinRes = 1.00000000000000000e+16
 	MaxRes = 1.00000000000000000e+17

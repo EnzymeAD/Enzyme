@@ -758,7 +758,7 @@ static LibraryPrice proposeLibraryCall(const Product &P, MatmulUnit &cm,
 // profile has none): the MACs of the smallest square a product embeds in, per
 // MAC of the product.
 static double squarePaddingRatio(const RecognizedMatmul &m) {
-  const double M = m.globalM, N = m.globalN, K = m.globalK ? m.globalK : m.K;
+  const double M = m.globalM, N = m.globalN, K = m.globalK;
   if (!M || !N || !K)
     return 1.0;
   const double S = std::max({M, N, K});
@@ -1314,8 +1314,8 @@ public:
   }
 
   /// The site's matrix products, with the analyses their raise keeps.
-  bool recognize(Session &S, Function &F, const SiteProfileData &P,
-                 SiteState &st) const override {
+  Expected<bool> recognize(Session &S, Function &F, const SiteProfileData &P,
+                           SiteState &st) const override {
     const Options &O = S.Opts;
     const Target &T = Target::of(F);
     MatmulSiteState &M = st.get<MatmulSiteState>();
@@ -1328,7 +1328,9 @@ public:
       M.SE.emplace(F, *M.TLI, *M.AC, *M.DT, *M.LI);
       // The constant-trip products are the in-kernel raise's.
       if (T.hasInKernelMatrixRaise())
-        findConstantShapeMatmuls(O, F, *M.SE, *M.LI, P.header, M.matmuls);
+        if (Error E = findConstantShapeMatmuls(O, F, *M.SE, *M.LI, P.header,
+                                               M.matmuls))
+          return std::move(E);
       // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
       // skips whatever that one claimed, so a product both recognize keeps the
       // constant-trip candidate set.

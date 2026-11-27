@@ -301,14 +301,13 @@ struct RecognizedMatmul {
   unsigned gridCTAs = 0;             // CTAs the in-kernel launch issues
   unsigned globalM = 0, globalN = 0; // full GEMM output extent
   /// Profile-scale reduction length, so that with globalM/globalN the shape is
-  /// at one scale. 0 = unavailable, and the compile-time trip count K is used.
+  /// at one scale.
   unsigned globalK = 0;
 
-  /// The M x N x K of the whole product at profile scale; an extent the
-  /// profile does not give is the tile's or the compile's.
+  /// The M x N x K of the whole product at profile scale; a row or column
+  /// extent the profile does not give is the tile's.
   std::array<unsigned, 3> profileShape() const {
-    return {globalM ? globalM : M, globalN ? globalN : N,
-            globalK ? globalK : K};
+    return {globalM ? globalM : M, globalN ? globalN : N, globalK};
   }
 
   /// The type of A, B, the accumulator and the result.
@@ -358,11 +357,13 @@ void findRuntimeShapeMatmuls(const Options &O, llvm::Function &F,
 
 /// Recognize the constant-trip reduction loops of F that compute a matrix
 /// product (constant-shape products), with the per-CTA extents and the
-/// launch geometry from `profileHeader`.
-void findConstantShapeMatmuls(const Options &O, llvm::Function &F,
-                              llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
-                              const SiteProfileHeader &profileHeader,
-                              llvm::SmallVectorImpl<RecognizedMatmul> &out);
+/// launch geometry from `profileHeader`. An error when the profile records no
+/// reduction length for one of them.
+llvm::Error
+findConstantShapeMatmuls(const Options &O, llvm::Function &F,
+                         llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
+                         const SiteProfileHeader &profileHeader,
+                         llvm::SmallVectorImpl<RecognizedMatmul> &out);
 
 /// Profile generation only: writes the reduction trip counts (profile-scale)
 /// of the scalar-loop matmuls of one profiled clone to its profile header, as
