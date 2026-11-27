@@ -5937,9 +5937,10 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
             out = constantInBoundsGEPHelper(B, dstType, out, dstPrefix);
           B.CreateStore(getUndefinedValueForType(M, ty), out);
         }
+        continue;
       }
-      // We don't actually need pointers either here
-      continue;
+      // The GC does not track the other pointers, for example the data
+      // pointer of a GenericMemoryRef. Copy them as all other data.
     }
 
     if (auto AT = dyn_cast<ArrayType>(ty)) {
