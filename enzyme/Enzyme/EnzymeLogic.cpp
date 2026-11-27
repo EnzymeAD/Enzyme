@@ -3901,6 +3901,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (subretType == DIFFE_TYPE::OUT_DIFF &&
         key.retType == DIFFE_TYPE::CONSTANT) {
       hasconstant = true;
+    } else if (subretType == DIFFE_TYPE::DUP_ARG &&
+               (key.retType == DIFFE_TYPE::CONSTANT ||
+                key.retType == DIFFE_TYPE::DUP_NONEED)) {
+      // Custom gradient signatures in reverse mode take no differet argument
+      // for CONSTANT, DUP_ARG, or DUP_NONEED returns (shadow return values,
+      // when needed, are produced by enzyme_augment), while keeping
+      // intAreConstant=false preserves DUP_ARG for pointer-carrying integers.
     } else if (subretType != key.retType) {
       std::string str;
       raw_string_ostream ss(str);
@@ -4931,7 +4938,9 @@ Function *EnzymeLogic::CreateForwardDiff(
       return foundcalled;
 
     if (!foundcalled->getReturnType()->isVoidTy() && !hasconstant) {
-      if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
+      if (returnUsed && retType == DIFFE_TYPE::CONSTANT &&
+          foundcalled->getReturnType() == todiff->getReturnType()) {
+        return ForwardCachedFunctions[tup] = foundcalled;
       }
       if (!returnUsed && retType != DIFFE_TYPE::CONSTANT && !hasconstant) {
         FunctionType *FTy = FunctionType::get(
@@ -4955,7 +4964,6 @@ Function *EnzymeLogic::CreateForwardDiff(
         bb.CreateRet(bb.CreateExtractValue(cal, 1));
         return ForwardCachedFunctions[tup] = NewF;
       }
-      assert(returnUsed);
     }
 
     SmallVector<Type *, 2> curTypes;
@@ -4970,16 +4978,16 @@ Function *EnzymeLogic::CreateForwardDiff(
         continue;
       }
       auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
-      if (TT.isFloat()) {
+      if (TT.isFloat() || arg.getType()->isFPOrFPVectorTy()) {
         nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
         continue;
-      } else if (TT == BaseType::Integer) {
-        nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-        continue;
-      } else {
-        legal = false;
-        break;
       }
+      if (TT == BaseType::Integer || arg.getType()->isIntOrIntVectorTy()) {
+        nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
+        continue;
+      }
+      legal = false;
+      break;
     }
     if (augmenteddata && augmenteddata->returns.find(AugmentedStruct::Tape) !=
                              augmenteddata->returns.end()) {
@@ -5017,18 +5025,18 @@ Function *EnzymeLogic::CreateForwardDiff(
           continue;
         }
         auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
-        if (TT.isFloat()) {
+        if (TT.isFloat() || arg.getType()->isFPOrFPVectorTy()) {
           nextArgs.push_back(Constant::getNullValue(arg.getType()));
           nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
           continue;
-        } else if (TT == BaseType::Integer) {
+        }
+        if (TT == BaseType::Integer || arg.getType()->isIntOrIntVectorTy()) {
           nextArgs.push_back(nextArgs.back());
           nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
           continue;
-        } else {
-          legal = false;
-          break;
         }
+        legal = false;
+        break;
       }
       if (augmenteddata && augmenteddata->returns.find(AugmentedStruct::Tape) !=
                                augmenteddata->returns.end()) {
@@ -5045,7 +5053,10 @@ Function *EnzymeLogic::CreateForwardDiff(
       if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
         bb.CreateRet(cal);
       } else if (returnUsed) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 0));
+        if (cal->getType() == RT)
+          bb.CreateRet(cal);
+        else
+          bb.CreateRet(bb.CreateExtractValue(cal, 0));
       } else if (retType != DIFFE_TYPE::CONSTANT) {
         bb.CreateRet(bb.CreateExtractValue(cal, 1));
       } else {
