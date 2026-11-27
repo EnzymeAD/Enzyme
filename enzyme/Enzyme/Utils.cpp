@@ -5421,33 +5421,56 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
                        llvm::TargetLibraryInfo *TLI) {
   if (isa<ConstantPointerNull, UndefValue, PoisonValue>(V))
     return true;
+  if (isa<Constant>(V))
+    return false;
   // The point after which uses count; only needed to bound the search by inst.
-  Instruction *VI = startinst;
-  if (!VI)
-    VI = dyn_cast<Instruction>(V);
-  if (VI)
-    VI = VI->getNextNode();
-  else if (inst)
-    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
-  SmallPtrSet<BasicBlock *, 1> regionBetween;
+  Instruction *Origin = startinst ? startinst : dyn_cast<Instruction>(V);
+  SmallPtrSet<BasicBlock *, 8> forwardReach;
+  SmallPtrSet<BasicBlock *, 8> backwardReach;
+  bool originBBInCycle = false;
+  bool instBBInCycle = false;
+  BasicBlock *originBB = Origin ? Origin->getParent() : nullptr;
   if (inst) {
-    SmallVector<BasicBlock *, 1> todo;
-    todo.push_back(VI->getParent());
-    while (todo.size()) {
-      auto cur = todo.pop_back_val();
-      if (regionBetween.count(cur))
-        continue;
-      regionBetween.insert(cur);
-      if (cur == inst->getParent())
-        continue;
-      for (auto BB : successors(cur))
-        todo.push_back(BB);
+    BasicBlock *instBB = inst->getParent();
+    SmallVector<BasicBlock *, 8> fTodo;
+    if (!Origin) {
+      fTodo.push_back(&instBB->getParent()->getEntryBlock());
+    } else {
+      for (auto *S : successors(originBB))
+        fTodo.push_back(S);
     }
+    while (!fTodo.empty()) {
+      auto *cur = fTodo.pop_back_val();
+      if (!forwardReach.insert(cur).second)
+        continue;
+      for (auto *S : successors(cur))
+        fTodo.push_back(S);
+    }
+    if (Origin) {
+      originBBInCycle = forwardReach.count(originBB) != 0;
+      if (Origin->getNextNode() != nullptr)
+        forwardReach.insert(originBB);
+    }
+
+    SmallVector<BasicBlock *, 8> bTodo;
+    for (auto *P : predecessors(instBB))
+      bTodo.push_back(P);
+    while (!bTodo.empty()) {
+      auto *cur = bTodo.pop_back_val();
+      if (!backwardReach.insert(cur).second)
+        continue;
+      for (auto *P : predecessors(cur))
+        bTodo.push_back(P);
+    }
+    instBBInCycle = backwardReach.count(instBB) != 0;
+    backwardReach.insert(instBB);
   }
   SmallVector<std::tuple<Instruction *, size_t, Value *>, 1> todo;
   for (auto U : V->users()) {
     if (auto I = dyn_cast<Instruction>(U)) {
-      todo.emplace_back(cast<Instruction>(I), checkLoadCaptures, V);
+      todo.emplace_back(I, checkLoadCaptures, V);
+    } else {
+      return false;
     }
   }
   std::set<std::tuple<Value *, size_t, Value *>> seen;
@@ -5459,25 +5482,45 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     auto UI = std::get<0>(pair);
     auto level = std::get<1>(pair);
     auto prev = std::get<2>(pair);
-    if (inst) {
-      if (!regionBetween.count(UI->getParent()))
-        continue;
-      if (UI->getParent() == VI->getParent()) {
-        if (UI->comesBefore(VI))
-          continue;
-      }
-      if (UI->getParent() == inst->getParent())
-        if (inst->comesBefore(UI))
-          continue;
-    }
 
+    // Always follow pure pointer-arithmetic / PHI propagation before filtering
+    // by CFG region, since a derived pointer defined outside the region (e.g.
+    // before startinst or in a dominating block) can be captured inside it.
     if (isPointerArithmeticInst(UI, /*includephi*/ true,
                                 /*includebin*/ true)) {
       for (auto U2 : UI->users()) {
-        auto UI2 = cast<Instruction>(U2);
-        todo.emplace_back(UI2, level, UI);
+        if (auto *UI2 = dyn_cast<Instruction>(U2))
+          todo.emplace_back(UI2, level, UI);
+        else
+          return false;
       }
       continue;
+    }
+
+    if (isa<LoadInst>(UI)) {
+      if (level) {
+        for (auto U2 : UI->users()) {
+          if (auto *UI2 = dyn_cast<Instruction>(U2))
+            todo.emplace_back(UI2, level - 1, UI);
+          else
+            return false;
+        }
+      }
+      continue;
+    }
+
+    if (inst) {
+      BasicBlock *uiBB = UI->getParent();
+      if (!forwardReach.count(uiBB) || !backwardReach.count(uiBB))
+        continue;
+      if (Origin && !originBBInCycle && uiBB == originBB) {
+        if (!Origin->comesBefore(UI))
+          continue;
+      }
+      if (!instBBInCycle && uiBB == inst->getParent()) {
+        if (inst->comesBefore(UI))
+          continue;
+      }
     }
 
     if (isa<MemSetInst>(UI))
@@ -5506,20 +5549,19 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
           return false;
         }
       }
+      if (CI->hasOperandBundles()) {
+        for (unsigned i = CI->getBundleOperandsStartIndex(),
+                      e = CI->getBundleOperandsEndIndex();
+             i < e; ++i) {
+          if (CI->getOperand(i) == prev)
+            return false;
+        }
+      }
       // This call does not capture; keep checking the remaining users.
       continue;
     }
 
     if (isa<CmpInst>(UI)) {
-      continue;
-    }
-    if (isa<LoadInst>(UI)) {
-      if (level) {
-        for (auto U2 : UI->users()) {
-          auto UI2 = cast<Instruction>(U2);
-          todo.emplace_back(UI2, level - 1, UI);
-        }
-      }
       continue;
     }
     // storing into it.
@@ -5537,8 +5579,152 @@ bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
   return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
 }
 
+static bool isDistinctNonNullObject(const Value *V,
+                                    const TargetLibraryInfo &TLI) {
+  if (!V->getType()->isPointerTy())
+    return false;
+  if (auto *AI = dyn_cast<AllocaInst>(V)) {
+    const DataLayout &DL = AI->getModule()->getDataLayout();
+    if (DL.getTypeAllocSize(AI->getAllocatedType()).isZero())
+      return false;
+    auto *ArrSize = dyn_cast<ConstantInt>(AI->getArraySize());
+    if (!ArrSize || ArrSize->isZero())
+      return false;
+    if (NullPointerIsDefined(AI->getFunction(), AI->getAddressSpace()))
+      return false;
+    return true;
+  }
+  if (auto *CB = dyn_cast<CallBase>(V)) {
+    if (!isNoAlias(CB))
+      return false;
+    const Function *Callee = getFunctionFromCall(CB);
+    bool NonNull = CB->hasRetAttr(Attribute::NonNull) ||
+                   hasMetadata(CB, LLVMContext::MD_nonnull) ||
+                   (Callee && Callee->hasRetAttribute(Attribute::NonNull));
+    if (!NonNull &&
+        !NullPointerIsDefined(CB->getFunction(),
+                              CB->getType()->getPointerAddressSpace())) {
+      if (CB->getRetDereferenceableBytes() > 0 ||
+          (Callee && Callee->getAttributes().getRetDereferenceableBytes() > 0))
+        NonNull = true;
+    }
+    if (!NonNull)
+      return false;
+    // Known C/Rust allocators with a constant-zero size may return a shared
+    // non-null sentinel pointer.
+    StringRef Name = getFuncNameFromCall(CB);
+    if (Name == "malloc" || Name == "calloc" || Name == "aligned_alloc" ||
+        Name == "valloc" || isRustAllocationFunction(Name)) {
+      for (unsigned Idx : getAllocationSizeArgIndices(Name, TLI, CB)) {
+#if LLVM_VERSION_MAJOR >= 14
+        if (Idx < CB->arg_size())
+#else
+        if (Idx < CB->getNumArgOperands())
+#endif
+          if (auto *CI = dyn_cast<ConstantInt>(CB->getArgOperand(Idx)))
+            if (CI->isZero())
+              return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool isInitializedOrZeroedAllocation(const Value *V) {
+  auto *CB = dyn_cast<CallBase>(V);
+  if (!CB)
+    return false;
+  StringRef Name = getFuncNameFromCall(CB);
+  if (Name == "calloc" || isRustZeroedAllocationFunction(Name) ||
+      Name == "swift_allocObject")
+    return true;
+#if LLVM_VERSION_MAJOR >= 15
+  auto hasZeroedOrRealloc = [](Attribute A) {
+    if (!A.isValid())
+      return false;
+    AllocFnKind K = A.getAllocKind();
+    return (K & (AllocFnKind::Zeroed | AllocFnKind::Realloc)) !=
+           AllocFnKind::Unknown;
+  };
+  if (CB->hasFnAttr(Attribute::AllocKind) &&
+      hasZeroedOrRealloc(CB->getFnAttr(Attribute::AllocKind)))
+    return true;
+  if (auto *Fn = getFunctionFromCall(CB))
+    if (Fn->hasFnAttribute(Attribute::AllocKind) &&
+        hasZeroedOrRealloc(Fn->getFnAttribute(Attribute::AllocKind)))
+      return true;
+#endif
+  return false;
+}
+
+static bool mayFreeMemory(Instruction *I, TargetLibraryInfo &TLI) {
+  auto *CB = dyn_cast<CallBase>(I);
+  if (!CB)
+    return false;
+  if (CB->doesNotAccessMemory() || CB->onlyReadsMemory())
+    return false;
+  if (CB->hasFnAttr(Attribute::NoFree))
+    return false;
+  if (auto *Fn = getFunctionFromCall(CB))
+    if (Fn->hasFnAttribute(Attribute::NoFree))
+      return false;
+  if (isa<DbgInfoIntrinsic>(CB))
+    return false;
+  if (auto *II = dyn_cast<IntrinsicInst>(CB)) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::lifetime_start:
+    case Intrinsic::lifetime_end:
+    case Intrinsic::memcpy:
+    case Intrinsic::memmove:
+    case Intrinsic::memset:
+    case Intrinsic::assume:
+      return false;
+    default:
+      break;
+    }
+  }
+  if (isAllocationCall(CB, TLI))
+    return false;
+  return true;
+}
+
+static bool mayFreeBetween(LoopInfo &LI, TargetLibraryInfo &TLI, Value *from,
+                           Instruction *to) {
+  bool foundFree = false;
+  if (auto *fromInst = dyn_cast<Instruction>(from)) {
+    allInstructionsBetween(LI, fromInst, to, [&](Instruction *I) -> bool {
+      if (I == to)
+        return false;
+      if (mayFreeMemory(I, TLI)) {
+        foundFree = true;
+        return true;
+      }
+      return false;
+    });
+    return foundFree;
+  }
+  Instruction *entryFirst =
+      &to->getParent()->getParent()->getEntryBlock().front();
+  if (entryFirst == to)
+    return false;
+  if (mayFreeMemory(entryFirst, TLI))
+    return true;
+  allInstructionsBetween(LI, entryFirst, to, [&](Instruction *I) -> bool {
+    if (I == to)
+      return false;
+    if (mayFreeMemory(I, TLI)) {
+      foundFree = true;
+      return true;
+    }
+    return false;
+  });
+  return foundFree;
+}
+
 // Compare two pointers whose (single) base objects are lhs and rhs.
-// Return true if guaranteed not to alias
+// Return true if guaranteed not to alias (or, when forPointerEquality is true,
+// guaranteed not to have equal addresses).
 // Return false if guaranteed to alias [with possible offset depending on flag].
 // Return {} if no information is given.
 #if LLVM_VERSION_MAJOR >= 16
@@ -5549,7 +5735,8 @@ static llvm::Optional<bool>
 areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
                                 llvm::DominatorTree &DT, llvm::LoopInfo &LI,
                                 llvm::Value *op0, llvm::Value *op1,
-                                llvm::Value *lhs, llvm::Value *rhs) {
+                                llvm::Value *lhs, llvm::Value *rhs,
+                                bool forPointerEquality) {
   if (lhs == rhs) {
     return false;
   }
@@ -5564,10 +5751,15 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
       return true;
     }
 
-  if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
+  if (!lhs->getType()->isPointerTy() || !rhs->getType()->isPointerTy())
     return {};
 
-  if (lhs->getType()->isPointerTy() && rhs->getType()->isPointerTy()) {
+  if (forPointerEquality) {
+    // Non-zero GEPs may form one-past-the-end pointers whose addresses can
+    // legitimately compare equal to an adjacent object.
+    if (isa<GEPOperator>(lhs) || isa<GEPOperator>(rhs))
+      return {};
+  } else {
     bool hasNullOrUndef = false;
     for (auto obj : getBaseObjects(lhs, /*offsetAllowed=*/true)) {
       if (isa<ConstantPointerNull, UndefValue>(obj)) {
@@ -5588,8 +5780,10 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
       return true;
   }
 
-  bool noalias_lhs = isNoAlias(lhs);
-  bool noalias_rhs = isNoAlias(rhs);
+  bool noalias_lhs =
+      forPointerEquality ? isDistinctNonNullObject(lhs, TLI) : isNoAlias(lhs);
+  bool noalias_rhs =
+      forPointerEquality ? isDistinctNonNullObject(rhs, TLI) : isNoAlias(rhs);
 
   bool noalias[2] = {noalias_lhs, noalias_rhs};
 
@@ -5601,21 +5795,41 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
 
     if (noalias[start_i]) {
       if (noalias[end_i]) {
-        return true;
+        if (!forPointerEquality || isa<AllocaInst>(start) ||
+            isa<AllocaInst>(end)) {
+          return true;
+        }
       }
       if (isa<Argument>(end)) {
-        return true;
-      }
-
-      if (auto starti = dyn_cast<Instruction>(start)) {
-        // If end dominates start, then since start is noalias at its creation,
-        // it is definitionally not aliasing end
-        if (DT.dominates(end, starti)) {
+        if (!forPointerEquality || isa<AllocaInst>(start) ||
+            !mayFreeBetween(LI, TLI, end, cast<Instruction>(start))) {
           return true;
         }
       }
 
+      if (auto starti = dyn_cast<Instruction>(start)) {
+        // If end dominates start, then since start is noalias at its creation,
+        // it is definitionally not aliasing end (for pointer equality on a
+        // heap allocation, also ensure end could not have been freed first).
+        if (DT.dominates(end, starti)) {
+          if (!forPointerEquality || isa<AllocaInst>(starti) ||
+              isa<AllocaInst>(end) || isa<GlobalValue>(end) ||
+              isa<ConstantPointerNull>(end)) {
+            return true;
+          }
+          if (noalias[end_i]) {
+            if (notCapturedBefore(end, starti, 0))
+              return true;
+          } else if (!mayFreeBetween(LI, TLI, end, starti)) {
+            return true;
+          }
+        }
+      }
+
       if (auto endi = dyn_cast<Instruction>(end)) {
+        if (forPointerEquality && isa<CallBase>(start) &&
+            !isa<AllocaInst>(endi) && !DT.dominates(start, endi))
+          continue;
         if (isAllocationCall(start, TLI)) {
           if (auto ld = dyn_cast<LoadInst>(endi)) {
             if (getBaseObject(ld->getOperand(0), true) == start)
@@ -5648,9 +5862,15 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
         //  and is not captured, since there could be an aliasing pointer to end
         //  which is captured.
         if (end_base != alloc_call && noalias[end_i] &&
-            notCapturedBefore(end_base, ld, 0, alloc_call)) {
+            notCapturedBefore(end_base, ld, 0)) {
           return true;
         }
+
+        // Allocations that initialize memory with known values (e.g. calloc /
+        // __rust_alloc_zeroed with null, or swift_allocObject with metadata)
+        // can produce pointers equal to existing values without any store.
+        if (isInitializedOrZeroedAllocation(alloc_call))
+          continue;
 
         // However if nothing was written to the alloc prior to the load, we
         // know that there is no way to dataflow end into start, so we now
@@ -5681,40 +5901,61 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
 
           // If the allocation was not written into prior to ld, any pointer
           // value loaded from it must have been created by one of the loads
-          // reading from alloc_call. If every load out of alloc_call is
-          // distinct from end, and was neither captured before end nor created
-          // after end, alloc_call's loaded values cannot dataflow into end.
+          // reading from alloc_call. If alloc_call never escapes or gets read
+          // by any other instruction, and every load out of alloc_call is
+          // distinct from end and not captured before end, alloc_call's loaded
+          // values cannot dataflow into end.
           SmallVector<Value *, 8> worklist;
           SmallPtrSet<Value *, 8> visited;
           SmallVector<LoadInst *, 8> alloc_loads;
+          bool alloc_escaped_or_read = false;
 
           worklist.push_back(alloc_call);
           visited.insert(alloc_call);
 
-          while (!worklist.empty()) {
+          while (!worklist.empty() && !alloc_escaped_or_read) {
             Value *V = worklist.pop_back_val();
             for (User *U : V->users()) {
-              if (!visited.insert(U).second)
-                continue;
               if (isPointerArithmeticInst(U, /*includephi*/ true,
                                           /*includebin*/ true)) {
-                worklist.push_back(U);
-              } else if (auto LI = dyn_cast<LoadInst>(U)) {
-                alloc_loads.push_back(LI);
+                if (visited.insert(U).second)
+                  worklist.push_back(U);
+              } else if (auto *Load = dyn_cast<LoadInst>(U)) {
+                if (visited.insert(U).second)
+                  alloc_loads.push_back(Load);
+              } else if (isa<CmpInst>(U) || isa<MemSetInst>(U)) {
+                continue;
+              } else if (auto *SI = dyn_cast<StoreInst>(U)) {
+                if (SI->getValueOperand() == V) {
+                  alloc_escaped_or_read = true;
+                  break;
+                }
+              } else if (auto *CB = dyn_cast<CallBase>(U)) {
+                if (isDeallocationCall(CB, TLI) || isa<DbgInfoIntrinsic>(CB))
+                  continue;
+                if (auto *II = dyn_cast<IntrinsicInst>(CB)) {
+                  auto ID = II->getIntrinsicID();
+                  if (ID == Intrinsic::lifetime_start ||
+                      ID == Intrinsic::lifetime_end)
+                    continue;
+                }
+                alloc_escaped_or_read = true;
+                break;
+              } else {
+                alloc_escaped_or_read = true;
+                break;
               }
             }
           }
 
+          if (alloc_escaped_or_read)
+            continue;
+
           bool all_loads_no_alias = true;
           for (LoadInst *alloc_load : alloc_loads) {
-            if (alloc_load == end) {
+            if (alloc_load == end || alloc_load == end_base) {
               all_loads_no_alias = false;
               break;
-            }
-            if (auto end_inst = dyn_cast<Instruction>(end)) {
-              if (DT.dominates(end_inst, alloc_load)) {
-                continue;
-              }
             }
             if (!notCapturedBefore(alloc_load, dyn_cast<Instruction>(end), 0)) {
               all_loads_no_alias = false;
@@ -5744,7 +5985,7 @@ llvm::Optional<bool>
 arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::DominatorTree &DT, llvm::LoopInfo &LI,
                              llvm::Value *op0, llvm::Value *op1,
-                             bool offsetAllowed) {
+                             bool offsetAllowed, bool forPointerEquality) {
   // Look through phis and selects: a pointer such as `xp = phi [x2, &s[i]]`
   // may be based on any of several objects, and the per-object reasoning
   // below (noalias, not captured, ...) is only valid for a single, known base.
@@ -5755,8 +5996,8 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
     return {};
 
   if (lhsObjs.size() == 1 && rhsObjs.size() == 1)
-    return areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, op0, op1,
-                                           lhsObjs[0], rhsObjs[0]);
+    return areBaseObjectsGuaranteedNoAlias(
+        TLI, AA, DT, LI, op0, op1, lhsObjs[0], rhsObjs[0], forPointerEquality);
 
   // With several candidate bases, the pointers are guaranteed not to alias
   // only if every pair of candidates is. A shared candidate means they may
@@ -5765,8 +6006,8 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
     for (auto rhs : rhsObjs) {
       if (lhs == rhs)
         return {};
-      auto res =
-          areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, lhs, rhs, lhs, rhs);
+      auto res = areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, lhs, rhs, lhs,
+                                                 rhs, forPointerEquality);
       if (!res || !*res)
         return {};
     }
