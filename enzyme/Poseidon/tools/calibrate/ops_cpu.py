@@ -686,8 +686,9 @@ def main():
         bench = Bench(bench_ir, args)
         control = Bench(control_ir, args, TARGET_S / 5)
         op = (bench.per_trip() - control.per_trip()) / unrolled
-        # A positive floor, as the GPU rows keep.
-        print(f"{name},{precision},{max(op / cycle() * 2.0, 1e-12):.9g}", flush=True)
+        if op <= 0:
+            sys.exit(f"ops_cpu.py: {name},{precision} ran no slower than its control, so the row has no price")
+        print(f"{name},{precision},{op / cycle() * 2.0:.9g}", flush=True)
 
 
 if __name__ == "__main__":

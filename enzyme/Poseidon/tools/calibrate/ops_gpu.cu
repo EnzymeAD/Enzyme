@@ -20,9 +20,9 @@
 // is that instruction in amdgcn inline assembly, so the compiler can neither
 // fold, contract nor reassociate the chain; an op the backend lowers to a
 // sequence (division, round, the math library, which is ROCm's ocml) is the
-// IEEE lowering a HIP device compile emits, behind an empty asm the value
-// passes through, so no identity of the op (round(round(x)) = round(x)) can
-// shorten the chain.
+// IEEE lowering a HIP device compile emits. A library call on either vendor
+// sits behind an empty asm the value passes through, so no identity of the op
+// (round(round(x)) = round(x)) can shorten the chain.
 //
 // On NVIDIA the tensor-core tile rows follow; in-kernel raises are NVPTX-only,
 // so no compile for an AMD GPU reads them.
@@ -122,12 +122,19 @@ __device__ double __nv_fma(double, double, double);
           stmt stmt stmt
 #define UNROLL 32
 
-// On AMD the value passes through an empty asm: no instruction, and nothing
-// known about it afterwards. NVIDIA's libdevice calls need no such barrier.
+// The value passes through an empty asm: no instruction, and nothing known
+// about it afterwards, so the compiler cannot shorten a chain of an op that
+// repeats itself (ceil(ceil(x)) = ceil(x)).
 #ifdef __HIP__
 #define OPAQUE(v) asm volatile("" : "+v"(v))
 #else
-#define OPAQUE(v)
+static __device__ __forceinline__ void opaque(float &v) {
+  asm volatile("" : "+f"(v));
+}
+static __device__ __forceinline__ void opaque(double &v) {
+  asm volatile("" : "+d"(v));
+}
+#define OPAQUE(v) opaque(v)
 #endif
 
 #define K_LIBM_UN(name, T, libfn)                                              \
@@ -304,15 +311,6 @@ K_CVT(cvt_f64_f32, double, float, "v_cvt_f32_f64", "v_cvt_f64_f32")
     out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
   }
 
-#define K_PTX_UN(name, T, asm_constraint, insn)                                \
-  template <int N> __global__ void name##_##T(T *out) {                        \
-    T a = (T)((threadIdx.x + blockIdx.x * blockDim.x) * 0.0001) + (T)1.5;      \
-    _Pragma("unroll 1") for (int i = 0; i < N / UNROLL; ++i) {                 \
-      CHAIN32(asm volatile(insn " %0, %0;" : "+" asm_constraint(a));)          \
-    }                                                                          \
-    out[threadIdx.x + blockIdx.x * blockDim.x] = a;                            \
-  }
-
 #define K_PTX_BIN_ILP(name, T, asm_constraint, insn, arg_imm)                  \
   template <int N> __global__ void name##_##T(T *out) {                        \
     T v[8];                                                                    \
@@ -369,8 +367,6 @@ K_PTX_BIN(fadd, float, "f", "add.f32", "0f3F800000") // +1.0
 K_PTX_BIN(fsub, float, "f", "sub.f32", "0f3F000000") // -0.5
 K_PTX_BIN(fmul, float, "f", "mul.f32", "0f3F800001") // *1.0000001
 K_PTX_BIN_ILP(ilp_fdiv, float, "f", "div.rn.f32", "0f3F800001")
-K_PTX_UN(fneg, float, "f", "neg.f32")
-K_PTX_UN(fabs, float, "f", "abs.f32")
 K_FCMP(fcmp, float, "f", "f32", "0f3F800000")
 K_FMA(fma, float, __nv_fmaf, 1.0001f, 0.0f)
 K_PTX_BIN(maxnum, float, "f", "max.f32", "0f3F800000")
@@ -381,8 +377,6 @@ K_PTX_BIN(fadd, double, "d", "add.f64", "0d3FF0000000000000")
 K_PTX_BIN(fsub, double, "d", "sub.f64", "0d3FE0000000000000")
 K_PTX_BIN(fmul, double, "d", "mul.f64", "0d3FF0000000000001")
 K_PTX_BIN_ILP(ilp_fdiv, double, "d", "div.rn.f64", "0d3FF0000000000001")
-K_PTX_UN(fneg, double, "d", "neg.f64")
-K_PTX_UN(fabs, double, "d", "abs.f64")
 K_FCMP(fcmp, double, "d", "f64", "0d3FF0000000000000")
 K_FMA(fma, double, __nv_fma, 1.0001, 0.0)
 K_PTX_BIN(maxnum, double, "d", "max.f64", "0d3FF0000000000000")
@@ -466,6 +460,16 @@ double diff_cycles(double t_n, double t_2n, int n1, int n2) {
   return per_op_ns * gGhz * 2.0;
 }
 
+// Prints the row `op`,`prec`. A chain twice as long that ran no slower measured
+// nothing, and no price is written in its place.
+static void printRow(const char *op, const char *prec, double cycles) {
+  if (!(cycles > 0))
+    poseidon::fatal("%s,%s: the chain of 1024 ran no slower than the chain of "
+                    "512, so the row has no price",
+                    op, prec);
+  printf("%s,%s,%.9g\n", op, prec, cycles);
+}
+
 #define BENCH_SCALAR(stem, T, op_name, prec_name, sink)                        \
   {                                                                            \
     double t1 = timeit_ns(                                                     \
@@ -477,9 +481,7 @@ double diff_cycles(double t_n, double t_2n, int n1, int n2) {
     /* thread). */                                                             \
     double c =                                                                 \
         diff_cycles(t1, t2, 512, 1024) / ((double)gCfg.blocks * gCfg.threads); \
-    if (c <= 0)                                                                \
-      c = 1e-12; /* fneg/fabs etc. are ~free; keep a positive floor */         \
-    printf("%s,%s,%.9g\n", op_name, prec_name, c);                             \
+    printRow(op_name, prec_name, c);                                           \
   }
 
 #define BENCH_CVT(name, sink, op_label, prec_label)                            \
@@ -490,10 +492,22 @@ double diff_cycles(double t_n, double t_2n, int n1, int n2) {
         timeit_ns([&]() { name<1024><<<gCfg.blocks, gCfg.threads>>>(sink); }); \
     double c = diff_cycles(t1, t2, 512, 1024) * 0.5 /                          \
                ((double)gCfg.blocks * gCfg.threads);                           \
-    if (c <= 0)                                                                \
-      c = 1e-12;                                                               \
-    printf("%s,%s,%.9g\n", op_label, prec_label, c);                           \
+    printRow(op_label, prec_label, c);                                         \
   }
+
+// An NVIDIA GPU has no instruction that negates or takes an absolute value:
+// either is a modifier on an operand of the instruction that reads the value,
+// an FADD when nothing else does (FADD R, -R, -RZ), and ptxas reduces a chain
+// of them to at most one. The two rows are priced as fadd.
+#ifdef __HIP__
+#define SIGN_ROWS(X)                                                           \
+  X(fneg, fneg);                                                               \
+  X(fabs, fabs);
+#else
+#define SIGN_ROWS(X)                                                           \
+  X(fadd, fneg);                                                               \
+  X(fadd, fabs);
+#endif
 
 // (kernel stem, row) of each per-op row, in the order they print; fmuladd is
 // priced as fma and powi as pow.
@@ -502,8 +516,7 @@ double diff_cycles(double t_n, double t_2n, int n1, int n2) {
   X(fsub, fsub);                                                               \
   X(fmul, fmul);                                                               \
   X(ilp_fdiv, fdiv);                                                           \
-  X(fneg, fneg);                                                               \
-  X(fabs, fabs);                                                               \
+  SIGN_ROWS(X)                                                                 \
   X(fcmp, fcmp);                                                               \
   X(fma, fma);                                                                 \
   X(fma, fmuladd);                                                             \

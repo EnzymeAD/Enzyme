@@ -132,7 +132,9 @@ Scalar costs are the precise, IEEE lowering of each operation (`div.rn.f32`,
 libdevice `__nv_*` for the transcendentals; on AMD the IEEE `fdiv` lowering and
 ROCm's ocml `__ocml_*`). Hardware `.approx` variants are 5x to 50x faster and
 lose accuracy; a kernel that opts into them would need a parallel row family,
-which does not exist. `fneg` and `fabs` measure at about one cycle because
-NVIDIA folds them into the consuming instruction's operand modifiers; on AMD
+which does not exist. An NVIDIA GPU has no instruction for `fneg` or `fabs`:
+either is an operand modifier of the instruction that reads the value, an
+`FADD` when nothing else does, so the two rows are priced as `fadd`; on AMD
 they are the 32-bit sign-bit operation the backend emits where it cannot fold
-them.
+them. A row whose measurement is not positive stops the calibration, naming
+the row.
