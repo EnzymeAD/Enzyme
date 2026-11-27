@@ -417,14 +417,16 @@ public:
                   *ofn);
       return nullptr;
     }
-    if (cast<Function>(fn)->empty()) {
+    auto *TargetFunction = cast<Function>(fn);
+    if (TargetFunction->empty() && !hasCustomRuleMetadata(TargetFunction) &&
+        !hasFunctionLikeMathRule(TargetFunction)) {
       EmitFailure("EmptyFunctionToDifferentiate", CI->getDebugLoc(), CI,
                   "failed to find fn to differentiate", *CI, " - found - ",
                   *fn);
       return nullptr;
     }
 
-    return cast<Function>(fn);
+    return TargetFunction;
   }
 
 #if LLVM_VERSION_MAJOR > 16
@@ -1162,7 +1164,8 @@ public:
     }
     type_args.Return = parsed ? dt : dt.Only(-1, nullptr);
 
-    type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
+    if (!fn->empty())
+      type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
     return type_args;
   }
 
@@ -1622,7 +1625,7 @@ public:
     if (!newFunc) {
       StringRef n = fn->getName();
       EmitFailure("FailedToDifferentiate", fn->getSubprogram(),
-                  &*fn->getEntryBlock().begin(),
+                  fn->empty() ? CI : &*fn->getEntryBlock().begin(),
                   "Could not generate derivative function of ", n);
       return false;
     }
