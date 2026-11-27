@@ -451,8 +451,8 @@ static std::string resolveCsv(const Device &D) {
 
 /// The arms --only takes.
 static constexpr StringLiteral Arms[] = {
-    "ops",        "herbie-platform", "stream", "ozaki",   "ozaki-rect",
-    "tcec",       "direct",          "inkernel", "operand-min"};
+    "ops",  "herbie-platform", "stream",   "ozaki",      "ozaki-rect",
+    "tcec", "direct",          "inkernel", "operand-min"};
 
 /// Whether `Arm` measures a host as well as a GPU.
 static bool isHostArm(StringRef Arm) {
