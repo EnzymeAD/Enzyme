@@ -2665,7 +2665,8 @@ public:
 #endif
             {
               InlineFunctionInfo IFI;
-              InlineResult IR = InlineFunction(*cur, IFI);
+              InlineResult IR =
+                  Logic.PPC.inlineFunctionWithOriginTracking(*cur, IFI);
               if (IR.isSuccess()) {
                 LowerSparsification(outerFunc, /*replaceAll*/ false);
                 // Copying outerFunc into its callers before its own Enzyme
