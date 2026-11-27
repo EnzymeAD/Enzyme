@@ -725,7 +725,8 @@ public:
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
   using TraceCacheKey =
-      std::tuple<llvm::Function *, ProbProgMode, bool, TraceInterface *>;
+      std::tuple<llvm::Function *, ProbProgMode, bool,
+                 std::array<llvm::Value *, 13>, std::vector<std::string>>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the reverse pass, or combined forward+reverse derivative function.

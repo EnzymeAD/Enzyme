@@ -117,6 +117,13 @@ void TraceGenerator::visitFunction(Function &F) {
 }
 
 void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
+  if (new_call->arg_size() < 3) {
+    EmitFailure("IllegalObserve", call.getDebugLoc(), &call,
+                "expected at least 3 arguments to __enzyme_observe", call);
+    hasError = true;
+    return;
+  }
+
   IRBuilder<> Builder(new_call);
 
   SmallVector<Value *, 4> Args(
@@ -124,6 +131,14 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
 
   Value *observed = new_call->getArgOperand(0);
   Function *likelihoodfn = GetFunctionFromValue(new_call->getArgOperand(1));
+  if (!likelihoodfn) {
+    EmitFailure("IllegalObserve", call.getDebugLoc(), &call,
+                "unable to find static likelihood function for "
+                "__enzyme_observe",
+                call);
+    hasError = true;
+    return;
+  }
   Value *address = new_call->getArgOperand(2);
 
   StringRef const_address;
@@ -141,6 +156,7 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
   auto score = Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
                                   ArrayRef<Value *>(Args).slice(1),
                                   "likelihood." + call.getName());
+  score->setCallingConv(likelihoodfn->getCallingConv());
 
   score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
 
@@ -181,12 +197,34 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
 }
 
 void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
+  if (new_call->arg_size() < 3) {
+    EmitFailure("IllegalSample", call.getDebugLoc(), &call,
+                "expected at least 3 arguments to __enzyme_sample", call);
+    hasError = true;
+    return;
+  }
+
   // create outlined sample function
   SmallVector<Value *, 4> Args(
       make_range(new_call->arg_begin() + 2, new_call->arg_end()));
 
   Function *samplefn = GetFunctionFromValue(new_call->getArgOperand(0));
   Function *likelihoodfn = GetFunctionFromValue(new_call->getArgOperand(1));
+  if (!samplefn || !likelihoodfn) {
+    EmitFailure("IllegalSample", call.getDebugLoc(), &call,
+                "unable to find static sample or likelihood function for "
+                "__enzyme_sample",
+                call);
+    hasError = true;
+    return;
+  }
+  if (samplefn->getReturnType()->isVoidTy()) {
+    EmitFailure("IllegalSample", call.getDebugLoc(), &call,
+                "__enzyme_sample distribution function cannot return void",
+                call);
+    hasError = true;
+    return;
+  }
   Value *address = new_call->getArgOperand(2);
 
   IRBuilder<> Builder(new_call);
@@ -246,6 +284,7 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   auto score = Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
                                   ArrayRef<Value *>(Args).slice(1),
                                   "likelihood." + call.getName());
+  score->setCallingConv(likelihoodfn->getCallingConv());
 
   score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
 
@@ -279,8 +318,10 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
         Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
   }
 
-  sample_call->takeName(new_call);
-  new_call->replaceAllUsesWith(sample_call);
+  if (!call.getType()->isVoidTy()) {
+    sample_call->takeName(new_call);
+    new_call->replaceAllUsesWith(sample_call);
+  }
   new_call->eraseFromParent();
 }
 
@@ -293,21 +334,28 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
 
   Function *called = getFunctionFromCall(&call);
-  assert(called);
+  assert(called && "Expected direct callee in handleArbitraryCall");
 
   Function *samplefn = Logic.CreateTrace(
       RequestContext(&call, &Builder), called, tutils->sampleFunctions,
       tutils->observeFunctions, activeRandomVariables, mode, autodiff,
       tutils->interface);
+  if (!samplefn) {
+    hasError = true;
+    return;
+  }
 
-  Instruction *replacement;
+  bool isVoid = samplefn->getReturnType()->isVoidTy();
+  Instruction *replacement = nullptr;
   switch (mode) {
   case ProbProgMode::Likelihood: {
     SmallVector<Value *, 2> args_and_likelihood(args);
     args_and_likelihood.push_back(tutils->getLikelihood());
-    replacement =
-        Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                           args_and_likelihood, "eval." + called->getName());
+    auto *C = Builder.CreateCall(
+        samplefn->getFunctionType(), samplefn, args_and_likelihood,
+        isVoid ? Twine() : "eval." + called->getName());
+    C->setCallingConv(samplefn->getCallingConv());
+    replacement = C;
     break;
   }
   case ProbProgMode::Trace: {
@@ -323,9 +371,11 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
     SmallVector<Value *, 2> args_and_trace(args);
     args_and_trace.push_back(tutils->getLikelihood());
     args_and_trace.push_back(trace);
-    replacement =
-        Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                           args_and_trace, "trace." + called->getName());
+    auto *C = Builder.CreateCall(
+        samplefn->getFunctionType(), samplefn, args_and_trace,
+        isVoid ? Twine() : "trace." + called->getName());
+    C->setCallingConv(samplefn->getCallingConv());
+    replacement = C;
 
     tutils->InsertCall(Builder, address, trace);
     break;
@@ -358,9 +408,11 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
       args_and_cond.push_back(tutils->getLikelihood());
       args_and_cond.push_back(observations);
       args_and_cond.push_back(trace);
-      ThenTracecall =
-          Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                             args_and_cond, "condition." + called->getName());
+      auto *C = Builder.CreateCall(
+          samplefn->getFunctionType(), samplefn, args_and_cond,
+          isVoid ? Twine() : "condition." + called->getName());
+      C->setCallingConv(samplefn->getCallingConv());
+      ThenTracecall = C;
     }
 
     Builder.SetInsertPoint(ElseTerm);
@@ -373,29 +425,38 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
       args_and_null.push_back(tutils->getLikelihood());
       args_and_null.push_back(observations);
       args_and_null.push_back(trace);
-      ElseTracecall =
-          Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                             args_and_null, "trace." + called->getName());
+      auto *C = Builder.CreateCall(
+          samplefn->getFunctionType(), samplefn, args_and_null,
+          isVoid ? Twine() : "trace." + called->getName());
+      C->setCallingConv(samplefn->getCallingConv());
+      ElseTracecall = C;
     }
 
     Builder.SetInsertPoint(new_call);
-    auto phi = Builder.CreatePHI(samplefn->getFunctionType()->getReturnType(),
-                                 2, call.getName());
-    phi->addIncoming(ThenTracecall, ThenTerm->getParent());
-    phi->addIncoming(ElseTracecall, ElseTerm->getParent());
-    replacement = phi;
+    if (!isVoid) {
+      auto phi = Builder.CreatePHI(samplefn->getFunctionType()->getReturnType(),
+                                   2, call.getName());
+      phi->addIncoming(ThenTracecall, ThenTerm->getParent());
+      phi->addIncoming(ElseTracecall, ElseTerm->getParent());
+      replacement = phi;
+    }
 
     tutils->InsertCall(Builder, address, trace);
     break;
   }
   }
 
-  replacement->takeName(new_call);
-  new_call->replaceAllUsesWith(replacement);
+  if (!isVoid) {
+    replacement->takeName(new_call);
+    new_call->replaceAllUsesWith(replacement);
+  }
   new_call->eraseFromParent();
 }
 
 void TraceGenerator::visitCallInst(CallInst &call) {
+  if (hasError)
+    return;
+
   auto fn = getFunctionFromCall(&call);
 
   if (!generativeFunctions.count(fn))
@@ -413,11 +474,18 @@ void TraceGenerator::visitCallInst(CallInst &call) {
 }
 
 void TraceGenerator::visitReturnInst(ReturnInst &ret) {
+  if (hasError)
+    return;
+
+  if (mode == ProbProgMode::Likelihood)
+    return;
 
   if (!ret.getReturnValue())
     return;
 
   ReturnInst *new_ret = dyn_cast<ReturnInst>(originalToNewFn[&ret]);
+  if (!new_ret)
+    return;
 
   IRBuilder<> Builder(new_ret);
   tutils->InsertReturn(Builder, new_ret->getReturnValue());

@@ -306,12 +306,22 @@ Value *StaticTraceInterface::hasChoice(IRBuilder<> &Builder) {
 }
 
 DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
-                                             Function *F)
+                                             Function *F,
+                                             Instruction *insertBefore)
     : TraceInterface(F->getContext()) {
-  assert(dynamicInterface);
+  assert(dynamicInterface && "Expected non-null dynamic interface value");
 
   auto &M = *F->getParent();
-  IRBuilder<> Builder(getFirstNonPHIOrDbg(&F->getEntryBlock()));
+  Instruction *IP = insertBefore;
+  if (!IP) {
+    if (auto *I = dyn_cast<Instruction>(dynamicInterface)) {
+      if (I->getParent()->getParent() == F && I->getNextNode())
+        IP = I->getNextNode();
+    }
+  }
+  if (!IP)
+    IP = getFirstNonPHIOrDbg(&F->getEntryBlock());
+  IRBuilder<> Builder(IP);
 
   getTraceFunction = MaterializeInterfaceFunction(
       Builder, dynamicInterface, getTraceTy(), 0, M, "get_trace");
@@ -368,8 +378,8 @@ Function *DynamicTraceInterface::MaterializeInterfaceFunction(
                                 dynamicInterface, Builder.getInt32(index));
   auto load =
       Builder.CreateLoad(getInt8PtrTy(dynamicInterface->getContext()), ptr);
-  auto pty = getPointerType(FTy, load->getPointerAddressSpace());
-  auto cast = Builder.CreatePointerCast(load, pty);
+  auto pty = getPointerType(FTy, M.getDataLayout().getProgramAddressSpace());
+  auto cast = Builder.CreatePointerBitCastOrAddrSpaceCast(load, pty);
 
   auto global =
       new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,

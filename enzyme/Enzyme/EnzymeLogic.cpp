@@ -6283,7 +6283,17 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
                          const StringSet<> &ActiveRandomVariables,
                          ProbProgMode mode, bool autodiff,
                          TraceInterface *interface) {
-  TraceCacheKey tup(totrace, mode, autodiff, interface);
+  std::array<llvm::Value *, 13> interfaceKey{};
+  if (interface)
+    interfaceKey = interface->getInterfaceFunctions();
+  std::vector<std::string> activeVars;
+  activeVars.reserve(ActiveRandomVariables.size());
+  for (const auto &entry : ActiveRandomVariables)
+    activeVars.push_back(entry.getKey().str());
+  std::sort(activeVars.begin(), activeVars.end());
+
+  TraceCacheKey tup(totrace, mode, autodiff, interfaceKey,
+                    std::move(activeVars));
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
@@ -6302,6 +6312,8 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
 
     for (auto &&U : todo->uses()) {
       if (auto &&call = dyn_cast<CallBase>(U.getUser())) {
+        if (!call->isCallee(&U))
+          continue;
         auto &&fun = call->getParent()->getParent();
         auto &&[it, inserted] = GenerativeFunctions.insert(fun);
         if (inserted)
@@ -6354,15 +6366,27 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
     llvm_unreachable("attempting to trace function without definition");
   }
 
+  Function *NewF = tutils->newFunc;
+  // Register NewF before visiting so direct and mutual recursion reuse NewF
+  // instead of recursing infinitely.
+  TraceCachedFunctions[tup] = NewF;
+
   tracer->visit(totrace);
 
-  if (verifyFunction(*tutils->newFunc, &errs())) {
-    errs() << *totrace << "\n";
-    errs() << *tutils->newFunc << "\n";
-    report_fatal_error("function failed verification (4)");
+  if (tracer->hasError) {
+    delete tracer;
+    delete tutils;
+    NewF->deleteBody();
+    NewF->replaceAllUsesWith(UndefValue::get(NewF->getType()));
+    NewF->eraseFromParent();
+    return TraceCachedFunctions[tup] = nullptr;
   }
 
-  Function *NewF = tutils->newFunc;
+  if (verifyFunction(*NewF, &errs())) {
+    errs() << *totrace << "\n";
+    errs() << *NewF << "\n";
+    report_fatal_error("function failed verification (4)");
+  }
 
   delete tracer;
   delete tutils;
@@ -6377,7 +6401,7 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
     }
   }
 
-  return TraceCachedFunctions[tup] = NewF;
+  return NewF;
 }
 
 llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
