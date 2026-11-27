@@ -22,15 +22,12 @@
 #include "runtime/profile/DeviceProfiler.h"
 #include "runtime/profile/ProfileFormat.h"
 
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Bitcode/BitcodeReader.h"
-#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -541,57 +538,6 @@ Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
   // runs is registered with the CUDA runtime before it is bound.
   appendToGlobalCtors(M, ctor, 65535);
   return true;
-}
-
-Error requireSharedMemoryLimit(Module &M) {
-  const Target &T = Target::of(M);
-  if (!T.isDevice())
-    return Error::success();
-  const DataLayout &DL = M.getDataLayout();
-  // Enzyme names the shadow of a global in the global's enzyme_shadow
-  // metadata.
-  DenseMap<const GlobalVariable *, const GlobalVariable *> primalOf;
-  for (const GlobalVariable &G : M.globals())
-    if (MDNode *MD = G.getMetadata("enzyme_shadow"))
-      if (auto *S =
-              mdconst::dyn_extract_or_null<GlobalVariable>(MD->getOperand(0)))
-        primalOf[S] = &G;
-  const uint64_t limit = T.maxStaticSharedBytes();
-  Error refused = Error::success();
-  for (const Function &K : M) {
-    if (K.isDeclaration() || !T.isKernel(K))
-      continue;
-    const SetVector<const GlobalVariable *> shared = T.staticSharedOf(K);
-    uint64_t bytes = 0;
-    for (const GlobalVariable *G : shared)
-      bytes += DL.getTypeAllocSize(G->getValueType());
-    if (bytes <= limit)
-      continue;
-    std::string own, shadows, others;
-    raw_string_ostream ownOS(own), shadowsOS(shadows), othersOS(others);
-    for (const GlobalVariable *G : shared) {
-      const GlobalVariable *primal = primalOf.lookup(G);
-      raw_string_ostream &os = !primal                   ? ownOS
-                               : shared.contains(primal) ? shadowsOS
-                                                         : othersOS;
-      os << (os.str().empty() ? "" : ", ")
-         << demangle((primal ? primal : G)->getName()) << " ("
-         << DL.getTypeAllocSize(G->getValueType()) << " bytes)";
-    }
-    std::string msg;
-    raw_string_ostream os(msg);
-    os << displayName(K) << " reaches " << bytes
-       << " bytes of static shared memory once profiled, above the " << limit
-       << " a kernel can declare: its own buffers "
-       << (own.empty() ? "none" : own) << "; the shadows of its buffers "
-       << (shadows.empty() ? "none" : shadows)
-       << "; the shadows of other kernels' buffers "
-       << (others.empty() ? "none" : others)
-       << ". Profile the kernel with smaller shared buffers, or the kernels "
-          "whose shadows it reaches in another translation unit.";
-    refused = joinErrors(std::move(refused), userError(K, msg));
-  }
-  return refused;
 }
 
 void recordProfileTableSize(LaunchManifest &L, Module &M) {

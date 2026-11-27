@@ -118,13 +118,6 @@ void recordProfileTableSize(LaunchManifest &L, llvm::Module &M);
 /// profiler. An error at a function whose probes it cannot serve.
 llvm::Expected<bool> linkDeviceProfiler(llvm::Module &M, bool profileGenerate);
 
-/// Device module of a profile-generate compile, once its derivatives are in
-/// place: an error at every kernel whose static shared memory (what it and the
-/// functions it calls use, the shadows Enzyme made among them) exceeds what a
-/// kernel can declare, naming its buffers, their shadows and the shadows of
-/// other kernels' buffers it reaches.
-llvm::Error requireSharedMemoryLimit(llvm::Module &M);
-
 /// One block-geometry probe at the entry of every function carrying value
 /// probes, so launch geometry is recorded per function.
 void injectBlockDimProbes(llvm::Module &M, bool print);

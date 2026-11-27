@@ -528,9 +528,6 @@ struct FinalizePass : PassParent<FinalizePass> {
     if (Error E =
             linkDeviceProfiler(M, O.Profiling.generatesProfile()).takeError())
       return stopOnError(S, M, std::move(E));
-    if (O.Profiling.generatesProfile())
-      if (Error E = requireSharedMemoryLimit(M))
-        return stopOnError(S, M, std::move(E));
     if (Error E = requireDeviceCallees(M, O.Profiling.generatesProfile()))
       return stopOnError(S, M, std::move(E));
     // Written after every site is processed and every check that can stop the
