@@ -472,7 +472,7 @@ scoreCandidate(const PrecisionCandidate &candidate, ArrayRef<FPNode *> outputs,
         out.nonFinite = true;
         return out;
       }
-      double error = sampleError(goldVal, result, m);
+      double error = momentError(goldVal, result, m);
       if (!std::isnan(error)) {
         out.at[outputs[j]].sum += error;
         ++out.at[outputs[j]].count;

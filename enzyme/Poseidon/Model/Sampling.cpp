@@ -44,10 +44,6 @@ static constexpr size_t kReferencesPerTask = 8;
 // share kept so far by this factor.
 static constexpr double kDrawMargin = 1.25;
 
-double sampleError(double goldVal, double result, ErrorMoment m) {
-  return momentError(goldVal, result, m);
-}
-
 namespace {
 // Cancellation-aware sampling plan: `active` iff the subgraph divides by or
 // takes the sqrt of a quantity profiled near zero; `pairs` are the leaf
@@ -418,7 +414,7 @@ static bool evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
   R.gold[i] = results[0];
   getFPValues({node}, point, results);
   R.value[i] = results[0];
-  R.error[i] = sampleError(R.gold[i], R.value[i], m);
+  R.error[i] = momentError(R.gold[i], R.value[i], m);
   return unsettled;
 }
 

@@ -63,7 +63,7 @@ std::string siteProfilePath(const Session &S, const Function &clone,
 // not record is an error at the site.
 static Expected<ErrorSum>
 resolveErrorSum(const Options &O, const SiteProfileData &P, const Function &F) {
-  const bool squares = !P.map.empty() && P.map.begin()->second.hasSecondMoments;
+  const bool squares = recordsSecondMoments(P.map);
   if (O.Model.ErrorSum.empty())
     return squares ? ErrorSum::Squares : ErrorSum::Absolute;
   if (O.Model.ErrorSum == "signed")
@@ -111,10 +111,6 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(P.map, F.getName(), O.Diagnostics.Print);
-  Expected<ErrorSum> errorSum = resolveErrorSum(O, P, F);
-  if (!errorSum)
-    return errorSum.takeError();
-  P.errorSum = *errorSum;
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
@@ -319,6 +315,10 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
   SiteProfileData profile;
   if (Error E = readSiteProfile(S, F, profile))
     return std::move(E);
+  Expected<ErrorSum> errorSum = resolveErrorSum(O, profile, F);
+  if (!errorSum)
+    return errorSum.takeError();
+  st.errorSum = *errorSum;
   SolvedFrom &from = st.get<SolvedFrom>();
   from.profilePath = profile.path;
   from.canonicalHash = profile.canonicalHash;
@@ -354,7 +354,6 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F,
 
   buildSubgraphs(O, profile.map, st);
 
-  st.errorSum = profile.errorSum;
   if (Error E = attachProfile(O, profile.map, st.errorSum, st, st.subgraphs))
     return std::move(E);
   shapeSubgraphs(O, F, st.subgraphs);
@@ -533,10 +532,8 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
       return userError(
           *st->F,
           Twine("the profile of ") + st->F->getName() +
-              (st->moment() == ErrorMoment::Second ? " records"
-                                                   : " does not record") +
-              " the squared sums SumSqGrad and SumSqSens, and the profile of " +
-              sites.front()->F->getName() +
+              squaredSumsClause(st->moment() == ErrorMoment::Second) +
+              "the profile of " + sites.front()->F->getName() +
               (st->moment() == ErrorMoment::Second ? " does not" : " does") +
               ", so the two cannot be solved jointly; profile both with one "
               "profiler");

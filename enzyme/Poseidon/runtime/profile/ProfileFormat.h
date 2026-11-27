@@ -39,6 +39,7 @@
 
 #include "poseidon/poseidon.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdarg>
@@ -431,6 +432,20 @@ inline bool profileReadKappaSites(const std::string &path,
   while (in >> site && std::getline(in >> std::ws, profile))
     list.sites.emplace(site, profile);
   return true;
+}
+
+//===----------------------------------------------------------------------===//
+// Stream rows
+//===----------------------------------------------------------------------===//
+
+// A kernel's time from its arithmetic time and its memory time as
+// (A^p + M^p)^(1/p): the formula stream_combine,pnorm is fitted under and
+// priced with.
+inline double combineTimes(double arith, double memory, double p) {
+  double hi = std::max(arith, memory), lo = std::min(arith, memory);
+  if (lo <= 0.0)
+    return hi;
+  return hi * std::pow(1.0 + std::pow(lo / hi, p), 1.0 / p);
 }
 
 } // namespace poseidon

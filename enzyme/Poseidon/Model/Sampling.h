@@ -36,11 +36,6 @@ struct Subgraph;
 class FPGraph;
 class FPNode;
 
-/// What the error of `result` against `goldVal` contributes to an accuracy
-/// cost in moment `m`: |goldVal - result|, in the units of the value, or its
-/// square.
-double sampleError(double goldVal, double result, ErrorMoment m);
-
 /// The points one subgraph is priced at and what its original expressions
 /// evaluate to there. They depend on the subgraph's inputs and the seed alone,
 /// so every unit that prices a rewrite of the subgraph shares one copy. Not for
@@ -52,7 +47,7 @@ public:
 
   /// At each point, the expression's exact value (MPFR, converged to 53 bits),
   /// its value as written, and the error of the latter in the subgraph's
-  /// moment (sampleError); NaN where the exact value did not settle.
+  /// moment (momentError); NaN where the exact value did not settle.
   struct Reference {
     /// One entry per point, in the order of the points.
     llvm::SmallVector<double, 4> gold, value, error;

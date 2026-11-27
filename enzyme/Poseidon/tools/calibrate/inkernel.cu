@@ -112,11 +112,8 @@ static int operandMin(const char *format, const char *accumulator) {
     CK(cudaMemcpy(hC, C, elts * 8, cudaMemcpyDeviceToHost));
   };
   double floor = operand_min::measure(*f, *acc, CAL_M, product, stderr);
-  if (floor == 0.0) {
-    fprintf(stderr, "the top %s binade walked is not kept exactly at N=%d\n",
-            f->name, CAL_M);
+  if (floor == 0.0)
     return 1;
-  }
   printf("operand_min = %.17g\n", floor);
   return 0;
 }

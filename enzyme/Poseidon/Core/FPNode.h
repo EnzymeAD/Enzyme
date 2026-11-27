@@ -148,7 +148,7 @@ protected:
 /// The weight of `node`'s sampled error in moment `m`: |grad|, or its summed
 /// squared gradient.
 inline double accuracyWeight(const FPNode &node, ErrorMoment m) {
-  return m == ErrorMoment::First ? std::fabs(node.grad) : node.sqGrad;
+  return momentWeight(node.grad, node.sqGrad, m);
 }
 
 class FPLLValue;

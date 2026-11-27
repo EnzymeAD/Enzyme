@@ -34,6 +34,7 @@
 
 #include "../../runtime/DeviceApi.h"
 #include "../../runtime/profile/ProfileFormat.h"
+#include "gpu_timing.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -394,72 +395,6 @@ struct Config {
 };
 static Config gCfg = {0, 1024, 50};
 
-#ifdef __HIP__
-// An AMD GPU's clock settles slowly after a change of load, so each kernel
-// runs for kWarmMs before it is timed, a batch lasts at least kBatchMs, and
-// the time is the median of kBatches batches of at least `reps` launches.
-constexpr int kBatches = 7;
-constexpr double kWarmMs = 20.0, kBatchMs = 5.0;
-
-template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
-  hipEvent_t e0, e1;
-  POSEIDON_GPU_CHECK(hipEventCreate(&e0));
-  POSEIDON_GPU_CHECK(hipEventCreate(&e1));
-  auto batch = [&](int reps) {
-    POSEIDON_GPU_CHECK(hipEventRecord(e0));
-    for (int i = 0; i < reps; ++i)
-      kernel();
-    POSEIDON_GPU_CHECK(hipEventRecord(e1));
-    POSEIDON_GPU_CHECK(hipEventSynchronize(e1));
-    POSEIDON_GPU_CHECK(hipGetLastError());
-    float ms;
-    POSEIDON_GPU_CHECK(hipEventElapsedTime(&ms, e0, e1));
-    return (double)ms;
-  };
-  double ms = batch(reps);
-  for (double warm = ms; warm < kWarmMs; warm += ms)
-    ms = batch(reps);
-  if (ms < kBatchMs)
-    reps = (int)std::ceil(reps * kBatchMs / std::max(ms, 1e-3));
-  double t[kBatches];
-  for (int b = 0; b < kBatches; ++b)
-    t[b] = batch(reps) * 1e6 / reps;
-  POSEIDON_GPU_CHECK(hipEventDestroy(e0));
-  POSEIDON_GPU_CHECK(hipEventDestroy(e1));
-  std::sort(t, t + kBatches);
-  return t[kBatches / 2];
-}
-#else
-// The mean of `reps` launches after three untimed ones.
-template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
-  cudaEvent_t e0, e1;
-  POSEIDON_GPU_CHECK(cudaEventCreate(&e0));
-  POSEIDON_GPU_CHECK(cudaEventCreate(&e1));
-  for (int i = 0; i < 3; ++i)
-    kernel();
-  POSEIDON_GPU_CHECK(cudaDeviceSynchronize());
-  POSEIDON_GPU_CHECK(cudaGetLastError());
-  POSEIDON_GPU_CHECK(cudaEventRecord(e0));
-  for (int i = 0; i < reps; ++i)
-    kernel();
-  POSEIDON_GPU_CHECK(cudaEventRecord(e1));
-  POSEIDON_GPU_CHECK(cudaEventSynchronize(e1));
-  POSEIDON_GPU_CHECK(cudaGetLastError());
-  float ms;
-  POSEIDON_GPU_CHECK(cudaEventElapsedTime(&ms, e0, e1));
-  POSEIDON_GPU_CHECK(cudaEventDestroy(e0));
-  POSEIDON_GPU_CHECK(cudaEventDestroy(e1));
-  return (double)ms * 1e6 / reps;
-}
-#endif
-
-static double gGhz;
-
-double diff_cycles(double t_n, double t_2n, int n1, int n2) {
-  double per_op_ns = (t_2n - t_n) / (n2 - n1);
-  return per_op_ns * gGhz * 2.0;
-}
-
 // Prints the row `op`,`prec`. A chain twice as long that ran no slower measured
 // nothing, and no price is written in its place.
 static void printRow(const char *op, const char *prec, double cycles) {
@@ -472,25 +407,28 @@ static void printRow(const char *op, const char *prec, double cycles) {
 
 #define BENCH_SCALAR(stem, T, op_name, prec_name, sink)                        \
   {                                                                            \
-    double t1 = timeit_ns(                                                     \
-        [&]() { stem##_##T<512><<<gCfg.blocks, gCfg.threads>>>(sink); });      \
-    double t2 = timeit_ns(                                                     \
-        [&]() { stem##_##T<1024><<<gCfg.blocks, gCfg.threads>>>(sink); });     \
+    double t1 = gpu_timing::timeNs(                                            \
+        [&]() { stem##_##T<512><<<gCfg.blocks, gCfg.threads>>>(sink); },       \
+        gCfg.reps);                                                            \
+    double t2 = gpu_timing::timeNs(                                            \
+        [&]() { stem##_##T<1024><<<gCfg.blocks, gCfg.threads>>>(sink); },      \
+        gCfg.reps);                                                            \
     /* reciprocal throughput per op: divide the saturated per-step wall */     \
     /* by the number of independent chains running in parallel (one per */     \
     /* thread). */                                                             \
-    double c =                                                                 \
-        diff_cycles(t1, t2, 512, 1024) / ((double)gCfg.blocks * gCfg.threads); \
+    double c = gpu_timing::cyclesPerUnit(t1, t2, 512) /                        \
+               ((double)gCfg.blocks * gCfg.threads);                           \
     printRow(op_name, prec_name, c);                                           \
   }
 
 #define BENCH_CVT(name, sink, op_label, prec_label)                            \
   {                                                                            \
-    double t1 =                                                                \
-        timeit_ns([&]() { name<512><<<gCfg.blocks, gCfg.threads>>>(sink); });  \
-    double t2 =                                                                \
-        timeit_ns([&]() { name<1024><<<gCfg.blocks, gCfg.threads>>>(sink); }); \
-    double c = diff_cycles(t1, t2, 512, 1024) * 0.5 /                          \
+    double t1 = gpu_timing::timeNs(                                            \
+        [&]() { name<512><<<gCfg.blocks, gCfg.threads>>>(sink); }, gCfg.reps); \
+    double t2 = gpu_timing::timeNs(                                            \
+        [&]() { name<1024><<<gCfg.blocks, gCfg.threads>>>(sink); },            \
+        gCfg.reps);                                                            \
+    double c = gpu_timing::cyclesPerUnit(t1, t2, 512) * 0.5 /                  \
                ((double)gCfg.blocks * gCfg.threads);                           \
     printRow(op_label, prec_label, c);                                         \
   }
@@ -759,7 +697,7 @@ double tensor_gemm_ns(int GN, bool *ok) {
     return -1.0;
   }
 
-  double ns = timeit_ns(launch, kGemmReps);
+  double ns = gpu_timing::timeNs(launch, kGemmReps);
   release();
   if (ok)
     *ok = true;
@@ -788,7 +726,7 @@ double scalar_gemm_ns(int GN) {
   launch();
   POSEIDON_GPU_CHECK(cudaGetLastError());
   POSEIDON_GPU_CHECK(cudaDeviceSynchronize());
-  double ns = timeit_ns(launch, kGemmReps);
+  double ns = gpu_timing::timeNs(launch, kGemmReps);
   POSEIDON_GPU_CHECK(cudaFree(dA));
   POSEIDON_GPU_CHECK(cudaFree(dB));
   POSEIDON_GPU_CHECK(cudaFree(dC));
@@ -892,15 +830,8 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  // From CUDA 13 on, gpuDeviceProp_t carries no clock rate. Every row is in
-  // cycles, so a clock rate that is not positive would price every op at 0.
-  int clkKHz = 0;
-  POSEIDON_GPU_CHECK(gpuDeviceGetAttribute(&clkKHz, gpuDevAttrClockRate, 0));
-  if (clkKHz <= 0)
-    poseidon::fatal("device 0 reports a clock rate of %d kHz; the per-op rows "
-                    "are in cycles and need a positive one",
-                    clkKHz);
-  gGhz = (double)clkKHz / 1e6;
+  // A clock rate that is not positive stops the run before any row is timed.
+  gpu_timing::clockGhz();
   // 1024 threads are 32 warps of an SM, but only 16 waves of a CU, whose four
   // SIMDs hold 32: an AMD GPU takes two blocks per CU to be throughput-bound.
 #ifdef __HIP__

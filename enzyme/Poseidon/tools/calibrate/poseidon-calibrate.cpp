@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Model/CostModel.h"
 #include "Model/CostTable.h"
 #include "runtime/gemm/SchemeConstants.h"
 
@@ -247,6 +248,21 @@ static std::pair<StringRef, StringRef> rowKey(StringRef Line) {
   return {Family, Rest.split(',').first};
 }
 
+/// The last line of `Out` that is the row `Family,Key`, trimmed; empty when
+/// none is.
+static StringRef rowLine(StringRef Out, StringRef Family, StringRef Key) {
+  StringRef Found;
+  for (StringRef Line : llvm::split(Out, '\n'))
+    if (rowKey(Line.trim()) == std::make_pair(Family, Key))
+      Found = Line.trim();
+  return Found;
+}
+
+/// Whether `Csv` holds the row `Family,Key`.
+static bool hasRow(StringRef Csv, StringRef Family, StringRef Key) {
+  return !rowLine(Csv, Family, Key).empty();
+}
+
 /// Replaces the rows of `Csv` whose (family, key) `Rows` carry, and keeps the
 /// others.
 static void mergeRows(std::string &Csv, StringRef Rows) {
@@ -268,6 +284,23 @@ static void mergeRows(std::string &Csv, StringRef Rows) {
     Kept += '\n';
   }
   Csv = Kept;
+}
+
+/// Merges `Rows` into the model file `Csv`, as mergeRows does.
+static void mergeIntoCsv(StringRef Csv, StringRef Rows) {
+  std::string Content = readFile(Csv);
+  mergeRows(Content, Rows);
+  writeFile(Csv, Content);
+}
+
+/// A new directory whose name starts with `Prefix`, which the run names as
+/// the work directory of `Arm`.
+static std::string makeWorkDir(StringRef Prefix, StringRef Arm) {
+  SmallString<256> Dir;
+  if (std::error_code EC = sys::fs::createUniqueDirectory(Prefix, Dir))
+    fail("cannot create " + Dir + ": " + EC.message());
+  outs() << "poseidon-calibrate: " << Arm << " workdir " << Dir << '\n';
+  return std::string(Dir);
 }
 
 namespace {
@@ -677,9 +710,7 @@ static void writeRows(StringRef Csv, StringRef Arm, StringRef Family,
     fail("the " + Arm + " calibration failed");
   if (!hasFamily(*Rows, Family))
     fail(Arm + " calibration produced no " + Family + " row");
-  std::string Content = readFile(Csv);
-  mergeRows(Content, *Rows);
-  writeFile(Csv, Content);
+  mergeIntoCsv(Csv, *Rows);
   for (StringRef Line : llvm::split(*Rows, '\n'))
     if (!Line.trim().empty())
       outs() << "  " << Line.trim() << '\n';
@@ -727,13 +758,9 @@ static void armStream(StringRef Csv, const Device &D) {
   if (!Rows)
     fail("the stream calibration failed");
   SmallVector<std::string, 6> Missing;
-  for (StringRef Row :
-       {"stream_load,double", "stream_load,float", "stream_store,double",
-        "stream_store,float", "stream_combine,pnorm", "stream_combine,band"})
-    if (none_of(llvm::split(*Rows, '\n'), [&](StringRef Line) {
-          return Line.trim().starts_with((Row + ",").str());
-        }))
-      Missing.push_back(Row.str());
+  for (const auto &[Opcode, Type] : kStreamRows)
+    if (rowLine(*Rows, Opcode, Type).empty())
+      Missing.push_back((Opcode + "," + Type).str());
   if (!Missing.empty())
     fail("the stream calibration produced no " + join(Missing, ", ") +
          " row, so no stream row is written");
@@ -965,10 +992,18 @@ public:
     return Classes;
   }
 
-  /// Compiles the harness with the candidate `Id` applied into `Exe`;
-  /// nonzero on failure, whose output is in `Log`.
-  int compileClass(StringRef Id, StringRef Exe, StringRef Log) const {
-    return compile({("-poseidon-pin=" + Id).str()}, Exe, Log);
+  /// The executable of the harness with the candidate `Id`, of class
+  /// `Class`, applied; none when it does not build, which is reported and adds
+  /// `Row` to Unmeasured.
+  std::optional<std::string> buildClass(StringRef Class, StringRef Id,
+                                        StringRef Row) const {
+    std::string Exe = Dir + "/cand_" + Class.str() + ".exe";
+    std::string Log = Dir + "/build_" + Class.str() + ".log";
+    if (!compile({("-poseidon-pin=" + Id).str()}, Exe, Log))
+      return Exe;
+    outs() << "  ! " << Row << " did not build (" << Log << ")\n";
+    Unmeasured.push_back(Row.str());
+    return std::nullopt;
   }
 
   const std::string Dir;
@@ -1045,19 +1080,16 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
 
   std::string Rows;
   for (const auto &[Class, Id] : H.classes()) {
-    const std::string Row = "inkernel_rel," + Class + Suffix.str();
-    if (!Force && StringRef(Content).contains(Row + ",")) {
-      outs() << "  = " << Class << Suffix << " already calibrated\n";
+    const std::string Key = Class + Suffix.str();
+    const std::string Row = "inkernel_rel," + Key;
+    if (!Force && hasRow(Content, "inkernel_rel", Key)) {
+      outs() << "  = " << Key << " already calibrated\n";
       continue;
     }
-    std::string Exe = H.Dir + "/cand_" + Class + ".exe";
-    std::string Log = H.Dir + "/build_" + Class + ".log";
-    if (H.compileClass(Id, Exe, Log)) {
-      outs() << "  ! " << Class << Suffix << " did not build (" << Log << ")\n";
-      Unmeasured.push_back(Row);
+    std::optional<std::string> Exe = H.buildClass(Class, Id, Row);
+    if (!Exe)
       continue;
-    }
-    std::optional<double> Ms = timeOf(Exe);
+    std::optional<double> Ms = timeOf(*Exe);
     if (!Ms) {
       outs() << "  ! " << Class << Suffix << " did not run\n";
       Unmeasured.push_back(Row);
@@ -1071,8 +1103,7 @@ static unsigned measureInKernel(const std::string &Csv, const Device &D,
   // that stops at a later shape keeps them.
   if (Rows.empty())
     return 0;
-  mergeRows(Content, Rows);
-  writeFile(Csv, Content);
+  mergeIntoCsv(Csv, Rows);
   return llvm::count(Rows, '\n');
 }
 
@@ -1086,12 +1117,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
               "NVPTX-only; their rows stay absent\n";
     return;
   }
-  SmallString<256> WorkBuf;
-  if (std::error_code EC =
-          sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf))
-    fail("cannot create " + WorkBuf + ": " + EC.message());
-  std::string Work(WorkBuf);
-  outs() << "poseidon-calibrate: in-kernel workdir " << Work << '\n';
+  const std::string Work = makeWorkDir("poseidon-inkernel", "in-kernel");
 
   unsigned Written = measureInKernel(Csv, D, Work, RefN, RefN, RefN,
                                      /*BColMajor=*/false, "");
@@ -1122,12 +1148,8 @@ static StringRef narrowOperandFormat(StringRef Class) {
 /// on.
 static void measureInKernelFloors(const std::string &Csv, const Device &D) {
   std::string Content = readFile(Csv);
-  SmallString<256> WorkBuf;
-  if (std::error_code EC =
-          sys::fs::createUniqueDirectory("poseidon-operand-min", WorkBuf))
-    fail("cannot create " + WorkBuf + ": " + EC.message());
-  outs() << "poseidon-calibrate: operand-min workdir " << WorkBuf << '\n';
-  const InKernelHarness H(Csv, D, (WorkBuf + "/class").str(), RefN, RefN, RefN,
+  const std::string Work = makeWorkDir("poseidon-operand-min", "operand-min");
+  const InKernelHarness H(Csv, D, Work + "/class", RefN, RefN, RefN,
                           /*BColMajor=*/false);
   outs() << "poseidon-calibrate: operand floors of the in-kernel raises at "
          << formatv("{0}x{0}x{0}", RefN) << ", B strided along K\n";
@@ -1138,19 +1160,15 @@ static void measureInKernelFloors(const std::string &Csv, const Device &D) {
     if (Format.empty())
       continue;
     const std::string Row = "inkernel_operand_min," + Class;
-    if (!Force && StringRef(Content).contains(Row + ",")) {
+    if (!Force && hasRow(Content, "inkernel_operand_min", Class)) {
       outs() << "  = " << Row << " already measured\n";
       continue;
     }
-    std::string Exe = H.Dir + "/cand_" + Class + ".exe";
-    std::string Log = H.Dir + "/build_" + Class + ".log";
-    if (H.compileClass(Id, Exe, Log)) {
-      outs() << "  ! " << Row << ": the class did not build (" << Log << ")\n";
-      Unmeasured.push_back(Row);
+    std::optional<std::string> Exe = H.buildClass(Class, Id, Row);
+    if (!Exe)
       continue;
-    }
     std::optional<std::string> Out = capture(
-        {Exe, "--operand-min", Format, StringRef(Class).rsplit('_').second});
+        {*Exe, "--operand-min", Format, StringRef(Class).rsplit('_').second});
     SmallVector<StringRef, 2> Match;
     if (!Out || !Regex("operand_min = ([0-9.e+-]+)").match(*Out, &Match)) {
       outs() << "  ! " << Row << ": no floor established\n";
@@ -1162,8 +1180,7 @@ static void measureInKernelFloors(const std::string &Csv, const Device &D) {
   }
   if (Rows.empty())
     return;
-  mergeRows(Content, Rows);
-  writeFile(Csv, Content);
+  mergeIntoCsv(Csv, Rows);
 }
 
 /// Measures the floors of the library calls of a narrow operand format the
@@ -1185,10 +1202,11 @@ static void measureLibraryFloors(const std::string &Csv, const Device &D) {
   }
   SmallVector<std::string, 8> Argv = {
       tool(D, Calibrator::Library), "operand-min", utostr(RefN), utostr(Reps)};
+  const std::string Content = readFile(Csv);
   SmallVector<std::string, 4> Asked;
   for (const auto &[Class, Family] : Classes) {
     const std::string Row = (Family + "," + Class).str();
-    if (!Force && lookupCost(CM, Family, Class)) {
+    if (!Force && hasRow(Content, Family, Class)) {
       outs() << "  = " << Row << " already measured\n";
       continue;
     }
@@ -1205,10 +1223,8 @@ static void measureLibraryFloors(const std::string &Csv, const Device &D) {
     fail("the operand-min calibration of the library calls failed");
   std::string Rows;
   for (const std::string &Row : Asked) {
-    StringRef Line;
-    for (StringRef L : llvm::split(*Out, '\n'))
-      if (L.trim().starts_with(Row + ","))
-        Line = L.trim();
+    auto [Family, Class] = rowKey(Row);
+    StringRef Line = rowLine(*Out, Family, Class);
     if (Line.empty()) {
       outs() << "  ! " << Row << ": no floor established\n";
       Unmeasured.push_back(Row);
@@ -1219,9 +1235,7 @@ static void measureLibraryFloors(const std::string &Csv, const Device &D) {
   }
   if (Rows.empty())
     return;
-  std::string Content = readFile(Csv);
-  mergeRows(Content, Rows);
-  writeFile(Csv, Content);
+  mergeIntoCsv(Csv, Rows);
 }
 
 /// Measures, per product class of a narrow operand format, the smallest

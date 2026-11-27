@@ -102,13 +102,13 @@ struct SolveRecord {
   /// selected none.
   std::optional<DPCost> selected;
   /// The site's time once its memory traffic is priced, in cost-model units
-  /// over the profiled run: its arithmetic, its memory, and the two combined,
-  /// for the code as written and at the selected point, and whether that point
-  /// is taken. Absent when the traffic is not priced.
+  /// over the profiled run: its arithmetic at the selected point, its
+  /// arithmetic and memory combined for the code as written and at the
+  /// selected point, and whether that point is taken. Absent when the traffic
+  /// is not priced.
   struct Time {
-    double arithAsWritten, arithSelected, memory;
+    double arithSelected;
     double combinedAsWritten, combinedSelected;
-    double pnorm, band;
     bool taken;
   };
   std::optional<Time> time;

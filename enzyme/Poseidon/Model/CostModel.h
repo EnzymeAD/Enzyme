@@ -22,6 +22,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
@@ -33,6 +34,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 namespace poseidon {
 
@@ -86,7 +88,17 @@ struct StreamPrices {
   double perByte(bool Store, uint64_t Width) const;
   /// A kernel's time from its arithmetic and its memory time.
   double combine(double Arith, double Memory) const;
+  /// Whether the modelled speedup `Speedup` is a gain no larger than the band.
+  bool withinBand(double Speedup) const {
+    return Speedup > 1.0 && Speedup <= 1.0 + Band;
+  }
 };
+
+/// The stream rows as (opcode, type), which a model carries all or none of.
+inline constexpr std::pair<llvm::StringLiteral, llvm::StringLiteral>
+    kStreamRows[] = {{"stream_load", "double"},   {"stream_store", "double"},
+                     {"stream_load", "float"},    {"stream_store", "float"},
+                     {"stream_combine", "pnorm"}, {"stream_combine", "band"}};
 
 /// The model's stream rows; none when it has no stream row, an error at `F`
 /// naming the first missing one when it has some but not all.

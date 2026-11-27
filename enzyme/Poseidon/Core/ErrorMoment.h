@@ -62,6 +62,12 @@ inline const char *errorSumName(ErrorSum s) {
   llvm_unreachable("every error sum has a name");
 }
 
+/// The weight of an operation's sampled error in moment `m`: the magnitude of
+/// its summed gradient `grad`, or its summed squared gradient `sqGrad`.
+inline double momentWeight(double grad, double sqGrad, ErrorMoment m) {
+  return m == ErrorMoment::First ? std::fabs(grad) : sqGrad;
+}
+
 /// What the error of `result` against `goldVal` contributes to an accuracy
 /// cost in moment `m`: its magnitude, or its square.
 inline double momentError(double goldVal, double result, ErrorMoment m) {

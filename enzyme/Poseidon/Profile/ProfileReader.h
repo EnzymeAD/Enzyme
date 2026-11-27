@@ -71,6 +71,15 @@ struct ProfileInfo {
 /// summed over them and reported about them does not depend on hashing.
 using ProfileMap = std::map<size_t, ProfileInfo>;
 
+/// Whether the records of `map` carry the squared sums, which a profile's
+/// records do all or none of.
+bool recordsSecondMoments(const ProfileMap &map);
+
+/// " records the squared sums SumSqGrad and SumSqSens, and ", or " does not
+/// record" in place of " records": the shared half of the refusal of two
+/// profiles or records that differ in them.
+std::string squaredSumsClause(bool records);
+
 /// The memory traffic of a kernel site's profiled run through one array: the
 /// extent of the addresses its launches touched, summed over the launches, per
 /// direction.
@@ -129,10 +138,6 @@ struct SiteProfileData {
   ProfileMap map;
   /// The profile's header.
   SiteProfileHeader header;
-  /// How its records' rounding errors are summed: -poseidon-error-sum, or,
-  /// when it is not given, squares when the records carry the squared sums,
-  /// else absolute.
-  ErrorSum errorSum = ErrorSum::Absolute;
   /// The canonical form hash of the site, as computed for this compile.
   std::string canonicalHash;
 };

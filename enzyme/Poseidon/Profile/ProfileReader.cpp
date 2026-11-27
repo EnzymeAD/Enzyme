@@ -87,13 +87,21 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
   return floored;
 }
 
+bool recordsSecondMoments(const ProfileMap &map) {
+  return !map.empty() && map.begin()->second.hasSecondMoments;
+}
+
+std::string squaredSumsClause(bool records) {
+  return std::string(records ? " records" : " does not record") +
+         " the squared sums SumSqGrad and SumSqSens, and ";
+}
+
 Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                           StringRef fileName, StringRef canonicalHash,
                           const Function &F, bool print) {
   const StringRef functionName = F.getName();
   auto refusal = [&](const Twine &why) { return userError(F, why); };
-  const bool second =
-      !profileMap.empty() && profileMap.begin()->second.hasSecondMoments;
+  const bool second = recordsSecondMoments(profileMap);
   std::unordered_map<size_t, double> grad, sens, sqGrad, sqSens;
   for (const std::string &dir : dirs) {
     SmallString<128> path(dir);
@@ -118,11 +126,9 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                      Twine(out.size()) + " instructions, the site's profile " +
                      Twine(profileMap.size()) +
                      "; both must come from the same profiling binary.");
-    if (!out.empty() && out.begin()->second.hasSecondMoments != second)
+    if (recordsSecondMoments(out) != second)
       return refusal(Twine("output profile ") + path +
-                     (second ? " does not record" : " records") +
-                     " the squared sums SumSqGrad and SumSqSens, and the "
-                     "site's profile " +
+                     squaredSumsClause(!second) + "the site's profile " +
                      (second ? "does" : "does not") +
                      "; both must come from the same profiling binary");
     for (const auto &kv : out) {
@@ -366,9 +372,8 @@ Error ProfileParser::record(size_t Slot, ProfileInfo &Info) {
   Info.hasSecondMoments = nextIs("SumSqGrad");
   if (SecondMoments && *SecondMoments != Info.hasSecondMoments)
     return refusal("the record of slot " + Twine(Slot) +
-                   (Info.hasSecondMoments ? " records" : " does not record") +
-                   " the squared sums SumSqGrad and SumSqSens, and the "
-                   "records before it " +
+                   squaredSumsClause(Info.hasSecondMoments) +
+                   "the records before it " +
                    (Info.hasSecondMoments ? "do not" : "do"));
   SecondMoments = Info.hasSecondMoments;
   if (Info.hasSecondMoments)

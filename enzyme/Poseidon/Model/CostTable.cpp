@@ -143,6 +143,10 @@ static constexpr StringLiteral kOperandMinFamilies[] = {
     "library_tcec_operand_min", "library_direct_operand_min",
     "inkernel_operand_min"};
 
+bool isOperandMinFamily(StringRef Opcode) {
+  return is_contained(kOperandMinFamilies, Opcode);
+}
+
 // Whether `Opcode,Type` is a row family poseidon-calibrate writes, read by a
 // compile or not; must agree with the calibrator.
 static bool isCostModelRow(StringRef Opcode, StringRef Type) {

@@ -14,6 +14,7 @@
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/Target.h"
+#include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -217,16 +218,12 @@ profiledCost(CostModelState &CM, const Function &F, const ProfileMap &profile,
 
 Expected<std::optional<StreamPrices>> streamPrices(CostModelState &CM,
                                                    const Function &F) {
-  static constexpr std::pair<StringLiteral, StringLiteral> Rows[] = {
-      {"stream_load", "double"},   {"stream_store", "double"},
-      {"stream_load", "float"},    {"stream_store", "float"},
-      {"stream_combine", "pnorm"}, {"stream_combine", "band"}};
-  if (none_of(Rows, [&](const auto &Row) {
+  if (none_of(kStreamRows, [&](const auto &Row) {
         return lookupCost(CM, Row.first, Row.second).has_value();
       }))
     return std::nullopt;
-  double Price[std::size(Rows)];
-  for (auto [Cost, Row] : zip(Price, Rows)) {
+  double Price[std::size(kStreamRows)];
+  for (auto [Cost, Row] : zip(Price, kStreamRows)) {
     Expected<double> Found =
         rowCost(CM, F, F.getSubprogram(), Row.first, Row.second);
     if (!Found)
@@ -244,10 +241,7 @@ double StreamPrices::perByte(bool Store, uint64_t Width) const {
 }
 
 double StreamPrices::combine(double Arith, double Memory) const {
-  double Hi = std::max(Arith, Memory), Lo = std::min(Arith, Memory);
-  if (Lo <= 0.0)
-    return Hi;
-  return Hi * std::pow(1.0 + std::pow(Lo / Hi, PNorm), 1.0 / PNorm);
+  return combineTimes(Arith, Memory, PNorm);
 }
 
 double trafficCost(const StreamPrices &Prices,

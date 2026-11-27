@@ -371,18 +371,10 @@ std::string instrumentTraffic(Function &clone, StringRef profileName) {
   SmallVector<Access, 32> Accesses;
   std::map<SmallVector<TrafficRoot, 2>, unsigned> Records;
   for (Instruction &I : instructions(clone)) {
-    Value *Ptr;
-    Type *Ty;
-    unsigned Kind;
-    if (auto *LI = dyn_cast<LoadInst>(&I)) {
-      Ptr = LI->getPointerOperand();
-      Ty = LI->getType();
-      Kind = 0;
-    } else if (auto *SI = dyn_cast<StoreInst>(&I)) {
-      Ptr = SI->getPointerOperand();
-      Ty = SI->getValueOperand()->getType();
-      Kind = 1;
-    } else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
+    Value *Ptr = getLoadStorePointerOperand(&I);
+    Type *Ty = Ptr ? getLoadStoreType(&I) : nullptr;
+    unsigned Kind = isa<StoreInst>(I);
+    if (auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
       Ptr = RMW->getPointerOperand();
       Ty = RMW->getValOperand()->getType();
       Kind = 2;
@@ -390,9 +382,9 @@ std::string instrumentTraffic(Function &clone, StringRef profileName) {
       Ptr = CX->getPointerOperand();
       Ty = CX->getNewValOperand()->getType();
       Kind = 2;
-    } else {
-      continue;
     }
+    if (!Ptr)
+      continue;
     SmallVector<TrafficRoot, 2> Roots = trafficRoots(Ptr, T);
     if (Roots.empty())
       continue;

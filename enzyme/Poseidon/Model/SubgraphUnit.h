@@ -42,7 +42,7 @@ struct BaselineAccuracy {
     const FPNode *node;
     /// The output's values at the points.
     const SubgraphSamples::Reference *ref;
-    /// Its mean error there in the subgraph's moment (sampleError).
+    /// Its mean error there in the subgraph's moment (momentError).
     double error;
     /// The output's accuracy weight (accuracyWeight); its error is weighted
     /// by |grad|.

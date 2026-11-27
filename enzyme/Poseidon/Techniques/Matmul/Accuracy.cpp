@@ -463,9 +463,8 @@ private:
           accD += A[mi * m.K + ki] * B[ki * m.N + ni];
         gold[mi * m.N + ni] = accD;
       }
-    const double weight = prof.moment == ErrorMoment::First
-                              ? std::fabs(prof.gradSum)
-                              : prof.sqGradSum;
+    const double weight =
+        momentWeight(prof.gradSum, prof.sqGradSum, prof.moment);
     double sampleDen = 0.0;
     for (size_t i = 0; i < mn; ++i)
       sampleDen += weight * momentError(gold[i], 0.0, prof.moment);

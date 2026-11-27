@@ -28,6 +28,7 @@
 
 #include "../../runtime/DeviceApi.h"
 #include "../../runtime/profile/ProfileFormat.h"
+#include "gpu_timing.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -96,33 +97,22 @@ __global__ void transform(const T *x, T *y, size_t n, T a, T b) {
 }
 
 static int gBlocks = 0;
-static double gGhz = 0.0;
 
-template <typename F> static double timeNs(F launch) {
-  gpuEvent_t e0, e1;
-  POSEIDON_GPU_CHECK(gpuEventCreate(&e0));
-  POSEIDON_GPU_CHECK(gpuEventCreate(&e1));
-  for (int i = 0; i < 3; ++i)
-    launch();
-  POSEIDON_GPU_CHECK(gpuDeviceSynchronize());
-  POSEIDON_GPU_CHECK(gpuEventRecord(e0));
-  for (int i = 0; i < kReps; ++i)
-    launch();
-  POSEIDON_GPU_CHECK(gpuEventRecord(e1));
-  POSEIDON_GPU_CHECK(gpuEventSynchronize(e1));
-  float ms = 0;
-  POSEIDON_GPU_CHECK(gpuEventElapsedTime(&ms, e0, e1));
-  POSEIDON_GPU_CHECK(gpuEventDestroy(e0));
-  POSEIDON_GPU_CHECK(gpuEventDestroy(e1));
-  return (double)ms * 1e6 / kReps;
+// The price of one element of a kernel launched over n and 2n elements.
+template <typename F> static double perElement(size_t n, F launchOver) {
+  double t1 = gpu_timing::timeNs([&] { launchOver(n); }, kReps);
+  double t2 = gpu_timing::timeNs([&] { launchOver(2 * n); }, kReps);
+  return gpu_timing::cyclesPerUnit(t1, t2, (double)n);
 }
 
-// The price of one element of a kernel launched over n and 2n elements: the
-// difference of the two times cancels the launch.
-template <typename F> static double perElement(size_t n, F launchOver) {
-  double t1 = timeNs([&] { launchOver(n); });
-  double t2 = timeNs([&] { launchOver(2 * n); });
-  return (t2 - t1) / (double)n * gGhz * 2.0;
+// Prints the row `op`,`type`. A price that is not positive measured nothing,
+// and no row is written in its place.
+static void printRow(const char *op, const char *type, double price) {
+  if (!(price > 0))
+    poseidon::fatal("%s,%s: the measured price %.9g is not positive, so the "
+                    "row has no price",
+                    op, type, price);
+  printf("%s,%s,%.9g\n", op, type, price);
 }
 
 struct Point {
@@ -137,7 +127,6 @@ static void sweepOne(std::vector<Point> &pts, const char *name, const T *x,
   double t = perElement(n, [&](size_t len) {
     transform<T, K><<<gBlocks, kThreads>>>(x, y, len, T(0.999), T(0.001));
   });
-  POSEIDON_GPU_CHECK(gpuGetLastError());
   pts.push_back({name, K, K * fma, m, t});
 }
 
@@ -166,17 +155,10 @@ static void sweep(std::vector<Point> &pts, const char *name, const T *x, T *y,
 #undef POSEIDON_SWEEP
 }
 
-static double combined(double a, double m, double p) {
-  if (a == 0.0 || m == 0.0)
-    return a + m;
-  double hi = std::fmax(a, m), lo = std::fmin(a, m);
-  return hi * std::pow(1.0 + std::pow(lo / hi, p), 1.0 / p);
-}
-
 static double misfit(const std::vector<Point> &pts, double p) {
   double s = 0.0;
   for (const Point &q : pts) {
-    double r = std::log(q.t / combined(q.a, q.m, p));
+    double r = std::log(q.t / poseidon::combineTimes(q.a, q.m, p));
     s += r * r;
   }
   return s;
@@ -194,9 +176,8 @@ int main(int argc, char **argv) {
   }
   gpuDeviceProp_t prop;
   POSEIDON_GPU_CHECK(gpuGetDeviceProperties(&prop, 0));
-  int clkKHz = 0;
-  POSEIDON_GPU_CHECK(gpuDeviceGetAttribute(&clkKHz, gpuDevAttrClockRate, 0));
-  gGhz = (double)clkKHz / 1e6;
+  // A clock rate that is not positive stops the run before any row is timed.
+  gpu_timing::clockGhz();
   gBlocks =
       prop.multiProcessorCount * (prop.maxThreadsPerMultiProcessor / kThreads);
   const size_t grid = (size_t)gBlocks * kThreads * kIlp<float>;
@@ -237,7 +218,6 @@ int main(int argc, char **argv) {
   double copyF = perElement(n, [&](size_t len) {
     transform<float, 0><<<gBlocks, kThreads>>>(xf, yf, len, 0.999f, 0.001f);
   });
-  POSEIDON_GPU_CHECK(gpuGetLastError());
   const double storeD = copyD - loadD, storeF = copyF - loadF;
 
   std::vector<Point> pts;
@@ -269,7 +249,7 @@ int main(int argc, char **argv) {
       stderr,
       "poseidon-calibrate-stream: %s, %d blocks x %d threads, %zu elements, "
       "%.3f GHz\n",
-      prop.name, gBlocks, kThreads, n, gGhz);
+      prop.name, gBlocks, kThreads, n, gpu_timing::clockGhz());
   fprintf(stderr,
           "poseidon-calibrate-stream: double: read %.6g, write alone %.6g, "
           "copy %.6g; float: read %.6g, write alone %.6g, copy %.6g\n",
@@ -277,7 +257,7 @@ int main(int argc, char **argv) {
   fprintf(stderr, "poseidon-calibrate-stream: type k A M T_measured T_model "
                   "relative_residual\n");
   for (const Point &q : pts) {
-    double model = combined(q.a, q.m, p);
+    double model = poseidon::combineTimes(q.a, q.m, p);
     double r = q.t / model - 1.0;
     if (q.a <= q.m)
       band = std::fmax(band, std::fabs(r));
@@ -296,10 +276,10 @@ int main(int argc, char **argv) {
       "%.4f\n",
       p, pts.size(), rms, band, beyond);
 
-  printf("stream_load,double,%.9g\n", loadD);
-  printf("stream_load,float,%.9g\n", loadF);
-  printf("stream_store,double,%.9g\n", storeD);
-  printf("stream_store,float,%.9g\n", storeF);
+  printRow("stream_load", "double", loadD);
+  printRow("stream_load", "float", loadF);
+  printRow("stream_store", "double", storeD);
+  printRow("stream_store", "float", storeF);
   printf("stream_combine,pnorm,%.9g\n", p);
   printf("stream_combine,band,%.9g\n", band);
   return 0;

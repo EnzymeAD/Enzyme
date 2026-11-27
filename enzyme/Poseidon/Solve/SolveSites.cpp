@@ -468,8 +468,7 @@ static bool takesSelectedPoint(const Options &O, const SiteState &st,
       asWrittenSelectable && !(rankedByAccuracy && selectedAcc < 0.0);
   const bool taken = isAsWritten || !selectedForCost || after < before;
   if (record)
-    record->time = SolveRecord::Time{arith0, arith,        memory,      before,
-                                     after,  prices.PNorm, prices.Band, taken};
+    record->time = SolveRecord::Time{arith, before, after, taken};
   if (!print)
     return taken;
   const double speedup = before / after;
@@ -487,7 +486,7 @@ static bool takesSelectedPoint(const Options &O, const SiteState &st,
                          ? "taken for its accuracy\n"
                          : "taken for the cost budget, which the code as "
                            "written exceeds\n");
-  else if (speedup <= 1.0 + prices.Band)
+  else if (prices.withinBand(speedup))
     llvm::errs() << "taken, its modelled gain inside the band\n";
   else
     llvm::errs() << "taken\n";

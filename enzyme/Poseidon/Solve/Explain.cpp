@@ -1003,17 +1003,18 @@ json::Object Explainer::toJSON() {
   }
   if (rec.time) {
     const SolveRecord::Time &t = *rec.time;
+    const StreamPrices &prices = *from.streamPrices;
     json::Object time;
-    putNum(time, "arithmetic_as_written", t.arithAsWritten);
+    putNum(time, "arithmetic_as_written", st.profiledCost);
     putNum(time, "arithmetic_selected", t.arithSelected);
-    putNum(time, "memory", t.memory);
+    putNum(time, "memory", *from.trafficCost);
     putNum(time, "combined_as_written", t.combinedAsWritten);
     putNum(time, "combined_selected", t.combinedSelected);
-    putNum(time, "pnorm", t.pnorm);
-    putNum(time, "band", t.band);
+    putNum(time, "pnorm", prices.PNorm);
+    putNum(time, "band", prices.Band);
     const double speedup = t.combinedAsWritten / t.combinedSelected;
     putNum(time, "modelled_speedup", speedup);
-    time["inside_band"] = speedup > 1.0 && speedup <= 1.0 + t.band;
+    time["inside_band"] = prices.withinBand(speedup);
     time["taken"] = t.taken;
     result["time"] = std::move(time);
   }

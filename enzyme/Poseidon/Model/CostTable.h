@@ -84,6 +84,10 @@ const std::string &costModelPath(const CostModelState &CM);
 /// from its prices depends on. Empty when no model is configured.
 std::string costModelRows(CostModelState &CM);
 
+/// Whether `Opcode` is an operand-floor family (*_operand_min): the smallest
+/// operand magnitude a product class keeps on the device.
+bool isOperandMinFamily(llvm::StringRef Opcode);
+
 /// The (opcode,type) row, if the model has it; a row of a ratio family
 /// (library_*_rel, inkernel_rel) or of an operand-floor family (*_operand_min)
 /// is positive.

@@ -16,6 +16,7 @@
 
 #include "../DeviceApi.h"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -124,9 +125,12 @@ struct ArrayTraffic {
 };
 } // namespace
 
+// The traffic of every record of one registry entry.
+using EntryTraffic = std::array<ArrayTraffic, POSEIDON_MAX_TRAFFIC_RECORDS>;
+
 // Per registry entry, per traffic record: what the launches so far moved.
-static std::map<int, std::vector<ArrayTraffic>> &launchTraffic() {
-  static auto *m = new std::map<int, std::vector<ArrayTraffic>>();
+static std::map<int, EntryTraffic> &launchTraffic() {
+  static auto *m = new std::map<int, EntryTraffic>();
   return *m;
 }
 
@@ -137,7 +141,7 @@ struct ProfileTables {
   std::vector<GPUProfileSlot> slots;
   std::vector<uint32_t> grid, block; // three per row
   std::vector<unsigned long long> launches;
-  std::map<int, std::vector<ArrayTraffic>> traffic;
+  std::map<int, EntryTraffic> traffic;
 
   char *name(int fi) { return &names[(size_t)fi * POSEIDON_FUNCNAME_MAXLEN]; }
   char *header(int fi) {
@@ -189,9 +193,8 @@ static void mergeRow(ProfileTables &t, int to, int from) {
   t.launches[to] += t.launches[from];
   auto moved = t.traffic.find(from);
   if (moved != t.traffic.end()) {
-    std::vector<ArrayTraffic> &into = t.traffic[to];
-    into.resize(POSEIDON_MAX_TRAFFIC_RECORDS);
-    for (size_t r = 0; r < moved->second.size(); ++r)
+    EntryTraffic &into = t.traffic[to];
+    for (int r = 0; r < POSEIDON_MAX_TRAFFIC_RECORDS; ++r)
       into[r] += moved->second[r];
     t.traffic.erase(from);
   }
@@ -242,7 +245,7 @@ static std::string profileOf(ProfileTables &t, int fi) {
   out << t.header(fi);
   auto traffic = t.traffic.find(fi);
   if (traffic != t.traffic.end())
-    for (size_t r = 0; r < traffic->second.size(); ++r) {
+    for (int r = 0; r < POSEIDON_MAX_TRAFFIC_RECORDS; ++r) {
       const ArrayTraffic &a = traffic->second[r];
       if (!a.loads && !a.stores)
         continue;
@@ -550,8 +553,7 @@ static void foldLaunchTraffic() {
       gpuMemcpy(launch, dev, sizeof(launch), gpuMemcpyDeviceToHost));
   POSEIDON_GPU_CHECK(gpuMemset(dev, 0, sizeof(launch)));
   POSEIDON_GPU_CHECK(gpuMemset(g_devTrafficFunc, 0, sizeof(int)));
-  std::vector<ArrayTraffic> &total = launchTraffic()[fi];
-  total.resize(POSEIDON_MAX_TRAFFIC_RECORDS);
+  EntryTraffic &total = launchTraffic()[fi];
   for (int r = 0; r < POSEIDON_MAX_TRAFFIC_RECORDS; ++r) {
     const GPUTrafficSlot &l = launch[r];
     ArrayTraffic a;

@@ -588,8 +588,7 @@ void SubgraphCores::nameInputs(int &symbolCounter) {
 Expected<std::optional<EligibleOutput>>
 SubgraphCores::eligible(Instruction *output) const {
   FPNode &node = *G.valueToNodeMap[output];
-  const double grad =
-      subgraph.moment == ErrorMoment::First ? node.grad : node.sqGrad;
+  const double grad = accuracyWeight(node, subgraph.moment);
   if (grad == 0.) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Skipping zero gradient instruction: "
@@ -945,7 +944,7 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
       break;
     }
 
-    double error = sampleError(goldVal, realVal, E.moment);
+    double error = momentError(goldVal, realVal, E.moment);
     if (!std::isnan(error)) {
       sum += error;
       ++count;
@@ -1034,7 +1033,7 @@ static void takeRound(const Options &O, ElementPricing &E, const RoundWork &W) {
                 [&](const RegimeArm &arm) { return E.starved(O, arm); }))
       continue;
     double origError = W.ref->error[p];
-    double error = sampleError(W.ref->gold[p], W.values[p], E.moment);
+    double error = momentError(W.ref->gold[p], W.values[p], E.moment);
     if (std::isnan(error) || std::isnan(origError))
       continue;
     for (const RegimeArm &arm : W.arms[p]) {

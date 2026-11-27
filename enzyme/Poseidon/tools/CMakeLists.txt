@@ -129,6 +129,7 @@ function(poseidon_add_hip_tool name src)
       ${_exe}
     DEPENDS
       ${CMAKE_CURRENT_SOURCE_DIR}/${src} ${POSEIDON_RUNTIME_HEADERS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/calibrate/gpu_timing.h
       ${CMAKE_CURRENT_SOURCE_DIR}/calibrate/operand_min.h ${ARGN}
     VERBATIM)
   add_custom_target(${name} ALL DEPENDS ${_exe})
@@ -165,8 +166,8 @@ install(
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # The sources poseidon-calibrate runs.
 install(
-  FILES calibrate/inkernel.cu calibrate/operand_min.h calibrate/ops_cpu.py
-  calibrate/herbie_platform.py
+  FILES calibrate/inkernel.cu calibrate/gpu_timing.h calibrate/operand_min.h
+  calibrate/ops_cpu.py calibrate/herbie_platform.py
   DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon/tools/calibrate)
 
 # --- poseidon-kappa and poseidon-explain
