@@ -333,11 +333,12 @@ private:
   /// fwd/both) or an extraction from the tape
   std::map<std::pair<llvm::Value *, int>, llvm::MDNode *>
       CachePointerInvariantGroups;
+
+protected:
   /// Given a value being cached, return the invariant metadata of any
   /// loads/stores to memory storing that value
   std::map<llvm::Value *, llvm::MDNode *> ValueInvariantGroups;
 
-protected:
   /// A map of values being cached to their underlying allocation/limit context
   std::map<llvm::Value *,
            std::pair<llvm::AssertingVH<llvm::AllocaInst>, LimitContext>>
