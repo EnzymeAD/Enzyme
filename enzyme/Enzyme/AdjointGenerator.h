@@ -879,8 +879,16 @@ public:
 
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
+            auto nex = vd[{(int)i}];
+            // Same ranges as addToInvertedPtrDiffe: a float does not merge
+            // with an adjacent Anything.
+            if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                               (dt == BaseType::Anything && nex.isFloat()))) {
+              nextStart = i;
+              break;
+            }
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
             if (!Legal) {
               nextStart = i;
               break;
@@ -1500,8 +1508,11 @@ public:
       auto dt = vd[{-1}];
       for (size_t i = start; i < storeSize; ++i) {
         auto nex = vd[{(int)i}];
-        if ((nex == BaseType::Anything && dt.isFloat()) ||
-            (dt == BaseType::Anything && nex.isFloat())) {
+        // Not at the first byte of a range: dt starts from [-1], which may be
+        // a float while that byte is an Anything (e.g. {[-1]:Float,
+        // [4]:Anything}), and an empty range would never advance.
+        if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                           (dt == BaseType::Anything && nex.isFloat()))) {
           nextStart = i;
           break;
         }
@@ -2324,8 +2335,8 @@ public:
           auto dt = vd[{-1}];
           for (size_t i = start; i < storeSize; ++i) {
             auto nex = vd[{(int)i}];
-            if ((nex == BaseType::Anything && dt.isFloat()) ||
-                (dt == BaseType::Anything && nex.isFloat())) {
+            if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                               (dt == BaseType::Anything && nex.isFloat()))) {
               nextStart = i;
               break;
             }
@@ -2493,8 +2504,8 @@ public:
           auto dt = TT[{-1}];
           for (size_t i = start; i < size0;) {
             auto nex = TT[{(int)i}];
-            if ((nex == BaseType::Anything && dt.isFloat()) ||
-                (dt == BaseType::Anything && nex.isFloat())) {
+            if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                               (dt == BaseType::Anything && nex.isFloat()))) {
               nextStart = i;
               break;
             }
@@ -2594,8 +2605,8 @@ public:
                 }
               }
             }
-            if ((nex == BaseType::Anything && dt.isFloat()) ||
-                (dt == BaseType::Anything && nex.isFloat())) {
+            if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                               (dt == BaseType::Anything && nex.isFloat()))) {
               nextStart = i;
               break;
             }
@@ -3860,8 +3871,16 @@ public:
 
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
+            auto nex = vd[{(int)i}];
+            // A float does not merge with an adjacent Anything, whose range
+            // would get the integer treatment (see addToInvertedPtrDiffe).
+            if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                               (dt == BaseType::Anything && nex.isFloat()))) {
+              nextStart = i;
+              break;
+            }
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
             if (!Legal) {
               nextStart = i;
               break;
@@ -5613,8 +5632,16 @@ public:
 
       auto dt = vd[{-1}];
       for (size_t i = start; i < size; ++i) {
+        auto nex = vd[{(int)i}];
+        // A float does not merge with an adjacent Anything, which is not
+        // differentiated (see addToInvertedPtrDiffe).
+        if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                           (dt == BaseType::Anything && nex.isFloat()))) {
+          nextStart = i;
+          break;
+        }
         bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
         if (!Legal) {
           nextStart = i;
           break;
