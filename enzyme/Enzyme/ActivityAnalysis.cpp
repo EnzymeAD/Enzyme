@@ -680,7 +680,7 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     return true;
   }
   Intrinsic::ID ID;
-  if (isMemFreeLibMFunction(Name, &ID))
+  if (isMemFreeLibMFunction(Name, &ID, CI.getFunctionType()))
     if (KnownInactiveIntrinsics.count(ID)) {
       return true;
     }
@@ -865,7 +865,8 @@ static inline void propagateArgumentInformation(
   if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
       Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
       Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
-      Name == "__lgammal_r_finite") {
+      Name == "__lgammal_r_finite" ||
+      classifyPointerSinCos(Name, CI.getFunctionType())) {
 
     propagateFromOperand(CI.getArgOperand(0));
     return;
@@ -1102,7 +1103,8 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       noActiveWrite = true;
     } else {
       StringRef funcName = getFuncNameFromCall(CI);
-      if (isMemFreeLibMFunction(funcName)) {
+      if (isMemFreeLibMFunction(funcName, /*ID*/ nullptr,
+                                CI->getFunctionType())) {
         noActiveWrite = true;
       } else if (funcName == "frexp" || funcName == "frexpf" ||
                  funcName == "frexpl" || funcName == "modf" ||
@@ -2273,7 +2275,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           return false;
 
         StringRef funcName = getFuncNameFromCall(CI);
-        if (isMemFreeLibMFunction(funcName)) {
+        if (isMemFreeLibMFunction(funcName, /*ID*/ nullptr,
+                                  CI->getFunctionType())) {
           return false;
         }
 
@@ -3000,7 +3003,9 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         StringRef funcName = getFuncNameFromCall(ci);
 
         if (funcName == "") {
-        } else if (isMemFreeLibMFunction(funcName) ||
+        } else if (isMemFreeLibMFunction(funcName, /*ID*/ nullptr,
+                                         ci->getFunctionType()) ||
+                   classifyPointerSinCos(funcName, ci->getFunctionType()) ||
                    isDebugFunction(ci->getCalledFunction()) ||
                    isCertainPrint(funcName) ||
                    isAllocationFunction(funcName, TLI) ||
