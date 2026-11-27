@@ -186,7 +186,6 @@ readAnnotations(Module &M, Error &errors) {
 MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
   Error errors = Error::success();
   MapVector<Function *, std::optional<double>> out = readAnnotations(M, errors);
-  // checkSiteAnnotations reports them.
   consumeError(std::move(errors));
   return out;
 }
@@ -230,13 +229,14 @@ kernelCallees(Function &K,
         }
 }
 
-/// Why `K` cannot be the site of the annotated functions it calls, empty if it
+/// Why `K` cannot be the site of the annotated functions it calls; none if it
 /// can. A kernel is the site of an annotated device function only when the rest
 /// of what it runs is a wrapper around the call (index arithmetic, a bounds
 /// check, a loop over the call, further such wrappers); the whole kernel is
 /// what gets profiled and rewritten, so floating-point work outside the
 /// annotated function would be rewritten without having been marked.
-static std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
+static std::optional<std::string>
+deviceSiteRefusal(ArrayRef<Function *> wrappers) {
   for (Function *W : wrappers)
     for (Instruction &I : instructions(*W)) {
       if (isOptimizable(I))
@@ -246,7 +246,7 @@ static std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
           CB && !CB->getCalledFunction() && !CB->isInlineAsm())
         return "makes an indirect call (in " + displayName(*W) + ")";
     }
-  return "";
+  return std::nullopt;
 }
 
 /// Gives `K` the annotation `fn` carries, target included, so that every later
@@ -308,7 +308,7 @@ Expected<bool> propagateDeviceSites(const Options &O, Module &M) {
     std::string names;
     std::optional<double> tau;
     Function *governing = reached.front();
-    std::string why = deviceSiteRefusal(wrappers.getArrayRef());
+    std::optional<std::string> why = deviceSiteRefusal(wrappers.getArrayRef());
     for (Function *fn : reached) {
       names += (names.empty() ? "" : ", ") + displayName(*fn);
       std::optional<double> t = annotated.lookup(fn);
@@ -330,10 +330,10 @@ Expected<bool> propagateDeviceSites(const Options &O, Module &M) {
                  DS_Warning);
       continue;
     }
-    if (!why.empty()) {
+    if (why) {
       const std::string message =
           displayName(K) + " calls " + names +
-          ", which carry POSEIDON_OPTIMIZE, and " + why +
+          ", which carry POSEIDON_OPTIMIZE, and " + *why +
           ", so it is no wrapper around the call and not their site; move "
           "that work out of the kernel, or annotate the kernel instead";
       if (O.Profiling.profileAction())
@@ -471,8 +471,8 @@ static bool isLambdaCallOperator(const Function &F) {
           StringRef(D->Context).rsplit("::").second.starts_with("$_"));
 }
 
-/// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
-/// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
+/// The host half of a CUDA or HIP compilation holds no host site: a function
+/// carrying POSEIDON_OPTIMIZE there compiles as written.
 Expected<bool> outlineHostSites(const Options &O, SiteRecords &T, Module &M) {
   if (Target::of(M).isDevice() || isOffloadHostHalf(M))
     return false;

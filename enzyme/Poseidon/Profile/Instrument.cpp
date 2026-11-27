@@ -55,17 +55,22 @@ using namespace llvm;
 
 namespace poseidon {
 
+GlobalVariable *privateConstant(Module &M, Constant *Init, const Twine &Name) {
+  auto *gv = new GlobalVariable(M, Init->getType(), /*isConstant=*/true,
+                                GlobalValue::PrivateLinkage, Init, Name,
+                                nullptr, GlobalVariable::NotThreadLocal,
+                                Target::of(M).globalAddressSpace());
+  gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+  return gv;
+}
+
 Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = getInt8PtrTy(Ctx);
   GlobalVariable *gv = gvName.empty() ? nullptr : M.getNamedGlobal(gvName);
   if (!gv) {
-    Constant *strConst = ConstantDataArray::getString(Ctx, contents, true);
-    gv = new GlobalVariable(
-        M, strConst->getType(), true, GlobalValue::PrivateLinkage, strConst,
-        gvName.empty() ? "poseidon.str" : gvName, nullptr,
-        GlobalVariable::NotThreadLocal, Target::of(M).globalAddressSpace());
-    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+    gv = privateConstant(M, ConstantDataArray::getString(Ctx, contents, true),
+                         gvName.empty() ? "poseidon.str" : gvName);
     gv->setAlignment(Align(1));
   }
   Constant *ptr = gv;
@@ -91,9 +96,8 @@ FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
   return fc;
 }
 
-/// The types of the profiler's hooks: (site name, slot, value, operand count,
-/// operands), (site name, slot, value, adjoint), and (site id, value) of the
-/// perturbation at `FpTy`.
+/// The type of the value probe: (site name, slot, value, operand count,
+/// operands).
 static FunctionType *logValueType(LLVMContext &C) {
   Type *Ptr = getInt8PtrTy(C), *I64 = Type::getInt64Ty(C),
        *Double = Type::getDoubleTy(C);
@@ -101,6 +105,7 @@ static FunctionType *logValueType(LLVMContext &C) {
                            false);
 }
 
+/// The type of the gradient probe: (site name, slot, value, adjoint).
 static FunctionType *logGradientType(LLVMContext &C) {
   Type *Double = Type::getDoubleTy(C);
   return FunctionType::get(
@@ -108,6 +113,7 @@ static FunctionType *logGradientType(LLVMContext &C) {
       {getInt8PtrTy(C), Type::getInt64Ty(C), Double, Double}, false);
 }
 
+/// The type of the perturbation of a value of type `FpTy`: (site id, value).
 static FunctionType *perturbType(Type *FpTy) {
   return FunctionType::get(FpTy, {Type::getInt32Ty(FpTy->getContext()), FpTy},
                            false);
@@ -371,7 +377,7 @@ Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
   ctor->addFnAttr(Attribute::NoUnwind);
   IRBuilder<> B(BasicBlock::Create(C, "entry", ctor));
   B.CreateCall(M.getOrInsertFunction(
-                   "__poseidon_profile_register_module",
+                   POSEIDON_ENTRY_NAME(POSEIDON_PROFILE_REGISTER_MODULE),
                    FunctionType::get(
                        VoidTy, {PtrTy, B.getInt32Ty(), B.getInt32Ty()}, false)),
                {shadow, B.getInt32(functions), B.getInt32(slots)});
@@ -816,6 +822,8 @@ static Error readProfDescriptors(const Options &O, Module &M,
       });
 }
 
+/// The private constant array `name` holding `vals`: the one already of that
+/// name and contents, or a new one.
 static Constant *profIntArray(Module &M, const Twine &nameT,
                               ArrayRef<int> vals) {
   std::string name = nameT.str();
@@ -823,10 +831,7 @@ static Constant *profIntArray(Module &M, const Twine &nameT,
   if (auto *old = M.getNamedGlobal(name))
     if (old->hasInitializer() && old->getInitializer() == init)
       return old;
-  auto *GV = new GlobalVariable(M, init->getType(), /*isConstant=*/true,
-                                GlobalValue::PrivateLinkage, init, name);
-  GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-  return GV;
+  return privateConstant(M, init, name);
 }
 
 Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
@@ -841,7 +846,7 @@ Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
   Type *i32 = Type::getInt32Ty(C);
   Type *i64 = Type::getInt64Ty(C);
   FunctionCallee helper = M.getOrInsertFunction(
-      "__poseidon_launch_profiled",
+      POSEIDON_ENTRY_NAME(POSEIDON_LAUNCH_PROFILED),
       FunctionType::get(
           Type::getVoidTy(C),
           {ptr, i32, ptr, ptr, i64, ptr, i32, ptr, i32, ptr, ptr, ptr}, false));
@@ -858,7 +863,7 @@ Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
     const ProfDesc &d = dIt->second;
     // The pass reaches the host module through more than one extension point;
     // a stub that already calls the helper must not be rewritten again.
-    if (callsFunctionNamed(F, "__poseidon_launch_profiled"))
+    if (callsFunctionNamed(F, POSEIDON_ENTRY_NAME(POSEIDON_LAUNCH_PROFILED)))
       continue;
     // The launch's own argument array and configuration: what the stub's
     // parameters look like depends on the host ABI (an aggregate argument
@@ -906,11 +911,14 @@ Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
   return changed;
 }
 
-bool registerProfiledKernels(const Options &O, Module &M) {
+Expected<bool> registerProfiledKernels(const Options &O, Module &M) {
   bool changed = false;
-  readProfileHeaders(O, M, [&](StringRef profileName, StringRef header) {
-    changed |= registerProfileStatic(M, profileName, profileName, header);
-  });
+  if (Error E = readProfileHeaders(
+          O, M, [&](StringRef profileName, StringRef header) {
+            changed |=
+                registerProfileStatic(M, profileName, profileName, header);
+          }))
+    return std::move(E);
   return changed;
 }
 

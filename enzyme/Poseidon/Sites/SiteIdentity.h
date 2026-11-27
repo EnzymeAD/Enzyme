@@ -34,9 +34,7 @@ class Value;
 namespace poseidon {
 
 /// What a site clone was cut from: the body, and the caller values of its
-/// parameters, which the parameter-staging arm resolves a pointer parameter
-/// to its addrspace(3) global through, the clone having no callers while it
-/// is optimized.
+/// parameters, which the clone has no callers to give while it is optimized.
 struct SiteClone {
   /// The body the clone was cut from.
   llvm::Function *Origin;
@@ -78,25 +76,15 @@ std::string functionIdentity(const llvm::Function &F, llvm::StringRef name);
 /// Records `identity` as that of the site whose body is `body`.
 void noteSiteIdentity(SiteRecords &T, llvm::Function &body,
                       std::string identity);
-/// The identity of the site whose body is `body`: what noteSiteIdentity
-/// recorded, or else the body's own, a marker's target being a function as
-/// written.
-std::string siteIdentity(const SiteRecords &T, const llvm::Function &body);
 /// Records the identity of each marker's target as written, before the
 /// optimizer can change its linkage.
 void recordMarkerIdentities(SiteRecords &T, llvm::Module &M);
 
-/// The stem of a file named after `name`: `name` itself, unless it is longer
-/// than a file name can hold or `identity`, the function the file stands for,
-/// has local linkage; then its first 160 characters, '~' and the GUID (the
-/// 64-bit MD5 hash PGO keys a function by) of `name` as PGO would name a
-/// function of that name and linkage in that function's source file.
-std::string fileStem(llvm::StringRef name, llvm::StringRef identity);
 /// The stem of a file named after `name`, a function name that is its own
-/// identity.
-inline std::string profileNameStem(llvm::StringRef name) {
-  return fileStem(name, name);
-}
+/// identity: `name` itself, unless it is longer than a file name can hold; then
+/// its first 160 characters, '~' and the GUID PGO keys a function of that name
+/// by.
+std::string profileNameStem(llvm::StringRef name);
 
 /// A site's name for a diagnostic: the demangled function, and for a per-call
 /// copy the call and caller it was made for.
@@ -149,9 +137,6 @@ llvm::Value *siteArg(const SiteRecords &T, const llvm::Function *clone,
                      unsigned i);
 /// Whether noteSiteClone recorded F: a site clone, not a pricing clone.
 bool isSiteClone(const SiteRecords &T, const llvm::Function *F);
-/// Calls the body `clone` was cut from in place of `clone`, a clone the solve
-/// applied nothing to; whether a call changed. `print` says so on stderr.
-bool redirectNoopSite(SiteRecords &T, llvm::Function *clone, bool print);
 
 } // namespace poseidon
 #endif // POSEIDON_SITES_SITE_IDENTITY_H

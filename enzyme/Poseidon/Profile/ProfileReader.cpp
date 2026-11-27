@@ -12,7 +12,6 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/LineIterator.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -104,10 +103,8 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
       return refusal(Twine("output profile ") + path + " of " + functionName +
                      " carries no sensitivity; re-run profile "
                      "generation with that output seeded.");
-    if (!canonicalHash.empty() && header.canonicalHash != canonicalHash)
-      return refusal(Twine("output profile ") + path +
-                     " was recorded against a different canonical form than "
-                     "the site's profile; re-run profile generation.");
+    if (Error E = requireCanonicalHash(header, canonicalHash, F))
+      return E;
     if (out.size() != profileMap.size())
       return refusal(Twine("output profile ") + path + " records " +
                      Twine(out.size()) + " instructions, the site's profile " +
@@ -136,6 +133,14 @@ Error mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
            << " output profiles)\n";
   return Error::success();
 }
+
+/// The word a KappaMark line spells each mark with.
+static constexpr std::pair<KappaMark, StringLiteral> kKappaMarks[] = {
+    {KappaMark::Ok, kProfileKappaOk},
+    {KappaMark::BelowNoise, kProfileKappaBelowNoise},
+    {KappaMark::Nonlinear, kProfileKappaNonlinear},
+    {KappaMark::Diverged, kProfileKappaDiverged},
+    {KappaMark::Unmeasured, kProfileKappaUnmeasured}};
 
 namespace {
 
@@ -271,19 +276,16 @@ Error ProfileParser::header(StringRef Key, StringRef Value,
     if (!Kappa)
       return Kappa.takeError();
     Header.kappa = *Kappa;
-    Header.hasKappa = true;
   } else if (Key == kProfileKeyKappaMark) {
-    Header.kappaMark = StringSwitch<KappaMark>(Value)
-                           .Case(kProfileKappaOk, KappaMark::Ok)
-                           .Case(kProfileKappaBelowNoise, KappaMark::BelowNoise)
-                           .Case(kProfileKappaNonlinear, KappaMark::Nonlinear)
-                           .Case(kProfileKappaDiverged, KappaMark::Diverged)
-                           .Case(kProfileKappaUnmeasured, KappaMark::Unmeasured)
-                           .Default(KappaMark::None);
-    if (Header.kappaMark == KappaMark::None)
-      return refusal(Twine(Key) + " " + Value +
-                     " is not ok, below-noise, nonlinear, diverged or " +
-                     kProfileKappaUnmeasured);
+    const auto *Mark = find_if(
+        kKappaMarks, [&](const auto &Entry) { return Entry.second == Value; });
+    if (Mark == std::end(kKappaMarks)) {
+      std::string Words;
+      raw_string_ostream OS(Words);
+      interleaveComma(make_second_range(kKappaMarks), OS);
+      return refusal(Twine(Key) + " " + Value + " is none of " + Words);
+    }
+    Header.kappaMark = Mark->first;
   } else if (Key == kProfileKeyExecuted) {
     if (Value != "0")
       return refusal(Twine(Key) + " " + Value + " is not 0");
@@ -382,8 +384,7 @@ Error parseProfileFile(const std::string &profilePath, const Function &F,
 }
 
 Error requireCanonicalHash(const SiteProfileHeader &header,
-                           StringRef canonicalHash, StringRef profilePath,
-                           const Function &F) {
+                           StringRef canonicalHash, const Function &F) {
   if (header.canonicalHash == canonicalHash)
     return Error::success();
   return userError(
@@ -396,26 +397,16 @@ Error requireCanonicalHash(const SiteProfileHeader &header,
 }
 
 StringRef kappaMarkName(KappaMark M) {
-  switch (M) {
-  case KappaMark::None:
-    return "";
-  case KappaMark::Ok:
-    return kProfileKappaOk;
-  case KappaMark::BelowNoise:
-    return kProfileKappaBelowNoise;
-  case KappaMark::Nonlinear:
-    return kProfileKappaNonlinear;
-  case KappaMark::Diverged:
-    return kProfileKappaDiverged;
-  case KappaMark::Unmeasured:
-    return kProfileKappaUnmeasured;
-  }
-  llvm_unreachable("every KappaMark has a word");
+  for (const auto &[Mark, Word] : kKappaMarks)
+    if (Mark == M)
+      return Word;
+  assert(M == KappaMark::None && "every KappaMark but None has a word");
+  return "";
 }
 
 Error requireMeasuredKappa(const SiteProfileHeader &header,
                            StringRef profilePath, const Function &F) {
-  if (header.hasKappa || header.kappaMark != KappaMark::Unmeasured)
+  if (header.kappa || header.kappaMark != KappaMark::Unmeasured)
     return Error::success();
   return userError(
       F,

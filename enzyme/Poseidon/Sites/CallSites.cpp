@@ -428,7 +428,7 @@ Expected<bool> lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
       if (active)
         errors = joinErrors(std::move(errors), userError(*H, kNoRoutedCall));
       else
-        warn(H, kNoRoutedCall + "; the call runs as written");
+        diagnose(*H, kNoRoutedCall + "; the call runs as written", DS_Warning);
       asWritten();
       continue;
     }
@@ -448,11 +448,12 @@ Expected<bool> lowerPerCallSites(const Options &O, SiteRecords &T, Module &M) {
           userError(*call, name + " " + *why +
                                ", so this call cannot be a Poseidon site"));
     else if (why)
-      warn(call, name + " " + *why +
-                     ", so this call is not a Poseidon site and runs as "
-                     "written");
+      diagnose(*call,
+               name + " " + *why +
+                   ", so this call is not a Poseidon site and runs as written",
+               DS_Warning);
     else if (!active)
-      warn(call, kNoProfileAction);
+      diagnose(*call, kNoProfileAction, DS_Warning);
     if (why || !active) {
       asWritten();
       continue;

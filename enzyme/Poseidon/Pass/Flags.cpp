@@ -219,27 +219,24 @@ std::string herbieProgram(const HerbieOptions &H) {
   return H.Binary.empty() ? POSEIDON_HERBIE_DEFAULT_BINARY : H.Binary;
 }
 
-FlagValues solveFlagValues(const Options &O) {
-  FlagValues out;
+/// Appends to `out` the name and value of every option of `key`, in the order
+/// Options.def declares them.
+static void appendFlagValues(const Options &O, OptionKey key, FlagValues &out) {
 #define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key, ...) \
-  if (OptionKey::Key == OptionKey::SolveInput)                                 \
+  if (OptionKey::Key == key)                                                   \
     out.emplace_back(Spelling, value(O.Group.Field));
 #include "Support/Options.def"
-  return out;
 }
 
-FlagValues notSolveInputs(const Options &O) {
+FlagValues solveFlagValues(const Options &O) {
   FlagValues out;
-#define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key, ...) \
-  if (OptionKey::Key == OptionKey::Other)                                      \
-    out.emplace_back(Spelling, value(O.Group.Field));
-#include "Support/Options.def"
+  appendFlagValues(O, OptionKey::SolveInput, out);
   return out;
 }
 
 FlagValues allFlagValues(const Options &O) {
   FlagValues all = solveFlagValues(O);
-  all.append(notSolveInputs(O));
+  appendFlagValues(O, OptionKey::Other, all);
   return all;
 }
 

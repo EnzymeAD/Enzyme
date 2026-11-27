@@ -182,14 +182,8 @@ using FlagValues = llvm::SmallVector<FlagValue>;
 /// option that changes the candidate set or its pricing, in the order the DP
 /// key lists them.
 FlagValues solveFlagValues(const Options &O);
-/// What a solved table does not depend on: what is profiled or which sites are
-/// solved, what is chosen from a solved table, a path whose contents the key
-/// holds instead (profiles, cost model, Herbie binary and platform), where
-/// results computed earlier are kept or handed to the host half, a solve that
-/// never reads a table (joint, manual), how long Herbie may run and on how many
-/// workers, and output.
-FlagValues notSolveInputs(const Options &O);
-/// Both, in that order.
+/// The name and value of every option: those solveFlagValues gives, then the
+/// others in the order they are declared.
 FlagValues allFlagValues(const Options &O);
 
 } // namespace poseidon

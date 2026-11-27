@@ -26,7 +26,6 @@
 #include "Support/Utils.h"
 #include "runtime/profile/ProfileFormat.h"
 
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -69,8 +68,8 @@ static void noteRewritten(Session &S, Function &F) {
   }
 }
 
-// Redirect the site's call to `F`: the rewritten clone, or the original body
-// when nothing was applied and the site has to stay bit-transparent.
+/// Redirect the site's call to `F`: the rewritten clone, or the original body
+/// when nothing was applied and the site has to stay bit-transparent.
 static void emitSiteCall(CallBase *CI, Function *F,
                          SmallVectorImpl<Value *> &primalArgs,
                          SmallVectorImpl<CallBase *> &calls) {
@@ -90,8 +89,8 @@ static void emitSiteCall(CallBase *CI, Function *F,
   calls.push_back(optCall);
 }
 
-// A profile-use compile pointed at a directory no profiling run wrote into
-// would otherwise leave every site as written and succeed.
+/// A profile-use compile pointed at a directory no profiling run wrote into
+/// would otherwise leave every site as written and succeed.
 static Error requireProfileDirectory(CallBase *CI, StringRef dir,
                                      StringRef flag) {
   const bool isDir = sys::fs::is_directory(dir);
@@ -110,8 +109,8 @@ static Error requireProfileDirectory(CallBase *CI, StringRef dir,
 }
 
 namespace {
-// Why a site has no records to solve from, read from every directory that
-// holds a profile of it.
+/// Why a site has no records to solve from, read from every directory that
+/// holds a profile of it.
 struct Unprofiled {
   bool neverExecuted;
   std::string path;
@@ -136,8 +135,7 @@ unprofiledSite(Session &S, CallBase *CI, Function &clone) {
       return E;
     if (header.executed)
       return Error::success();
-    if (Error E =
-            requireCanonicalHash(header, canonicalFormHash(clone), path, clone))
+    if (Error E = requireCanonicalHash(header, canonicalFormHash(clone), clone))
       return E;
     if (!neverExecuted)
       neverExecuted = Unprofiled{true, path};
@@ -151,7 +149,7 @@ unprofiledSite(Session &S, CallBase *CI, Function &clone) {
   return absent ? absent : neverExecuted;
 }
 
-// `tau` > 0 is the site's accuracy target, its own when `siteTarget`.
+/// `tau` > 0 is the site's accuracy target, its own when `siteTarget`.
 static Error reportUnprofiled(Session &S, CallBase *CI, const Function &body,
                               Function &clone, const Unprofiled &site,
                               double tau, bool siteTarget) {
@@ -176,31 +174,33 @@ static Error reportUnprofiled(Session &S, CallBase *CI, const Function &body,
                               site.path + ": " + cause +
                               ", and -poseidon-strict-mode does not leave a "
                               "site unchanged");
-  warn(CI, Twine("no profile at ") + site.path + ": " + cause +
-               "; leaving the site unchanged");
+  diagnose(*CI,
+           Twine("no profile at ") + site.path + ": " + cause +
+               "; leaving the site unchanged",
+           DS_Warning);
   explainUnprofiled(S, clone, tau, siteTarget, "unprofiled", cause, site.path);
   return Error::success();
 }
 
-// Tells every technique that the host launches the solved site `body` through
-// the kernel `CI` is in, with `primalArgs`.
+/// Tells every technique that the host launches the solved site `body` through
+/// the kernel `CI` is in, with `primalArgs`.
 static void noteSiteLaunch(Session &S, CallBase *CI, const Function &body,
                            ArrayRef<Value *> primalArgs) {
   for (const Technique *T : techniques())
     T->siteLaunched(S, body, *CI->getFunction(), primalArgs);
 }
 
-// Profile use, shared by both annotation forms: `CI` is the call the site's
-// body is reached through (the marker call, or the wrapper kernel's call of its
-// own outlined body), `F` the body and `primalArgs` the caller values its
-// parameters take.
+/// Profile use, shared by both annotation forms: `CI` is the call the site's
+/// body is reached through (the marker call, or the wrapper kernel's call of
+/// its own outlined body), `F` the body and `primalArgs` the caller values its
+/// parameters take.
 static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
                               SmallVectorImpl<Value *> &primalArgs, double tau,
                               SmallVectorImpl<CallBase *> &calls) {
   const Options &O = S.Opts;
   const bool profileUse = O.Profiling.usesProfile();
   if (!profileUse) {
-    warn(CI, kNoProfileAction);
+    diagnose(*CI, kNoProfileAction, DS_Warning);
   } else {
     if (Error E = noteSiteForPins(S, *F))
       return E;
@@ -234,9 +234,11 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     const double target = tau > 0.0 ? tau : (double)O.Solver.Tau;
     if (none_of(instructions(*F),
                 [](const Instruction &I) { return isOptimizable(I); })) {
-      warn(CI, Twine(sourceBody->getName()) +
+      diagnose(*CI,
+               Twine(sourceBody->getName()) +
                    " holds no floating-point operation the pass rewrites; "
-                   "leaving the site unchanged");
+                   "leaving the site unchanged",
+               DS_Warning);
       explainLeftAlone(S, *F, target, tau > 0.0, "no_fp_operation",
                        "the site holds no floating-point operation the pass "
                        "rewrites");
@@ -310,10 +312,10 @@ static Expected<bool> optimizeMarker(Session &S, CallInst *CI,
   return true;
 }
 
-// Profile use of a host site: the body is solved once, and every call of it,
-// the wrapper's and the ones the inliner placed in F's callers, is redirected
-// to what the solve chose; a caller redirected to a rewrite is a function the
-// rewrite reached.
+/// Profile use of a host site: the body is solved once, and every call of it,
+/// the wrapper's and the ones the inliner placed in F's callers, is redirected
+/// to what the solve chose; a caller redirected to a rewrite is a function the
+/// rewrite reached.
 static Expected<bool> optimizeHostBody(Session &S, const Site &site) {
   Function &B = *site.fn;
   releaseHostBody(B);
@@ -341,16 +343,18 @@ static Expected<bool> optimizeHostBody(Session &S, const Site &site) {
   return true;
 }
 
-// What the profiled run spent inside this site: over the slots the profile
-// records, the execution count times the CSV price of the operation the slot
-// names. A site the run never reached has no records and costs nothing; a
-// profile recorded against another canonical form is an error at the site.
-static Expected<double> profiledSiteCost(Session &S, Function &body) {
+/// What the profiled run spent inside this site: over the slots the profile
+/// records, the execution count times the CSV price of the operation the slot
+/// names. None when the profile-use directory holds no profile of the site; a
+/// site the run never reached costs nothing, and a profile recorded against
+/// another canonical form is an error at the site.
+static Expected<std::optional<double>> profiledSiteCost(Session &S,
+                                                        Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
   llvm::sys::path::append(profilePath,
                           bodyProfileFile(S.get<SiteRecords>(), body));
   if (!llvm::sys::fs::exists(profilePath.str()))
-    return 0.0;
+    return std::nullopt;
 
   ProfileMap profileMap;
   SiteProfileHeader header;
@@ -366,8 +370,8 @@ static Expected<double> profiledSiteCost(Session &S, Function &body) {
   Function *clone = canonicalize(body);
   setSlotMetadata(*clone);
   Expected<double> cost = [&]() -> Expected<double> {
-    if (Error E = requireCanonicalHash(header, canonicalFormHash(*clone),
-                                       profilePath, *clone))
+    if (Error E =
+            requireCanonicalHash(header, canonicalFormHash(*clone), *clone))
       return std::move(E);
     if (Error E = requireCostModel(S, *clone))
       return std::move(E);
@@ -377,11 +381,11 @@ static Expected<double> profiledSiteCost(Session &S, Function &body) {
   if (!cost)
     return cost.takeError();
   clone->eraseFromParent();
-  return cost;
+  return *cost;
 }
 
-// Profile use of the kernel sites: each kernel becomes a wrapper around its
-// own body, and that body is solved and rewritten like a marked one.
+/// Profile use of the kernel sites: each kernel becomes a wrapper around its
+/// own body, and that body is solved and rewritten like a marked one.
 static Expected<bool> optimizeKernels(Session &Sess,
                                       ArrayRef<const Site *> kernels,
                                       SmallVectorImpl<CallBase *> &calls) {
@@ -406,36 +410,22 @@ static Expected<bool> optimizeKernels(Session &Sess,
                             site.target.value_or(0.0), calls);
   };
 
+  // A site's share is only known once every regex-named site has been priced,
+  // so with the filter on they are all outlined and priced before any of them
+  // is optimized. A kernel without a profile has no share; the solve reports
+  // it as it reports every site without one.
   const bool filter =
       O.Profiling.MinCostShare > 0.0 &&
       any_of(kernels, [](const Site *site) { return site->byRegex; });
-  bool changed = false;
-  if (!filter) {
-    for (const Site *site : kernels) {
-      Function *body = nullptr;
-      Expected<CallInst *> call =
-          outlineKernelBody(Sess.get<SiteRecords>(), *site->fn, body);
-      if (!call)
-        return call.takeError();
-      markOutlineTransparent(body);
-      if (Error E = optimize(*call, body, *site))
-        return std::move(E);
-      changed = true;
-    }
-    return changed;
-  }
-
-  // A site's share is only known once every regex-named site has been priced,
-  // so with the filter on they are all outlined and priced before any of them
-  // is optimized.
   struct Outlined {
     const Site *site;
     Function *body;
     CallInst *call;
-    double cost;
+    std::optional<double> cost;
   };
   SmallVector<Outlined, 4> outlined;
   double regexTotal = 0.0;
+  bool changed = false;
   for (const Site *site : kernels) {
     Function *body = nullptr;
     Expected<CallInst *> call =
@@ -443,20 +433,26 @@ static Expected<bool> optimizeKernels(Session &Sess,
     if (!call)
       return call.takeError();
     markOutlineTransparent(body);
-    double cost = 0.0;
+    if (!filter) {
+      if (Error E = optimize(*call, body, *site))
+        return std::move(E);
+      changed = true;
+      continue;
+    }
+    std::optional<double> cost;
     if (site->byRegex) {
-      Expected<double> priced = profiledSiteCost(Sess, *body);
+      Expected<std::optional<double>> priced = profiledSiteCost(Sess, *body);
       if (!priced)
         return priced.takeError();
       cost = *priced;
+      regexTotal += cost.value_or(0.0);
     }
-    regexTotal += cost;
     outlined.push_back({site, body, *call, cost});
   }
 
   for (Outlined &K : outlined) {
-    double share = regexTotal > 0.0 ? K.cost / regexTotal : 1.0;
-    if (K.site->byRegex && share < O.Profiling.MinCostShare) {
+    double share = regexTotal > 0.0 && K.cost ? *K.cost / regexTotal : 1.0;
+    if (K.cost && share < O.Profiling.MinCostShare) {
       const std::string below =
           formatv("{0}% of the profiled FP cost of the kernels "
                   "-poseidon-kernels named, below -poseidon-min-cost-share={1}",
@@ -514,37 +510,23 @@ Expected<bool> optimizeSites(Session &S, ArrayRef<Site> sites,
 Expected<bool> prepareModule(Session &S, Module &M) {
   if (!S.Opts.Profiling.generatesProfile())
     return false;
-  injectHostProfilerInit(M, S.Opts.Diagnostics.Print);
+  bool changed = injectHostProfilerInit(M, S.Opts.Diagnostics.Print);
   predeclareInactiveProfilerProbes(M);
 
-  DenseMap<Function *, Function *> clones;
-  unsigned nextSiteId = getNextSiteId(M);
-  bool anySite = false, anyHostBody = false;
-  for (const Site &site : collectSites(
-           S.Opts, M,
-           {Site::Form::Marker, Site::Form::Kernel, Site::Form::HostBody})) {
-    switch (site.form) {
-    case Site::Form::Marker:
-      // A site whose body is still a derivative request is the late run's;
-      // its marker stays where it is.
-      if (deferSite(S.Opts, site.marker))
-        continue;
-      if (Error E = profileSite(S, site, clones, nextSiteId).takeError())
-        return std::move(E);
-      anySite = true;
-      break;
-    case Site::Form::HostBody:
-      anyHostBody = true;
-      [[fallthrough]];
-    case Site::Form::Kernel: {
-      Expected<bool> profiled = profileSite(S, site, clones, nextSiteId);
-      if (!profiled)
-        return profiled.takeError();
-      anySite |= *profiled;
-      break;
-    }
-    }
-  }
+  SmallVector<Site, 4> sites = collectSites(
+      S.Opts, M,
+      {Site::Form::Marker, Site::Form::Kernel, Site::Form::HostBody});
+  // A site whose body is still a derivative request is the late run's; its
+  // marker stays where it is.
+  erase_if(sites, [&](const Site &site) {
+    return site.form == Site::Form::Marker && deferSite(S.Opts, site.marker);
+  });
+  const bool anyHostBody = any_of(sites, [](const Site &site) {
+    return site.form == Site::Form::HostBody;
+  });
+  Expected<bool> profiled = profileSites(S, M, sites);
+  if (!profiled)
+    return profiled.takeError();
   if (anyHostBody) {
     registerStackArrays(S, M);
     registerGlobals(M);
@@ -556,20 +538,12 @@ Expected<bool> prepareModule(Session &S, Module &M) {
         "__poseidon_host_sites_present");
     present->setVisibility(GlobalValue::HiddenVisibility);
   }
-  setNextSiteId(M, nextSiteId);
-
-  if (anySite) {
-    // Launch geometry is recorded per profiled function; the probe is keyed by
-    // the same poseidon.site.<name> global the value probes carry, so it has to
-    // be placed after they exist.
-    injectBlockDimProbes(M, S.Opts.Diagnostics.Print);
-  }
-  return anySite;
+  return changed || anyHostBody || *profiled;
 }
 
-// Gives each host wrapper without a subprogram the one most of its inlined
-// code is in, when no other function holds it, and moves the wrapper's own
-// locations into that subprogram.
+/// Gives each host wrapper without a subprogram the one most of its inlined
+/// code is in, when no other function holds it, and moves the wrapper's own
+/// locations into that subprogram.
 static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
   for (Function &F : M) {
     if (!F.hasFnAttribute(kSiteWrapper))
@@ -615,8 +589,7 @@ Error finalizeModule(Session &S, Module &M) {
   restoreHostWrapperDebugInfo(M, S.Opts.Profiling.generatesProfile());
   // The site counter is a note the early run leaves for the late one; nothing
   // downstream reads it.
-  if (auto *NMD = M.getNamedMetadata(kNextSiteIdMD))
-    NMD->eraseFromParent();
+  eraseNextSiteId(M);
   return Error::success();
 }
 

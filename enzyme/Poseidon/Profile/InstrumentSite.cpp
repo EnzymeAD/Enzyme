@@ -21,6 +21,7 @@
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
+#include "runtime/profile/DeviceProfiler.h"
 #include "runtime/profile/ProfileFormat.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -132,7 +133,8 @@ static Expected<bool> profileMarker(Session &S, CallInst *CI,
     // The site id counts clones in marker order.
     clone = instrumentedClone(S, *F, nextSiteId++);
     if (!clone) {
-      warn(CI, Twine("no profilable operation in ") + F->getName());
+      diagnose(*CI, Twine("no profilable operation in ") + F->getName(),
+               DS_Warning);
       return false;
     }
   }
@@ -543,12 +545,9 @@ static Expected<bool> profileKernel(Session &S, Function &K,
 }
 
 static Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
-  Constant *init = ConstantArray::get(ArrayType::get(T, elts.size()), elts);
-  auto *GV =
-      new GlobalVariable(M, init->getType(), true, GlobalValue::PrivateLinkage,
-                         init, "poseidon.site");
-  GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-  return GV;
+  return privateConstant(
+      M, ConstantArray::get(ArrayType::get(T, elts.size()), elts),
+      "poseidon.site");
 }
 
 /// The source name of a parameter, for the runtime's diagnostics.
@@ -570,7 +569,7 @@ static unsigned pushStackArrays(CallBase &CB, IRBuilder<> &B) {
   Module &M = *CB.getModule();
   const DataLayout &DL = M.getDataLayout();
   FunctionCallee push = M.getOrInsertFunction(
-      "__poseidon_stack_push",
+      POSEIDON_ENTRY_NAME(POSEIDON_STACK_PUSH),
       FunctionType::get(B.getVoidTy(), {B.getPtrTy(), B.getInt64Ty()}, false));
   SmallPtrSet<AllocaInst *, 4> seen;
   unsigned n = 0;
@@ -604,7 +603,7 @@ static void popStackArrays(CallBase &CB, unsigned n) {
   }
   IRBuilder<> B(at);
   FunctionCallee pop = M.getOrInsertFunction(
-      "__poseidon_stack_pop",
+      POSEIDON_ENTRY_NAME(POSEIDON_STACK_POP),
       FunctionType::get(B.getVoidTy(), {B.getInt32Ty()}, false));
   B.CreateCall(pop, {B.getInt32(n)});
 }
@@ -652,8 +651,7 @@ void registerGlobals(Module &M) {
     StringRef name = GV.getName();
     if (GV.isDeclaration() || GV.isThreadLocal() || GV.getAddressSpace() ||
         GV.hasAvailableExternallyLinkage() || name.starts_with("llvm.") ||
-        GV.getSection() == "llvm.metadata" || name.starts_with("poseidon") ||
-        name.starts_with("poseidon.static."))
+        GV.getSection() == "llvm.metadata" || name.starts_with("poseidon"))
       continue;
     uint64_t bytes = DL.getTypeAllocSize(GV.getValueType());
     if (bytes)
@@ -664,7 +662,7 @@ void registerGlobals(Module &M) {
     return;
   Constant *table = constantArray(M, entryTy, entries);
   FunctionCallee reg = M.getOrInsertFunction(
-      "__poseidon_register_globals",
+      POSEIDON_ENTRY_NAME(POSEIDON_REGISTER_GLOBALS),
       FunctionType::get(Type::getVoidTy(C), {PtrTy, I64}, false));
   Function *ctor =
       Function::Create(FunctionType::get(Type::getVoidTy(C), {}, false),
@@ -713,7 +711,7 @@ static void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
       B.CreateStore(CI->getArgOperand(D.ptrParams[k]),
                     B.CreateConstInBoundsGEP2_32(arrTy, ptrs, 0, k));
     FunctionCallee request = M.getOrInsertFunction(
-        "__poseidon_host_shadows",
+        POSEIDON_ENTRY_NAME(POSEIDON_HOST_SHADOWS),
         FunctionType::get(B.getVoidTy(),
                           {PtrTy, B.getInt32Ty(), B.getInt32Ty(), PtrTy, PtrTy,
                            PtrTy, PtrTy, PtrTy},
@@ -971,18 +969,6 @@ struct Region {
   AllocaInst *shadow = nullptr;
 };
 
-} // namespace
-
-/// The marker in the explicit form, with a shadow for every pointer marked
-/// poseidon_shadow: a local object like the one the pointer points into, zero,
-/// and seeded by the kernel path's rule when the site writes into it and the
-/// program reads it afterwards (readAfterCall). A pointer into no object the
-/// pass knows has a local object as its shadow that covers what the call
-/// reaches through it, zero and seeded wherever the call writes, since what it
-/// writes outlives the caller. Either is made at every execution of the call,
-/// because the object the call sees is a new one each time: its storage is
-/// reused, its value is not.
-namespace {
 /// What withShadows makes for the pointers marked poseidon_shadow: a local
 /// object's shadow and seed width, per object; a shadow over an extent, per
 /// region; which marker argument takes which; and the pointers that need
@@ -1264,6 +1250,15 @@ static void printShadows(StringRef site, const MarkerArgs &marker,
   errs() << '\n';
 }
 
+/// The marker in the explicit form, with a shadow for every pointer marked
+/// poseidon_shadow: a local object like the one the pointer points into, zero,
+/// and seeded by the kernel path's rule when the site writes into it and the
+/// program reads it afterwards (readAfterCall). A pointer into no object the
+/// pass knows has a local object as its shadow that covers what the call
+/// reaches through it, zero and seeded wherever the call writes, since what it
+/// writes outlives the caller. Either is made at every execution of the call,
+/// because the object the call sees is a new one each time: its storage is
+/// reused, its value is not.
 static Expected<CallInst *> withShadows(CallInst *CI, Function &clone,
                                         const MarkerArgs &marker, bool print) {
   SmallVector<unsigned, 8> seedWidth;
@@ -1290,9 +1285,12 @@ static Expected<CallInst *> withShadows(CallInst *CI, Function &clone,
   return NC;
 }
 
-Expected<bool> profileSite(Session &S, const Site &site,
-                           DenseMap<Function *, Function *> &clones,
-                           unsigned &nextSiteId) {
+/// Instruments the site and makes the call that reaches it a derivative
+/// request; whether it did. Markers of one body share `clones`' instrumented
+/// clone, and the clones made take their ids from `nextSiteId`.
+static Expected<bool> profileSite(Session &S, const Site &site,
+                                  DenseMap<Function *, Function *> &clones,
+                                  unsigned &nextSiteId) {
   switch (site.form) {
   case Site::Form::Marker:
     return profileMarker(S, site.marker, clones, nextSiteId);
@@ -1302,6 +1300,52 @@ Expected<bool> profileSite(Session &S, const Site &site,
     return profileHostBody(S, *site.fn, nextSiteId);
   }
   llvm_unreachable("every site form is profiled");
+}
+
+/// Site ids number the profiled clones of one module and arm the
+/// condition-number perturbation one site at a time, so the late run has to
+/// continue the early run's numbering rather than restart it. Carried on the
+/// module because the two runs are different pass instances.
+static constexpr StringLiteral kNextSiteIdMD = "poseidon.next.site.id";
+
+static unsigned getNextSiteId(Module &M) {
+  NamedMDNode *NMD = M.getNamedMetadata(kNextSiteIdMD);
+  if (!NMD || NMD->getNumOperands() == 0)
+    return 0;
+  auto *C = mdconst::extract<ConstantInt>(NMD->getOperand(0)->getOperand(0));
+  return (unsigned)C->getZExtValue();
+}
+
+static void setNextSiteId(Module &M, unsigned next) {
+  NamedMDNode *NMD = M.getOrInsertNamedMetadata(kNextSiteIdMD);
+  NMD->clearOperands();
+  NMD->addOperand(MDNode::get(M.getContext(),
+                              ConstantAsMetadata::get(ConstantInt::get(
+                                  Type::getInt32Ty(M.getContext()), next))));
+}
+
+void eraseNextSiteId(Module &M) {
+  if (NamedMDNode *NMD = M.getNamedMetadata(kNextSiteIdMD))
+    NMD->eraseFromParent();
+}
+
+Expected<bool> profileSites(Session &S, Module &M, ArrayRef<Site> sites) {
+  DenseMap<Function *, Function *> clones;
+  unsigned nextSiteId = getNextSiteId(M);
+  bool instrumented = false;
+  for (const Site &site : sites) {
+    Expected<bool> profiled = profileSite(S, site, clones, nextSiteId);
+    if (!profiled)
+      return profiled.takeError();
+    instrumented |= *profiled;
+  }
+  setNextSiteId(M, nextSiteId);
+  // Launch geometry is recorded per profiled function; the probe is keyed by
+  // the same poseidon.site.<name> global the value probes carry, so it has to
+  // be placed after they exist.
+  if (instrumented)
+    injectBlockDimProbes(M, S.Opts.Diagnostics.Print);
+  return instrumented;
 }
 
 } // namespace poseidon

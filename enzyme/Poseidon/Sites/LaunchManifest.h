@@ -8,10 +8,16 @@
 //
 // Device and host code are separate compilations, so a device-side solve that
 // changes how a kernel must be launched reaches the host through a file: the
-// manifest of the translation unit in the cache directory, which holds one
-// single-line descriptor per wrapper kernel. The device compile writes it
-// whole once its sites are processed, and the host compile of the same source
-// and unit reads it and no other.
+// manifest of the translation unit in the cache directory. The device compile
+// writes it whole once its sites are processed, and the host compile of the
+// same source and unit reads it and no other.
+//
+// The manifest is a cache entry (Support/CacheKey.h) whose value is a JSON
+// object: "library calls" and "profile generation", each the list of the
+// single-line descriptors of that LaunchKind, one per wrapper kernel; and from
+// a profile-generate compile, "profile headers", which maps a kernel to
+// {"profile": <profile name>, "header": <header text>}, and "profile table",
+// {"functions": <count>, "slots": <count>}.
 //
 //===----------------------------------------------------------------------===//
 
@@ -70,7 +76,14 @@ struct LaunchManifest {
 
 /// The two kinds of launch a device module hands its host half.
 enum class LaunchKind {
-  /// A raised GEMM the host stub dispatches to a library.
+  /// A raised GEMM the host stub dispatches to a library:
+  ///   <kernel> <C arg> <A arg> <B arg> <standalone 0/1> <modulus field>
+  ///     <A col-major 0/1> <B col-major 0/1> <C col-major 0/1> <scheme>
+  ///     rd, then per dimension M, N, K, lda, ldb, ldc: <factor count>,
+  ///       <factor arg> <factor offset> per factor, <mul> <add>; then <beta>
+  ///     [lc <M axis> <N axis>] [pf <C offset> <A offset> <B offset>]
+  ///     [eq <count> (<arg> <offset> <arg> <offset>)...]
+  /// The keyword blocks after the scheme come in any order; rd is required.
   LibraryCall,
   /// An annotated kernel the host stub launches through the profiling helper:
   ///   <kernel> <site id> <original arg count> <pointer arg count>
@@ -106,7 +119,8 @@ void recordProfileHeader(LaunchManifest &L, llvm::StringRef wrapperName,
 void recordProfileTable(LaunchManifest &L, unsigned functions, unsigned slots);
 
 /// What the device half of host module M recorded with recordProfileTable;
-/// none when it profiles nothing, an error when the entry is not two counts.
+/// zero counts when it profiles nothing or its manifest cannot be read, which
+/// is a warning; an error when the entry is not two counts.
 llvm::Expected<std::pair<unsigned, unsigned>>
 readProfileTable(const Options &O, const llvm::Module &M);
 
@@ -120,8 +134,9 @@ llvm::Error writeLaunchManifest(const Options &O, LaunchManifest &L,
 
 /// Hands `parse` the space-separated tokens of every `kind` descriptor in the
 /// manifest of host module M; token 0 is always the wrapper kernel name. A unit
-/// without a manifest has none. A descriptor `parse` refuses is an error naming
-/// the manifest, the descriptor and what `parse` said.
+/// without a manifest has none, and one that cannot be read is a warning. A
+/// descriptor `parse` refuses is an error naming the manifest, the descriptor
+/// and what `parse` said.
 llvm::Error readDescriptors(
     const Options &O, const llvm::Module &M, LaunchKind kind,
     llvm::function_ref<llvm::Error(llvm::ArrayRef<llvm::StringRef>)> parse);
@@ -197,12 +212,14 @@ private:
 };
 
 /// Hands `use` the profile name and header of every profiled kernel in the
-/// manifest of host module M. A unit without a manifest has none; one that
-/// cannot be read is reported by readDescriptors.
-void readProfileHeaders(const Options &O, const llvm::Module &M,
-                        llvm::function_ref<void(llvm::StringRef profileName,
-                                                llvm::StringRef header)>
-                            use);
+/// manifest of host module M, in kernel order. A unit without a manifest has
+/// none, and one that cannot be read is a warning; an entry that is not a
+/// profile name and a header is an error naming the manifest.
+llvm::Error
+readProfileHeaders(const Options &O, const llvm::Module &M,
+                   llvm::function_ref<void(llvm::StringRef profileName,
+                                           llvm::StringRef header)>
+                       use);
 
 } // namespace poseidon
 #endif // POSEIDON_SITES_LAUNCH_MANIFEST_H

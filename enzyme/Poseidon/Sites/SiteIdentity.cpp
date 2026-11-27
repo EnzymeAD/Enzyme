@@ -9,7 +9,6 @@
 #include "SiteIdentity.h"
 
 #include "Markers.h"
-#include "Site.h"
 #include "Targets/OffloadRuntime.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -17,12 +16,10 @@
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Regex.h"
-#include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
 
@@ -79,7 +76,10 @@ void noteSiteIdentity(SiteRecords &T, Function &body, std::string identity) {
   T.Identities[&body] = std::move(identity);
 }
 
-std::string siteIdentity(const SiteRecords &T, const Function &body) {
+/// The identity of the site whose body is `body`: what noteSiteIdentity
+/// recorded, or else the body's own, a marker's target being a function as
+/// written.
+static std::string siteIdentity(const SiteRecords &T, const Function &body) {
   auto it = T.Identities.find(&body);
   return it != T.Identities.end() ? it->second : functionIdentity(body);
 }
@@ -92,7 +92,12 @@ void recordMarkerIdentities(SiteRecords &T, Module &M) {
       T.Identities.insert({target, functionIdentity(*target)});
 }
 
-std::string fileStem(StringRef name, StringRef identity) {
+/// The stem of a file named after `name`: `name` itself, unless it is longer
+/// than a file name can hold or `identity`, the function the file stands for,
+/// has local linkage; then its first 160 characters, '~' and the GUID (the
+/// 64-bit MD5 hash PGO keys a function by) of `name` as PGO would name a
+/// function of that name and linkage in that function's source file.
+static std::string fileStem(StringRef name, StringRef identity) {
   // The longest file named after a stem, "launches_" + stem + "_" + 16 hex
   // digits + ".json", stays under NAME_MAX = 255.
   constexpr size_t kVerbatim = 200, kKept = 160;
@@ -108,6 +113,8 @@ std::string fileStem(StringRef name, StringRef identity) {
           utohexstr(MD5Hash(named), /*LowerCase=*/true, /*Width=*/16))
       .str();
 }
+
+std::string profileNameStem(StringRef name) { return fileStem(name, name); }
 
 std::string bodyProfileStem(const SiteRecords &T, const Function &body) {
   return fileStem(siteKeyOfBody(body), siteIdentity(T, body));
@@ -208,23 +215,6 @@ Value *siteArg(const SiteRecords &T, const Function *clone, unsigned i) {
     return nullptr;
   const WeakTrackingVH &arg = it->second.Args[i];
   return arg.pointsToAliveValue() ? (Value *)arg : nullptr;
-}
-
-bool redirectNoopSite(SiteRecords &T, Function *clone, bool print) {
-  auto it = T.Clones.find(clone);
-  if (it == T.Clones.end() || !it->second.Origin)
-    return false;
-  Function *orig = it->second.Origin;
-  if (orig == clone)
-    return false;
-  SmallVector<CallBase *, 4> callers = callsOf(*clone);
-  for (CallBase *CB : callers)
-    CB->setCalledFunction(orig);
-  if (!callers.empty() && print)
-    llvm::errs() << "[poseidon] no rewrite applied for " << clone->getName()
-                 << "; wrapper call restored to original body "
-                 << orig->getName() << " (bit-transparent no-op)\n";
-  return !callers.empty();
 }
 
 } // namespace poseidon

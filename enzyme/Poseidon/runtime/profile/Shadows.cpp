@@ -17,6 +17,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "DeviceProfiler.h"
 #include "ShadowTable.h"
 
 #include <atomic>
@@ -229,7 +230,7 @@ struct HostShadowOps {
 
 static std::mutex shadowLock;
 
-extern "C" void __poseidon_stack_push(void *base, uint64_t bytes) {
+extern "C" void POSEIDON_STACK_PUSH(void *base, uint64_t bytes) {
   if (!stackArrays) {
     inRegistry = true;
     stackArrays = new std::vector<Extent>();
@@ -240,12 +241,12 @@ extern "C" void __poseidon_stack_push(void *base, uint64_t bytes) {
   inRegistry = false;
 }
 
-extern "C" void __poseidon_stack_pop(uint32_t n) {
+extern "C" void POSEIDON_STACK_POP(uint32_t n) {
   if (stackArrays)
     stackArrays->resize(stackArrays->size() > n ? stackArrays->size() - n : 0);
 }
 
-extern "C" void __poseidon_register_globals(const void *table, uint64_t n) {
+extern "C" void POSEIDON_REGISTER_GLOBALS(const void *table, uint64_t n) {
   struct Entry {
     void *p;
     uint64_t bytes;
@@ -264,11 +265,11 @@ extern "C" void __poseidon_register_globals(const void *table, uint64_t n) {
 // One call of a host site: the shadow of each pointer argument (ShadowTable).
 // An allocation the call writes through any argument is an output of the
 // call.
-extern "C" void __poseidon_host_shadows(const char *fn, int site, int nptr,
-                                        void *const *ptrs, const int *param,
-                                        const int *seedWidth,
-                                        const char *const *paramName,
-                                        void **out) {
+extern "C" void POSEIDON_HOST_SHADOWS(const char *fn, int site, int nptr,
+                                      void *const *ptrs, const int *param,
+                                      const int *seedWidth,
+                                      const char *const *paramName,
+                                      void **out) {
   std::vector<Extent> ext((size_t)nptr, Extent{0, 0});
   std::map<uintptr_t, int> width;
   for (int k = 0; k < nptr; ++k) {

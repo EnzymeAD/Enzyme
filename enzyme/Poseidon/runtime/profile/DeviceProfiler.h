@@ -8,7 +8,8 @@
 //
 // The state the two halves of the GPU profiler share: the device half
 // (DeviceProfilerDevice.cu) updates it, the host half (DeviceProfilerHost.cu)
-// allocates it and writes the profile from it.
+// allocates it and writes the profile from it. Also the names of the host
+// runtime's entry points, which the pass and the runtime share.
 //
 //===----------------------------------------------------------------------===//
 
@@ -44,6 +45,17 @@
 // The device variable every profiled device module defines and the host half
 // of the same translation unit registers.
 #define POSEIDON_DEVICE_PROFILE_TABLE "__poseidon_profile_table"
+
+// The host runtime's entry points the pass calls: the runtime defines each
+// under its macro, and the pass spells it POSEIDON_ENTRY_NAME(<macro>).
+#define POSEIDON_ENTRY_QUOTE(x) #x
+#define POSEIDON_ENTRY_NAME(x) POSEIDON_ENTRY_QUOTE(x)
+#define POSEIDON_STACK_PUSH __poseidon_stack_push
+#define POSEIDON_STACK_POP __poseidon_stack_pop
+#define POSEIDON_REGISTER_GLOBALS __poseidon_register_globals
+#define POSEIDON_HOST_SHADOWS __poseidon_host_shadows
+#define POSEIDON_PROFILE_REGISTER_MODULE __poseidon_profile_register_module
+#define POSEIDON_LAUNCH_PROFILED __poseidon_launch_profiled
 
 POSEIDON_HD inline uint64_t doubleToOrderedUint64(double val) {
   uint64_t bits;

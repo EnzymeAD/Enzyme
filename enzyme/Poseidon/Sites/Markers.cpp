@@ -17,7 +17,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/InstIterator.h"
@@ -42,15 +41,16 @@ bool isMarkerCall(StringRef calleeName) {
          calleeName.contains("__enzyme_fp_optimize");
 }
 
-void warn(CallBase *CI, const Twine &message) {
-  diagnose(*CI, message, DS_Warning);
+/// The operand of the marker call `CI` that names its body.
+static Value *markerFunctionOperand(CallInst *CI) {
+  return CI->getArgOperand(CI->hasStructRetAttr() ? 1 : 0);
 }
 
 /// The body a marker names, or null, without diagnostics: a malformed marker
 /// is reported once, by the handler that lowers it. An empty body is returned
 /// as found; only markerTarget refuses it.
 Function *markerTargetOrNull(CallInst *CI) {
-  Value *fn = CI->getArgOperand(CI->hasStructRetAttr() ? 1 : 0);
+  Value *fn = markerFunctionOperand(CI);
   while (!isa<Function>(fn)) {
     if (auto *ci = dyn_cast<CastInst>(fn)) {
       fn = ci->getOperand(0);
@@ -79,7 +79,7 @@ Expected<Function *> markerTarget(CallInst *CI) {
   if (!F) {
     std::string buf;
     llvm::raw_string_ostream os(buf);
-    os << *CI->getArgOperand(CI->hasStructRetAttr() ? 1 : 0);
+    os << *markerFunctionOperand(CI);
     return userError(*CI, "failed to find the annotated function in " + buf);
   }
   if (F->empty())
@@ -110,10 +110,16 @@ static bool isEnzymeRequestName(StringRef name) {
 
 /// Enzyme names what it generates after the function it differentiated, with
 /// one of these prefixes.
+std::optional<StringRef> enzymeGeneratedFrom(StringRef name) {
+  for (StringRef prefix :
+       {"fwddiffe", "diffe", "augmented_", "fwdsplit", "batch_"})
+    if (name.consume_front(prefix))
+      return name;
+  return std::nullopt;
+}
+
 static bool isEnzymeGeneratedName(StringRef name) {
-  return name.starts_with("fwddiffe") || name.starts_with("diffe") ||
-         name.starts_with("augmented_") || name.starts_with("fwdsplit") ||
-         name.starts_with("batch_");
+  return enzymeGeneratedFrom(name).has_value();
 }
 
 /// Fold the code Enzyme generated for the request into the deferred body. What
@@ -222,22 +228,6 @@ void collectMarkerCalls(Module &M, SmallVectorImpl<CallInst *> &out) {
 
 bool isDeferredBody(const Function &F) {
   return F.hasFnAttribute(kSiteDeferred);
-}
-
-unsigned getNextSiteId(Module &M) {
-  NamedMDNode *NMD = M.getNamedMetadata(kNextSiteIdMD);
-  if (!NMD || NMD->getNumOperands() == 0)
-    return 0;
-  auto *C = mdconst::extract<ConstantInt>(NMD->getOperand(0)->getOperand(0));
-  return (unsigned)C->getZExtValue();
-}
-
-void setNextSiteId(Module &M, unsigned next) {
-  NamedMDNode *NMD = M.getOrInsertNamedMetadata(kNextSiteIdMD);
-  NMD->clearOperands();
-  NMD->addOperand(MDNode::get(M.getContext(),
-                              ConstantAsMetadata::get(ConstantInt::get(
-                                  Type::getInt32Ty(M.getContext()), next))));
 }
 
 /// The name an Enzyme activity marker carries, however the frontend spelled it:

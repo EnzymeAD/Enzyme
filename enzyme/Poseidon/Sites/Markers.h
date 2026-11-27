@@ -17,7 +17,6 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
 
 #include <optional>
@@ -43,8 +42,10 @@ bool isMarkerCall(llvm::StringRef calleeName);
 /// lowers; LLVM uniques a second declaration's name with a suffix.
 constexpr llvm::StringLiteral kAutodiffRequest = "__enzyme_autodiff_poseidon";
 
-/// Reports `message` as a warning at the marker call `CI`.
-void warn(llvm::CallBase *CI, const llvm::Twine &message);
+/// The name of the function Enzyme generated the function `name` from; none
+/// when `name` is not one Enzyme gives what it generates.
+std::optional<llvm::StringRef> enzymeGeneratedFrom(llvm::StringRef name);
+
 /// The function the marker call `CI` names, or null, without a diagnostic.
 llvm::Function *markerTargetOrNull(llvm::CallInst *CI);
 /// The function the marker call `CI` names; an error if it names none or one
@@ -132,17 +133,6 @@ void collectMarkerCalls(llvm::Module &M,
                         llvm::SmallVectorImpl<llvm::CallInst *> &out);
 /// Whether deferSite left the marked body `F` to the late run.
 bool isDeferredBody(const llvm::Function &F);
-
-/// Site ids number the profiled clones of one module and arm the
-/// condition-number perturbation one site at a time, so the late run has to
-/// continue the early run's numbering rather than restart it. Carried on the
-/// module because the two runs are different pass instances.
-constexpr llvm::StringLiteral kNextSiteIdMD = "poseidon.next.site.id";
-
-/// The next site id of `M`, which the early run leaves for the late one.
-unsigned getNextSiteId(llvm::Module &M);
-/// Records `next` as the next site id of `M`.
-void setNextSiteId(llvm::Module &M, unsigned next);
 
 /// What the marker call says about one site: the caller value behind each of
 /// the site's parameters, the accuracy target, and which marker arguments are

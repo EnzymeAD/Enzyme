@@ -352,9 +352,9 @@ static size_t g_registeredSlots = 0;
 // module profiles and the probes the largest of them holds. A unit loaded
 // after main started is bound to the tables already allocated, which it must
 // fit.
-extern "C" void __poseidon_profile_register_module(const void *table,
-                                                   unsigned functions,
-                                                   unsigned slots) {
+extern "C" void POSEIDON_PROFILE_REGISTER_MODULE(const void *table,
+                                                 unsigned functions,
+                                                 unsigned slots) {
   poseidonModuleTables().push_back(table);
   g_registeredFunctions += functions;
   g_registeredSlots = std::max<size_t>(g_registeredSlots, slots);
@@ -505,10 +505,10 @@ static void poseidonAllocRange(void *p, void *&base, size_t &size) {
 // A profiled kernel's launch with the shadows of its pointer arguments
 // (ShadowTable).
 extern "C" void
-__poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
-                           const unsigned *block, size_t shmem, void *stream,
-                           int nargs, void **args, int nptr, const int *ptrIdx,
-                           const int *ptrOff, const int *seedWidth) {
+POSEIDON_LAUNCH_PROFILED(const void *func, int site, const unsigned *grid,
+                         const unsigned *block, size_t shmem, void *stream,
+                         int nargs, void **args, int nptr, const int *ptrIdx,
+                         const int *ptrOff, const int *seedWidth) {
   int device = -1;
   POSEIDON_DEVICE_OK(gpuGetDevice(&device));
   if (device != g_device)

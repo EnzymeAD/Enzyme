@@ -13,6 +13,7 @@
 #include "Pins.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
+#include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve.h"
 #include "Support/Diagnostics.h"
@@ -74,7 +75,7 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   P.canonicalHash = canonicalHash;
   if (Error E = parseProfileFile(P.path, F, P.map, P.header))
     return E;
-  if (Error E = requireCanonicalHash(P.header, canonicalHash, P.path, F))
+  if (Error E = requireCanonicalHash(P.header, canonicalHash, F))
     return E;
   if (P.map.empty())
     diagnose(F, "the profile " + P.path + " records no operation of the site",
@@ -119,7 +120,7 @@ static Error putOnApplicationScale(Session &S, Function &F,
     siteSumSens += kv.second.sumSens;
   // Per-output weights are already divided by each output's own total.
   if (!O.Profiling.OutputProfiles.empty()) {
-    if (profileHeader.hasKappa)
+    if (profileHeader.kappa)
       return userError(
           F, Twine("the profile of ") + F.getName() +
                  " carries a measured condition number, which scales one "
@@ -133,9 +134,9 @@ static Error putOnApplicationScale(Session &S, Function &F,
   // within their noise, or not at all) is no measurement, and scaling the
   // site's errors by it would let any rewrite through. The site is solved
   // against its own target, as a site of a run without a metric is.
-  const bool unresolved = profileHeader.hasKappa &&
+  const bool unresolved = profileHeader.kappa &&
                           (profileHeader.kappaMark == KappaMark::BelowNoise ||
-                           !(profileHeader.kappa > 0.0));
+                           !(*profileHeader.kappa > 0.0));
   if (unresolved)
     diagnose(F,
              Twine("the profiling runs did not resolve the condition "
@@ -143,12 +144,12 @@ static Error putOnApplicationScale(Session &S, Function &F,
                  F.getName() +
                  " against the declared metric from their "
                  "noise (Kappa = " +
-                 shortDouble(profileHeader.kappa) + ", " +
+                 shortDouble(*profileHeader.kappa) + ", " +
                  kappaMarkName(profileHeader.kappaMark) +
                  "), so the site is solved against its own target; measure it "
                  "with larger perturbation steps in POSEIDON_KAPPA_LADDER",
              DS_Warning);
-  if (profileHeader.hasKappa && !unresolved) {
+  if (profileHeader.kappa && !unresolved) {
     double sumSens = siteSumSens;
     if (sumSens == 0.0)
       return userError(F, Twine("the profile of ") + F.getName() +
@@ -164,13 +165,13 @@ static Error putOnApplicationScale(Session &S, Function &F,
                    "site is left as written",
                DS_Warning);
     else
-      factor = profileHeader.kappa / sumSens;
+      factor = *profileHeader.kappa / sumSens;
     SolvedFrom &from = st.get<SolvedFrom>();
     from.kappa = profileHeader.kappa;
     from.kappaMark = profileHeader.kappaMark;
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << F.getName()
-                   << ": measured condition number " << profileHeader.kappa
+                   << ": measured condition number " << *profileHeader.kappa
                    << " (" << kappaMarkName(profileHeader.kappaMark)
                    << "), profiled sensitivity " << sumSens << ", error scale "
                    << factor << '\n';
@@ -452,6 +453,24 @@ static Expected<bool> materializeSolution(Session &S, Function &F,
 
 // Selects the steps of `sites`, pinned or solved in one DP under `tau`, then
 // explains and materializes each site; true when a site changed.
+/// Calls the body `clone` was cut from in place of `clone`, a clone the solve
+/// applied nothing to; `print` says so on stderr.
+static void redirectNoopSite(SiteRecords &T, Function *clone, bool print) {
+  auto it = T.Clones.find(clone);
+  if (it == T.Clones.end() || !it->second.Origin)
+    return;
+  Function *orig = it->second.Origin;
+  if (orig == clone)
+    return;
+  SmallVector<CallBase *, 4> callers = callsOf(*clone);
+  for (CallBase *CB : callers)
+    CB->setCalledFunction(orig);
+  if (!callers.empty() && print)
+    llvm::errs() << "[poseidon] no rewrite applied for " << clone->getName()
+                 << "; wrapper call restored to original body "
+                 << orig->getName() << " (bit-transparent no-op)\n";
+}
+
 static Expected<bool> solveAndApply(Session &S, Module &M,
                                     const StringSet<> &declared,
                                     ArrayRef<SiteState *> sites, double tau,

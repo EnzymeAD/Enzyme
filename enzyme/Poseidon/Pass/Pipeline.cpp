@@ -110,9 +110,9 @@ Session &sessionOf(Module &M, ModuleAnalysisManager &MAM) {
 }
 
 // Whether Enzyme has already run on M: Enzyme removes its prev_fixup marks
-// before its run ends, so enzyme_math functions without any prev_fixup, or an
-// augmented_/diffe clone, mean it has. Extension-point callbacks run in
-// -fpass-plugin order, so a reversed plugin order shows here.
+// before its run ends, so enzyme_math functions without any prev_fixup, or a
+// function Enzyme generated from one M defines, mean it has. Extension-point
+// callbacks run in -fpass-plugin order, so a reversed plugin order shows here.
 static bool enzymeAlreadyRan(Module &M) {
   bool anyMath = false, anyPending = false;
   for (const Function &F : M) {
@@ -121,14 +121,10 @@ static bool enzymeAlreadyRan(Module &M) {
   }
   if (anyMath && !anyPending)
     return true;
-  for (const Function &F : M) {
-    if (F.empty())
-      continue;
-    StringRef name = F.getName();
-    if (M.getFunction(("augmented_" + name).str()) ||
-        M.getFunction(("diffe" + name).str()))
-      return true;
-  }
+  for (const Function &G : M)
+    if (std::optional<StringRef> from = enzymeGeneratedFrom(G.getName()))
+      if (const Function *F = M.getFunction(*from); F && !F->empty())
+        return true;
   return false;
 }
 
@@ -384,17 +380,10 @@ struct DeferredSitePass : PassParent<DeferredSitePass> {
 
     bool instrumented = false;
     if (O.Profiling.generatesProfile()) {
-      DenseMap<Function *, Function *> clones;
-      unsigned nextSiteId = getNextSiteId(M);
-      for (const Site &site : markers) {
-        Expected<bool> profiled = profileSite(S, site, clones, nextSiteId);
-        if (!profiled)
-          return stopOnError(S, M, profiled.takeError());
-        instrumented |= *profiled;
-      }
-      setNextSiteId(M, nextSiteId);
-      if (instrumented)
-        injectBlockDimProbes(M, O.Diagnostics.Print);
+      Expected<bool> profiled = profileSites(S, M, markers);
+      if (!profiled)
+        return stopOnError(S, M, profiled.takeError());
+      instrumented = *profiled;
       markers = collectDeferredSites(M);
     }
 
@@ -602,50 +591,42 @@ struct SiteGatePass : PassParent<SiteGatePass> {
   static bool isRequired() { return true; }
 };
 
-} // namespace
-
-// The host module's launch stubs of the kernels a descriptor in its manifest
-// names, rewritten before inlining: for profile generation into a launch that
-// supplies the profiling kernel's shadows, and for host library call.
-
-/// Rewrites, on the host module and before inlining, each __device_stub__
-/// launch stub that a descriptor in the module's manifest matches.
-class HostStubPass : public PassParent<HostStubPass> {
-public:
-  /// Rewrites the stubs of `M`; nothing in a device module or a compile that
-  /// hands no launch over, and nothing once the session has stopped.
-  llvm::PreservedAnalyses run(llvm::Module &M,
-                              llvm::ModuleAnalysisManager &MAM);
-};
-
-llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
-                                          llvm::ModuleAnalysisManager &MAM) {
-  Session &S = sessionOf(M, MAM);
-  const Options &O = S.Opts;
-  if (S.Stopped || Target::of(M).isDevice() || !handsOverLaunches(O))
-    return llvm::PreservedAnalyses::all();
-  // Profile generation: every launch of an annotated kernel goes through the
-  // runtime helper that supplies its shadow buffers. Library call
-  // materializes only in the optimize phase: profile-gen builds instrument the
-  // original kernel and do not link the runtime.
-  bool changed = false;
-  if (O.Profiling.generatesProfile()) {
-    Expected<bool> rewritten = rewriteProfileStubBodies(O, M);
-    if (!rewritten)
-      return stopOnError(S, M, rewritten.takeError());
-    changed = *rewritten;
-    changed |= registerProfiledKernels(O, M);
-  } else {
-    for (const Technique *T : techniques()) {
-      Expected<bool> rewritten = T->rewriteHost(O, M);
+// Rewrites, on the host module and before inlining, each __device_stub__
+// launch stub that a descriptor in the module's manifest matches: for profile
+// generation into a launch that supplies the profiling kernel's shadows, and
+// for host library call. Nothing in a device module or a compile that hands no
+// launch over.
+struct HostStubPass : PassParent<HostStubPass> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    Session &S = sessionOf(M, MAM);
+    const Options &O = S.Opts;
+    if (S.Stopped || Target::of(M).isDevice() || !handsOverLaunches(O))
+      return PreservedAnalyses::all();
+    // Library call materializes only in the optimize phase: profile-gen builds
+    // instrument the original kernel and do not link the runtime.
+    bool changed = false;
+    if (O.Profiling.generatesProfile()) {
+      Expected<bool> rewritten = rewriteProfileStubBodies(O, M);
       if (!rewritten)
         return stopOnError(S, M, rewritten.takeError());
-      changed |= *rewritten;
+      changed = *rewritten;
+      Expected<bool> registered = registerProfiledKernels(O, M);
+      if (!registered)
+        return stopOnError(S, M, registered.takeError());
+      changed |= *registered;
+    } else {
+      for (const Technique *T : techniques()) {
+        Expected<bool> rewritten = T->rewriteHost(O, M);
+        if (!rewritten)
+          return stopOnError(S, M, rewritten.takeError());
+        changed |= *rewritten;
+      }
     }
+    return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
-  return changed ? llvm::PreservedAnalyses::none()
-                 : llvm::PreservedAnalyses::all();
-}
+};
+
+} // namespace
 
 // The canonical prefix, which brings a site body to the form the profile is
 // numbered against. It matches the start of Enzyme's OptimizerEarly pipeline,

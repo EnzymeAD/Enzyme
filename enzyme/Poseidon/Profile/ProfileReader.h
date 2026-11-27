@@ -6,8 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The profile a profiling run writes for a site (runtime/fpprofiler), read and
-// checked against the site's canonical form.
+// The profile a profiling run writes for a site, in the format
+// runtime/profile/ProfileFormat.h specifies, read and checked against the
+// site's canonical form.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace llvm {
@@ -74,11 +76,9 @@ struct SiteProfileHeader {
   /// the profile carries none.
   std::string canonicalHash;
   /// Measured relative condition number of the declared quantity of interest
-  /// with respect to this site's outputs; 1.0 when the profile carries no
+  /// with respect to this site's outputs; none when the profile carries no
   /// Kappa line.
-  double kappa = 1.0;
-  /// Whether the profile carries a Kappa line.
-  bool hasKappa = false;
+  std::optional<double> kappa;
   /// How the run measured Kappa; Unmeasured without a Kappa line when the run
   /// declared a quantity of interest and did not measure the condition number;
   /// None when the profile carries no KappaMark line.
@@ -113,7 +113,6 @@ llvm::Error parseProfileFile(const std::string &profilePath,
 /// against the canonical form `canonicalHash` names.
 llvm::Error requireCanonicalHash(const SiteProfileHeader &header,
                                  llvm::StringRef canonicalHash,
-                                 llvm::StringRef profilePath,
                                  const llvm::Function &F);
 
 /// An error at the site `F` when the profiling run declared a quantity of

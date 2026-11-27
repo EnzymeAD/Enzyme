@@ -26,8 +26,9 @@
 #ifndef POSEIDON_PROFILE_INSTRUMENT_H
 #define POSEIDON_PROFILE_INSTRUMENT_H
 
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/Error.h"
 
@@ -37,6 +38,7 @@ namespace llvm {
 class CallInst;
 class Constant;
 class Function;
+class GlobalVariable;
 class Module;
 } // namespace llvm
 
@@ -52,6 +54,11 @@ struct Site;
 /// it.
 llvm::FunctionCallee getProfilerHook(llvm::Module &M, llvm::StringRef name,
                                      llvm::FunctionType *FT);
+
+/// A new private unnamed_addr constant global `Name` of `M` holding `Init`, in
+/// the global address space of `M`.
+llvm::GlobalVariable *privateConstant(llvm::Module &M, llvm::Constant *Init,
+                                      const llvm::Twine &Name);
 
 /// A generic pointer to a private constant C string `contents` in the global
 /// address space of `M`: the global `gvName`, made if absent, or a new
@@ -125,14 +132,15 @@ bool defineProfileDirectory(const Options &O, llvm::Module &M);
 /// them, so that AD never differentiates them.
 void predeclareInactiveProfilerProbes(llvm::Module &M);
 
-/// Instruments the site and makes the call that reaches it a derivative
-/// request; whether it did, or the mistake that keeps the site from being
-/// profiled. Markers of one body share `clones`' instrumented clone, and the
-/// clones made take their ids from `nextSiteId`.
-llvm::Expected<bool>
-profileSite(Session &S, const Site &site,
-            llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
-            unsigned &nextSiteId);
+/// Instruments each of `sites` and makes the call that reaches it a derivative
+/// request, then places the block-geometry probes; whether a site was
+/// instrumented, or the mistake that keeps a site from being profiled. Markers
+/// of one body share one instrumented clone. The clones take their site ids
+/// after those of an earlier call on `M`.
+llvm::Expected<bool> profileSites(Session &S, llvm::Module &M,
+                                  llvm::ArrayRef<Site> sites);
+/// Removes from `M` the site-id count profileSites leaves for a later call.
+void eraseNextSiteId(llvm::Module &M);
 /// Registers with the host profiler, around each call that passes a stack
 /// object, that object's extent, so that a site reached through it can size
 /// its shadow.
@@ -152,8 +160,9 @@ llvm::Expected<bool> rewriteProfileStubBodies(const Options &O,
 /// Registers the header of every kernel the device half profiled with the
 /// host profiler, as a host site's is: the device profiler writes a kernel's
 /// profile only once the kernel has run, and the host profiler writes one with
-/// no records for a registered site that nothing wrote.
-bool registerProfiledKernels(const Options &O, llvm::Module &M);
+/// no records for a registered site that nothing wrote. An error for a header
+/// entry of M's manifest that is malformed.
+llvm::Expected<bool> registerProfiledKernels(const Options &O, llvm::Module &M);
 
 } // namespace poseidon
 

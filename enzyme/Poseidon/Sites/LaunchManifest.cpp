@@ -69,10 +69,9 @@ struct Manifest {
 
 } // namespace
 
-/// The source file tells apart the units one compile writes into a cache, the
-/// unit name the compiles of one source into it.
 /// The manifest of M, in the -poseidon-launch-dir directory or else the
-/// -poseidon-cache one; none when neither names a directory.
+/// -poseidon-cache one, keyed by M's source file and unit name; none when
+/// neither names a directory.
 static std::optional<Manifest> manifestOf(const Options &O, const Module &M) {
   StringRef dir = O.Cache.LaunchDir.empty() ? O.Cache.Dir : O.Cache.LaunchDir;
   if (dir.empty())
@@ -86,6 +85,57 @@ static std::optional<Manifest> manifestOf(const Options &O, const Module &M) {
       m.path, "launches_" + profileNameStem(sys::path::filename(source).str()) +
                   "_" + m.key.digest() + ".json");
   return m;
+}
+
+namespace {
+
+/// A manifest read back: its path and its JSON object.
+struct ReadManifest {
+  SmallString<256> path;
+  json::Object value;
+};
+
+} // namespace
+
+/// A warning about the manifest at `path`: `why` it cannot be used, then
+/// `unused`, what is not read from it.
+static void warnUnusable(const Module &M, StringRef path, const Twine &why,
+                         StringRef unused) {
+  M.getContext().diagnose(DiagnosticInfoGeneric(
+      Twine("Poseidon: the launch manifest ") + path + why + "; " + unused,
+      DS_Warning));
+}
+
+/// The manifest of M read back; none when M has none, or when the one found is
+/// unreadable or was written for another compile, which is a warning that ends
+/// in `unused`, what is not read from it.
+static std::optional<ReadManifest>
+readManifest(const Options &O, const Module &M, StringRef unused) {
+  std::optional<Manifest> m = manifestOf(O, M);
+  if (!m)
+    return std::nullopt;
+  CacheEntryRead read = readCacheEntry(m->path, m->key);
+  json::Object *value = read.value ? read.value->getAsObject() : nullptr;
+  if (read.value && !value)
+    read.unreadable = "it holds no JSON object";
+  if (!read.unreadable.empty() || !read.differs.empty()) {
+    warnUnusable(M, m->path,
+                 read.unreadable.empty()
+                     ? " was written for a different " + read.differs
+                     : " is unreadable (" + read.unreadable + ")",
+                 unused);
+    return std::nullopt;
+  }
+  if (!value)
+    return std::nullopt;
+  return ReadManifest{m->path, std::move(*value)};
+}
+
+/// The error for a malformed `what` in the manifest at `path`.
+static Error malformed(StringRef path, const Twine &what) {
+  return userError("the launch manifest " + path + " holds " + what +
+                   "; remove the -poseidon-cache directory and compile the "
+                   "unit again");
 }
 
 bool handsOverLaunches(const Options &O) {
@@ -116,22 +166,19 @@ void recordProfileTable(LaunchManifest &L, unsigned functions, unsigned slots) {
 
 Expected<std::pair<unsigned, unsigned>> readProfileTable(const Options &O,
                                                          const Module &M) {
-  std::optional<Manifest> m = manifestOf(O, M);
-  if (!m)
+  std::optional<ReadManifest> m =
+      readManifest(O, M, "its profile table is not read");
+  const json::Value *entry = m ? m->value.get(kProfileTable) : nullptr;
+  if (!entry)
     return std::make_pair(0u, 0u);
-  CacheEntryRead read = readCacheEntry(m->path, m->key);
-  const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
-  const json::Object *table = value ? value->getObject(kProfileTable) : nullptr;
-  if (!table)
-    return std::make_pair(0u, 0u);
-  std::optional<int64_t> functions = table->getInteger("functions");
-  std::optional<int64_t> slots = table->getInteger("slots");
+  const json::Object *table = entry->getAsObject();
+  std::optional<int64_t> functions =
+      table ? table->getInteger("functions") : std::nullopt;
+  std::optional<int64_t> slots =
+      table ? table->getInteger("slots") : std::nullopt;
   if (!functions || !slots || *functions < 0 || *slots < 0 ||
       *functions > UINT32_MAX || *slots > UINT32_MAX)
-    return userError("the launch manifest " + m->path +
-                     " holds a profile table entry that is not two counts; "
-                     "remove the -poseidon-cache directory and compile the "
-                     "unit again");
+    return malformed(m->path, "a profile table entry that is not two counts");
   return std::make_pair((unsigned)*functions, (unsigned)*slots);
 }
 
@@ -204,65 +251,55 @@ Error writeLaunchManifest(const Options &O, LaunchManifest &L,
 
 Error readDescriptors(const Options &O, const Module &M, LaunchKind kind,
                       function_ref<Error(ArrayRef<StringRef>)> parse) {
-  std::optional<Manifest> found = manifestOf(O, M);
-  if (!found)
+  constexpr StringLiteral unused = "no launch stub is rewritten from it";
+  std::optional<ReadManifest> m = readManifest(O, M, unused);
+  if (!m)
     return Error::success();
-  const Manifest &m = *found;
-  CacheEntryRead read = readCacheEntry(m.path, m.key);
-  const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
-  const json::Array *lines = value ? value->getArray(kindName(kind)) : nullptr;
-  if (read.value && !lines)
-    read.unreadable = ("it holds no " + kindName(kind) + " list").str();
-  if (!read.unreadable.empty() || !read.differs.empty())
-    M.getContext().diagnose(DiagnosticInfoGeneric(
-        Twine("Poseidon: the launch manifest ") + m.path +
-            (read.unreadable.empty()
-                 ? " was written for a different " + read.differs
-                 : " is unreadable (" + read.unreadable + ")") +
-            "; no launch stub is rewritten from it",
-        DS_Warning));
-  if (!lines)
+  const json::Array *lines = m->value.getArray(kindName(kind));
+  if (!lines) {
+    warnUnusable(M, m->path,
+                 " is unreadable (it holds no " + kindName(kind) + " list)",
+                 unused);
     return Error::success();
+  }
   for (const json::Value &entry : *lines) {
     std::optional<StringRef> line = entry.getAsString();
     if (!line)
-      return userError("the launch manifest " + m.path + " holds a " +
-                       kindName(kind) +
-                       " entry that is not a string; remove the "
-                       "-poseidon-cache directory and compile the unit again");
+      return malformed(m->path,
+                       "a " + kindName(kind) + " entry that is not a string");
     SmallVector<StringRef, 8> toks;
     line->trim().split(toks, ' ');
     if (Error E = parse(toks))
-      return userError("the launch manifest " + m.path + " holds the " +
-                       kindName(kind) + " descriptor '" + *line +
-                       "', which does not parse (" + toString(std::move(E)) +
-                       "); remove the -poseidon-cache directory and compile "
-                       "the unit again");
+      return malformed(m->path, "the " + kindName(kind) + " descriptor '" +
+                                    *line + "', which does not parse (" +
+                                    toString(std::move(E)) + ")");
   }
   return Error::success();
 }
 
-void readProfileHeaders(const Options &O, const Module &M,
-                        function_ref<void(StringRef, StringRef)> use) {
-  std::optional<Manifest> m = manifestOf(O, M);
-  if (!m)
-    return;
-  CacheEntryRead read = readCacheEntry(m->path, m->key);
-  const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
-  const json::Object *headers =
-      value ? value->getObject(kProfileHeaders) : nullptr;
+Error readProfileHeaders(const Options &O, const Module &M,
+                         function_ref<void(StringRef, StringRef)> use) {
+  std::optional<ReadManifest> m =
+      readManifest(O, M, "no profile header is registered from it");
+  const json::Value *entry = m ? m->value.get(kProfileHeaders) : nullptr;
+  if (!entry)
+    return Error::success();
+  const json::Object *headers = entry->getAsObject();
   if (!headers)
-    return;
+    return malformed(m->path, "profile headers that are not an object");
   // In kernel order: a JSON object's own order is its hash table's.
   std::map<std::string, const json::Object *> byKernel;
-  for (const auto &[kernel, entry] : *headers)
-    byKernel[kernel.str()] = entry.getAsObject();
+  for (const auto &[kernel, h] : *headers)
+    byKernel[kernel.str()] = h.getAsObject();
   for (const auto &[kernel, h] : byKernel) {
     std::optional<StringRef> name = h ? h->getString("profile") : std::nullopt;
     std::optional<StringRef> header = h ? h->getString("header") : std::nullopt;
-    if (name && header)
-      use(*name, *header);
+    if (!name || !header)
+      return malformed(m->path, "a profile headers entry of " + kernel +
+                                    " that is not a profile name and header");
+    use(*name, *header);
   }
+  return Error::success();
 }
 
 } // namespace poseidon

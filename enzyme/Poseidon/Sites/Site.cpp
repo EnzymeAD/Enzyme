@@ -26,6 +26,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -139,10 +140,9 @@ static bool isHostScalar(Type *T) {
          T->isFloatTy() || T->isDoubleTy();
 }
 
-/// Why `F` cannot be a host site, empty if it can. The profiled clone is
-/// differentiated with one activity per parameter, which a pointer, a
-/// floating-point scalar and an integer have, and its value comes back only as
-/// one of the latter two.
+/// The profiled clone is differentiated with one activity per parameter, which
+/// a pointer, a floating-point scalar and an integer have, and its value comes
+/// back only as one of the latter two.
 std::optional<std::string> hostSiteRefusal(Function &F) {
   if (F.isVarArg())
     return "is variadic";
@@ -372,7 +372,11 @@ void releaseHostBody(Function &B) {
 /// it was found.
 void inlineKernelBody(CallInst *call, Function *body) {
   InlineFunctionInfo IFI;
-  (void)InlineFunction(*call, IFI);
+  InlineResult inlined = InlineFunction(*call, IFI);
+  if (!inlined.isSuccess())
+    reportFatalInternalError(Twine("Poseidon: the outlined body ") +
+                             body->getName() + " does not inline back (" +
+                             inlined.getFailureReason() + ")");
   if (body->use_empty())
     body->eraseFromParent();
 }
