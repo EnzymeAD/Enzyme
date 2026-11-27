@@ -66,7 +66,7 @@ class DiffeGradientUtils final : public GradientUtils {
       llvm::ValueToValueMapTy &invertedPointers_,
       const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
       const llvm::SmallPtrSetImpl<llvm::Value *> &returnvals_,
-      DIFFE_TYPE ActiveReturn, bool shadowReturnUsed,
+      DIFFE_TYPE ActiveReturn, bool shadowReturnUsed, bool diffeReturnUsed,
       llvm::ArrayRef<DIFFE_TYPE> constant_values,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
       DerivativeMode mode, bool runtimeActivity, bool strongZero,
