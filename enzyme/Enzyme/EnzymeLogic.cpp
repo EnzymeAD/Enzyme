@@ -2844,6 +2844,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   gutils->eraseFictiousPHIs();
+  gutils->applyDeferredConditionalGuards();
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
@@ -4793,6 +4794,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   cleanupInversionAllocs(gutils, entry);
+  gutils->applyDeferredConditionalGuards();
   clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
@@ -5274,6 +5276,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
 
   cleanupInversionAllocs(gutils, entry);
+  gutils->applyDeferredConditionalGuards();
   clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {

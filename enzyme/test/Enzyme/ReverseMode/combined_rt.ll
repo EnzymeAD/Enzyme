@@ -700,9 +700,9 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  %i5 = call {}*** @julia.get_pgcstack() #{{[0-9]+}}
 ; CHECK-NEXT:  %i6 = getelementptr inbounds {}**, {}*** %i5, i64 2
 ; CHECK-NEXT:  %i7 = bitcast {}*** %i6 to i64***
-; CHECK-NEXT:  %i8 = load i64**, i64*** %i7, align 8, !tbaa !2, !alias.scope !95, !noalias !98
+; CHECK-NEXT:  %i8 = load i64**, i64*** %i7, align 8, !tbaa !2
 ; CHECK-NEXT:  %i9 = getelementptr inbounds i64*, i64** %i8, i64 2
-; CHECK-NEXT:  %i10 = load i64*, i64** %i9, align 8, !tbaa !6, !alias.scope !100, !noalias !103
+; CHECK-NEXT:  %i10 = load i64*, i64** %i9, align 8, !tbaa !6
 ; CHECK-NEXT:  fence syncscope("singlethread") seq_cst
 ; CHECK-NEXT:  call void @julia.safepoint(i64* %i10) #{{[0-9]+}}
 ; CHECK-NEXT:  fence syncscope("singlethread") seq_cst
@@ -714,9 +714,9 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  %i14 = getelementptr inbounds {}**, {}*** %i5, i64 -14
 ; CHECK-NEXT:  %i15 = bitcast {}*** %i14 to {}*
 ; CHECK-NEXT:  %i16 = getelementptr inbounds [1 x [1 x [2 x [1 x double]]]], [1 x [1 x [2 x [1 x double]]]] addrspace(11)* %arg2, i64 0, i64 0, i64 0, i64 0, i64 0
-; CHECK-NEXT:  %i17 = load double, double addrspace(11)* %i16, align 8, !tbaa !6, !alias.scope !105, !noalias !108, !enzyme_type !49, !enzymejl_byref_BITS_VALUE !8, !enzymejl_source_type_Float64 !8
+; CHECK-NEXT:  %i17 = load double, double addrspace(11)* %i16, align 8, !tbaa !6, !alias.scope !9, !noalias !12, !enzyme_type !49, !enzymejl_byref_BITS_VALUE !8, !enzymejl_source_type_Float64 !8
 ; CHECK-NEXT:  %i18 = getelementptr inbounds [1 x [1 x [2 x [1 x double]]]], [1 x [1 x [2 x [1 x double]]]] addrspace(11)* %arg2, i64 0, i64 0, i64 0, i64 1, i64 0
-; CHECK-NEXT:  %i19 = load double, double addrspace(11)* %i18, align 8, !tbaa !6, !alias.scope !105, !noalias !108, !enzyme_type !49, !enzymejl_byref_BITS_VALUE !8, !enzymejl_source_type_Float64 !8
+; CHECK-NEXT:  %i19 = load double, double addrspace(11)* %i18, align 8, !tbaa !6, !alias.scope !9, !noalias !12, !enzyme_type !49, !enzymejl_byref_BITS_VALUE !8, !enzymejl_source_type_Float64 !8
 ; CHECK-NEXT:  %i20_augmented = call { {} addrspace(10)*, {} addrspace(10)* } @augmented_jl_alloc_genericmemory({} addrspace(10)* addrspacecast ({}* inttoptr (i64 4522732752 to {}*) to {} addrspace(10)*), i64 1)
 ; CHECK-NEXT:  %i20 = extractvalue { {} addrspace(10)*, {} addrspace(10)* } %i20_augmented, 0
 ; CHECK-NEXT:  %"i20'ac" = extractvalue { {} addrspace(10)*, {} addrspace(10)* } %i20_augmented, 1
@@ -728,15 +728,15 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  %i23 = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %i22, i64 0, i32 1
 ; CHECK-NEXT:  %"i24'ipc" = bitcast {} addrspace(10)** addrspace(11)* %"i23'ipg" to i8* addrspace(11)*
 ; CHECK-NEXT:  %i24 = bitcast {} addrspace(10)** addrspace(11)* %i23 to i8* addrspace(11)*
-; CHECK-NEXT:  %"i25'ipl" = load i8*, i8* addrspace(11)* %"i24'ipc", align 8, !tbaa !6, !alias.scope !110, !noalias !113, !nonnull !8
-; CHECK-NEXT:  %i25 = load i8*, i8* addrspace(11)* %i24, align 8, !tbaa !6, !alias.scope !115, !noalias !116, !nonnull !8, !invariant.group !117, !enzyme_type !54, !enzymejl_byref_BITS_VALUE !8, !enzyme_nocache !8, !enzymejl_source_type_Ptr\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8
+; CHECK-NEXT:  %"i25'ipl" = load i8*, i8* addrspace(11)* %"i24'ipc", align 8, !tbaa !6, !alias.scope !9, !noalias !12, !nonnull !8
+; CHECK-NEXT:  %i25 = load i8*, i8* addrspace(11)* %i24, align 8, !tbaa !6, !alias.scope !9, !noalias !12, !nonnull !8, !invariant.group ![[IG0:[0-9]+]], !enzyme_type !54, !enzymejl_byref_BITS_VALUE !8, !enzyme_nocache !8, !enzymejl_source_type_Ptr\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8
 ; CHECK-NEXT:  %i26 = call noalias nonnull align 8 dereferenceable(24) "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@double, [-1,8]:Pointer, [-1,8,0]:Integer, [-1,8,1]:Integer, [-1,8,2]:Integer, [-1,8,3]:Integer, [-1,8,4]:Integer, [-1,8,5]:Integer, [-1,8,6]:Integer, [-1,8,7]:Integer, [-1,8,8]:Pointer, [-1,8,8,-1]:Float@double, [-1,16]:Integer, [-1,17]:Integer, [-1,18]:Integer, [-1,19]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer}" {} addrspace(10)* @julia.gc_alloc_obj({}* nonnull %i15, i64 noundef 24, {} addrspace(10)* noundef addrspacecast ({}* inttoptr (i64 4522732432 to {}*) to {} addrspace(10)*)) #{{[0-9]+}}
 ; CHECK-NEXT:  %i27 = bitcast {} addrspace(10)* %i26 to { i8*, {} addrspace(10)* } addrspace(10)*
 ; CHECK-NEXT:  %i28 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %i27 to { i8*, {} addrspace(10)* } addrspace(11)*
 ; CHECK-NEXT:  %i29 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i28, i64 0, i32 0
 ; CHECK-NEXT:  store i8* %i25, i8* addrspace(11)* %i29, align 8, !tbaa !42, !alias.scope !40, !noalias !57
-; CHECK-NEXT:  store {} addrspace(10)* %i20, {} addrspace(10)** %i20_cache, align 8, !invariant.group !118
-; CHECK-NEXT:  store {} addrspace(10)* %"i20'ac", {} addrspace(10)** %"i20'ip_phi_cache", align 8, !invariant.group !119
+; CHECK-NEXT:  store {} addrspace(10)* %i20, {} addrspace(10)** %i20_cache, align 8, !invariant.group ![[IG1:[0-9]+]]
+; CHECK-NEXT:  store {} addrspace(10)* %"i20'ac", {} addrspace(10)** %"i20'ip_phi_cache", align 8, !invariant.group ![[IG2:[0-9]+]]
 ; CHECK-NEXT:  %i30 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i28, i64 0, i32 1
 ; CHECK-NEXT:  store {} addrspace(10)* %i20, {} addrspace(10)* addrspace(11)* %i30, align 8, !tbaa !42, !alias.scope !40, !noalias !57
 ; CHECK-NEXT:  %i31 = bitcast {} addrspace(10)* %i26 to i8 addrspace(10)*
@@ -750,24 +750,24 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  %i36 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %i20, {} addrspace(10)** noundef %i35) #{{[0-9]+}}
 ; CHECK-NEXT:  %"i37'ipc" = bitcast {} addrspace(10)* addrspace(13)* %0 to double addrspace(13)*
 ; CHECK-NEXT:  %i37 = bitcast {} addrspace(10)* addrspace(13)* %i36 to double addrspace(13)*
-; CHECK-NEXT:  store double %i17, double addrspace(13)* %i37, align 8, !tbaa !58, !alias.scope !120, !noalias !123
+; CHECK-NEXT:  store double %i17, double addrspace(13)* %i37, align 8, !tbaa !58, !alias.scope !59, !noalias !60
 ; CHECK-NEXT:  %"i38'ipg" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %0, i64 1
 ; CHECK-NEXT:  %i38 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %i36, i64 1
 ; CHECK-NEXT:  %"i39'ipc" = bitcast {} addrspace(10)* addrspace(13)* %"i38'ipg" to double addrspace(13)*
 ; CHECK-NEXT:  %i39 = bitcast {} addrspace(10)* addrspace(13)* %i38 to double addrspace(13)*
-; CHECK-NEXT:  store double %i19, double addrspace(13)* %i39, align 8, !tbaa !58, !alias.scope !120, !noalias !123
+; CHECK-NEXT:  store double %i19, double addrspace(13)* %i39, align 8, !tbaa !58, !alias.scope !59, !noalias !60
 ; CHECK-NEXT:  %i43 = getelementptr inbounds { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }, { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }* %i, i64 0, i32 1
-; CHECK-NEXT:  %i44 = load atomic {} addrspace(10)*, {} addrspace(10)** %i43 unordered, align 8, !tbaa !61, !alias.scope !125, !noalias !128, !nonnull !8, !dereferenceable !29, !align !30, !enzyme_type !31, !enzymejl_source_type_Vector\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8, !enzymejl_byref_MUT_REF !8
+; CHECK-NEXT:  %i44 = load atomic {} addrspace(10)*, {} addrspace(10)** %i43 unordered, align 8, !tbaa !61, !alias.scope !63, !noalias !64, !nonnull !8, !dereferenceable !29, !align !30, !enzyme_type !31, !enzymejl_source_type_Vector\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8, !enzymejl_byref_MUT_REF !8
 ; CHECK-NEXT:  %i46 = bitcast {} addrspace(10)* %i44 to { i8*, {} addrspace(10)* } addrspace(10)*
 ; CHECK-NEXT:  %i47 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %i46 to { i8*, {} addrspace(10)* } addrspace(11)*
 ; CHECK-NEXT:  %i48 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i47, i64 0, i32 1
-; CHECK-NEXT:  %i49 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i48, align 8, !tbaa !42, !alias.scope !130, !noalias !133, !dereferenceable_or_null !44, !align !30, !enzyme_type !65, !enzymejl_byref_MUT_REF !8, !enzymejl_source_type_Memory\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8
+; CHECK-NEXT:  %i49 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i48, align 8, !tbaa !42, !alias.scope !40, !noalias !41, !dereferenceable_or_null !44, !align !30, !enzyme_type !65, !enzymejl_byref_MUT_REF !8, !enzymejl_source_type_Memory\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8
 ; CHECK-NEXT:  %i50 = bitcast {} addrspace(10)* %i44 to {} addrspace(10)** addrspace(10)*
 ; CHECK-NEXT:  %i51 = addrspacecast {} addrspace(10)** addrspace(10)* %i50 to {} addrspace(10)** addrspace(11)*
-; CHECK-NEXT:  %i52 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %i51, align 8, !tbaa !42, !alias.scope !130, !noalias !133, !enzyme_type !54, !enzymejl_byref_BITS_VALUE !8, !enzyme_nocache !8, !enzymejl_source_type_Ptr\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8
+; CHECK-NEXT:  %i52 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %i51, align 8, !tbaa !42, !alias.scope !40, !noalias !41, !enzyme_type !54, !enzymejl_byref_BITS_VALUE !8, !enzyme_nocache !8, !enzymejl_source_type_Ptr\7BAT2\7B2\2C\20\40NamedTuple\7BSymLP\3A\3ALP\7BFloat64\7D\2C\20SymLL\3A\3ALL\7BFloat64\7D\7D\7D\7D !8
 ; CHECK-NEXT:  %i53 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %i49, {} addrspace(10)** noundef %i52) #{{[0-9]+}}
 ; CHECK-NEXT:  %i54 = bitcast {} addrspace(10)* addrspace(13)* %i53 to double addrspace(13)*
-; CHECK-NEXT:  %i55 = load double, double addrspace(13)* %i54, align 8, !tbaa !58, !alias.scope !135, !noalias !138, !enzyme_type !49, !enzymejl_byref_BITS_VALUE !8, !enzymejl_source_type_Float64 !8
+; CHECK-NEXT:  %i55 = load double, double addrspace(13)* %i54, align 8, !tbaa !58, !alias.scope !66, !noalias !60, !enzyme_type !49, !enzymejl_byref_BITS_VALUE !8, !enzymejl_source_type_Float64 !8
 ; CHECK-NEXT:  %i56 = fadd double %i55, %arg1
 ; CHECK-NEXT:  store double %i56, double addrspace(13)* %i54, align 8, !tbaa !58, !alias.scope !59, !noalias !60
 ; CHECK-NEXT:  %i57 = addrspacecast { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }* %i to { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)*
@@ -827,22 +827,22 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  [[val_arg1:%.*]] = load double, double* %"arg1'de", align 8
 ; CHECK-NEXT:  [[add:%.*]] = fadd fast double [[val_arg1]], [[val_i56]]
 ; CHECK-NEXT:  store double [[add]], double* %"arg1'de", align 8
-; CHECK-NEXT:  [[cache_val:%.*]] = load {} addrspace(10)*, {} addrspace(10)** %"i20'ip_phi_cache", align 8, !invariant.group !119
+; CHECK-NEXT:  [[cache_val:%.*]] = load {} addrspace(10)*, {} addrspace(10)** %"i20'ip_phi_cache", align 8, !invariant.group ![[IG2]]
 ; CHECK-NEXT:  %"i21'ipc_unwrap" = bitcast {} addrspace(10)* [[cache_val]] to { i64, {} addrspace(10)** } addrspace(10)*
 ; CHECK-NEXT:  %"i22'ipc_unwrap" = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %"i21'ipc_unwrap" to { i64, {} addrspace(10)** } addrspace(11)*
 ; CHECK-NEXT:  %"i23'ipg_unwrap" = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %"i22'ipc_unwrap", i64 0, i32 1
 ; CHECK-NEXT:  %"i24'ipc_unwrap" = bitcast {} addrspace(10)** addrspace(11)* %"i23'ipg_unwrap" to i8* addrspace(11)*
-; CHECK-NEXT:  %"i25'il_phi_unwrap" = load i8*, i8* addrspace(11)* %"i24'ipc_unwrap", align 8, !tbaa !6, !alias.scope !110, !noalias !113, !nonnull !8
+; CHECK-NEXT:  %"i25'il_phi_unwrap" = load i8*, i8* addrspace(11)* %"i24'ipc_unwrap", align 8, !tbaa !6, !alias.scope !9, !noalias !12, !nonnull !8
 ; CHECK-NEXT:  %"i35'ipc_unwrap" = bitcast i8* %"i25'il_phi_unwrap" to {} addrspace(10)**
 ; CHECK-NEXT:  [[gc_loaded_val:%.*]] = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* [[cache_val]], {} addrspace(10)** %"i35'ipc_unwrap")
 ; CHECK-NEXT:  %"i38'ipg_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* [[gc_loaded_val]], i64 1
 ; CHECK-NEXT:  %"i39'ipc_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %"i38'ipg_unwrap" to double addrspace(13)*
-; CHECK-NEXT:  [[cache_val_unwrap:%.*]] = load {} addrspace(10)*, {} addrspace(10)** %i20_cache, align 8, !invariant.group !118
+; CHECK-NEXT:  [[cache_val_unwrap:%.*]] = load {} addrspace(10)*, {} addrspace(10)** %i20_cache, align 8, !invariant.group ![[IG1]]
 ; CHECK-NEXT:  %i21_unwrap = bitcast {} addrspace(10)* [[cache_val_unwrap]] to { i64, {} addrspace(10)** } addrspace(10)*
 ; CHECK-NEXT:  %i22_unwrap = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %i21_unwrap to { i64, {} addrspace(10)** } addrspace(11)*
 ; CHECK-NEXT:  %i23_unwrap = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %i22_unwrap, i64 0, i32 1
 ; CHECK-NEXT:  %i24_unwrap = bitcast {} addrspace(10)** addrspace(11)* %i23_unwrap to i8* addrspace(11)*
-; CHECK-NEXT:  %i25_unwrap = load i8*, i8* addrspace(11)* %i24_unwrap, align 8, !tbaa !6, !alias.scope !115, !noalias !116, !nonnull !8, !invariant.group !117
+; CHECK-NEXT:  %i25_unwrap = load i8*, i8* addrspace(11)* %i24_unwrap, align 8, !tbaa !6, !alias.scope !9, !noalias !12, !nonnull !8, !invariant.group ![[IG0]]
 ; CHECK-NEXT:  %i35_unwrap = bitcast i8* %i25_unwrap to {} addrspace(10)**
 ; CHECK-NEXT:  [[gc_loaded_val_unwrap:%.*]] = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef [[cache_val_unwrap]], {} addrspace(10)** noundef %i35_unwrap) #{{[0-9]+}}
 ; CHECK-NEXT:  %i38_unwrap = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* [[gc_loaded_val_unwrap]], i64 1
