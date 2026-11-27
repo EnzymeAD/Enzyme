@@ -81,8 +81,8 @@ contains
     real, intent(in) :: c
     integer :: i
     ! TODO: Use the `dot_product` intrinsic.
-    !       Requires accounting for `_FortranADotProductReal4` for this to work
-    !       at -O0
+    !       Requires accounting for `_FortranADotProductReal4` in reverse mode
+    !       for this to work at -O0
     ! dot = dot_product(a, b) + c
     dot = c
     do i = 1, n
