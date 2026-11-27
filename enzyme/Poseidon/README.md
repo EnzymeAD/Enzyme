@@ -186,9 +186,9 @@ What it keeps for a site or a compile is a state of its own type, which the
 site or the session holds in a slot, made on first use. The session holds the
 states of the other layers the same way: the site records, the launch manifest,
 the cost model and the pins.
-Each unit writes its own part of the explanation of a solve; the explanation
-(`Solve/Explain.cpp`) words a remark by the kind the unit gives a candidate,
-one of the kinds its schema lists.
+Each unit writes its own part of the explanation of a solve and words the
+remarks of its own candidates; the explanation (`Solve/Explain.cpp`) adds what
+every kind of candidate has.
 
 ### Passes
 

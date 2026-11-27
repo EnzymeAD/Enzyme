@@ -180,8 +180,7 @@ foreach(_runtime CUDA HIP TCEC)
 endforeach()
 
 # How a HIP source is compiled: by the clang the plugin is built against, for
-# POSEIDON_AMDGPU_ARCH. HIP marks its error type nodiscard; the sources drop
-# the same results their CUDA builds drop.
+# POSEIDON_AMDGPU_ARCH.
 if(POSEIDON_HAS_HIP)
   # DeviceApi.h, which every GPU runtime source includes, includes hipBLAS.
   if(NOT EXISTS ${POSEIDON_ROCM_PATH}/lib/libhipblas.so)
@@ -197,8 +196,7 @@ if(POSEIDON_HAS_HIP)
       --offload-arch=${POSEIDON_AMDGPU_ARCH}
       --rocm-path=${POSEIDON_ROCM_PATH}
       -std=c++17
-      -O3
-      -Wno-unused-value)
+      -O3)
 endif()
 
 # The Enzyme plugin of this build, which differentiates the profiling probes,

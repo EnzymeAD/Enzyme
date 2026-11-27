@@ -190,8 +190,8 @@ static void setFullWillReturn(Function *NewF) {
   }
 }
 
-// Copies of Enzyme's loop canonicalization, which is defined in Enzyme's
-// plugin, and a profile-use compile loads this plugin without it.
+// Copies of Enzyme's loop canonicalization: Enzyme's plugin defines it, and a
+// profile-use compile loads this plugin without Enzyme's.
 static std::pair<PHINode *, Instruction *>
 insertNewCanonicalIV(Loop *L, Type *Ty, const Twine &Name) {
   BasicBlock *Header = L->getHeader();
