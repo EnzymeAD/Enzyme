@@ -288,7 +288,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
           if (!lookup)
             os << "gutils->extractMeta(" << builder << ", ";
           else
-            os << builder << ".CreateExtractValue(";
+            os << "GradientUtils::extractElementOrValue(" << builder << ", ";
         }
 
         if (lookup && intrinsic != MLIRDerivatives)
@@ -752,6 +752,14 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             "{(llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
          << rvalue->getValue()
          << "\"), (llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
+         << ivalue->getValue() << "\")});\n"
+         << curIndent << INDENT
+         << "} else if (auto VT = dyn_cast<FixedVectorType>(ty)) {\n"
+         << curIndent << INDENT << INDENT
+         << "ret = ConstantVector::get("
+            "{(llvm::Constant*)ConstantFP::get(VT->getElementType(), \""
+         << rvalue->getValue()
+         << "\"), (llvm::Constant*)ConstantFP::get(VT->getElementType(), \""
          << ivalue->getValue() << "\")});\n";
       os << curIndent << INDENT << "} else {\n";
       os << curIndent << INDENT << "  llvm::errs() << *ty << \"\\n\";\n";
@@ -845,35 +853,98 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op shadow supported");
 
+      if (!resultRoot->getArgName(0))
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand in shadow") +
+                            resultTree->getAsString());
+
+      auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+      auto [ord, isVec, ext, isva] =
+          nameToOrdinal.lookup(name, pattern, resultTree);
+      assert(!isVec);
+      assert(!isva);
+
+      if (ext.size() && intrinsic != MLIRDerivatives) {
+        std::string extStr;
+        for (unsigned i = 0; i < ext.size(); i++) {
+          if (i != 0)
+            extStr += ", ";
+          extStr += std::to_string(ext[i]);
+        }
+        os << "({\n";
+        os << curIndent << INDENT << "Value *subOrig = gutils->extractMeta("
+           << builder << ", " << ord << ", ArrayRef<unsigned>({" << extStr
+           << "}), \"\", /*fallback=*/false);\n";
+        os << curIndent << INDENT << "Value *shadowRes = nullptr;\n";
+        os << curIndent << INDENT << "if (subOrig) {\n";
+        os << curIndent << INDENT << INDENT << "shadowRes = ";
+        if (lookup)
+          os << "lookup(";
+        os << "gutils->invertPointerM(subOrig, " << builder << ", TR.query(&"
+           << origName << "))";
+        if (lookup)
+          os << ", " << builder << ")";
+        os << ";\n";
+        os << curIndent << INDENT << "} else {\n";
+        os << curIndent << INDENT << INDENT << "Value *aggShadow = ";
+        if (lookup)
+          os << "lookup(";
+        os << "gutils->invertPointerM(" << ord << ", " << builder
+           << ", TR.query(&" << origName << "))";
+        if (lookup)
+          os << ", " << builder << ")";
+        os << ";\n";
+        os << curIndent << INDENT << INDENT
+           << "if (gutils->getWidth() == 1) {\n";
+        os << curIndent << INDENT << INDENT << INDENT << "shadowRes = "
+           << (lookup ? "GradientUtils::extractElementOrValue("
+                      : "gutils->extractMeta(")
+           << builder << ", aggShadow, ArrayRef<unsigned>({" << extStr
+           << "}));\n";
+        os << curIndent << INDENT << INDENT << "} else {\n";
+        os << curIndent << INDENT << INDENT << INDENT
+           << "shadowRes = UndefValue::get(gutils->getShadowType("
+              "gutils->extractMeta("
+           << ord << "->getType(), ArrayRef<unsigned>({" << extStr
+           << "}))));\n";
+        os << curIndent << INDENT << INDENT << INDENT
+           << "for (unsigned int idx = 0, W = gutils->getWidth(); idx < W; "
+              "idx++) {\n";
+        os << curIndent << INDENT << INDENT << INDENT << INDENT
+           << "Value *elem = "
+           << (lookup ? "GradientUtils::extractElementOrValue("
+                      : "gutils->extractMeta(")
+           << builder << ", aggShadow, ArrayRef<unsigned>({idx, " << extStr
+           << "}));\n";
+        os << curIndent << INDENT << INDENT << INDENT << INDENT
+           << "shadowRes = " << builder
+           << ".CreateInsertValue(shadowRes, elem, {idx});\n";
+        os << curIndent << INDENT << INDENT << INDENT << "}\n";
+        os << curIndent << INDENT << INDENT << "}\n";
+        os << curIndent << INDENT << "}\n";
+        os << curIndent << INDENT << "shadowRes;\n";
+        os << curIndent << "})";
+        return true;
+      }
+
       if (lookup)
         os << "lookup(";
       os << "gutils->invertPointerM(";
 
-      if (resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext, isva] =
-            nameToOrdinal.lookup(name, pattern, resultTree);
-        assert(!isVec);
-        assert(!isva);
+      if (ext.size())
+        os << "gutils->extractMeta(" << builder << ",";
+      os << ord;
 
-        if (ext.size())
-          os << "gutils->extractMeta(" << builder << ",";
-        os << ord;
-
-        if (ext.size()) {
-          os << ", ArrayRef<unsigned>({";
-          for (unsigned i = 0; i < ext.size(); i++) {
-            if (i != 0)
-              os << ", ";
-            os << std::to_string(ext[i]);
-          }
-          os << "}))";
+      if (ext.size()) {
+        os << ", ArrayRef<unsigned>({";
+        for (unsigned i = 0; i < ext.size(); i++) {
+          if (i != 0)
+            os << ", ";
+          os << std::to_string(ext[i]);
         }
+        os << "}))";
+      }
 
-      } else
-        PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand in shadow") +
-                            resultTree->getAsString());
       os << ", " << builder;
       if (intrinsic != MLIRDerivatives)
         os << ", TR.query(&" << origName << ")";
@@ -886,6 +957,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       bool useStruct = Def->getValueAsBit("struct");
       bool useRetType = Def->getValueAsBit("useRetType");
+      int useArgType =
+          Def->getValue("useArgType") ? Def->getValueAsInt("useArgType") : -1;
 
       SmallVector<bool, 1> vectorValued = prepareArgs(
           curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
@@ -903,6 +976,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (useRetType) {
         os << (origName == "<ILLEGAL>" ? "call" : origName) << ".getType()";
+      } else if (useArgType >= 0) {
+        os << (origName == "<ILLEGAL>" ? "call" : origName) << ".getOperand("
+           << useArgType << ")->getType()";
       } else {
         if (useStruct)
           os << "StructType::get(gutils->newFunc->getContext(), "
@@ -939,13 +1015,13 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << curIndent << INDENT << INDENT << "{\n";
         os << curIndent << INDENT << INDENT << INDENT
            << "std::vector<unsigned> idxs;\n";
-        if (vectorValued[i])
+        if (anyVector)
           os << curIndent << INDENT << INDENT << INDENT
              << "if (gutils->getWidth() != 1) idxs.push_back(idx);\n";
         os << curIndent << INDENT << INDENT << INDENT << "idxs.push_back(" << i
            << ");\n";
-        os << curIndent << INDENT << INDENT << INDENT << "res = " << builder
-           << ".CreateInsertValue(res, ";
+        os << curIndent << INDENT << INDENT << INDENT
+           << "res = GradientUtils::insertMeta(" << builder << ", res, ";
         if (vectorValued[i])
           os << "(gutils->getWidth() == 1) ? " << argPattern << "_" << i
              << " : gutils->extractMeta(" << builder << ", " << argPattern
@@ -1007,8 +1083,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                   os << curIndent << INDENT << "Value* local_"
                      << ptree->getArgNameStr(i) << " = ";
                   if (!vectorValued[next[0]]) {
-                    os << builder << ".CreateExtractValue(" << op
-                       << ", ArrayRef<unsigned>({";
+                    os << "GradientUtils::extractElementOrValue(" << builder
+                       << ", " << op << ", ArrayRef<unsigned>({";
                     for (unsigned i = 1; i < next.size(); i++) {
                       if (i != 1)
                         os << ", ";
