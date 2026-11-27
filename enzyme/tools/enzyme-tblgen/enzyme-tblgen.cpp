@@ -384,7 +384,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (retidx_cur.size() == 0) {
         os << "dif";
       } else {
-        os << "({\n";
+        os << "[&]() {\n";
         os << curIndent << INDENT
            << "Value *out = UndefValue::get(gutils->getShadowType(getSubType("
            << origName << ".getType()";
@@ -417,7 +417,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
            << "out = (gutils->getWidth() > 1) ? "
               "Builder2.CreateInsertValue(out, prev, idx) : prev;\n";
         os << curIndent << INDENT << INDENT << "}\n";
-        os << curIndent << INDENT << "out; })\n";
+        os << curIndent << INDENT << "return out; }()\n";
       }
       return true;
     } else if (opName == "TypeOf" || Def->isSubClassOf("TypeOf")) {
@@ -474,7 +474,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         "only two/three op StaticSelect supported");
 
-      os << "({\n";
+      os << "[&]() {\n";
       os << curIndent << INDENT << "// Computing " << opName << "\n";
       if (intrinsic == MLIRDerivatives)
         os << curIndent << INDENT << "mlir::Value imVal = ";
@@ -513,10 +513,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       bool complexExpr = conditionStr.contains(';');
       if (complexExpr)
-        os << "({\n";
+        os << "[&]() {\n";
       os << conditionStr;
       if (complexExpr)
-        os << "\n" << curIndent << INDENT << "})";
+        os << "\n" << curIndent << INDENT << "}()";
 
       os << ";\n";
 
@@ -586,8 +586,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << curIndent << INDENT << "}\n";
       }
 
-      os << curIndent << INDENT << "imVal;\n";
-      os << curIndent << INDENT << "})";
+      os << curIndent << INDENT << "return imVal;\n";
+      os << curIndent << INDENT << "}()";
 
       return any_vector;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
@@ -722,7 +722,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (!ivalue)
         PrintFatalError(pattern->getLoc(), Twine("'ivalue' not defined in ") +
                                                resultTree->getAsString());
-      os << "({\n";
+      os << "[&]() {\n";
       os << curIndent << INDENT << "auto ty = ";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
@@ -757,8 +757,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "  llvm::errs() << *ty << \"\\n\";\n";
       os << curIndent << INDENT << "  assert(0 && \"unhandled cfp\");\n";
       os << curIndent << INDENT << "}\n";
-      os << curIndent << INDENT << "ret;\n";
-      os << curIndent << "})\n";
+      os << curIndent << INDENT << "return ret;\n";
+      os << curIndent << "}()\n";
       return false;
     } else if (opName == "ConstantInt" || Def->isSubClassOf("ConstantInt")) {
 
@@ -817,10 +817,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                         Twine("string 'value' not defined in ") +
                             resultTree->getAsString());
       if (value->getValue().contains(';'))
-        os << "({ ";
+        os << "[&]() { ";
       os << value->getValue();
       if (value->getValue().contains(';'))
-        os << " })";
+        os << " }()";
       return false;
     } else if (opName == "Undef" || Def->isSubClassOf("Undef")) {
       if (resultRoot->getNumArgs() != 1)
@@ -882,7 +882,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << ", " << builder << ")";
       return true;
     } else if (Def->isSubClassOf("MultiReturn")) {
-      os << "({\n";
+      os << "[&]() {\n";
 
       bool useStruct = Def->getValueAsBit("struct");
       bool useRetType = Def->getValueAsBit("useRetType");
@@ -956,8 +956,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << curIndent << INDENT << INDENT << "}\n";
       }
       os << curIndent << INDENT << "}\n";
-      os << curIndent << INDENT << " res;\n";
-      os << curIndent << "})";
+      os << curIndent << INDENT << "return res;\n";
+      os << curIndent << "}()";
       return anyVector;
     } else if (Def->isSubClassOf("SubRoutine")) {
       auto npattern = Def->getValueAsDag("PatternToMatch");
@@ -972,7 +972,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                         Twine("pattern 'insts' not defined in ") +
                             resultTree->getAsString());
 
-      os << "({\n";
+      os << "[&]() {\n";
       os << curIndent << INDENT << "// Computing subroutine " << opName << "\n";
       SmallVector<bool, 1> vectorValued = prepareArgs(
           curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
@@ -1067,7 +1067,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       ArrayRef<unsigned> nretidx{};
 
-      os << curIndent << INDENT;
+      os << curIndent << INDENT << "return ";
       bool anyVector2 =
           handle(curIndent + INDENT, argPattern + "_sr", os, pattern, insts,
                  builder, nnameToOrdinal, /*lookup*/ false, nretidx,
@@ -1075,11 +1075,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       (void)anyVector2;
       assert(anyVector == anyVector2);
       os << ";\n";
-      os << curIndent << "})";
+      os << curIndent << "}()";
       return anyVector;
     } else if (Def->isSubClassOf("Inst")) {
 
-      os << "({\n";
+      os << "[&]() {\n";
       os << curIndent << INDENT << "// Computing " << opName << "\n";
       SmallVector<bool, 1> vectorValued = prepareArgs(
           curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
@@ -1126,6 +1126,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "CallInst *V = ";
       } else if (anyVector && intrinsic != MLIRDerivatives) {
         os << "Value *V = ";
+      } else {
+        os << "return ";
       }
 
       if (isCall) {
@@ -1249,11 +1251,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
            << ".CreateInsertValue(res, V, {idx});\n";
         os << curIndent << INDENT << INDENT << "}\n";
         os << curIndent << INDENT "}\n";
-        os << curIndent << INDENT << "res;\n";
+        os << curIndent << INDENT << "return res;\n";
       } else if (isCall)
-        os << curIndent << INDENT << "V;\n";
+        os << curIndent << INDENT << "return V;\n";
 
-      os << curIndent << "})";
+      os << curIndent << "}()";
       return anyVector;
     }
     errs() << *resultRoot << "\n";
@@ -1439,7 +1441,7 @@ void handleUse(
 
     bool complexExpr = StringRef(conditionStr).contains(';');
     if (complexExpr) {
-      conditionStr = " ({ " + conditionStr + " }) ";
+      conditionStr = " [&]() { " + conditionStr + " }() ";
     }
 
     for (size_t i = numArgs == 3; i < numArgs; ++i) {
