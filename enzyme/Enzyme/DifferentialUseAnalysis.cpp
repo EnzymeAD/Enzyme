@@ -563,9 +563,10 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
+    llvm::StringRef canonMPIName = canonicalizeMPIName(funcName);
+
     // Only need primal (and shadow) request for reverse, or shadow buffer
-    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
-        funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
+    if (canonMPIName == "MPI_Isend" || canonMPIName == "MPI_Irecv") {
       if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
         return false;
 
@@ -576,7 +577,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
       if (shadow && val == CI->getArgOperand(0)) {
-        if ((funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") &&
+        if (canonMPIName == "MPI_Irecv" &&
             mode != DerivativeMode::ReverseModeGradient) {
           // Need shadow buffer for forward pass of ireceive
           if (EnzymePrintDiffUse)
@@ -584,7 +585,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                          << *val << " in reverse as shadow MPI " << *CI << "\n";
           return true;
         }
-        if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
+        if (canonMPIName == "MPI_Isend") {
           // Need shadow buffer for forward or reverse pass of isend
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
@@ -608,19 +609,19 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         }
 
       // Only need the primal request.
-      if (funcName == "MPI_Wait" || funcName == "PMPI_Wait")
+      if (canonMPIName == "MPI_Wait")
         if (val != CI->getArgOperand(0))
           return false;
 
       // Only need element count for reverse of waitall
-      if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall")
+      if (canonMPIName == "MPI_Waitall")
         if (val != CI->getArgOperand(0) || val != CI->getOperand(1))
           return false;
 
     } else {
       // Don't need shadow of anything (all via cache for reverse),
       // but need shadow of request for primal.
-      if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
+      if (canonMPIName == "MPI_Wait") {
         if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
           return false;
         // Need shadow request in forward pass only
@@ -638,7 +639,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // Since adjoint of barrier is another barrier in reverse
     // we still need even if instruction is inactive
     if (!shadow)
-      if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier") {
+      if (funcName == "__kmpc_barrier" || canonMPIName == "MPI_Barrier") {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need direct primal of " << *val
                        << " in reverse from barrier " << *user << "\n";
