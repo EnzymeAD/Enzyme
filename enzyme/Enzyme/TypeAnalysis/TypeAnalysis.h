@@ -451,6 +451,25 @@ public:
 
 TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer = true);
+TypeTree defaultTypeTreeForLLVM(llvm::Type *ElementType,
+                                const llvm::DataLayout &Layout,
+                                llvm::Instruction *Origin = nullptr,
+                                bool IntIsPointer = true);
+/// Fill uncovered leaf and padding byte ranges from `ValueType`'s LLVM IR
+/// layout when `AllowWideIntegers` holds or every uncovered leaf has an
+/// unambiguous IR type (floating-point, pointer, or isolated sub-16-bit
+/// integer).
+TypeTree augmentTypeTreeFromLLVM(const TypeTree &KnownTypes,
+                                 llvm::Type *ValueType,
+                                 const llvm::DataLayout &Layout,
+                                 llvm::Instruction *Origin = nullptr,
+                                 bool AllowWideIntegers = false,
+                                 const llvm::MDNode *TrueTypeMetadata = nullptr,
+                                 bool *WasCompletelyUnknown = nullptr);
+/// Whether every byte of `ValueType` in `Tree` is proven non-pointer and at
+/// least one byte is floating-point.
+bool isKnownNonPointerWithFloat(const TypeTree &Tree, llvm::Type *ValueType,
+                                const llvm::DataLayout &Layout);
 FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
                                     llvm::Function *todiff);
 #endif

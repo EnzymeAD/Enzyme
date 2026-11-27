@@ -1457,8 +1457,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #endif
   }
 
-  if (!op->getType()->isFPOrFPVectorTy() && !gutils->isConstantValue(op) &&
-      gutils->TR.anyPointer(op)) {
+  if (!gutils->isConstantValue(op) && gutils->canContainPointer(op)) {
     modifyPrimal = true;
 
 #ifdef PRINT_AUGCALL
@@ -1482,11 +1481,8 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
       continue;
     }
 
-    auto argType = op->getArgOperand(i)->getType();
-
-    if (!argType->isFPOrFPVectorTy() &&
-        !gutils->isConstantValue(op->getArgOperand(i)) &&
-        gutils->TR.anyPointer(op->getArgOperand(i))) {
+    if (!gutils->isConstantValue(op->getArgOperand(i)) &&
+        gutils->canContainPointer(op->getArgOperand(i))) {
       if (!isReadOnly(op, i)) {
         modifyPrimal = true;
 #ifdef PRINT_AUGCALL
