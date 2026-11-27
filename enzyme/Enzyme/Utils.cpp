@@ -25,6 +25,7 @@
 #include "Utils.h"
 #include "CApi.h"
 #include "GradientUtils.h"
+#include "Locks.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -462,6 +463,14 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "_FortranAGetGID",
   };
   if (llvm::is_contained(FlangRuntimeQueries, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // Lock and unlock primitives neither free memory nor leak allocations.
+  if (locks::classifyLockCall(name)) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
     F.addAttribute(

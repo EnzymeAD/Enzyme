@@ -58,6 +58,7 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "ActivityAnalysis.h"
+#include "Locks.h"
 #include "Utils.h"
 
 #include "llvm/Demangle/Demangle.h"
@@ -645,6 +646,11 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
       }
     }
   }
+
+  // Lock and unlock primitives carry no derivative data; their locked
+  // section is re-established in the reverse pass (see CallDerivatives).
+  if (locks::classifyLockCall(Name))
+    return true;
 
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
     if (startsWith(Name, FuncName)) {
