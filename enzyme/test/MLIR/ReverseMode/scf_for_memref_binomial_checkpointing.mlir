@@ -20,36 +20,37 @@ module {
 }
 
 // CHECK-LABEL: func.func @main(
+// CHECK-SAME:    %[[ARG0:.+]]: memref<f32>, %[[ARG1:.+]]: memref<f32>,
 
+// Read-only %arg0 is not written in the loop or after it, so only the scalar
+// state and step index need checkpoint buffers (no clone slots or memref.copy).
 // CHECK:         %[[STATE:.+]] = memref.alloc() : memref<3xf32>
 // CHECK-NEXT:    %[[IDX:.+]] = memref.alloc() : memref<3xindex>
-// CHECK-NEXT:    %[[SLOTS:.+]] = memref.alloc() : memref<3xf32>
+// CHECK-NOT:     memref.alloc() : memref<3xf32>
 
-// CHECK:         scf.for %[[K:.+]] = %c0 to %c3 step %c1
+// CHECK:         scf.for %[[K:.+]] = %[[C0:[^ ]+]] to %[[C3:[^ ]+]] step %[[C1:[^ ]+]] iter_args(
 // CHECK:           memref.store {{.*}}, %[[STATE]][%[[K]]]
 // CHECK:           memref.store {{.*}}, %[[IDX]][%[[K]]]
-// CHECK:           %[[FWDSLOT:.+]] = memref.subview %[[SLOTS]][%[[K]]] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      memref.copy %arg0, %[[FWDSLOT]] : memref<f32> to memref<f32, strided<[], offset: ?>>
+// CHECK-NOT:       memref.copy
 
-// CHECK:         %[[WORK:.+]] = memref.alloc() : memref<f32>
-// CHECK-NEXT:    memref.copy %arg0, %[[WORK]]
+// CHECK-NOT:     memref.alloc() : memref<f32>
+// CHECK-NOT:     memref.copy
 
-// CHECK:         scf.for %{{.+}} = %c0 to %c9 step %c1 iter_args(%[[SP:.+]] = %c3
-// CHECK-NEXT:      %[[CAPO:.+]] = arith.subi %[[SP]], %c1 : index
+// CHECK:         scf.for %{{.+}} = %[[C0]] to %[[C9:.+]] step %[[C1]] iter_args(%[[SP:.+]] = %[[C3]]
+// CHECK-NEXT:      %[[CAPO:.+]] = arith.subi %[[SP]], %[[C1]] : index
 // CHECK:           memref.load %[[STATE]][%[[CAPO]]]
 // CHECK:           memref.load %[[IDX]][%[[CAPO]]]
-// CHECK:           %[[REVSLOT:.+]] = memref.subview %[[SLOTS]][%[[CAPO]]] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      memref.copy %[[REVSLOT]], %[[WORK]] : memref<f32, strided<[], offset: ?>> to memref<f32>
+// CHECK-NOT:       memref.copy
 
 // CHECK:           scf.while ({{.*}}%[[ACAPO:.+]] = %[[CAPO]]
 // CHECK:             memref.store {{.*}}, %[[IDX]][%[[ACAPO]]]
-// CHECK:             %[[ACSLOT:.+]] = memref.subview %[[SLOTS]][%[[ACAPO]]] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:        memref.copy %[[WORK]], %[[ACSLOT]] : memref<f32> to memref<f32, strided<[], offset: ?>>
-// The replay reads the working clone, never a checkpoint slot.
-// CHECK:             memref.load %[[WORK]][] : memref<f32>
+// CHECK-NOT:         memref.copy
+// The replay reads the original read-only memref directly.
+// CHECK:             memref.load %[[ARG0]][] : memref<f32>
+
+// CHECK:         memref.load %[[ARG1]][] : memref<f32>
+// CHECK:         memref.store {{.*}}, %[[ARG1]][] : memref<f32>
 
 // CHECK:         memref.dealloc %[[STATE]] : memref<3xf32>
 // CHECK-NEXT:    memref.dealloc %[[IDX]] : memref<3xindex>
-// CHECK-NEXT:    memref.dealloc %[[WORK]] : memref<f32>
-// CHECK-NEXT:    memref.dealloc %[[SLOTS]] : memref<3xf32>
 // CHECK-NEXT:    return
