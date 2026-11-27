@@ -22,6 +22,12 @@ entry:
   ret void
 }
 
+define dso_local void @dmemcpy_const_src(double* %dst, double* %dstp, double* %src, i64 %n) local_unnamed_addr #0 {
+entry:
+  tail call void (...) @__enzyme_autodiff.f64(void (double*, double*, i64)* nonnull @memcpy_float, metadata !"enzyme_runtime_activity", double* %dst, double* %dstp, metadata !"enzyme_const", double* %src, i64 %n) #3
+  ret void
+}
+
 declare void @__enzyme_autodiff.f64(...) local_unnamed_addr
 
 attributes #0 = { nounwind uwtable }
@@ -94,5 +100,14 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br i1 [[loop_exit]], label %for.end, label %for.body
 
 ; CHECK: for.end:                                          ; preds = %for.body, %memset_dst, %entry
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
+
+; CHECK: define internal {{(dso_local )?}}void @diffememcpy_float.1(ptr nocapture %dst, ptr nocapture %"dst'", ptr nocapture readonly %src, i64 %num)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 %num, i1 false)
+; CHECK-NEXT:   [[dst_inactive_c:%.*]] = icmp eq ptr %"dst'", %dst
+; CHECK-NEXT:   [[len_c:%.*]] = select i1 [[dst_inactive_c]], i64 0, i64 %num
+; CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr align 1 %"dst'", i8 0, i64 [[len_c]], i1 false)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
