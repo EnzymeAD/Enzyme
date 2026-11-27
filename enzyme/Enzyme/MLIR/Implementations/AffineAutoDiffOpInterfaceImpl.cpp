@@ -32,6 +32,34 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::affine;
 
+static Region *getInsertionAffineScope(OpBuilder &builder) {
+  auto *block = builder.getInsertionBlock();
+  if (!block)
+    return nullptr;
+  auto *parentOp = block->getParentOp();
+  if (!parentOp)
+    return nullptr;
+  if (parentOp->hasTrait<OpTrait::AffineScope>())
+    return block->getParent();
+  return affine::getAffineScope(parentOp);
+}
+
+static bool areValidAffineBoundOperands(AffineMap map, ValueRange operands,
+                                        Region *scope) {
+  if (!scope)
+    return false;
+  unsigned numDims = map.getNumDims();
+  if (operands.size() != numDims + map.getNumSymbols())
+    return false;
+  for (Value dim : operands.take_front(numDims))
+    if (!affine::isValidDim(dim, scope))
+      return false;
+  for (Value sym : operands.drop_front(numDims))
+    if (!affine::isValidSymbol(sym, scope))
+      return false;
+  return true;
+}
+
 namespace {
 
 affine::AffineForOp
@@ -646,41 +674,52 @@ struct AffineForOpInterfaceReverse
       }
     }
 
-    auto revFor = affine::AffineForOp::create(
-        builder, op->getLoc(), revLBOperands, lb.getMap(), revUBOperands,
-        ub.getMap(), forOp.getStepAsInt(), incomingGradients);
-    preserveAttributesButCheckpointing(revFor, op);
+    Region *scope = getInsertionAffineScope(builder);
+    bool validAffineBounds =
+        areValidAffineBoundOperands(lb.getMap(), revLBOperands, scope) &&
+        areValidAffineBoundOperands(ub.getMap(), revUBOperands, scope);
+
+    Operation *revForOp = nullptr;
+    if (validAffineBounds) {
+      auto revFor = affine::AffineForOp::create(
+          builder, op->getLoc(), revLBOperands, lb.getMap(), revUBOperands,
+          ub.getMap(), forOp.getStepAsInt(), incomingGradients);
+      preserveAttributesButCheckpointing(revFor, op);
+      revForOp = revFor;
+    } else {
+      auto lbExpanded = affine::expandAffineMap(builder, op->getLoc(),
+                                                lb.getMap(), revLBOperands);
+      auto ubExpanded = affine::expandAffineMap(builder, op->getLoc(),
+                                                ub.getMap(), revUBOperands);
+      assert(lbExpanded && ubExpanded && lbExpanded->size() == 1 &&
+             ubExpanded->size() == 1 && "expected single-result affine bounds");
+      Value stepVal = arith::ConstantIndexOp::create(builder, op->getLoc(),
+                                                     forOp.getStepAsInt());
+      auto revFor =
+          scf::ForOp::create(builder, op->getLoc(), (*lbExpanded)[0],
+                             (*ubExpanded)[0], stepVal, incomingGradients);
+      preserveAttributesButCheckpointing(revFor, op);
+      revForOp = revFor;
+    }
 
     bool valid = true;
     for (auto &&[oldReg, newReg] :
-         llvm::zip(op->getRegions(), revFor->getRegions())) {
+         llvm::zip(op->getRegions(), revForOp->getRegions())) {
       for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
         OpBuilder bodyBuilder(&revBB, revBB.end());
 
         // Create implicit terminator if not present (when num results > 0)
         if (revBB.empty()) {
-          affine::AffineYieldOp::create(bodyBuilder, revFor->getLoc());
+          if (validAffineBounds)
+            affine::AffineYieldOp::create(bodyBuilder, revForOp->getLoc());
+          else
+            scf::YieldOp::create(bodyBuilder, revForOp->getLoc());
         }
+
+        bodyBuilder.setInsertionPointToStart(&revBB);
+        mlir::enzyme::localizeGradients(bodyBuilder, gutils, &oBB);
+
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
-
-        // All values defined in the body should have no use outside this block
-        // therefore we can set their diffe to zero upon entering the reverse
-        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
-        for (auto operand : oBB.getArguments().slice(1)) {
-          if (!gutils->isConstantValue(operand)) {
-            gutils->zeroDiffe(operand, bodyBuilder);
-          }
-        }
-
-        for (auto &it : oBB.getOperations()) {
-          for (auto res : it.getResults()) {
-            if (!gutils->isConstantValue(res)) {
-              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
-              if (iface && !iface.isMutable())
-                gutils->zeroDiffe(res, bodyBuilder);
-            }
-          }
-        }
 
         auto term = oBB.getTerminator();
 
@@ -740,7 +779,7 @@ struct AffineForOpInterfaceReverse
         // Every active carried value has a result in the reverse loop, so
         // advance the index even when the init itself is constant.
         if (!gutils->isConstantValue(arg))
-          gutils->addToDiffe(arg, revFor.getResult(resIdx), builder);
+          gutils->addToDiffe(arg, revForOp->getResult(resIdx), builder);
         resIdx++;
       }
     }
@@ -1081,9 +1120,11 @@ struct AffineLoadOpInterfaceReverse
           retrievedArguments.push_back(retrievedValue);
         }
 
+        Region *scope = getInsertionAffineScope(builder);
+        bool hasIndex = !areValidAffineBoundOperands(loadOp.getAffineMap(),
+                                                     retrievedArguments, scope);
         if (!gutils->AtomicAdd) {
           auto alignAttr = loadOp->getAttrOfType<IntegerAttr>("alignment");
-          bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
           // if index had to be cached, the pop is not necessarily a valid index
           if (hasIndex) {
             SmallVector<Value> indices;
@@ -1115,7 +1156,6 @@ struct AffineLoadOpInterfaceReverse
               storeGradientOp->setAttr("alignment", alignAttr);
           }
         } else {
-          bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
           auto alignAttr = loadOp->getAttrOfType<IntegerAttr>("alignment");
           // if index had to be cached, the pop is not necessarily a valid index
           if (hasIndex) {
@@ -1235,7 +1275,9 @@ struct AffineStoreOpInterfaceReverse
         retrievedArguments.push_back(retrievedValue);
       }
 
-      bool hasIndex = storeOp.getAffineMap().getNumDims() > 0;
+      Region *scope = getInsertionAffineScope(builder);
+      bool hasIndex = !areValidAffineBoundOperands(storeOp.getAffineMap(),
+                                                   retrievedArguments, scope);
       auto alignAttr = storeOp->getAttrOfType<IntegerAttr>("alignment");
 
       if (!iface.isMutable()) {
@@ -1389,6 +1431,10 @@ struct AffineForOpEnzymeOpsRemover
     : public ForLikeEnzymeOpsRemover<AffineForOpEnzymeOpsRemover,
                                      affine::AffineForOp> {
 public:
+  static bool isOtherForOp(Operation *op) {
+    return isa<affine::AffineForOp, scf::ForOp>(op);
+  }
+
   // TODO: support non constant number of iteration by using unknown dimensions
   static std::optional<int64_t>
   getConstantNumberOfIterations(affine::AffineForOp forOp) {
@@ -1444,6 +1490,26 @@ public:
     }
   }
 
+  static SmallVector<IntOrValue, 1> getOtherDimensionBounds(OpBuilder &builder,
+                                                            Operation *op) {
+    if (auto affineFor = dyn_cast<affine::AffineForOp>(op))
+      return getDimensionBounds(builder, affineFor);
+    auto scfFor = cast<scf::ForOp>(op);
+    Value lb = scfFor.getLowerBound(), ub = scfFor.getUpperBound(),
+          step = scfFor.getStep();
+    IntegerAttr lbAttr, ubAttr, stepAttr;
+    if (matchPattern(lb, m_Constant(&lbAttr)) &&
+        matchPattern(ub, m_Constant(&ubAttr)) &&
+        matchPattern(step, m_Constant(&stepAttr))) {
+      return {
+          IntOrValue((ubAttr.getInt() - lbAttr.getInt()) / stepAttr.getInt())};
+    }
+    Value diff = arith::SubIOp::create(builder, scfFor->getLoc(), ub, lb);
+    if (!matchPattern(step, m_One()))
+      diff = arith::DivUIOp::create(builder, scfFor->getLoc(), diff, step);
+    return {IntOrValue(diff)};
+  }
+
   static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
                                                 affine::AffineForOp forOp) {
     Value val = forOp.getBody()->getArgument(0);
@@ -1465,6 +1531,32 @@ public:
       val = arith::DivUIOp::create(builder, forOp->getLoc(), val, step);
     }
     return {val};
+  }
+
+  static SmallVector<Value> getOtherCanonicalLoopIVs(OpBuilder &builder,
+                                                     Operation *op) {
+    if (auto affineFor = dyn_cast<affine::AffineForOp>(op))
+      return getCanonicalLoopIVs(builder, affineFor);
+    auto scfFor = cast<scf::ForOp>(op);
+    Value val = scfFor.getBody()->getArgument(0);
+    if (!matchPattern(scfFor.getLowerBound(), m_Zero()))
+      val = arith::SubIOp::create(builder, scfFor->getLoc(), val,
+                                  scfFor.getLowerBound());
+    if (!matchPattern(scfFor.getStep(), m_One()))
+      val = arith::DivUIOp::create(builder, scfFor->getLoc(), val,
+                                   scfFor.getStep());
+    return {val};
+  }
+
+  static SmallVector<Value>
+  computeOtherReversedIndices(PatternRewriter &rewriter, Operation *op,
+                              ArrayRef<Value> otherInductionVariable,
+                              ArrayRef<IntOrValue> bounds) {
+    return ForLikeEnzymeOpsRemover<
+        AffineForOpEnzymeOpsRemover,
+        affine::AffineForOp>::computeReversedIndices(rewriter, op,
+                                                     otherInductionVariable,
+                                                     bounds);
   }
 
   static IRMapping createArgumentMap(PatternRewriter &rewriter,
@@ -1493,6 +1585,34 @@ public:
     return map;
   }
 
+  static IRMapping createOtherArgumentMap(PatternRewriter &rewriter,
+                                          affine::AffineForOp forOp,
+                                          ArrayRef<Value> indFor,
+                                          Operation *otherForOp,
+                                          ArrayRef<Value> indOther) {
+    if (auto affineOther = dyn_cast<affine::AffineForOp>(otherForOp))
+      return createArgumentMap(rewriter, forOp, indFor, affineOther, indOther);
+    auto scfOther = cast<scf::ForOp>(otherForOp);
+    IRMapping map;
+    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+      map.map(f, o);
+
+    Value canIdx = forOp.getBody()->getArgument(0);
+    if (!map.contains(canIdx)) {
+      Location loc = forOp.getLoc();
+      Value revIV = scfOther.getLowerBound();
+      if (!indOther.empty()) {
+        Value scaled = indOther[0];
+        if (forOp.getStepAsInt() != 1)
+          scaled =
+              arith::MulIOp::create(rewriter, loc, scaled, scfOther.getStep());
+        revIV = arith::AddIOp::create(rewriter, loc, revIV, scaled);
+      }
+      map.map(canIdx, revIV);
+    }
+    return map;
+  }
+
   static affine::AffineForOp
   replaceWithNewOperands(PatternRewriter &rewriter,
                          affine::AffineForOp otherForOp,
@@ -1512,8 +1632,32 @@ public:
     return newOtherForOp;
   }
 
+  static Operation *replaceOtherWithNewOperands(PatternRewriter &rewriter,
+                                                Operation *otherForOp,
+                                                ArrayRef<Value> operands) {
+    if (auto affineOther = dyn_cast<affine::AffineForOp>(otherForOp))
+      return replaceWithNewOperands(rewriter, affineOther, operands)
+          .getOperation();
+    auto scfOther = cast<scf::ForOp>(otherForOp);
+    auto newOtherForOp = scf::ForOp::create(
+        rewriter, scfOther->getLoc(), scfOther.getLowerBound(),
+        scfOther.getUpperBound(), scfOther.getStep(), operands);
+    newOtherForOp->setDiscardableAttrs(
+        scfOther->getDiscardableAttrDictionary());
+    newOtherForOp.getRegion().takeBody(scfOther.getRegion());
+    rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
+                                       0, scfOther->getNumResults()));
+    return newOtherForOp.getOperation();
+  }
+
   static ValueRange getInits(affine::AffineForOp forOp) {
     return forOp.getInits();
+  }
+
+  static ValueRange getOtherInits(Operation *op) {
+    if (auto affineFor = dyn_cast<affine::AffineForOp>(op))
+      return affineFor.getInits();
+    return cast<scf::ForOp>(op).getInitArgs();
   }
 
   static bool mustPostAdd(affine::AffineForOp forOp) { return false; }

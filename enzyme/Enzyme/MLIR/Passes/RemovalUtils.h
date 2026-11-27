@@ -241,28 +241,79 @@ public:
     return false;
   }
 
+  static bool isOtherForOp(Operation *op) { return isa<OpName>(op); }
+
+  static Block *getLoopBody(Operation *op) { return &op->getRegion(0).front(); }
+
+  static SmallVector<IntOrValue, 1> getOtherDimensionBounds(OpBuilder &builder,
+                                                            Operation *op) {
+    return FinalClass::getDimensionBounds(builder, cast<OpName>(op));
+  }
+
+  static SmallVector<Value> getOtherCanonicalLoopIVs(OpBuilder &builder,
+                                                     Operation *op) {
+    return FinalClass::getCanonicalLoopIVs(builder, cast<OpName>(op));
+  }
+
+  static SmallVector<Value>
+  computeOtherReversedIndices(PatternRewriter &rewriter, Operation *op,
+                              ArrayRef<Value> otherInductionVariable,
+                              ArrayRef<IntOrValue> bounds) {
+    return FinalClass::computeReversedIndices(rewriter, cast<OpName>(op),
+                                              otherInductionVariable, bounds);
+  }
+
+  static IRMapping createOtherArgumentMap(PatternRewriter &rewriter,
+                                          OpName forOp, ArrayRef<Value> indFor,
+                                          Operation *otherForOp,
+                                          ArrayRef<Value> indOther) {
+    return FinalClass::createArgumentMap(rewriter, forOp, indFor,
+                                         cast<OpName>(otherForOp), indOther);
+  }
+
+  static ValueRange getOtherInits(Operation *op) {
+    return FinalClass::getInits(cast<OpName>(op));
+  }
+
+  static Operation *replaceOtherWithNewOperands(PatternRewriter &rewriter,
+                                                Operation *otherForOp,
+                                                ArrayRef<Value> operands) {
+    return FinalClass::replaceWithNewOperands(
+               rewriter, cast<OpName>(otherForOp), operands)
+        .getOperation();
+  }
+
   static llvm::SmallVector<mlir::Value>
-  computeReversedIndices(PatternRewriter &rewriter, OpName op,
+  computeReversedIndices(PatternRewriter &rewriter, Operation *op,
                          llvm::ArrayRef<mlir::Value> otherInductionVariable,
                          llvm::ArrayRef<IntOrValue> bounds) {
     llvm::SmallVector<mlir::Value> results;
+    Region *scope = affine::getAffineScope(op);
     for (auto &&[bound, iv] : llvm::zip_equal(bounds, otherInductionVariable)) {
       if (affine::isAffineInductionVar(iv)) {
         AffineExpr reversedIV;
         SmallVector<Value> operands{iv};
+        unsigned numDims = 1;
         unsigned numSymbols = 0;
         AffineExpr ivExpr = rewriter.getAffineDimExpr(0);
 
         if (bound.vval) {
-          AffineExpr boundExpr = rewriter.getAffineSymbolExpr(0);
+          AffineExpr boundExpr;
+          if (affine::isValidDim(bound.vval, scope) &&
+              !affine::isValidSymbol(bound.vval, scope)) {
+            boundExpr = rewriter.getAffineDimExpr(1);
+            numDims = 2;
+          } else {
+            boundExpr = rewriter.getAffineSymbolExpr(0);
+            numSymbols = 1;
+          }
           reversedIV = boundExpr - 1 - ivExpr;
           operands.push_back(bound.vval);
-          numSymbols = 1;
         } else {
           reversedIV = rewriter.getAffineConstantExpr(bound.ival - 1) - ivExpr;
         }
 
-        AffineMap map = AffineMap::get(/*dimCount=*/1, numSymbols, reversedIV);
+        AffineMap map = AffineMap::get(numDims, numSymbols, reversedIV);
         results.push_back(affine::AffineApplyOp::create(rewriter, op->getLoc(),
                                                         map, operands));
         continue;
@@ -303,7 +354,7 @@ public:
       }
     }
 
-    OpName otherForOp = nullptr; // where caches pops are
+    Operation *otherForOp = nullptr; // where caches pops are
 
     // There is support for two push/pop removal modes, one is using immutable
     // tensors, the other uses memrefs. memref is the default, but tensor can be
@@ -341,8 +392,8 @@ public:
 
         cachesMap[pushedValue] = info;
 
-        if (isa<OpName>(info.popOp->getParentOp())) {
-          otherForOp = cast<OpName>(info.popOp->getParentOp());
+        if (FinalClass::isOtherForOp(info.popOp->getParentOp())) {
+          otherForOp = info.popOp->getParentOp();
         }
       }
     });
@@ -472,16 +523,16 @@ public:
         lastFwd = rewriter.getInsertionPoint()->getPrevNode();
       }
 
-      rewriter.setInsertionPointToStart(otherForOp.getBody());
+      rewriter.setInsertionPointToStart(FinalClass::getLoopBody(otherForOp));
       otherInductionVariable =
-          FinalClass::getCanonicalLoopIVs(rewriter, otherForOp);
+          FinalClass::getOtherCanonicalLoopIVs(rewriter, otherForOp);
 
       // The reverse iteration count may not be known at this point, as it may
       // be cached via a push/pop, use the fwd count in that case.
       if (!revNumIters.size()) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(otherForOp);
-        revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
+        revNumIters = FinalClass::getOtherDimensionBounds(rewriter, otherForOp);
         for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
           if (!fwd.vval && rev.vval) {
             rev.vval = nullptr;
@@ -490,9 +541,9 @@ public:
         }
       }
 
-      reversedIndex = FinalClass::computeReversedIndices(
+      reversedIndex = FinalClass::computeOtherReversedIndices(
           rewriter, otherForOp, otherInductionVariable, revNumIters);
-      fwdrevmap = FinalClass::createArgumentMap(
+      fwdrevmap = FinalClass::createOtherArgumentMap(
           rewriter, forOp, inductionVariable, otherForOp, reversedIndex);
       for (auto v : inductionVariable) {
         if (auto op = v.getDefiningOp()) {
@@ -508,10 +559,12 @@ public:
 
     if (hasMinCut(forOp) && caches.size()) {
       mincut = true;
-      mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
+      mlir::enzyme::minCutCache(forOp.getBody(),
+                                FinalClass::getLoopBody(otherForOp), caches,
                                 rewriter, fwdrevmap, lastFwd);
       if (hasLoopInvariantCache(forOp))
-        mlir::enzyme::loopInvariantCache(caches, forOp, otherForOp, fwdrevmap);
+        mlir::enzyme::loopInvariantCache(
+            caches, forOp, cast<LoopLikeOpInterface>(otherForOp), fwdrevmap);
     }
     for (auto v : inductionVariable) {
       if (auto op = v.getDefiningOp()) {
@@ -782,7 +835,7 @@ public:
       if (otherInductionVariable.size()) {
         rewriter.restoreInsertionPoint(revIP);
       } else
-        rewriter.setInsertionPointToStart(otherForOp.getBody());
+        rewriter.setInsertionPointToStart(FinalClass::getLoopBody(otherForOp));
     }
     for (auto &info : caches) {
       if (mincut)
@@ -796,7 +849,7 @@ public:
       if (!revNumIters.size()) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(otherForOp);
-        revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
+        revNumIters = FinalClass::getOtherDimensionBounds(rewriter, otherForOp);
         for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
           if (!fwd.vval && rev.vval) {
             rev.vval = nullptr;
@@ -807,7 +860,7 @@ public:
 
       // First, try to get canonical vars from looking up directly
       if (otherInductionVariable.size() && !reversedIndex.size()) {
-        reversedIndex = FinalClass::computeReversedIndices(
+        reversedIndex = FinalClass::computeOtherReversedIndices(
             rewriter, otherForOp, otherInductionVariable, revNumIters);
       }
 
@@ -816,7 +869,7 @@ public:
         Value zero = arith::ConstantOp::create(rewriter, otherForOp->getLoc(),
                                                rewriter.getIndexAttr(0));
         SmallVector<Value> newOperands =
-            llvm::to_vector(FinalClass::getInits(otherForOp));
+            llvm::to_vector(FinalClass::getOtherInits(otherForOp));
         newOperands.push_back(zero);
 
         otherInductionVariable = {
@@ -836,11 +889,11 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(otherForOp);
-          otherForOp = FinalClass::replaceWithNewOperands(rewriter, otherForOp,
-                                                          newOperands);
+          otherForOp = FinalClass::replaceOtherWithNewOperands(
+              rewriter, otherForOp, newOperands);
         }
 
-        reversedIndex = FinalClass::computeReversedIndices(
+        reversedIndex = FinalClass::computeOtherReversedIndices(
             rewriter, otherForOp, otherInductionVariable, revNumIters);
       }
       reversedIndex = llvm::map_to_vector(reversedIndex, [&rewriter](Value iv) {
