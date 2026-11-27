@@ -698,6 +698,10 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                                "enzymejl_returnRoots_v"));
   }
 
+  // Record whether this function started with a single regular Julia sret at
+  // arg 0 and no enzymejl_returnRoots argument (before srets.clear() below).
+  const bool hadSingleSRetWithoutRoots = (srets.size() == 1 && rroots.empty());
+
   // Regular julia function, needing no intervention
   if (srets.size() == 1) {
     assert(*srets.begin() == 0);
@@ -930,9 +934,33 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     nexti++;
   }
 
-  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+  const bool restoredReturnRoots =
+      hadSingleSRetWithoutRoots && roots_AT != nullptr;
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex)) {
+    if (restoredReturnRoots && attr.isStringAttribute() &&
+        attr.getKindAsString() == "enzyme_parmremove") {
+      SmallVector<StringRef, 4> parts;
+      attr.getValueAsString().split(parts, ',', /*MaxSplit=*/-1,
+                                    /*KeepEmpty=*/false);
+      if (!llvm::is_contained(parts, "0")) {
+        std::string kept;
+        for (StringRef p : parts) {
+          if (p == "1")
+            continue;
+          if (!kept.empty())
+            kept += ",";
+          kept += p.str();
+        }
+        if (!kept.empty())
+          NewAttrs = NewAttrs.addAttribute(
+              F->getContext(), AttributeList::FunctionIndex,
+              Attribute::get(F->getContext(), "enzyme_parmremove", kept));
+        continue;
+      }
+    }
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FunctionIndex, attr);
+  }
   if (sretTy || roots_AT)
     NewAttrs = allowArgumentMemoryWrites(F->getContext(), NewAttrs);
 
