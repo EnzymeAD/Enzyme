@@ -92,9 +92,9 @@ attributes #4 = { nounwind }
 !10 = !{!4, !4, i64 0}
 
 
-; CHECK: define internal double @fwddiffesum_list(%struct.n* noalias readonly %node, %struct.n* %"node'", i64 %times)
+; CHECK: define internal double @fwddiffesum_list({{ptr|%struct.n\*}} noalias readonly %node, {{ptr|%struct.n\*}} %"node'", i64 %times)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %cmp18 = icmp eq %struct.n* %node, null
+; CHECK-NEXT:   %cmp18 = icmp eq {{ptr|%struct.n\*}} %node, null
 ; CHECK-NEXT:   br i1 %cmp18, label %for.cond.cleanup, label %for.cond1.preheader.preheader
 
 ; CHECK: for.cond1.preheader.preheader:                    ; preds = %entry
@@ -102,10 +102,10 @@ attributes #4 = { nounwind }
 
 ; CHECK: for.cond1.preheader:  
 ; CHECK-NEXT:   %[[sum019:.+]] = phi {{(fast )?}}double [ %[[i3:.+]], %for.cond.cleanup4 ], [ 0.000000e+00, %for.cond1.preheader.preheader ]
-; CHECK-NEXT:   %[[dval:.+]] = phi %struct.n* [ %[[ipl4:.+]], %for.cond.cleanup4 ], [ %"node'", %for.cond1.preheader.preheader ]
-; CHECK-NEXT:   %val.020 = phi %struct.n* [ %[[i1:.+]], %for.cond.cleanup4 ], [ %node, %for.cond1.preheader.preheader ]
-; CHECK-NEXT:   %"values'ipg" = getelementptr inbounds %struct.n, %struct.n* %[[dval]], i64 0, i32 0
-; CHECK-NEXT:   %"'ipl" = load double*, double** %"values'ipg", align 8
+; CHECK-NEXT:   %[[dval:.+]] = phi {{ptr|%struct.n\*}} [ %[[ipl4:.+]], %for.cond.cleanup4 ], [ %"node'", %for.cond1.preheader.preheader ]
+; CHECK-NEXT:   %val.020 = phi {{ptr|%struct.n\*}} [ %[[i1:.+]], %for.cond.cleanup4 ], [ %node, %for.cond1.preheader.preheader ]
+; CHECK-NEXT:   %"values'ipg" = getelementptr inbounds %struct.n, {{ptr|%struct.n\*}} %[[dval]], i64 0, i32 0
+; CHECK-NEXT:   %"'ipl" = load {{ptr|double\*}}, {{ptr|double\*\*}} %"values'ipg", align 8
 ; CHECK-NEXT:   br label %for.body5
 
 ; CHECK: for.cond.cleanup.loopexit:                        ; preds = %for.cond.cleanup4
@@ -116,19 +116,19 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   ret double %[[sum0]]
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
-; CHECK-NEXT:   %"next'ipg" = getelementptr inbounds %struct.n, %struct.n* %[[dval]], i64 0, i32 1
-; CHECK-NEXT:   %next = getelementptr inbounds %struct.n, %struct.n* %val.020, i64 0, i32 1
-; CHECK-NEXT:   %[[ipl4]] = load %struct.n*, %struct.n** %"next'ipg", align 8
-; CHECK-NEXT:   %[[i1]] = load %struct.n*, %struct.n** %next, align 8, !tbaa !7
-; CHECK-NEXT:   %cmp = icmp eq %struct.n* %[[i1]], null
+; CHECK-NEXT:   %"next'ipg" = getelementptr inbounds %struct.n, {{ptr|%struct.n\*}} %[[dval]], i64 0, i32 1
+; CHECK-NEXT:   %next = getelementptr inbounds %struct.n, {{ptr|%struct.n\*}} %val.020, i64 0, i32 1
+; CHECK-NEXT:   %[[ipl4]] = load {{ptr|%struct.n\*}}, {{ptr|%struct.n\*\*}} %"next'ipg", align 8
+; CHECK-NEXT:   %[[i1]] = load {{ptr|%struct.n\*}}, {{ptr|%struct.n\*\*}} %next, align 8, !tbaa !7
+; CHECK-NEXT:   %cmp = icmp eq {{ptr|%struct.n\*}} %[[i1]], null
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup.loopexit, label %for.cond1.preheader
 
 ; CHECK: for.body5:                                        ; preds = %for.body5, %for.cond1.preheader
 ; CHECK-NEXT:   %[[sum116:.+]] = phi {{(fast )?}}double [ %[[sum019]], %for.cond1.preheader ], [ %[[i3]], %for.body5 ]
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body5 ], [ 0, %for.cond1.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"'ipl", i64 %iv1
-; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, {{ptr|double\*}} %"'ipl", i64 %iv1
+; CHECK-NEXT:   %[[i2:.+]] = load double, {{ptr|double\*}} %"arrayidx'ipg", align 8
 ; CHECK-NEXT:   %[[i3]] = fadd fast double %[[i2]], %[[sum116]]
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv1, %times
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup4, label %for.body5
