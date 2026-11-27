@@ -529,7 +529,7 @@ runHerbie(const std::vector<std::string> &Cores, const Options &O,
           StringRef Label, HerbieBinaryDigests &Digests) {
   const std::string Program = herbieProgram(O.Herbie);
   const bool Print = O.Diagnostics.Print;
-  const StringRef CacheDir = O.Herbie.Cache;
+  const StringRef CacheDir = O.Cache.Dir;
   const ShardPlan plan = planShards(Cores.size(), O);
   const SmallVector<std::string> command =
       herbieCommand(O, Program, Platform, TaylorTerms, plan);

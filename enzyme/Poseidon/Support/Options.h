@@ -122,7 +122,13 @@ struct ModelOptions {
 #include "Options.def"
 };
 
-/// Herbie and the result cache.
+/// The result cache, and the hand-over of launches to the host half.
+struct CacheOptions {
+#define POSEIDON_CACHE_OPTION POSEIDON_FIELD
+#include "Options.def"
+};
+
+/// Herbie.
 struct HerbieOptions {
 #define POSEIDON_HERBIE_OPTION POSEIDON_FIELD
 #include "Options.def"
@@ -149,6 +155,7 @@ struct Options {
   CandidateOptions Candidates;
   SolverOptions Solver;
   ModelOptions Model;
+  CacheOptions Cache;
   HerbieOptions Herbie;
   MatmulOptions Matmul;
   DiagnosticOptions Diagnostics;

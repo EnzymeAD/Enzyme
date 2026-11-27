@@ -120,8 +120,15 @@ static Error modelError(CostModelState &CM, const Twine &What) {
                                What);
 }
 
+// Whether `T` is the cost-model type column of a number format. The column is
+// read off NumberFormat.def because poseidon-calibrate links this file without
+// Core/NumberFormat.cpp.
 static bool isScalarTypeName(StringRef T) {
-  return is_contained({"bf16", "half", "float", "double", "fp80", "fp128"}, T);
+  static constexpr StringLiteral kCostTypes[] = {
+#define NUMBER_FORMAT(Kind, Name, Dtype, CostType, ...) CostType,
+#include "Core/NumberFormat.def"
+  };
+  return !T.empty() && is_contained(kCostTypes, T);
 }
 
 // Whether `Opcode,Type` is a row family poseidon-calibrate writes, read by a

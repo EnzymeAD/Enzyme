@@ -50,8 +50,8 @@ static StringRef kindName(LaunchKind kind) {
 /// compile, or else the values of every Poseidon flag, which a compile hands
 /// both halves alike.
 static std::string unitName(const Options &O, const Module &M) {
-  if (!O.Herbie.CompilationId.empty())
-    return O.Herbie.CompilationId;
+  if (!O.Cache.CompilationId.empty())
+    return O.Cache.CompilationId;
   if (std::optional<StringRef> cuid = compilationUnitId(M))
     return cuid->str();
   CacheKey options;
@@ -74,8 +74,7 @@ struct Manifest {
 /// The manifest of M, in the -poseidon-launch-dir directory or else the
 /// -poseidon-cache one; none when neither names a directory.
 static std::optional<Manifest> manifestOf(const Options &O, const Module &M) {
-  StringRef dir =
-      O.Herbie.LaunchDir.empty() ? O.Herbie.Cache : O.Herbie.LaunchDir;
+  StringRef dir = O.Cache.LaunchDir.empty() ? O.Cache.Dir : O.Cache.LaunchDir;
   if (dir.empty())
     return std::nullopt;
   Manifest m;

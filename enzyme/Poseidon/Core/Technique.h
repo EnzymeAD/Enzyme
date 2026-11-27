@@ -50,9 +50,9 @@ struct SiteProfileData;
 /// One site's solve: its FP graph, its profile's scale, the units proposed for
 /// it and what each technique keeps for it.
 struct SiteState : FPGraph, AttachedStates {
-  /// The accuracy target written at the site; 0 when the site has none and
-  /// -poseidon-tau applies.
-  double tau = 0.0;
+  /// The accuracy target the site is solved against: the one written at the
+  /// site, else -poseidon-tau; 0 for none.
+  double target = 0.0;
   /// Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
   /// costs carry; the denominator that turns an accuracy cost into a
   /// per-operation relative rounding level.

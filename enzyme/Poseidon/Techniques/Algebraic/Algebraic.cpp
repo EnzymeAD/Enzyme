@@ -161,9 +161,9 @@ static Expected<HerbieAnswers> askHerbie(Session &S,
     if (R.Result == HerbieRunResult::Outcome::Failed)
       return userError(
           F,
-          Twine(O.Herbie.Cache.empty() ? "no cache is kept"
-                                       : "the cache " + O.Herbie.Cache +
-                                             " holds no Herbie answer") +
+          Twine(O.Cache.Dir.empty()
+                    ? "no cache is kept"
+                    : "the cache " + O.Cache.Dir + " holds no Herbie answer") +
               " for " + RunLabel +
               (Program.empty() ? ", and " + kBuiltWithoutHerbie.str()
                                : ", and the Herbie at " + Program +
@@ -1911,7 +1911,7 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     const AlgebraicCandidate &cand = candidates[j];
     Alternative A;
     A.id = candidateId(j);
-    A.item = this;
+    A.unit = this;
     A.index = j;
     fill(A, cand.expr);
     if (cand.CompCost != std::numeric_limits<double>::max()) {
@@ -1982,7 +1982,7 @@ void AlgebraicUnit::remarkApplied(OptimizationRemarkEmitter &ORE,
 
 std::string AlgebraicUnit::rivalReason(const Alternative &A,
                                        const Alternative &Rival) const {
-  if (!isa<AlgebraicUnit>(Rival.item))
+  if (!isa<AlgebraicUnit>(Rival.unit))
     return "";
   return "the selected " + Rival.id + " rewrites the same output";
 }

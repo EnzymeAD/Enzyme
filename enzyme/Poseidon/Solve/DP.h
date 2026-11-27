@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string>
 
 namespace poseidon {
 
@@ -62,6 +63,14 @@ private:
   /// The power of two one cost-model unit is scaled by on the axis.
   int Exponent = 0;
 };
+
+/// Whether the footprints of `a` and `b` keep them out of one strategy: they
+/// overlap and one of the two consumes its footprint.
+bool footprintsConflict(const OptimizationUnit &a, const OptimizationUnit &b);
+
+/// Why the cost `cost`, introduced by `what` ("a cost of"), does not fit the
+/// DP's axis.
+std::string offAxisMessage(llvm::StringRef what, double cost);
 
 /// The frontier: per cost, the least error of a strategy of that cost.
 using CostMap = std::map<DPCost, double>;

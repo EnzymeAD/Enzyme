@@ -129,7 +129,7 @@ static Error keySiteTable(Session &S, const SiteState &st,
     key.add(("-" + name).str(), value);
   // Under a target a matrix product enters with its domain error, sampled
   // over another range by default.
-  if (st.tau > 0.0 || O.Solver.Tau > 0.0)
+  if (st.target > 0.0)
     key.add("matrix product error", "domain error");
 
   std::string candidates;
@@ -141,7 +141,7 @@ static Error keySiteTable(Session &S, const SiteState &st,
   }
   key.addContent("candidate set", candidates);
 
-  SmallString<128> path(O.Herbie.Cache);
+  SmallString<128> path(O.Cache.Dir);
   sys::path::append(path, "dp_" + key.digest() + ".json");
   table.path = path.str().str();
   key.addCompiler(kPassIdentity);
@@ -266,7 +266,7 @@ static void writeDPTable(const Options &O, const Function &F,
     value["baseline_accuracy_cost"] = baseline;
 
   Error E = Error::success();
-  if (std::error_code EC = sys::fs::create_directories(O.Herbie.Cache))
+  if (std::error_code EC = sys::fs::create_directories(O.Cache.Dir))
     E = errorCodeToError(EC);
   else
     E = writeCacheEntry(table.path, table.key, std::move(value));
@@ -444,10 +444,75 @@ solveOrder(const Options &O, ArrayRef<ArrayRef<SiteUnit *>> units) {
   return O.Solver.EarlyPrune ? prunedOrder(sites) : exactOrder(sites);
 }
 
+// The -poseidon-print summary of the frontier of a solve over `units`.
+static void printFrontier(const CostScale &scale,
+                          const CostMap &costToAccuracyMap,
+                          const SolutionMap &costToSolutionMap,
+                          ArrayRef<ArrayRef<SiteUnit *>> units) {
+  size_t numCandidates = 0;
+  double compositions = 1.0;
+  for (ArrayRef<SiteUnit *> site : units)
+    for (const SiteUnit *unit : site) {
+      numCandidates += unit->numCandidates();
+      if (!unit->consumesFootprint())
+        // +1 for the "do nothing" possibility
+        compositions *= unit->numCandidates() + 1;
+    }
+  llvm::errs() << "[poseidon] Critical computation cost range: ["
+               << scale.share(costToAccuracyMap.begin()->first) << ", "
+               << scale.share(costToAccuracyMap.rbegin()->first) << "]\n";
+  llvm::errs() << "[poseidon] DP table contains " << costToAccuracyMap.size()
+               << " entries.\n";
+  if (costToAccuracyMap.size() == 1)
+    noteSinglePointFrontier(costToSolutionMap, numCandidates);
+  llvm::errs() << "[poseidon] Total candidate compositions: " << compositions
+               << '\n';
+  if (costToSolutionMap.count(0) && costToSolutionMap.at(0).empty())
+    llvm::errs() << "[poseidon] the no-op solution (cost budget used 0) is "
+                    "Pareto-optimal\n";
+}
+
+// The -poseidon-print report of the point `best` the target `tau`, or the
+// budget when `tau` is 0, selected from the frontier of the solve of `names`;
+// none when nothing was selected.
+static void printSelection(StringRef names, double tau, double accScale,
+                           double baseline, const CostScale &scale,
+                           const CostMap &costToAccuracyMap,
+                           std::optional<DPCost> best) {
+  if (tau > 0.0) {
+    if (!best) {
+      double bestAchievable = std::numeric_limits<double>::infinity();
+      for (const auto &pair : costToAccuracyMap)
+        bestAchievable = std::min(bestAchievable, pair.second);
+      llvm::errs() << "[poseidon] No solution found that meets accuracy "
+                      "tolerance "
+                   << tau << "; the best relative accuracy in the DP table "
+                   << "is " << (baseline + bestAchievable) / accScale << '\n';
+      return;
+    }
+    const double accCost = costToAccuracyMap.at(*best);
+    llvm::errs() << "[poseidon] " << names << ": tau=" << tau
+                 << " S=" << accScale << " A0=" << baseline
+                 << " selected cost=" << scale.share(*best)
+                 << " accCost=" << accCost
+                 << " rel=" << (baseline + accCost) / accScale << '\n';
+    return;
+  }
+  if (!best) {
+    llvm::errs() << "[poseidon] No solution found within the computation "
+                    "cost budget\n";
+    return;
+  }
+  llvm::errs() << "[poseidon] Minimum accuracy cost within budget: "
+               << costToAccuracyMap.at(*best) << '\n';
+  llvm::errs() << "[poseidon] Computation cost budget used: "
+               << scale.share(*best) << '\n';
+}
+
 Expected<SmallVector<SolutionStep>>
 solveSites(Session &S, ArrayRef<SiteState *> sites,
-           ArrayRef<ArrayRef<SiteUnit *>> units, double tau, bool joint,
-           SolveRecord *record) {
+           ArrayRef<ArrayRef<SiteUnit *>> units, const CostScale &scale,
+           double accScale, double tau, bool joint, SolveRecord *record) {
   const Options &O = S.Opts;
   const bool print = O.Diagnostics.Print;
   // Only a single site's table is cached: the key names one site's candidates.
@@ -456,16 +521,11 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                        : nullptr;
 
   std::string names;
-  double profiledCost = 0.0;
-  double accScale = 0.0;
   for (SiteState *st : sites) {
     if (!names.empty())
       names += ",";
     names += st->F->getName().str();
-    profiledCost += st->profiledCost;
-    accScale += st->accScale;
   }
-  const CostScale scale(profiledCost);
 
   if (print) {
     llvm::errs() << "[poseidon] Starting accuracy DP solver";
@@ -537,29 +597,8 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
     record->baseline = baseline;
   }
 
-  size_t numCandidates = 0;
-  double compositions = 1.0;
-  for (ArrayRef<SiteUnit *> site : units)
-    for (const SiteUnit *unit : site) {
-      numCandidates += unit->numCandidates();
-      if (!unit->consumesFootprint())
-        // +1 for the "do nothing" possibility
-        compositions *= unit->numCandidates() + 1;
-    }
-  if (print) {
-    llvm::errs() << "[poseidon] Critical computation cost range: ["
-                 << scale.share(costToAccuracyMap.begin()->first) << ", "
-                 << scale.share(costToAccuracyMap.rbegin()->first) << "]\n";
-    llvm::errs() << "[poseidon] DP table contains " << costToAccuracyMap.size()
-                 << " entries.\n";
-    if (costToAccuracyMap.size() == 1)
-      noteSinglePointFrontier(costToSolutionMap, numCandidates);
-    llvm::errs() << "[poseidon] Total candidate compositions: " << compositions
-                 << '\n';
-    if (costToSolutionMap.count(0) && costToSolutionMap.at(0).empty())
-      llvm::errs() << "[poseidon] the no-op solution (cost budget used 0) is "
-                      "Pareto-optimal\n";
-  }
+  if (print)
+    printFrontier(scale, costToAccuracyMap, costToSolutionMap, units);
 
   if (tau > 0.0) {
     if (unpriced && !loadedFromCache && print)
@@ -586,39 +625,11 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
                                : admits(cost, acc) ? PointVerdict::Outranked
                                                    : PointVerdict::Excluded;
 
-  if (tau > 0.0) {
-    if (!best) {
-      double bestAchievable = std::numeric_limits<double>::infinity();
-      for (const auto &pair : costToAccuracyMap)
-        bestAchievable = std::min(bestAchievable, pair.second);
-      if (print)
-        llvm::errs() << "[poseidon] No solution found that meets accuracy "
-                        "tolerance "
-                     << tau << "; the best relative accuracy in the DP table "
-                     << "is " << (baseline + bestAchievable) / accScale << '\n';
-      return SmallVector<SolutionStep>();
-    }
-    const double accCost = costToAccuracyMap.at(*best);
-    if (print)
-      llvm::errs() << "[poseidon] " << names << ": tau=" << tau
-                   << " S=" << accScale << " A0=" << baseline
-                   << " selected cost=" << scale.share(*best)
-                   << " accCost=" << accCost
-                   << " rel=" << (baseline + accCost) / accScale << '\n';
-  } else {
-    if (!best) {
-      if (print)
-        llvm::errs() << "[poseidon] No solution found within the computation "
-                        "cost budget\n";
-      return SmallVector<SolutionStep>();
-    }
-    if (print) {
-      llvm::errs() << "[poseidon] Minimum accuracy cost within budget: "
-                   << costToAccuracyMap.at(*best) << '\n';
-      llvm::errs() << "[poseidon] Computation cost budget used: "
-                   << scale.share(*best) << '\n';
-    }
-  }
+  if (print)
+    printSelection(names, tau, accScale, baseline, scale, costToAccuracyMap,
+                   best);
+  if (!best)
+    return SmallVector<SolutionStep>();
 
   assert(costToSolutionMap.count(*best) && "every frontier point has a "
                                            "solution");

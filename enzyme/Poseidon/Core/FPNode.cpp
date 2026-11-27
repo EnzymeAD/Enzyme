@@ -457,42 +457,9 @@ static bool isOptimizableOperation(const Instruction *I) {
       return true;
     if (!I->getType()->isFloatTy() && !I->getType()->isDoubleTy())
       return false;
-    switch (Callee->getIntrinsicID()) {
-    case Intrinsic::sin:
-    case Intrinsic::cos:
-    case Intrinsic::tan:
-    case Intrinsic::asin:
-    case Intrinsic::acos:
-    case Intrinsic::atan:
-    case Intrinsic::atan2:
-    case Intrinsic::sinh:
-    case Intrinsic::cosh:
-    case Intrinsic::tanh:
-    case Intrinsic::exp:
-    case Intrinsic::log:
-    case Intrinsic::sqrt:
-    case Intrinsic::pow:
-    case Intrinsic::powi:
-    case Intrinsic::fabs:
-    case Intrinsic::fma:
-    case Intrinsic::fmuladd:
-    case Intrinsic::maxnum:
-    case Intrinsic::minnum:
-    case Intrinsic::ceil:
-    case Intrinsic::floor:
-    case Intrinsic::exp2:
-    case Intrinsic::log10:
-    case Intrinsic::log2:
-    case Intrinsic::rint:
-    case Intrinsic::round:
-    case Intrinsic::trunc:
-    case Intrinsic::copysign:
-      return true;
-    case Intrinsic::not_intrinsic:
+    if (Callee->getIntrinsicID() == Intrinsic::not_intrinsic)
       return isOptimizableLibmCall(Callee->getName());
-    default:
-      return false;
-    }
+    return fpcoreOperator(fpcoreName(*I)) != nullptr;
   }
   default:
     return false;

@@ -35,8 +35,8 @@ template <auto Get> static Type *storage(LLVMContext &C) {
 static constexpr NumberFormatInfo kFormats[] = {
 #define NUMBER_FORMAT(Kind, Name, Dtype, CostType, CType, Words, LLVMType,     \
                       Semantics, Components, Matrix)                           \
-  {NumberFormat::Kind, Name,       Dtype, CostType, CType, Words,              \
-   storage<LLVMType>,  Components, Matrix},
+  {NumberFormat::Kind, Name,      Dtype,      CostType, CType, Words,          \
+   storage<LLVMType>,  Semantics, Components, Matrix},
 #include "Core/NumberFormat.def"
 };
 
@@ -77,23 +77,14 @@ Type *storageTypeOf(LLVMContext &ctx, NumberFormat k) {
 }
 
 const char *dtypeName(NumberFormat k) {
-  static constexpr const char *kNames[] = {
-      "invalid",
-#define NUMBER_FORMAT(Kind, Name, Dtype, ...) Dtype,
-#include "Core/NumberFormat.def"
-  };
-  return kNames[unsigned(k)];
+  return k == NumberFormat::Invalid ? "invalid" : formatOf(k).Dtype.data();
 }
 
 static const fltSemantics *semanticsForKind(NumberFormat k) {
-  static constexpr const fltSemantics &(*kSemantics[])() = {
-      nullptr,
-#define NUMBER_FORMAT(Kind, Name, Dtype, CostType, CType, Words, Storage,      \
-                      Semantics, ...)                                          \
-  Semantics,
-#include "Core/NumberFormat.def"
-  };
-  return kSemantics[unsigned(k)] ? &kSemantics[unsigned(k)]() : nullptr;
+  if (k == NumberFormat::Invalid)
+    return nullptr;
+  const NumberFormatInfo &F = formatOf(k);
+  return F.Semantics ? &F.Semantics() : nullptr;
 }
 
 namespace {
@@ -136,11 +127,6 @@ Rounding::Rounding(NumberFormat k) : kind(k) {
   maxFinite = f.maxFinite;
 }
 
-// Round to nearest, ties to even, as APFloat::convert does, computed with
-// integer arithmetic on the binary64 encoding: exact, independent of the
-// floating-point environment, and cheap enough for every multiply-accumulate
-// the matrix accuracy model simulates. memcpy rather than llvm::bit_cast keeps
-// this one call per value in a build without optimization.
 // The fields of an IEEE binary64: the stored fraction bits below the implicit
 // leading bit, the exponent bias, and the biased exponent of an infinity or a
 // NaN once unbiased.
@@ -150,6 +136,11 @@ static constexpr int kF64Bias = std::numeric_limits<double>::max_exponent - 1;
 static constexpr int kF64SpecialExponent = kF64Bias + 1;
 static constexpr unsigned kF64SignBit = 63;
 
+// Round to nearest, ties to even, as APFloat::convert does, computed with
+// integer arithmetic on the binary64 encoding: exact, independent of the
+// floating-point environment, and cheap enough for every multiply-accumulate
+// the matrix accuracy model simulates. memcpy rather than llvm::bit_cast keeps
+// this one call per value in a build without optimization.
 double Rounding::operator()(double x) const {
   if (precision == 0)
     return x;

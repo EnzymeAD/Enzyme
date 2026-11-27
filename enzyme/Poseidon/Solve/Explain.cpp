@@ -459,9 +459,11 @@ class Explainer final : public Explanation {
     auto it = st.valueToNodeMap.find(V);
     if (it == st.valueToNodeMap.end() || !it->second)
       return "";
-    double lo = it->second->getLowerBound(), hi = it->second->getUpperBound();
-    if (!std::isfinite(lo) || !std::isfinite(hi) || lo > hi)
+    std::optional<std::pair<double, double>> range =
+        it->second->profiledRange();
+    if (!range)
       return "";
+    auto [lo, hi] = *range;
     int digits = 3;
     while (lo != hi && digits < 17 &&
            remarkNumber(lo, digits) == remarkNumber(hi, digits))
@@ -544,19 +546,14 @@ void Explainer::markSteps() {
 Expected<int64_t> Explainer::onAxis(double cost) const {
   if (std::optional<DPCost> c = scale.toDPCost(cost))
     return *c;
-  std::string Text;
-  raw_string_ostream(Text) << cost;
-  return userError(F, "a cost of " + Twine(Text) +
-                          " does not fit the DP's cost axis; a cost-model row "
-                          "prices a candidate beyond 2^30 times the profiled "
-                          "cost");
+  return userError(F, offAxisMessage("a cost of", cost));
 }
 
 void Explainer::judge(UnitExplanation &U) {
   for (Alternative &A : U.alts) {
-    if (!A.item)
+    if (!A.unit)
       continue;
-    auto key = std::make_pair(A.item, A.index);
+    auto key = std::make_pair(A.unit, A.index);
     if (applied.count(key)) {
       A.standing = Standing::Applied;
       U.applied = true;
@@ -599,13 +596,13 @@ void Explainer::judge(UnitExplanation &U) {
     }
     const Alternative *dom = nullptr;
     auto better = [&](const Alternative &B, const Alternative &D) {
-      bool b = applied.count({B.item, B.index}),
-           d = applied.count({D.item, D.index});
+      bool b = applied.count({B.unit, B.index}),
+           d = applied.count({D.unit, D.index});
       return b != d ? b : *B.costDelta < *D.costDelta;
     };
     if (A.costDelta && A.accDelta)
       for (const Alternative &B : U.alts)
-        if (&B != &A && B.item && B.costDelta && B.accDelta &&
+        if (&B != &A && B.unit && B.costDelta && B.accDelta &&
             *B.costDelta <= *A.costDelta && *B.accDelta <= *A.accDelta &&
             (*B.costDelta < *A.costDelta || *B.accDelta < *A.accDelta) &&
             (!dom || better(B, *dom)))
@@ -618,9 +615,9 @@ void Explainer::judge(UnitExplanation &U) {
     }
     std::string rival;
     for (const Alternative &B : U.alts)
-      if (&B != &A && B.item && applied.count({B.item, B.index}) &&
+      if (&B != &A && B.unit && applied.count({B.unit, B.index}) &&
           B.outputs == A.outputs)
-        if (std::string why = A.item->rivalReason(A, B); !why.empty())
+        if (std::string why = A.unit->rivalReason(A, B); !why.empty())
           rival = std::move(why);
     if (!rival.empty()) {
       A.reason = std::move(rival);
@@ -651,7 +648,7 @@ void Explainer::markPareto(Alternative &A, DPCost point) const {
 std::string Explainer::leftReason(const UnitExplanation &U) {
   if (U.applied)
     return "";
-  bool any = llvm::any_of(U.alts, [](const Alternative &A) { return A.item; });
+  bool any = llvm::any_of(U.alts, [](const Alternative &A) { return A.unit; });
   if (!any) {
     SmallVector<std::string, 2> why(U.whyNone.begin(), U.whyNone.end());
     if (U.sg)
@@ -670,17 +667,17 @@ std::string Explainer::leftReason(const UnitExplanation &U) {
   if (tau > 0.0) {
     const Alternative *best = nullptr;
     for (const Alternative &A : U.alts)
-      if (A.item && A.err && (!best || *A.err < *best->err))
+      if (A.unit && A.err && (!best || *A.err < *best->err))
         best = &A;
     bool anyMeets = llvm::any_of(U.alts, [&](const Alternative &A) {
-      return A.item && A.err && *A.err <= tau;
+      return A.unit && A.err && *A.err <= tau;
     });
     if (!anyMeets && best)
       return "every alternative's modelled error is above the target " +
              remarkNumber(tau) + " (best: " + best->id + ", " +
              remarkNumber(*best->err) + ")";
     bool cheaperMeets = llvm::any_of(U.alts, [&](const Alternative &A) {
-      return A.item && A.err && *A.err <= tau && A.costDelta &&
+      return A.unit && A.err && *A.err <= tau && A.costDelta &&
              *A.costDelta < 0;
     });
     if (!cheaperMeets)
@@ -724,10 +721,9 @@ Error Explainer::buildSubgraph(size_t s) {
       op["executions"] = (int64_t)N->executions;
       putNum(op, "sensitivity", N->sens);
       putNum(op, "gradient", N->grad);
-      double lo = N->getLowerBound(), hi = N->getUpperBound();
-      if (std::isfinite(lo) && std::isfinite(hi) && lo <= hi) {
-        op["min"] = lo;
-        op["max"] = hi;
+      if (std::optional<std::pair<double, double>> range = N->profiledRange()) {
+        op["min"] = range->first;
+        op["max"] = range->second;
       }
     }
     U.ops.push_back(std::move(op));
@@ -745,10 +741,9 @@ Error Explainer::buildSubgraph(size_t s) {
     putLoc(in, "loc", locOf(V));
     in["type"] = typeName(V->getType());
     if (N) {
-      double lo = N->getLowerBound(), hi = N->getUpperBound();
-      if (std::isfinite(lo) && std::isfinite(hi) && lo <= hi) {
-        in["min"] = lo;
-        in["max"] = hi;
+      if (std::optional<std::pair<double, double>> range = N->profiledRange()) {
+        in["min"] = range->first;
+        in["max"] = range->second;
         std::string label = leafLabel(V);
         if (!label.empty())
           U.inputRanges.push_back(rangeOf(V, label));
@@ -1196,7 +1191,7 @@ void Explainer::emitRemarks() {
       if (A.accDelta && std::isfinite(share(A.baseAcc)))
         errChange = remarkNumber(share(A.baseAcc)) + " -> " +
                     remarkNumber(share(A.baseAcc + *A.accDelta));
-      A.item->remarkApplied(ORE, *this, U, A, errChange, costChange);
+      A.unit->remarkApplied(ORE, *this, U, A, errChange, costChange);
     }
 
   for (const UnitExplanation &U : units) {

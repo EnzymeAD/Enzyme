@@ -36,6 +36,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cassert>
 #include <memory>
 #include <optional>
 #include <string>
@@ -250,8 +251,7 @@ static Error priceUnlessCached(Session &S, SiteState &st,
                                StringRef profilePath) {
   const Options &O = S.Opts;
   // A joint or a manual solve reads no table.
-  if (!O.Herbie.Cache.empty() && !O.Solver.SolveJointly &&
-      O.Solver.Pin.empty()) {
+  if (!O.Cache.Dir.empty() && !O.Solver.SolveJointly && O.Solver.Pin.empty()) {
     Expected<std::unique_ptr<DPTable>> table =
         lookupDPTable(S, st, st.units, profilePath);
     if (!table)
@@ -269,14 +269,14 @@ static Error priceUnlessCached(Session &S, SiteState &st,
   return requireCostsOnAxis(st, st.units);
 }
 
-// Collects the candidates of the site F into `st` and prices them unless its
-// DP table is cached; false when F has no FP subgraph and no technique
-// recognized anything in it.
-static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
-                                          SiteState &st) {
+// Collects the candidates of the site F, solved against `target`, into `st`
+// and prices them unless its DP table is cached; false when F has no FP
+// subgraph and no technique recognized anything in it.
+static Expected<bool> collectFPCandidates(Session &S, Function &F,
+                                          double target, SiteState &st) {
   const Options &O = S.Opts;
   st.F = &F;
-  st.tau = tau;
+  st.target = target;
 
   const Target &T = Target::of(F);
   if (T.isDevice() && O.Diagnostics.Print)
@@ -492,7 +492,8 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
     record.selector = SolveSelector::Pinned;
   } else if (!solved.empty()) {
     Expected<SmallVector<SolutionStep>> selected =
-        solveSites(S, solved, units, tau, joint, rec);
+        solveSites(S, solved, units, CostScale(record.profiledCost),
+                   record.accScale, tau, joint, rec);
     if (!selected)
       return selected.takeError();
     steps = std::move(*selected);
@@ -530,7 +531,7 @@ Expected<bool> optimizeSite(Session &S, Function &F, double tau) {
 
   const StringSet<> declared = declaredFunctions(*F.getParent());
   SiteState st;
-  Expected<bool> collected = collectFPCandidates(S, F, tau, st);
+  Expected<bool> collected = collectFPCandidates(S, F, target, st);
   if (!collected)
     return collected.takeError();
   if (!*collected) {
@@ -567,7 +568,9 @@ Expected<bool> solveJointly(Session &S, Module &M) {
   bool allFromSite = true;
   for (Function *F : marked) {
     double tau = 0.0;
-    F->getFnAttribute(kJointTau).getValueAsString().getAsDouble(tau);
+    [[maybe_unused]] const bool unparsable =
+        F->getFnAttribute(kJointTau).getValueAsString().getAsDouble(tau);
+    assert(!unparsable && "kJointTau holds the target the pass wrote");
     F->removeFnAttr(kJointTau);
     allFromSite &= tau > 0.0;
     targets.push_back({F, tau > 0.0 ? tau : (double)O.Solver.Tau});
@@ -577,8 +580,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
                    [&](const auto &t) { return t.second != jointTau; })) {
     std::string msg;
     raw_string_ostream os(msg);
-    os << "Poseidon: the sites of one -poseidon-solve-jointly solve have "
-          "different "
+    os << "the sites of one -poseidon-solve-jointly solve have different "
           "accuracy targets:";
     for (auto &[F, t] : targets) {
       const Function *origin = siteOriginOf(S.get<SiteRecords>(), *F);
@@ -592,11 +594,9 @@ Expected<bool> solveJointly(Session &S, Module &M) {
       os << ')';
     }
     os << "; give them one target";
-    M.getContext().diagnose(DiagnosticInfoUnsupported(
-        *targets.front().first, os.str(), DiagnosticLocation(), DS_Error));
     for (auto &[F, t] : targets)
       redirectNoopSite(S.get<SiteRecords>(), F, S.Opts.Diagnostics.Print);
-    return false;
+    return userError(*targets.front().first, msg);
   }
 
   const StringSet<> declared = declaredFunctions(M);

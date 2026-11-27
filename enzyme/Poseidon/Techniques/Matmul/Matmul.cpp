@@ -1171,7 +1171,7 @@ std::string MatmulUnit::choiceText(size_t i) const {
 std::optional<double> MatmulUnit::targetScale() const {
   // Under a target a product's relative error is a term of the site's
   // relative error, which the DP reads as an accuracy cost over accScale.
-  if (site().tau > 0.0 || session().Opts.Solver.Tau > 0.0)
+  if (site().target > 0.0)
     return site().accScale;
   return std::nullopt;
 }
@@ -1236,7 +1236,7 @@ Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
     A.summary = matmulOptionLabel(o);
     if (o.realization == Realization::InKernel)
       A.keys["inkernel_class"] = inKernelCostClass(o.variant);
-    A.item = this;
+    A.unit = this;
     A.index = j;
     A.at = U.root;
     Expected<int64_t> c = E.onAxis(getCompCostDelta(j));
@@ -1292,7 +1292,7 @@ void MatmulUnit::remarkProfile(DiagnosticInfoOptimizationBase &R,
 
 std::string MatmulUnit::rivalReason(const Alternative &A,
                                     const Alternative &Rival) const {
-  if (!isa<MatmulUnit>(Rival.item))
+  if (!isa<MatmulUnit>(Rival.unit))
     return "";
   return "the product takes one realization, and " + Rival.id + " was selected";
 }
@@ -1386,9 +1386,8 @@ public:
     // sampling over [min, max] under-prices fixed-point Ozaki on matrices of
     // wide dynamic range, so a site solved under a target defaults to a wide
     // log-uniform range.
-    const double target = st.tau > 0.0 ? st.tau : (double)O.Solver.Tau;
     const unsigned sampleLogBits =
-        O.Matmul.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
+        O.Matmul.SampleLogBits.value_or(st.target > 0.0 ? 40 : 0);
     return generateMatmulCandidates(S, M.matmuls, P.map, sampleLogBits,
                                     M.units);
   }

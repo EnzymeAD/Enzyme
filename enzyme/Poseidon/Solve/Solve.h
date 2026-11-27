@@ -131,20 +131,21 @@ lookupDPTable(Session &S, const SiteState &st, llvm::ArrayRef<SiteUnit *> units,
 llvm::SmallVector<OptimizationUnit *>
 solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
 
-/// Solves `units[i]`, units of the site `sites[i]`, in one DP and selects a
-/// frontier point: under `tau` > 0 the one the target picks, else the most
-/// accurate one within -poseidon-cost-budget. Under `tau` a point's modelled
-/// relative error is (A0 + its accuracy cost) / the sites' summed accScale,
-/// A0 the accuracy cost of the sites as written: for one site, the sum over
-/// its units of an FP subgraph's accuracy cost over accScale (a per-operation
-/// relative rounding level) and a matrix product's relative domain error. A
-/// single site's table is read from or written to the cache when the site has
-/// one. `joint` marks a solve of the sites of -poseidon-solve-jointly, however
-/// many.
+/// Solves `units[i]`, units of the site `sites[i]`, in one DP on the axis
+/// `scale` of the sites' summed profiled cost, and selects a frontier point:
+/// under `tau` > 0 the one the target picks, else the most accurate one within
+/// -poseidon-cost-budget. Under `tau` a point's modelled relative error is
+/// (A0 + its accuracy cost) / `accScale`, the sites' summed accScale, A0 the
+/// accuracy cost of the sites as written: for one site, the sum over its units
+/// of an FP subgraph's accuracy cost over accScale (a per-operation relative
+/// rounding level) and a matrix product's relative domain error. A single
+/// site's table is read from or written to the cache when the site has one.
+/// `joint` marks a solve of the sites of -poseidon-solve-jointly, however many.
 llvm::Expected<llvm::SmallVector<SolutionStep>>
 solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
-           llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
-           bool joint, SolveRecord *record);
+           llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units,
+           const CostScale &scale, double accScale, double tau, bool joint,
+           SolveRecord *record);
 
 /// What a site is solved from, for its solve and the explanation of it: the
 /// profile and its condition number, and the site's DP table in the cache.

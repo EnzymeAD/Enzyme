@@ -53,9 +53,23 @@ static std::optional<PinItem> parseUnitRef(StringRef s) {
   return item;
 }
 
+// The units an item may name, "A<i>, P<i> or M<i>", by the letters of the
+// techniques' units.
+static std::string unitForms() {
+  std::string forms;
+  ArrayRef<const Technique *> all = techniques();
+  for (auto [k, T] : enumerate(all)) {
+    if (k > 0)
+      forms += k + 1 == all.size() ? " or " : ", ";
+    forms += T->unitKind().letter;
+    forms += "<i>";
+  }
+  return forms;
+}
+
 // A name may itself hold ':' (a Herbie precision annotation), so the unit is
 // read first and a site prefix only when the item does not start with one.
-static Expected<PinItem> parseApplyItem(StringRef text, const Function &site) {
+static Expected<PinItem> parsePinItem(StringRef text, const Function &site) {
   std::optional<PinItem> item = parseUnitRef(text);
   if (!item) {
     auto [site, rest] = text.split(':');
@@ -63,19 +77,18 @@ static Expected<PinItem> parseApplyItem(StringRef text, const Function &site) {
       item->site = site.str();
   }
   if (!item)
-    return userError(site,
-                     "-poseidon-pin: cannot read '" + Twine(text) +
-                         "'; an item is [<site>:]<unit>_<ordinal> or "
-                         "[<site>:]<unit>=<name>, <unit> being A<i>, P<i> or "
-                         "M<i>");
+    return userError(site, "-poseidon-pin: cannot read '" + Twine(text) +
+                               "'; an item is [<site>:]<unit>_<ordinal> or "
+                               "[<site>:]<unit>=<name>, <unit> being " +
+                               unitForms());
   item->text = text.str();
   return *item;
 }
 
 // `site` is the site the items are read for, where a mistake in them is
 // reported.
-static Expected<std::vector<PinItem> *> applyItems(Session &S,
-                                                   const Function &site) {
+static Expected<std::vector<PinItem> *> pinItems(Session &S,
+                                                 const Function &site) {
   PinState &P = S.get<PinState>();
   if (!P.parsed) {
     P.parsed = true;
@@ -83,7 +96,7 @@ static Expected<std::vector<PinItem> *> applyItems(Session &S,
     StringRef(S.Opts.Solver.Pin)
         .split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
     for (StringRef text : texts) {
-      Expected<PinItem> item = parseApplyItem(text.trim(), site);
+      Expected<PinItem> item = parsePinItem(text.trim(), site);
       if (!item)
         return item.takeError();
       P.items.push_back(std::move(*item));
@@ -120,7 +133,7 @@ Error noteSiteForPins(Session &S, const Function &body) {
     return Error::success();
   P.sites.push_back(key);
   SmallVector<std::string, 2> aliases = siteAliases(key);
-  Expected<std::vector<PinItem> *> items = applyItems(S, body);
+  Expected<std::vector<PinItem> *> items = pinItems(S, body);
   if (!items)
     return items.takeError();
   for (PinItem &item : **items) {
@@ -195,7 +208,7 @@ Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
   SmallVector<SolutionStep> steps;
   SmallPtrSet<const SiteUnit *, 8> appliedUnits;
   const Function &F = *st.F;
-  Expected<std::vector<PinItem> *> items = applyItems(S, F);
+  Expected<std::vector<PinItem> *> items = pinItems(S, F);
   if (!items)
     return items.takeError();
   for (const PinItem &item : **items) {
@@ -245,12 +258,9 @@ Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
       return userError(F, "-poseidon-pin item '" + Twine(id) + "': " + name +
                               " already has " + kind.appliedNoun +
                               " applied; give one item per unit");
-    // The rule the solvers keep: a raise replaces the loop it reads, so no
-    // other step may edit an instruction of that loop.
     for (const SolutionStep &prior : steps) {
       const SiteUnit &other = unitOf(prior);
-      if ((unit->consumesFootprint() || other.consumesFootprint()) &&
-          unit->footprintOverlaps(other))
+      if (footprintsConflict(*unit, other))
         return userError(F, "-poseidon-pin item '" + Twine(id) + "': " + name +
                                 " and " + other.info().letter +
                                 Twine(other.indexInKind()) +

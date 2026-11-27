@@ -559,16 +559,16 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
   key.add("seed", std::to_string(O.Model.RandomSeed));
   key.add("sampling log bits", std::to_string(sampleLogBits));
   key.add("confidence", exactDouble(kDefaultConfidence));
-  SmallString<256> p(O.Herbie.Cache);
+  SmallString<256> p(O.Cache.Dir);
   sys::path::append(p, "matmul_accuracy_" + key.digest() + ".json");
   path = p.str().str();
   key.addCompiler(kPassIdentity);
 }
 
 void Memo::store(const Options &O, const MatmulAccuracy &result) const {
-  if (O.Herbie.Cache.empty())
+  if (O.Cache.Dir.empty())
     return;
-  (void)sys::fs::create_directories(O.Herbie.Cache, true);
+  (void)sys::fs::create_directories(O.Cache.Dir, true);
   // As text: a domain error can be infinite, which JSON cannot hold.
   json::Object value;
   value["accuracy cost"] = exactDouble(result.accuracyCost);
@@ -589,7 +589,7 @@ static bool parseAccNumber(const json::Object &value, StringRef name,
 }
 
 bool Memo::lookup(const Options &O, MatmulAccuracy &result) const {
-  if (O.Herbie.Cache.empty())
+  if (O.Cache.Dir.empty())
     return false;
   CacheEntryRead read = readCacheEntry(path, key);
   if (read.value) {
@@ -671,7 +671,7 @@ Error evaluateMatmulAccuracy(Session &S, const RecognizedMatmul &m,
   SmallVector<size_t> computed;
   for (size_t i = 0; i < queries.size(); ++i) {
     memos.emplace_back(O, m, prof, sampleLogBits, numSamples, queries[i]);
-    if (!O.Herbie.Cache.empty())
+    if (!O.Cache.Dir.empty())
       for (size_t c : computed)
         if (memos[c].file() == memos[i].file()) {
           sameEntryAs[i] = c;

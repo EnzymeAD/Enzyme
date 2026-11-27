@@ -78,6 +78,21 @@ static void reportUnexecuted(const Function &F,
                    where + "); profile an input that runs them");
 }
 
+// The inputs of a subgraph of `operations`, in the order the operations read
+// them: what they read that is neither one of them nor a floating-point
+// literal.
+static SetVector<Value *> inputsOf(const SetVector<Instruction *> &operations) {
+  SetVector<Value *> inputs;
+  for (Instruction *I : operations)
+    for (Value *op : fpOperands(*I)) {
+      auto *OpI = dyn_cast<Instruction>(op);
+      if ((OpI && operations.contains(OpI)) || isa<ConstantFP>(op))
+        continue;
+      inputs.insert(op);
+    }
+  return inputs;
+}
+
 void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
                     SiteState &st) {
   Function &F = *st.F;
@@ -155,7 +170,6 @@ void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
         continue;
 
       SmallVector<Value *, 8> todo;
-      SetVector<Value *> input_seen;
       SetVector<Instruction *> output_seen;
       SetVector<Instruction *> operation_seen;
       todo.push_back(&I);
@@ -174,14 +188,9 @@ void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
         operation_seen.insert(I2);
         processed.insert(cur);
 
-        for (const auto &operand : fpOperands(*I2)) {
-          if (!inSubgraph(*operand)) {
-            if (!isa<ConstantFP>(operand))
-              input_seen.insert(operand);
-          } else {
+        for (const auto &operand : fpOperands(*I2))
+          if (inSubgraph(*operand))
             todo.push_back(operand);
-          }
-        }
 
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
@@ -194,6 +203,7 @@ void buildSubgraphs(const Options &O, const ProfileMap &profileMap,
       }
 
       if (!operation_seen.empty()) {
+        SetVector<Value *> input_seen = inputsOf(operation_seen);
         if (O.Diagnostics.Print)
           llvm::errs() << "[poseidon] Found a subgraph with "
                        << operation_seen.size() << " operations and "
@@ -384,25 +394,6 @@ static bool isSplitPoint(const Options &O, Instruction *I,
   return isBottleneck;
 }
 
-static SetVector<Value *>
-findReachedInputs(const SetVector<Instruction *> &operations) {
-  SetVector<Value *> reachedInputs;
-
-  for (auto *I : operations) {
-    for (auto &op : fpOperands(*I)) {
-      if (auto *OpI = dyn_cast<Instruction>(op)) {
-        if (operations.contains(OpI)) {
-          continue;
-        }
-      }
-
-      reachedInputs.insert(op);
-    }
-  }
-
-  return reachedInputs;
-}
-
 static void splitSubgraphAtBottleneck(const Subgraph &currentSubgraph,
                                       Instruction *bottleneck,
                                       Subgraph &newSubgraph,
@@ -412,7 +403,7 @@ static void splitSubgraphAtBottleneck(const Subgraph &currentSubgraph,
 
   newSubgraph.operations = movedOps;
   newSubgraph.outputs.insert(bottleneck);
-  newSubgraph.inputs = findReachedInputs(newSubgraph.operations);
+  newSubgraph.inputs = inputsOf(newSubgraph.operations);
 
   for (auto I : currentSubgraph.operations) {
     if (!movedOps.contains(I)) {
@@ -425,7 +416,7 @@ static void splitSubgraphAtBottleneck(const Subgraph &currentSubgraph,
     remainingSubgraph.outputs.remove(bottleneck);
   }
 
-  remainingSubgraph.inputs = findReachedInputs(remainingSubgraph.operations);
+  remainingSubgraph.inputs = inputsOf(remainingSubgraph.operations);
   assert(remainingSubgraph.inputs.contains(bottleneck) &&
          "the split-off bottleneck is an input of the remaining subgraph");
 }

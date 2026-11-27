@@ -165,7 +165,7 @@ public:
   }
   /// The site's expression graph, which owns the unit's nodes: the site.
   FPGraph &graph() const;
-  /// The i of A<i>, P<i>, M<i>, and the DP table's itemIndex.
+  /// The i of the unit's id <letter><i>, and the DP table's index.
   size_t indexInKind() const {
     assert(boundSite && "unit read before its site was sealed");
     return boundIndex;

@@ -83,14 +83,13 @@ DPCost CostScale::fromShare(double share) const {
                             : std::numeric_limits<DPCost>::min());
 }
 
-static Error offAxis(double delta) {
+std::string offAxisMessage(StringRef what, double cost) {
   std::string Text;
-  raw_string_ostream(Text) << delta;
-  return make_error<StringError>(
-      "a cost change of " + Text +
-          " does not fit the DP's cost axis; a cost-model row prices a "
-          "candidate beyond 2^30 times the profiled cost",
-      inconvertibleErrorCode());
+  raw_string_ostream(Text)
+      << what << ' ' << cost
+      << " does not fit the DP's cost axis; a cost-model row prices a "
+         "candidate beyond 2^30 times the profiled cost";
+  return Text;
 }
 
 // a + b on the DP's axis; none, with the error kept in `deferred`, when the
@@ -116,17 +115,20 @@ static std::optional<DPCost> costOnAxis(const CostScale &scale,
   const double delta = unit.costDelta(i, prior);
   std::optional<DPCost> cost = scale.toDPCost(delta);
   if (!cost)
-    deferred.set(offAxis(delta));
+    deferred.set(make_error<StringError>(
+        offAxisMessage("a cost change of", delta), inconvertibleErrorCode()));
   return cost;
 }
 
-// Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
-// their footprints overlap and one of them consumes its footprint.
-static bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
-  if (a.rewritesSameOutputAs(b))
-    return true;
+bool footprintsConflict(const OptimizationUnit &a, const OptimizationUnit &b) {
   return (a.consumesFootprint() || b.consumesFootprint()) &&
          a.footprintOverlaps(b);
+}
+
+// Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
+// their footprints conflict.
+static bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
+  return a.rewritesSameOutputAs(b) || footprintsConflict(a, b);
 }
 
 // Whether taking `later` is admitted or priced differently depending on

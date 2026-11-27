@@ -21,6 +21,7 @@
 #include "Model/SubgraphUnit.h"
 #include "Support/Diagnostics.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -77,6 +78,34 @@ struct PrecisionCandidate {
              llvm::SmallVectorImpl<llvm::Value *> *components = nullptr);
 };
 
+/// The profiled execution counts a precision unit weighs the instructions of
+/// its subgraph by.
+struct MeasuredFrequencies {
+  /// Measured execution counts of the subgraph's instructions over the
+  /// profiling run, which survive materialization. Empty prices exactly as an
+  /// unweighted walk.
+  llvm::DenseMap<const llvm::Instruction *, uint64_t> opExec;
+  /// The same counts by loop depth.
+  std::map<unsigned, uint64_t> depthExec;
+  /// The execution count the counts are divided by: the first output's.
+  uint64_t execNormalizer = 0;
+  /// Frequency scale for synthetic output-boundary casts: they execute at the
+  /// insertion point's frequency (the output's consumer), not the body's.
+  /// min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.
+  double outBoundaryFreqScale = 1.0;
+
+  /// The measured count of the deepest class at or below `d` (the shallowest
+  /// class outside every recorded loop) over the normalizer; 1.0 without one.
+  double freqWeightAtDepth(unsigned d) const {
+    if (depthExec.empty() || execNormalizer == 0)
+      return 1.0;
+    auto it = depthExec.upper_bound(d);
+    uint64_t e = (it == depthExec.begin()) ? depthExec.begin()->second
+                                           : std::prev(it)->second;
+    return (double)e / (double)execNormalizer;
+  }
+};
+
 /// The precision candidates of one subgraph. A candidate is repriced against
 /// the outputs the selected rewrites of the same subgraph leave.
 class PrecisionUnit : public SubgraphUnit<PrecisionCandidate> {
@@ -86,6 +115,8 @@ public:
                                         "a precision change", true};
   /// Each output's part of initialAccCost, by the output's node.
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
+  /// The counts the subgraph's instructions are priced by.
+  MeasuredFrequencies frequencies;
 
   /// A repricing: a candidate, by position, and the units rewriting outputs
   /// of the same subgraph among the steps it is priced after.

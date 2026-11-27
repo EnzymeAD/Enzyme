@@ -69,9 +69,10 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
   // zero can be arbitrarily small (treated as 0); otherwise the closer
   // endpoint.
   auto minMagnitude = [](FPNode *n) -> double {
-    double lb = n->getLowerBound(), ub = n->getUpperBound();
-    if (!std::isfinite(lb) || !std::isfinite(ub) || lb > ub)
+    std::optional<std::pair<double, double>> range = n->profiledRange();
+    if (!range)
       return std::numeric_limits<double>::infinity();
+    auto [lb, ub] = *range;
     if (lb <= 0.0 && ub >= 0.0)
       return 0.0;
     return std::min(std::fabs(lb), std::fabs(ub));
@@ -177,16 +178,17 @@ private:
 };
 } // namespace
 
-// An error unless [lower, upper] is an interval of finite values; the profile
-// gives an infinite bound when the run saw an infinity, and an empty range
-// when it saw no value but NaN.
-static Error checkFinite(double lower, double upper, const Value &V,
-                         StringRef what) {
-  if (std::isfinite(lower) && std::isfinite(upper) && lower <= upper)
-    return Error::success();
+// The profiled range of `node`, the node of `V`; an error when it is no
+// interval of finite values. The profile gives an infinite bound when the run
+// saw an infinity, and an empty range when it saw no value but NaN.
+static Expected<std::pair<double, double>>
+finiteRange(const FPNode &node, const Value &V, StringRef what) {
+  if (std::optional<std::pair<double, double>> range = node.profiledRange())
+    return *range;
   std::string text;
   raw_string_ostream os(text);
-  os << "the profiled range [" << lower << ", " << upper << "] of " << what << V
+  os << "the profiled range [" << node.getLowerBound() << ", "
+     << node.getUpperBound() << "] of " << what << V
      << " is not an interval of finite values";
   return createStringError(inconvertibleErrorCode(), text);
 }
@@ -196,20 +198,21 @@ Error JointSampler::collectBoxes(ArrayRef<Value *> inputs) {
   SetVector<const FPLLValue *> leaves;
   for (Value *input : inputs) {
     FPNode *node = valueToNodeMap.at(input);
-    double lower = node->getLowerBound(), upper = node->getUpperBound();
-    if (Error E = checkFinite(lower, upper, *input, "the subgraph input "))
-      return E;
-    box.insert({input, {lower, upper}});
+    Expected<std::pair<double, double>> range =
+        finiteRange(*node, *input, "the subgraph input ");
+    if (!range)
+      return range.takeError();
+    box.insert({input, {range->first, range->second}});
     collectLeaves(node, seen, leaves);
     if (!node->operands.empty())
       computed.push_back(node);
   }
   for (const FPLLValue *leaf : leaves) {
-    double lower = leaf->getLowerBound(), upper = leaf->getUpperBound();
-    if (Error E = checkFinite(lower, upper, *leaf->value,
-                              "the value a subgraph input is computed from, "))
-      return E;
-    leafBox.insert({leaf->value, {lower, upper}});
+    Expected<std::pair<double, double>> range = finiteRange(
+        *leaf, *leaf->value, "the value a subgraph input is computed from, ");
+    if (!range)
+      return range.takeError();
+    leafBox.insert({leaf->value, {range->first, range->second}});
   }
   return Error::success();
 }
@@ -392,8 +395,6 @@ Expected<ArrayRef<SubgraphSamples::Point>> SubgraphSamples::points() {
   return ArrayRef<Point>(base);
 }
 
-// The exact and the as-written value of `node` at `point`, and the error of
-// the latter, into entry `i` of `R`.
 std::optional<double> SubgraphSamples::Reference::meanError() const {
   double sum = 0.0;
   unsigned count = 0;
@@ -407,7 +408,8 @@ std::optional<double> SubgraphSamples::Reference::meanError() const {
   return sum / count;
 }
 
-// Returns whether the exact value did not settle.
+// The exact and the as-written value of `node` at `point`, and the error of
+// the latter, into entry `i` of `R`; whether the exact value did not settle.
 static bool evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
                               SubgraphSamples::Reference &R, size_t i) {
   SmallVector<double, 1> results;

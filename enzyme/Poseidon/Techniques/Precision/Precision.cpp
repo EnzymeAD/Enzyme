@@ -568,7 +568,7 @@ public:
 
   // The cost of the cone of outputs[i] for each i in `which`, in that order,
   // and of the expansion roots. Only for a clone that can be priced.
-  Expected<double> cost(Session &S, const Subgraph &subgraph,
+  Expected<double> cost(Session &S, const MeasuredFrequencies &freq,
                         ArrayRef<size_t> which);
 
 private:
@@ -840,7 +840,8 @@ CandidateClone::cone(ArrayRef<size_t> roots) const {
                       [&](Value *V) { return clonedInputs.contains(V); });
 }
 
-Expected<double> CandidateClone::cost(Session &S, const Subgraph &subgraph,
+Expected<double> CandidateClone::cost(Session &S,
+                                      const MeasuredFrequencies &freq,
                                       ArrayRef<size_t> which) {
   assert(unpricedReason.empty() && "the clone cannot be priced");
   const Options &O = S.Opts;
@@ -861,8 +862,7 @@ Expected<double> CandidateClone::cost(Session &S, const Subgraph &subgraph,
     if (!isa<FPExtInst, FPTruncInst>(I))
       bodyDepth = std::max(bodyDepth, cloneLI->getLoopDepth(I->getParent()));
 
-  const bool freqWeighted =
-      freqWeightedPricing(O) && subgraph.depthExec.size() > 1;
+  const bool freqWeighted = freqWeightedPricing(O) && freq.depthExec.size() > 1;
   double cost = 0.0;
   for (Instruction *I : coneInsts) {
     auto It = prices.find(I);
@@ -878,23 +878,25 @@ Expected<double> CandidateClone::cost(Session &S, const Subgraph &subgraph,
       // The measured frequency of this depth subsumes the boundary-cast scale
       // and also reaches the arithmetic emitted outside the body loop, where a
       // df64 boundary conversion lives.
-      c *= subgraph.freqWeightAtDepth(d);
+      c *= freq.freqWeightAtDepth(d);
     } else if (isa<FPExtInst, FPTruncInst>(I) && bodyDepth > 0 && d == 0) {
-      c *= subgraph.outBoundaryFreqScale;
+      c *= freq.outBoundaryFreqScale;
     }
     cost += c;
   }
   return cost;
 }
 
-// The cost of `pt` per execution of `subgraph`; a UserError for a cost-model
-// row it lacks, any other error saying why the clone cannot be priced.
+// The cost of `pt` per execution of `subgraph`, its instructions weighed by
+// `freq`; a UserError for a cost-model row it lacks, any other error saying why
+// the clone cannot be priced.
 static Expected<double> priceCandidate(Session &S, Subgraph &subgraph,
+                                       const MeasuredFrequencies &freq,
                                        PrecisionCandidate &pt) {
   CandidateClone clone(S, subgraph, subgraph.outputs.getArrayRef(), pt);
   if (!clone.unpriceable().empty())
     return createStringError(clone.unpriceable());
-  return clone.cost(S, subgraph,
+  return clone.cost(S, freq,
                     to_vector(seq<size_t>(0, subgraph.outputs.size())));
 }
 
@@ -977,11 +979,12 @@ static std::string fmtTiers(ArrayRef<std::pair<NumberFormat, int>> tierPcts) {
   return s;
 }
 
-// Records each operation's measured frequency in `subgraph`, so the baseline
-// walk and every candidate's weight each instruction by its own, snapped onto
-// the classes of loop depth the candidate walk sees.
+// Records each operation's measured frequency of `subgraph` in `freq`, so the
+// baseline walk and every candidate's weight each instruction by its own,
+// snapped onto the classes of loop depth the candidate walk sees.
 static void measureFrequencies(const Options &O, Function &F,
-                               Subgraph &subgraph, const FPGraph &G) {
+                               const Subgraph &subgraph, const FPGraph &G,
+                               MeasuredFrequencies &freq) {
   DominatorTree freqDT(F);
   LoopInfo freqLI(freqDT);
   auto note = [&](Instruction *I) {
@@ -990,11 +993,11 @@ static void measureFrequencies(const Options &O, Function &F,
         it->second->executions == 0)
       return;
     uint64_t e = it->second->executions;
-    subgraph.opExec[I] = e;
+    freq.opExec[I] = e;
     unsigned d = freqLI.getLoopDepth(I->getParent());
-    auto dit = subgraph.depthExec.find(d);
-    if (dit == subgraph.depthExec.end())
-      subgraph.depthExec[d] = e;
+    auto dit = freq.depthExec.find(d);
+    if (dit == freq.depthExec.end())
+      freq.depthExec[d] = e;
     else
       dit->second = std::max(dit->second, e);
   };
@@ -1003,17 +1006,17 @@ static void measureFrequencies(const Options &O, Function &F,
   for (Instruction *output : subgraph.outputs)
     note(output);
   // A materialized instruction keeps only its loop depth.
-  for (auto &kv : subgraph.opExec)
+  for (auto &kv : freq.opExec)
     if (auto *I = dyn_cast<Instruction>(kv.first)) {
-      auto dit = subgraph.depthExec.find(freqLI.getLoopDepth(I->getParent()));
-      if (dit != subgraph.depthExec.end())
+      auto dit = freq.depthExec.find(freqLI.getLoopDepth(I->getParent()));
+      if (dit != freq.depthExec.end())
         kv.second = dit->second;
     }
-  if (O.Diagnostics.Print && subgraph.depthExec.size() > 1) {
+  if (O.Diagnostics.Print && freq.depthExec.size() > 1) {
     llvm::errs() << "[poseidon] frequency-heterogeneous subgraph "
                     "(normalizer "
-                 << subgraph.execNormalizer << ", measured depth:exec";
-    for (auto &kv : subgraph.depthExec)
+                 << freq.execNormalizer << ", measured depth:exec";
+    for (auto &kv : freq.depthExec)
       llvm::errs() << ' ' << kv.first << ':' << kv.second;
     llvm::errs() << "); pricing each instruction at its own measured "
                     "frequency\n";
@@ -1199,20 +1202,17 @@ proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
   const Options &O = S.Opts;
   const uint64_t o0Exec = G.valueToNodeMap[subgraph.outputs[0]]->executions;
 
-  // Filled before PU is built, whose baseline walk reads them.
-  subgraph.opExec.clear();
-  subgraph.depthExec.clear();
-  subgraph.execNormalizer = o0Exec;
-  if (freqWeightedPricing(O))
-    measureFrequencies(O, F, subgraph, G);
-
   PrecisionUnit PU(subgraph);
+  // Before the baseline walk, which reads them.
+  PU.frequencies.execNormalizer = o0Exec;
+  if (freqWeightedPricing(O))
+    measureFrequencies(O, F, subgraph, G, PU.frequencies);
   if (Error E = PU.priceAsWritten(S.get<CostModelState>()))
     return E;
   PU.executions = o0Exec;
   if (std::optional<double> scale =
           outBoundaryFreqScale(profileHeader, PU.executions))
-    subgraph.outBoundaryFreqScale = *scale;
+    PU.frequencies.outBoundaryFreqScale = *scale;
 
   // The operations, and the calls of the library functions the cost model
   // prices per precision, by ascending sensitivity. Stable: which tier an
@@ -1285,7 +1285,7 @@ Error PrecisionUnit::priceAsWritten(CostModelState &CM) {
   Expected<double> cost = compCost(
       CM,
       SmallVector<Value *>(subgraph->outputs.begin(), subgraph->outputs.end()),
-      subgraph->inputs, &subgraph->opExec, subgraph->execNormalizer);
+      subgraph->inputs, &frequencies.opExec, frequencies.execNormalizer);
   if (!cost)
     return cost.takeError();
   initialCompCost = *cost;
@@ -1407,7 +1407,7 @@ void PrecisionUnit::priceRequests(
       if (fresh) {
         Expected<double> cost =
             compCost(S.get<CostModelState>(), R.outputs, subgraph->inputs,
-                     &subgraph->opExec, subgraph->execNormalizer);
+                     &frequencies.opExec, frequencies.execNormalizer);
         if (cost) {
           initial->second = *cost;
         } else {
@@ -1416,7 +1416,7 @@ void PrecisionUnit::priceRequests(
         }
       }
       double initialCompCost = initial->second;
-      Expected<double> clonePrice = clone.cost(S, *subgraph, R.which);
+      Expected<double> clonePrice = clone.cost(S, frequencies, R.which);
       if (!clonePrice) {
         pricingError.set(clonePrice.takeError());
         compCostDeltaCache[R.key] = 0.0;
@@ -1632,7 +1632,7 @@ Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
     PrecisionCandidate &cand = candidates[j];
     Alternative A;
     A.id = candidateId(j);
-    A.item = this;
+    A.unit = this;
     A.index = j;
     describe(A, cand);
     for (unsigned o = 0; o < sg.outputs.size(); ++o)
@@ -1706,7 +1706,7 @@ void PrecisionUnit::remarkApplied(OptimizationRemarkEmitter &ORE,
 
 std::string PrecisionUnit::rivalReason(const Alternative &A,
                                        const Alternative &Rival) const {
-  if (!isa<PrecisionUnit>(Rival.item) || Rival.kind != A.kind)
+  if (!isa<PrecisionUnit>(Rival.unit) || Rival.kind != A.kind)
     return "";
   return "the subgraph takes one precision assignment, and " + Rival.id +
          " was selected";
@@ -1731,7 +1731,8 @@ Error PrecisionUnit::price() {
   SmallVector<PrecisionCandidate, 8> priced;
   std::string firstWhy;
   for (PrecisionCandidate &c : candidates) {
-    Expected<double> cost = priceCandidate(session(), *subgraph, c);
+    Expected<double> cost =
+        priceCandidate(session(), *subgraph, frequencies, c);
     if (cost) {
       c.CompCost = *cost;
       priced.push_back(std::move(c));

@@ -135,7 +135,7 @@ struct Alternative {
   /// Where its remarks point.
   const llvm::Instruction *at = nullptr;
   /// Its unit and position there; none for a candidate never offered.
-  const SiteUnit *item = nullptr;
+  const SiteUnit *unit = nullptr;
   size_t index = 0;
   Standing standing = Standing::Far;
 };

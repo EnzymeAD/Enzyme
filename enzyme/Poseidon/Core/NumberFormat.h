@@ -21,6 +21,7 @@
 
 namespace llvm {
 class LLVMContext;
+struct fltSemantics;
 } // namespace llvm
 
 namespace poseidon {
@@ -69,6 +70,8 @@ struct NumberFormatInfo {
   NumberFormat Kind;
   llvm::StringLiteral Name, Dtype, CostType, CType, Words;
   llvm::Type *(*LLVMType)(llvm::LLVMContext &);
+  /// What roundToPrec rounds to; null for none.
+  const llvm::fltSemantics &(*Semantics)();
   unsigned Components;
   bool Matrix;
 };

@@ -26,9 +26,9 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -114,6 +114,13 @@ public:
   double getLowerBound() const { return lb; }
   /// The greatest value the profile recorded; -inf before any was recorded.
   double getUpperBound() const { return ub; }
+  /// The profiled range as [lower, upper] when it is an interval of finite
+  /// values; none when the profile recorded no value or an infinite one.
+  std::optional<std::pair<double, double>> profiledRange() const {
+    if (!std::isfinite(lb) || !std::isfinite(ub) || lb > ub)
+      return std::nullopt;
+    return std::make_pair(lb, ub);
+  }
   /// Emits the node at `builder`, its operands first and each cast to the
   /// node's format, and returns its value. `VMap`, when given, maps each value
   /// of the program a leaf names to the value to read instead.
@@ -223,30 +230,6 @@ struct Subgraph {
   size_t outputsRewritten = 0;
   /// The points its units are priced at, while they are priced.
   std::shared_ptr<SubgraphSamples> samples;
-  /// Frequency scale for synthetic output-boundary casts: they execute at the
-  /// insertion point's frequency (the output's consumer), not the body's.
-  /// min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.
-  double outBoundaryFreqScale = 1.0;
-
-  /// Measured execution counts of this subgraph's instructions over the
-  /// profiling run, which survive materialization. Empty prices exactly as an
-  /// unweighted walk.
-  llvm::DenseMap<const llvm::Instruction *, uint64_t> opExec;
-  /// The same counts by loop depth.
-  std::map<unsigned, uint64_t> depthExec;
-  /// The execution count the counts are divided by: the first output's.
-  uint64_t execNormalizer = 0;
-
-  /// The measured count of the deepest class at or below `d` (the shallowest
-  /// class outside every recorded loop) over the normalizer; 1.0 without one.
-  double freqWeightAtDepth(unsigned d) const {
-    if (depthExec.empty() || execNormalizer == 0)
-      return 1.0;
-    auto it = depthExec.upper_bound(d);
-    uint64_t e = (it == depthExec.begin()) ? depthExec.begin()->second
-                                           : std::prev(it)->second;
-    return (double)e / (double)execNormalizer;
-  }
 
   Subgraph() = default;
   explicit Subgraph(llvm::SetVector<llvm::Value *> inputs,
