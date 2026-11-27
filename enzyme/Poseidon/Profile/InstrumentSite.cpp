@@ -508,6 +508,27 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
 /// every launch.
 static Expected<bool> profileKernel(Session &S, Function &K,
                                     unsigned &nextSiteId) {
+  // The derivative keeps a shadow next to every shared buffer that holds
+  // floating-point data.
+  const Target &T = Target::of(K);
+  const DataLayout &DL = K.getParent()->getDataLayout();
+  uint64_t sharedBytes = 0;
+  for (const GlobalVariable *G : T.staticSharedOf(K)) {
+    const uint64_t size = DL.getTypeAllocSize(G->getValueType());
+    sharedBytes += findLeafType(G->getValueType(), isFPLeaf) ? 2 * size : size;
+  }
+  if (const uint64_t limit = T.maxStaticSharedBytes(); sharedBytes > limit) {
+    diagnose(K,
+             displayName(K) + " would declare " + Twine(sharedBytes) +
+                 " bytes of static shared memory once profiled, with a shadow "
+                 "next to each floating-point shared buffer, above the " +
+                 Twine(limit) +
+                 " a kernel can declare; the kernel is not profiled and stays "
+                 "as written",
+             DS_Warning);
+    return false;
+  }
+
   Function *body = nullptr;
   Expected<CallInst *> outlined =
       outlineKernelBody(S.get<SiteRecords>(), K, body);

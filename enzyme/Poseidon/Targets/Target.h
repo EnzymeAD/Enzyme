@@ -16,6 +16,7 @@
 #ifndef POSEIDON_TARGETS_TARGET_H
 #define POSEIDON_TARGETS_TARGET_H
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Intrinsics.h"
 
@@ -27,6 +28,7 @@ namespace llvm {
 class CallInst;
 class Function;
 class GlobalValue;
+class GlobalVariable;
 class IRBuilderBase;
 class Module;
 class Type;
@@ -108,6 +110,11 @@ public:
   /// Whether a kernel that may make an unknown call is allocated the static
   /// shared memory of every address-taken function.
   virtual bool allocatesAddressTakenShared() const { return false; }
+  /// The shared globals `Root` is allocated: those it and the functions it
+  /// calls refer to and, where allocatesAddressTakenShared, those of every
+  /// address-taken function once one of them makes an unknown call.
+  llvm::SetVector<const llvm::GlobalVariable *>
+  staticSharedOf(const llvm::Function &Root) const;
 
   /// The launch geometry `V` reads; Kind None when it reads none.
   virtual LaunchGeometry decodeLaunchValue(const llvm::Value *V) const = 0;

@@ -543,19 +543,6 @@ Expected<bool> registerDeviceProfileTable(const Options &O, Module &M) {
   return true;
 }
 
-/// Appends to `out` every shared global `V` refers to, through constant
-/// expressions.
-static void collectShared(const Target &T, const Value *V,
-                          SetVector<const GlobalVariable *> &out) {
-  if (const auto *G = dyn_cast<GlobalVariable>(V)) {
-    if (T.isShared(*G))
-      out.insert(G);
-  } else if (const auto *CE = dyn_cast<ConstantExpr>(V)) {
-    for (const Value *Op : CE->operands())
-      collectShared(T, Op, out);
-  }
-}
-
 Error requireSharedMemoryLimit(Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
@@ -574,29 +561,7 @@ Error requireSharedMemoryLimit(Module &M) {
   for (const Function &K : M) {
     if (K.isDeclaration() || !T.isKernel(K))
       continue;
-    SetVector<const Function *> funcs;
-    SetVector<const GlobalVariable *> shared;
-    bool unknownCall = false;
-    funcs.insert(&K);
-    for (size_t f = 0; f < funcs.size(); ++f) {
-      for (const Instruction &I : instructions(*funcs[f])) {
-        if (const auto *CB = dyn_cast<CallBase>(&I)) {
-          const Function *callee = CB->getCalledFunction();
-          if (callee && !callee->isDeclaration())
-            funcs.insert(callee);
-          unknownCall |= !callee && !CB->isInlineAsm();
-        }
-        for (const Value *Op : I.operands())
-          collectShared(T, Op, shared);
-      }
-      // The target allocates a kernel that may make an unknown call the
-      // shared memory of every function whose address is taken.
-      if (f + 1 == funcs.size() && unknownCall &&
-          T.allocatesAddressTakenShared())
-        for (const Function &F : M)
-          if (!F.isDeclaration() && F.hasAddressTaken())
-            funcs.insert(&F);
-    }
+    const SetVector<const GlobalVariable *> shared = T.staticSharedOf(K);
     uint64_t bytes = 0;
     for (const GlobalVariable *G : shared)
       bytes += DL.getTypeAllocSize(G->getValueType());

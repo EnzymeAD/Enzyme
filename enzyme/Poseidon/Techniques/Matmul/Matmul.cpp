@@ -311,53 +311,17 @@ static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
   Module *mod = F.getParent();
   const Target &T = Target::of(*mod);
   const DataLayout &DL = mod->getDataLayout();
-  // Only the addrspace(3) globals co-resident with this raise count, so take
-  // the max over the enclosing kernels rather than a module-wide sum: another
-  // kernel of the module does not share this one's shared memory.
-  // A shared global counts for a function when an instruction of it or of a
-  // function it calls uses the global, directly or through constant
-  // expressions.
-  auto sharedBytesUsedBy = [&](const Function *root,
-                               SmallPtrSetImpl<const GlobalVariable *> &out) {
-    SmallVector<const Function *, 8> work{root};
-    SmallPtrSet<const Function *, 8> reached{root};
-    while (!work.empty()) {
-      const Function *cur = work.pop_back_val();
-      for (const Instruction &I : instructions(*cur))
-        if (auto *CB = dyn_cast<CallBase>(&I))
-          if (const Function *Callee = CB->getCalledFunction())
-            if (!Callee->isDeclaration() && reached.insert(Callee).second)
-              work.push_back(Callee);
-    }
-    for (const GlobalVariable &GV : mod->globals()) {
-      if (!T.isShared(GV) || !GV.getValueType()->isSized())
-        continue;
-      SmallVector<const User *, 8> users(GV.users());
-      SmallPtrSet<const User *, 8> seen;
-      while (!users.empty()) {
-        const User *U = users.pop_back_val();
-        if (!seen.insert(U).second)
-          continue;
-        if (const auto *I = dyn_cast<Instruction>(U)) {
-          if (reached.contains(I->getFunction())) {
-            out.insert(&GV);
-            break;
-          }
-          continue;
-        }
-        append_range(users, U->users());
-      }
-    }
-  };
-  auto sizeOfSet = [&](const SmallPtrSetImpl<const GlobalVariable *> &s) {
+  // Only the shared globals co-resident with this raise count, so take the max
+  // over the enclosing kernels rather than a module-wide sum: another kernel
+  // of the module does not share this one's shared memory.
+  auto sizeOfSet = [&](const SetVector<const GlobalVariable *> &s) {
     uint64_t b = 0;
     for (const GlobalVariable *GV : s)
       b += DL.getTypeAllocSize(GV->getValueType()).getFixedValue();
     return b;
   };
   uint64_t bytes = 0;
-  SmallPtrSet<const GlobalVariable *, 16> own;
-  sharedBytesUsedBy(&F, own);
+  const SetVector<const GlobalVariable *> own = T.staticSharedOf(F);
   // The kernels call the body the site clone was cut from.
   const Function *origFn = siteOriginOf(S.get<SiteRecords>(), F);
   if (!origFn)
@@ -367,8 +331,8 @@ static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
     if (auto *CB = dyn_cast<CallBase>(U))
       if (const Function *K = CB->getFunction())
         if (T.isKernel(*K)) {
-          SmallPtrSet<const GlobalVariable *, 16> s(own.begin(), own.end());
-          sharedBytesUsedBy(K, s);
+          SetVector<const GlobalVariable *> s = T.staticSharedOf(*K);
+          s.insert(own.begin(), own.end());
           bytes = std::max(bytes, sizeOfSet(s));
           sawKernel = true;
         }

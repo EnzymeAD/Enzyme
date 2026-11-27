@@ -11,8 +11,11 @@
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -57,6 +60,44 @@ StringRef Target::processor(const Function &F) const {
 bool Target::isShared(const GlobalValue &G) const {
   std::optional<unsigned> AS = sharedAddressSpace();
   return AS && G.getAddressSpace() == *AS;
+}
+
+/// Appends to `out` every sized shared global `V` refers to, through constant
+/// expressions.
+static void collectShared(const Target &T, const Value *V,
+                          SetVector<const GlobalVariable *> &out) {
+  if (const auto *G = dyn_cast<GlobalVariable>(V)) {
+    if (T.isShared(*G) && G->getValueType()->isSized())
+      out.insert(G);
+  } else if (const auto *CE = dyn_cast<ConstantExpr>(V)) {
+    for (const Value *Op : CE->operands())
+      collectShared(T, Op, out);
+  }
+}
+
+SetVector<const GlobalVariable *>
+Target::staticSharedOf(const Function &Root) const {
+  SetVector<const Function *> funcs;
+  SetVector<const GlobalVariable *> shared;
+  bool unknownCall = false;
+  funcs.insert(&Root);
+  for (size_t f = 0; f < funcs.size(); ++f) {
+    for (const Instruction &I : instructions(*funcs[f])) {
+      if (const auto *CB = dyn_cast<CallBase>(&I)) {
+        const Function *callee = CB->getCalledFunction();
+        if (callee && !callee->isDeclaration())
+          funcs.insert(callee);
+        unknownCall |= !callee && !CB->isInlineAsm();
+      }
+      for (const Value *Op : I.operands())
+        collectShared(*this, Op, shared);
+    }
+    if (f + 1 == funcs.size() && unknownCall && allocatesAddressTakenShared())
+      for (const Function &F : *Root.getParent())
+        if (!F.isDeclaration() && F.hasAddressTaken())
+          funcs.insert(&F);
+  }
+  return shared;
 }
 
 bool Target::inlinesMathCall(const Function &callee) const {
