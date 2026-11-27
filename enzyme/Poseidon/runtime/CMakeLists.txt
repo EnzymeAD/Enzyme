@@ -23,10 +23,10 @@ set(POSEIDON_RUNTIME_HEADERS ${POSEIDON_RUNTIME_HEADERS} PARENT_SCOPE)
 # (POSEIDON_HIP_CXX). Each source is compiled whole: every kernel is launched
 # from a host function of its own file, so the archive carries complete device
 # code and a program built by any compiler can link it. The HIP objects are
-# compiled in and into the Poseidon build directory, which the CUID clang gives
-# their symbols is derived from. The HIP headers define
-# CUDA's directed-rounding intrinsics (the Ozaki-II scaling's __dadd_ru,
-# __fsub_rd, ...) only under OCML_BASIC_ROUNDED_OPERATIONS.
+# compiled in the Poseidon build directory, from which clang derives the CUID
+# in their symbols. The HIP headers define CUDA's directed-rounding intrinsics
+# (the Ozaki-II scaling's __dadd_ru, __fsub_rd, ...) only under
+# OCML_BASIC_ROUNDED_OPERATIONS.
 function(poseidon_add_gpu_runtime cuda_target hip_target)
   cmake_parse_arguments(PARSE_ARGV 2 _arg "" "" "SOURCES")
   if(POSEIDON_HAS_CUDA)
@@ -71,6 +71,9 @@ target_include_directories(
   PRIVATE ${ENZYME_SOURCE_DIR}/include)
 # Linked into profile-generate builds only: it replaces malloc for the process.
 add_library(poseidon_profile_shadows STATIC profile/Shadows.cpp)
+target_include_directories(
+  poseidon_profile_shadows
+  PRIVATE ${ENZYME_SOURCE_DIR}/include)
 install(
   TARGETS poseidon_profile poseidon_profile_shadows
   EXPORT PoseidonTargets
@@ -183,9 +186,11 @@ if(POSEIDON_HAS_CUDA)
     poseidon_gemm_cuda
     PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Xcompiler=-O3>)
   # What a program that links poseidon_gemm_cuda links besides it is said here
-  # only
-  # (poseidon_gemm_cuda_link_files).
+  # only (poseidon_gemm_cuda_link_files).
   target_link_libraries(poseidon_gemm_cuda PUBLIC CUDA::cublas CUDA::cudart)
+  target_include_directories(
+    poseidon_gemm_cuda
+    PRIVATE ${ENZYME_SOURCE_DIR}/include)
   if(POSEIDON_HAS_TCEC)
     target_sources(poseidon_gemm_cuda PRIVATE gemm/Tcec.cu)
     target_include_directories(
@@ -219,10 +224,9 @@ endif()
 
 # poseidon_gemm_cuda_link_files(<out> [TOOLKIT])
 # The libraries poseidon_gemm_cuda links, in its order: cuMpSGEMM defines
-# cuBLAS's
-# GEMM entry points and comes after cuBLAS, so that a call of cuBLAS reaches
-# cuBLAS. Without TOOLKIT only those that are files, which a link adds beyond
-# the CUDA toolkit's libraries; with it every one, as a file.
+# cuBLAS's GEMM entry points and comes after cuBLAS, so that a call of cuBLAS
+# reaches cuBLAS. Without TOOLKIT only those that are files, which a link adds
+# beyond the CUDA toolkit's libraries; with it every one, as a file.
 function(poseidon_gemm_cuda_link_files out)
   cmake_parse_arguments(PARSE_ARGV 1 _arg "TOOLKIT" "" "")
   set(_files "")

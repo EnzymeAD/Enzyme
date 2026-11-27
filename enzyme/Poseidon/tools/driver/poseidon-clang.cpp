@@ -175,8 +175,8 @@ static void printHelp(StringRef Prog) {
   outs() << "\nAny other -poseidon-<flag>[=<value>], with or without -mllvm "
             "before\nit, reaches the pass as -Xclang -mllvm -Xclang "
             "-poseidon-<flag>.\nPOSEIDON_PLUGIN and POSEIDON_ENZYME_PLUGIN "
-            "override the plugin paths baked\nin at build time; "
-            "POSEIDON_ECHO=1 prints the clang command line\nthis driver "
+            "override the plugin paths baked\nin at build time; with "
+            "POSEIDON_ECHO set, the driver prints the clang command\nline it "
             "runs. Every -poseidon-<flag> is listed by\n  "
          << Prog << " -mllvm -help-hidden -c -x c /dev/null\n";
 }

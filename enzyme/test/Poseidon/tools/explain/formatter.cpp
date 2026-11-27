@@ -179,7 +179,7 @@ __attribute__((noinline)) void rotation(const double *w, double *q, int n) {
   "original": {"c": ["x * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))", "y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))"]},
   "outputs": [{"loc": {"file": "formatter_rotation.cpp", "line": 15, "col": 22}, "c": "x * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))"},
               {"loc": {"file": "formatter_rotation.cpp", "line": 16, "col": 22}, "c": "y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))"}],
-  "alternatives": [{"id": "P0_10", "kind": "precision", "status": "applied", "changes": [{"ops": [5, 7], "to": "FP32"}], "modelled_error": 1.3241097083711176e-08,
+  "alternatives": [{"id": "P0_10", "kind": "precision", "status": "applied", "changes": [{"ops": [5, 7], "to": "FP32", "c_type": "float", "words": "float"}], "modelled_error": 1.3241097083711176e-08,
    "cost_delta": -0.7441307993292342, "summary": "Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations)"}]}]}
 //--- formatter/mixed.explain.json
 {"schema": "poseidon-explain/1",
@@ -188,5 +188,5 @@ __attribute__((noinline)) void rotation(const double *w, double *q, int n) {
   "ops": [{"opcode": "*"}, {"opcode": "fma"}, {"opcode": "fma"}, {"opcode": "sqrt"}, {"opcode": "*"},
           {"loc": {"file": "formatter_rotation.cpp", "line": 13, "col": 16}, "opcode": "sin", "float_call": "sinf"}, {"opcode": "/"},
           {"loc": {"file": "formatter_rotation.cpp", "line": 14, "col": 16}, "opcode": "cos", "float_call": "cosf"}],
-  "alternatives": [{"id": "P0_10", "kind": "precision", "status": "applied", "changes": [{"ops": [5], "to": "FP32"}, {"ops": [7], "to": "FP16"}],
+  "alternatives": [{"id": "P0_10", "kind": "precision", "status": "applied", "changes": [{"ops": [5], "to": "FP32", "c_type": "float", "words": "float"}, {"ops": [7], "to": "FP16", "c_type": "_Float16", "words": "half"}],
    "summary": "sin (13:16) in float and cos (14:16) in half"}]}]}

@@ -75,8 +75,11 @@ if(POSEIDON_HAS_CUDA)
     poseidon-calibrate-library-cuda
     PRIVATE POSEIDON_TCEC=$<BOOL:${POSEIDON_HAS_TCEC}>)
   target_include_directories(
+    poseidon-calibrate-ops-cuda
+    PRIVATE ${ENZYME_SOURCE_DIR}/include)
+  target_include_directories(
     poseidon-calibrate-library-cuda
-    PRIVATE ${POSEIDON_SOURCE_DIR})
+    PRIVATE ${POSEIDON_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
   target_link_libraries(
     poseidon-calibrate-library-cuda
     PRIVATE poseidon_gemm_cuda CUDA::cublas)
@@ -110,6 +113,7 @@ function(poseidon_add_hip_tool name src)
     COMMAND
       ${POSEIDON_HIP_CXX}
       -I${POSEIDON_SOURCE_DIR}
+      -I${ENZYME_SOURCE_DIR}/include
       ${CMAKE_CURRENT_SOURCE_DIR}/${src}
       ${_libs}
       -L${POSEIDON_ROCM_PATH}/lib

@@ -103,10 +103,8 @@ static bool g_metricSet = false;
 // metric, so it records and writes nothing else.
 static bool g_metricOnly = false;
 
-// The site this kappa run perturbs and by how much;
-// eps 0 perturbs nothing.
-static int g_kappaSite = -1;
-static double g_kappaEps = 0.0;
+// The site this kappa run perturbs and by how much.
+static KappaPerturbation g_kappa;
 
 // The file names of the profiles this process wrote, the sites of this run
 // the condition-number measurement may perturb. Never destroyed: the exit
@@ -193,12 +191,9 @@ static std::set<std::string> &writtenElsewhere() {
 static void writeMetric() {
   if (!g_metricSet)
     return;
-  const std::string dir = FunctionProfile::outputDir();
+  const std::string &dir = FunctionProfile::outputDir();
   profileMkdirP(dir);
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), "%.17g", g_metricValue);
-  profileWriteFile(dir + "/metric.txt", metricName() + " " + buf + "\n",
-                   "the declared quantity of interest");
+  profileWriteMetric(dir, metricName(), g_metricValue);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +206,8 @@ static void writeMetric() {
 //   unset    a profiling run: marks the profiles of its sites unmeasured, so
 //            that profile use stops on them, and says how to measure them;
 //            under poseidon-kappa (POSEIDON_KAPPA_SITES names a file) it marks
-//            them and lists them in that file instead;
+//            them and lists them, with its profile directory, in that file
+//            instead;
 //   0        declined: leaves the profiles as a run without a metric does;
 //   child    a run of the measurement: perturbs site POSEIDON_KAPPA_SITE by
 //            POSEIDON_KAPPA_EPS and records the metric alone.
@@ -289,8 +285,7 @@ static std::map<int, std::string> kappaSites(const std::string &pdir) {
     int id = -1;
     bool executed = true;
     while (std::getline(in, line)) {
-      if (!line.empty() &&
-          line.find_first_not_of("0123456789") == std::string::npos)
+      if (profileIsSlotLine(line))
         break;
       executed &= line != kProfileNeverExecuted;
       std::sscanf(line.c_str(), siteIdFormat.c_str(), &id);
@@ -305,19 +300,17 @@ static std::map<int, std::string> kappaSites(const std::string &pdir) {
 // more: what POSEIDON_KAPPA asks of it (above).
 static void answerKappaRequest() {
   const char *request = getenv("POSEIDON_KAPPA");
-  if (g_kappaSite >= 0 || profileIsKappaChild() || !g_metricSet)
+  if (profileIsKappaChild() || !g_metricSet)
     return;
-  const std::map<int, std::string> sites =
-      kappaSites(FunctionProfile::outputDir());
+  const std::string &dir = FunctionProfile::outputDir();
+  const std::map<int, std::string> sites = kappaSites(dir);
   if (sites.size() < 2)
     return;
   if (request && !strcmp(request, "0")) {
-    fprintf(
-        stderr,
-        "[poseidon] metric \"%s\" was declared and its condition numbers at "
-        "%zu sites are not measured (POSEIDON_KAPPA=0): each site is "
-        "solved against its own target\n",
-        metricName().c_str(), sites.size());
+    report("metric \"%s\" was declared and its condition numbers at %zu "
+           "sites are not measured (POSEIDON_KAPPA=0): each site is solved "
+           "against its own target",
+           metricName().c_str(), sites.size());
     return;
   }
   // Until a measurement replaces it, so that profile use can tell a declared
@@ -326,22 +319,16 @@ static void answerKappaRequest() {
     profileReplaceKappa(kv.second, {std::string(kProfileKeyKappaMark) + " = " +
                                     kProfileKappaUnmeasured});
   if (const char *list = getenv("POSEIDON_KAPPA_SITES")) {
-    std::string text;
-    for (const auto &[site, path] : sites)
-      text += std::to_string(site) + " " + path + "\n";
-    profileWriteFile(list, text, "the sites to measure");
+    profileWriteKappaSites(list, {dir, sites});
     return;
   }
   const std::vector<double> ladder = profileKappaLadder();
-  fprintf(
-      stderr,
-      "[poseidon] metric \"%s\" was declared but its condition numbers at %zu "
-      "sites were not measured, and profile use needs them "
-      "(POSEIDON_KAPPA=0 on this run solves each site against its own "
-      "target instead); measuring takes %zu more runs of this program: "
-      "poseidon-kappa -- %s\n",
-      metricName().c_str(), sites.size(), 1 + sites.size() * ladder.size(),
-      kappaCommand().c_str());
+  report("metric \"%s\" was declared but its condition numbers at %zu sites "
+         "were not measured, and profile use needs them (POSEIDON_KAPPA=0 on "
+         "this run solves each site against its own target instead); "
+         "measuring takes %zu more runs of this program: poseidon-kappa -- %s",
+         metricName().c_str(), sites.size(), 1 + sites.size() * ladder.size(),
+         kappaCommand().c_str());
 }
 
 // Whether the profile at `path` holds a record, which only a run that executed
@@ -350,8 +337,7 @@ static bool holdsRecords(const std::string &path) {
   std::ifstream in(path);
   std::string line;
   while (std::getline(in, line))
-    if (!line.empty() &&
-        line.find_first_not_of("0123456789") == std::string::npos)
+    if (profileIsSlotLine(line))
       return true;
   return false;
 }
@@ -398,9 +384,7 @@ static void writeAllProfilesAtExit() {
 
 static int registerProfiler() {
   g_metricOnly = profileIsKappaChild();
-  g_kappaSite = (int)profileEnvInteger("POSEIDON_KAPPA_SITE", -1);
-  if (g_kappaSite >= 0)
-    g_kappaEps = profileEnvPositiveReal("POSEIDON_KAPPA_EPS", 1e-6);
+  g_kappa = profileKappaPerturbation();
   FunctionProfile::setOutputDir(profileDirectory());
 
   captureKappaArgv();
@@ -413,11 +397,17 @@ extern "C" {
 int __poseidon_profile_runtime = registerProfiler();
 }
 
+// An entry called with a null name would drop what the name keys without a
+// word, so it stops the run.
+static void requireNonNull(const char *p, const char *entry, const char *what) {
+  if (!p)
+    profileFail("%s was called with a null %s.", entry, what);
+}
+
 extern "C" {
 
 void poseidon_metric(const char *name, double value) {
-  if (!name)
-    return;
+  requireNonNull(name, "poseidon_metric", "name");
   std::lock_guard<std::mutex> lock(registryMutex);
   metricName() = name;
   g_metricValue = value;
@@ -425,8 +415,8 @@ void poseidon_metric(const char *name, double value) {
 }
 
 void __poseidon_register_static(const char *funcName, const char *text) {
-  if (!funcName || !text)
-    return;
+  requireNonNull(funcName, "__poseidon_register_static", "function name");
+  requireNonNull(text, "__poseidon_register_static", "header");
   std::lock_guard<std::mutex> lock(registryMutex);
   staticHeaders()[funcName] = text;
 }
@@ -435,8 +425,8 @@ void __poseidon_register_static(const char *funcName, const char *text) {
 // `site` (DeviceProfiler.h poseidonPerturbed); the identity unless this run
 // perturbs that site.
 double __poseidon_perturb(int site, double v) {
-  return site == g_kappaSite && g_kappaEps != 0.0
-             ? poseidonPerturbed(v, g_kappaEps)
+  return site == g_kappa.site && g_kappa.eps != 0.0
+             ? poseidonPerturbed(v, g_kappa.eps)
              : v;
 }
 
@@ -445,16 +435,16 @@ float __poseidon_perturbf(int site, float v) {
 }
 
 void __poseidon_profile_written(const char *funcName) {
-  if (!funcName)
-    return;
+  requireNonNull(funcName, "__poseidon_profile_written", "function name");
   std::lock_guard<std::mutex> lock(registryMutex);
   writtenElsewhere().insert(funcName);
 }
 
 void __poseidon_log_grad(const char *funcName, size_t idx, double value,
                          double grad) {
-  if (!funcName || g_metricOnly)
+  if (g_metricOnly)
     return;
+  requireNonNull(funcName, "__poseidon_log_grad", "function name");
 
   std::lock_guard<std::mutex> lock(registryMutex);
   profilerFor(funcName).updateGradient(idx, value, grad);
@@ -462,8 +452,9 @@ void __poseidon_log_grad(const char *funcName, size_t idx, double value,
 
 void __poseidon_log_value(const char *funcName, size_t idx, double res,
                           size_t numOperands, double *operands) {
-  if (!funcName || g_metricOnly)
+  if (g_metricOnly)
     return;
+  requireNonNull(funcName, "__poseidon_log_value", "function name");
 
   std::lock_guard<std::mutex> lock(registryMutex);
   profilerFor(funcName).updateValue(idx, res, numOperands, operands);

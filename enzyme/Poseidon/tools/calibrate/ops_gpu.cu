@@ -33,6 +33,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../runtime/DeviceApi.h"
+#include "../../runtime/profile/ProfileFormat.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -408,16 +409,17 @@ constexpr double kWarmMs = 20.0, kBatchMs = 5.0;
 
 template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
   hipEvent_t e0, e1;
-  (void)hipEventCreate(&e0);
-  (void)hipEventCreate(&e1);
+  POSEIDON_GPU_CHECK(hipEventCreate(&e0));
+  POSEIDON_GPU_CHECK(hipEventCreate(&e1));
   auto batch = [&](int reps) {
-    (void)hipEventRecord(e0);
+    POSEIDON_GPU_CHECK(hipEventRecord(e0));
     for (int i = 0; i < reps; ++i)
       kernel();
-    (void)hipEventRecord(e1);
-    (void)hipEventSynchronize(e1);
+    POSEIDON_GPU_CHECK(hipEventRecord(e1));
+    POSEIDON_GPU_CHECK(hipEventSynchronize(e1));
+    POSEIDON_GPU_CHECK(hipGetLastError());
     float ms;
-    (void)hipEventElapsedTime(&ms, e0, e1);
+    POSEIDON_GPU_CHECK(hipEventElapsedTime(&ms, e0, e1));
     return (double)ms;
   };
   double ms = batch(reps);
@@ -428,8 +430,8 @@ template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
   double t[kBatches];
   for (int b = 0; b < kBatches; ++b)
     t[b] = batch(reps) * 1e6 / reps;
-  (void)hipEventDestroy(e0);
-  (void)hipEventDestroy(e1);
+  POSEIDON_GPU_CHECK(hipEventDestroy(e0));
+  POSEIDON_GPU_CHECK(hipEventDestroy(e1));
   std::sort(t, t + kBatches);
   return t[kBatches / 2];
 }
@@ -437,20 +439,22 @@ template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
 // The mean of `reps` launches after three untimed ones.
 template <typename K> double timeit_ns(K kernel, int reps = gCfg.reps) {
   cudaEvent_t e0, e1;
-  (void)cudaEventCreate(&e0);
-  (void)cudaEventCreate(&e1);
+  POSEIDON_GPU_CHECK(cudaEventCreate(&e0));
+  POSEIDON_GPU_CHECK(cudaEventCreate(&e1));
   for (int i = 0; i < 3; ++i)
     kernel();
-  (void)cudaDeviceSynchronize();
-  (void)cudaEventRecord(e0);
+  POSEIDON_GPU_CHECK(cudaDeviceSynchronize());
+  POSEIDON_GPU_CHECK(cudaGetLastError());
+  POSEIDON_GPU_CHECK(cudaEventRecord(e0));
   for (int i = 0; i < reps; ++i)
     kernel();
-  (void)cudaEventRecord(e1);
-  (void)cudaEventSynchronize(e1);
+  POSEIDON_GPU_CHECK(cudaEventRecord(e1));
+  POSEIDON_GPU_CHECK(cudaEventSynchronize(e1));
+  POSEIDON_GPU_CHECK(cudaGetLastError());
   float ms;
-  (void)cudaEventElapsedTime(&ms, e0, e1);
-  (void)cudaEventDestroy(e0);
-  (void)cudaEventDestroy(e1);
+  POSEIDON_GPU_CHECK(cudaEventElapsedTime(&ms, e0, e1));
+  POSEIDON_GPU_CHECK(cudaEventDestroy(e0));
+  POSEIDON_GPU_CHECK(cudaEventDestroy(e1));
   return (double)ms * 1e6 / reps;
 }
 #endif
@@ -687,6 +691,16 @@ __global__ void sgemm(const double *__restrict__ A,
 
 static const int kGemmReps = 10;
 
+// Whether `e`, the status of the probe launch `what` of a scheme's GEMM, says
+// that this GPU has no kernel of the scheme; any other failure stops the run.
+static bool schemeUnsupported(cudaError_t e, const char *what) {
+  if (e == cudaErrorNoKernelImageForDevice || e == cudaErrorNotSupported)
+    return true;
+  if (e != cudaSuccess)
+    poseidon::fatalCall(what, __FILE__, __LINE__, cudaGetErrorString(e));
+  return false;
+}
+
 // Wall time (ns per GEMM) of one scheme's tiled WMMA GEMM at M = N = K = GN;
 // *ok is false when the scheme does not run on this GPU.
 template <typename AB, typename ACC, typename FRAG_AB, int MT, int NT, int KT,
@@ -704,22 +718,17 @@ double tensor_gemm_ns(int GN, bool *ok) {
   size_t aN = (size_t)M * K, bN = (size_t)K * N, cN = (size_t)M * N;
   AB *dA = nullptr, *dB = nullptr;
   ACC *dC = nullptr;
-  if (cudaMalloc(&dA, aN * sizeof(AB)) != cudaSuccess ||
-      cudaMalloc(&dB, bN * sizeof(AB)) != cudaSuccess ||
-      cudaMalloc(&dC, cN * sizeof(ACC)) != cudaSuccess) {
-    if (dA)
-      cudaFree(dA);
-    if (dB)
-      cudaFree(dB);
-    if (dC)
-      cudaFree(dC);
-    if (ok)
-      *ok = false;
-    return -1.0;
-  }
-  cudaMemset(dA, 0, aN * sizeof(AB));
-  cudaMemset(dB, 0, bN * sizeof(AB));
-  cudaMemset(dC, 0, cN * sizeof(ACC));
+  POSEIDON_GPU_CHECK(cudaMalloc(&dA, aN * sizeof(AB)));
+  POSEIDON_GPU_CHECK(cudaMalloc(&dB, bN * sizeof(AB)));
+  POSEIDON_GPU_CHECK(cudaMalloc(&dC, cN * sizeof(ACC)));
+  POSEIDON_GPU_CHECK(cudaMemset(dA, 0, aN * sizeof(AB)));
+  POSEIDON_GPU_CHECK(cudaMemset(dB, 0, bN * sizeof(AB)));
+  POSEIDON_GPU_CHECK(cudaMemset(dC, 0, cN * sizeof(ACC)));
+  auto release = [&] {
+    POSEIDON_GPU_CHECK(cudaFree(dA));
+    POSEIDON_GPU_CHECK(cudaFree(dB));
+    POSEIDON_GPU_CHECK(cudaFree(dC));
+  };
 
   dim3 grid(N / BN, M / BM);
   int threads = BWM * BWN * 32;
@@ -728,22 +737,17 @@ double tensor_gemm_ns(int GN, bool *ok) {
           IS_TF32><<<grid, threads>>>(dA, dB, dC, M, N, K);
   };
 
-  cudaGetLastError(); // clear any stale error
-  launch();           // warm / probe launch
-  cudaError_t err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) { // unsupported scheme (e.g. DMMA)
-    cudaFree(dA);
-    cudaFree(dB);
-    cudaFree(dC);
+  launch();
+  if (schemeUnsupported(cudaGetLastError(), "the WMMA GEMM launch") ||
+      schemeUnsupported(cudaDeviceSynchronize(), "cudaDeviceSynchronize")) {
+    release();
     if (ok)
       *ok = false;
     return -1.0;
   }
 
   double ns = timeit_ns(launch, kGemmReps);
-  cudaFree(dA);
-  cudaFree(dB);
-  cudaFree(dC);
+  release();
   if (ok)
     *ok = true;
   return ns;
@@ -757,38 +761,24 @@ double scalar_gemm_ns(int GN) {
     return -1.0;
   size_t aN = (size_t)M * K, bN = (size_t)K * N, cN = (size_t)M * N;
   double *dA = nullptr, *dB = nullptr, *dC = nullptr;
-  if (cudaMalloc(&dA, aN * 8) != cudaSuccess ||
-      cudaMalloc(&dB, bN * 8) != cudaSuccess ||
-      cudaMalloc(&dC, cN * 8) != cudaSuccess) {
-    if (dA)
-      cudaFree(dA);
-    if (dB)
-      cudaFree(dB);
-    if (dC)
-      cudaFree(dC);
-    return -1.0;
-  }
-  cudaMemset(dA, 0, aN * 8);
-  cudaMemset(dB, 0, bN * 8);
-  cudaMemset(dC, 0, cN * 8);
+  POSEIDON_GPU_CHECK(cudaMalloc(&dA, aN * 8));
+  POSEIDON_GPU_CHECK(cudaMalloc(&dB, bN * 8));
+  POSEIDON_GPU_CHECK(cudaMalloc(&dC, cN * 8));
+  POSEIDON_GPU_CHECK(cudaMemset(dA, 0, aN * 8));
+  POSEIDON_GPU_CHECK(cudaMemset(dB, 0, bN * 8));
+  POSEIDON_GPU_CHECK(cudaMemset(dC, 0, cN * 8));
   dim3 grid(N / BN, M / BM);
   int threads = (BM / TM) * (BN / TN);
   auto launch = [&]() {
     sgemm<BM, BN, BK, TM, TN><<<grid, threads>>>(dA, dB, dC, M, N, K);
   };
-  cudaGetLastError();
   launch();
-  cudaError_t err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    cudaFree(dA);
-    cudaFree(dB);
-    cudaFree(dC);
-    return -1.0;
-  }
+  POSEIDON_GPU_CHECK(cudaGetLastError());
+  POSEIDON_GPU_CHECK(cudaDeviceSynchronize());
   double ns = timeit_ns(launch, kGemmReps);
-  cudaFree(dA);
-  cudaFree(dB);
-  cudaFree(dC);
+  POSEIDON_GPU_CHECK(cudaFree(dA));
+  POSEIDON_GPU_CHECK(cudaFree(dB));
+  POSEIDON_GPU_CHECK(cudaFree(dC));
   return ns;
 }
 
@@ -889,9 +879,14 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  // From CUDA 13 on, gpuDeviceProp_t carries no clock rate.
+  // From CUDA 13 on, gpuDeviceProp_t carries no clock rate. Every row is in
+  // cycles, so a clock rate that is not positive would price every op at 0.
   int clkKHz = 0;
-  (void)gpuDeviceGetAttribute(&clkKHz, gpuDevAttrClockRate, 0);
+  POSEIDON_GPU_CHECK(gpuDeviceGetAttribute(&clkKHz, gpuDevAttrClockRate, 0));
+  if (clkKHz <= 0)
+    poseidon::fatal("device 0 reports a clock rate of %d kHz; the per-op rows "
+                    "are in cycles and need a positive one",
+                    clkKHz);
   gGhz = (double)clkKHz / 1e6;
   // 1024 threads are 32 warps of an SM, but only 16 waves of a CU, whose four
   // SIMDs hold 32: an AMD GPU takes two blocks per CU to be throughput-bound.
@@ -907,15 +902,16 @@ int main(int argc, char **argv) {
 
   size_t total = (size_t)gCfg.blocks * gCfg.threads;
   float *fout;
-  (void)gpuMalloc(&fout, total * sizeof(float));
+  POSEIDON_GPU_CHECK(gpuMalloc(&fout, total * sizeof(float)));
   double *dout;
-  (void)gpuMalloc(&dout, total * sizeof(double));
+  POSEIDON_GPU_CHECK(gpuMalloc(&dout, total * sizeof(double)));
 
 #ifdef __HIP__
   // Bring the GPU to its sustained clock before the first row.
   for (int i = 0; i < 2000; ++i)
     fma_float<1024><<<gCfg.blocks, gCfg.threads>>>(fout);
-  (void)hipDeviceSynchronize();
+  POSEIDON_GPU_CHECK(hipDeviceSynchronize());
+  POSEIDON_GPU_CHECK(hipGetLastError());
 #endif
 
 #define BENCH_FLOAT(stem, row) BENCH_SCALAR(stem, float, #row, "float", fout)
@@ -925,8 +921,8 @@ int main(int argc, char **argv) {
   BENCH_CVT(cvt_f32_f64, fout, "fpext_float_to_double", "float");
   BENCH_CVT(cvt_f64_f32, dout, "fptrunc_double_to_float", "double");
 
-  (void)gpuFree(fout);
-  (void)gpuFree(dout);
+  POSEIDON_GPU_CHECK(gpuFree(fout));
+  POSEIDON_GPU_CHECK(gpuFree(dout));
 #ifndef __HIP__
   tileRows();
 #endif

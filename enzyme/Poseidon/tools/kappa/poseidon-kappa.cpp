@@ -19,9 +19,10 @@
 // The profiling run is the program's: it gets this process's standard streams,
 // and its exit status is this tool's, unless the measurement fails, which
 // exits 1. The scratch directories are removed on every exit. The profiling
-// run lists the sites to measure in the file POSEIDON_KAPPA_SITES names; a run
-// of the measurement has POSEIDON_KAPPA=child and POSEIDON_KAPPA_SITE /
-// POSEIDON_KAPPA_EPS, and writes its metric alone (Profiler.cpp).
+// run lists the sites to measure, and the directory it wrote its metric to, in
+// the file POSEIDON_KAPPA_SITES names; a run of the measurement has
+// POSEIDON_KAPPA=child and POSEIDON_KAPPA_SITE / POSEIDON_KAPPA_EPS, and writes
+// its metric alone (Profiler.cpp).
 //
 //===----------------------------------------------------------------------===//
 
@@ -105,34 +106,10 @@ int runProgram(const std::vector<std::string> &extra, const std::string &log) {
   return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
 
-// The metric a run wrote into `dir`, and its name. The value is the last field
-// of the line: the name may hold spaces.
-bool readMetric(const std::string &dir, double &value,
-                std::string *name = nullptr) {
-  std::ifstream in(dir + "/metric.txt");
-  std::string line;
-  if (!in.is_open() || !std::getline(in, line))
-    return false;
-  size_t at = line.rfind(' ');
-  if (at == std::string::npos)
-    return false;
-  const char *field = line.c_str() + at + 1;
-  char *end = nullptr;
-  value = std::strtod(field, &end);
-  if (name)
-    *name = line.substr(0, at);
-  return end != field && *end == '\0';
-}
-
-// The sites the profiling run listed, by site id, with their profiles.
-std::map<int, std::string> readSites(const std::string &path) {
-  std::map<int, std::string> sites;
-  std::ifstream in(path);
-  int site;
-  std::string profile;
-  while (in >> site && std::getline(in >> std::ws, profile))
-    sites.emplace(site, profile);
-  return sites;
+// The metric a run wrote into `dir`.
+bool readMetric(const std::string &dir, double &value) {
+  std::string name;
+  return profileReadMetric(dir, name, value);
 }
 
 // A scratch directory, removed with everything in it when it goes out of
@@ -341,14 +318,21 @@ int main(int argc, char **argv) {
   const int status = runProgram({"POSEIDON_KAPPA_SITES=" + siteList}, "");
   const std::chrono::duration<double> profileRun =
       std::chrono::steady_clock::now() - profileStart;
-  // A program that failed, declared no metric or executed fewer than two
-  // sites has nothing to measure.
-  const std::map<int, std::string> sites = readSites(siteList);
+  // A program that failed has nothing to measure, and one that declared no
+  // metric or executed fewer than two sites lists none.
+  KappaSiteList list;
+  if (status != 0 || !profileReadKappaSites(siteList, list))
+    return status;
+  const std::map<int, std::string> &sites = list.sites;
   double m0 = 0.0;
   std::string metric;
-  if (status != 0 || sites.size() < 2 ||
-      !readMetric(profileDirectory(), m0, &metric))
-    return status;
+  if (!profileReadMetric(list.dir, metric, m0)) {
+    fprintf(stderr,
+            "poseidon-kappa: error: the profiling run listed %zu sites to "
+            "measure and wrote no readable metric to %s/%s\n",
+            sites.size(), list.dir.c_str(), kProfileMetricFile);
+    return 1;
+  }
 
   const size_t runs = 1 + sites.size() * ladder.size();
   fprintf(stderr,

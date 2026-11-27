@@ -6,11 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Tensor-core error correction (TCEC), the F32-accuracy-class sibling of
-// OzakiII.cu. The product is cuMpSGEMM's, linked, not included
-// (SchemeConstants.h): its error correction accumulates outside the tensor
-// cores with round-to-nearest, which a GEMM library accumulating inside them
-// does not reproduce. It is built only with POSEIDON_CUMPSGEMM_ROOT.
+// Tensor-core error correction (TCEC). The product is cuMpSGEMM's, linked,
+// not included (SchemeConstants.h): its error correction accumulates outside
+// the tensor cores with round-to-nearest, which a GEMM library accumulating
+// inside them does not reproduce. It is built only with
+// POSEIDON_CUMPSGEMM_ROOT.
 //
 // FP16 spans only about four decades, so an FP32 operand outside that window
 // splits into Inf or NaN limbs. Each operand is scaled by one power of two
@@ -138,9 +138,10 @@ cuMpSGEMM_compute_mode_t computeModeOf(int mode) {
   case kTcecTf32Tc:
     return CUMPSGEMM_TF32TC;
   }
-  fail("__poseidon_tcec_dgemm with mode %d: it takes a PoseidonTcecMode, 1 to "
-       "4",
-       mode);
+  poseidon::fatal(
+      "__poseidon_tcec_dgemm with mode %d: it takes a PoseidonTcecMode, 1 to "
+      "4",
+      mode);
 }
 
 // The scale of each operand from its largest magnitude.
@@ -148,10 +149,11 @@ void scaleExponents(TcecDevice &dev, const double *A, const double *B, int M,
                     int Ncols, int K, int lda, int ldb, int aColMajor,
                     int bColMajor, cudaStream_t stream) {
   if (!dev.scaleExp) {
-    POSEIDON_GEMM_CK(cudaMalloc(&dev.scaleExp, 3 * sizeof(int)));
-    POSEIDON_GEMM_CK(cudaMalloc(&dev.maxBits, 2 * sizeof(unsigned long long)));
+    POSEIDON_GPU_CHECK(cudaMalloc(&dev.scaleExp, 3 * sizeof(int)));
+    POSEIDON_GPU_CHECK(
+        cudaMalloc(&dev.maxBits, 2 * sizeof(unsigned long long)));
   }
-  POSEIDON_GEMM_CK(
+  POSEIDON_GPU_CHECK(
       cudaMemsetAsync(dev.maxBits, 0, 2 * sizeof(unsigned long long), stream));
   maxMagnitude(A, dev.maxBits, M, K, lda, aColMajor, stream);
   maxMagnitude(B, dev.maxBits + 1, K, Ncols, ldb, bColMajor, stream);

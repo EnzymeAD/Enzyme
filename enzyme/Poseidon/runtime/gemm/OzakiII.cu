@@ -27,8 +27,8 @@
 // An FP64 GEMM as row/column scaling shifts -> num_moduli int8 residue planes
 // -> one strided-batched INT8 tensor-core GEMM -> double-double CRT. The
 // residue and CRT kernels are instantiated per modulus count
-// (kOzakiIIMinModuli..14), with the moduli and their byte weights as
-// immediates.
+// (kOzakiIIMinModuli..kOzakiIIMaxModuli), with the moduli and their byte
+// weights as immediates.
 //
 // Operand scaling (GEMMul8 v3.1.1's fast mode). For each row a of A and each
 // column b of B, s = ||a||_2^2 is accumulated in FP64 with every operation
@@ -186,7 +186,8 @@ __global__ void shiftsStridedReduceKernel(const double *part, int R, int nChunk,
 }
 
 // Shifts of the R vectors (length K) of one operand. `part` holds
-// R*ceil(K/256) doubles for the strided K >= 1024 case.
+// R*ceil(K/kOzakiIINormChunk) doubles for the strided K >= kOzakiIINormSplitK
+// case.
 void computeShifts(const double *src, size_t ld, int R, int K, bool contiguous,
                    short *sft, double *part, float log2P, gpuStream_t stream) {
   if (contiguous) {
@@ -429,9 +430,10 @@ static const OzakiIIConstants &constantsOf(int nm) {
 
 static void checkModuli(int nm) {
   if (nm < (int)kOzakiIIMinModuli || nm > kMaxModuli)
-    fail("__poseidon_ozakiii_dgemm with num_moduli = %d: it takes %u to %d "
-         "moduli",
-         nm, kOzakiIIMinModuli, kMaxModuli);
+    poseidon::fatal(
+        "__poseidon_ozakiii_dgemm with num_moduli = %d: it takes %u to %d "
+        "moduli",
+        nm, kOzakiIIMinModuli, kMaxModuli);
 }
 
 // The device scratch of a dispatch, one allocation: the residue planes of A
@@ -492,7 +494,7 @@ static int ensureScratch(OzakiDevice &dev, int Mp, int Kp, int Ncols) {
   next.Ncp = s.columnsCapped ? want : std::max(want, s.Ncp);
   if (s.block) {
     drainScratch(dev);
-    POSEIDON_GEMM_CK(gpuFree(s.block));
+    POSEIDON_GPU_CHECK(gpuFree(s.block));
   }
   s = Scratch();
   for (;;) {
@@ -501,16 +503,18 @@ static int ensureScratch(OzakiDevice &dev, int Mp, int Kp, int Ncols) {
     if (e == gpuSuccess)
       break;
     if (e != gpuErrorMemoryAllocation)
-      failCall("gpuMalloc", __FILE__, __LINE__, gpuGetErrorString(e));
+      poseidon::fatalCall("gpuMalloc", __FILE__, __LINE__,
+                          gpuGetErrorString(e));
     // The failure is the last error of this thread; the entry checks that.
     (void)gpuGetLastError();
     if (next.Ncp == kOzakiIIPadTile) {
       size_t freeBytes = 0, totalBytes = 0;
-      POSEIDON_GEMM_CK(gpuMemGetInfo(&freeBytes, &totalBytes));
-      fail("__poseidon_ozakiii_dgemm needs %zu bytes of device memory for a %d "
-           "x %d operand and %d columns of the other, and the device has %zu "
-           "bytes free",
-           bytes, next.Mp, next.Kp, next.Ncp, freeBytes);
+      POSEIDON_GPU_CHECK(gpuMemGetInfo(&freeBytes, &totalBytes));
+      poseidon::fatal(
+          "__poseidon_ozakiii_dgemm needs %zu bytes of device memory for a %d "
+          "x %d operand and %d columns of the other, and the device has %zu "
+          "bytes free",
+          bytes, next.Mp, next.Kp, next.Ncp, freeBytes);
     }
     next.Ncp = std::max(kOzakiIIPadTile,
                         next.Ncp / 2 / kOzakiIIPadTile * kOzakiIIPadTile);
@@ -562,9 +566,10 @@ static void multiply(Call<OzakiDevice> &call, double *C, const double *A,
                      int ldc, int aColMajor, int bColMajor, int cColMajor,
                      double alpha, double beta) {
   if (K >= kOzakiIIMaxK)
-    fail("__poseidon_ozakiii_dgemm with K = %d: its INT32 residue products "
-         "overflow from K = %d on",
-         K, kOzakiIIMaxK);
+    poseidon::fatal(
+        "__poseidon_ozakiii_dgemm with K = %d: its INT32 residue products "
+        "overflow from K = %d on",
+        K, kOzakiIIMaxK);
   const gpuStream_t stream = call.stream;
   const gpublasHandle_t h = call.blas();
   const OzakiIIConstants &q = constantsOf(NM);
@@ -591,8 +596,8 @@ static void multiply(Call<OzakiDevice> &call, double *C, const double *A,
 }
 
 // f(std::integral_constant<int, nm>) for a modulus count nm in
-// kOzakiIIMinModuli..14 (checkModuli), so that f launches the kernels
-// instantiated for nm.
+// kOzakiIIMinModuli..kOzakiIIMaxModuli (checkModuli), so that f launches the
+// kernels instantiated for nm.
 template <class F, int... I>
 void withModuliOf(int nm, F &&f, std::integer_sequence<int, I...>) {
   constexpr int lo = (int)kOzakiIIMinModuli;

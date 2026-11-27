@@ -1559,8 +1559,11 @@ static ChangeWords wordsOf(const PrecisionCandidate &cand, const Subgraph &sg,
   for (const FormatChange &ch : cand.changes) {
     W.expansion |= expansionComponents(ch.newType) != 0;
     json::Object c;
+    const NumberFormatInfo &to = formatOf(ch.newType);
     c["from"] = formatOf(ch.oldType).Name.str();
-    c["to"] = formatOf(ch.newType).Name.str();
+    c["to"] = to.Name.str();
+    c["c_type"] = to.CType.str();
+    c["words"] = precisionWords(ch.newType);
     json::Array idx;
     SmallVector<std::string, 4> names;
     MapVector<std::string, unsigned, std::map<std::string, unsigned>> counts;

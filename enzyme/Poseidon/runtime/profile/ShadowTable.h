@@ -15,9 +15,10 @@
 #ifndef POSEIDON_RUNTIME_PROFILE_SHADOW_TABLE_H
 #define POSEIDON_RUNTIME_PROFILE_SHADOW_TABLE_H
 
+#include "ProfileFormat.h"
+
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <set>
@@ -80,13 +81,8 @@ private:
       Ops::fillOnes((double *)p, bytes / sizeof(double), stream);
     else if (width == 4)
       Ops::fillOnes((float *)p, bytes / sizeof(float), stream);
-    else {
-      fprintf(stderr,
-              "[poseidon] no seed rule for a %d-byte output "
-              "element.\n",
-              width);
-      abort();
-    }
+    else
+      fatal("no seed rule for a %d-byte output element.", width);
   }
 
   void freeAll() {

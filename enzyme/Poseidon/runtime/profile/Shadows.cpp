@@ -18,6 +18,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DeviceProfiler.h"
+#include "ProfileFormat.h"
 #include "ShadowTable.h"
 
 #include <atomic>
@@ -210,13 +211,8 @@ namespace {
 struct HostShadowOps {
   static void *allocZeroed(size_t bytes, const char *site, void *) {
     void *p = calloc(bytes ? bytes : 1, 1);
-    if (!p) {
-      fprintf(stderr,
-              "[poseidon] cannot allocate a %zu-byte shadow for "
-              "%s.\n",
-              bytes, site);
-      abort();
-    }
+    if (!p)
+      poseidon::fatal("cannot allocate a %zu-byte shadow for %s.", bytes, site);
     return p;
   }
   static void free(void *p) { ::free(p); }
@@ -275,22 +271,17 @@ extern "C" void POSEIDON_HOST_SHADOWS(const char *fn, int site, int nptr,
   for (int k = 0; k < nptr; ++k) {
     if (!ptrs[k])
       continue;
-    if (!findExtent(ptrs[k], ext[k])) {
-      fflush(stdout);
-      fprintf(stderr,
-              "[poseidon] argument %d%s%s%s of %s points to %p, "
-              "which the profiler did not see allocated. It sizes a site's "
-              "shadows from heap allocations, and from the globals and the "
-              "stack objects passed directly to a call in a translation unit "
-              "that defines a POSEIDON_OPTIMIZE function. Allocate this array "
-              "on the heap, or give its shadow in an explicit list of "
-              "__poseidon_optimize: enzyme_dup before the pointer and the "
-              "shadow after it.\n",
-              param[k], paramName[k][0] ? " ('" : "", paramName[k],
-              paramName[k][0] ? "')" : "", fn, ptrs[k]);
-      fflush(stderr);
-      abort();
-    }
+    if (!findExtent(ptrs[k], ext[k]))
+      poseidon::fatal(
+          "argument %d%s%s%s of %s points to %p, which the profiler did not "
+          "see allocated. It sizes a site's shadows from heap allocations, and "
+          "from the globals and the stack objects passed directly to a call in "
+          "a translation unit that defines a POSEIDON_OPTIMIZE function. "
+          "Allocate this array on the heap, or give its shadow in an explicit "
+          "list of __poseidon_optimize: enzyme_dup before the pointer and the "
+          "shadow after it.",
+          param[k], paramName[k][0] ? " ('" : "", paramName[k],
+          paramName[k][0] ? "')" : "", fn, ptrs[k]);
     int &w = width[ext[k].base];
     if (seedWidth[k] > w)
       w = seedWidth[k];

@@ -54,11 +54,12 @@
 //              the realization the solve names it by), inkernel_class (for an
 //              in-kernel raise of a product, the class of the inkernel_rel
 //              cost-model row that prices it), precision, outputs,
-//              fpcore, c, approx, approx_note, changes (each with from, to
-//              and the indices of its ops), cost_delta, modelled_error,
-//              modelled_domain_error (of a product: its relative output
-//              error, its term of modelled_error under a target),
-//              herbie_error_bits, status ("applied", "pareto",
+//              fpcore, c, approx, approx_note, changes (each with from, to,
+//              c_type (the C type of to; empty for an expansion), words (to
+//              in an explanation) and the indices of its ops), cost_delta,
+//              modelled_error, modelled_domain_error (of a product: its
+//              relative output error, its term of modelled_error under a
+//              target), herbie_error_bits, status ("applied", "pareto",
 //              "rejected") and reason
 //   pareto     (solved sites) the frontier in cost order: budget (the
 //              -poseidon-cost-budget that selects the point; none for a point

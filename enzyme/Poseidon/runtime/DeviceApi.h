@@ -13,7 +13,8 @@
 // or the HIP name, given side by side, as the build is a CUDA or a HIP build
 // (__HIP__). HIP and hipBLAS keep CUDA's calling conventions, so the two names
 // of a row take the same arguments. Code for one runtime only uses that
-// runtime's own names.
+// runtime's own names. POSEIDON_GPU_CHECK checks the status a call of either
+// runtime returns.
 //
 //===----------------------------------------------------------------------===//
 
@@ -100,6 +101,17 @@
 #define GPU_R_8I POSEIDON_CUDA_OR_HIP(CUDA_R_8I, HIP_R_8I)
 #define gpuDataType_t POSEIDON_CUDA_OR_HIP(cudaDataType_t, hipDataType)
 // clang-format on
+
+// A runtime call that does not return gpuSuccess stops the program through
+// poseidon::fatalCall, which a source using this includes from
+// profile/ProfileFormat.h. An ignored failure leaves a sticky error that the
+// next caller of gpuGetLastError reports as its own.
+#define POSEIDON_GPU_CHECK(call)                                               \
+  do {                                                                         \
+    gpuError_t e_ = (call);                                                    \
+    if (e_ != gpuSuccess)                                                      \
+      poseidon::fatalCall(#call, __FILE__, __LINE__, gpuGetErrorString(e_));   \
+  } while (0)
 
 // ROCm's hip_fp16.h and hip_bf16.h call device-library functions this clang
 // does not declare. A HIP build needs the two formats only as storage and as

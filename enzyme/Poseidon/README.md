@@ -20,10 +20,10 @@ and says so in a remark (`-Rpass-missed=poseidon`); asking for them with
 `-poseidon-enable-algebraic` is then an error, unless the `-poseidon-cache`
 directory holds Herbie's answers from another build.
 
-The CUDA runtimes are built when CMake finds a CUDA toolkit
+The CUDA runtimes are built when CMake finds a CUDA compiler
 (`-DPOSEIDON_ENABLE_CUDA=On` requires one, `Off` builds none), for the GPUs of
-the machine, or for every major architecture of the toolkit on a machine
-without one (`-DCMAKE_CUDA_ARCHITECTURES` chooses others). The HIP runtimes are
+the machine, or on a machine without one for sm_75, sm_80 and sm_90 and as PTX
+for newer ones (`-DCMAKE_CUDA_ARCHITECTURES` chooses others). The HIP runtimes are
 built when `-DPOSEIDON_ROCM_PATH=<rocm>` names a ROCm installation, for the
 processor `-DPOSEIDON_AMDGPU_ARCH` names (default `gfx942`); the
 error-corrected GEMM runtime when `-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` names
@@ -141,6 +141,12 @@ target_compile_options(app PRIVATE
   "SHELL:${POSEIDON_MLLVM} -poseidon-tau=1e-8")
 ```
 
+`POSEIDON_GPU_RUNTIME`, set before `find_package`, names the GPU runtime the
+targets link: `CUDA`, `HIP`, or `NONE` for a project of host code alone; by
+default the one this Poseidon was built for. A project that loads Enzyme's
+plugin in its own options links `Poseidon::EnzymeOptions` where it does, or
+adds `POSEIDON_ENZYME_OPTIONS`: the options a HIP compile passes Enzyme.
+
 ## How it works
 
 ### Targets
@@ -254,24 +260,26 @@ serves only a compile that gets the same answers.
 
 | Variable | Read by | Meaning |
 |---|---|---|
-| `POSEIDON_PROFILE_DIR` | profiler runtime, `poseidon-kappa` | Where a profiling run writes its profiles and `metric.txt`; default `./poseidon.profile` |
+| `POSEIDON_PROFILE_DIR` | profiler runtime | Where a profiling run writes its profiles and `metric.txt`; default `./poseidon.profile` |
 | `POSEIDON_PROFILE_HEAP_MB` | device profiler | Device heap for the profiled kernels' reverse passes; default 4096 |
 | `POSEIDON_KAPPA` | profiler runtime | `0` declines the condition numbers of a declared metric; `child` marks a run of the measurement (set by `poseidon-kappa`) |
 | `POSEIDON_KAPPA_LADDER` | profiler runtime, `poseidon-kappa` | The relative perturbations of the measurement; default `1e-8,1e-6,1e-4` |
-| `POSEIDON_KAPPA_SITE`, `POSEIDON_KAPPA_EPS`, `POSEIDON_KAPPA_SITES` | profiler runtime | Set by `poseidon-kappa`: the site a run perturbs and by how much, and the file a profiling run lists its sites in |
+| `POSEIDON_KAPPA_SITE`, `POSEIDON_KAPPA_EPS`, `POSEIDON_KAPPA_SITES` | profiler runtime | Set by `poseidon-kappa`: the site a run of the measurement perturbs and by how much, and the file a profiling run lists its profile directory and sites in |
 | `POSEIDON_COST_MODEL` | plugin | The cost model when no `-poseidon-cost-model` names one |
 | `XDG_CACHE_HOME`, `HOME` | plugin, `poseidon-calibrate` | The user cache of cost models, `$XDG_CACHE_HOME/poseidon` or `~/.cache/poseidon` |
 | `POSEIDON_PLUGIN`, `POSEIDON_ENZYME_PLUGIN` | `poseidon-clang` | The plugins to load in place of those of the build |
-| `POSEIDON_ECHO` | `poseidon-clang` | Prints the clang command it runs |
+| `POSEIDON_ECHO` | `poseidon-clang` | Set to any value, prints the clang command it runs |
 | `HIP_PATH`, `ROCM_PATH` | `poseidon-clang` | The ROCm installation of a HIP compile without `--hip-path` or `--rocm-path` |
 | `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` | `poseidon-calibrate` | The GPU to measure without `--gpu` |
-| `TMPDIR` | `poseidon-kappa`, plugin | Where the runs of the measurement keep their scratch directories, and a compile the input files and output directories of its Herbie runs; default `/tmp` |
+| `TMPDIR` | `poseidon-kappa`, `poseidon-clang`, `poseidon-calibrate`, plugin | Where the runs of the measurement keep their scratch directories, `poseidon-clang` its launch directory and response file, `poseidon-calibrate` its temporary files and in-kernel work directory, and a compile the input files and output directories of its Herbie runs; default `/tmp` |
 
 ### File formats
 
 | File | Written by | Read by | Specified in |
 |---|---|---|---|
-| Profile, `<site>.fpprofile` and `metric.txt` | profiler runtime; `poseidon-kappa` adds the condition number | plugin | `runtime/profile/ProfileFormat.h` |
+| Profile, `<site>.fpprofile` | profiler runtime; `poseidon-kappa` adds the condition number | plugin | `runtime/profile/ProfileFormat.h` |
+| Declared metric, `metric.txt` | profiler runtime | `poseidon-kappa` | `runtime/profile/ProfileFormat.h` |
+| Sites to measure, the file `POSEIDON_KAPPA_SITES` names | profiler runtime | `poseidon-kappa` | `runtime/profile/ProfileFormat.h` |
 | Cost model, `cm_<arch>_<device>.csv` and its Herbie platform | `poseidon-calibrate` | plugin | `tools/calibrate/README.md` |
 | Explanation, `<function>.explain.json` | plugin (`-poseidon-explain`) | `poseidon-explain`, `poseidon-calibrate` | `Solve/Explain.h` |
 | Launch manifest | device half of a GPU compile | host half | `Sites/LaunchManifest.h` |

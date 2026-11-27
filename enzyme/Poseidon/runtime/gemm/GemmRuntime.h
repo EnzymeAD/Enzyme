@@ -18,14 +18,11 @@
 #define POSEIDON_RUNTIME_GEMM_GEMM_RUNTIME_H
 
 #include "../DeviceApi.h"
+#include "../profile/ProfileFormat.h"
 #include "LibraryCalls.h"
 
 #include <algorithm>
-#include <cstdarg>
 #include <cstddef>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <mutex>
 #include <type_traits>
 #include <vector>
@@ -37,41 +34,14 @@ namespace gemm {
 // Errors
 //===----------------------------------------------------------------------===//
 
-// An error leaves C unwritten or wrong, so it stops the program, with the
-// message after "[poseidon] ".
-[[noreturn]] __attribute__((format(printf, 1, 2))) inline void
-fail(const char *format, ...) {
-  fflush(stdout);
-  fputs("[poseidon] ", stderr);
-  va_list args;
-  va_start(args, format);
-  vfprintf(stderr, format, args);
-  va_end(args);
-  fputc('\n', stderr);
-  abort();
-}
-
-// A call of the GPU runtime or the library that returned `status`.
-[[noreturn]] inline void failCall(const char *call, const char *file, int line,
-                                  const char *status) {
-  fail("%.*s failed at %s:%d: %s", (int)strcspn(call, "("), call, file, line,
-       status);
-}
-
-#define POSEIDON_GEMM_CK(call)                                                 \
-  do {                                                                         \
-    gpuError_t e_ = (call);                                                    \
-    if (e_ != gpuSuccess)                                                      \
-      poseidon::gemm::failCall(#call, __FILE__, __LINE__,                      \
-                               gpuGetErrorString(e_));                         \
-  } while (0)
-
+// An error leaves C unwritten or wrong, so it stops the program (fatal, and
+// POSEIDON_GPU_CHECK for the GPU runtime's calls).
 #define POSEIDON_GEMM_CB(call)                                                 \
   do {                                                                         \
     gpublasStatus_t s_ = (call);                                               \
     if (s_ != GPUBLAS_STATUS_SUCCESS)                                          \
-      poseidon::gemm::failCall(#call, __FILE__, __LINE__,                      \
-                               gpublasGetStatusString(s_));                    \
+      poseidon::fatalCall(#call, __FILE__, __LINE__,                           \
+                          gpublasGetStatusString(s_));                         \
   } while (0)
 
 //===----------------------------------------------------------------------===//
@@ -94,11 +64,11 @@ struct Device {
 template <class State> State &deviceState() {
   static std::vector<State> *all = [] {
     int n = 0;
-    POSEIDON_GEMM_CK(gpuGetDeviceCount(&n));
+    POSEIDON_GPU_CHECK(gpuGetDeviceCount(&n));
     return new std::vector<State>(n);
   }();
   int d = 0;
-  POSEIDON_GEMM_CK(gpuGetDevice(&d));
+  POSEIDON_GPU_CHECK(gpuGetDevice(&d));
   return (*all)[d];
 }
 
@@ -111,15 +81,15 @@ public:
       : dev(deviceState<State>()), stream(stream), hold(dev.lock),
         scratch(scratch) {
     if (scratch && dev.scratchFree)
-      POSEIDON_GEMM_CK(gpuStreamWaitEvent(stream, dev.scratchFree, 0));
+      POSEIDON_GPU_CHECK(gpuStreamWaitEvent(stream, dev.scratchFree, 0));
   }
   ~Call() {
     if (!scratch)
       return;
     if (!dev.scratchFree)
-      POSEIDON_GEMM_CK(
+      POSEIDON_GPU_CHECK(
           gpuEventCreateWithFlags(&dev.scratchFree, gpuEventDisableTiming));
-    POSEIDON_GEMM_CK(gpuEventRecord(dev.scratchFree, stream));
+    POSEIDON_GPU_CHECK(gpuEventRecord(dev.scratchFree, stream));
   }
   Call(const Call &) = delete;
   Call &operator=(const Call &) = delete;
@@ -144,7 +114,7 @@ private:
 // then be freed.
 inline void drainScratch(Device &dev) {
   if (dev.scratchFree)
-    POSEIDON_GEMM_CK(gpuEventSynchronize(dev.scratchFree));
+    POSEIDON_GPU_CHECK(gpuEventSynchronize(dev.scratchFree));
 }
 
 // A device buffer of a runtime's scratch, grown to the largest size asked of
@@ -158,9 +128,9 @@ struct ScratchBuffer {
       return;
     if (data) {
       drainScratch(dev);
-      POSEIDON_GEMM_CK(gpuFree(data));
+      POSEIDON_GPU_CHECK(gpuFree(data));
     }
-    POSEIDON_GEMM_CK(gpuMalloc(&data, want));
+    POSEIDON_GPU_CHECK(gpuMalloc(&data, want));
     bytes = want;
   }
   template <class T> T *as() const { return static_cast<T *>(data); }
@@ -258,8 +228,8 @@ void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
               int cColMajor, double beta, void *stream, bool scratch,
               Multiply multiply) {
   if (M < 0 || Ncols < 0 || K < 0)
-    fail("%s with M = %d, Ncols = %d, K = %d: an extent is negative", entry, M,
-         Ncols, K);
+    fatal("%s with M = %d, Ncols = %d, K = %d: an extent is negative", entry, M,
+          Ncols, K);
   if (M == 0 || Ncols == 0)
     return;
   if (K == 0) {
@@ -269,7 +239,7 @@ void runEntry(const char *entry, double *C, int M, int Ncols, int K, int ldc,
     Call<State> call(static_cast<gpuStream_t>(stream), scratch);
     multiply(call);
   }
-  POSEIDON_GEMM_CK(gpuGetLastError());
+  POSEIDON_GPU_CHECK(gpuGetLastError());
 }
 
 //===----------------------------------------------------------------------===//

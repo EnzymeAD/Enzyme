@@ -49,9 +49,9 @@ poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
       printf("[poseidon] the profiler table of the device module "
              "holding '%s' was never written. The host runtime binds it from "
              "__poseidon_profile_init_device, which a profile-generate compile "
-             "calls at the top of main; link libposeidon_profile_cuda and "
+             "calls at the top of main; link libposeidon_profile_%s and "
              "compile main with -poseidon-profile-generate.\n",
-             fn ? fn : "?");
+             fn ? fn : "?", POSEIDON_CUDA_OR_HIP("cuda", "hip"));
     gpuTrap();
   }
   if (!fn) {
@@ -113,10 +113,10 @@ __device__ inline int poseidonFuncIdx(const char *fn) {
   return poseidonRegisterIdx(T.funcReg, T.funcNames, T.maxFuncs, fn, "value");
 }
 
-// The slot of probe idx of the function funcName, whose registry index goes to
-// fi. A probe index past the table is a hard error.
-__device__ inline GPUProfileSlot *poseidonSlot(const char *funcName, size_t idx,
-                                               int &fi) {
+// The slot of probe idx of the function funcName. A probe index past the
+// table is a hard error.
+__device__ inline GPUProfileSlot *poseidonSlot(const char *funcName,
+                                               size_t idx) {
   const DeviceProfileTable &T = __poseidon_profile_table;
   if (T.funcReg && idx >= T.slotCount) {
     if (poseidonFirstFatal())
@@ -126,8 +126,7 @@ __device__ inline GPUProfileSlot *poseidonSlot(const char *funcName, size_t idx,
              (unsigned long long)T.slotCount);
     gpuTrap();
   }
-  fi = poseidonFuncIdx(funcName);
-  return &T.slots[(size_t)fi * T.slotCount + idx];
+  return &T.slots[(size_t)poseidonFuncIdx(funcName) * T.slotCount + idx];
 }
 
 // A device call site whose arguments reach overlapping memory, one of them
@@ -254,8 +253,7 @@ __poseidon_device_log_value(const char *funcName, size_t idx, double res,
   const DeviceProfileTable &T = __poseidon_profile_table;
   if (T.metricOnly)
     return;
-  int fi;
-  GPUProfileSlot *slot = poseidonSlot(funcName, idx, fi);
+  GPUProfileSlot *slot = poseidonSlot(funcName, idx);
 
   atomicMinDouble(&slot->minRes, res);
   atomicMaxDouble(&slot->maxRes, res);
@@ -277,8 +275,7 @@ __poseidon_device_log_grad(const char *funcName, size_t idx, double value,
   const DeviceProfileTable &T = __poseidon_profile_table;
   if (T.metricOnly)
     return;
-  int fi;
-  GPUProfileSlot *slot = poseidonSlot(funcName, idx, fi);
+  GPUProfileSlot *slot = poseidonSlot(funcName, idx);
 
   if (!isnan(grad) && !isinf(grad) && !isnan(value) && !isinf(value)) {
     atomicAddFinite(&slot->sumGrad, grad);

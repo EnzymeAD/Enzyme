@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -60,45 +59,16 @@ static std::vector<const void *> &poseidonModuleTables() {
   return *v;
 }
 
-// A runtime call that fails while the program runs stops it with the message,
-// by abort.
-[[noreturn]] __attribute__((format(printf, 1, 2))) static void
-profileAbort(const char *format, ...) {
-  va_list args;
-  va_start(args, format);
-  profileReport(format, args);
-  va_end(args);
-  abort();
-}
-
-static unsigned long long profileEnvPositive(const char *name,
-                                             unsigned long long dflt) {
-  long long parsed = profileEnvInteger(name, (long long)dflt);
-  if (parsed <= 0)
-    profileBadEnv(name, getenv(name), "a positive integer");
-  return (unsigned long long)parsed;
-}
-
-// Every GPU runtime call is checked: an ignored failure leaves a sticky error
-// on the context that the next caller of gpuGetLastError() reports as its
-// own, or a profile that is wrong.
-#define POSEIDON_DEVICE_OK(call)                                               \
-  do {                                                                         \
-    gpuError_t _e = (call);                                                    \
-    if (_e != gpuSuccess)                                                      \
-      profileAbort("%s failed (%s).", #call, gpuGetErrorString(_e));           \
-  } while (0)
-
 // A device-side profiler abort (gpuTrap) poisons the context without failing
 // the process, so the exit writer checks the context first and exits nonzero.
 static void poseidonProfileExitCheck() {
   gpuError_t st = gpuDeviceSynchronize();
   if (st != gpuSuccess)
-    profileFail("the profiled run ended with a CUDA error (%s). A device-side "
+    profileFail("the profiled run ended with a %s error (%s). A device-side "
                 "profiler abort leaves the context in this state (see the "
                 "'[poseidon]' message above); the profile is "
                 "incomplete and is NOT written.",
-                gpuGetErrorString(st));
+                POSEIDON_CUDA_OR_HIP("CUDA", "HIP"), gpuGetErrorString(st));
 }
 
 // Tells the host profiler which kernels this writer wrote a profile for. Weak:
@@ -288,7 +258,7 @@ static size_t g_heapBytes = 0;
 static int g_device = -1;
 
 static void poseidonBindModule(const void *table) {
-  POSEIDON_DEVICE_OK(gpuMemcpyToSymbol(table, &g_table, sizeof(g_table)));
+  POSEIDON_GPU_CHECK(gpuMemcpyToSymbol(table, &g_table, sizeof(g_table)));
 }
 
 // The function registry (pointer keys, names, per-function launch geometry)
@@ -315,20 +285,20 @@ static void allocateTables(size_t nfuncs, size_t count) {
   alloc((void **)&g_devStaticByFunc, stBytes);
   alloc((void **)&g_devSlots, slotBytes);
   if (err != gpuSuccess)
-    profileAbort(
+    fatal(
         "allocating the profile tables of %zu profiled functions of up to %zu "
         "probes each (%zu bytes) failed (%s).",
         nfuncs, count,
         regBytes + nameBytes + 2 * dimBytes + lcBytes + stBytes + slotBytes,
         gpuGetErrorString(err));
-  POSEIDON_DEVICE_OK(gpuMemset(g_devFuncReg, 0, regBytes));
-  POSEIDON_DEVICE_OK(gpuMemset(g_devFuncNames, 0, nameBytes));
-  POSEIDON_DEVICE_OK(gpuMemset(g_devGridByFunc, 0, dimBytes));
-  POSEIDON_DEVICE_OK(gpuMemset(g_devBlockByFunc, 0, dimBytes));
-  POSEIDON_DEVICE_OK(gpuMemset(g_devLaunchByFunc, 0, lcBytes));
-  POSEIDON_DEVICE_OK(gpuMemset(g_devStaticByFunc, 0, stBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devFuncReg, 0, regBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devFuncNames, 0, nameBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devGridByFunc, 0, dimBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devBlockByFunc, 0, dimBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devLaunchByFunc, 0, lcBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devStaticByFunc, 0, stBytes));
   // Zero is the initial state of every field (see doubleToOrderedUint64Min).
-  POSEIDON_DEVICE_OK(gpuMemset(g_devSlots, 0, slotBytes));
+  POSEIDON_GPU_CHECK(gpuMemset(g_devSlots, 0, slotBytes));
   g_maxFuncs = (int)nfuncs;
   g_slotCount = count;
   g_table.maxFuncs = (int)nfuncs;
@@ -380,7 +350,7 @@ extern "C" void __poseidon_profile_init_device() {
   g_deviceInitDone = true;
 
   profileDir = profileDirectory();
-  POSEIDON_DEVICE_OK(gpuGetDevice(&g_device));
+  POSEIDON_GPU_CHECK(gpuGetDevice(&g_device));
 
   // A profiled kernel's reverse pass caches what it cannot recompute in the
   // device heap, which CUDA sizes at 8 MiB and an application sizes for its
@@ -389,7 +359,7 @@ extern "C" void __poseidon_profile_init_device() {
   const size_t heapBytes =
       profileEnvPositive("POSEIDON_PROFILE_HEAP_MB", POSEIDON_DEFAULT_HEAP_MB)
       << 20;
-  POSEIDON_DEVICE_OK(gpuDeviceGetLimit(&g_heapBytes, gpuLimitMallocHeapSize));
+  POSEIDON_GPU_CHECK(gpuDeviceGetLimit(&g_heapBytes, gpuLimitMallocHeapSize));
   if (g_heapBytes < heapBytes) {
     gpuError_t e = gpuDeviceSetLimit(gpuLimitMallocHeapSize, heapBytes);
     if (e != gpuSuccess)
@@ -407,17 +377,15 @@ extern "C" void __poseidon_profile_init_device() {
     allocateTables(std::max<size_t>(g_registeredFunctions, 1),
                    std::max<size_t>(g_registeredSlots, 1));
 
-  g_table.kappaSite = (int)profileEnvInteger("POSEIDON_KAPPA_SITE", -1);
-  g_table.kappaEps = 0.0;
-  if (g_table.kappaSite >= 0) {
-    g_table.kappaEps = profileEnvPositiveReal("POSEIDON_KAPPA_EPS", 1e-6);
-    fprintf(stderr, "[poseidon] perturbing site %d (eps=%g)\n",
-            g_table.kappaSite, g_table.kappaEps);
-  }
+  const KappaPerturbation kappa = profileKappaPerturbation();
+  g_table.kappaSite = kappa.site;
+  g_table.kappaEps = kappa.eps;
+  if (kappa.site >= 0)
+    report("perturbing site %d (eps=%g)", kappa.site, kappa.eps);
 
   for (const void *table : poseidonModuleTables())
     poseidonBindModule(table);
-  POSEIDON_DEVICE_OK(gpuDeviceSynchronize());
+  POSEIDON_GPU_CHECK(gpuDeviceSynchronize());
   // atexit handlers run in reverse registration order, and the CUDA runtime
   // registers its own teardown when it is first initialized above, so the
   // writer runs before the driver shuts down.
@@ -443,11 +411,11 @@ namespace {
 struct DeviceShadowOps {
   static void *allocZeroed(size_t bytes, const char *, void *stream) {
     void *p = nullptr;
-    POSEIDON_DEVICE_OK(gpuMalloc(&p, bytes));
-    POSEIDON_DEVICE_OK(gpuMemsetAsync(p, 0, bytes, (gpuStream_t)stream));
+    POSEIDON_GPU_CHECK(gpuMalloc(&p, bytes));
+    POSEIDON_GPU_CHECK(gpuMemsetAsync(p, 0, bytes, (gpuStream_t)stream));
     return p;
   }
-  static void free(void *p) { POSEIDON_DEVICE_OK(gpuFree(p)); }
+  static void free(void *p) { POSEIDON_GPU_CHECK(gpuFree(p)); }
   // A run that ended with a device error exits from the profile writer, which
   // runs after this, with the message that names it.
   static void freeAtExit(void *p) { (void)gpuFree(p); }
@@ -471,10 +439,10 @@ static void poseidonAllocRange(void *p, void *&base, size_t &size) {
 #ifdef __HIP__
   hipError_t e = hipMemGetAddressRange(&base, &size, p);
   if (e != hipSuccess)
-    profileAbort("hipMemGetAddressRange failed (%s) for the device pointer %p "
-                 "passed to a profiled kernel. Only allocations the HIP "
-                 "allocator owns can be shadowed.",
-                 hipGetErrorString(e), p);
+    fatal("hipMemGetAddressRange failed (%s) for the device pointer %p "
+          "passed to a profiled kernel. Only allocations the HIP "
+          "allocator owns can be shadowed.",
+          hipGetErrorString(e), p);
 #else
   typedef int (*PFN_MemGetAddressRange)(unsigned long long *, size_t *,
                                         unsigned long long);
@@ -484,19 +452,19 @@ static void poseidonAllocRange(void *p, void *&base, size_t &size) {
     cudaError_t e =
         cudaGetDriverEntryPoint("cuMemGetAddressRange", &fn, cudaEnableDefault);
     if (e != cudaSuccess || !fn)
-      profileAbort("cuMemGetAddressRange is not available (%s); the size of a "
-                   "profiled kernel's buffers cannot be determined.",
-                   cudaGetErrorString(e));
+      fatal("cuMemGetAddressRange is not available (%s); the size of a "
+            "profiled kernel's buffers cannot be determined.",
+            cudaGetErrorString(e));
     getRange = (PFN_MemGetAddressRange)fn;
   }
   unsigned long long b = 0;
   size_t n = 0;
   int rc = getRange(&b, &n, (unsigned long long)(uintptr_t)p);
   if (rc != 0)
-    profileAbort("cuMemGetAddressRange failed (%d) for the device pointer %p "
-                 "passed to a profiled kernel. Only allocations the CUDA "
-                 "allocator owns can be shadowed.",
-                 rc, p);
+    fatal("cuMemGetAddressRange failed (%d) for the device pointer %p "
+          "passed to a profiled kernel. Only allocations the CUDA "
+          "allocator owns can be shadowed.",
+          rc, p);
   base = (void *)(uintptr_t)b;
   size = n;
 #endif
@@ -510,7 +478,7 @@ POSEIDON_LAUNCH_PROFILED(const void *func, int site, const unsigned *grid,
                          int nargs, void **args, int nptr, const int *ptrIdx,
                          const int *ptrOff, const int *seedWidth) {
   int device = -1;
-  POSEIDON_DEVICE_OK(gpuGetDevice(&device));
+  POSEIDON_GPU_CHECK(gpuGetDevice(&device));
   if (device != g_device)
     profileFail("site %d is launched on device %d, and the profile tables "
                 "were set up on device %d; profile generation supports one "

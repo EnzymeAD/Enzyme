@@ -97,9 +97,9 @@ LibraryFormat formatOf(int mode) {
 #else
   const char *modes = "1 to 4";
 #endif
-  fail("__poseidon_direct_dgemm with mode %d: this build takes a "
-       "PoseidonDirectMode, %s",
-       mode, modes);
+  poseidon::fatal("__poseidon_direct_dgemm with mode %d: this build takes a "
+                  "PoseidonDirectMode, %s",
+                  mode, modes);
 }
 
 // Packs a rows x cols operand, in its own layout, in the format of `mode`.

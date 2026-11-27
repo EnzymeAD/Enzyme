@@ -643,9 +643,6 @@ def substitute(text, names):
     return re.sub(r"\b(v\d+)\b", lambda m: names.get(m.group(1), m.group(1)), text)
 
 
-C_TYPES = {"FP32": ("float", "float"), "FP16": ("_Float16", "half"), "BF16": ("__bf16", "bfloat16")}
-
-
 def algebraic_edits(unit, alt, tag, src, ast):
     """The edits of an applied algebraic alternative, one per output, and a
     note for an output with no expression in the AST to replace."""
@@ -680,7 +677,9 @@ def precision_edits(unit, alt, tag, src, ast):
     ops = unit.get("ops", [])
     changed, order = {}, []
     for ch in alt.get("changes", []):
-        ctype, words = C_TYPES.get(ch.get("to"), ("float", "float"))
+        if not ch.get("c_type") or "words" not in ch:
+            fail("change to %s of %s names no C type and words" % (ch.get("to", "?"), alt.get("id", "?")))
+        ctype, words = ch["c_type"], ch["words"]
         for i in ch.get("ops", []):
             off = src.offset(ops[i].get("loc")) if i < len(ops) else None
             n = None
