@@ -58,9 +58,13 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           diffMergeSet;
 
       for (auto fwdOp : blk->getOps<enzyme::ForwardDiffOp>()) {
+        // Concatenating existing lanes requires different argument/result
+        // mappings. Only combine width-one requests.
+        if (fwdOp.getWidth() != 1)
+          continue;
         auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(fwdOp, fwdOp.getFnAttr()));
-        if (!fnOp)
+        if (!fnOp || fnOp.isExternal())
           continue;
 
         batchutils::BatchDiffCacheKey key =
@@ -70,15 +74,18 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       }
 
       for (auto &pair : diffMergeSet) {
-        auto key = pair.first;
         auto allDiffs = pair.second;
         if (allDiffs.size() < 2)
           continue;
+        // Earlier groups may have replaced primal results used by this group.
+        // Read the live operands instead of retaining erased values in the key.
+        auto key = batchutils::createDiffCacheKey(allDiffs.front(),
+                                                  pair.first.function);
 
         // Collect inner effects of function
         if (!innerEffectCache.contains(key.function)) {
           innerEffectCache[key.function] =
-              oputils::collectFnEffects(key.function);
+              batchutils::collectBatchFnEffects(key.function);
         }
 
         SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
@@ -373,9 +380,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           diffMergeSet;
 
       for (auto revOp : blk->getOps<enzyme::AutoDiffOp>()) {
+        if (revOp.getWidth() != 1)
+          continue;
         auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(revOp, revOp.getFnAttr()));
-        if (!fnOp)
+        if (!fnOp || fnOp.isExternal())
           continue;
 
         batchutils::BatchDiffCacheKey key =
@@ -385,15 +394,16 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       }
 
       for (auto &pair : diffMergeSet) {
-        auto key = pair.first;
         auto allDiffs = pair.second;
         if (allDiffs.size() < 2)
           continue;
+        auto key = batchutils::createDiffCacheKey(allDiffs.front(),
+                                                  pair.first.function);
 
         // Collect inner effects of function
         if (!innerEffectCache.contains(key.function)) {
           innerEffectCache[key.function] =
-              oputils::collectFnEffects(key.function);
+              batchutils::collectBatchFnEffects(key.function);
         }
 
         SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
@@ -621,6 +631,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
                 old_din.replaceAllUsesWith(new_din);
               }
+              ++out_idx;
             }
           }
           // erase all old ops
