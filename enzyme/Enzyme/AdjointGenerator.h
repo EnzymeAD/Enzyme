@@ -1698,7 +1698,10 @@ public:
           bool needs_writebarrier = false;
           if (constantval) {
             if (!gutils->runtimeActivity) {
-              if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
+              if ((dt == BaseType::Pointer ||
+                   (dt.isPossiblePointer() &&
+                    size >= DL.getPointerSizeInBits() / 8)) &&
+                  vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
                     !isa<ConstantPointerNull>(orig_val)) {
                   std::string str;
@@ -2930,7 +2933,7 @@ public:
       goto def;
     }
     case Instruction::AShr: {
-      if (looseTypeAnalysis) {
+      if (looseTypeAnalysis || isUnknownNarrowIntegerOp(BO, TR)) {
         llvm::errs() << "warning: binary operator is integer and constant: "
                      << BO << "\n";
         // if loose type analysis, assume this integer and is constant
@@ -3175,7 +3178,7 @@ public:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
-      if (looseTypeAnalysis) {
+      if (looseTypeAnalysis || isUnknownNarrowIntegerOp(BO, TR)) {
         llvm::errs()
             << "warning: binary operator is integer and assumed constant: "
             << BO << "\n";
@@ -3497,6 +3500,12 @@ public:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
+      if (isUnknownNarrowIntegerOp(BO, TR)) {
+        setDiffe(&BO,
+                 Constant::getNullValue(gutils->getShadowType(BO.getType())),
+                 Builder2);
+        return;
+      }
       if (looseTypeAnalysis) {
         forwardModeInvertedPointerFallback(BO);
         llvm::errs() << "warning: binary operator is integer and constant: "
@@ -4611,7 +4620,10 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+        if (isUnknownNarrowIntegerOp(I, TR))
+          return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::umin || ID == Intrinsic::smin ||
             ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
@@ -4788,7 +4800,10 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+        if (isUnknownNarrowIntegerOp(I, TR))
+          return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::umin || ID == Intrinsic::smin ||
             ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
@@ -4876,7 +4891,10 @@ public:
         }
         if (gutils->isConstantInstruction(&I))
           return false;
+        if (isUnknownNarrowIntegerOp(I, TR))
+          return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::umin || ID == Intrinsic::smin ||
             ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
