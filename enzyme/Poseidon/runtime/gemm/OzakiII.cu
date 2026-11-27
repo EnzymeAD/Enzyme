@@ -503,8 +503,7 @@ static int ensureScratch(OzakiDevice &dev, int Mp, int Kp, int Ncols) {
     if (e == gpuSuccess)
       break;
     if (e != gpuErrorMemoryAllocation)
-      poseidon::fatalCall("gpuMalloc", __FILE__, __LINE__,
-                          gpuGetErrorString(e));
+      poseidon::fatalCall("gpuMalloc", gpuGetErrorString(e));
     // The failure is the last error of this thread; the entry checks that.
     (void)gpuGetLastError();
     if (next.Ncp == kOzakiIIPadTile) {

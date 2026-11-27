@@ -40,8 +40,7 @@ namespace gemm {
   do {                                                                         \
     gpublasStatus_t s_ = (call);                                               \
     if (s_ != GPUBLAS_STATUS_SUCCESS)                                          \
-      poseidon::fatalCall(#call, __FILE__, __LINE__,                           \
-                          gpublasGetStatusString(s_));                         \
+      poseidon::fatalCall(#call, gpublasGetStatusString(s_));                  \
   } while (0)
 
 //===----------------------------------------------------------------------===//

@@ -110,7 +110,7 @@
   do {                                                                         \
     gpuError_t e_ = (call);                                                    \
     if (e_ != gpuSuccess)                                                      \
-      poseidon::fatalCall(#call, __FILE__, __LINE__, gpuGetErrorString(e_));   \
+      poseidon::fatalCall(#call, gpuGetErrorString(e_));                       \
   } while (0)
 
 // ROCm's hip_fp16.h and hip_bf16.h call device-library functions this clang

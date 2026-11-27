@@ -80,12 +80,10 @@ fatal(const char *format, ...) {
   abort();
 }
 
-// The call `call` at file:line returned `status`; the message names the
-// function called, without its arguments.
-[[noreturn]] inline void fatalCall(const char *call, const char *file, int line,
-                                   const char *status) {
-  fatal("%.*s failed at %s:%d: %s", (int)strcspn(call, "("), call, file, line,
-        status);
+// The call `call` returned `status`; the message names the function called,
+// without its arguments.
+[[noreturn]] inline void fatalCall(const char *call, const char *status) {
+  fatal("%.*s failed: %s", (int)strcspn(call, "("), call, status);
 }
 
 // A run whose profile would be wrong or lost stops with the message and exit

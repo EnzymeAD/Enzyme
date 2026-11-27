@@ -697,7 +697,7 @@ static bool schemeUnsupported(cudaError_t e, const char *what) {
   if (e == cudaErrorNoKernelImageForDevice || e == cudaErrorNotSupported)
     return true;
   if (e != cudaSuccess)
-    poseidon::fatalCall(what, __FILE__, __LINE__, cudaGetErrorString(e));
+    poseidon::fatalCall(what, cudaGetErrorString(e));
   return false;
 }
 
