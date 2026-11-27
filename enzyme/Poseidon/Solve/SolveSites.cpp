@@ -709,9 +709,7 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
   }
   // The selector's own test of the code as written, the frontier point of
   // cost 0 and accuracy cost 0.
-  const bool asWrittenSelectable =
-      tau > 0.0 ? selectable(0.0) && baseline / accScale <= tau
-                : 0 <= scale.fromShare(O.Solver.CostBudget);
+  const bool asWrittenSelectable = admits(0, 0.0);
   if (!takesSelectedPoint(O, *sites.front(), names, scale, *best,
                           costToAccuracyMap.at(*best),
                           costToSolutionMap.at(*best).empty(), tau,
