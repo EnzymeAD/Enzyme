@@ -654,7 +654,7 @@ void EnzymeGradientUtilsSubTransferHelper(
   assert(orig);
   SubTransferHelper(gutils, (DerivativeMode)mode, unwrap(secretty),
                     (Intrinsic::ID)intrinsic, (unsigned)dstAlign,
-                    (unsigned)srcAlign, (unsigned)offset, (bool)dstConstant,
+                    (unsigned)srcAlign, (size_t)offset, (bool)dstConstant,
                     unwrap(shadow_dst), unwrap(primal_dst), (bool)srcConstant,
                     unwrap(shadow_src), unwrap(primal_src), unwrap(length),
                     unwrap(isVolatile), cast<CallInst>(orig),
