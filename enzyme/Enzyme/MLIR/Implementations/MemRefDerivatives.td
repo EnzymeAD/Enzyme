@@ -14,3 +14,7 @@ def : ReadOnlyIdentityOp<"memref", "SubViewOp", [0]>;
 def : InactiveOp<"memref", "DimOp">;
 def : AllocationOp<"memref", "AllocOp">;
 def : AllocationOp<"memref", "AllocaOp">;
+
+def : SingleRegionControlFlowOp<"memref", "AllocaScopeOp">;
+
+def : RegionTerminatorOp<"memref", "AllocaScopeReturnOp">;
