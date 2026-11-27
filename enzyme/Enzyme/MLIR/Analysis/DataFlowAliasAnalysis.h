@@ -279,6 +279,14 @@ private:
 void markReadOnlyLoads(CallableOpInterface funcOp,
                        function_ref<void(Operation *)> annotate);
 
+/// Return true if `type` is or transitively contains a pointer-like value
+/// tracked by alias analysis.
+bool containsPointerLike(Type type);
+
+/// Return true if `type` is or transitively contains a value-semantic
+/// floating-point or complex element.
+bool containsValueActiveType(Type type);
+
 } // namespace enzyme
 } // namespace mlir
 
