@@ -525,7 +525,9 @@ public:
 
   // The stored result; false when the model has to compute it.
   bool lookup(const Options &O, MatmulAccuracy &result) const;
-  void store(const Options &O, const MatmulAccuracy &result) const;
+  // Writes `result` as the stored result; an error when the cache cannot be
+  // written.
+  Error store(const Options &O, const MatmulAccuracy &result) const;
   // The entry's file in -poseidon-cache: two memos of one file hold one
   // result.
   const std::string &file() const { return path; }
@@ -595,21 +597,15 @@ Memo::Memo(const Options &O, const RecognizedMatmul &m,
   key.addCompiler(kPassIdentity);
 }
 
-void Memo::store(const Options &O, const MatmulAccuracy &result) const {
+Error Memo::store(const Options &O, const MatmulAccuracy &result) const {
   if (O.Cache.Dir.empty())
-    return;
-  (void)sys::fs::create_directories(O.Cache.Dir, true);
+    return Error::success();
   // As text: a domain error can be infinite, which JSON cannot hold.
   json::Object value;
   value["accuracy cost"] = exactDouble(result.accuracyCost);
   value["domain error"] = exactDouble(result.domainError);
   value["out of range"] = result.outOfRange;
-  if (Error E = writeCacheEntry(path, key, std::move(value))) {
-    std::string why = toString(std::move(E));
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] could not write the accuracy memo " << path
-                   << ": " << why << '\n';
-  }
+  return writeCacheEntry(path, key, std::move(value));
 }
 
 static bool parseAccNumber(const json::Object &value, StringRef name,
@@ -738,13 +734,23 @@ Error evaluateMatmulAccuracy(Session &S, const RecognizedMatmul &m,
       parts.push_back(part);
   }
   const SampledProducts products(O, m, prof, sampleLogBits, numSamples, parts);
+  // One warning tells of a cache that cannot be written.
+  bool writable = true;
   for (size_t c = 0; c < computed.size(); ++c) {
     const size_t i = computed[c];
     Expected<SampledError> error = products.error(partOf[c]);
     if (!error)
       return error.takeError();
     results[i] = finish(O, prof, queries[i], *error);
-    memos[i].store(O, results[i]);
+    if (!writable)
+      continue;
+    if (Error E = memos[i].store(O, results[i])) {
+      diagnose(anchorOf(m),
+               "cannot write the accuracy memo " + memos[i].file() + ": " +
+                   toString(std::move(E)),
+               DS_Warning);
+      writable = false;
+    }
   }
   for (size_t i = 0; i < queries.size(); ++i)
     if (sameEntryAs[i])

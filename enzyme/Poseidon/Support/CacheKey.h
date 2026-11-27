@@ -67,7 +67,8 @@ private:
 /// The 64-bit xxh3 digest of `bytes` as 16 upper-case hex digits.
 std::string contentDigest(llvm::StringRef bytes);
 
-/// A cache with one file per entry holds the entry's key and its value as JSON.
+/// A cache with one file per entry holds the entry's key and its value as
+/// JSON; writing one creates its directory.
 llvm::Error writeCacheEntry(llvm::StringRef path, const CacheKey &key,
                             llvm::json::Value value);
 

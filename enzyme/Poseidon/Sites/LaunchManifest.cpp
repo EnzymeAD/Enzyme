@@ -233,9 +233,6 @@ Error writeLaunchManifest(const Options &O, LaunchManifest &L,
   if (L.ProfiledFunctions)
     value[kProfileTable] = json::Object{{"functions", L.ProfiledFunctions},
                                         {"slots", L.ProfiledSlots}};
-  if (std::error_code EC =
-          sys::fs::create_directories(sys::path::parent_path(m.path)))
-    return cannot("write", EC.message());
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
     return cannot("write", toString(std::move(E)));
   for (LaunchKind kind : kKinds) {

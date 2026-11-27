@@ -14,6 +14,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 #if __has_include("llvm/Support/VCSRevision.h")
@@ -84,6 +85,9 @@ CacheKey::firstDifference(const json::Object *stored,
 }
 
 Error writeCacheEntry(StringRef path, const CacheKey &key, json::Value value) {
+  if (std::error_code EC =
+          sys::fs::create_directories(sys::path::parent_path(path)))
+    return errorCodeToError(EC);
   json::Object entry;
   entry["key"] = key.toJSON();
   entry["value"] = std::move(value);

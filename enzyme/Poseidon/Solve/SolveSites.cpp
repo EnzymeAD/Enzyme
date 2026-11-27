@@ -266,12 +266,7 @@ static void writeDPTable(const Options &O, const Function &F,
   if (std::isfinite(baseline))
     value["baseline_accuracy_cost"] = baseline;
 
-  Error E = Error::success();
-  if (std::error_code EC = sys::fs::create_directories(O.Cache.Dir))
-    E = errorCodeToError(EC);
-  else
-    E = writeCacheEntry(table.path, table.key, std::move(value));
-  if (E) {
+  if (Error E = writeCacheEntry(table.path, table.key, std::move(value))) {
     diagnose(F,
              "cannot write the DP cache entry " + table.path + ": " +
                  toString(std::move(E)),
