@@ -36,6 +36,172 @@ set(Enzyme_LLVM_BINARY_DIR "@CONF_LLVM_BINARY_DIR@")
 set(Enzyme_CLANG_EXE "@CONF_CLANG_EXE@")
 set(Enzyme_TABLEGEN_EXE "@Enzyme_CONFIG_TABLEGEN_EXE@")
 
+# Relocate LLVM paths when the prefix recorded at Enzyme build time (such as a
+# Cellar patch directory in Homebrew) has been replaced by an ABI-compatible
+# LLVM release.
+function(_enzyme_resolve_llvm_paths)
+  if(Enzyme_LLVM_BINARY_DIR STREQUAL "" OR EXISTS "${Enzyme_LLVM_BINARY_DIR}")
+    return()
+  endif()
+
+  set(old_binary_dir "${Enzyme_LLVM_BINARY_DIR}")
+  set(relative_llvm_dir "")
+  if(NOT Enzyme_LLVM_DIR STREQUAL "")
+    file(RELATIVE_PATH relative_path "${old_binary_dir}" "${Enzyme_LLVM_DIR}")
+    if(NOT relative_path MATCHES "^\\.\\."
+       AND NOT IS_ABSOLUTE "${relative_path}")
+      set(relative_llvm_dir "${relative_path}")
+    endif()
+  endif()
+
+  set(relative_clang_exe "")
+  if(NOT Enzyme_CLANG_EXE STREQUAL "")
+    file(RELATIVE_PATH relative_path "${old_binary_dir}" "${Enzyme_CLANG_EXE}")
+    if(NOT relative_path MATCHES "^\\.\\."
+       AND NOT IS_ABSOLUTE "${relative_path}")
+      set(relative_clang_exe "${relative_path}")
+    endif()
+  endif()
+
+  set(relative_tablegen_exe "")
+  if(NOT Enzyme_TABLEGEN_EXE STREQUAL "")
+    file(RELATIVE_PATH relative_path "${old_binary_dir}"
+         "${Enzyme_TABLEGEN_EXE}")
+    if(NOT relative_path MATCHES "^\\.\\."
+       AND NOT IS_ABSOLUTE "${relative_path}")
+      set(relative_tablegen_exe "${relative_path}")
+    endif()
+  endif()
+
+  set(candidates "")
+  if(DEFINED LLVM_ROOT AND EXISTS "${LLVM_ROOT}")
+    list(APPEND candidates "${LLVM_ROOT}")
+  endif()
+  if(DEFINED ENV{LLVM_ROOT} AND EXISTS "$ENV{LLVM_ROOT}")
+    list(APPEND candidates "$ENV{LLVM_ROOT}")
+  endif()
+  if(DEFINED LLVM_DIR AND EXISTS "${LLVM_DIR}")
+    get_filename_component(llvm_dir_three_up "${LLVM_DIR}/../../.." ABSOLUTE)
+    get_filename_component(llvm_dir_one_up "${LLVM_DIR}/.." ABSOLUTE)
+    list(APPEND candidates "${llvm_dir_three_up}" "${llvm_dir_one_up}")
+  endif()
+
+  get_filename_component(parent_dir "${old_binary_dir}" DIRECTORY)
+  if(IS_DIRECTORY "${parent_dir}")
+    set(major_minor "${Enzyme_LLVM_VERSION_MAJOR}.${Enzyme_LLVM_VERSION_MINOR}")
+    file(GLOB same_minor_siblings "${parent_dir}/${major_minor}.*"
+         "${parent_dir}/llvm-${major_minor}.*")
+    if(same_minor_siblings)
+      if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
+        list(SORT same_minor_siblings COMPARE NATURAL ORDER DESCENDING)
+      else()
+        list(SORT same_minor_siblings ORDER DESCENDING)
+      endif()
+      list(APPEND candidates ${same_minor_siblings})
+    endif()
+
+    file(GLOB same_major_siblings "${parent_dir}/${Enzyme_LLVM_VERSION_MAJOR}.*"
+         "${parent_dir}/llvm-${Enzyme_LLVM_VERSION_MAJOR}.*")
+    if(same_major_siblings)
+      if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
+        list(SORT same_major_siblings COMPARE NATURAL ORDER DESCENDING)
+      else()
+        list(SORT same_major_siblings ORDER DESCENDING)
+      endif()
+      list(APPEND candidates ${same_major_siblings})
+    endif()
+
+    get_filename_component(root_prefix "${parent_dir}/../.." ABSOLUTE)
+    list(
+      APPEND candidates "${root_prefix}/opt/llvm@${Enzyme_LLVM_VERSION_MAJOR}"
+      "${root_prefix}/opt/llvm")
+  endif()
+
+  get_filename_component(enzyme_prefix "${Enzyme_CMAKE_DIR}/../../.." ABSOLUTE)
+  get_filename_component(enzyme_root "${enzyme_prefix}/../../.." ABSOLUTE)
+  list(
+    APPEND candidates "${enzyme_prefix}"
+    "${enzyme_root}/opt/llvm@${Enzyme_LLVM_VERSION_MAJOR}"
+    "${enzyme_root}/opt/llvm")
+
+  find_program(
+    _enzyme_llvm_config
+    NAMES "llvm-config-${Enzyme_LLVM_VERSION_MAJOR}" "llvm-config")
+  if(_enzyme_llvm_config)
+    get_filename_component(config_real "${_enzyme_llvm_config}" REALPATH)
+    get_filename_component(config_prefix "${config_real}/../.." ABSOLUTE)
+    list(APPEND candidates "${config_prefix}")
+  endif()
+  unset(_enzyme_llvm_config CACHE)
+
+  set(cmake_subdirs "")
+  if(NOT relative_llvm_dir STREQUAL "")
+    list(APPEND cmake_subdirs "${relative_llvm_dir}")
+  endif()
+  list(APPEND cmake_subdirs "lib/cmake/llvm" "lib64/cmake/llvm" "cmake")
+  list(REMOVE_DUPLICATES cmake_subdirs)
+
+  set(matched_binary_dir "")
+  foreach(candidate IN LISTS candidates)
+    if(NOT IS_DIRECTORY "${candidate}")
+      continue()
+    endif()
+    foreach(subdir IN LISTS cmake_subdirs)
+      set(version_file "${candidate}/${subdir}/LLVMConfigVersion.cmake")
+      if(NOT EXISTS "${version_file}")
+        continue()
+      endif()
+      file(READ "${version_file}" version_contents)
+      string(REGEX MATCH "PACKAGE_VERSION \"([0-9]+)\\.([0-9]+)\\.([0-9]+)"
+             version_match "${version_contents}")
+      if(version_match
+         AND CMAKE_MATCH_1 STREQUAL "${Enzyme_LLVM_VERSION_MAJOR}")
+        set(matched_binary_dir "${candidate}")
+        set(Enzyme_LLVM_BINARY_DIR "${candidate}" PARENT_SCOPE)
+        set(Enzyme_LLVM_DIR "${candidate}/${subdir}" PARENT_SCOPE)
+        set(Enzyme_LLVM_VERSION_MINOR "${CMAKE_MATCH_2}" PARENT_SCOPE)
+        set(Enzyme_LLVM_VERSION_PATCH "${CMAKE_MATCH_3}" PARENT_SCOPE)
+        break()
+      endif()
+    endforeach()
+    if(NOT matched_binary_dir STREQUAL "")
+      break()
+    endif()
+  endforeach()
+
+  if(matched_binary_dir STREQUAL "")
+    return()
+  endif()
+
+  if(NOT Enzyme_CLANG_EXE STREQUAL "" AND NOT EXISTS "${Enzyme_CLANG_EXE}")
+    if(NOT relative_clang_exe STREQUAL ""
+       AND EXISTS "${matched_binary_dir}/${relative_clang_exe}")
+      set(Enzyme_CLANG_EXE "${matched_binary_dir}/${relative_clang_exe}"
+          PARENT_SCOPE)
+    elseif(EXISTS "${matched_binary_dir}/bin/clang")
+      set(Enzyme_CLANG_EXE "${matched_binary_dir}/bin/clang" PARENT_SCOPE)
+    elseif(EXISTS "${matched_binary_dir}/bin/clang.exe")
+      set(Enzyme_CLANG_EXE "${matched_binary_dir}/bin/clang.exe" PARENT_SCOPE)
+    endif()
+  endif()
+
+  if(NOT Enzyme_TABLEGEN_EXE STREQUAL ""
+     AND NOT EXISTS "${Enzyme_TABLEGEN_EXE}")
+    if(NOT relative_tablegen_exe STREQUAL ""
+       AND EXISTS "${matched_binary_dir}/${relative_tablegen_exe}")
+      set(Enzyme_TABLEGEN_EXE "${matched_binary_dir}/${relative_tablegen_exe}"
+          PARENT_SCOPE)
+    elseif(EXISTS "${matched_binary_dir}/bin/llvm-tblgen")
+      set(Enzyme_TABLEGEN_EXE "${matched_binary_dir}/bin/llvm-tblgen"
+          PARENT_SCOPE)
+    elseif(EXISTS "${matched_binary_dir}/bin/llvm-tblgen.exe")
+      set(Enzyme_TABLEGEN_EXE "${matched_binary_dir}/bin/llvm-tblgen.exe"
+          PARENT_SCOPE)
+    endif()
+  endif()
+endfunction()
+_enzyme_resolve_llvm_paths()
+
 # Our library dependencies (contains definitions for IMPORTED targets)
 if(
   (NOT TARGET ClangEnzymeFlags)
@@ -69,6 +235,6 @@ if(
       LLDEnzymeNoStrictAliasingFlags
       LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR}
       ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR}
-      LLDEnzyme-${LLD_LLVM_VERSION_MAJOR}
+      LLDEnzyme-${Enzyme_LLVM_VERSION_MAJOR}
       EnzymeReactantSupport-${Enzyme_LLVM_VERSION_MAJOR})
 endif()
