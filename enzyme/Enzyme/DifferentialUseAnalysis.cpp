@@ -218,7 +218,32 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (auto LI = dyn_cast<LoadInst>(user)) {
-      if (gutils->runtimeActivity) {
+      bool hasConstantBase = false;
+      Value *curptr = const_cast<Value *>(LI->getPointerOperand());
+      if (!gutils->runtimeActivity && !gutils->isConstantValue(curptr)) {
+        while (auto SI = dyn_cast<SelectInst>(curptr)) {
+          if (SI->getCondition()->getType()->isIntegerTy(1)) {
+            if (gutils->isConstantValue(SI->getTrueValue())) {
+              curptr = SI->getFalseValue();
+              continue;
+            }
+            if (gutils->isConstantValue(SI->getFalseValue())) {
+              curptr = SI->getTrueValue();
+              continue;
+            }
+          }
+          break;
+        }
+        if (!gutils->isConstantValue(curptr)) {
+          for (auto v : getBaseObjects(curptr)) {
+            if (gutils->isConstantValue(v)) {
+              hasConstantBase = true;
+              break;
+            }
+          }
+        }
+      }
+      if (gutils->runtimeActivity || hasConstantBase) {
         auto vd = TR.query(const_cast<llvm::Instruction *>(user));
         if (!vd.isKnown()) {
           auto ET = LI->getType();
