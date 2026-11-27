@@ -451,4 +451,24 @@ def LowerBinomialProgressPass : Pass<"lower-enzyme-binomial-progress"> {
   ];
 }
 
+def LowerOnlineProgressPass : Pass<"lower-enzyme-online-progress"> {
+  let summary = "Lower enzyme.online_progress to scf/arith/memref";
+  let dependentDialects = [
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect"
+  ];
+}
+
+// Combined pass that lowers both enzyme.binomial_progress and
+// enzyme.online_progress in one pipeline step.
+def LowerCheckpointingProgressPass : Pass<"lower-enzyme-checkpointing-progress"> {
+  let summary = "Lower enzyme.binomial_progress and enzyme.online_progress to scf/arith/memref";
+  let dependentDialects = [
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect"
+  ];
+}
+
 #endif // ENZYME_PASSES
