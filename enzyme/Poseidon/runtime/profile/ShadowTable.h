@@ -18,10 +18,12 @@
 #include "DeviceProfiler.h"
 #include "ProfileFormat.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <mutex>
 #include <set>
 
 namespace poseidon {
@@ -66,6 +68,37 @@ public:
     return *table;
   }
 
+  // A pointer of a call: the allocation [base, base + bytes) it points into,
+  // base 0 for a null pointer, its offset there, and the element size of the
+  // output the call writes through it, 0 for none.
+  struct Pointer {
+    uintptr_t base = 0;
+    size_t bytes = 0, offset = 0;
+    int seedWidth = 0;
+  };
+
+  // Writes to `out` the shadow of each of the `n` pointers `ptrs` of one call
+  // of `site`, null for a null pointer. An allocation the call writes through
+  // any of its pointers is an output of the call. Calls from several threads
+  // share the table.
+  void shadowsOf(const Pointer *ptrs, size_t n, int site, const char *siteName,
+                 void *stream, void **out) {
+    std::map<uintptr_t, int> width;
+    for (size_t k = 0; k < n; ++k)
+      if (ptrs[k].base) {
+        int &w = width[ptrs[k].base];
+        w = std::max(w, ptrs[k].seedWidth);
+      }
+    std::lock_guard<std::mutex> g(lock);
+    for (size_t k = 0; k < n; ++k)
+      out[k] = ptrs[k].base
+                   ? (char *)shadowOf(ptrs[k].base, ptrs[k].bytes, site,
+                                      width[ptrs[k].base], siteName, stream) +
+                         ptrs[k].offset
+                   : nullptr;
+  }
+
+private:
   // The shadow of the allocation [base, base + bytes). A base seen with a
   // different extent is a reused address, not the same buffer: the previous
   // allocation was freed and its shadow is stale. When `width` is the element
@@ -74,7 +107,7 @@ public:
   // so the first site that writes a buffer consumes its adjoint and leaves
   // zero behind for the sites that write it later.
   void *shadowOf(uintptr_t base, size_t bytes, int site, int width,
-                 const char *siteName, void *stream = nullptr) {
+                 const char *siteName, void *stream) {
     Shadow &sb = shadows[base];
     if (!sb.p || sb.bytes != bytes) {
       if (sb.p)
@@ -88,7 +121,6 @@ public:
     return sb.p;
   }
 
-private:
   struct Shadow {
     void *p = nullptr;
     size_t bytes = 0;
@@ -112,6 +144,7 @@ private:
   }
 
   std::map<uintptr_t, Shadow> shadows;
+  std::mutex lock;
 };
 
 } // namespace poseidon

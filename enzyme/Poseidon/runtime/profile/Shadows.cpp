@@ -224,8 +224,6 @@ struct HostShadowOps {
 };
 } // namespace
 
-static std::mutex shadowLock;
-
 extern "C" void POSEIDON_STACK_PUSH(void *base, uint64_t bytes) {
   if (!stackArrays) {
     inRegistry = true;
@@ -259,19 +257,18 @@ extern "C" void POSEIDON_REGISTER_GLOBALS(const void *table, uint64_t n) {
 }
 
 // One call of a host site: the shadow of each pointer argument (ShadowTable).
-// An allocation the call writes through any argument is an output of the
-// call.
 extern "C" void POSEIDON_HOST_SHADOWS(const char *fn, int site, int nptr,
                                       void *const *ptrs, const int *param,
                                       const int *seedWidth,
                                       const char *const *paramName,
                                       void **out) {
-  std::vector<Extent> ext((size_t)nptr, Extent{0, 0});
-  std::map<uintptr_t, int> width;
+  using Shadows = poseidon::ShadowTable<HostShadowOps>;
+  std::vector<Shadows::Pointer> at((size_t)nptr);
   for (int k = 0; k < nptr; ++k) {
     if (!ptrs[k])
       continue;
-    if (!findExtent(ptrs[k], ext[k]))
+    Extent ext{0, 0};
+    if (!findExtent(ptrs[k], ext))
       poseidon::fatal(
           "argument %d%s%s%s of %s points to %p, which the profiler did not "
           "see allocated. It sizes a site's shadows from heap allocations, and "
@@ -282,19 +279,7 @@ extern "C" void POSEIDON_HOST_SHADOWS(const char *fn, int site, int nptr,
           "shadow after it.",
           param[k], paramName[k][0] ? " ('" : "", paramName[k],
           paramName[k][0] ? "')" : "", fn, ptrs[k]);
-    int &w = width[ext[k].base];
-    if (seedWidth[k] > w)
-      w = seedWidth[k];
+    at[k] = {ext.base, ext.bytes, (uintptr_t)ptrs[k] - ext.base, seedWidth[k]};
   }
-
-  std::lock_guard<std::mutex> g(shadowLock);
-  auto &shadows = poseidon::ShadowTable<HostShadowOps>::get();
-  for (int k = 0; k < nptr; ++k) {
-    out[k] = nullptr;
-    if (!ptrs[k])
-      continue;
-    void *sp = shadows.shadowOf(ext[k].base, ext[k].bytes, site,
-                                width[ext[k].base], fn);
-    out[k] = (char *)sp + ((uintptr_t)ptrs[k] - ext[k].base);
-  }
+  Shadows::get().shadowsOf(at.data(), at.size(), site, fn, nullptr, out);
 }

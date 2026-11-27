@@ -25,7 +25,6 @@
 #include <cstring>
 #include <fstream>
 #include <map>
-#include <mutex>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -494,9 +493,6 @@ struct DeviceShadowOps {
 };
 } // namespace
 
-// Profiled launches from several host threads share one shadow table.
-static std::mutex g_shadowLock;
-
 // The allocation a device pointer points into. Taken through the driver entry
 // point rather than by linking libcuda, so a profile-generation build needs no
 // extra library on its link line; HIP's runtime answers it itself.
@@ -584,33 +580,24 @@ POSEIDON_LAUNCH_PROFILED(const void *func, int site, const unsigned *grid,
                 site, device, g_device);
   std::vector<void *> full(args, args + nargs);
   std::vector<void *> shadow((size_t)nptr, nullptr);
-  std::vector<void *> base((size_t)nptr, nullptr);
-  std::vector<size_t> off((size_t)nptr, 0), size((size_t)nptr, 0);
-  // An allocation this launch writes through any of its arguments is an output
-  // of the launch, whichever argument first reaches it below.
-  std::map<void *, int> width;
+  using Shadows = ShadowTable<DeviceShadowOps>;
+  std::vector<Shadows::Pointer> at((size_t)nptr);
   for (int k = 0; k < nptr; ++k) {
     // A pointer argument, or a pointer field of an aggregate argument (the
     // captures of a lambda the kernel takes by value).
     void *p = *(void **)((char *)args[ptrIdx[k]] + ptrOff[k]);
     if (!p)
       continue;
-    poseidonAllocRange(p, base[k], size[k]);
-    off[k] = (uintptr_t)p - (uintptr_t)base[k];
-    int &w = width[base[k]];
-    w = std::max(w, seedWidth[k]);
+    void *base;
+    size_t size;
+    poseidonAllocRange(p, base, size);
+    at[k] = {(uintptr_t)base, size, (uintptr_t)p - (uintptr_t)base,
+             seedWidth[k]};
   }
-  {
-    std::lock_guard<std::mutex> lock(g_shadowLock);
-    for (int k = 0; k < nptr; ++k) {
-      if (base[k])
-        shadow[k] = (char *)ShadowTable<DeviceShadowOps>::get().shadowOf(
-                        (uintptr_t)base[k], size[k], site, width[base[k]],
-                        "a profiled kernel", stream) +
-                    off[k];
-      full.push_back(&shadow[k]);
-    }
-  }
+  Shadows::get().shadowsOf(at.data(), at.size(), site, "a profiled kernel",
+                           stream, shadow.data());
+  for (int k = 0; k < nptr; ++k)
+    full.push_back(&shadow[k]);
 
   dim3 g(grid[0], grid[1], grid[2]);
   dim3 b(block[0], block[1], block[2]);
