@@ -7190,6 +7190,31 @@ const TypeTree &TypeResults::query(Value *val) const {
 // Returns last non-padding/alignment location of the corresponding subtype T.
 size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
                     size_t offset = 0) {
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    auto numElems = AT->getNumElements();
+    if (numElems == 0)
+      return 0;
+    auto elemTy = AT->getElementType();
+    Type *inner = elemTy;
+    while (auto innerAT = dyn_cast<ArrayType>(inner))
+      inner = innerAT->getElementType();
+    size_t innerAlloc = DL.getTypeAllocSize(inner);
+    size_t innerSize = (DL.getTypeSizeInBits(inner) + 7) / 8;
+    if (!isa<StructType>(inner) && innerAlloc == innerSize)
+      return (DL.getTypeSizeInBits(T) + 7) / 8;
+    size_t stride = DL.getTypeAllocSize(elemTy);
+    size_t prevOff = 0;
+    for (size_t idx = 0; idx < numElems; idx++) {
+      size_t off = idx * stride;
+      if (off > prevOff)
+        for (size_t i = prevOff; i < off; i++)
+          offs.insert(offset + i);
+      size_t subSize = skippedBytes(offs, elemTy, DL, offset + off);
+      prevOff = off + subSize;
+    }
+    return prevOff;
+  }
+
   auto ST = dyn_cast<StructType>(T);
   if (!ST)
     return (DL.getTypeSizeInBits(T) + 7) / 8;
@@ -7201,7 +7226,8 @@ size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
     if (off > prevOff)
       for (size_t i = prevOff; i < off; i++)
         offs.insert(offset + i);
-    size_t subSize = skippedBytes(offs, ST->getElementType(idx), DL, prevOff);
+    size_t subSize =
+        skippedBytes(offs, ST->getElementType(idx), DL, offset + off);
     prevOff = off + subSize;
   }
   return prevOff;
@@ -7258,7 +7284,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
       i++;
       continue;
     }
-    if (!anythingIsFloat && dt == BaseType::Integer) {
+    if (!anythingIsFloat && dt == BaseType::Anything) {
       i++;
       continue;
     }
