@@ -5,6 +5,7 @@ add_subdirectory(ForwardMode)
 add_subdirectory(mpi)
 add_subdirectory(OpenMP)
 add_subdirectory(ReverseMode)
+add_subdirectory(TypeAnalysis)
 
 # Run regression and unit tests
 add_lit_testsuite(
