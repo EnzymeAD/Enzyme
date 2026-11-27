@@ -161,21 +161,25 @@ plugin links into each device module it compiles for profile generation.
 
 | Folder | What it holds |
 |---|---|
-| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), the optimization unit the solver chooses among (`Unit.h`), and what a technique provides the pass (`Technique.h`) |
+| `Core/` | What the rest is written against: the expression graph of a site and its FPCore and C forms (`FPNode`, `FPCore`), the number formats (`NumberFormat`), the compile of a module and the states it holds for the later layers (`Session.h`), the optimization unit the solver chooses among (`Unit.h`), and a site's solve and what a technique provides the pass (`Technique.h`) |
 | `Model/` | The models every technique shares: the measured cost table and the cost of code over it, the sampling of a subgraph's inputs, the evaluation of an expression graph at a point, in floating point and exactly, and the unit over one FP subgraph priced on its samples (`SubgraphUnit.h`) |
 | `Techniques/` | One folder per technique, each with its own pricing and accuracy model: `Algebraic/` (Herbie), `Precision/` (narrowing and floating-point expansions), `Matmul/` (matrix products on tensor cores or as library calls); `Techniques.cpp` lists them |
-| `Solve/` | A site's collection and pricing of units, the DP over them, pins, and the explanation of the result |
+| `Solve/` | A site's FP subgraphs, the collection and pricing of its units, the DP over them (`Solve.h`), pins, and the explanation of the result |
 | `Sites/`, `Profile/` | Finding and outlining sites, their canonical form and launch manifest; profile generation and the reading of profiles |
 | `Pass/`, `Targets/`, `Support/` | The pass pipeline and its options; what the pass knows of each target; shared helpers |
 | `runtime/`, `tools/` | The libraries a compiled program links (profilers, GEMM runtimes); `poseidon-clang`, `poseidon-calibrate`, `poseidon-explain`, `poseidon-kappa` |
 
 The units are an algebraic unit, a precision unit or a matmul unit, one kind
 per technique; the solver sees each as an optimization unit whose candidates
-carry a cost change and an error change. A technique joins the pass as one
-entry of the list in `Techniques/Techniques.cpp`: the kind of its units, the
-option that turns it on, and the steps of a compile it takes part in, from
-proposing units for a site to rewriting the host half. What it keeps for a site
-or a compile is its own state type, which the site and the session hold for it.
+carry a cost change and an error change. A technique joins the pass as a
+subclass of `Technique` in its own folder, which the list in
+`Techniques/Techniques.cpp` names: the kind of its units, the option that turns
+it on, and the steps of a compile it takes part in, from proposing units for a
+site to rewriting the host half; a step it does not override does nothing.
+What it keeps for a site or a compile is a state of its own type, which the
+site or the session holds in a slot, made on first use. The session holds the
+states of the other layers the same way: the site records, the launch manifest,
+the cost model and the pins.
 Each unit writes its own part of the explanation of a solve; the explanation
 (`Solve/Explain.cpp`) words a remark by the kind the unit gives a candidate,
 one of the kinds its schema lists.

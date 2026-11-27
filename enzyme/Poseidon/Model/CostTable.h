@@ -27,18 +27,11 @@
 
 namespace poseidon {
 
-/// The cost model of one compile: the CSV resolved from the request (the
-/// -poseidon-cost-model it is constructed with, POSEIDON_COST_MODEL) or from
-/// the first priced function's target-cpu, loaded once, and what is derived
-/// from it.
+/// The cost model of one compile: the CSV resolved, at its first use, from the
+/// request (-poseidon-cost-model, POSEIDON_COST_MODEL) or from the first priced
+/// function's target-cpu, loaded once, and what is derived from it.
 struct CostModelState {
-  /// A state for the model `requested` names; empty for one resolved by
-  /// target-cpu.
-  explicit CostModelState(std::string requested)
-      : Requested(std::move(requested)) {}
-
-  /// The CSV the compile names; empty when none does.
-  std::string Requested;
+  static inline char ID;
   /// The CSV in effect, once resolved.
   std::string Resolved;
   /// Whether `Resolved` has been decided.
@@ -60,15 +53,19 @@ struct CostModelState {
 /// ~/.cache); empty when there is none.
 std::string userCacheDir();
 
-/// Parses the model the request names, and fails unless every line is a header
-/// or a row of a family poseidon-calibrate writes.
-llvm::Error loadCostModel(CostModelState &CM);
+/// Parses the model `Requested` names, else POSEIDON_COST_MODEL, unless `CM`
+/// is resolved already, and fails unless every line is a header or a row of a
+/// family poseidon-calibrate writes.
+llvm::Error loadCostModel(CostModelState &CM, llvm::StringRef Requested);
 
 /// Resolves and loads the model for the function named `function`, compiled for
-/// `targetCpu`, and fails unless its native_arch header names `targetCpu`.
-/// `OnDevice` says whether `targetCpu` is a GPU's, which decides the
-/// poseidon-calibrate command a missing model is named with.
-llvm::Error requireCostModel(CostModelState &CM, llvm::StringRef targetCpu,
+/// `targetCpu`: unless `CM` is resolved already, the model `Requested` names,
+/// else POSEIDON_COST_MODEL, else the one measured for `targetCpu`. Fails
+/// unless its native_arch header names `targetCpu`. `OnDevice` says whether
+/// `targetCpu` is a GPU's, which decides the poseidon-calibrate command a
+/// missing model is named with.
+llvm::Error requireCostModel(CostModelState &CM, llvm::StringRef Requested,
+                             llvm::StringRef targetCpu,
                              llvm::StringRef function, bool OnDevice);
 
 /// The loaded model; a site has required it.
@@ -78,9 +75,9 @@ getCostModel(CostModelState &CM);
 /// The device the loaded CSV was measured on ("# native_arch=").
 const std::string &getCostModelNativeArch(CostModelState &CM);
 
-/// The CSV in effect, once resolved; empty before the first requireCostModel
-/// unless the flag or POSEIDON_COST_MODEL named one.
-const std::string &costModelPath(CostModelState &CM);
+/// The CSV in effect; empty until a requireCostModel or loadCostModel resolves
+/// it.
+const std::string &costModelPath(const CostModelState &CM);
 
 /// The loaded model as text, its rows in order with exact costs and its
 /// native_arch header, without comments or blank lines: what a result computed

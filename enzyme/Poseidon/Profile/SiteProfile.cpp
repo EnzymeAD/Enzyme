@@ -8,6 +8,7 @@
 
 #include "Instrument.h"
 
+#include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Enzyme/Utils.h"
 #include "ProfileReader.h"
@@ -18,7 +19,6 @@
 #include "Sites/Markers.h"
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
-#include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
@@ -70,10 +70,10 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   // Before the probes, which break the shapes a technique reads.
   std::string techniqueHeader;
   raw_string_ostream techniqueOS(techniqueHeader);
-  for (const Technique &T : techniques())
-    if (T.WriteProfileHeader && T.Enabled(S.Opts))
-      T.WriteProfileHeader(S.Opts, *clone, techniqueOS);
-  const std::string profileName = bodyProfileStem(S.Sites, F);
+  for (const Technique *T : techniques())
+    if (T->enabled(S.Opts))
+      T->writeProfileHeader(S.Opts, *clone, techniqueOS);
+  const std::string profileName = bodyProfileStem(S.get<SiteRecords>(), F);
   if (!instrumentForProfiling(*clone, siteId, profileName)) {
     clone->eraseFromParent();
     return nullptr;
@@ -476,7 +476,7 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
     msg << '\n';
   }
   recordDescriptor(
-      S.Launches, LaunchKind::Profiling, kernelName,
+      S.get<LaunchManifest>(), LaunchKind::Profiling, kernelName,
       [&](raw_ostream &os) {
         os << ' ' << siteId << ' ' << numArgs << ' ' << shadowed.size();
         for (const Shadowed &s : shadowed)
@@ -492,7 +492,7 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
       std::move(message));
   // The host half registers it with the profiling runtime, so that a kernel
   // that never launches still gets a profile, one saying so.
-  recordProfileHeader(S.Launches, kernelName, profileName, header);
+  recordProfileHeader(S.get<LaunchManifest>(), kernelName, profileName, header);
 }
 
 /// Profile generation for an attribute site. The kernel keeps its name, its
@@ -505,7 +505,8 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
 static Expected<bool> profileKernel(Session &S, Function &K,
                                     unsigned &nextSiteId) {
   Function *body = nullptr;
-  Expected<CallInst *> outlined = outlineKernelBody(S.Sites, K, body);
+  Expected<CallInst *> outlined =
+      outlineKernelBody(S.get<SiteRecords>(), K, body);
   if (!outlined)
     return outlined.takeError();
   CallInst *call = *outlined;
@@ -523,7 +524,7 @@ static Expected<bool> profileKernel(Session &S, Function &K,
     return true;
   }
   const unsigned siteId = nextSiteId++;
-  const std::string profileName = bodyProfileStem(S.Sites, *body);
+  const std::string profileName = bodyProfileStem(S.get<SiteRecords>(), *body);
 
   SmallVector<Shadowed, 8> shadowed = shadowedPointers(K, *clone);
   Function *P = createProfiledKernel(K, shadowed);

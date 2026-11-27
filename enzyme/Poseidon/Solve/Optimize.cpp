@@ -6,14 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Optimize.h"
+#include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Explain.h"
 #include "Model/CostModel.h"
+#include "Pins.h"
 #include "Profile/ProfileReader.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
-#include "Solve/Session.h"
+#include "Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
@@ -49,7 +50,7 @@ namespace poseidon {
 std::string siteProfilePath(const Session &S, const Function &clone,
                             StringRef dir) {
   SmallString<128> path(dir);
-  sys::path::append(path, siteProfileFile(S.Sites, clone));
+  sys::path::append(path, siteProfileFile(S.get<SiteRecords>(), clone));
   return path.str().str();
 }
 
@@ -79,7 +80,7 @@ static Error readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
              DS_Warning);
   if (!O.Profiling.OutputProfiles.empty())
     if (Error E = mergeOutputProfiles(P.map, O.Profiling.OutputProfiles,
-                                      siteProfileFile(S.Sites, F),
+                                      siteProfileFile(S.get<SiteRecords>(), F),
                                       canonicalHash, F, O.Diagnostics.Print))
       return E;
   // Before anything reads a gradient: the floor is written back into the
@@ -163,8 +164,9 @@ static Error putOnApplicationScale(Session &S, Function &F,
                DS_Warning);
     else
       factor = profileHeader.kappa / sumSens;
-    st.kappa = profileHeader.kappa;
-    st.kappaMark = profileHeader.kappaMark;
+    SolvedFrom &from = st.get<SolvedFrom>();
+    from.kappa = profileHeader.kappa;
+    from.kappaMark = profileHeader.kappaMark;
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] " << F.getName()
                    << ": measured condition number " << profileHeader.kappa
@@ -208,11 +210,11 @@ static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
       G.eraseFromParent();
 }
 
-void SiteState::sealUnits(Session &S) {
-  assert(!unitsSealed && "a site's units are sealed once");
-  unitsSealed = true;
-  for (const Technique &T : techniques())
-    T.BindUnits(S, *this);
+void sealUnits(Session &S, SiteState &st) {
+  assert(!st.unitsSealed && "a site's units are sealed once");
+  st.unitsSealed = true;
+  for (const Technique *T : techniques())
+    T->bindUnits(S, st);
 }
 
 // The cost change of each candidate of `units` that pricing priced, against
@@ -254,8 +256,9 @@ static Error priceUnlessCached(Session &S, SiteState &st,
         lookupDPTable(S, st, st.units, profilePath);
     if (!table)
       return table.takeError();
-    st.table = std::move(*table);
-    if (st.table->hit)
+    std::unique_ptr<DPTable> &cached = st.get<SolvedFrom>().table;
+    cached = std::move(*table);
+    if (cached->hit)
       return Error::success();
   }
   if (Error E = priceCandidates(st))
@@ -282,18 +285,20 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   SiteProfileData profile;
   if (Error E = readSiteProfile(S, F, profile))
     return std::move(E);
-  st.profilePath = profile.path;
-  st.canonicalHash = profile.canonicalHash;
+  SolvedFrom &from = st.get<SolvedFrom>();
+  from.profilePath = profile.path;
+  from.canonicalHash = profile.canonicalHash;
   bool recognized = false;
-  for (const Technique &T : techniques())
-    if (T.Recognize && T.Enabled(O))
-      recognized |= T.Recognize(S, F, profile, st);
+  for (const Technique *T : techniques())
+    if (T->enabled(O))
+      recognized |= T->recognize(S, F, profile, st);
 
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
-  if (Error E = requireCostModel(S.CostModel, F))
+  if (Error E = requireCostModel(S, F))
     return std::move(E);
-  Expected<double> cost = profiledCost(S.CostModel, F, profile.map, slotOf);
+  Expected<double> cost =
+      profiledCost(S.get<CostModelState>(), F, profile.map, slotOf);
   if (!cost)
     return cost.takeError();
   st.profiledCost = *cost;
@@ -307,27 +312,27 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   if (st.subgraphs.empty() && !recognized)
     return false;
 
-  for (const Technique &T : techniques())
-    if (T.BeginSite && T.Enabled(O))
-      if (Error E = T.BeginSite(S, F, st))
+  for (const Technique *T : techniques())
+    if (T->enabled(O))
+      if (Error E = T->beginSite(S, F, st))
         return std::move(E);
   if (!st.subgraphs.empty())
-    for (const Technique &T : techniques())
-      if (T.RemarkUnavailable && !T.Enabled(O))
-        T.RemarkUnavailable(S, F);
+    for (const Technique *T : techniques())
+      if (!T->enabled(O))
+        T->remarkUnavailable(S, F);
   // One subgraph at a time, every technique's units for it.
   for (auto [index, subgraph] : enumerate(st.subgraphs)) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
-    for (const Technique &T : techniques())
-      if (T.ProposeForSubgraph && T.Enabled(O))
-        if (Error E = T.ProposeForSubgraph(S, F, st, subgraph, index, profile))
+    for (const Technique *T : techniques())
+      if (T->enabled(O))
+        if (Error E = T->proposeForSubgraph(S, F, st, subgraph, index, profile))
           return std::move(E);
   }
-  for (const Technique &T : techniques())
-    if (T.ProposeForSite && T.Enabled(O))
-      if (Error E = T.ProposeForSite(S, st, profile))
+  for (const Technique *T : techniques())
+    if (T->enabled(O))
+      if (Error E = T->proposeForSite(S, st, profile))
         return std::move(E);
-  st.sealUnits(S);
+  sealUnits(S, st);
 
   if (Error E = priceUnlessCached(S, st, profile.path))
     return std::move(E);
@@ -335,7 +340,7 @@ static Expected<bool> collectFPCandidates(Session &S, Function &F, double tau,
   if (Error E = putOnApplicationScale(S, F, profile, st))
     return std::move(E);
   if (O.Diagnostics.Print) {
-    if (st.table && st.table->hit)
+    if (from.table && from.table->hit)
       llvm::errs() << "[poseidon] " << F.getName()
                    << ": candidates not priced; the DP table read from the "
                       "cache holds the prices its solve used\n";
@@ -415,9 +420,8 @@ static Expected<bool> materializeSolution(Session &S, Function &F,
         I->eraseFromParent();
       }
     }
-    for (const Technique &T : techniques())
-      if (T.SiteApplied)
-        T.SiteApplied(S, F);
+    for (const Technique *T : techniques())
+      T->siteApplied(S, F);
   }
 
   // The emitted site is cleaned up without the target, which versions a loop
@@ -457,7 +461,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
   SmallVector<SiteState *, 4> solved;
   SmallVector<ArrayRef<SiteUnit *>, 4> units;
   for (SiteState *st : sites)
-    if (st->kappaMark != KappaMark::Diverged) {
+    if (st->get<SolvedFrom>().kappaMark != KappaMark::Diverged) {
       solved.push_back(st);
       units.push_back(st->units);
     }
@@ -512,7 +516,7 @@ static Expected<bool> solveAndApply(Session &S, Module &M,
     // An unrewritten site calls the original body again: the preprocessed
     // clone need not lower bit-identically.
     if (joint && !*siteChanged)
-      redirectNoopSite(S.Sites, st->F, S.Opts.Diagnostics.Print);
+      redirectNoopSite(S.get<SiteRecords>(), st->F, S.Opts.Diagnostics.Print);
     changed |= *siteChanged;
   }
   return changed;
@@ -577,7 +581,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
           "different "
           "accuracy targets:";
     for (auto &[F, t] : targets) {
-      const Function *origin = siteOriginOf(S.Sites, *F);
+      const Function *origin = siteOriginOf(S.get<SiteRecords>(), *F);
       os << ' '
          << llvm::demangle((origin ? origin->getName() : F->getName()).str())
          << " (";
@@ -591,7 +595,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
     M.getContext().diagnose(DiagnosticInfoUnsupported(
         *targets.front().first, os.str(), DiagnosticLocation(), DS_Error));
     for (auto &[F, t] : targets)
-      redirectNoopSite(S.Sites, F, S.Opts.Diagnostics.Print);
+      redirectNoopSite(S.get<SiteRecords>(), F, S.Opts.Diagnostics.Print);
     return false;
   }
 
@@ -609,7 +613,7 @@ Expected<bool> solveJointly(Session &S, Module &M) {
         llvm::errs() << "[poseidon] joint solve: nothing to optimize in "
                      << F->getName() << '\n';
       explainNothingToOptimize(S, *F, tau, allFromSite);
-      redirectNoopSite(S.Sites, F, S.Opts.Diagnostics.Print);
+      redirectNoopSite(S.get<SiteRecords>(), F, S.Opts.Diagnostics.Print);
     }
   }
   if (states.empty())

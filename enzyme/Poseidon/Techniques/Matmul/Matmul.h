@@ -390,7 +390,7 @@ struct InKernelTile {
 };
 
 /// What the matrix-product pipeline records over a compile.
-struct MatmulState : TechniqueState {
+struct MatmulState {
   static inline char ID;
   /// The library call chosen for each optimized body clone, keyed by the
   /// clone.
@@ -526,43 +526,12 @@ public:
   std::string selectionText(size_t i) const override;
 };
 
-/// What the matrix-product technique keeps for a site.
-struct MatmulSiteState : TechniqueState {
-  static inline char ID;
-  /// The site's matrix products; MatmulUnit::matmul points into this, so it
-  /// must outlive materialization.
-  llvm::SmallVector<RecognizedMatmul, 4> matmuls;
-  /// The matrix-product units proposed for the site.
-  llvm::SmallVector<MatmulUnit, 4> units;
-  /// The dominator, loop, assumption, library and scalar-evolution analyses of
-  /// the site, for the loop raises. The matmuls found hold SE and SCEVs it
-  /// owns, so these outlive materialization. SE is declared last so that it is
-  /// destroyed first: it references the others.
-  std::optional<llvm::DominatorTree> DT;
-  std::optional<llvm::LoopInfo> LI;
-  std::optional<llvm::AssumptionCache> AC;
-  std::optional<llvm::TargetLibraryInfoImpl> TLII;
-  std::optional<llvm::TargetLibraryInfo> TLI;
-  std::optional<llvm::ScalarEvolution> SE;
-};
-
 /// The label of `opt` in candidate names and diagnostics.
 std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
 /// The class whose inkernel_rel cost-model row prices an in-kernel raise of
 /// `v`, such as "f16_f32" or "tcec_n2_f16_f32".
 std::string inKernelCostClass(const SchemeVariant &v);
-
-/// Appends to `out` a unit with priced candidates for each product of
-/// `matmuls` the profiling run executed. `sampleLogBits`: 0 samples operands
-/// uniformly over the profiled [min, max]; B > 0 log-uniformly in magnitude
-/// over [maxMag * 2^-B, maxMag]. An error is a user error about the profile or
-/// the cost model.
-llvm::Error generateMatmulCandidates(Session &S,
-                                     llvm::ArrayRef<RecognizedMatmul> matmuls,
-                                     const ProfileMap &scalarProfile,
-                                     unsigned sampleLogBits,
-                                     llvm::SmallVectorImpl<MatmulUnit> &out);
 
 // A raised GEMM materialized as a host library call (RealizeLibraryCall.cpp).
 
@@ -581,6 +550,9 @@ void writePendingLibraryCall(Session &S, llvm::Function &body);
 /// M's manifest matches into a call of the GEMM runtime. Host module only. An
 /// error for a descriptor that does not parse.
 llvm::Expected<bool> rewriteGemmStubBodies(const Options &O, llvm::Module &M);
+
+/// The technique of matrix products on tensor cores or as library calls.
+const Technique &matmulTechnique();
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_MATMUL_MATMUL_H

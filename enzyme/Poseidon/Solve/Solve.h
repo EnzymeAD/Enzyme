@@ -1,4 +1,4 @@
-//===- Optimize.h - a site's candidates, solve and materialization --------===//
+//===- Solve.h - a site's candidates, solve and materialization -----------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,18 +6,20 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// A site's candidates, solve and materialization; the DP over the units of one
-// site or of several sites, the selection of a frontier point by budget or
-// accuracy target, and the cache of a site's solved table (SolveSites.cpp): a
-// later compile with the same key binds the table to its own candidates instead
-// of pricing and solving again.
+// The header of Optimize.cpp, SolveSites.cpp and Subgraphs.cpp. A site's FP
+// subgraphs (Subgraphs.cpp), candidates, solve and materialization
+// (Optimize.cpp); the DP over the units of one site or of several sites, the
+// selection of a frontier point by budget or accuracy target, and the cache of
+// a site's solved table (SolveSites.cpp): a later compile with the same key
+// binds the table to its own candidates instead of pricing and solving again.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_SOLVE_OPTIMIZE_H
-#define POSEIDON_SOLVE_OPTIMIZE_H
+#ifndef POSEIDON_SOLVE_SOLVE_H
+#define POSEIDON_SOLVE_SOLVE_H
 
 #include "Core/FPNode.h"
+#include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Core/Unit.h"
 #include "Profile/ProfileReader.h"
@@ -25,7 +27,6 @@
 #include "Support/CacheKey.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Value.h"
@@ -39,10 +40,6 @@
 #include <vector>
 
 namespace poseidon {
-
-struct SiteState;
-struct Options;
-class Session;
 
 /// What chose a solve's applied steps.
 enum class SolveSelector {
@@ -149,19 +146,10 @@ solveSites(Session &S, llvm::ArrayRef<SiteState *> sites,
            llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
            bool joint, SolveRecord *record);
 
-/// One site's solve: its FP graph, its profile's scale, the units proposed for
-/// it and what each technique keeps for it.
-struct SiteState : FPGraph, TechniqueStates {
-  /// The accuracy target written at the site; 0 when the site has none and
-  /// -poseidon-tau applies.
-  double tau = 0.0;
-  /// Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
-  /// costs carry; the denominator that turns an accuracy cost into a
-  /// per-operation relative rounding level.
-  double accScale = 0.0;
-  /// What the profiled run spent in the site, in cost-model units: the
-  /// execution count times the price of every operation the profile records.
-  double profiledCost = 0.0;
+/// What a site is solved from, for its solve and the explanation of it: the
+/// profile and its condition number, and the site's DP table in the cache.
+struct SolvedFrom {
+  static inline char ID;
   /// The profile the site is solved from.
   std::string profilePath;
   /// The canonical form hash the profile was checked against.
@@ -171,42 +159,14 @@ struct SiteState : FPGraph, TechniqueStates {
   std::optional<double> kappa;
   /// How the profiling run measured `kappa`.
   KappaMark kappaMark = KappaMark::None;
-  /// The factor the accuracy costs were multiplied by to put them on the
-  /// application's scale: kappa over the summed sensitivity, 1 without a
-  /// measured kappa.
-  double scaleFactor = 1.0;
-  /// The accumulating operations of the reduction loops a technique
-  /// recognized, each of which -poseidon-subgraph-reductions admits as an FP
-  /// subgraph of one operation.
-  llvm::SmallPtrSet<llvm::Instruction *, 4> reductionOps;
-  /// The site's FP subgraphs, the connected components of its operations.
-  llvm::SmallVector<Subgraph, 1> subgraphs;
-  /// The site's units, technique by technique in the order techniques() lists
-  /// them, each bound to this site.
-  llvm::SmallVector<SiteUnit *, 8> units;
-  /// Whether sealUnits has run.
-  bool unitsSealed = false;
   /// Set when the site is solved against the DP table cache.
   std::unique_ptr<DPTable> table;
-
-  /// Binds every unit to this site and lists it in `units`, technique by
-  /// technique. Once per site, after its last proposal: no technique proposes
-  /// a unit for the site after it.
-  void sealUnits(Session &S);
 };
 
-/// A site's profile: the file it was read from, its records and the canonical
-/// form hash of the site they were checked against.
-struct SiteProfileData {
-  /// The profile file.
-  std::string path;
-  /// The profile's records by slot.
-  ProfileMap map;
-  /// The profile's header.
-  SiteProfileHeader header;
-  /// The canonical form hash of the site, as computed for this compile.
-  std::string canonicalHash;
-};
+/// Binds every unit of the site `st` to it and lists it in its `units`,
+/// technique by technique. Once per site, after its last proposal: no
+/// technique proposes a unit for the site after it.
+void sealUnits(Session &S, SiteState &st);
 
 /// The file in the profile directory `dir` that holds the profile of the site
 /// clone `clone`.
@@ -250,4 +210,4 @@ llvm::SmallVector<SolutionStep>
 stepsToApply(llvm::ArrayRef<SolutionStep> steps);
 
 } // namespace poseidon
-#endif // POSEIDON_SOLVE_OPTIMIZE_H
+#endif // POSEIDON_SOLVE_SOLVE_H

@@ -57,6 +57,7 @@ struct ProfileHeaderText {
 /// What a device module hands its host half, gathered while its sites are
 /// solved and written once by writeLaunchManifest.
 struct LaunchManifest {
+  static inline char ID;
   /// By kernel name, so that the manifest and its messages come out in one
   /// order whatever order the sites were solved in.
   std::map<std::string, Recorded> LibraryCalls, Profiling;

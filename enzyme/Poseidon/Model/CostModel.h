@@ -14,6 +14,7 @@
 #ifndef POSEIDON_MODEL_COST_MODEL_H
 #define POSEIDON_MODEL_COST_MODEL_H
 
+#include "Core/Session.h"
 #include "Model/CostTable.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -37,9 +38,10 @@ namespace poseidon {
 
 struct ProfileInfo;
 
-/// An error at `F` unless the cost model is present and its native_arch header
-/// names this function's target-cpu.
-llvm::Error requireCostModel(CostModelState &CM, const llvm::Function &F);
+/// An error at `F` unless the cost model of `S` is present and its native_arch
+/// header names this function's target-cpu. The first call resolves the model
+/// from S's -poseidon-cost-model, POSEIDON_COST_MODEL or F's target-cpu.
+llvm::Error requireCostModel(Session &S, const llvm::Function &F);
 
 /// The row `Opcode,Type`, in the cost model's units per execution; a model
 /// without it is an error at `Loc` in `F`.

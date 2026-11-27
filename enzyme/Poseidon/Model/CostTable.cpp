@@ -32,13 +32,13 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Resolves the CSV the compile prices from to the flag, else
+// Resolves the CSV the compile prices from to `Requested`, else
 // POSEIDON_COST_MODEL; false when neither names one.
-static bool resolveFromRequest(CostModelState &CM) {
+static bool resolveFromRequest(CostModelState &CM, StringRef Requested) {
   if (CM.IsResolved)
     return true;
-  if (!CM.Requested.empty()) {
-    CM.Resolved = CM.Requested;
+  if (!Requested.empty()) {
+    CM.Resolved = Requested.str();
     CM.IsResolved = true;
   } else if (const char *Env = std::getenv("POSEIDON_COST_MODEL")) {
     if (*Env) {
@@ -49,8 +49,7 @@ static bool resolveFromRequest(CostModelState &CM) {
   return CM.IsResolved;
 }
 
-const std::string &costModelPath(CostModelState &CM) {
-  resolveFromRequest(CM);
+const std::string &costModelPath(const CostModelState &CM) {
   return CM.Resolved;
 }
 
@@ -64,9 +63,10 @@ std::string userCacheDir() {
 
 // One measured model per device: the file name carries the architecture it was
 // measured on, so the module's target-cpu names it.
-static Error resolveForTarget(CostModelState &CM, StringRef TargetCpu,
-                              StringRef FnName, bool OnDevice) {
-  if (resolveFromRequest(CM))
+static Error resolveForTarget(CostModelState &CM, StringRef Requested,
+                              StringRef TargetCpu, StringRef FnName,
+                              bool OnDevice) {
+  if (resolveFromRequest(CM, Requested))
     return Error::success();
   if (TargetCpu.empty())
     return createStringError(inconvertibleErrorCode(),
@@ -152,9 +152,10 @@ static bool isCostModelRow(StringRef Opcode, StringRef Type) {
                 [&](const MathFunction &Fn) { return Fn.Name == Opcode; });
 }
 
-Error loadCostModel(CostModelState &CM) {
+Error loadCostModel(CostModelState &CM, StringRef Requested) {
   if (CM.Loaded)
     return Error::success();
+  resolveFromRequest(CM, Requested);
   ErrorOr<std::unique_ptr<MemoryBuffer>> File =
       MemoryBuffer::getFile(costModelPath(CM));
   if (!File)
@@ -231,11 +232,11 @@ std::string costModelRows(CostModelState &CM) {
   return Rows;
 }
 
-Error requireCostModel(CostModelState &CM, StringRef targetCpu,
-                       StringRef function, bool OnDevice) {
-  if (Error E = resolveForTarget(CM, targetCpu, function, OnDevice))
+Error requireCostModel(CostModelState &CM, StringRef Requested,
+                       StringRef targetCpu, StringRef function, bool OnDevice) {
+  if (Error E = resolveForTarget(CM, Requested, targetCpu, function, OnDevice))
     return E;
-  if (Error E = loadCostModel(CM))
+  if (Error E = loadCostModel(CM, Requested))
     return E;
   if (CM.NativeArch.empty())
     return modelError(CM, "carries no '# native_arch=' header, so it cannot "

@@ -87,6 +87,19 @@ struct SiteProfileHeader {
   bool executed = true;
 };
 
+/// A site's profile: the file it was read from, its records and the canonical
+/// form hash of the site they were checked against.
+struct SiteProfileData {
+  /// The profile file.
+  std::string path;
+  /// The profile's records by slot.
+  ProfileMap map;
+  /// The profile's header.
+  SiteProfileHeader header;
+  /// The canonical form hash of the site, as computed for this compile.
+  std::string canonicalHash;
+};
+
 /// The word a profile's KappaMark line spells `M` with.
 llvm::StringRef kappaMarkName(KappaMark M);
 

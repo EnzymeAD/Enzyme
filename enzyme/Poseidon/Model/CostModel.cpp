@@ -36,9 +36,11 @@ using namespace llvm;
 
 namespace poseidon {
 
-Error requireCostModel(CostModelState &CM, const Function &F) {
+Error requireCostModel(Session &S, const Function &F) {
   const Target &T = Target::of(F);
-  if (Error E = requireCostModel(CM, T.processor(F), F.getName(), T.isDevice()))
+  if (Error E =
+          requireCostModel(S.get<CostModelState>(), S.Opts.Model.CostModel,
+                           T.processor(F), F.getName(), T.isDevice()))
     return userError(F, toString(std::move(E)));
   return Error::success();
 }

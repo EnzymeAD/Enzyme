@@ -9,17 +9,17 @@
 // The algebraic units of an FP subgraph: Herbie's rewrites of its outputs,
 // one output or an array of them per unit. In order: running Herbie, the
 // cores of a subgraph, the accuracy of a rewrite (regime arms priced on their
-// own samples), the cost of a rewrite, and the unit.
+// own samples), the cost of a rewrite, the unit, and the technique.
 //
 //===----------------------------------------------------------------------===//
 
 #include "Algebraic.h"
 #include "Core/FPCore.h"
+#include "Core/Session.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Model/Sampling.h"
 #include "Solve/Explain.h"
-#include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
 #include "Support/Utils.h"
@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -69,7 +70,8 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
   if (H.PlatformResolved)
     return &P;
 
-  const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
+  const std::string &NativeArch =
+      getCostModelNativeArch(S.get<CostModelState>());
   const Target &T = Target::measuredOn(NativeArch);
   P.Name = T.herbiePlatform(NativeArch);
 
@@ -86,7 +88,7 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
     // Generated next to the CSV it was priced from, by
     // `poseidon-calibrate --only herbie-platform`. Another architecture's
     // platform holds that architecture's prices, so none is substituted.
-    StringRef Csv(costModelPath(S.CostModel));
+    StringRef Csv(costModelPath(S.get<CostModelState>()));
     P.Path =
         (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
     if (!sys::fs::exists(P.Path))
@@ -95,7 +97,7 @@ static Expected<const HerbiePlatform *> herbiePlatform(Session &S,
                  P.Path +
                  ", does not exist; generate it with "
                  "'poseidon-calibrate --only herbie-platform --out " +
-                 costModelPath(S.CostModel) + "'");
+                 costModelPath(S.get<CostModelState>()) + "'");
   }
 
   if (!P.Path.empty()) {
@@ -327,7 +329,9 @@ static Error collectHerbieRewrites(Session &S,
   return Error::success();
 }
 
-void reportHerbieAnswers(Session &S) {
+// Prints how many Herbie answers the compile ran fresh and read from the
+// cache.
+static void reportHerbieAnswers(Session &S) {
   HerbieRunState &H = S.get<HerbieRunState>();
   if (!H.Cached && !H.Fresh)
     return;
@@ -630,7 +634,7 @@ Error SubgraphCores::addCores(ArrayRef<Value *> roots, ArrayRef<double> grads,
     batch.inputs.push_back(herbieInput);
     AlgebraicUnit &RU =
         batch.units.emplace_back(subgraph, roots, grads, body, executions);
-    if (Error Err = RU.priceAsWritten(S.CostModel))
+    if (Error Err = RU.priceAsWritten(S.get<CostModelState>()))
       return Err;
     RU.herbiePrecision = prec;
   }
@@ -724,10 +728,13 @@ Error SubgraphCores::addArrayCores(ArrayRef<const EligibleOutput *> group,
                   "Herbie array input", batch);
 }
 
-Error proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
-                              int subgraphCounter, int &symbolCounter,
-                              FPGraph &G,
-                              SmallVectorImpl<AlgebraicUnit> &algebraicUnits) {
+// Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
+// `subgraphCounter`, appended to `algebraicUnits` unpriced. Its inputs are
+// named from `symbolCounter`, which the site's subgraphs share.
+static Error
+proposeHerbieCandidates(Session &S, Function &F, Subgraph &subgraph,
+                        int subgraphCounter, int &symbolCounter, FPGraph &G,
+                        SmallVectorImpl<AlgebraicUnit> &algebraicUnits) {
   SubgraphCores cores(S, subgraph, subgraphCounter, G);
   cores.nameInputs(symbolCounter);
 
@@ -1760,8 +1767,8 @@ Error AlgebraicUnit::price() {
   const BoundaryCastFreq Boundary = boundaryCastFreq(LI);
   for (AlgebraicCandidate &c : candidates) {
     Expected<double> cost =
-        priceRewrite(session().CostModel, session().PB, c.expr, *output, st,
-                     FMF, subgraph->inputs, Boundary);
+        priceRewrite(session().get<CostModelState>(), session().PB, c.expr,
+                     *output, st, FMF, subgraph->inputs, Boundary);
     if (!cost)
       return cost.takeError();
     c.CompCost = *cost;
@@ -1934,6 +1941,120 @@ void AlgebraicUnit::printPriced(raw_ostream &OS) {
     OS << "\t\t" << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy
        << "\t\t" << candidate.expr << '\n';
   }
+}
+
+//===----------------------------------------------------------------------===//
+// The technique
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+/// What the algebraic technique keeps for a site.
+struct AlgebraicSiteState {
+  static inline char ID;
+  /// The algebraic units proposed for the site.
+  SmallVector<AlgebraicUnit, 4> units;
+  /// How many names of graph inputs Herbie's queries of the site's subgraphs
+  /// have used.
+  int symbols = 0;
+};
+
+/// Algebraic rewrites from Herbie.
+class AlgebraicTechnique final : public Technique {
+public:
+  const UnitKindInfo &unitKind() const override { return AlgebraicUnit::Info; }
+
+  bool enabled(const Options &O) const override {
+    return O.Candidates.EnableAlgebraic;
+  }
+
+  /// The missed-optimization remark, once per compile, that no algebraic
+  /// rewrite is proposed because no Herbie can run.
+  void remarkUnavailable(Session &S, Function &F) const override {
+    bool &reported = S.get<HerbieRunState>().LackReported;
+    if (!S.Opts.Candidates.AlgebraicLacksHerbie || reported)
+      return;
+    reported = true;
+    const std::string program = herbieProgram(S.Opts.Herbie);
+    OptimizationRemarkEmitter ORE(&F);
+    ORE.emit([&]() {
+      OptimizationRemarkMissed R(kRemarkPass, "NoHerbie", siteLocation(S, F),
+                                 &F.getEntryBlock());
+      R << "Poseidon proposes no algebraic rewrites: "
+        << (program.empty() ? kBuiltWithoutHerbie.str()
+                            : "there is no Herbie at " + program);
+      return R;
+    });
+  }
+
+  Error proposeForSubgraph(Session &S, Function &F, SiteState &st,
+                           Subgraph &subgraph, size_t index,
+                           const SiteProfileData &) const override {
+    AlgebraicSiteState &A = st.get<AlgebraicSiteState>();
+    return proposeHerbieCandidates(S, F, subgraph, int(index), A.symbols, st,
+                                   A.units);
+  }
+
+  void bindUnits(Session &S, SiteState &st) const override {
+    bindAll(S, st, st.get<AlgebraicSiteState>().units);
+  }
+
+  /// The outputs as written that the algebraic units price, on the subgraphs
+  /// no unit edits in place: such a unit's baseline covers every output of its
+  /// subgraph. `unpriced` counts the units left out for want of a price.
+  double baseline(SiteState &st, unsigned &unpriced) const override {
+    SmallPtrSet<const Value *, 8> arrayPriced;
+    double baseline = 0.0;
+    for (const AlgebraicUnit &RU : st.get<AlgebraicSiteState>().units) {
+      if (llvm::any_of(st.units, [&](const SiteUnit *unit) {
+            return unit->subgraphOf() == RU.subgraph &&
+                   unit->rewrittenOutputs().empty();
+          }))
+        continue;
+      // An algebraic unit with no candidates was never priced, so its share of
+      // the baseline is unknown; it cannot appear in a solution either.
+      if (RU.candidates.empty()) {
+        ++unpriced;
+        continue;
+      }
+      // An array core prices all of its outputs at once; each output's
+      // baseline is counted once however many cores cover it.
+      if (llvm::any_of(RU.roots,
+                       [&](const Value *V) { return arrayPriced.contains(V); }))
+        continue;
+      if (RU.isArray())
+        arrayPriced.insert(RU.roots.begin(), RU.roots.end());
+      baseline += RU.initialAccCost;
+    }
+    return baseline;
+  }
+
+  /// Why no algebraic rewrite of `subgraph` was searched for.
+  void explainAbsent(const Options &O, const SiteState &st,
+                     const Subgraph &subgraph,
+                     SmallVectorImpl<std::string> &why) const override {
+    if (!enabled(O)) {
+      why.push_back("the algebraic search is disabled");
+      return;
+    }
+    for (Instruction *output : subgraph.outputs) {
+      auto it = st.valueToNodeMap.find(output);
+      if (it != st.valueToNodeMap.end() && it->second &&
+          it->second->grad == 0.0) {
+        why.push_back("the profiled gradient of its output is zero");
+        return;
+      }
+    }
+  }
+
+  void report(Session &S) const override { reportHerbieAnswers(S); }
+};
+
+} // namespace
+
+const Technique &algebraicTechnique() {
+  static const AlgebraicTechnique Instance;
+  return Instance;
 }
 
 } // namespace poseidon

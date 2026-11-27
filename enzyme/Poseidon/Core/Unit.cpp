@@ -1,4 +1,4 @@
-//===- Unit.cpp - the interface every optimization unit implements --------===//
+//===- Unit.cpp - optimization units; anchors of the Core interfaces ------===//
 //
 // Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Unit.h"
+#include "Core/Session.h"
+#include "Core/Technique.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Twine.h"
@@ -19,16 +21,20 @@ using namespace llvm;
 
 namespace poseidon {
 
+AttachedStates::Holder::~Holder() = default;
+
 OptimizationUnit::~OptimizationUnit() = default;
 
-void SiteUnit::bind(Session &S, SiteState &site, FPGraph &graph,
-                    size_t indexInKind) {
+Technique::~Technique() = default;
+
+void SiteUnit::bind(Session &S, SiteState &site, size_t indexInKind) {
   assert(!boundSite && "a unit is bound to its site once");
   boundSession = &S;
   boundSite = &site;
-  boundGraph = &graph;
   boundIndex = indexInKind;
 }
+
+FPGraph &SiteUnit::graph() const { return site(); }
 
 bool SiteUnit::footprintOverlaps(const OptimizationUnit &other) const {
   const SetVector<Instruction *> *a = footprint();

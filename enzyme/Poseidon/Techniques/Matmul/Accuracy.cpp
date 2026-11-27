@@ -13,10 +13,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "BuildIdentity.h"
+#include "Core/Session.h"
 #include "MatmulInternal.h"
 #include "Simulation.h"
 #include "Sites/Canonicalize.h"
-#include "Solve/Session.h"
 #include "Support/CacheKey.h"
 #include "Support/Diagnostics.h"
 #include "Support/Parallel.h"

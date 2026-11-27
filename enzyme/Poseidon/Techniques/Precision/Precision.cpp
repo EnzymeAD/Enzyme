@@ -14,6 +14,7 @@
 #include "Precision.h"
 #include "Core/FPCore.h"
 #include "Core/FPNode.h"
+#include "Core/Session.h"
 #include "Expansion.h"
 #include "ExpansionModel.h"
 #include "Model/CostModel.h"
@@ -22,7 +23,6 @@
 #include "Narrowing.h"
 #include "Profile/ProfileReader.h"
 #include "Solve/Explain.h"
-#include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Parallel.h"
 #include "Support/Utils.h"
@@ -395,8 +395,8 @@ static SmallVector<PHINode *, 16> demotablePhis(Function &F) {
 // Demote FP64 PHIs whose every incoming is fpext-from-float or a
 // float-representable constant. InstCombine folds fptrunc(fpext(x)) -> x but
 // stops at a loop-carried PHI, so an FP32 accumulator the solver chose would
-// otherwise keep its fptrunc/fpext roundtrip.
-bool demoteFPCastPHIs(Function &F) {
+// otherwise keep its fptrunc/fpext roundtrip. Whether one was demoted.
+static bool demoteFPCastPHIs(Function &F) {
   SmallVector<PHINode *, 16> demoted = demotablePhis(F);
   if (demoted.empty())
     return false;
@@ -867,7 +867,7 @@ Expected<double> CandidateClone::cost(Session &S, const Subgraph &subgraph,
   for (Instruction *I : coneInsts) {
     auto It = prices.find(I);
     if (It == prices.end()) {
-      Expected<double> price = instructionCost(S.CostModel, I);
+      Expected<double> price = instructionCost(S.get<CostModelState>(), I);
       if (!price)
         return price.takeError();
       It = prices.try_emplace(I, *price).first;
@@ -1143,7 +1143,7 @@ void TierSweep::threeTier(ArrayRef<NumberFormat> tiers,
 
 namespace {
 // What the precision technique keeps for a compile.
-struct PrecisionState : TechniqueState {
+struct PrecisionState {
   static inline char ID;
   // The libm functions whose single-precision call, with its two casts, the
   // cost model prices below the double-precision call; set on first use.
@@ -1171,7 +1171,8 @@ narrowableFuncs(Session &S, const Function &F) {
       double costs[4];
       for (auto [cost, row] : zip(costs, rows)) {
         Expected<double> price =
-            rowCost(S.CostModel, F, F.getSubprogram(), row.first, row.second);
+            rowCost(S.get<CostModelState>(), F, F.getSubprogram(), row.first,
+                    row.second);
         if (!price)
           return price.takeError();
         cost = *price;
@@ -1186,10 +1187,15 @@ narrowableFuncs(Session &S, const Function &F) {
   return &*cached;
 }
 
-Error proposePrecisionCandidates(
-    Session &S, Function &F, Subgraph &subgraph, FPGraph &G,
-    const SiteProfileHeader &profileHeader, bool expansionSafe,
-    SmallVectorImpl<PrecisionUnit> &precisionUnits) {
+// The precision candidates of `subgraph`, appended to `precisionUnits`
+// unpriced: two- and three-tier assignments of its operations by profiled
+// sensitivity, over the formats and expansions the target, the cost model and
+// the options allow.
+static Error
+proposePrecisionCandidates(Session &S, Function &F, Subgraph &subgraph,
+                           FPGraph &G, const SiteProfileHeader &profileHeader,
+                           bool expansionSafe,
+                           SmallVectorImpl<PrecisionUnit> &precisionUnits) {
   const Options &O = S.Opts;
   const uint64_t o0Exec = G.valueToNodeMap[subgraph.outputs[0]]->executions;
 
@@ -1201,7 +1207,7 @@ Error proposePrecisionCandidates(
     measureFrequencies(O, F, subgraph, G);
 
   PrecisionUnit PU(subgraph);
-  if (Error E = PU.priceAsWritten(S.CostModel))
+  if (Error E = PU.priceAsWritten(S.get<CostModelState>()))
     return E;
   PU.executions = o0Exec;
   if (std::optional<double> scale =
@@ -1239,7 +1245,7 @@ Error proposePrecisionCandidates(
   const std::unordered_set<std::string> *hwScalar = nullptr;
   if (gpuMode) {
     Expected<const std::unordered_set<std::string> *> types =
-        scalarTypes(S.CostModel, F);
+        scalarTypes(S.get<CostModelState>(), F);
     if (!types)
       return types.takeError();
     hwScalar = *types;
@@ -1400,7 +1406,7 @@ void PrecisionUnit::priceRequests(
       auto [initial, fresh] = initialCompCosts.try_emplace(R.outputs);
       if (fresh) {
         Expected<double> cost =
-            compCost(S.CostModel, R.outputs, subgraph->inputs,
+            compCost(S.get<CostModelState>(), R.outputs, subgraph->inputs,
                      &subgraph->opExec, subgraph->execNormalizer);
         if (cost) {
           initial->second = *cost;
@@ -1713,6 +1719,81 @@ void PrecisionUnit::printPriced(raw_ostream &OS) {
       OS << getCompCostDelta(i);
     OS << "\t\t" << candidate.desc << '\n';
   }
+}
+
+namespace {
+
+/// What the precision technique keeps for a site.
+struct PrecisionSiteState {
+  static inline char ID;
+  /// The precision units proposed for the site.
+  SmallVector<PrecisionUnit, 4> units;
+  /// Whether the site's floating-point operations are rounded as written, so
+  /// that floating-point expansions can be proposed for them.
+  bool expansionSafe = true;
+};
+
+/// Precision changes and floating-point expansions.
+class PrecisionTechnique final : public Technique {
+public:
+  const UnitKindInfo &unitKind() const override { return PrecisionUnit::Info; }
+
+  bool enabled(const Options &O) const override {
+    return O.Candidates.EnablePrecision;
+  }
+
+  void shapeSubgraphs(const Options &O, Function &F,
+                      SmallVectorImpl<Subgraph> &subgraphs) const override {
+    mergeSharedStagingSubgraphs(O, F, subgraphs);
+  }
+
+  Error beginSite(Session &S, Function &F, SiteState &st) const override {
+    Expected<bool> safe =
+        expansionsRoundedAsWritten(S.Opts, F, !st.subgraphs.empty());
+    if (!safe)
+      return safe.takeError();
+    st.get<PrecisionSiteState>().expansionSafe = *safe;
+    return Error::success();
+  }
+
+  Error proposeForSubgraph(Session &S, Function &F, SiteState &st,
+                           Subgraph &subgraph, size_t,
+                           const SiteProfileData &P) const override {
+    PrecisionSiteState &PS = st.get<PrecisionSiteState>();
+    return proposePrecisionCandidates(S, F, subgraph, st, P.header,
+                                      PS.expansionSafe, PS.units);
+  }
+
+  void bindUnits(Session &S, SiteState &st) const override {
+    bindAll(S, st, st.get<PrecisionSiteState>().units);
+  }
+
+  /// The subgraphs as written: a precision unit's baseline covers every output
+  /// of its subgraph. `unpriced` counts the outputs of the units left out for
+  /// want of a price.
+  double baseline(SiteState &st, unsigned &unpriced) const override {
+    double baseline = 0.0;
+    for (const PrecisionUnit &PU : st.get<PrecisionSiteState>().units) {
+      baseline += PU.initialAccCost;
+      if (!PU.unpricedReason.empty())
+        unpriced += PU.subgraph->outputs.size();
+    }
+    return baseline;
+  }
+
+  /// Narrows the shared staging and the FP64 PHIs of F that the applied
+  /// precision changes left reading narrower values, as pricing did.
+  void siteApplied(Session &S, Function &F) const override {
+    narrowSharedStaging(S, F, /*announce=*/true, ParamNarrowing::Both, F);
+    demoteFPCastPHIs(F);
+  }
+};
+
+} // namespace
+
+const Technique &precisionTechnique() {
+  static const PrecisionTechnique Instance;
+  return Instance;
 }
 
 } // namespace poseidon

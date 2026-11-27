@@ -494,8 +494,8 @@ static std::string platformPathFor(StringRef Csv) {
 /// Writes the Herbie platform of a GPU model from `Csv` alone, so that Herbie
 /// ranks rewrites by the prices the DP solves with.
 static void armHerbiePlatform(StringRef Csv) {
-  CostModelState CM(Csv.str());
-  if (Error E = loadCostModel(CM))
+  CostModelState CM;
+  if (Error E = loadCostModel(CM, Csv))
     fail(toString(std::move(E)));
   const std::string &Arch = CM.NativeArch;
   if (Arch.empty())
@@ -1021,8 +1021,9 @@ static void armInKernel(const std::string &Csv, const Device &D) {
 /// Resolves the model as a compile for `D` does, with --out in the place of
 /// -poseidon-cost-model, and reports which row families it lacks.
 static int checkModel(const Device &D) {
-  CostModelState CM(Out.empty() ? std::string() : resolveCsv(D));
-  Error E = requireCostModel(CM, D.Arch, "this device", !D.Host);
+  CostModelState CM;
+  Error E = requireCostModel(CM, Out.empty() ? std::string() : resolveCsv(D),
+                             D.Arch, "this device", !D.Host);
   if (!CM.Loaded) {
     printError(toString(std::move(E)));
     return 1;

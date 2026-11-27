@@ -60,6 +60,7 @@ struct PinItem {
 /// What the compile knows of its -poseidon-pin items and of the
 /// sites it has noted against them.
 struct PinState {
+  static inline char ID;
   /// Whether `items` holds the items of the compile's -poseidon-pin.
   bool parsed = false;
   /// The items, in the order the flag gives them.

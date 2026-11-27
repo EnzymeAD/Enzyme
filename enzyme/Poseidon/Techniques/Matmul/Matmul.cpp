@@ -12,12 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/Session.h"
 #include "MatmulInternal.h"
 #include "Model/CostModel.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Explain.h"
-#include "Solve/Optimize.h"
-#include "Solve/Session.h"
+#include "Solve/Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/Target.h"
@@ -121,8 +121,8 @@ static Error reportRow(Session &S, const RecognizedMatmul &m, const Twine &what,
   if (S.Opts.Model.StrictMode)
     return userError(anchorOf(m), "strict mode: " + what +
                                       " has no measured '" + row + "' row in " +
-                                      costModelPath(S.CostModel) + "; " +
-                                      measure + " measures it");
+                                      costModelPath(S.get<CostModelState>()) +
+                                      "; " + measure + " measures it");
   if (!S.get<MatmulState>().ReportedRows.insert(row).second)
     return Error::success();
   const Instruction &at = anchorOf(m);
@@ -235,13 +235,14 @@ static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
     StringRef what, SmallVectorImpl<std::string> &estimated) {
   const Options &O = S.Opts;
   if (shape) {
-    double rel =
-        lookupCost(S.CostModel, "inkernel_rel", cls + "_" + shape->key())
-            .value_or(-1.0);
+    double rel = lookupCost(S.get<CostModelState>(), "inkernel_rel",
+                            cls + "_" + shape->key())
+                     .value_or(-1.0);
     if (rel > 0.0)
       return std::optional<double>(baselinePerMac * rel);
   }
-  double rel = lookupCost(S.CostModel, "inkernel_rel", cls).value_or(-1.0);
+  double rel =
+      lookupCost(S.get<CostModelState>(), "inkernel_rel", cls).value_or(-1.0);
   if (rel > 0.0) {
     if (shape)
       estimated.push_back(cls);
@@ -283,7 +284,7 @@ getAvailableWmmaTargets(Session &S, const RecognizedMatmul &m) {
       S.get<MatmulState>().AvailableWmmaTargets;
   if (!available) {
     SmallVector<InKernelTile, 16> result;
-    const auto &model = getCostModel(S.CostModel);
+    const auto &model = getCostModel(S.get<CostModelState>());
     for (const InKernelTile &t : kInKernelTiles) {
       std::string opcode = "wmma_mma_" + mmaShapeSuffix(t.M, t.N, t.K);
       std::string prec =
@@ -361,7 +362,7 @@ static uint64_t enclosingKernelSharedBytes(const Session &S, Function &F) {
   SmallPtrSet<const GlobalVariable *, 16> own;
   sharedBytesUsedBy(&F, own);
   // The kernels call the body the site clone was cut from.
-  const Function *origFn = siteOriginOf(S.Sites, F);
+  const Function *origFn = siteOriginOf(S.get<SiteRecords>(), F);
   if (!origFn)
     origFn = &F;
   bool sawKernel = false;
@@ -799,11 +800,13 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
     const std::string squareKey = "nm" + std::to_string(nm);
     const std::string key =
         squareKey + (square ? std::string() : "_" + shapeKey);
-    double rel = lookupCost(P.S.CostModel, family, key).value_or(-1.0);
+    double rel =
+        lookupCost(P.S.get<CostModelState>(), family, key).value_or(-1.0);
     if (rel <= 0.0 && !square) {
-      rel = lookupCost(P.S.CostModel, "library_ozaki_rel", squareKey)
-                .value_or(-1.0) *
-            padding;
+      rel =
+          lookupCost(P.S.get<CostModelState>(), "library_ozaki_rel", squareKey)
+              .value_or(-1.0) *
+          padding;
       if (rel > 0.0)
         estimated += (estimated.empty() ? "" : ", ") + std::to_string(nm);
     }
@@ -866,7 +869,8 @@ static Error proposeLibrarySplit(const Product &P, const LibrarySite &L,
     return Error::success();
   }
   double rel =
-      lookupCost(P.S.CostModel, "library_tcec_rel", "fp16tcec").value_or(-1.0);
+      lookupCost(P.S.get<CostModelState>(), "library_tcec_rel", "fp16tcec")
+          .value_or(-1.0);
   if (rel <= 0.0)
     return reportMissingRow(P.S, P.m, "tcec library call",
                             "library_tcec_rel,fp16tcec", kCalibrate);
@@ -904,7 +908,8 @@ static Error proposeLibraryDirect(const Product &P, const LibrarySite &L,
   for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
     const std::string cls = schemeFormats(d.variant, '_');
     double rel =
-        lookupCost(P.S.CostModel, "library_direct_rel", cls).value_or(-1.0);
+        lookupCost(P.S.get<CostModelState>(), "library_direct_rel", cls)
+            .value_or(-1.0);
     if (rel <= 0.0) {
       if (Error E = reportMissingRow(
               P.S, m, Twine(schemeTag(d.variant)) + " " + cls + " library call",
@@ -941,15 +946,15 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
       std::to_string(M) + "x" + std::to_string(N) + "x" + std::to_string(K);
   const std::string rectKey = "dgemm_m" + std::to_string(M) + "n" +
                               std::to_string(N) + "k" + std::to_string(K);
-  double rel =
-      L.runShape ? lookupCost(P.S.CostModel, "library_ozaki_rect_rel", rectKey)
-                       .value_or(-1.0)
-                 : -1.0;
+  double rel = L.runShape ? lookupCost(P.S.get<CostModelState>(),
+                                       "library_ozaki_rect_rel", rectKey)
+                                .value_or(-1.0)
+                          : -1.0;
   const bool rectangular = L.runShape && !(M == N && N == K);
   const bool fromSquare = rel <= 0.0;
   if (fromSquare)
-    rel =
-        lookupCost(P.S.CostModel, "library_ozaki_rel", "dgemm").value_or(-1.0);
+    rel = lookupCost(P.S.get<CostModelState>(), "library_ozaki_rel", "dgemm")
+              .value_or(-1.0);
   if (rel <= 0.0)
     return reportMissingRow(P.S, m, "native-dgemm library call",
                             "library_ozaki_rel,dgemm", kCalibrate);
@@ -966,10 +971,16 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
   return Error::success();
 }
 
-Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
-                               const ProfileMap &scalarProfile,
-                               unsigned sampleLogBits,
-                               SmallVectorImpl<MatmulUnit> &out) {
+// Appends to `out` a unit with priced candidates for each product of
+// `matmuls` the profiling run executed. `sampleLogBits`: 0 samples operands
+// uniformly over the profiled [min, max]; B > 0 log-uniformly in magnitude
+// over [maxMag * 2^-B, maxMag]. An error is a user error about the profile or
+// the cost model.
+static Error generateMatmulCandidates(Session &S,
+                                      ArrayRef<RecognizedMatmul> matmuls,
+                                      const ProfileMap &scalarProfile,
+                                      unsigned sampleLogBits,
+                                      SmallVectorImpl<MatmulUnit> &out) {
   for (const RecognizedMatmul &m : matmuls) {
     Expected<std::optional<MatmulProfile>> loaded =
         loadProfile(m, scalarProfile);
@@ -996,7 +1007,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
       // reciprocal throughput per op, so this sum is the baseline's cost per
       // MAC (executions = profiled total MACs).
       for (Instruction *I : m.footprint) {
-        Expected<double> c = instructionCost(S.CostModel, I);
+        Expected<double> c = instructionCost(S.get<CostModelState>(), I);
         if (!c)
           return c.takeError();
         baselinePerMac += *c;
@@ -1010,7 +1021,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<RecognizedMatmul> matmuls,
       // epilogue's fadd amortized over the K-long reduction it closes.
       double bodySum = 0.0, epi = 0.0;
       for (Instruction *I : m.footprint) {
-        Expected<double> c = instructionCost(S.CostModel, I);
+        Expected<double> c = instructionCost(S.get<CostModelState>(), I);
         if (!c)
           return c.takeError();
         if (I == g.epilogue)
@@ -1237,6 +1248,133 @@ Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
     U.alts.push_back(std::move(A));
   }
   return Error::success();
+}
+
+namespace {
+
+/// What the matrix-product technique keeps for a site.
+struct MatmulSiteState {
+  static inline char ID;
+  /// The site's matrix products; MatmulUnit::matmul points into this, so it
+  /// must outlive materialization.
+  SmallVector<RecognizedMatmul, 4> matmuls;
+  /// The matrix-product units proposed for the site.
+  SmallVector<MatmulUnit, 4> units;
+  /// The dominator, loop, assumption, library and scalar-evolution analyses of
+  /// the site, for the loop raises. The matmuls found hold SE and SCEVs it
+  /// owns, so these outlive materialization. SE is declared last so that it is
+  /// destroyed first: it references the others.
+  std::optional<DominatorTree> DT;
+  std::optional<LoopInfo> LI;
+  std::optional<AssumptionCache> AC;
+  std::optional<TargetLibraryInfoImpl> TLII;
+  std::optional<TargetLibraryInfo> TLI;
+  std::optional<ScalarEvolution> SE;
+};
+
+/// Matrix products on tensor cores or as library calls.
+class MatmulTechnique final : public Technique {
+public:
+  const UnitKindInfo &unitKind() const override { return MatmulUnit::Info; }
+
+  bool enabled(const Options &O) const override {
+    return O.Candidates.EnableMatmul;
+  }
+
+  void writeProfileHeader(const Options &O, Function &Clone,
+                          raw_ostream &OS) const override {
+    writeReductionTrips(O, Clone, OS);
+  }
+
+  /// The site's matrix products, with the analyses their raise keeps.
+  bool recognize(Session &S, Function &F, const SiteProfileData &P,
+                 SiteState &st) const override {
+    const Options &O = S.Opts;
+    const Target &T = Target::of(F);
+    MatmulSiteState &M = st.get<MatmulSiteState>();
+    if (T.isDevice()) {
+      M.DT.emplace(F);
+      M.LI.emplace(*M.DT);
+      M.AC.emplace(F);
+      M.TLII.emplace(Triple(F.getParent()->getTargetTriple()));
+      M.TLI.emplace(*M.TLII, &F);
+      M.SE.emplace(F, *M.TLI, *M.AC, *M.DT, *M.LI);
+      // The constant-trip products are the in-kernel raise's.
+      if (T.hasInKernelMatrixRaise())
+        findConstantShapeMatmuls(O, F, *M.SE, *M.LI, P.header, M.matmuls);
+      // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
+      // skips whatever that one claimed, so a product both recognize keeps the
+      // constant-trip candidate set.
+      findRuntimeShapeMatmuls(O, F, *M.SE, *M.LI, P.header, P.map, M.matmuls);
+    }
+    for (const RecognizedMatmul &m : M.matmuls)
+      if (m.origin == RecognizedMatmul::Origin::ConstantShape &&
+          m.scalarLoop.fma)
+        st.reductionOps.insert(m.scalarLoop.fma);
+
+    if (O.Diagnostics.Print && !M.matmuls.empty()) {
+      llvm::errs() << "[poseidon] Found " << M.matmuls.size()
+                   << " matrix product(s) in " << F.getName() << '\n';
+      auto dimStr = [](unsigned d) -> std::string {
+        return d == ~0u ? std::string("?") : std::to_string(d);
+      };
+      for (const auto &m : M.matmuls) {
+        llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
+                     << dimStr(m.N) << 'x' << dimStr(m.K)
+                     << " type=" << dtypeName(m.elemType) << " origin="
+                     << (m.origin == RecognizedMatmul::Origin::RuntimeShape
+                             ? "RuntimeShape"
+                             : "ConstantShape")
+                     << '\n';
+      }
+    }
+    return !M.matmuls.empty();
+  }
+
+  Error proposeForSite(Session &S, SiteState &st,
+                       const SiteProfileData &P) const override {
+    const Options &O = S.Opts;
+    MatmulSiteState &M = st.get<MatmulSiteState>();
+    // The operand sampling of the matrix accuracy model, 0 for none. Uniform
+    // sampling over [min, max] under-prices fixed-point Ozaki on matrices of
+    // wide dynamic range, so a site solved under a target defaults to a wide
+    // log-uniform range.
+    const double target = st.tau > 0.0 ? st.tau : (double)O.Solver.Tau;
+    const unsigned sampleLogBits =
+        O.Matmul.SampleLogBits.value_or(target > 0.0 ? 40 : 0);
+    return generateMatmulCandidates(S, M.matmuls, P.map, sampleLogBits,
+                                    M.units);
+  }
+
+  void bindUnits(Session &S, SiteState &st) const override {
+    bindAll(S, st, st.get<MatmulSiteState>().units);
+  }
+
+  /// Two builds of one source differ in whether the error-corrected library
+  /// call is a candidate.
+  void addToTableKey(CacheKey &key) const override {
+    key.add("TCEC backend", kHaveTcecRuntime ? "cuMpSGEMM" : "none");
+  }
+
+  void siteApplied(Session &S, Function &F) const override {
+    writePendingLibraryCall(S, F);
+  }
+
+  void siteLaunched(Session &S, const Function &Body, Function &Kernel,
+                    ArrayRef<Value *> Args) const override {
+    noteLibraryCallLaunch(S, Body, Kernel, Args);
+  }
+
+  Expected<bool> rewriteHost(const Options &O, Module &M) const override {
+    return rewriteGemmStubBodies(O, M);
+  }
+};
+
+} // namespace
+
+const Technique &matmulTechnique() {
+  static const MatmulTechnique Instance;
+  return Instance;
 }
 
 } // namespace poseidon

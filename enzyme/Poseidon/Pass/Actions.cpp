@@ -10,6 +10,7 @@
 #include "Core/Technique.h"
 #include "PassInternal.h"
 
+#include "Core/Session.h"
 #include "Model/CostModel.h"
 #include "Profile/Instrument.h"
 #include "Profile/ProfileReader.h"
@@ -19,8 +20,8 @@
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
 #include "Solve/Explain.h"
-#include "Solve/Optimize.h"
-#include "Solve/Session.h"
+#include "Solve/Pins.h"
+#include "Solve/Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "runtime/profile/ProfileFormat.h"
@@ -185,9 +186,8 @@ static Error reportUnprofiled(Session &S, CallBase *CI, const Function &body,
 // the kernel `CI` is in, with `primalArgs`.
 static void noteSiteLaunch(Session &S, CallBase *CI, const Function &body,
                            ArrayRef<Value *> primalArgs) {
-  for (const Technique &T : techniques())
-    if (T.SiteLaunched)
-      T.SiteLaunched(S, body, *CI->getFunction(), primalArgs);
+  for (const Technique *T : techniques())
+    T->siteLaunched(S, body, *CI->getFunction(), primalArgs);
 }
 
 // Profile use, shared by both annotation forms: `CI` is the call the site's
@@ -226,7 +226,7 @@ static Error optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     F = canonicalize(*F);
     S.SiteClones.push_back(F);
     setSlotMetadata(*F);
-    noteSiteClone(S.Sites, F, sourceBody, primalArgs);
+    noteSiteClone(S.get<SiteRecords>(), F, sourceBody, primalArgs);
     S.SiteCalls[F] = CI->getDebugLoc();
 
     // Profile generation recorded nothing for a site without an operation to
@@ -347,7 +347,8 @@ static Expected<bool> optimizeHostBody(Session &S, const Site &site) {
 // profile recorded against another canonical form is an error at the site.
 static Expected<double> profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
-  llvm::sys::path::append(profilePath, bodyProfileFile(S.Sites, body));
+  llvm::sys::path::append(profilePath,
+                          bodyProfileFile(S.get<SiteRecords>(), body));
   if (!llvm::sys::fs::exists(profilePath.str()))
     return 0.0;
 
@@ -368,9 +369,9 @@ static Expected<double> profiledSiteCost(Session &S, Function &body) {
     if (Error E = requireCanonicalHash(header, canonicalFormHash(*clone),
                                        profilePath, *clone))
       return std::move(E);
-    if (Error E = requireCostModel(S.CostModel, *clone))
+    if (Error E = requireCostModel(S, *clone))
       return std::move(E);
-    return profiledCost(S.CostModel, *clone, profileMap, slotOf);
+    return profiledCost(S.get<CostModelState>(), *clone, profileMap, slotOf);
   }();
   // An error names the clone, so the clone outlives it.
   if (!cost)
@@ -391,7 +392,7 @@ static Expected<bool> optimizeKernels(Session &Sess,
   // Without a profile nothing can be applied, so the kernels are left exactly
   // as written rather than outlined and never folded back.
   if (!O.Profiling.usesProfile()) {
-    warnSitesWithoutProfile(Sess.Opts, Sess.Sites,
+    warnSitesWithoutProfile(Sess.Opts, Sess.get<SiteRecords>(),
                             *kernels.front()->fn->getParent());
     return false;
   }
@@ -413,7 +414,7 @@ static Expected<bool> optimizeKernels(Session &Sess,
     for (const Site *site : kernels) {
       Function *body = nullptr;
       Expected<CallInst *> call =
-          outlineKernelBody(Sess.Sites, *site->fn, body);
+          outlineKernelBody(Sess.get<SiteRecords>(), *site->fn, body);
       if (!call)
         return call.takeError();
       markOutlineTransparent(body);
@@ -437,7 +438,8 @@ static Expected<bool> optimizeKernels(Session &Sess,
   double regexTotal = 0.0;
   for (const Site *site : kernels) {
     Function *body = nullptr;
-    Expected<CallInst *> call = outlineKernelBody(Sess.Sites, *site->fn, body);
+    Expected<CallInst *> call =
+        outlineKernelBody(Sess.get<SiteRecords>(), *site->fn, body);
     if (!call)
       return call.takeError();
     markOutlineTransparent(body);
@@ -598,9 +600,8 @@ static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
 Error finalizeModule(Session &S, Module &M) {
   if (Error E = checkPinnedSites(S, M))
     return E;
-  for (const Technique &T : techniques())
-    if (T.Report)
-      T.Report(S);
+  for (const Technique *T : techniques())
+    T->report(S);
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases
   // leaving a canonicalized clone nothing calls.

@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/Session.h"
 #include "Core/Technique.h"
 #include "PassInternal.h"
 #include "Profile/Instrument.h"
@@ -16,8 +17,7 @@
 #include "Sites/Markers.h"
 #include "Sites/Site.h"
 #include "Sites/SiteIdentity.h"
-#include "Solve/Optimize.h"
-#include "Solve/Session.h"
+#include "Solve/Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -170,11 +170,11 @@ static void runAlwaysInliner(Module &M, ModuleAnalysisManager &MAM) {
 // profile action, records the markers' identities; true when M changed.
 static Expected<bool> lowerAnnotatedSites(Session &S, Module &M) {
   Error errors = checkSiteAnnotations(M);
-  Expected<bool> perCall = lowerPerCallSites(S.Opts, S.Sites, M);
+  Expected<bool> perCall = lowerPerCallSites(S.Opts, S.get<SiteRecords>(), M);
   if (!perCall || errors)
     return joinErrors(std::move(errors), perCall.takeError());
   if (S.Opts.Profiling.profileAction())
-    recordMarkerIdentities(S.Sites, M);
+    recordMarkerIdentities(S.get<SiteRecords>(), M);
   return *perCall;
 }
 
@@ -200,7 +200,7 @@ struct OptimizePass : PassParent<OptimizePass> {
     if (!deviceCalls)
       return stopOnError(S, M, deviceCalls.takeError());
     changed |= *deviceCalls;
-    Expected<bool> hostSites = outlineHostSites(O, S.Sites, M);
+    Expected<bool> hostSites = outlineHostSites(O, S.get<SiteRecords>(), M);
     if (!hostSites)
       return stopOnError(S, M, hostSites.takeError());
     changed |= *hostSites;
@@ -467,7 +467,7 @@ struct LowerSitesPass : PassParent<LowerSitesPass> {
     if (!deviceSites)
       return stopOnError(S, M, deviceSites.takeError());
     changed |= *deviceSites;
-    Expected<bool> hostSites = outlineHostSites(O, S.Sites, M);
+    Expected<bool> hostSites = outlineHostSites(O, S.get<SiteRecords>(), M);
     if (!hostSites)
       return stopOnError(S, M, hostSites.takeError());
     changed |= *hostSites;
@@ -477,7 +477,7 @@ struct LowerSitesPass : PassParent<LowerSitesPass> {
     changed |= *table;
     changed |= defineProfileDirectory(O, M);
     if (!O.Profiling.profileAction())
-      changed |= leaveSitesAsWritten(O, S.Sites, M);
+      changed |= leaveSitesAsWritten(O, S.get<SiteRecords>(), M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -547,9 +547,9 @@ struct FinalizePass : PassParent<FinalizePass> {
     // compile has passed, so a host half never reads the manifest of a device
     // half that failed.
     if (O.Profiling.generatesProfile())
-      recordProfileTableSize(S.Launches, M);
+      recordProfileTableSize(S.get<LaunchManifest>(), M);
     if (T.isDevice() && !S.IsAsWritten && handsOverLaunches(O))
-      if (Error E = writeLaunchManifest(S.Opts, S.Launches, M))
+      if (Error E = writeLaunchManifest(S.Opts, S.get<LaunchManifest>(), M))
         return stopOnError(S, M, std::move(E));
     releaseDeviceMath(M);
     SmallSetVector<Function *, 4> rewritten;
@@ -635,10 +635,8 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
     changed = *rewritten;
     changed |= registerProfiledKernels(O, M);
   } else {
-    for (const Technique &T : techniques()) {
-      if (!T.RewriteHost)
-        continue;
-      Expected<bool> rewritten = T.RewriteHost(O, M);
+    for (const Technique *T : techniques()) {
+      Expected<bool> rewritten = T->rewriteHost(O, M);
       if (!rewritten)
         return stopOnError(S, M, rewritten.takeError());
       changed |= *rewritten;

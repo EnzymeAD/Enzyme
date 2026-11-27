@@ -20,6 +20,9 @@
 #ifndef POSEIDON_CORE_UNIT_H
 #define POSEIDON_CORE_UNIT_H
 
+#include "Core/FPNode.h"
+#include "Core/Session.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -39,11 +42,8 @@ class raw_ostream;
 
 namespace poseidon {
 
-class Session;
 class Explanation;
-class FPGraph;
 struct SiteState;
-struct Subgraph;
 struct UnitExplanation;
 class OptimizationUnit;
 
@@ -147,11 +147,9 @@ public:
   static bool classof(const OptimizationUnit *) { return true; }
 
   /// Binds the unit to the session and the site it was proposed for, as the
-  /// site's `indexInKind`-th unit of its kind. Once. `graph` is the site as its
-  /// graph: the caller converts, since the site's type is defined above this
-  /// layer.
-  void bind(Session &S, SiteState &site, FPGraph &graph, size_t indexInKind);
-  /// The session, site and graph bind gave; the unit must be bound.
+  /// site's `indexInKind`-th unit of its kind. Once.
+  void bind(Session &S, SiteState &site, size_t indexInKind);
+  /// The session bind gave; the unit must be bound.
   Session &session() const {
     assert(boundSession && "unit read before its site was sealed");
     return *boundSession;
@@ -161,11 +159,8 @@ public:
     assert(boundSite && "unit read before its site was sealed");
     return *boundSite;
   }
-  /// The site's expression graph, which owns the unit's nodes.
-  FPGraph &graph() const {
-    assert(boundGraph && "unit read before its site was sealed");
-    return *boundGraph;
-  }
+  /// The site's expression graph, which owns the unit's nodes: the site.
+  FPGraph &graph() const;
   /// The i of A<i>, P<i>, M<i>, and the DP table's itemIndex.
   size_t indexInKind() const {
     assert(boundSite && "unit read before its site was sealed");
@@ -244,7 +239,6 @@ private:
   const UnitKindInfo *kindInfo;
   Session *boundSession = nullptr;
   SiteState *boundSite = nullptr;
-  FPGraph *boundGraph = nullptr;
   size_t boundIndex = 0;
 };
 

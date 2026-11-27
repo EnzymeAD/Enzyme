@@ -48,6 +48,7 @@ struct SiteClone {
 /// The sites of one module: each site clone's record, and the identity of
 /// each body the pass made for a site and of each marker's target.
 struct SiteRecords {
+  static inline char ID;
   /// The record of each site clone, by clone.
   std::map<const llvm::Function *, SiteClone> Clones;
   /// Keyed by value, not function: a later pass may replace a function by an

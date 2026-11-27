@@ -67,7 +67,7 @@ inline constexpr llvm::StringLiteral kBuiltWithoutHerbie =
 /// What a compile keeps between its Herbie runs: the platform Herbie searches
 /// against, derived from the cost model once it is resolved, and the digest of
 /// each Herbie binary run.
-struct HerbieRunState : TechniqueState {
+struct HerbieRunState {
   static inline char ID;
   /// The platform the compile's searches run against, once resolved.
   HerbiePlatform Platform;

@@ -13,12 +13,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/Session.h"
 #include "Enzyme/Utils.h"
 #include "MatmulInternal.h"
 #include "Sites/Annotations.h"
 #include "Sites/LaunchManifest.h"
 #include "Sites/SiteIdentity.h"
-#include "Solve/Session.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/OffloadRuntime.h"
@@ -125,7 +125,7 @@ const CallBase *siteCallOf(const Session &S, const Function &F) {
   SmallVector<Value *, 8> callerArgs;
   const Function *kernel = nullptr;
   for (unsigned i = 0, e = F.arg_size(); i < e; ++i) {
-    Value *v = siteArg(S.Sites, &F, i);
+    Value *v = siteArg(S.get<SiteRecords>(), &F, i);
     callerArgs.push_back(v);
     if (auto *A = dyn_cast_or_null<Argument>(v))
       kernel = A->getParent();
@@ -179,7 +179,7 @@ libraryCallNote(const Session &S, const RecognizedMatmul &m) {
                   "the place of the whole launch");
   SmallVector<Value *, 8> callerArgs;
   for (unsigned i = 0, e = F->arg_size(); i < e; ++i)
-    callerArgs.push_back(siteArg(S.Sites, F, i));
+    callerArgs.push_back(siteArg(S.get<SiteRecords>(), F, i));
   const std::vector<int> paramToArg = launchArgsOf(callerArgs);
   auto mapped = [&](int param) {
     return param >= 0 && (size_t)param < paramToArg.size() &&
@@ -240,7 +240,7 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
         << " == " << launchRefString(y, "arg");
   msg << '\n';
   recordDescriptor(
-      S.Launches, LaunchKind::LibraryCall, wrapperName,
+      S.get<LaunchManifest>(), LaunchKind::LibraryCall, wrapperName,
       [&](raw_ostream &os) {
         os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' '
            << (n.standalone ? 1 : 0) << ' ' << modulusField << ' '

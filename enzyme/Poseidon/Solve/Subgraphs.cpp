@@ -10,8 +10,8 @@
 #include "Core/FPNode.h"
 #include "Core/NumberFormat.h"
 #include "Core/Technique.h"
-#include "Optimize.h"
 #include "Sites/Canonicalize.h"
+#include "Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Options.h"
 #include "Support/Utils.h"
@@ -529,9 +529,8 @@ void shapeSubgraphs(const Options &O, Function &F,
   }
 
   // After splitting, so that a reshaped subgraph is never split again.
-  for (const Technique &T : techniques())
-    if (T.ShapeSubgraphs)
-      T.ShapeSubgraphs(O, F, subgraphs);
+  for (const Technique *T : techniques())
+    T->shapeSubgraphs(O, F, subgraphs);
 }
 
 } // namespace poseidon

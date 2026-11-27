@@ -7,10 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "Pins.h"
+#include "Core/Session.h"
 #include "Core/Technique.h"
-#include "Optimize.h"
 #include "Sites/SiteIdentity.h"
-#include "Solve/Session.h"
+#include "Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 
@@ -28,13 +28,14 @@ namespace poseidon {
 
 static std::optional<PinItem> parseUnitRef(StringRef s) {
   PinItem item;
-  const Technique *T = llvm::find_if(techniques(), [&](const Technique &T) {
-    return s.starts_with(T.Unit.letter);
-  });
+  const Technique *const *T =
+      llvm::find_if(techniques(), [&](const Technique *T) {
+        return s.starts_with(T->unitKind().letter);
+      });
   if (T == techniques().end())
     return std::nullopt;
-  s = s.drop_front(T->Unit.letter.size());
-  item.kind = &T->Unit;
+  item.kind = &(*T)->unitKind();
+  s = s.drop_front(item.kind->letter.size());
   size_t digits = s.find_first_not_of("0123456789");
   if (digits == 0 || digits == StringRef::npos ||
       s.take_front(digits).getAsInteger(10, item.unit))
@@ -76,7 +77,7 @@ static Expected<PinItem> parseApplyItem(StringRef text, const Function &site) {
 // reported.
 static Expected<std::vector<PinItem> *> applyItems(Session &S,
                                                    const Function &site) {
-  PinState &P = S.Pins;
+  PinState &P = S.get<PinState>();
   if (!P.parsed) {
     P.parsed = true;
     SmallVector<StringRef> texts;
@@ -114,7 +115,7 @@ static std::string listSites(const std::set<std::string> &keys) {
 Error noteSiteForPins(Session &S, const Function &body) {
   if (S.Opts.Solver.Pin.empty())
     return Error::success();
-  PinState &P = S.Pins;
+  PinState &P = S.get<PinState>();
   std::string key = siteKeyOfBody(body);
   if (is_contained(P.sites, key))
     return Error::success();
@@ -138,7 +139,7 @@ Error noteSiteForPins(Session &S, const Function &body) {
 }
 
 Error checkPinnedSites(Session &S, Module &M) {
-  PinState &P = S.Pins;
+  PinState &P = S.get<PinState>();
   // The host half of a CUDA or HIP unit is given the items too, and the sites
   // they name are the device half's. A noted site read the items.
   if (!P.sites.empty())
@@ -190,7 +191,7 @@ static Expected<size_t> findNamed(const PinItem &item, const Function &F,
 }
 
 Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
-  const std::string key = siteKey(S.Sites, *st.F);
+  const std::string key = siteKey(S.get<SiteRecords>(), *st.F);
   const SmallVector<std::string, 2> aliases = siteAliases(key);
   SmallVector<SolutionStep> steps;
   SmallPtrSet<const SiteUnit *, 8> appliedUnits;
@@ -274,7 +275,7 @@ Expected<SmallVector<SolutionStep>> parsePins(Session &S, SiteState &st) {
 
 std::string pinValue(const Session &S, const SiteState &st,
                      ArrayRef<SolutionStep> applied) {
-  const std::string key = siteKey(S.Sites, *st.F);
+  const std::string key = siteKey(S.get<SiteRecords>(), *st.F);
   std::string value;
   for (const SolutionStep &step : applied) {
     const SiteUnit &unit = unitOf(step);
@@ -290,7 +291,7 @@ std::string pinValue(const Session &S, const SiteState &st,
 
 void printPin(Session &S, const SiteState &st, ArrayRef<SolutionStep> applied) {
   const std::string value = pinValue(S, st, applied);
-  if (!value.empty() && !S.Pins.printed.insert(value).second)
+  if (!value.empty() && !S.get<PinState>().printed.insert(value).second)
     return;
   if (S.Opts.Diagnostics.Print)
     llvm::errs() << "[poseidon] pin: " << value << '\n';

@@ -47,15 +47,15 @@ void remarkMissed(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
 /// A mistake in what the compile was given: where it is and what it is.
 ///
 /// A function that finds one returns it, and every caller passes it on, up to
-/// the entry of the running pass. There stopOnError (Solve/Session.h) reports
-/// it once through diagnoseUserErrors, leaves the module valid, and marks the
-/// session stopped, so that the session's later passes leave the module as it
-/// is. The compile fails through the diagnostic handler's error count, and the
-/// process that loaded the plugin is never ended by the pass. The one place an
-/// error is held rather than returned is the DP's search, which cannot unwind:
-/// a DeferredError (below) keeps the first one it meets, a repricing
-/// that fails or a cost that leaves the DP's axis, and solveSites returns it
-/// after the search.
+/// the entry of the running pass. There stopOnError (Pass/PassInternal.h)
+/// reports it once through diagnoseUserErrors, leaves the module valid, and
+/// marks the session stopped, so that the session's later passes leave the
+/// module as it is. The compile fails through the diagnostic handler's error
+/// count, and the process that loaded the plugin is never ended by the pass.
+/// The one place an error is held rather than returned is the DP's search,
+/// which cannot unwind: a DeferredError (below) keeps the first one it meets, a
+/// repricing that fails or a cost that leaves the DP's axis, and solveSites
+/// returns it after the search.
 class UserError : public llvm::ErrorInfo<UserError> {
 public:
   static char ID;

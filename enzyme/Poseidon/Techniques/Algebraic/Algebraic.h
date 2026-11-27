@@ -42,7 +42,6 @@ class PassBuilder;
 namespace poseidon {
 
 struct Options;
-class Session;
 
 /// An expression Herbie returned for a core.
 struct AlgebraicCandidate {
@@ -183,27 +182,8 @@ private:
   double erasableCost = std::numeric_limits<double>::quiet_NaN();
 };
 
-/// What the algebraic technique keeps for a site.
-struct AlgebraicSiteState : TechniqueState {
-  static inline char ID;
-  /// The algebraic units proposed for the site.
-  llvm::SmallVector<AlgebraicUnit, 4> units;
-  /// How many names of graph inputs Herbie's queries of the site's subgraphs
-  /// have used.
-  int symbols = 0;
-};
-
-/// Prints how many Herbie answers the compile ran fresh and read from the
-/// cache.
-void reportHerbieAnswers(Session &S);
-
-/// Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
-/// `subgraphCounter`, appended to `algebraicUnits` unpriced. Its inputs are
-/// named from `symbolCounter`, which the site's subgraphs share.
-llvm::Error
-proposeHerbieCandidates(Session &S, llvm::Function &F, Subgraph &subgraph,
-                        int subgraphCounter, int &symbolCounter, FPGraph &G,
-                        llvm::SmallVectorImpl<AlgebraicUnit> &algebraicUnits);
+/// The technique of algebraic rewrites from Herbie.
+const Technique &algebraicTechnique();
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_ALGEBRAIC_ALGEBRAIC_H

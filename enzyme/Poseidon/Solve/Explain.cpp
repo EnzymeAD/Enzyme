@@ -8,11 +8,12 @@
 
 #include "Explain.h"
 #include "Core/FPCore.h"
+#include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Model/CostModel.h"
-#include "Optimize.h"
+#include "Pins.h"
 #include "Sites/SiteIdentity.h"
-#include "Solve/Session.h"
+#include "Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 #include "Targets/MathLibrary.h"
@@ -326,7 +327,7 @@ static std::string exprWords(const UnitExplanation &U) {
 }
 
 static std::string siteSymbolOf(const Session &S, const Function &F) {
-  return siteSymbol(siteKey(S.Sites, F)).str();
+  return siteSymbol(siteKey(S.get<SiteRecords>(), F)).str();
 }
 
 // The schema identifier of every explanation; see Explainer::toJSON.
@@ -336,7 +337,7 @@ static constexpr StringLiteral kSchema = "poseidon-explain/1";
 // made, where it is called and where it is written.
 static json::Object functionJSON(const Session &S, const Function &F) {
   json::Object fn;
-  const Function *origin = siteOriginOf(S.Sites, F);
+  const Function *origin = siteOriginOf(S.get<SiteRecords>(), F);
   std::string symbol = siteSymbolOf(S, F);
   fn["name"] = llvm::demangle(symbol);
   fn["symbol"] = symbol;
@@ -653,11 +654,12 @@ std::string Explainer::leftReason(const UnitExplanation &U) {
   if (!any) {
     SmallVector<std::string, 2> why(U.whyNone.begin(), U.whyNone.end());
     if (U.sg)
-      for (const Technique &T : techniques())
-        if (T.ExplainAbsent && llvm::none_of(st.units, [&](SiteUnit *unit) {
-              return &unit->info() == &T.Unit && unit->subgraphOf() == U.sg;
+      for (const Technique *T : techniques())
+        if (llvm::none_of(st.units, [&](SiteUnit *unit) {
+              return &unit->info() == &T->unitKind() &&
+                     unit->subgraphOf() == U.sg;
             }))
-          T.ExplainAbsent(Sess.Opts, st, *U.sg, why);
+          T->explainAbsent(Sess.Opts, st, *U.sg, why);
     if (why.empty())
       why.push_back("no candidate was generated");
     llvm::sort(why);
@@ -805,7 +807,8 @@ Error Explainer::buildSubgraph(size_t s) {
 
   if (!sg.outputs.empty()) {
     SmallVector<Value *> outs(sg.outputs.begin(), sg.outputs.end());
-    Expected<double> base = compCost(Sess.CostModel, outs, sg.inputs);
+    Expected<double> base =
+        compCost(Sess.get<CostModelState>(), outs, sg.inputs);
     if (!base)
       return base.takeError();
     if (FPNode *N = nodeOf(sg.outputs[0])) {
@@ -891,13 +894,14 @@ json::Object Explainer::toJSON() {
   json::Object root;
   root["schema"] = kSchema;
 
+  const SolvedFrom &from = st.get<SolvedFrom>();
   json::Object fn = functionJSON(Sess, F);
-  fn["canonical_hash"] = st.canonicalHash;
-  fn["profile"] = st.profilePath;
+  fn["canonical_hash"] = from.canonicalHash;
+  fn["profile"] = from.profilePath;
   root["function"] = std::move(fn);
 
   json::Object target = targetJSON(Sess.Opts, tau, rec.siteTarget);
-  target["cost_model"] = costModelPath(Sess.CostModel);
+  target["cost_model"] = costModelPath(Sess.get<CostModelState>());
   target["selector"] = selectorName(rec.selector);
   if (rec.fromCache)
     target["from_cache"] = true;
@@ -913,9 +917,9 @@ json::Object Explainer::toJSON() {
   putNum(scaleObj, "accuracy_scale", rec.accScale);
   putNum(scaleObj, "baseline_accuracy_cost", rec.baseline);
   putNum(scaleObj, "profiled_cost", rec.profiledCost);
-  if (st.kappa) {
-    scaleObj["kappa"] = *st.kappa;
-    scaleObj["kappa_mark"] = kappaMarkName(st.kappaMark);
+  if (from.kappa) {
+    scaleObj["kappa"] = *from.kappa;
+    scaleObj["kappa_mark"] = kappaMarkName(from.kappaMark);
     scaleObj["kappa_factor"] = st.scaleFactor;
   }
   root["scale"] = std::move(scaleObj);
@@ -1113,7 +1117,7 @@ std::string Explainer::siteLeftReason() const {
   }
   if (rec.selector == SolveSelector::Pinned)
     return "no -poseidon-pin item names a candidate of this site";
-  if (st.kappaMark == KappaMark::Diverged)
+  if (st.get<SolvedFrom>().kappaMark == KappaMark::Diverged)
     return "the profiling runs diverged under the smallest perturbation, so "
            "the site offers no candidate";
   return "the selected frontier point leaves the site as written";
@@ -1338,12 +1342,13 @@ void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
   json::Object result{{"status", status}, {"reason", reason}};
   if (!profile.empty())
     result["profile"] = profile;
-  writeExplanation(
-      S, F, body ? bodyProfileStem(S.Sites, F) : siteFileStem(S.Sites, F),
-      json::Object{{"schema", kSchema},
-                   {"function", functionJSON(S, F)},
-                   {"target", targetJSON(S.Opts, tau, siteTarget)},
-                   {"result", std::move(result)}});
+  writeExplanation(S, F,
+                   body ? bodyProfileStem(S.get<SiteRecords>(), F)
+                        : siteFileStem(S.get<SiteRecords>(), F),
+                   json::Object{{"schema", kSchema},
+                                {"function", functionJSON(S, F)},
+                                {"target", targetJSON(S.Opts, tau, siteTarget)},
+                                {"result", std::move(result)}});
 }
 
 void explainNothingToOptimize(Session &S, Function &F, double tau,
@@ -1388,7 +1393,7 @@ Error explainSolve(Session &S, Function &F, SiteState &st,
   if (remarks)
     E.emitRemarks();
   if (write)
-    writeExplanation(S, F, siteFileStem(S.Sites, F), E.toJSON());
+    writeExplanation(S, F, siteFileStem(S.get<SiteRecords>(), F), E.toJSON());
   return Error::success();
 }
 

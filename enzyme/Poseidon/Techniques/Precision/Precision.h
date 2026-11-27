@@ -41,9 +41,7 @@
 
 namespace poseidon {
 
-class PrecisionUnit;
 class Session;
-struct SiteProfileHeader;
 
 /// A precision candidate: an assignment of the subgraph's operations to
 /// formats, one change per tier.
@@ -78,20 +76,6 @@ struct PrecisionCandidate {
              llvm::ValueToValueMapTy *VMap = nullptr, FPGraph *graph = nullptr,
              llvm::SmallVectorImpl<llvm::Value *> *components = nullptr);
 };
-
-/// Demotes each FP64 PHI of `F` whose every incoming value is an extension of
-/// an FP32 value or an FP32-representable constant to an FP32 PHI; whether one
-/// was demoted.
-bool demoteFPCastPHIs(llvm::Function &F);
-
-/// The precision candidates of `subgraph`, appended to `precisionUnits`
-/// unpriced: two- and three-tier assignments of its operations by profiled
-/// sensitivity, over the formats and expansions the target, the cost model and
-/// the options allow.
-llvm::Error proposePrecisionCandidates(
-    Session &S, llvm::Function &F, Subgraph &subgraph, FPGraph &G,
-    const SiteProfileHeader &profileHeader, bool expansionSafe,
-    llvm::SmallVectorImpl<PrecisionUnit> &precisionUnits);
 
 /// The precision candidates of one subgraph. A candidate is repriced against
 /// the outputs the selected rewrites of the same subgraph leave.
@@ -176,15 +160,8 @@ private:
   DeferredError pricingError;
 };
 
-/// What the precision technique keeps for a site.
-struct PrecisionSiteState : TechniqueState {
-  static inline char ID;
-  /// The precision units proposed for the site.
-  llvm::SmallVector<PrecisionUnit, 4> units;
-  /// Whether the site's floating-point operations are rounded as written, so
-  /// that floating-point expansions can be proposed for them.
-  bool expansionSafe = true;
-};
+/// The technique of precision changes and floating-point expansions.
+const Technique &precisionTechnique();
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_PRECISION_PRECISION_H

@@ -7,10 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "BuildIdentity.h"
+#include "Core/Session.h"
 #include "Core/Technique.h"
 #include "Model/CostModel.h"
-#include "Optimize.h"
-#include "Solve/Session.h"
+#include "Solve.h"
 #include "Support/Diagnostics.h"
 #include "Support/Utils.h"
 
@@ -104,11 +104,10 @@ static Error keySiteTable(Session &S, const SiteState &st,
       I.getFastMathFlags().print(bodyOS);
     }
   key.addContent("function body", body);
-  key.add("device", getCostModelNativeArch(S.CostModel));
-  for (const Technique &T : techniques())
-    if (T.AddToTableKey)
-      T.AddToTableKey(key);
-  key.addContent("cost model", costModelRows(S.CostModel));
+  key.add("device", getCostModelNativeArch(S.get<CostModelState>()));
+  for (const Technique *T : techniques())
+    T->addToTableKey(key);
+  key.addContent("cost model", costModelRows(S.get<CostModelState>()));
   key.add("cost axis", "cost-model units times 2^(32 - log2 profiled cost)");
 
   SmallVector<std::string, 4> profilePaths = {profilePath.str()};
@@ -453,7 +452,9 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
   const Options &O = S.Opts;
   const bool print = O.Diagnostics.Print;
   // Only a single site's table is cached: the key names one site's candidates.
-  DPTable *table = sites.size() == 1 ? sites.front()->table.get() : nullptr;
+  DPTable *table = sites.size() == 1
+                       ? sites.front()->get<SolvedFrom>().table.get()
+                       : nullptr;
 
   std::string names;
   double profiledCost = 0.0;
@@ -486,9 +487,8 @@ solveSites(Session &S, ArrayRef<SiteState *> sites,
   // The modelled error of the code as written. The DP table is relative to it
   // (costToAccuracyMap[0] == 0) while a tolerance is an absolute level.
   for (SiteState *st : sites)
-    for (const Technique &T : techniques())
-      if (T.Baseline)
-        baseline += T.Baseline(*st, unpriced);
+    for (const Technique *T : techniques())
+      baseline += T->baseline(*st, unpriced);
 
   if (loadedFromCache) {
     costToAccuracyMap = table->costToAccuracyMap;
