@@ -6421,17 +6421,13 @@ public:
           goto badaugmentedfn;
 
         for (unsigned i = 0; i < pre_args.size(); ++i) {
-          if (pre_args[i]->getType() == FT->getParamType(i))
-            continue;
-          else if (!call.getCalledFunction())
-            pre_args[i] =
-                BuilderZ.CreateBitCast(pre_args[i], FT->getParamType(i));
-          else
+          if (pre_args[i]->getType() != FT->getParamType(i) &&
+              call.getCalledFunction())
             goto badaugmentedfn;
         }
 
         augmentcall = BuilderZ.CreateCall(
-            FT, newcalled, pre_args,
+            matchCallArgs(BuilderZ, FT, pre_args), newcalled, pre_args,
             gutils->getInvertedBundles(&call, PreBundleTypes, BuilderZ,
                                        /*lookup*/ false));
         augmentcall->setCallingConv(call.getCallingConv());
@@ -6879,16 +6875,12 @@ public:
       goto badfn;
 
     for (unsigned i = 0; i < args.size(); ++i) {
-      if (args[i]->getType() == FT->getParamType(i))
-        continue;
-      else if (!call.getCalledFunction())
-        args[i] = Builder2.CreateBitCast(args[i], FT->getParamType(i));
-      else
+      if (args[i]->getType() != FT->getParamType(i) && call.getCalledFunction())
         goto badfn;
     }
 
     CallInst *diffes =
-        Builder2.CreateCall(FT, newcalled, args,
+        Builder2.CreateCall(matchCallArgs(Builder2, FT, args), newcalled, args,
                             gutils->getInvertedBundles(
                                 &call, BundleTypes, Builder2, /*lookup*/ true));
     diffes->setCallingConv(call.getCallingConv());
