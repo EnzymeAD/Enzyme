@@ -128,6 +128,20 @@ inline bool is_value_needed_in_reverse(
             << " in reverse as forward mode error always needs result\n";
       return seen[idx] = true;
     }
+    if (auto CI = dyn_cast<CallInst>(inst)) {
+      StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
+      if (!gutils->isConstantValue(const_cast<Value *>(inst)) &&
+          (funcName == "gsl_stats_sd" || funcName == "gsl_stats_sd_m" ||
+           funcName == "gsl_stats_sd_with_fixed_mean" ||
+           funcName == "gsl_stats_float_sd" ||
+           funcName == "gsl_stats_float_sd_m" ||
+           funcName == "gsl_stats_float_sd_with_fixed_mean")) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                       << " in reverse as active gsl_stats_sd\n";
+        return seen[idx] = true;
+      }
+    }
   }
 
   if (auto CI = dyn_cast<CallInst>(inst)) {
