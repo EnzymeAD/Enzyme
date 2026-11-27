@@ -523,6 +523,14 @@ public:
     return "M " + std::to_string(matmul->id);
   }
   llvm::Error explain(Explanation &E, UnitExplanation &U) override;
+  void remarkApplied(llvm::OptimizationRemarkEmitter &ORE, Explanation &E,
+                     const UnitExplanation &U, const Alternative &A,
+                     llvm::StringRef ErrorChange,
+                     llvm::StringRef CostChange) const override;
+  std::string rivalReason(const Alternative &A,
+                          const Alternative &Rival) const override;
+  void remarkProfile(llvm::DiagnosticInfoOptimizationBase &R,
+                     const UnitExplanation &U) const override;
   std::string selectionText(size_t i) const override;
 };
 

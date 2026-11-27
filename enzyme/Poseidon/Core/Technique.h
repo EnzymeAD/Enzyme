@@ -14,7 +14,7 @@
 // which is also the order of a site's units. A technique keeps its own state in
 // a slot of the SiteState or of the Session. Of the types a later phase
 // defines, this header and Core/Unit.h name only those a step merely passes
-// through: SiteProfileData, Explanation and UnitExplanation.
+// through: SiteProfileData, Explanation, UnitExplanation and Alternative.
 //
 //===----------------------------------------------------------------------===//
 

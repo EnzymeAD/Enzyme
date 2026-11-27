@@ -1799,9 +1799,53 @@ static bool isPolynomial(StringRef expr, FPGraph &G) {
   return true;
 }
 
+namespace {
+
+/// What the explanation says of a rewrite beyond its expression.
+struct RewriteNotes {
+  /// Its C form, one expression per output.
+  SmallVector<std::string, 1> c;
+  /// Whether it approximates a function, and whether by a series.
+  bool approx = false, series = false;
+  /// How it approximates and splits regimes, in words.
+  std::string note;
+};
+
+} // namespace
+
+// The notes of the rewrite `text` of a unit over `sg`, whose outputs have the
+// dtype `rdt`. Parsing adds to the explanation's scratch graph.
+static RewriteNotes notesOf(StringRef text, Explanation &E, const Subgraph &sg,
+                            StringRef rdt) {
+  CRendering how = E.rendering(sg);
+  RewriteNotes N;
+  SmallVector<std::pair<std::string, std::string>, 2> specs;
+  N.c = fpcoreToC(text, E.scratch(), how, rdt, &specs);
+  SmallVector<std::string, 2> notes;
+  std::set<std::string> seen;
+  for (const auto &[spec, impl] : specs) {
+    if (!seen.insert(spec).second)
+      continue;
+    SmallVector<std::string, 1> specC = fpcoreToC(spec, E.scratch(), how, "");
+    std::string specText = clip(specC.empty() ? spec : specC[0], 120);
+    if (!isPolynomial(impl, E.scratch())) {
+      SmallVector<std::string, 1> implC = fpcoreToC(impl, E.scratch(), how, "");
+      notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
+                      " in place of " + specText);
+      continue;
+    }
+    N.series = true;
+    notes.push_back("series approximation of " + specText);
+  }
+  N.approx = !specs.empty();
+  if (text.contains("(if"))
+    notes.push_back("regime split");
+  N.note = joinWords(notes);
+  return N;
+}
+
 Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
   const Subgraph &sg = *subgraph;
-  CRendering how = E.rendering(sg);
   json::Object core;
   core["id"] = (info().letter + Twine(indexInKind())).str();
   if (!herbiePrecision.empty())
@@ -1813,7 +1857,9 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     core["unpriced"] = unpricedReason;
   if (std::isfinite(herbieBits) && std::isfinite(initialHerbieAccuracy))
     core["error_bits"] = (1.0 - initialHerbieAccuracy) * herbieBits;
-  U.herbie.push_back(std::move(core));
+  if (!U.keys.getArray("herbie"))
+    U.keys["herbie"] = json::Array();
+  U.keys.getArray("herbie")->push_back(std::move(core));
 
   SmallVector<unsigned, 1> outs;
   for (Value *root : roots)
@@ -1834,41 +1880,27 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
 
   auto fill = [&](Alternative &A, const std::string &text) {
     A.kind = "algebraic";
-    A.precision = herbiePrecision;
-    A.fpcore = text;
+    A.kindWords = "the algebraic rewrite";
+    A.expr = text;
     A.outputs = outs;
     A.at = cast<Instruction>(roots.front());
     A.baseAcc = initialAccCost;
     A.baseCost = base;
-    SmallVector<std::pair<std::string, std::string>, 2> specs;
-    A.c = fpcoreToC(text, E.scratch(), how, rdt, &specs);
-    SmallVector<std::string, 2> notes;
-    std::set<std::string> seen;
-    for (const auto &[spec, impl] : specs) {
-      if (!seen.insert(spec).second)
-        continue;
-      SmallVector<std::string, 1> specC = fpcoreToC(spec, E.scratch(), how, "");
-      std::string specText = clip(specC.empty() ? spec : specC[0], 120);
-      if (!isPolynomial(impl, E.scratch())) {
-        SmallVector<std::string, 1> implC =
-            fpcoreToC(impl, E.scratch(), how, "");
-        notes.push_back(clip(implC.empty() ? impl : implC[0], 120) +
-                        " in place of " + specText);
-        continue;
-      }
-      A.series = true;
-      notes.push_back("series approximation of " + specText);
-    }
-    A.approx = !specs.empty();
-    if (StringRef(text).contains("(if"))
-      notes.push_back("regime split");
-    A.approxNote = joinWords(notes);
+    RewriteNotes N = notesOf(text, E, sg, rdt);
+    A.c = std::move(N.c);
+    if (!herbiePrecision.empty())
+      A.keys["precision"] = herbiePrecision;
+    if (!text.empty())
+      A.keys["fpcore"] = text;
+    A.keys["approx"] = N.approx;
+    if (!N.note.empty())
+      A.keys["approx_note"] = N.note;
     std::string what = "Herbie rewrite";
-    if (!A.precision.empty())
-      what += " searched at " + A.precision;
-    if (A.series)
+    if (!herbiePrecision.empty())
+      what += " searched at " + herbiePrecision;
+    if (N.series)
       what += ", series approximation";
-    else if (A.approx)
+    else if (N.approx)
       what += ", approximation";
     if (StringRef(text).contains("(if"))
       what += ", regime split";
@@ -1890,10 +1922,13 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     }
     E.setAccuracy(A, getAccCostDelta(j));
     if (std::isfinite(herbieBits)) {
+      json::Object bits;
       if (std::isfinite(initialHerbieAccuracy))
-        A.bitsBefore = (1.0 - initialHerbieAccuracy) * herbieBits;
+        bits["before"] = (1.0 - initialHerbieAccuracy) * herbieBits;
       if (std::isfinite(cand.herbieAccuracy))
-        A.bitsAfter = (1.0 - cand.herbieAccuracy) * herbieBits;
+        bits["after"] = (1.0 - cand.herbieAccuracy) * herbieBits;
+      if (!bits.empty())
+        A.keys["herbie_error_bits"] = std::move(bits);
     }
     U.alts.push_back(std::move(A));
   }
@@ -1910,6 +1945,46 @@ Error AlgebraicUnit::explain(Explanation &E, UnitExplanation &U) {
     U.whyNone.push_back("Herbie returned no alternative (" + herbieStatus +
                         ")");
   return Error::success();
+}
+
+void AlgebraicUnit::remarkApplied(OptimizationRemarkEmitter &ORE,
+                                  Explanation &E, const UnitExplanation &U,
+                                  const Alternative &A, StringRef ErrorChange,
+                                  StringRef CostChange) const {
+  const std::string &text = candidates[A.index].expr;
+  RewriteNotes N =
+      notesOf(text, E, *subgraph, dtypeOfType(roots.front()->getType()));
+  for (size_t k = 0; k < A.outputs.size(); ++k) {
+    unsigned o = A.outputs[k];
+    const Instruction *at = A.at;
+    if (o < subgraph->outputs.size())
+      at = subgraph->outputs[o];
+    std::string orig = o < U.outC.size() ? U.outC[o] : "";
+    std::string now = k < A.c.size() ? A.c[k] : text;
+    ORE.emit([&]() {
+      OptimizationRemark R(kRemarkPass, "Rewritten", at);
+      R << "Poseidon rewrote " << ore::NV("Expr", clip(orig)) << " as "
+        << ore::NV("Rewritten", clip(now));
+      std::string how = N.note;
+      if (N.series && !U.inputRanges.empty())
+        how += ", valid on the profiled range " + join(U.inputRanges, ", ");
+      if (!how.empty())
+        R << " (" << ore::NV("Technique", how) << ")";
+      if (!ErrorChange.empty())
+        R << "; modelled error " << ore::NV("Error", ErrorChange);
+      if (!CostChange.empty())
+        R << ", cost " << ore::NV("Cost", CostChange);
+      R << " [" << ore::NV("Id", A.id) << "]";
+      return R;
+    });
+  }
+}
+
+std::string AlgebraicUnit::rivalReason(const Alternative &A,
+                                       const Alternative &Rival) const {
+  if (!isa<AlgebraicUnit>(Rival.item))
+    return "";
+  return "the selected " + Rival.id + " rewrites the same output";
 }
 
 void AlgebraicUnit::printPriced(raw_ostream &OS) {

@@ -169,6 +169,12 @@ public:
   llvm::Error price() override;
   void printPriced(llvm::raw_ostream &OS) override;
   llvm::Error explain(Explanation &E, UnitExplanation &U) override;
+  void remarkApplied(llvm::OptimizationRemarkEmitter &ORE, Explanation &E,
+                     const UnitExplanation &U, const Alternative &A,
+                     llvm::StringRef ErrorChange,
+                     llvm::StringRef CostChange) const override;
+  std::string rivalReason(const Alternative &A,
+                          const Alternative &Rival) const override;
   std::string keyHeader() const override {
     return "R " + herbiePrecision + " " + expr;
   }

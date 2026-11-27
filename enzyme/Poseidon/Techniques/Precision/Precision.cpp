@@ -36,6 +36,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
@@ -142,7 +143,7 @@ static Value *changedCall(IRBuilder<> &B, CallInst *CI,
 
 // Emits I in the precision of `change`, reading the operands already changed
 // from `oldToNew` and casting the others, and records the new value there.
-static void changePrecision(Instruction *I, PrecisionChange &change,
+static void changePrecision(Instruction *I, FormatChange &change,
                             MapVector<Value *, Value *> &oldToNew) {
   assert(isOptimizable(*I) &&
          "Trying to tune an instruction is not isOptimizable");
@@ -192,7 +193,7 @@ public:
 
   // The operations `change` converts that are still to be changed, in the
   // clone under VMap.
-  SetVector<Instruction *> operationsOf(const PrecisionChange &change) const;
+  SetVector<Instruction *> operationsOf(const FormatChange &change) const;
 
   // Converts `sorted`, in operand order, to an n-component expansion.
   // `components` receives the components of each converted instruction.
@@ -201,8 +202,7 @@ public:
 
   // Converts `insts`, `sorted` in operand order, to the format of `change`,
   // giving their readers outside the change the value cast back.
-  void changeFormat(PrecisionChange &change,
-                    const SetVector<Instruction *> &insts,
+  void changeFormat(FormatChange &change, const SetVector<Instruction *> &insts,
                     ArrayRef<Instruction *> sorted);
 
 private:
@@ -233,7 +233,7 @@ ChangeTarget::ChangeTarget(Session &S, Subgraph &subgraph,
 }
 
 SetVector<Instruction *>
-ChangeTarget::operationsOf(const PrecisionChange &change) const {
+ChangeTarget::operationsOf(const FormatChange &change) const {
   SetVector<Instruction *> insts;
   for (FPLLValue *node : change.nodes) {
     if (!node || !node->value)
@@ -279,7 +279,7 @@ void ChangeTarget::expand(unsigned n, ArrayRef<Instruction *> sorted,
       graph->replaceErased(erased, restored);
 }
 
-void ChangeTarget::changeFormat(PrecisionChange &change,
+void ChangeTarget::changeFormat(FormatChange &change,
                                 const SetVector<Instruction *> &insts,
                                 ArrayRef<Instruction *> sorted) {
   MapVector<Value *, Value *> oldToNew;
@@ -319,7 +319,7 @@ void PrecisionCandidate::apply(Session &S, Subgraph &subgraph,
                                SmallVectorImpl<Value *> *components) {
   ChangeTarget target(S, subgraph, VMap, graph);
   SmallVector<Value *, 32> pairComponents, widerComponents;
-  for (PrecisionChange &change : changes) {
+  for (FormatChange &change : changes) {
     SetVector<Instruction *> insts = target.operationsOf(change);
     SmallVector<Instruction *, 8> sorted;
     topoSort(insts, sorted);
@@ -640,7 +640,7 @@ void CandidateClone::applyCandidate(Session &S, Subgraph &subgraph,
   // restore is not billed per iteration.
   SmallVector<Value *, 32> expandedComponents;
   bool ptHasExpansion = false, wantsPairs = false;
-  for (PrecisionChange &ch : pt.changes) {
+  for (FormatChange &ch : pt.changes) {
     ptHasExpansion |= expansionComponents(ch.newType) != 0;
     wantsPairs |= ch.newType == NumberFormat::Expansion2;
   }
@@ -1088,7 +1088,7 @@ void TierSweep::add(ArrayRef<NumberFormat> tiers, ArrayRef<int> cuts,
                     StringRef kind) {
   const size_t N = sortedAsc.size();
   SmallVector<std::pair<NumberFormat, int>, 3> shares;
-  SmallVector<PrecisionChange, 3> changes;
+  SmallVector<FormatChange, 3> changes;
   int prevPct = 0;
   size_t prevK = 0;
   for (auto [i, type] : enumerate(tiers)) {
@@ -1324,7 +1324,7 @@ static std::vector<const Instruction *>
 changedOperations(const PrecisionCandidate &candidate,
                   const Subgraph &subgraph) {
   std::vector<const Instruction *> changed;
-  for (const PrecisionChange &change : candidate.changes) {
+  for (const FormatChange &change : candidate.changes) {
     for (const FPLLValue *node : change.nodes)
       if (node && node->value &&
           subgraph.operations.contains(cast<Instruction>(node->value)))
@@ -1515,14 +1515,37 @@ firstInIROrder(Function &F, const SmallPtrSetImpl<const Value *> &set) {
   return nullptr;
 }
 
-Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
-  const Subgraph &sg = *subgraph;
-  Function &F = *graph().F;
+namespace {
+
+/// What the explanation says of the changes of a precision candidate.
+struct ChangeWords {
+  /// Whether a change moves to a floating-point expansion.
+  bool expansion = false;
+  /// Each change: from, to and the indices of its ops among the subgraph's.
+  json::Array changes;
+  /// The operations the changes move and the format the last moves to, as
+  /// the remarks name them.
+  SmallVector<std::string, 4> ops;
+  std::string to;
+  /// The candidate's name and what each change moves where.
+  std::string summary;
+  /// The C type of each operation a change computes in a plain format.
+  DenseMap<const FPNode *, std::string> dtypes;
+  /// The changed operation first in IR order; null when none is in the
+  /// function.
+  const Instruction *first = nullptr;
+};
+
+} // namespace
+
+// The words of the changes of `cand`, a candidate over `sg` of the site `G`.
+static ChangeWords wordsOf(const PrecisionCandidate &cand, const Subgraph &sg,
+                           FPGraph &G) {
+  Function &F = *G.F;
   auto nodeOf = [&](Value *V) -> FPNode * {
-    auto it = graph().valueToNodeMap.find(V);
-    return it == graph().valueToNodeMap.end() ? nullptr : it->second;
+    auto it = G.valueToNodeMap.find(V);
+    return it == G.valueToNodeMap.end() ? nullptr : it->second;
   };
-  CRendering how = E.rendering(sg);
   DenseMap<const FPNode *, unsigned> opIndex;
   unsigned k = 0;
   for (Instruction &I : instructions(F))
@@ -1532,64 +1555,75 @@ Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
       ++k;
     }
 
-  auto describe = [&](Alternative &A, PrecisionCandidate &cand) {
-    bool expansion = false;
-    DenseMap<const FPNode *, std::string> dtypes;
-    SmallPtrSet<const Value *, 8> changedInsts;
-    SmallVector<std::string, 4> parts;
-    for (const PrecisionChange &ch : cand.changes) {
-      expansion |= expansionComponents(ch.newType) != 0;
-      json::Object c;
-      c["from"] = formatOf(ch.oldType).Name.str();
-      c["to"] = formatOf(ch.newType).Name.str();
-      json::Array idx;
-      SmallVector<std::string, 4> names;
-      MapVector<std::string, unsigned, std::map<std::string, unsigned>> counts;
-      for (FPLLValue *node : ch.nodes) {
-        auto it = opIndex.find(node);
-        if (it != opIndex.end())
-          idx.push_back((int64_t)it->second);
-        changedInsts.insert(node->value);
-        SourceLoc L = locOf(node->value);
-        std::string w = opWord(operationName(*node));
-        ++counts[w];
-        if (L.valid())
-          w += formatv(" ({0}:{1})", L.line, L.col).str();
-        names.push_back(w);
-        A.changedOps.push_back(w);
-        if (!expansionComponents(ch.newType))
-          dtypes[node] = dtypeOfType(storageTypeOf(F.getContext(), ch.newType));
-      }
-      c["ops"] = std::move(idx);
-      A.changes.push_back(std::move(c));
-      if (names.size() > kMaxListedOps) {
-        names.clear();
-        for (const auto &[w, n] : counts)
-          names.push_back(n == 1 ? w : formatv("{0} x {1}", n, w).str());
-      }
-      parts.push_back(joinWords(names) + " in " + precisionWords(ch.newType));
-      A.changedTo = precisionWords(ch.newType);
+  ChangeWords W;
+  SmallPtrSet<const Value *, 8> changedInsts;
+  SmallVector<std::string, 4> parts;
+  for (const FormatChange &ch : cand.changes) {
+    W.expansion |= expansionComponents(ch.newType) != 0;
+    json::Object c;
+    c["from"] = formatOf(ch.oldType).Name.str();
+    c["to"] = formatOf(ch.newType).Name.str();
+    json::Array idx;
+    SmallVector<std::string, 4> names;
+    MapVector<std::string, unsigned, std::map<std::string, unsigned>> counts;
+    for (FPLLValue *node : ch.nodes) {
+      auto it = opIndex.find(node);
+      if (it != opIndex.end())
+        idx.push_back((int64_t)it->second);
+      changedInsts.insert(node->value);
+      SourceLoc L = locOf(node->value);
+      std::string w = opWord(operationName(*node));
+      ++counts[w];
+      if (L.valid())
+        w += formatv(" ({0}:{1})", L.line, L.col).str();
+      names.push_back(w);
+      W.ops.push_back(w);
+      if (!expansionComponents(ch.newType))
+        W.dtypes[node] = dtypeOfType(storageTypeOf(F.getContext(), ch.newType));
     }
-    A.kind = expansion ? "expansion" : "precision";
-    A.summary = cand.desc + ": " + joinWords(parts) + " (" +
-                std::to_string(A.changedOps.size()) + " of " +
-                std::to_string(sg.operations.size()) + " operations)";
-    if (A.changedOps.size() == sg.operations.size() && cand.changes.size() == 1)
-      A.changedOps = {
-          formatv("all {0} operations", sg.operations.size()).str()};
-    else if (A.changedOps.size() > kMaxListedOps)
-      A.changedOps = {formatv("{0} of the {1} operations", A.changedOps.size(),
-                              sg.operations.size())
-                          .str()};
-    A.at = firstInIROrder(F, changedInsts);
-    if (!A.at)
-      A.at = sg.outputs[0];
-    if (!expansion) {
+    c["ops"] = std::move(idx);
+    W.changes.push_back(std::move(c));
+    if (names.size() > kMaxListedOps) {
+      names.clear();
+      for (const auto &[w, n] : counts)
+        names.push_back(n == 1 ? w : formatv("{0} x {1}", n, w).str());
+    }
+    parts.push_back(joinWords(names) + " in " + precisionWords(ch.newType));
+    W.to = precisionWords(ch.newType);
+  }
+  W.summary = cand.desc + ": " + joinWords(parts) + " (" +
+              std::to_string(W.ops.size()) + " of " +
+              std::to_string(sg.operations.size()) + " operations)";
+  if (W.ops.size() == sg.operations.size() && cand.changes.size() == 1)
+    W.ops = {formatv("all {0} operations", sg.operations.size()).str()};
+  else if (W.ops.size() > kMaxListedOps)
+    W.ops = {
+        formatv("{0} of the {1} operations", W.ops.size(), sg.operations.size())
+            .str()};
+  W.first = firstInIROrder(F, changedInsts);
+  return W;
+}
+
+Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
+  const Subgraph &sg = *subgraph;
+  CRendering how = E.rendering(sg);
+
+  auto describe = [&](Alternative &A, PrecisionCandidate &cand) {
+    ChangeWords W = wordsOf(cand, sg, graph());
+    A.kind = W.expansion ? "expansion" : "precision";
+    A.kindWords = W.expansion ? "the float expansion" : "the precision change";
+    A.summary = std::move(W.summary);
+    if (!W.changes.empty())
+      A.keys["changes"] = std::move(W.changes);
+    A.at = W.first ? W.first : sg.outputs[0];
+    if (!W.expansion) {
       CRendering typed = how;
-      typed.dtypes = &dtypes;
-      for (Instruction *O : sg.outputs)
-        if (FPNode *N = nodeOf(O))
-          A.c.push_back(renderC(*N, typed, dtypeOfType(O->getType())));
+      typed.dtypes = &W.dtypes;
+      for (Instruction *O : sg.outputs) {
+        auto it = graph().valueToNodeMap.find(O);
+        if (it != graph().valueToNodeMap.end() && it->second)
+          A.c.push_back(renderC(*it->second, typed, dtypeOfType(O->getType())));
+      }
     }
     A.baseAcc = initialAccCost;
     A.baseCost = U.baseCost;
@@ -1638,6 +1672,7 @@ Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
   for (const auto &[desc, why] : dropped) {
     Alternative A;
     A.kind = "precision";
+    A.kindWords = "the precision change";
     A.summary = desc;
     A.at = sg.outputs[0];
     A.standing = Standing::Dropped;
@@ -1647,6 +1682,34 @@ Error PrecisionUnit::explain(Explanation &E, UnitExplanation &U) {
   if (!unpricedReason.empty())
     U.unpriced(unpricedReason);
   return Error::success();
+}
+
+void PrecisionUnit::remarkApplied(OptimizationRemarkEmitter &ORE,
+                                  Explanation &E, const UnitExplanation &U,
+                                  const Alternative &A, StringRef ErrorChange,
+                                  StringRef CostChange) const {
+  ChangeWords W = wordsOf(candidates[A.index], *subgraph, graph());
+  ORE.emit([&]() {
+    OptimizationRemark R(kRemarkPass, "PrecisionChanged", A.at);
+    R << "Poseidon runs " << ore::NV("Ops", joinWords(W.ops)) << " in "
+      << ore::NV("Type", W.to);
+    if (A.c.size() == 1 && !A.c[0].empty())
+      R << ": " << ore::NV("Rewritten", clip(A.c[0]));
+    if (!ErrorChange.empty())
+      R << "; modelled error " << ore::NV("Error", ErrorChange);
+    if (!CostChange.empty())
+      R << ", cost " << ore::NV("Cost", CostChange);
+    R << " [" << ore::NV("Id", A.id) << "]";
+    return R;
+  });
+}
+
+std::string PrecisionUnit::rivalReason(const Alternative &A,
+                                       const Alternative &Rival) const {
+  if (!isa<PrecisionUnit>(Rival.item) || Rival.kind != A.kind)
+    return "";
+  return "the subgraph takes one precision assignment, and " + Rival.id +
+         " was selected";
 }
 
 std::string PrecisionUnit::choiceText(size_t i) const {

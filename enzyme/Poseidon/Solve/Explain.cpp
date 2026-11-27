@@ -41,6 +41,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -60,7 +61,7 @@ static void putNum(json::Object &o, StringRef key, double v) {
     o[key] = v;
 }
 
-static std::string num(double v, int digits = 2) {
+std::string remarkNumber(double v, int digits) {
   if (!std::isfinite(v))
     return "n/a";
   return formatv("{0}", format("%.*g", digits, v)).str();
@@ -88,16 +89,6 @@ static std::string typeName(Type *T) {
   raw_string_ostream os(s);
   T->print(os);
   return s;
-}
-
-static std::string kindWords(StringRef kind) {
-  if (kind == "algebraic")
-    return "the algebraic rewrite";
-  if (kind == "precision")
-    return "the precision change";
-  if (kind == "expansion")
-    return "the float expansion";
-  return "the product candidate";
 }
 
 std::string joinWords(ArrayRef<std::string> items) {
@@ -306,6 +297,16 @@ public:
 
 } // namespace
 
+// Adds `keys`, the keys of a kind, to `o`; json::Object prints its keys
+// sorted, so the order they are added in is not written.
+static void mergeKeys(json::Object &o, json::Object keys) {
+  for (auto &KV : keys) {
+    [[maybe_unused]] bool fresh =
+        o.try_emplace(KV.first, std::move(KV.second)).second;
+    assert(fresh && "a key of a kind is one the entry does not write itself");
+  }
+}
+
 // The `status` of a candidate in the explanation.
 static StringRef statusName(Standing standing) {
   switch (standing) {
@@ -462,9 +463,11 @@ class Explainer final : public Explanation {
     if (!std::isfinite(lo) || !std::isfinite(hi) || lo > hi)
       return "";
     int digits = 3;
-    while (lo != hi && digits < 17 && num(lo, digits) == num(hi, digits))
+    while (lo != hi && digits < 17 &&
+           remarkNumber(lo, digits) == remarkNumber(hi, digits))
       ++digits;
-    return label + " in [" + num(lo, digits) + ", " + num(hi, digits) + "]";
+    return label + " in [" + remarkNumber(lo, digits) + ", " +
+           remarkNumber(hi, digits) + "]";
   }
 
   std::string leafLabel(Value *V) {
@@ -578,8 +581,8 @@ void Explainer::judge(UnitExplanation &U) {
       continue;
     }
     if (tau > 0.0 && A.err && *A.err > tau) {
-      A.reason =
-          "modelled error " + num(*A.err) + " is above the target " + num(tau);
+      A.reason = "modelled error " + remarkNumber(*A.err) +
+                 " is above the target " + remarkNumber(tau);
       A.standing = A.costDelta && *A.costDelta < 0
                        ? Standing::CheaperAboveTarget
                        : Standing::Near;
@@ -613,16 +616,14 @@ void Explainer::judge(UnitExplanation &U) {
       A.standing = Standing::Far;
       continue;
     }
-    const Alternative *rival = nullptr;
+    std::string rival;
     for (const Alternative &B : U.alts)
       if (&B != &A && B.item && applied.count({B.item, B.index}) &&
-          B.kind == A.kind && B.outputs == A.outputs)
-        rival = &B;
-    if (rival) {
-      A.reason = A.kind == "algebraic"
-                     ? "the selected " + rival->id + " rewrites the same output"
-                     : "the subgraph takes one precision assignment, and " +
-                           rival->id + " was selected";
+          B.outputs == A.outputs)
+        if (std::string why = A.item->rivalReason(A, B); !why.empty())
+          rival = std::move(why);
+    if (!rival.empty()) {
+      A.reason = std::move(rival);
       A.standing = Standing::Far;
       continue;
     }
@@ -676,16 +677,18 @@ std::string Explainer::leftReason(const UnitExplanation &U) {
     });
     if (!anyMeets && best)
       return "every alternative's modelled error is above the target " +
-             num(tau) + " (best: " + best->id + ", " + num(*best->err) + ")";
+             remarkNumber(tau) + " (best: " + best->id + ", " +
+             remarkNumber(*best->err) + ")";
     bool cheaperMeets = llvm::any_of(U.alts, [&](const Alternative &A) {
       return A.item && A.err && *A.err <= tau && A.costDelta &&
              *A.costDelta < 0;
     });
     if (!cheaperMeets)
-      return "no alternative that meets the target " + num(tau) +
+      return "no alternative that meets the target " + remarkNumber(tau) +
              " is cheaper than as written";
     if (!rec.selected && steps.empty())
-      return "no solution on the site's frontier meets the target " + num(tau);
+      return "no solution on the site's frontier meets the target " +
+             remarkNumber(tau);
     return "its alternatives do not fit the target together with the "
            "selected rewrites";
   }
@@ -879,6 +882,7 @@ Error Explainer::build() {
       continue;
     UnitExplanation U;
     U.id = (unit->info().letter + Twine(unit->indexInKind())).str();
+    U.owner = unit;
     if (Error E = unit->explain(*this, U))
       return E;
     U.loc = locOf(U.root);
@@ -983,12 +987,10 @@ json::Object Explainer::toJSON() {
     u["id"] = U.id;
     u["kind"] = U.kind;
     putLoc(u, "loc", U.loc);
-    if (!U.shape.empty())
-      u["shape"] = U.shape;
     if (U.baseCost)
       u["cost"] = scale.share(*U.baseCost);
     u["executions"] = (int64_t)U.executions;
-    if (U.kind == "subgraph") {
+    if (U.sg) {
       u["ops"] = std::move(U.ops);
       u["inputs"] = std::move(U.inputs);
       u["outputs"] = json::Array(U.outputs);
@@ -1016,9 +1018,8 @@ json::Object Explainer::toJSON() {
           original["fpcore"] = std::move(fs);
       }
       u["original"] = std::move(original);
-      if (!U.herbie.empty())
-        u["herbie"] = std::move(U.herbie);
     }
+    mergeKeys(u, std::move(U.keys));
     if (!U.left.empty())
       u["left_as_written"] = U.left;
     json::Array alts;
@@ -1028,18 +1029,12 @@ json::Object Explainer::toJSON() {
         a["id"] = A.id;
       a["kind"] = A.kind;
       a["summary"] = A.summary;
-      if (!A.inKernelClass.empty())
-        a["inkernel_class"] = A.inKernelClass;
-      if (!A.precision.empty())
-        a["precision"] = A.precision;
-      if (!A.outputs.empty() && U.kind == "subgraph") {
+      if (!A.outputs.empty() && U.sg) {
         json::Array outs;
         for (unsigned o : A.outputs)
           outs.push_back((int64_t)o);
         a["outputs"] = std::move(outs);
       }
-      if (!A.fpcore.empty())
-        a["fpcore"] = A.fpcore;
       if (A.c.size() == 1 && !A.c[0].empty())
         a["c"] = A.c[0];
       else if (A.c.size() > 1) {
@@ -1048,27 +1043,11 @@ json::Object Explainer::toJSON() {
           cs.push_back(c);
         a["c"] = std::move(cs);
       }
-      if (A.kind == "algebraic") {
-        a["approx"] = A.approx;
-        if (!A.approxNote.empty())
-          a["approx_note"] = A.approxNote;
-      }
-      if (!A.changes.empty())
-        a["changes"] = std::move(A.changes);
       if (A.costDelta)
         a["cost_delta"] = scale.share(*A.costDelta);
       if (A.err)
         a["modelled_error"] = *A.err;
-      if (A.domainError)
-        a["modelled_domain_error"] = *A.domainError;
-      if (A.bitsBefore || A.bitsAfter) {
-        json::Object bits;
-        if (A.bitsBefore)
-          bits["before"] = *A.bitsBefore;
-        if (A.bitsAfter)
-          bits["after"] = *A.bitsAfter;
-        a["herbie_error_bits"] = std::move(bits);
-      }
+      mergeKeys(a, std::move(A.keys));
       a["status"] = statusName(A.standing);
       if (!A.reason.empty())
         a["reason"] = A.reason;
@@ -1111,7 +1090,7 @@ json::Object Explainer::toJSON() {
 std::string Explainer::siteLeftReason() const {
   if (!rec.table.empty() && !rec.selected) {
     if (tau > 0.0)
-      return "no frontier point meets the accuracy target " + num(tau);
+      return "no frontier point meets the accuracy target " + remarkNumber(tau);
     return "no frontier point is within the cost budget " +
            costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
   }
@@ -1142,7 +1121,7 @@ void Explainer::emitRemarks() {
                                  &F.getEntryBlock());
     R << "Poseidon site " << ore::NV("Site", siteName) << ": ";
     if (tau > 0.0)
-      R << "target " << ore::NV("Tau", num(tau));
+      R << "target " << ore::NV("Tau", remarkNumber(tau));
     else
       R << "cost budget "
         << ore::NV("Budget",
@@ -1150,14 +1129,14 @@ void Explainer::emitRemarks() {
     double asWritten = relErr(0.0);
     if (std::isfinite(asWritten))
       R << "; modelled error as written "
-        << ore::NV("ErrorBefore", num(asWritten));
+        << ore::NV("ErrorBefore", remarkNumber(asWritten));
     if (nApplied == 0) {
       R << "; left as written";
     } else {
       double acc =
           selectedAcc().value_or(std::numeric_limits<double>::quiet_NaN());
       if (std::isfinite(relErr(acc)))
-        R << ", after " << ore::NV("Error", num(relErr(acc)));
+        R << ", after " << ore::NV("Error", remarkNumber(relErr(acc)));
       R << "; " << ore::NV("Rewrites", (unsigned)nApplied)
         << (nApplied == 1 ? " rewrite" : " rewrites");
       if (before && delta)
@@ -1185,10 +1164,8 @@ void Explainer::emitRemarks() {
       continue;
     ORE.emit([&]() {
       OptimizationRemarkAnalysis R(kRemarkPass, "Profile", U.root);
-      if (U.kind == "matmul") {
-        R << "Poseidon profile of the " << ore::NV("Shape", U.shape)
-          << " matrix product: " << ore::NV("Executions", U.executions)
-          << " multiply-adds";
+      if (!U.sg) {
+        U.owner->remarkProfile(R, U);
         return R;
       }
       R << "Poseidon profile of " << ore::NV("Expr", exprWords(U));
@@ -1200,7 +1177,8 @@ void Explainer::emitRemarks() {
         R << ore::NV("Ranges", join(U.inputRanges, ", ")) << "; ";
       R << ore::NV("Executions", U.executions) << " executions";
       if (std::isfinite(U.sensitivity))
-        R << ", sensitivity " << ore::NV("Sensitivity", num(U.sensitivity));
+        R << ", sensitivity "
+          << ore::NV("Sensitivity", remarkNumber(U.sensitivity));
       return R;
     });
   }
@@ -1216,62 +1194,9 @@ void Explainer::emitRemarks() {
                      pctStr(*A.baseCost, *A.baseCost + *A.costDelta);
       std::string errChange;
       if (A.accDelta && std::isfinite(share(A.baseAcc)))
-        errChange = num(share(A.baseAcc)) + " -> " +
-                    num(share(A.baseAcc + *A.accDelta));
-      if (A.kind == "algebraic") {
-        for (size_t k = 0; k < A.outputs.size(); ++k) {
-          unsigned o = A.outputs[k];
-          const Instruction *at = A.at;
-          if (U.sg && o < U.sg->outputs.size())
-            at = U.sg->outputs[o];
-          std::string orig = o < U.outC.size() ? U.outC[o] : "";
-          std::string now = k < A.c.size() ? A.c[k] : A.fpcore;
-          ORE.emit([&]() {
-            OptimizationRemark R(kRemarkPass, "Rewritten", at);
-            R << "Poseidon rewrote " << ore::NV("Expr", clip(orig)) << " as "
-              << ore::NV("Rewritten", clip(now));
-            std::string how = A.approxNote;
-            if (A.series && !U.inputRanges.empty())
-              how +=
-                  ", valid on the profiled range " + join(U.inputRanges, ", ");
-            if (!how.empty())
-              R << " (" << ore::NV("Technique", how) << ")";
-            if (!errChange.empty())
-              R << "; modelled error " << ore::NV("Error", errChange);
-            if (!costChange.empty())
-              R << ", cost " << ore::NV("Cost", costChange);
-            R << " [" << ore::NV("Id", A.id) << "]";
-            return R;
-          });
-        }
-      } else if (A.kind == "precision" || A.kind == "expansion") {
-        ORE.emit([&]() {
-          OptimizationRemark R(kRemarkPass, "PrecisionChanged", A.at);
-          R << "Poseidon runs " << ore::NV("Ops", joinWords(A.changedOps))
-            << " in " << ore::NV("Type", A.changedTo);
-          if (A.c.size() == 1 && !A.c[0].empty())
-            R << ": " << ore::NV("Rewritten", clip(A.c[0]));
-          if (!errChange.empty())
-            R << "; modelled error " << ore::NV("Error", errChange);
-          if (!costChange.empty())
-            R << ", cost " << ore::NV("Cost", costChange);
-          R << " [" << ore::NV("Id", A.id) << "]";
-          return R;
-        });
-      } else if (A.kind == "matmul") {
-        ORE.emit([&]() {
-          OptimizationRemark R(kRemarkPass, "MatmulRaised", A.at);
-          R << "Poseidon raised the " << ore::NV("Shape", U.shape)
-            << " matrix product to " << ore::NV("Technique", A.summary);
-          if (A.domainError)
-            R << "; modelled domain error "
-              << ore::NV("Error", num(*A.domainError));
-          if (!costChange.empty())
-            R << ", cost " << ore::NV("Cost", costChange);
-          R << " [" << ore::NV("Id", A.id) << "]";
-          return R;
-        });
-      }
+        errChange = remarkNumber(share(A.baseAcc)) + " -> " +
+                    remarkNumber(share(A.baseAcc + *A.accDelta));
+      A.item->remarkApplied(ORE, *this, U, A, errChange, costChange);
     }
 
   for (const UnitExplanation &U : units) {
@@ -1280,10 +1205,7 @@ void Explainer::emitRemarks() {
     if (!U.applied)
       ORE.emit([&]() {
         OptimizationRemarkMissed R(kRemarkPass, "LeftAsWritten", U.root);
-        R << "Poseidon left "
-          << ore::NV("Expr", U.kind == "matmul"
-                                 ? "the " + U.shape + " matrix product"
-                                 : exprWords(U))
+        R << "Poseidon left " << ore::NV("Expr", U.sg ? exprWords(U) : U.name)
           << " as written: " << ore::NV("Reason", U.left);
         return R;
       });
@@ -1306,19 +1228,19 @@ void Explainer::emitRemarks() {
         OptimizationRemarkMissed R(kRemarkPass, "Rejected", at);
         R << "Poseidon "
           << (A.standing == Standing::Pareto ? "did not select " : "rejected ")
-          << ore::NV("Kind", kindWords(A.kind));
+          << ore::NV("Kind", A.kindWords);
         if (!A.id.empty())
           R << " " << ore::NV("Id", A.id);
         if (A.c.size() == 1 && !A.c[0].empty())
           R << " to " << ore::NV("Rewritten", clip(A.c[0]));
-        else if (A.kind != "algebraic")
+        else if (!A.expr)
           R << " (" << ore::NV("Rewritten", A.summary) << ")";
-        else if (!A.fpcore.empty())
-          R << " to " << ore::NV("Rewritten", clip(A.fpcore));
+        else if (!A.expr->empty())
+          R << " to " << ore::NV("Rewritten", clip(*A.expr));
         R << ": " << ore::NV("Reason", A.reason);
         SmallVector<std::string, 2> facts;
         if (A.err && A.reason.find("modelled error") == std::string::npos)
-          facts.push_back("modelled error " + num(*A.err));
+          facts.push_back("modelled error " + remarkNumber(*A.err));
         if (A.costDelta)
           facts.push_back("cost change " + costStr(*A.costDelta));
         if (!facts.empty())

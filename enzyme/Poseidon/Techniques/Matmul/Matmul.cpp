@@ -30,6 +30,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -1196,20 +1197,29 @@ void MatmulUnit::printPriced(raw_ostream &OS) {
        << '\n';
 }
 
+// The product's M x N x K over the whole launch, as the explanation writes it:
+// "?" for a dimension not known.
+static std::string shapeOf(const RecognizedMatmul &m) {
+  auto dim = [](unsigned d) {
+    return d == ~0u || d == 0 ? std::string("?") : std::to_string(d);
+  };
+  unsigned M = m.globalM ? m.globalM : m.M;
+  unsigned N = m.globalN ? m.globalN : m.N;
+  unsigned K = m.globalK ? m.globalK : m.K;
+  return dim(M) + "x" + dim(N) + "x" + dim(K);
+}
+
 Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
   U.kind = "matmul";
+  std::string shape;
   if (matmul) {
     U.root = dyn_cast_or_null<Instruction>(matmul->outputValue);
     if (!U.root && !matmul->footprint.empty())
       U.root = matmul->footprint[0];
-    auto dim = [](unsigned d) {
-      return d == ~0u || d == 0 ? std::string("?") : std::to_string(d);
-    };
-    unsigned M = matmul->globalM ? matmul->globalM : matmul->M;
-    unsigned N = matmul->globalN ? matmul->globalN : matmul->N;
-    unsigned K = matmul->globalK ? matmul->globalK : matmul->K;
-    U.shape = dim(M) + "x" + dim(N) + "x" + dim(K);
+    shape = shapeOf(*matmul);
+    U.keys["shape"] = shape;
   }
+  U.name = "the " + shape + " matrix product";
   U.executions = executions;
   if (initialCompCost >= 0.0) {
     Expected<int64_t> c = E.onAxis(initialCompCost * (double)executions);
@@ -1222,9 +1232,10 @@ Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
     Alternative A;
     A.id = candidateId(j);
     A.kind = "matmul";
+    A.kindWords = "the product candidate";
     A.summary = matmulOptionLabel(o);
     if (o.realization == Realization::InKernel)
-      A.inKernelClass = inKernelCostClass(o.variant);
+      A.keys["inkernel_class"] = inKernelCostClass(o.variant);
     A.item = this;
     A.index = j;
     A.at = U.root;
@@ -1234,13 +1245,14 @@ Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
     A.costDelta = *c;
     E.setAccuracy(A, getAccCostDelta(j));
     if (std::isfinite(o.domainError))
-      A.domainError = o.domainError;
+      A.keys["modelled_domain_error"] = o.domainError;
     A.baseCost = U.baseCost;
     U.alts.push_back(std::move(A));
   }
   for (const auto &[label, why] : dropped) {
     Alternative A;
     A.kind = "matmul";
+    A.kindWords = "the product candidate";
     A.summary = label;
     A.at = U.root;
     A.standing = Standing::Dropped;
@@ -1248,6 +1260,41 @@ Error MatmulUnit::explain(Explanation &E, UnitExplanation &U) {
     U.alts.push_back(std::move(A));
   }
   return Error::success();
+}
+
+void MatmulUnit::remarkApplied(OptimizationRemarkEmitter &ORE, Explanation &E,
+                               const UnitExplanation &U, const Alternative &A,
+                               StringRef ErrorChange,
+                               StringRef CostChange) const {
+  const double domainError = candidates[A.index].domainError;
+  ORE.emit([&]() {
+    OptimizationRemark R(kRemarkPass, "MatmulRaised", A.at);
+    R << "Poseidon raised the "
+      << ore::NV("Shape", matmul ? shapeOf(*matmul) : "")
+      << " matrix product to " << ore::NV("Technique", A.summary);
+    if (std::isfinite(domainError))
+      R << "; modelled domain error "
+        << ore::NV("Error", remarkNumber(domainError));
+    if (!CostChange.empty())
+      R << ", cost " << ore::NV("Cost", CostChange);
+    R << " [" << ore::NV("Id", A.id) << "]";
+    return R;
+  });
+}
+
+void MatmulUnit::remarkProfile(DiagnosticInfoOptimizationBase &R,
+                               const UnitExplanation &U) const {
+  R << "Poseidon profile of the "
+    << ore::NV("Shape", matmul ? shapeOf(*matmul) : "")
+    << " matrix product: " << ore::NV("Executions", U.executions)
+    << " multiply-adds";
+}
+
+std::string MatmulUnit::rivalReason(const Alternative &A,
+                                    const Alternative &Rival) const {
+  if (!isa<MatmulUnit>(Rival.item))
+    return "";
+  return "the product takes one realization, and " + Rival.id + " was selected";
 }
 
 namespace {

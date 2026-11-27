@@ -35,7 +35,7 @@ static constexpr unsigned kGroundTruthPrec = 53;
 
 EmulatedArithmetic::~EmulatedArithmetic() = default;
 
-FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes)
+FPEvaluator::FPEvaluator(ArrayRef<FormatChange> changes)
     : emulated(changes.size()) {
   for (const auto &[index, change] : enumerate(changes)) {
     if (change.arithmetic)
@@ -361,7 +361,7 @@ mpfr_t &MPFREvaluator::getResult(const FPNode *node) {
 void getFPValues(ArrayRef<FPNode *> outputs,
                  const MapVector<Value *, double> &inputValues,
                  SmallVectorImpl<double> &results,
-                 ArrayRef<PrecisionChange> changes) {
+                 ArrayRef<FormatChange> changes) {
   assert(!outputs.empty() && "no outputs to evaluate");
   results.resize(outputs.size());
 

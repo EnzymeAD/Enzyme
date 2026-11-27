@@ -47,7 +47,7 @@ class Session;
 /// formats, one change per tier.
 struct PrecisionCandidate {
   /// The tiers, each a set of nodes and the format they move to.
-  llvm::SmallVector<PrecisionChange, 1> changes;
+  llvm::SmallVector<FormatChange, 1> changes;
   /// The accuracy cost of the outputs with the changes applied, on the scale
   /// of the unit's initialAccCost; NaN until priced.
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
@@ -65,7 +65,7 @@ struct PrecisionCandidate {
   llvm::MapVector<FPNode *, double> perOutputAccCost;
 
   /// A candidate of the tiers `changes`, named `desc`.
-  explicit PrecisionCandidate(llvm::SmallVector<PrecisionChange> changes,
+  explicit PrecisionCandidate(llvm::SmallVector<FormatChange> changes,
                               const std::string &desc)
       : changes(std::move(changes)), desc(desc) {}
 
@@ -151,6 +151,12 @@ public:
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override { return "P"; }
   llvm::Error explain(Explanation &E, UnitExplanation &U) override;
+  void remarkApplied(llvm::OptimizationRemarkEmitter &ORE, Explanation &E,
+                     const UnitExplanation &U, const Alternative &A,
+                     llvm::StringRef ErrorChange,
+                     llvm::StringRef CostChange) const override;
+  std::string rivalReason(const Alternative &A,
+                          const Alternative &Rival) const override;
   std::string selectionText(size_t i) const override {
     return candidates[i].desc;
   }

@@ -380,7 +380,7 @@ void modelApplied(std::vector<AppFn> &fns) {
     FPNode *root =
         nodeOf(a.F->getEntryBlock().getTerminator()->getOperand(0), G);
     const bool f32 = a.F->getReturnType()->isFloatTy();
-    SmallVector<PrecisionChange> changes;
+    SmallVector<FormatChange> changes;
     for (auto &ch : a.changes) {
       SetVector<FPLLValue *> nodes;
       for (Instruction *I : ch)

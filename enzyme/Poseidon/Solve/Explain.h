@@ -112,31 +112,26 @@ enum class Standing {
 /// A candidate among the alternatives of an entry of the explanation; what is
 /// empty or none is not written.
 struct Alternative {
-  /// Its id, kind, summary, fpcore, precision and inkernel_class, and why the
-  /// solve treated it as it did.
-  std::string id, kind, summary, fpcore, precision, inKernelClass, reason;
+  /// Its id, kind, summary, and why the solve treated it as it did.
+  std::string id, kind, summary, reason;
+  /// The keys of its kind, written into its entry as they are.
+  llvm::json::Object keys;
+  /// What the remarks call a candidate of its kind ("the float expansion").
+  std::string kindWords;
+  /// Its rewritten expression, which the remarks show when it has no single C
+  /// form; none for a kind whose remarks show its summary instead.
+  std::optional<std::string> expr;
   /// Its C form, one expression per output.
   llvm::SmallVector<std::string, 1> c;
   /// The positions of the outputs it rewrites among its subgraph's.
   llvm::SmallVector<unsigned, 1> outputs;
-  /// Whether it approximates a function, whether by a series, and how.
-  bool approx = false, series = false;
-  std::string approxNote;
   /// Its cost change, and the cost as written of what it rewrites, on the
   /// solve's axis.
   std::optional<int64_t> costDelta, baseCost;
-  /// Its accuracy cost change, its modelled error and, for a product, its
-  /// relative domain error.
-  std::optional<double> accDelta, err, domainError;
-  /// Herbie's error bits of the expression as written and of the candidate.
-  std::optional<double> bitsBefore, bitsAfter;
+  /// Its accuracy cost change and its modelled error.
+  std::optional<double> accDelta, err;
   /// The accuracy cost as written of what it rewrites.
   double baseAcc = std::numeric_limits<double>::quiet_NaN();
-  /// Its format changes; the operations they change and the format they move
-  /// to, as its remark names them.
-  llvm::json::Array changes;
-  llvm::SmallVector<std::string, 4> changedOps;
-  std::string changedTo;
   /// Where its remarks point.
   const llvm::Instruction *at = nullptr;
   /// Its unit and position there; none for a candidate never offered.
@@ -151,11 +146,17 @@ struct UnitExplanation {
   std::string id, kind;
   /// The subgraph; null for a unit over something else.
   const Subgraph *sg = nullptr;
+  /// The unit over something else; null for a subgraph.
+  const SiteUnit *owner = nullptr;
+  /// How the remarks name an entry of a unit over something else.
+  std::string name;
+  /// The keys of its kind, written into the entry as they are.
+  llvm::json::Object keys;
   /// Where it is, and the instruction its remarks point at.
   SourceLoc loc;
   const llvm::Instruction *root = nullptr;
-  /// Its ops, inputs and outputs, and the cores Herbie searched.
-  llvm::json::Array ops, inputs, outputs, herbie;
+  /// Its ops, inputs and outputs.
+  llvm::json::Array ops, inputs, outputs;
   /// Each output as C, and the profiled ranges of the inputs as remarks name
   /// them.
   llvm::SmallVector<std::string, 2> outC, inputRanges;
@@ -164,8 +165,8 @@ struct UnitExplanation {
   std::optional<int64_t> baseCost;
   uint64_t executions = 0;
   double sensitivity = std::numeric_limits<double>::quiet_NaN();
-  /// Why it is left as written, and the shape of a product.
-  std::string left, shape;
+  /// Why it is left as written.
+  std::string left;
   /// Why its units offer no candidate, when they offer none.
   llvm::SmallVector<std::string, 2> whyNone;
   /// Whether a candidate of it is applied.
@@ -204,6 +205,10 @@ std::string joinWords(llvm::ArrayRef<std::string> items);
 /// `s`, cut after `n` characters and marked as cut; 160 is what a remark shows
 /// of an expression.
 std::string clip(const std::string &s, size_t n = 160);
+
+/// `v` as the remarks write a number, to `digits` significant digits; "n/a"
+/// when it is not finite.
+std::string remarkNumber(double v, int digits = 2);
 
 /// Whether the solve of `F` is explained: -poseidon-explain names a directory,
 /// or a remark of the pass is enabled for `F`.

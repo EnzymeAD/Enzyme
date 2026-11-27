@@ -52,10 +52,10 @@ public:
            llvm::function_ref<double(const FPNode &)> valueOf) = 0;
 };
 
-/// The nodes of one tier of a precision candidate and the format they move
-/// from and to. The nodes belong to the site's graph.
-struct PrecisionChange {
-  /// The operations of the tier.
+/// Operations the evaluator computes in a format other than the one they are
+/// written in, and with which arithmetic. The nodes belong to the site's graph.
+struct FormatChange {
+  /// The operations.
   llvm::SetVector<FPLLValue *> nodes;
   /// The format they are computed in as written.
   NumberFormat oldType;
@@ -65,9 +65,9 @@ struct PrecisionChange {
   /// null when its operations are rounded to it.
   EmulatedArithmetic::Factory arithmetic;
 
-  explicit PrecisionChange(llvm::SetVector<FPLLValue *> &nodes,
-                           NumberFormat oldType, NumberFormat newType,
-                           EmulatedArithmetic::Factory arithmetic = nullptr)
+  explicit FormatChange(llvm::SetVector<FPLLValue *> &nodes,
+                        NumberFormat oldType, NumberFormat newType,
+                        EmulatedArithmetic::Factory arithmetic = nullptr)
       : nodes(nodes), oldType(oldType), newType(newType),
         arithmetic(arithmetic) {}
 };
@@ -99,7 +99,7 @@ private:
 public:
   /// An evaluator of the candidate whose precision changes are `changes`;
   /// none evaluates the graph as written.
-  FPEvaluator(llvm::ArrayRef<PrecisionChange> changes = {});
+  FPEvaluator(llvm::ArrayRef<FormatChange> changes = {});
 
   /// Computes `node` and its operands at the point `inputValues`, which gives
   /// a value to every input the node reads.
@@ -114,7 +114,7 @@ public:
 void getFPValues(llvm::ArrayRef<FPNode *> outputs,
                  const llvm::MapVector<llvm::Value *, double> &inputValues,
                  llvm::SmallVectorImpl<double> &results,
-                 llvm::ArrayRef<PrecisionChange> changes = {});
+                 llvm::ArrayRef<FormatChange> changes = {});
 
 /// The exact values, evaluated in MPFR at increasing precision until the first
 /// 53 significand bits of each output stop changing; NaN for an output that

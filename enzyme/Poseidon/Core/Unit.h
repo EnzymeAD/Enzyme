@@ -27,6 +27,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cassert>
 #include <cstddef>
@@ -35,13 +36,16 @@
 #include <utility>
 
 namespace llvm {
+class DiagnosticInfoOptimizationBase;
 class Instruction;
+class OptimizationRemarkEmitter;
 class Value;
 class raw_ostream;
 } // namespace llvm
 
 namespace poseidon {
 
+struct Alternative;
 class Explanation;
 struct SiteState;
 struct UnitExplanation;
@@ -230,6 +234,28 @@ public:
   /// unit itself in the explanation `E` of the site's solve; an error is one
   /// `E` reports.
   virtual llvm::Error explain(Explanation &E, UnitExplanation &U) = 0;
+  /// Emits through `ORE` the remarks of `A`, a candidate of the unit the solve
+  /// applied, in `U`, its entry in the explanation `E`. `ErrorChange` and
+  /// `CostChange` give its modelled error and its cost as written and with it
+  /// ("a -> b"), each empty when unknown.
+  virtual void remarkApplied(llvm::OptimizationRemarkEmitter &ORE,
+                             Explanation &E, const UnitExplanation &U,
+                             const Alternative &A, llvm::StringRef ErrorChange,
+                             llvm::StringRef CostChange) const = 0;
+  /// Adds to `R`, the profile remark of `U`, the entry of a unit over
+  /// something other than an FP subgraph, what the profile recorded of it.
+  /// Only such a unit is asked.
+  virtual void remarkProfile(llvm::DiagnosticInfoOptimizationBase &R,
+                             const UnitExplanation &U) const {
+    llvm_unreachable("a unit over an FP subgraph has no profile remark");
+  }
+  /// Why the solve left out `A`, a candidate of the unit, for `Rival`, another
+  /// of the same entry that it applied and that rewrites the same outputs;
+  /// empty when taking `Rival` does not exclude `A`.
+  virtual std::string rivalReason(const Alternative &A,
+                                  const Alternative &Rival) const {
+    return "";
+  }
 
 protected:
   /// A unit of kind `kind`, unbound.
